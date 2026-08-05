@@ -273,17 +273,23 @@ static void BLE_CONNECTIVITY_TEST_UNUSED set_output(const struct gpio_dt_spec *g
 
 static bool reserve_status1_for_power_indicator(void)
 {
-    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST);
+    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+           (DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY);
 }
 
 static bool reserve_status0_for_route_test_power(void)
 {
-    return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST);
+    return reserve_status1_for_power_indicator();
+}
+
+static bool mesh_route_activity_leds_enabled(void)
+{
+    return reserve_status1_for_power_indicator();
 }
 
 static void status0_route_test_power_apply(void)
 {
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+    if (!reserve_status0_for_route_test_power() ||
         !status_power_indicator_enabled) {
         return;
     }
@@ -337,7 +343,7 @@ void status_led1_set(bool red, bool green, bool blue)
 void status_power_indicator_set(bool enabled)
 {
     status_power_indicator_enabled = enabled;
-    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+    if (reserve_status0_for_route_test_power()) {
         if (enabled) {
             status0_route_test_power_apply();
         } else {
@@ -393,7 +399,7 @@ static void status0_power_blink_handler(struct k_work *work)
 static void status1_debug_pulse(bool red, bool green, bool blue)
 {
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+    if (!mesh_route_activity_leds_enabled() ||
         !status1_debug_pulse_work_ready) {
         return;
     }
@@ -414,7 +420,7 @@ static void status0_debug_pulse_for(bool red,
                                     uint32_t duration_ms)
 {
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+    if (!mesh_route_activity_leds_enabled() ||
         !status0_debug_pulse_work_ready) {
         return;
     }
@@ -781,23 +787,9 @@ void status_apply(const struct status_inputs *inputs)
             indication.repeat_count, indication.duration_ms);
 }
 
-int status_leds_init(void)
+int status_leds_connect(void)
 {
     int ret = 0;
-
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-    k_work_init_delayable(&status1_debug_pulse_restore_work,
-                          status1_debug_pulse_restore_handler);
-    status1_debug_pulse_work_ready = true;
-    k_work_init_delayable(&status0_debug_pulse_restore_work,
-                          status0_debug_pulse_restore_handler);
-    status0_debug_pulse_work_ready = true;
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
-    k_work_init_delayable(&status0_power_blink_work,
-                          status0_power_blink_handler);
-    status0_power_blink_work_ready = true;
-#endif
-#endif
 
 #if DT_NODE_HAS_STATUS(STATUS0_RED_NODE, okay)
     ret |= configure_output(&status0_red);
@@ -826,6 +818,25 @@ int status_leds_init(void)
         status_led1_set(false, false, false);
     }
     return ret;
+}
+
+int status_leds_init(void)
+{
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    k_work_init_delayable(&status1_debug_pulse_restore_work,
+                          status1_debug_pulse_restore_handler);
+    status1_debug_pulse_work_ready = true;
+    k_work_init_delayable(&status0_debug_pulse_restore_work,
+                          status0_debug_pulse_restore_handler);
+    status0_debug_pulse_work_ready = true;
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+    k_work_init_delayable(&status0_power_blink_work,
+                          status0_power_blink_handler);
+    status0_power_blink_work_ready = true;
+#endif
+#endif
+
+    return status_leds_connect();
 }
 
 int debug_serial_init(void)

@@ -47,9 +47,14 @@ void app_mesh_route_reply_ack_decide_backup(
     const struct app_mesh_route_reply_ack_backup_state *state,
     struct app_mesh_route_reply_ack_backup_result *result);
 
+bool app_mesh_route_reply_upstream_ack_allowed(
+    bool downstream_handoff_required,
+    bool downstream_handoff_acked);
+
 uint32_t app_mesh_route_reply_ack_deadline_after_preemption(
     uint32_t preempted_at_ms,
     uint32_t timeout_ms,
-    uint32_t latest_deadline_ms);
+    uint32_t latest_deadline_ms,
+    bool latest_deadline_valid);
 
 #endif

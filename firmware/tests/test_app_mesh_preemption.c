@@ -578,26 +578,32 @@ static void test_queue_remove_rotates_once_and_preserves_relative_order(void)
 
     assert(app_mesh_queue_remove_first(&ops, &target, &scratch, &removed) == 0);
     assert(removed);
-    assert(fixture.count == 3u);
-    assert(fixture.get_calls == 4u);
-    assert(fixture.put_calls == 3u);
+    assert(fixture.count ==
+           MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH - 1u);
+    assert(fixture.get_calls ==
+           MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH);
+    assert(fixture.put_calls ==
+           MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH - 1u);
     assert(fixture.entries[0].packet.seq == 1u);
-    assert(fixture.entries[1].packet.seq == 3u);
-    assert(fixture.entries[2].packet.seq == 4u);
+    for (uint8_t i = 1u; i < fixture.count; i++) {
+        assert(fixture.entries[i].packet.seq == i + 2u);
+    }
 }
 
 static void test_queue_remove_absent_target_preserves_order(void)
 {
     struct queue_remove_fixture fixture = queue_remove_fixture();
     struct app_mesh_queue_remove_ops ops = queue_remove_ops(&fixture);
-    struct mesh_outbound target = {.packet.seq = 9u};
+    struct mesh_outbound target = {
+        .packet.seq = MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH + 1u,
+    };
     struct mesh_outbound scratch;
     bool removed = true;
 
     assert(app_mesh_queue_remove_first(&ops, &target, &scratch, &removed) ==
            -ENOENT);
     assert(!removed);
-    assert(fixture.count == 4u);
+    assert(fixture.count == MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH);
     for (uint8_t i = 0u; i < fixture.count; i++) {
         assert(fixture.entries[i].packet.seq == i + 1u);
     }
@@ -634,11 +640,12 @@ static void test_queue_remove_reports_get_and_put_failures(void)
         assert(put_failure.put_calls == 1u);
         assert(put_failure.recovery_valid);
         assert(put_failure.recovery.packet.seq == 1u);
-        assert(put_failure.count == 4u);
-        assert(put_failure.entries[0].packet.seq == 2u);
-        assert(put_failure.entries[1].packet.seq == 3u);
-        assert(put_failure.entries[2].packet.seq == 4u);
-        assert(put_failure.entries[3].packet.seq == 99u);
+        assert(put_failure.count ==
+               MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH);
+        for (uint8_t i = 0u; i + 1u < put_failure.count; i++) {
+            assert(put_failure.entries[i].packet.seq == i + 2u);
+        }
+        assert(put_failure.entries[put_failure.count - 1u].packet.seq == 99u);
     }
 }
 
@@ -652,7 +659,9 @@ static void test_queue_head_owner_blocks_rotation_but_allows_append(void)
     struct mesh_outbound expected;
     struct mesh_outbound removed;
     struct mesh_outbound target = {.packet.seq = 2u};
-    struct mesh_outbound appended = {.packet.seq = 5u};
+    struct mesh_outbound appended = {
+        .packet.seq = MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH + 1u,
+    };
     bool target_removed = true;
 
     app_mesh_queue_head_owner_init(&owner);
@@ -662,7 +671,8 @@ static void test_queue_head_owner_blocks_rotation_but_allows_append(void)
 
     /* A producer may append while the sender owns the immutable head. */
     assert(queue_remove_put(&appended, &fixture) == 0);
-    assert(fixture.count == 5u);
+    assert(fixture.count ==
+           MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY);
     assert(app_mesh_queue_remove_first_owned(&owner,
                                              &remove_ops,
                                              &target,
@@ -679,9 +689,10 @@ static void test_queue_head_owner_blocks_rotation_but_allows_append(void)
                                       &removed) == 0);
     assert(removed.packet.seq == 1u);
     assert(!app_mesh_queue_head_owned(&owner));
-    assert(fixture.count == 4u);
+    assert(fixture.count == MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH);
     assert(fixture.entries[0].packet.seq == 2u);
-    assert(fixture.entries[3].packet.seq == 5u);
+    assert(fixture.entries[fixture.count - 1u].packet.seq ==
+           MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH + 1u);
 }
 
 static void test_queue_head_owner_rejects_stale_or_changed_head(void)
@@ -703,7 +714,8 @@ static void test_queue_head_owner_rejects_stale_or_changed_head(void)
                                       &stale,
                                       &expected,
                                       &removed) == -ESTALE);
-    assert(fixture.count == 4u && fixture.get_calls == 0u);
+    assert(fixture.count == MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH &&
+           fixture.get_calls == 0u);
 
     /* Model an illegal unowned destructive interleaving: fail closed. */
     fixture.entries[0].packet.seq = 99u;
@@ -712,7 +724,8 @@ static void test_queue_head_owner_rejects_stale_or_changed_head(void)
                                       &token,
                                       &expected,
                                       &removed) == -ESTALE);
-    assert(fixture.count == 4u && fixture.get_calls == 0u);
+    assert(fixture.count == MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH &&
+           fixture.get_calls == 0u);
     assert(app_mesh_queue_head_abort(&owner, &token) == 0);
 }
 

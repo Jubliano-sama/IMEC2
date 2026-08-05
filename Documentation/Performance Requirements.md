@@ -11,7 +11,7 @@
 | **Could Have** | **PR-06** | Clicker lasts > 4 weeks without battery replacement | [[Constraints\|CON-10]] |
 | **Must Have** | **PR-07** | Allow at least 3 clicks a minute per clicker | [[Constraints\|CON-11]] |
 | **Must Have** | **PR-08** | Support at least 4 simultaneous clicks. | [[Constraints\|CON-12]] |
-| **Must Have** | **PR-09** | Latency < 15 seconds | [[Constraints\|CON-13]] |
+| **Must Have** | **PR-09** | Click to Ranging Latency < 15 seconds | [[Constraints\|CON-13]] |
 
 # Changelog
 

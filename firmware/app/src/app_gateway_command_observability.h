@@ -10,8 +10,12 @@
 #define GATEWAY_COMMAND_EVENT_SCHEMA_VERSION 1u
 #define GATEWAY_COMMAND_EVENT_WIRE_LEN 78u
 #define GATEWAY_COMMAND_EVENT_MAX_TRACKED 3u
-#define GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH 2u
-#define GATEWAY_COMMAND_OBSERVABILITY_RAM_BUDGET_BYTES 576u
+#define GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH 5u
+/*
+ * The 64-bit native-test ABI pads each event slot more than the 32-bit target.
+ * The exact gateway ELF remains the authoritative target-RAM gate.
+ */
+#define GATEWAY_COMMAND_OBSERVABILITY_RAM_BUDGET_BYTES 912u
 #define GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE UINT8_MAX
 
 enum gateway_command_event_kind {
@@ -69,6 +73,9 @@ bool gateway_command_survey_sample_admission(
     enum gateway_command_event_reason *reason);
 void gateway_command_survey_terminal_outcome(
     size_t report_count,
+    size_t pair_count,
+    bool pairs_planned,
+    bool topology_complete,
     uint16_t failure_count,
     enum gateway_command_event_reason failure_reason,
     enum command_status *status,
@@ -113,6 +120,7 @@ struct gateway_command_event_snapshot {
 struct gateway_command_event_terminal {
     struct gateway_command_event event;
     bool valid;
+    bool enqueue_pending;
 };
 
 struct gateway_command_observability_state {
@@ -136,6 +144,16 @@ int gateway_command_observability_prepare(
     struct gateway_command_observability_state *state,
     struct gateway_command_event *event,
     bool terminal);
+/*
+ * Prepare an event with a caller-reserved durable identity.  The reservation
+ * must happen before entering any BLE/stream spinlock; this function performs
+ * no persistence or blocking work.
+ */
+int gateway_command_observability_prepare_with_sequence(
+    struct gateway_command_observability_state *state,
+    struct gateway_command_event *event,
+    bool terminal,
+    uint32_t event_seq);
 void gateway_command_observability_note_enqueue(
     struct gateway_command_observability_state *state,
     uint32_t event_seq,

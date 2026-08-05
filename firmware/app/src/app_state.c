@@ -12,7 +12,6 @@
 
 LOG_MODULE_REGISTER(app_state, LOG_LEVEL_DBG);
 
-uint32_t next_event_seq;
 bool uwb_rf_active;
 struct k_spinlock uwb_rf_lock;
 struct k_spinlock anchor_uwb_lock;
@@ -24,7 +23,8 @@ struct mesh_relay mesh_runtime;
 struct mesh_event_diagnostics mesh_event_stats;
 struct uwb_anchor_session anchor_uwb_session;
 uint32_t anchor_uwb_scan_interval_ms = ANCHOR_UWB_SCAN_INTERVAL_MS;
-uint16_t mesh_event_control_seq;
+static uint16_t mesh_event_control_seq;
+static struct k_spinlock mesh_event_control_seq_lock;
 static uint64_t mesh_event_boot_nonce_value;
 static K_MUTEX_DEFINE(mesh_event_boot_nonce_lock);
 static const char *uwb_rf_owner_reason;
@@ -124,7 +124,9 @@ const char *range_status_name(enum range_status status)
 
 bool range_status_valid(enum range_status status)
 {
-    return status >= RANGE_OK && status <= RANGE_TIMING_INVALID;
+    return status >= RANGE_OK &&
+           status <= RANGE_TIMING_INVALID &&
+           status != RANGE_STS_QUALITY_FAIL;
 }
 
 bool mesh_id_is_unicast(uint64_t node_id)
@@ -292,10 +294,11 @@ void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)
         return;
     }
 
-    if (out->queued_at_ms != 0u) {
+    if (out->queued_at_valid) {
         packet_age_add_elapsed(&out->packet, now_ms - out->queued_at_ms);
     }
     out->queued_at_ms = now_ms;
+    out->queued_at_valid = true;
     ret = mesh_outbound_set_flood_packet_age_ms(out, out->packet.message_age_ms);
     if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
         LOG_WRN("mesh flood age TLV update failed: msg=0x%02x ret=%d",
@@ -307,17 +310,8 @@ void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)
 bool mesh_outbound_ready_for_tx(const struct mesh_outbound *out, uint32_t now_ms)
 {
     return out == NULL ||
-           out->earliest_tx_ms == 0u ||
+           !out->earliest_tx_valid ||
            (int32_t)(now_ms - out->earliest_tx_ms) >= 0;
-}
-
-uint32_t next_click_event_seq(void)
-{
-    next_event_seq++;
-    if (next_event_seq == 0u) {
-        next_event_seq = 1u;
-    }
-    return next_event_seq;
 }
 
 uint32_t packet_age_add(uint32_t age_ms, uint32_t elapsed_ms)
@@ -352,11 +346,17 @@ uint32_t uptime_ms_until_deadline(uint32_t now_ms, uint32_t deadline_ms)
 
 uint16_t mesh_next_event_control_seq(void)
 {
+    k_spinlock_key_t key;
+    uint16_t sequence;
+
+    key = k_spin_lock(&mesh_event_control_seq_lock);
     mesh_event_control_seq++;
     if (mesh_event_control_seq == 0u) {
         mesh_event_control_seq = 1u;
     }
-    return mesh_event_control_seq;
+    sequence = mesh_event_control_seq;
+    k_spin_unlock(&mesh_event_control_seq_lock, key);
+    return sequence;
 }
 
 uint64_t mesh_event_boot_nonce(void)
@@ -442,34 +442,136 @@ static bool local_anchor_discovery_assignment_values_valid(uint32_t epoch,
 
 int local_anchor_restore_discovery_assignment(uint32_t epoch,
                                               uint32_t table_seq,
-                                              uint32_t table_fingerprint,
+                                              const struct discovery_assignment_table_commitment *table_commitment,
                                               uint8_t anchor_slot,
                                               uint8_t slot_count,
-                                              bool provisioned)
+                                              bool provisioned,
+                                              bool ordered_epoch_valid,
+                                              const uint32_t *retired_epochs,
+                                              uint8_t retired_epoch_count,
+                                              uint32_t pending_epoch,
+                                              uint32_t pending_table_seq,
+                                              const struct discovery_assignment_table_commitment *pending_table_commitment,
+                                              bool pending_valid)
 {
     k_spinlock_key_t key;
+    bool history_valid;
+    bool pending_restored = true;
+    bool finalized_valid =
+        epoch != 0u && table_seq != 0u && table_commitment != NULL;
 
-    if (epoch == 0u || table_seq == 0u || table_fingerprint == 0u ||
-        slot_count == 0u || slot_count > UWB_DISCOVERY_SLOT_COUNT ||
-        (provisioned && anchor_slot >= slot_count)) {
+    if ((!finalized_valid && !pending_valid) ||
+        (finalized_valid &&
+         (slot_count == 0u || slot_count > UWB_DISCOVERY_SLOT_COUNT)) ||
+        (provisioned &&
+         (!finalized_valid || anchor_slot >= slot_count)) ||
+        (pending_valid &&
+         (pending_epoch == 0u || pending_table_seq == 0u ||
+          pending_table_commitment == NULL))) {
         return PROTO_ERR_MALFORMED;
     }
     key = k_spin_lock(&anchor_discovery_assignment_lock);
     app_discovery_assignment_policy_init(&anchor_discovery_assignment_policy,
-                                         true,
+                                         finalized_valid,
+                                         ordered_epoch_valid,
                                          provisioned,
                                          epoch,
                                          table_seq,
-                                         table_fingerprint);
+                                         table_commitment);
+    history_valid =
+        app_discovery_assignment_policy_restore_retired_epochs(
+            &anchor_discovery_assignment_policy,
+            retired_epochs,
+            retired_epoch_count);
+    if (history_valid && pending_valid) {
+        pending_restored =
+            app_discovery_assignment_policy_restore_pending(
+                &anchor_discovery_assignment_policy,
+                pending_epoch,
+                pending_table_seq,
+                pending_table_commitment);
+    }
+    if (!history_valid || !pending_restored) {
+        app_discovery_assignment_policy_init(
+            &anchor_discovery_assignment_policy,
+            false,
+            false,
+            false,
+            0u,
+            0u,
+            NULL);
+        k_spin_unlock(&anchor_discovery_assignment_lock, key);
+        return PROTO_ERR_MALFORMED;
+    }
     anchor_discovery_assignment_slot = provisioned ? anchor_slot : 0u;
     anchor_discovery_assignment_slot_count = provisioned ? slot_count : 0u;
     k_spin_unlock(&anchor_discovery_assignment_lock, key);
     return PROTO_OK;
 }
 
+bool local_anchor_discovery_assignment_project_pending_commit(
+    uint32_t next_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    uint32_t *retired_epochs,
+    uint8_t *retired_epoch_count)
+{
+    k_spinlock_key_t key;
+    bool pending_identity_current;
+    bool projected;
+
+    key = k_spin_lock(&anchor_discovery_assignment_lock);
+    pending_identity_current =
+        anchor_discovery_assignment_policy.joining_epoch == next_epoch &&
+        anchor_discovery_assignment_policy.claim_observed &&
+        anchor_discovery_assignment_policy.joining_table_seq == table_seq &&
+        discovery_assignment_table_commitment_equal(
+            &anchor_discovery_assignment_policy.joining_table_commitment,
+            table_commitment);
+    /*
+     * A newer CLAIM or TABLE-before-CLAIM is RAM-only until its TABLE
+     * snapshot is durably installed. The transaction owner and the caller's
+     * exact pending-snapshot check make the older durable ACK authoritative
+     * during that interval, so its already-delivered proof must still be
+     * allowed to commit.
+     */
+    if (!pending_identity_current &&
+        anchor_discovery_assignment_policy.joining_epoch != 0u &&
+        discovery_assignment_epoch_strictly_newer(
+            anchor_discovery_assignment_policy.joining_epoch,
+            next_epoch)) {
+        pending_identity_current = true;
+    }
+    projected =
+        pending_identity_current &&
+        app_discovery_assignment_policy_project_retired_epochs(
+            &anchor_discovery_assignment_policy,
+            next_epoch,
+            retired_epochs,
+            retired_epoch_count);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return projected;
+}
+
+bool local_anchor_discovery_assignment_export_retired_epochs(
+    uint32_t *retired_epochs,
+    uint8_t *retired_epoch_count)
+{
+    k_spinlock_key_t key;
+    bool exported;
+
+    key = k_spin_lock(&anchor_discovery_assignment_lock);
+    exported = app_discovery_assignment_policy_export_retired_epochs(
+        &anchor_discovery_assignment_policy,
+        retired_epochs,
+        retired_epoch_count);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return exported;
+}
+
 int local_anchor_commit_discovery_assignment(uint32_t epoch,
                                              uint32_t table_seq,
-                                             uint32_t table_fingerprint,
+                                             const struct discovery_assignment_table_commitment *table_commitment,
                                              uint8_t anchor_slot,
                                              uint8_t slot_count)
 {
@@ -486,7 +588,7 @@ int local_anchor_commit_discovery_assignment(uint32_t epoch,
         &anchor_discovery_assignment_policy,
         epoch,
         table_seq,
-        table_fingerprint);
+        table_commitment);
     if (committed) {
         anchor_discovery_assignment_slot = anchor_slot;
         anchor_discovery_assignment_slot_count = slot_count;
@@ -502,9 +604,10 @@ void local_anchor_reset_discovery_assignment(void)
     app_discovery_assignment_policy_init(&anchor_discovery_assignment_policy,
                                          false,
                                          false,
+                                         false,
                                          0u,
                                          0u,
-                                         0u);
+                                         NULL);
     anchor_discovery_assignment_slot = 0u;
     anchor_discovery_assignment_slot_count = 0u;
     k_spin_unlock(&anchor_discovery_assignment_lock, key);
@@ -513,7 +616,7 @@ void local_anchor_reset_discovery_assignment(void)
 int local_anchor_mark_discovery_assignment_unprovisioned(
     uint32_t epoch,
     uint32_t table_seq,
-    uint32_t table_fingerprint)
+    const struct discovery_assignment_table_commitment *table_commitment)
 {
     k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
     bool accepted;
@@ -522,7 +625,7 @@ int local_anchor_mark_discovery_assignment_unprovisioned(
         &anchor_discovery_assignment_policy,
         epoch,
         table_seq,
-        table_fingerprint);
+        table_commitment);
     if (accepted) {
         anchor_discovery_assignment_slot = 0u;
         anchor_discovery_assignment_slot_count = 0u;
@@ -547,7 +650,7 @@ local_anchor_discovery_assignment_note_claim(uint32_t epoch)
 enum app_discovery_assignment_table_decision
 local_anchor_discovery_assignment_note_table(uint32_t epoch,
                                              uint32_t table_seq,
-                                             uint32_t table_fingerprint)
+                                             const struct discovery_assignment_table_commitment *table_commitment)
 {
     enum app_discovery_assignment_table_decision decision;
     k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
@@ -556,7 +659,23 @@ local_anchor_discovery_assignment_note_table(uint32_t epoch,
         &anchor_discovery_assignment_policy,
         epoch,
         table_seq,
-        table_fingerprint);
+        table_commitment);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return decision;
+}
+
+enum app_discovery_assignment_table_decision
+local_anchor_discovery_assignment_preview_table(uint32_t epoch,
+                                                uint32_t table_seq,
+                                                const struct discovery_assignment_table_commitment *table_commitment)
+{
+    struct app_discovery_assignment_policy preview;
+    enum app_discovery_assignment_table_decision decision;
+    k_spinlock_key_t key = k_spin_lock(&anchor_discovery_assignment_lock);
+
+    preview = anchor_discovery_assignment_policy;
+    decision = app_discovery_assignment_policy_note_table(
+        &preview, epoch, table_seq, table_commitment);
     k_spin_unlock(&anchor_discovery_assignment_lock, key);
     return decision;
 }

@@ -27,6 +27,8 @@ extern "C" {
 #define MESH_RELAY_GATEWAY_ACK_CAPACITY \
     (MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX * \
      MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN)
+#define MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES \
+    ((MESH_RELAY_GATEWAY_ACK_CAPACITY + 7u) / 8u)
 #define MESH_RELAY_FLOOD_SEEN_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES ROUTE_MAX_FAILURES
@@ -92,8 +94,8 @@ extern "C" {
 #define COLLECTION_BUNDLE_MAX_RECORDS 8u
 #define MESH_RELAY_RESULT_BUNDLE_RECORDS 2u
 #define MESH_RELAY_RESULT_BUNDLE_HOLD_MS 25u
-#define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 2u
-#define MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION 1u
+#define MESH_RELAY_OUTBOX_SNAPSHOT_VERSION 4u
+#define MESH_RELAY_CHILD_CUSTODY_SNAPSHOT_VERSION 2u
 #define COMMAND_RESULT_EXPIRY_DEFAULT_S 86400u
 #define MESH_RELAY_GATEWAY_ACK_RETENTION_MS \
     (COMMAND_RESULT_EXPIRY_DEFAULT_S * 1000u)
@@ -161,6 +163,7 @@ struct mesh_parent_candidate {
     uint8_t channel9_busy_hint;
     uint32_t capacity_observed_at_ms;
     uint32_t capacity_valid_until_ms;
+    bool capacity_hint_valid;
     bool channel9_timing_valid;
     uint32_t last_observed_ms;
     uint32_t last_success_ms;
@@ -200,6 +203,7 @@ enum mesh_relay_delivery_state {
 enum mesh_relay_status {
     MESH_RELAY_ERR_RESULT_GRANT_ATTEMPTS_EXHAUSTED = -2000,
     MESH_RELAY_ERR_RESULT_GRANT_DEADLINE_EXPIRED = -2001,
+    MESH_RELAY_ERR_OUTBOX_EXPIRED = -2002,
 };
 
 struct persistent_outbox_record {
@@ -219,6 +223,8 @@ struct persistent_outbox_record {
     uint64_t custody_parent;
     bool gateway_acked;
     uint32_t expiry_s;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    /* Wire-integrity diagnostic; semantic equality uses semantic_digest. */
     uint16_t payload_crc;
     uint16_t payload_len;
 };
@@ -226,6 +232,7 @@ struct persistent_outbox_record {
 enum mesh_relay_role {
     MESH_RELAY_ROLE_ANCHOR = 1,
     MESH_RELAY_ROLE_GATEWAY = 2,
+    MESH_RELAY_ROLE_CLICKER = 3,
 };
 
 enum mesh_relay_action {
@@ -234,6 +241,11 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_FORWARD = 1u << 2,
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
     MESH_RELAY_ACTION_DROP = 1u << 6,
+    /*
+     * The original gateway ACK was authenticated, but source custody now
+     * belongs to a compact durable ACK-confirm packet rather than being done.
+     */
+    MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING = 1u << 7,
     MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED = 1u << 8,
     MESH_RELAY_ACTION_RETRANSMIT = 1u << 9,
     MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED = 1u << 10,
@@ -257,6 +269,7 @@ enum mesh_relay_action {
     /* The original transit outbox remains owned until this ACK is sent. */
     MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING = 1u << 28,
     MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY = 1u << 29,
+    MESH_RELAY_ACTION_CHILD_CUSTODY_CHANGED = 1u << 30,
 };
 
 enum mesh_relay_tx_state {
@@ -265,6 +278,12 @@ enum mesh_relay_tx_state {
     MESH_RELAY_TX_WAIT_RETRY_BACKOFF = 2,
     MESH_RELAY_TX_WAIT_RESULT_GRANT = 3,
     MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD = 4,
+    /*
+     * The retry/expiry policy is terminal, but application-owned durable
+     * producers must be retired before the relay may release this exact raw
+     * record or overwrite its last persisted copy.
+     */
+    MESH_RELAY_TX_WAIT_TERMINAL_COMMIT = 5,
 };
 
 struct mesh_outbound {
@@ -276,6 +295,8 @@ struct mesh_outbound {
     uint32_t queued_at_ms;
     uint32_t earliest_tx_ms;
     uint8_t flood_retry_count;
+    bool queued_at_valid;
+    bool earliest_tx_valid;
 };
 
 struct mesh_gateway_route_adv_snapshot {
@@ -313,49 +334,68 @@ struct mesh_duplicate_entry {
     uint32_t session_id;
     uint32_t last_seen_ms;
     uint32_t busy_response_at_ms;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t seq;
-    uint16_t payload_len;
-    uint16_t payload_crc;
     uint16_t busy_response_interval_ms;
     uint8_t msg_type;
-    bool payload_identity_valid;
+    bool semantic_identity_valid;
     bool delivery_accepted;
     bool valid;
 };
 
-_Static_assert(sizeof(struct mesh_duplicate_entry) == 40u,
-               "duplicate and BUSY suppression state must not increase relay RAM");
+_Static_assert(sizeof(struct mesh_duplicate_entry) == 72u,
+               "duplicate cache must retain full semantic commitments");
+
+struct mesh_command_replay_window {
+    uint64_t forwarded;
+    uint32_t newest_command_seq;
+    /*
+     * Only the newest transport attempt may be redelivered locally for
+     * application admission retry. Bind that exception to the complete
+     * immutable command; older seen attempts remain transport-stale.
+     */
+    uint8_t newest_semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    bool initialized;
+};
+
+_Static_assert(sizeof(struct mesh_command_replay_window) == 48u,
+               "command replay window must retain one full commitment");
 
 /*
  * External gateway-only acceptance history. The production gateway overlays
  * this store on anchor-only batch state instead of charging every relay role.
  * A new explicit batch may retire only the same origin's prior batched
- * identities; exact unbatched acceptances remain sticky until expiry.
+ * identities. Each source has a fixed four-identity partition; a fifth
+ * accepted identity replaces only that source's shortest-lived record.
+ * Assignment candidates use normal partitions within the append-only
+ * 50-member roster bound, never a 51st origin. A candidate identity is
+ * reserved only after the gateway assignment state machine validates the
+ * exact phase, epoch, hash, membership, and operation state. After the prior
+ * owner is terminal and its exact durable roster is loaded, enumeration-start
+ * reconciliation retains member histories and retires every absent origin.
  */
 struct mesh_gateway_ack_identity_entry {
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t session_id;
-    uint32_t last_seen_ms;
+    uint32_t expires_at_ms;
     uint16_t seq;
-    uint16_t payload_len;
-    uint16_t payload_crc;
     uint8_t msg_type;
     /* Low six bits encode owner index + 1; high bits hold identity flags. */
     uint8_t owner_state;
 };
 
-struct mesh_gateway_ack_origin_entry {
-    uint64_t src_id;
-    uint32_t batch_id;
-    uint8_t identity_count;
-    uint8_t state;
-    uint16_t reserved;
-};
-
 struct mesh_gateway_ack_store {
-    struct mesh_gateway_ack_origin_entry
-        origins[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX];
+    /*
+     * Structure-of-arrays avoids alignment padding for every origin.
+     * Identity counts are derived by scanning the identity table, avoiding a
+     * separate mutable count that could diverge from its owner records.
+     */
+    uint64_t origin_src_ids[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX];
+    uint32_t origin_batch_ids[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX];
     struct mesh_gateway_ack_identity_entry
         identities[MESH_RELAY_GATEWAY_ACK_CAPACITY];
+    uint8_t candidate_identity_bits[
+        MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES];
 };
 
 struct mesh_upstream_ancestry_entry {
@@ -377,14 +417,14 @@ struct mesh_anchor_downlink_store {
         upstream_ancestry[ROUTE_MAX_CANDIDATES];
 };
 
-_Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 16u,
-               "gateway ACK identity must remain compact");
-_Static_assert(sizeof(struct mesh_gateway_ack_origin_entry) == 16u,
-               "gateway ACK origin history must remain compact");
-_Static_assert(sizeof(struct mesh_gateway_ack_store) == 4000u,
+_Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 44u,
+               "gateway ACK identity must retain a full semantic commitment");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 25u,
+               "gateway ACK candidate bitmap must cover every identity");
+_Static_assert(sizeof(struct mesh_gateway_ack_store) == 9432u,
                "gateway ACK store must fit role-overlaid static storage");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u,
-               "gateway ACK history must cover 50 four-packet batches");
+               "gateway ACK history must cover 50 four-packet members");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY <= UINT8_MAX,
                "per-origin identity counts must not overflow");
 _Static_assert(MESH_RELAY_ANCHOR_DOWNLINK_ROUTES >=
@@ -440,6 +480,7 @@ struct mesh_pending_tx {
     bool result_offer_active;
     bool gateway_ack_forward_pending;
     uint8_t busy_retry_round;
+    bool hop_ack_observed_since_send;
 };
 
 struct mesh_relay_outbox_snapshot {
@@ -449,6 +490,7 @@ struct mesh_relay_outbox_snapshot {
     uint64_t gateway_id;
     struct persistent_outbox_record record;
     struct mesh_pending_tx pending;
+    uint32_t route_epoch;
     uint32_t snapshot_at_ms;
     bool valid;
 };
@@ -457,13 +499,27 @@ struct mesh_route_discovery_state {
     uint64_t target_id;
     uint8_t attempts;
     uint32_t next_request_id;
+    uint32_t current_request_id;
     uint32_t next_request_ms;
+    uint32_t completed_request_id;
+    uint32_t completed_request_until_ms;
+    uint64_t completed_reply_previous_hop_id;
+    uint8_t completed_reply_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    bool active;
+};
+
+struct mesh_route_reply_ack_expectation {
+    uint64_t peer_id;
+    uint8_t reply_commitment[SEMANTIC_DIGEST_SHA256_LEN];
+    uint32_t session_id;
     bool active;
 };
 
 struct mesh_result_bundle_entry {
     struct command_result_id result_id;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t payload_len;
+    /* Required on the RESULT_BUNDLE wire; never used as semantic equality. */
     uint16_t payload_crc;
     uint32_t message_age_ms;
     uint32_t queued_at_ms;
@@ -485,8 +541,8 @@ struct mesh_result_bundle_queue {
 struct mesh_result_offer_reservation {
     struct command_result_id result_id;
     uint64_t child_id;
+    uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t result_len;
-    uint16_t result_crc;
     bool valid;
 };
 
@@ -514,13 +570,22 @@ struct mesh_relay {
     struct route_table upstream;
     struct mesh_downlink_entry downlinks[MESH_RELAY_DOWNLINK_ROUTES];
     struct mesh_duplicate_entry duplicates[MESH_RELAY_DUP_CACHE_SIZE];
+    struct mesh_command_replay_window command_replay;
     struct flood_seen_entry flood_seen[MESH_RELAY_FLOOD_SEEN_SIZE];
     struct mesh_relay_event_timing_entry event_timings[MESH_RELAY_EVENT_TIMINGS];
     struct mesh_pending_tx pending;
     struct persistent_outbox_record outbox_record;
     struct mesh_route_discovery_state route_discovery;
+    struct mesh_route_reply_ack_expectation route_reply_ack_expectation;
     struct mesh_result_bundle_queue result_bundle;
     struct mesh_result_offer_reservation result_offer_reservation;
+    /*
+     * Runtime-only expiry. The persisted version-2 custody snapshot retains
+     * the full result commitment; a restored reservation receives a bounded
+     * lease instead of becoming permanent. Reservation.valid arms this
+     * deadline; zero is a valid wrapped deadline.
+     */
+    uint32_t result_offer_reservation_deadline_ms;
     struct mesh_relay_diagnostics diagnostics;
     union {
         struct mesh_gateway_ack_store *gateway_ack_store;
@@ -529,6 +594,13 @@ struct mesh_relay {
     uint8_t duplicate_next;
     uint8_t flood_seen_next;
     uint16_t next_seq;
+    /*
+     * Highest fully handled gateway-route advertisement sequence for the
+     * current upstream epoch. Zero means no advertisement has committed; zero
+     * is not a valid wire sequence. Kept last so native builds consume the
+     * structure's existing tail padding.
+     */
+    uint32_t gateway_route_adv_seq;
 };
 
 struct mesh_relay_result {
@@ -555,7 +627,24 @@ struct mesh_relay_result {
     uint64_t route_reply_backup_next_hop_id;
     uint64_t route_discovery_target_id;
     struct operation_policy_set operation_policy;
+    /*
+     * A route-state transition commits before the platform performs the
+     * consequent work. Preserve the prior advertisement high-water state so
+     * forwarding rollback and durable-state diagnostics retain its exact
+     * predecessor.
+     */
+    uint32_t forward_admission_previous_gateway_route_adv_seq;
+    /*
+     * Route epoch/freshness changes must become durable before the platform
+     * installs policy, forwards control, or resumes epoch-bound custody.
+     * Preserve the predecessor so tests and failure handling can prove the
+     * transition was monotonic.
+    */
+    uint32_t route_state_previous_epoch;
     bool route_reply_backup_valid;
+    bool forward_admission_gateway_epoch_changed;
+    bool route_state_changed;
+    bool route_state_durable;
 };
 
 void mesh_relay_init(struct mesh_relay *relay,
@@ -563,9 +652,52 @@ void mesh_relay_init(struct mesh_relay *relay,
                      uint64_t local_id,
                      uint64_t gateway_id,
                      uint32_t route_epoch);
+/*
+ * Restore only the durable ordering state after mesh_relay_init(), before
+ * epoch-bound outbox or child-custody snapshots are admitted.
+ */
+int mesh_relay_restore_route_freshness(
+    struct mesh_relay *relay,
+    uint32_t route_epoch,
+    uint32_t gateway_route_adv_seq);
+/*
+ * Configured gateway routes use the same epoch transition as wire-learned
+ * routes. Validation is mutation-free so an application can durably reserve
+ * a newer epoch before committing the route.
+ */
+int mesh_relay_validate_configured_gateway_route(
+    const struct mesh_relay *relay,
+    const struct route_candidate *candidate,
+    bool *epoch_changed);
+int mesh_relay_upsert_configured_gateway_route(
+    struct mesh_relay *relay,
+    const struct route_candidate *candidate);
+/*
+ * Mark the result only after platform persistence has completed and read back.
+ * Transport rollback may release provisional forwarding admission, but it
+ * must never regress route ordering after this boundary.
+ */
+int mesh_relay_mark_route_state_durable(
+    const struct mesh_relay *relay,
+    struct mesh_relay_result *result);
 void mesh_gateway_ack_store_init(struct mesh_gateway_ack_store *store);
 int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
                                         struct mesh_gateway_ack_store *store);
+/*
+ * Caller serializes these with gateway RX. Candidate reservation is permitted
+ * only after the assignment semantic gate has fully validated the candidate;
+ * a full existing source uses the ordinary source-local replacement policy.
+ * Reconciliation must run only after terminal and durable-publication gates:
+ * it preserves exact append-only roster members and retires every absent
+ * origin so P members leave exactly 50 - P candidate partitions.
+ */
+int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
+                                             uint64_t candidate_id,
+                                             uint32_t now_ms);
+int mesh_relay_reconcile_gateway_ack_membership(
+    struct mesh_relay *relay,
+    const uint64_t *member_ids,
+    size_t member_count);
 void mesh_anchor_downlink_store_init(struct mesh_anchor_downlink_store *store);
 int mesh_relay_attach_anchor_downlink_store(
     struct mesh_relay *relay,
@@ -576,6 +708,9 @@ const struct mesh_downlink_entry *mesh_relay_downlink_at(
     size_t index);
 const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_relay *relay,
                                                            uint64_t target_id);
+const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
+    const struct mesh_relay *relay,
+    uint64_t target_id);
 /* Caller must first accept a current-survey local gateway report and its RX metadata. */
 int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
                                                  uint64_t target_id,
@@ -768,6 +903,10 @@ bool mesh_relay_defer_tx(struct mesh_relay *relay,
                          uint32_t now_ms,
                          uint32_t random_value);
 bool mesh_relay_can_defer_tx(const struct mesh_relay *relay);
+uint32_t mesh_relay_outbox_expiry_s_for_packet(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
 int mesh_relay_defer_pending_retry(struct mesh_relay *relay,
                                    uint32_t retry_at_ms);
 int mesh_relay_note_retransmit_deferred(struct mesh_relay *relay,
@@ -818,6 +957,32 @@ void mesh_relay_note_channel9_missed(struct mesh_relay *relay,
 void mesh_relay_note_tx_sent(struct mesh_relay *relay,
                              const struct mesh_outbound *out,
                              uint32_t now_ms);
+int mesh_relay_validate_route_request(const struct mesh_relay *relay,
+                                      const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint64_t previous_hop_id,
+                                      uint32_t now_ms);
+int mesh_relay_validate_gateway_route_adv(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id);
+int mesh_relay_validate_route_reply(const struct mesh_relay *relay,
+                                    const struct proto_packet *packet,
+                                    const uint8_t *payload,
+                                    size_t payload_len,
+                                    uint64_t previous_hop_id,
+                                    uint32_t now_ms);
+int mesh_relay_accept_route_reply_ack(struct mesh_relay *relay,
+                                      const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint64_t previous_hop_id);
+void mesh_relay_abandon_route_reply_ack(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *route_reply);
 void mesh_relay_note_route_reply_retry(struct mesh_relay *relay);
 void mesh_relay_note_delivery_failure_at(struct mesh_relay *relay,
                                          uint64_t dst_id,
@@ -847,10 +1012,25 @@ int mesh_relay_commit_transit_gateway_ack_forward(
     const struct mesh_outbound *forwarded_ack,
     uint32_t now_ms,
     uint32_t *actions);
+int mesh_relay_commit_gateway_ack_confirm_terminal(
+    struct mesh_relay *relay,
+    const struct proto_packet *confirm_packet,
+    const uint8_t *confirm_payload,
+    size_t confirm_payload_len,
+    uint32_t now_ms);
+/*
+ * Release an expired/exhausted local outbox only after every application
+ * producer has durably consumed the exact terminal raw record.
+ */
+int mesh_relay_commit_terminal_release(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
 /*
  * Commit a gateway-local delivery only after the protocol owner has durably
  * accepted it. On success, result contains the exact gateway ACK action and
- * binds duplicate handling to the accepted payload length and CRC. Exact
+ * binds duplicate handling to the accepted full semantic commitment. Exact
  * survey retries are ACK-sticky; collection result and bundle retries return
  * to the semantic owner so it can re-arm a missed collection EACK.
  */
@@ -861,6 +1041,28 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
                                        uint64_t previous_hop_id,
                                        uint32_t now_ms,
                                        struct mesh_relay_result *result);
+/*
+ * Targeted commands are transport-visible before their application result is
+ * admitted. Commit local duplicate suppression only after the anchor has
+ * reserved and queued that result; otherwise an exact retry must redeliver.
+ */
+int mesh_relay_commit_anchor_command_delivery(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms);
+/*
+ * Roll back only transport forwarding admission after the platform proves
+ * that no RF copy was sent and no deferred retry owner was retained.  Local
+ * semantic state remains committed and must be independently idempotent.
+ */
+int mesh_relay_rollback_forward_admission(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    const struct mesh_relay_result *admission);
 int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                      const struct proto_packet *packet,
                                      const uint8_t *payload,

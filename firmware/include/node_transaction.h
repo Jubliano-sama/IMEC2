@@ -2,6 +2,7 @@
 #define NODE_TRANSACTION_H
 
 #include "node_comm.h"
+#include "semantic_digest.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -10,19 +11,20 @@
 #define NODE_TRANSACTION_RESPONDER_MAX_RECORDS 8u
 
 /*
- * Non-cryptographic conflict fingerprint over canonical serialized bytes.
- * A zero seed starts a new fingerprint. Pass the previous nonzero result to
- * extend it. Nonempty results never return zero; this is not an authenticity
- * or corruption-proofing primitive.
+ * Full SHA-256 commitments over canonical serialized bytes. These commitments
+ * are equality authority for request/result reconciliation; callers must never
+ * truncate them to a transport token or a bounded fingerprint.
  */
-uint32_t node_transaction_fingerprint_bytes(uint32_t seed,
-                                            const uint8_t *bytes,
-                                            size_t length);
+bool node_transaction_digest_bytes(
+    const uint8_t *bytes,
+    size_t length,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN]);
 struct proto_packet;
-uint32_t node_transaction_fingerprint_packet(
+bool node_transaction_digest_packet(
     const struct proto_packet *packet,
     const uint8_t *payload,
-    size_t payload_len);
+    size_t payload_len,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN]);
 
 enum node_transaction_state {
     NODE_TRANSACTION_EMPTY = 0,
@@ -64,7 +66,7 @@ struct node_transaction_key {
 
 struct node_transaction_spec {
     struct node_transaction_key key;
-    uint32_t request_fingerprint;
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t client_token;
     uint64_t absolute_deadline_ms;
     bool cleanup_required;
@@ -72,8 +74,8 @@ struct node_transaction_spec {
 
 struct node_transaction {
     struct node_transaction_spec spec;
+    uint8_t accepted_result_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t request_delivery_handle;
-    uint32_t accepted_result_fingerprint;
     uint32_t result_token;
     enum node_transaction_state state;
     enum node_transaction_abandon_reason abandon_reason;
@@ -97,8 +99,8 @@ int node_transaction_note_request_terminal(
 int node_transaction_reconcile_result(
     struct node_transaction *transaction,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
-    uint32_t result_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    const uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t result_token,
     uint64_t now_ms,
     enum node_transaction_result_disposition *disposition,
@@ -136,8 +138,8 @@ enum node_transaction_receive_disposition {
 
 struct node_transaction_response_record {
     struct node_transaction_key key;
-    uint32_t request_fingerprint;
-    uint32_t result_fingerprint;
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t result_token;
     uint64_t expires_at_ms;
     enum node_transaction_response_state state;
@@ -153,16 +155,17 @@ void node_transaction_responder_init(
 int node_transaction_responder_receive(
     struct node_transaction_responder *responder,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint64_t expires_at_ms,
     uint64_t now_ms,
     enum node_transaction_receive_disposition *disposition,
+    uint8_t cached_result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t *cached_result_token);
 int node_transaction_responder_commit(
     struct node_transaction_responder *responder,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
-    uint32_t result_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    const uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t result_token);
 int node_transaction_responder_abandon(
     struct node_transaction_responder *responder,

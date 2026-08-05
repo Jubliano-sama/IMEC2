@@ -89,6 +89,7 @@ static int test_prepare_channel9(struct mesh_outbound *out,
     }
     if (ret == 0) {
         out->earliest_tx_ms = plan->start_ms + 11u;
+        out->earliest_tx_valid = true;
         test->prepared_earliest_tx_ms = out->earliest_tx_ms;
     } else if (test->mutate_failed_prepare) {
         out->packet.session_id = 0xdeadbeefu;
@@ -97,7 +98,9 @@ static int test_prepare_channel9(struct mesh_outbound *out,
         out->payload[1] = 0xddu;
         out->payload_len = 2u;
         out->queued_at_ms = 0x12345678u;
+        out->queued_at_valid = true;
         out->earliest_tx_ms = 0x87654321u;
+        out->earliest_tx_valid = true;
     }
     return ret;
 }
@@ -235,7 +238,7 @@ ZTEST(gateway_eack_policy, test_falls_back_to_c5_when_channel9_plan_fails)
     zassert_equal(result.channel9_plan_ret, -EAGAIN);
     zassert_equal(result.channel9_next_hop_id, 0u);
     zassert_equal(result.channel9_candidate_count, 1u);
-    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 0u);
     zassert_equal(ctx.plan_calls, 1u);
     zassert_equal(ctx.prepare_calls, 0u);
     zassert_equal(ctx.send_ch9_calls, 0u);
@@ -263,7 +266,7 @@ ZTEST(gateway_eack_policy, test_falls_back_to_c5_when_channel9_prepare_fails)
     zassert_equal(result.channel9_prepare_ret, -EMSGSIZE);
     zassert_equal(result.channel9_next_hop_id, 0u);
     zassert_equal(result.channel9_candidate_count, 1u);
-    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 0u);
     zassert_equal(ctx.plan_calls, 1u);
     zassert_equal(ctx.prepare_calls, 1u);
     zassert_equal(ctx.send_ch9_calls, 0u);
@@ -301,7 +304,7 @@ ZTEST(gateway_eack_policy,
     zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_C5_FLOOD);
     zassert_equal(result.channel9_prepare_ret, -EBUSY);
     zassert_equal(result.channel9_candidate_count, 1u);
-    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 0u);
     zassert_equal(ctx.prepare_calls, 1u);
     zassert_equal(ctx.send_ch9_calls, 0u);
     zassert_equal(ctx.send_c5_calls, 1u);
@@ -343,7 +346,7 @@ ZTEST(gateway_eack_policy, test_tries_second_candidate_when_first_prepare_fails)
     zassert_equal(result.channel9_send_ret, 0);
     zassert_equal(result.channel9_next_hop_id, second_peer);
     zassert_equal(result.channel9_candidate_count, 2u);
-    zassert_equal(result.channel9_attempt_count, 2u);
+    zassert_equal(result.channel9_attempt_count, 1u);
     zassert_equal(ctx.plan_calls, 2u);
     zassert_equal(ctx.prepare_calls, 2u);
     zassert_equal(ctx.send_ch9_calls, 1u);
@@ -361,42 +364,40 @@ ZTEST(gateway_eack_policy, test_tries_second_candidate_when_first_prepare_fails)
     zassert_equal(eack.earliest_tx_ms, 1245u);
 }
 
-ZTEST(gateway_eack_policy, test_tries_second_candidate_when_first_send_fails)
+ZTEST(gateway_eack_policy, test_send_failure_waits_for_backoff_before_second_candidate)
 {
     const uint64_t first_peer = 0x1111222233334444ull;
     const uint64_t second_peer = 0x5555666677778888ull;
     const uint64_t candidates[] = { first_peer, second_peer };
     struct mesh_outbound eack = make_eack();
+    struct mesh_outbound original_eack = eack;
     struct test_ctx ctx = {
         .send_ch9_ret_by_call = { -EIO, 0 },
     };
     struct app_gateway_eack_policy_ops ops = make_ops(&ctx);
     struct app_gateway_eack_policy_result result;
 
-    zassert_ok(app_gateway_eack_send_to_candidates(&eack, candidates,
-                                                   ARRAY_SIZE(candidates),
-                                                   &ops, &result));
-    zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_CHANNEL9);
-    zassert_equal(result.channel9_send_ret, 0);
-    zassert_equal(result.channel9_next_hop_id, second_peer);
-    zassert_equal(result.channel9_candidate_count, 2u);
-    zassert_equal(result.channel9_attempt_count, 2u);
-    zassert_equal(ctx.plan_calls, 2u);
-    zassert_equal(ctx.prepare_calls, 2u);
-    zassert_equal(ctx.send_ch9_calls, 2u);
+    zassert_equal(app_gateway_eack_send_to_candidates(&eack, candidates,
+                                                     ARRAY_SIZE(candidates),
+                                                     &ops, &result),
+                  -EIO);
+    zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_NONE);
+    zassert_equal(result.channel9_send_ret, -EIO);
+    zassert_equal(result.channel9_next_hop_id, first_peer);
+    zassert_equal(result.channel9_candidate_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(ctx.plan_calls, 1u);
+    zassert_equal(ctx.prepare_calls, 1u);
+    zassert_equal(ctx.send_ch9_calls, 1u);
     zassert_equal(ctx.send_c5_calls, 0u);
-    zassert_equal(ctx.note_tx_calls, 1u);
-    zassert_equal(ctx.note_ch9_calls, 1u);
+    zassert_equal(ctx.note_tx_calls, 0u);
+    zassert_equal(ctx.note_ch9_calls, 0u);
     zassert_equal(ctx.sent_ch9_next_hops[0], first_peer);
-    zassert_equal(ctx.sent_ch9_next_hops[1], second_peer);
-    zassert_equal(ctx.noted_ch9_peer, second_peer);
-    zassert_equal(eack.next_hop_id, second_peer);
-    zassert_equal(eack.radio_channel, MESH_EVENT_CHANNEL);
-    zassert_equal(eack.earliest_tx_ms, 1245u);
+    zassert_mem_equal(&eack, &original_eack, sizeof(eack));
 }
 
 ZTEST(gateway_eack_policy,
-      test_c5_fallback_after_all_channel9_sends_fail_notes_only_fallback_tx)
+      test_channel9_send_failure_never_falls_through_to_c5)
 {
     const uint64_t first_peer = 0x1111222233334444ull;
     const uint64_t second_peer = 0x5555666677778888ull;
@@ -408,28 +409,25 @@ ZTEST(gateway_eack_policy,
     struct app_gateway_eack_policy_ops ops = make_ops(&ctx);
     struct app_gateway_eack_policy_result result;
 
-    zassert_ok(app_gateway_eack_send_to_candidates(&eack, candidates,
-                                                   ARRAY_SIZE(candidates),
-                                                   &ops, &result));
-
-    zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_C5_FLOOD);
+    zassert_equal(app_gateway_eack_send_to_candidates(&eack, candidates,
+                                                     ARRAY_SIZE(candidates),
+                                                     &ops, &result),
+                  -EIO);
+    zassert_equal(result.mode, APP_GATEWAY_EACK_SEND_NONE);
     zassert_equal(result.channel9_plan_ret, 0);
     zassert_equal(result.channel9_prepare_ret, 0);
-    zassert_equal(result.channel9_send_ret, -ETIMEDOUT);
+    zassert_equal(result.channel9_send_ret, -EIO);
     zassert_equal(result.c5_send_ret, 0);
-    zassert_equal(result.channel9_next_hop_id, 0u);
-    zassert_equal(result.channel9_candidate_count, 2u);
-    zassert_equal(result.channel9_attempt_count, 2u);
-    zassert_equal(ctx.plan_calls, 2u);
-    zassert_equal(ctx.prepare_calls, 2u);
-    zassert_equal(ctx.send_ch9_calls, 2u);
-    zassert_equal(ctx.send_c5_calls, 1u);
-    zassert_equal(ctx.note_tx_calls, 1u);
+    zassert_equal(result.channel9_next_hop_id, first_peer);
+    zassert_equal(result.channel9_candidate_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(ctx.plan_calls, 1u);
+    zassert_equal(ctx.prepare_calls, 1u);
+    zassert_equal(ctx.send_ch9_calls, 1u);
+    zassert_equal(ctx.send_c5_calls, 0u);
+    zassert_equal(ctx.note_tx_calls, 0u);
     zassert_equal(ctx.note_ch9_calls, 0u);
     zassert_equal(ctx.sent_ch9_next_hops[0], first_peer);
-    zassert_equal(ctx.sent_ch9_next_hops[1], second_peer);
-    zassert_equal(ctx.noted_tx_next_hop, MESH_BROADCAST_ID);
-    zassert_equal(ctx.noted_tx_radio_channel, UWB_CHANNEL_WAKE_CONTACT);
     zassert_equal(eack.next_hop_id, MESH_BROADCAST_ID);
     zassert_equal(eack.radio_channel, UWB_CHANNEL_WAKE_CONTACT);
     zassert_equal(eack.earliest_tx_ms, 0u);
@@ -459,7 +457,7 @@ ZTEST(gateway_eack_policy, test_skips_invalid_and_duplicate_candidates_before_c5
     zassert_equal(result.channel9_plan_ret, -EAGAIN);
     zassert_equal(result.channel9_next_hop_id, 0u);
     zassert_equal(result.channel9_candidate_count, 1u);
-    zassert_equal(result.channel9_attempt_count, 1u);
+    zassert_equal(result.channel9_attempt_count, 0u);
     zassert_equal(ctx.plan_calls, 1u);
     zassert_equal(ctx.prepare_calls, 0u);
     zassert_equal(ctx.send_ch9_calls, 0u);

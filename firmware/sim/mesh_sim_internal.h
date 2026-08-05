@@ -43,6 +43,10 @@ void mesh_sim_clear_connection_timing(
     struct mesh_sim_world *world,
     const struct mesh_sim_connection *connection);
 enum dwm3000_timing_phy mesh_sim_radio_timing_phy(enum mesh_sim_phy phy);
+int mesh_sim_radio_operation_conflicts(const struct mesh_sim_world *world,
+                                       uint8_t node_index,
+                                       uint64_t start_us,
+                                       uint64_t end_us);
 int mesh_sim_events_runtime_schedule_cb(enum mesh_runtime_work_kind kind,
                                         uint64_t token,
                                         uint64_t at_us,

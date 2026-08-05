@@ -7,6 +7,7 @@
 
 #define LOCAL_ID UINT64_C(0x1000000000000001)
 #define PEER_ID UINT64_C(0x2000000000000002)
+#define OTHER_PEER_ID UINT64_C(0x3000000000000003)
 #define TEST_PROPOSAL_BOOT_NONCE UINT64_C(0x1020304050607080)
 #define TEST_PROPOSAL_PAYLOAD_LEN \
     (PROTO_TLV_U8_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN)
@@ -106,6 +107,34 @@ static void test_update_end_ownership(void)
                                      0u) == MESH_EVENT_OWNER_DUPLICATE);
 }
 
+static void test_update_identity_rejects_old_fnv_collision(void)
+{
+    const uint8_t first_payload[] = {
+        0xd6u, 0x69u, 0x98u, 0x8du, 0x5eu, 0xc8u, 0x75u, 0xfeu,
+    };
+    const uint8_t collision_payload[] = {
+        0x61u, 0xcdu, 0x17u, 0x2au, 0xdeu, 0x66u, 0xfeu, 0x0au,
+    };
+    struct mesh_event_owner owner = {0};
+    struct proto_packet update = control_packet(
+        MSG_MESH_EVENT_UPDATE, UINT32_C(0x41000002), 13u,
+        sizeof(first_payload));
+
+    assert(mesh_event_owner_begin(&owner, PEER_ID, update.session_id,
+                                  12u, true) == PROTO_OK);
+    assert(mesh_event_owner_commit(&owner, LOCAL_ID, PEER_ID, &update,
+                                   first_payload,
+                                   sizeof(first_payload)) == PROTO_OK);
+    /*
+     * Both payloads collide under the retired 32-bit FNV-1a identity. The
+     * complete SHA-256 commitment must still classify the altered bytes as a
+     * conflict under the same message/session/sequence key.
+     */
+    assert(mesh_event_owner_classify(
+               &owner, LOCAL_ID, PEER_ID, &update, collision_payload,
+               sizeof(collision_payload)) == MESH_EVENT_OWNER_CONFLICT);
+}
+
 static void test_stale_operation_cannot_mutate_new_owner(void)
 {
     uint8_t update_payload[] = {9u, 8u, 7u};
@@ -161,11 +190,18 @@ static void test_local_and_remote_sequences_are_independent(void)
         MSG_MESH_EVENT_UPDATE, UINT32_C(0x44000001), UINT16_C(50000),
         sizeof(local_payload));
     struct proto_packet remote_update = control_packet(
-        MSG_MESH_EVENT_UPDATE, UINT32_C(0x44000001), UINT16_C(7),
+        MSG_MESH_EVENT_UPDATE, UINT32_C(0x44000001), UINT16_C(31001),
+        sizeof(remote_payload));
+    struct proto_packet stale_first_remote = control_packet(
+        MSG_MESH_EVENT_UPDATE, UINT32_C(0x44000001), UINT16_C(31000),
         sizeof(remote_payload));
 
     assert(mesh_event_owner_begin(&owner, PEER_ID, UINT32_C(0x44000001),
                                   UINT16_C(31000), true) == PROTO_OK);
+    assert(mesh_event_owner_classify(
+               &owner, LOCAL_ID, PEER_ID, &stale_first_remote,
+               remote_payload,
+               sizeof(remote_payload)) == MESH_EVENT_OWNER_STALE);
     assert(mesh_event_owner_commit_local(&owner, LOCAL_ID, &local_update,
                                          local_payload,
                                          sizeof(local_payload)) == PROTO_OK);
@@ -173,7 +209,7 @@ static void test_local_and_remote_sequences_are_independent(void)
                                    remote_payload,
                                    sizeof(remote_payload)) == PROTO_OK);
     assert(owner.local_sequence == UINT16_C(50000));
-    assert(owner.remote_sequence == UINT16_C(7));
+    assert(owner.remote_sequence == UINT16_C(31001));
     assert(owner.active);
 }
 
@@ -205,7 +241,7 @@ static void test_delayed_proposal_cannot_replace_newer_operation(void)
     next_proposal = proposal_packet(UINT32_C(0x45000003), 102u,
                                     next_payload_len);
     current_end = control_packet(MSG_MESH_EVENT_END, UINT32_C(0x45000002),
-                                  1u, 0u);
+                                  102u, 0u);
 
     assert(mesh_event_owner_classify_proposal(
                NULL, LOCAL_ID, PEER_ID, &old_proposal, old_payload,
@@ -259,7 +295,7 @@ static void test_proposal_history_is_bounded_and_rejects_recent_sessions(void)
                TEST_PROPOSAL_BOOT_NONCE) == PROTO_OK);
     mesh_event_owner_abandon(&owner);
     for (uint16_t i = 1u;
-         i <= MESH_EVENT_OWNER_RETIRED_SESSION_CAPACITY;
+         i <= MESH_EVENT_OWNER_RETIRED_SESSION_CAPACITY + 1u;
          i++) {
         uint32_t session = first_session + i;
 
@@ -275,6 +311,20 @@ static void test_proposal_history_is_bounded_and_rejects_recent_sessions(void)
     assert(mesh_event_owner_classify_proposal(
                &owner, LOCAL_ID, PEER_ID, &proposal, payload,
                payload_len) == MESH_EVENT_OWNER_STALE);
+
+    /*
+     * The retired ring is only a collision guard. Same-incarnation ordering
+     * must still reject an older session after that exact ID has rolled out
+     * of the bounded ring and after the current owner becomes inactive.
+     */
+    proposal = proposal_packet(first_session, 1u, payload_len);
+    assert(!mesh_event_owner_retains_session(&owner, first_session));
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &proposal, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner, PEER_ID, proposal.session_id, proposal.seq, true,
+               TEST_PROPOSAL_BOOT_NONCE) == PROTO_ERR_STALE);
 }
 
 static void test_cross_direction_replacement_keeps_remote_history(void)
@@ -330,11 +380,179 @@ static void test_cross_direction_replacement_keeps_remote_history(void)
                remote_n2_payload_len) == MESH_EVENT_OWNER_APPLY);
 }
 
+static void test_proposal_digest_survives_retry_cache_lifetime(void)
+{
+    uint8_t proposal_payload[TEST_PROPOSAL_PAYLOAD_LEN];
+    uint8_t changed_payload[TEST_PROPOSAL_PAYLOAD_LEN];
+    uint8_t proposal_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    size_t payload_len = build_proposal_payload(
+        proposal_payload,
+        sizeof(proposal_payload),
+        0x61u,
+        TEST_PROPOSAL_BOOT_NONCE);
+    struct proto_packet proposal = proposal_packet(
+        UINT32_C(0x47100001), 41u, payload_len);
+    struct proto_packet update = control_packet(
+        MSG_MESH_EVENT_UPDATE,
+        proposal.session_id,
+        42u,
+        1u);
+    const uint8_t update_payload[] = {0xa5u};
+    struct mesh_event_owner owner = {0};
+
+    memcpy(changed_payload, proposal_payload, payload_len);
+    changed_payload[0] ^= UINT8_C(0x01);
+    assert(semantic_digest_sha256(proposal_payload,
+                                  payload_len,
+                                  proposal_digest));
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner,
+               PEER_ID,
+               proposal.session_id,
+               proposal.seq,
+               true,
+               TEST_PROPOSAL_BOOT_NONCE) == PROTO_OK);
+    assert(mesh_event_owner_bind_remote_proposal_digest(
+               &owner,
+               proposal.session_id,
+               proposal.seq,
+               proposal_digest) == PROTO_OK);
+
+    /* Later owner activity and external cache expiry cannot erase this key. */
+    assert(mesh_event_owner_commit(&owner,
+                                   LOCAL_ID,
+                                   PEER_ID,
+                                   &update,
+                                   update_payload,
+                                   sizeof(update_payload)) == PROTO_OK);
+    assert(mesh_event_owner_classify_proposal(
+               &owner,
+               LOCAL_ID,
+               PEER_ID,
+               &proposal,
+               proposal_payload,
+               payload_len) == MESH_EVENT_OWNER_DUPLICATE);
+    assert(mesh_event_owner_classify_proposal(
+               &owner,
+               LOCAL_ID,
+               PEER_ID,
+               &proposal,
+               changed_payload,
+               payload_len) == MESH_EVENT_OWNER_CONFLICT);
+}
+
+static void test_proposal_freshness_uses_session_not_cross_peer_sequence_gap(void)
+{
+    uint8_t payload[TEST_PROPOSAL_PAYLOAD_LEN];
+    size_t payload_len = build_proposal_payload(
+        payload,
+        sizeof(payload),
+        0x62u,
+        TEST_PROPOSAL_BOOT_NONCE);
+    struct mesh_event_owner owner = {0};
+    struct proto_packet current = proposal_packet(
+        UINT32_C(0x50000000), 10u, payload_len);
+    struct proto_packet after_unrelated_traffic = proposal_packet(
+        UINT32_C(0x50000001), UINT16_C(50000), payload_len);
+    struct proto_packet delayed = proposal_packet(
+        UINT32_C(0x50000000), 11u, payload_len);
+    struct proto_packet wrap_current = proposal_packet(
+        UINT32_MAX, UINT16_C(60000), payload_len);
+    struct proto_packet wrap_next = proposal_packet(
+        1u, 2u, payload_len);
+
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner,
+               PEER_ID,
+               current.session_id,
+               current.seq,
+               true,
+               TEST_PROPOSAL_BOOT_NONCE) == PROTO_OK);
+    /*
+     * More than half of the 16-bit sequence space may be consumed by traffic
+     * to other peers. The same-boot session advances, so this peer's proposal
+     * is still fresh.
+     */
+    assert(mesh_event_owner_classify_proposal(
+               &owner,
+               LOCAL_ID,
+               PEER_ID,
+               &after_unrelated_traffic,
+               payload,
+               payload_len) == MESH_EVENT_OWNER_APPLY);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner,
+               PEER_ID,
+               after_unrelated_traffic.session_id,
+               after_unrelated_traffic.seq,
+               true,
+               TEST_PROPOSAL_BOOT_NONCE) == PROTO_OK);
+    assert(mesh_event_owner_classify_proposal(
+               &owner,
+               LOCAL_ID,
+               PEER_ID,
+               &delayed,
+               payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+
+    memset(&owner, 0, sizeof(owner));
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner,
+               PEER_ID,
+               wrap_current.session_id,
+               wrap_current.seq,
+               true,
+               TEST_PROPOSAL_BOOT_NONCE) == PROTO_OK);
+    assert(mesh_event_owner_classify_proposal(
+               &owner,
+               LOCAL_ID,
+               PEER_ID,
+               &wrap_next,
+               payload,
+               payload_len) == MESH_EVENT_OWNER_APPLY);
+}
+
+static void test_owned_control_sequence_is_peer_scoped_and_wrap_safe(void)
+{
+    static const uint8_t update_payload[] = {0x73u};
+    struct mesh_event_owner first = {0};
+    struct mesh_event_owner second = {0};
+    struct proto_packet first_update;
+    uint16_t sequence;
+
+    assert(mesh_event_owner_begin(&first,
+                                  PEER_ID,
+                                  UINT32_C(0x51000001),
+                                  UINT16_MAX,
+                                  false) == PROTO_OK);
+    assert(mesh_event_owner_begin(&second,
+                                  OTHER_PEER_ID,
+                                  UINT32_C(0x51000002),
+                                  UINT16_C(50000),
+                                  false) == PROTO_OK);
+    assert(mesh_event_owner_next_local_sequence(&first) == 1u);
+    assert(mesh_event_owner_next_local_sequence(&second) == UINT16_C(50001));
+
+    sequence = mesh_event_owner_next_local_sequence(&first);
+    first_update = local_control_packet(MSG_MESH_EVENT_UPDATE,
+                                        first.session_id,
+                                        sequence,
+                                        sizeof(update_payload));
+    assert(mesh_event_owner_commit_local(&first,
+                                         LOCAL_ID,
+                                         &first_update,
+                                         update_payload,
+                                         sizeof(update_payload)) == PROTO_OK);
+    assert(mesh_event_owner_next_local_sequence(&first) == 2u);
+    assert(mesh_event_owner_next_local_sequence(&second) == UINT16_C(50001));
+}
+
 static void test_proposal_nonce_required_without_owner_mutation(void)
 {
     const uint32_t session_id = UINT32_C(0x47500001);
     const uint64_t boot_nonce = UINT64_C(0xabcdef0123456789);
     uint8_t valid_payload[TEST_PROPOSAL_PAYLOAD_LEN];
+    uint8_t malformed_payload[TEST_PROPOSAL_PAYLOAD_LEN + 1u];
     uint8_t zero_payload[PROTO_TLV_U64_ENCODED_LEN] = {
         TLV_MESH_EVENT_BOOT_NONCE,
         sizeof(uint64_t),
@@ -342,6 +560,7 @@ static void test_proposal_nonce_required_without_owner_mutation(void)
     };
     size_t valid_payload_len;
     struct proto_packet valid_proposal;
+    struct proto_packet malformed_proposal;
     struct proto_packet missing_proposal;
     struct proto_packet zero_proposal;
     struct proto_packet update;
@@ -350,7 +569,12 @@ static void test_proposal_nonce_required_without_owner_mutation(void)
 
     valid_payload_len = build_proposal_payload(
         valid_payload, sizeof(valid_payload), 0x42u, boot_nonce);
+    memcpy(malformed_payload, valid_payload, valid_payload_len);
+    malformed_payload[valid_payload_len] = TLV_REASON;
     valid_proposal = proposal_packet(session_id, 7u, valid_payload_len);
+    malformed_proposal = proposal_packet(session_id + 3u,
+                                         1u,
+                                         sizeof(malformed_payload));
     missing_proposal = proposal_packet(session_id + 1u, 1u, 0u);
     zero_proposal = proposal_packet(session_id + 2u, 1u,
                                     sizeof(zero_payload));
@@ -371,6 +595,10 @@ static void test_proposal_nonce_required_without_owner_mutation(void)
     assert(mesh_event_owner_classify_proposal(
                &owner, LOCAL_ID, PEER_ID, &zero_proposal, zero_payload,
                sizeof(zero_payload)) == MESH_EVENT_OWNER_INVALID);
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &malformed_proposal,
+               malformed_payload,
+               sizeof(malformed_payload)) == MESH_EVENT_OWNER_INVALID);
     assert(owner.generation == generation);
     assert(owner.session_id == valid_proposal.session_id);
     assert(owner.remote_boot_nonce == boot_nonce);
@@ -435,8 +663,19 @@ static void test_boot_nonce_restarts_sequence_and_rejects_old_replay(void)
     assert(mesh_event_owner_begin_with_boot_nonce(
                &owner, PEER_ID, first_proposal.session_id,
                first_proposal.seq, true, first_boot_nonce) == PROTO_OK);
-    /* A reset incarnation is a new identity even when it reuses the exact
-     * session and sequence from the current owner. */
+    /*
+     * Random boot nonces cannot be ordered, so a reset incarnation cannot
+     * replace a still-live owner even when it reuses the exact session and
+     * sequence. Supervision or route teardown releases the prior owner first.
+     */
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &second_proposal, second_payload,
+               second_payload_len) == MESH_EVENT_OWNER_STALE);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner, PEER_ID, second_proposal.session_id,
+               second_proposal.seq, true, second_boot_nonce) ==
+           PROTO_ERR_STALE);
+    mesh_event_owner_abandon(&owner);
     assert(mesh_event_owner_classify_proposal(
                &owner, LOCAL_ID, PEER_ID, &second_proposal, second_payload,
                second_payload_len) == MESH_EVENT_OWNER_APPLY);
@@ -462,18 +701,24 @@ static void test_boot_nonce_restarts_sequence_and_rejects_old_replay(void)
                &owner, PEER_ID, delayed_first_different_session.session_id,
                delayed_first_different_session.seq, true,
                first_boot_nonce) == PROTO_ERR_STALE);
-    /* The active incarnation keeps the normal sequence ordering rules. */
+    /*
+     * Proposal freshness is session-scoped. A lower 16-bit packet sequence may
+     * follow unrelated traffic to other peers without stalling this peer.
+     */
     assert(mesh_event_owner_classify_proposal(
                &owner, LOCAL_ID, PEER_ID, &second_lower_sequence,
                second_payload,
-               second_payload_len) == MESH_EVENT_OWNER_STALE);
+               second_payload_len) == MESH_EVENT_OWNER_APPLY);
     assert(mesh_event_owner_begin_with_boot_nonce(
                &owner, PEER_ID, second_lower_sequence.session_id,
                second_lower_sequence.seq, true,
-               second_boot_nonce) == PROTO_ERR_STALE);
+               second_boot_nonce) == PROTO_OK);
 
-    /* A third incarnation can replace the second one with the same wire
-     * session/sequence, and both earlier incarnations remain retired. */
+    /* A third incarnation follows the same bounded teardown rule. */
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &third_proposal, third_payload,
+               third_payload_len) == MESH_EVENT_OWNER_STALE);
+    mesh_event_owner_abandon(&owner);
     assert(mesh_event_owner_classify_proposal(
                &owner, LOCAL_ID, PEER_ID, &third_proposal, third_payload,
                third_payload_len) == MESH_EVENT_OWNER_APPLY);
@@ -531,6 +776,10 @@ static void test_local_owner_between_remote_incarnations(void)
     assert(!owner.proposal_from_peer);
     assert(mesh_event_owner_classify_proposal(
                &owner, LOCAL_ID, PEER_ID, &second_proposal, second_payload,
+               second_payload_len) == MESH_EVENT_OWNER_STALE);
+    mesh_event_owner_abandon(&owner);
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &second_proposal, second_payload,
                second_payload_len) == MESH_EVENT_OWNER_APPLY);
     assert(mesh_event_owner_begin_with_boot_nonce(
                &owner, PEER_ID, second_proposal.session_id,
@@ -542,17 +791,201 @@ static void test_local_owner_between_remote_incarnations(void)
                first_payload_len) == MESH_EVENT_OWNER_STALE);
 }
 
+static void test_reciprocal_proposals_use_stable_id_arbitration(void)
+{
+    const uint64_t lower_id = LOCAL_ID;
+    const uint64_t higher_id = PEER_ID;
+    const uint64_t lower_boot_nonce = UINT64_C(0x5152535455565758);
+    uint8_t payload[TEST_PROPOSAL_PAYLOAD_LEN];
+    size_t payload_len;
+    struct mesh_event_owner lower_owner = {0};
+    struct mesh_event_owner higher_owner = {0};
+    struct proto_packet lower_proposal;
+
+    payload_len = build_proposal_payload(payload, sizeof(payload), 0x51u,
+                                         lower_boot_nonce);
+    lower_proposal = proposal_packet(UINT32_C(0x49500001), 1u, payload_len);
+    lower_proposal.src_id = lower_id;
+    lower_proposal.dst_id = higher_id;
+
+    assert(mesh_event_owner_arbitrate_reciprocal_proposal(
+               lower_id, higher_id, true, higher_id, NULL) ==
+           MESH_EVENT_PROPOSAL_KEEP_LOCAL);
+    assert(mesh_event_owner_arbitrate_reciprocal_proposal(
+               higher_id, lower_id, true, lower_id, NULL) ==
+           MESH_EVENT_PROPOSAL_ACCEPT_REMOTE);
+    assert(mesh_event_owner_arbitrate_reciprocal_proposal(
+               higher_id, lower_id, true, OTHER_PEER_ID, NULL) ==
+           MESH_EVENT_PROPOSAL_NO_RECIPROCAL);
+
+    assert(mesh_event_owner_begin(&lower_owner, higher_id,
+                                  UINT32_C(0x49500002), 2u, false) ==
+           PROTO_OK);
+    assert(mesh_event_owner_begin(&higher_owner, lower_id,
+                                  UINT32_C(0x49500003), 3u, false) ==
+           PROTO_OK);
+    assert(mesh_event_owner_arbitrate_reciprocal_proposal(
+               lower_id, higher_id, false, 0u, &lower_owner) ==
+           MESH_EVENT_PROPOSAL_KEEP_LOCAL);
+    assert(mesh_event_owner_arbitrate_reciprocal_proposal(
+               higher_id, lower_id, false, 0u, &higher_owner) ==
+           MESH_EVENT_PROPOSAL_ACCEPT_REMOTE);
+
+    /*
+     * The ordinary classifier remains fail-closed for a different boot nonce.
+     * Only the explicit reciprocal classifier may replace the higher
+     * endpoint's locally installed schedule, and it still cannot let the
+     * higher-ID proposal displace the lower endpoint's local owner.
+     */
+    assert(mesh_event_owner_classify_proposal(
+               &higher_owner, higher_id, lower_id, &lower_proposal, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+    assert(mesh_event_owner_classify_reciprocal_proposal(
+               &higher_owner, higher_id, lower_id, &lower_proposal, payload,
+               payload_len) == MESH_EVENT_OWNER_APPLY);
+    lower_proposal.src_id = higher_id;
+    lower_proposal.dst_id = lower_id;
+    assert(mesh_event_owner_classify_reciprocal_proposal(
+               &lower_owner, lower_id, higher_id, &lower_proposal, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+
+    higher_owner.proposal_from_peer = true;
+    lower_proposal.src_id = lower_id;
+    lower_proposal.dst_id = higher_id;
+    assert(mesh_event_owner_classify_reciprocal_proposal(
+               &higher_owner, higher_id, lower_id, &lower_proposal, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+    assert(mesh_event_owner_arbitrate_reciprocal_proposal(
+               higher_id, lower_id, false, 0u, &higher_owner) ==
+           MESH_EVENT_PROPOSAL_NO_RECIPROCAL);
+}
+
+static void test_many_incarnations_preserve_live_owner_and_allow_slot_reuse(void)
+{
+    const uint64_t first_boot_nonce = UINT64_C(0x7100000000000001);
+    const uint32_t first_session = UINT32_C(0x4a000001);
+    uint8_t payload[TEST_PROPOSAL_PAYLOAD_LEN];
+    size_t payload_len;
+    struct mesh_event_owner owner = {0};
+    struct proto_packet proposal;
+    struct proto_packet replay;
+    struct proto_packet unseen;
+    struct proto_packet current_next;
+    uint64_t current_boot_nonce = first_boot_nonce;
+
+    payload_len = build_proposal_payload(
+        payload, sizeof(payload), 0x71u, current_boot_nonce);
+    proposal = proposal_packet(first_session, 1u, payload_len);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner, PEER_ID, proposal.session_id, proposal.seq, true,
+               current_boot_nonce) == PROTO_OK);
+
+    for (uint8_t i = 1u; i <= 16u; i++) {
+        current_boot_nonce = first_boot_nonce + i;
+        payload_len = build_proposal_payload(
+            payload, sizeof(payload), (uint8_t)(0x71u + i),
+            current_boot_nonce);
+        proposal = proposal_packet(first_session + i, 1u, payload_len);
+        assert(mesh_event_owner_classify_proposal(
+                   &owner, LOCAL_ID, PEER_ID, &proposal, payload,
+                   payload_len) == MESH_EVENT_OWNER_STALE);
+        mesh_event_owner_abandon(&owner);
+        assert(mesh_event_owner_classify_proposal(
+                   &owner, LOCAL_ID, PEER_ID, &proposal, payload,
+                   payload_len) == MESH_EVENT_OWNER_APPLY);
+        assert(mesh_event_owner_begin_with_boot_nonce(
+                   &owner, PEER_ID, proposal.session_id, proposal.seq, true,
+                   current_boot_nonce) == PROTO_OK);
+    }
+
+    payload_len = build_proposal_payload(
+        payload, sizeof(payload), 0x71u, first_boot_nonce);
+    replay = proposal_packet(first_session, 1u, payload_len);
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &replay, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+
+    payload_len = build_proposal_payload(
+        payload, sizeof(payload), 0xf1u, current_boot_nonce + 1u);
+    unseen = proposal_packet(first_session + UINT32_C(0x100), 1u,
+                             payload_len);
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &unseen, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner, PEER_ID, unseen.session_id, unseen.seq, true,
+               current_boot_nonce + 1u) == PROTO_ERR_STALE);
+    assert(owner.session_id == proposal.session_id);
+    assert(owner.remote_boot_nonce == current_boot_nonce);
+
+    /* The current incarnation remains live and advances normal sequencing. */
+    payload_len = build_proposal_payload(
+        payload, sizeof(payload), 0xf2u, current_boot_nonce);
+    current_next = proposal_packet(proposal.session_id + 1u, 2u,
+                                   payload_len);
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &current_next, payload,
+               payload_len) == MESH_EVENT_OWNER_APPLY);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner, PEER_ID, current_next.session_id, current_next.seq,
+               true, current_boot_nonce) == PROTO_OK);
+
+    /* Inactive slots can serve a third peer without expanding active state. */
+    mesh_event_owner_abandon(&owner);
+    assert(mesh_event_owner_begin_with_boot_nonce(
+               &owner, OTHER_PEER_ID, UINT32_C(0x4b000001), 1u, true,
+               UINT64_C(0x7200000000000001)) == PROTO_OK);
+    assert(owner.peer_id == OTHER_PEER_ID);
+    payload_len = build_proposal_payload(
+        payload, sizeof(payload), 0x71u, first_boot_nonce);
+    replay = proposal_packet(first_session, 1u, payload_len);
+    assert(mesh_event_owner_classify_proposal(
+               &owner, LOCAL_ID, PEER_ID, &replay, payload,
+               payload_len) == MESH_EVENT_OWNER_STALE);
+}
+
+static void test_inactive_owner_slot_supports_fifty_sequential_peers(void)
+{
+    struct mesh_event_owner owner = {0};
+
+    for (uint32_t i = 0u; i < 50u; i++) {
+        uint64_t peer_id = OTHER_PEER_ID + i;
+        uint64_t boot_nonce = UINT64_C(0x7300000000000001) + i;
+
+        if (owner.active) {
+            mesh_event_owner_abandon(&owner);
+        }
+        assert(mesh_event_owner_begin_with_boot_nonce(
+                   &owner,
+                   peer_id,
+                   UINT32_C(0x4c000001) + i,
+                   (uint16_t)(i + 1u),
+                   true,
+                   boot_nonce) == PROTO_OK);
+        assert(owner.peer_id == peer_id);
+        assert(owner.remote_boot_nonce == boot_nonce);
+        assert(owner.active);
+    }
+}
+
 int main(void)
 {
     test_update_end_ownership();
+    test_update_identity_rejects_old_fnv_collision();
     test_stale_operation_cannot_mutate_new_owner();
     test_abandoned_owner_rejects_delayed_control();
     test_local_and_remote_sequences_are_independent();
     test_delayed_proposal_cannot_replace_newer_operation();
     test_proposal_history_is_bounded_and_rejects_recent_sessions();
     test_cross_direction_replacement_keeps_remote_history();
+    test_proposal_digest_survives_retry_cache_lifetime();
+    test_proposal_freshness_uses_session_not_cross_peer_sequence_gap();
+    test_owned_control_sequence_is_peer_scoped_and_wrap_safe();
     test_proposal_nonce_required_without_owner_mutation();
     test_boot_nonce_restarts_sequence_and_rejects_old_replay();
     test_local_owner_between_remote_incarnations();
+    test_reciprocal_proposals_use_stable_id_arbitration();
+    test_many_incarnations_preserve_live_owner_and_allow_slot_reuse();
+    test_inactive_owner_slot_supports_fifty_sequential_peers();
     return 0;
 }

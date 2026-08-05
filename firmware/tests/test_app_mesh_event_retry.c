@@ -1,4 +1,5 @@
 #include "app_mesh_event_retry.h"
+#include "mesh.h"
 
 #include "protocol.h"
 
@@ -18,15 +19,16 @@ static struct app_mesh_event_request_identity request_identity(
     const uint8_t *payload,
     size_t payload_len)
 {
-    return (struct app_mesh_event_request_identity) {
+    struct app_mesh_event_request_identity request = {
         .source_id = source_id,
         .session_id = session_id,
         .sequence = sequence,
-        .payload_fingerprint = app_mesh_event_payload_fingerprint(payload,
-                                                                  payload_len),
-        .payload_len = (uint16_t)payload_len,
         .message_type = MSG_MESH_EVENT_PROPOSE,
     };
+
+    assert(app_mesh_event_payload_digest(payload, payload_len,
+                                         request.payload_digest));
+    return request;
 }
 
 static struct app_mesh_rf_retry_key retry_key(uint32_t session_id,
@@ -78,6 +80,36 @@ static void test_duplicate_conflict_and_busy_are_distinct(void)
            APP_MESH_EVENT_REQUEST_BUSY);
     assert(app_mesh_event_retry_match(&state, PEER_ID + 1u, &request) ==
            APP_MESH_EVENT_REQUEST_BUSY);
+}
+
+static void test_old_fnv_collision_is_a_digest_conflict(void)
+{
+    /*
+     * These different byte strings both produce FNV-1a 0xd5d16ac6. The prior
+     * 32-bit identity accepted the second request as an exact duplicate.
+     */
+    const uint8_t first_payload[] = {
+        0xd6u, 0x69u, 0x98u, 0x8du, 0x5eu, 0xc8u, 0x75u, 0xfeu,
+    };
+    const uint8_t collision_payload[] = {
+        0x61u, 0xcdu, 0x17u, 0x2au, 0xdeu, 0x66u, 0xfeu, 0x0au,
+    };
+    struct app_mesh_event_request_identity first = request_identity(
+        PEER_ID, UINT32_C(0x12345679), 20u, first_payload,
+        sizeof(first_payload));
+    struct app_mesh_event_request_identity collision = request_identity(
+        PEER_ID, first.session_id, first.sequence, collision_payload,
+        sizeof(collision_payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        first.session_id, first.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_ACCEPT);
+    struct app_mesh_event_retry_state state = {0};
+
+    assert(!app_mesh_event_request_payload_equal(&first, &collision));
+    assert(app_mesh_event_retry_begin(&state, PEER_ID, &first, &key, 1000u,
+                                      10000u, EVENT_INTERVAL_MS, 10u) == 0);
+    assert(app_mesh_event_retry_match(&state, PEER_ID, &collision) ==
+           APP_MESH_EVENT_REQUEST_CONFLICT);
 }
 
 static void test_accept_correlates_with_exact_and_stable_release_identities(void)
@@ -163,6 +195,195 @@ static void test_accept_correlates_with_exact_and_stable_release_identities(void
                                           request.session_id,
                                           request.sequence,
                                           true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+}
+
+static void test_delayed_legacy_accept_cannot_complete_newer_proposal(void)
+{
+    const uint8_t payload[] = {0x41u, 0x42u, 0x43u};
+    const uint32_t old_session = UINT32_C(0x2468ace0);
+    const uint32_t new_session = UINT32_C(0x13579bdf);
+    struct app_mesh_event_request_identity request = request_identity(
+        LOCAL_ID, new_session, 20u, payload, sizeof(payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        request.session_id, request.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state proposal = {0};
+    struct mesh_event_timing old_timing = {
+        .mesh_channel = MESH_EVENT_CHANNEL,
+        .event_interval_ms = EVENT_INTERVAL_MS,
+        .event_window_ms = 20u,
+        .guard_ms = 5u,
+        .peer_clock_skew_estimate_ppm = 10,
+        .max_missed_events = 4u,
+        .supervision_timeout_ms = 1000u,
+    };
+    struct mesh_event_timing new_timing = old_timing;
+    struct mesh_event_timing delayed_accept;
+    struct mesh_event_timing current_accept;
+
+    assert(mesh_event_timing_bind_proposal_session(&old_timing, old_session));
+    assert(old_timing.event_counter == old_session);
+    assert(mesh_event_timing_local_tx_slot(&old_timing));
+    assert(mesh_event_timing_bind_proposal_session(&new_timing, new_session));
+    assert(new_timing.event_counter == new_session);
+    assert(mesh_event_timing_local_tx_slot(&new_timing));
+    assert(!mesh_event_timing_bind_proposal_session(&new_timing, 0u));
+
+    delayed_accept = old_timing;
+    current_accept = new_timing;
+    assert(app_mesh_event_retry_begin(&proposal,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      1000u,
+                                      10000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+
+    assert(!app_mesh_event_accept_timing_compatible(&delayed_accept,
+                                                    &new_timing));
+    assert(app_mesh_event_accept_classify(
+               &proposal,
+               PEER_ID,
+               LOCAL_ID,
+               PEER_ID,
+               UINT32_C(0x87654321),
+               77u,
+               app_mesh_event_accept_timing_compatible(&delayed_accept,
+                                                       &new_timing)) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+
+    /*
+     * The last stable release uses a fresh ACCEPT packet identity, but echoes
+     * the proposal timing. Its current-session counter remains compatible.
+     */
+    assert(app_mesh_event_accept_timing_compatible(&current_accept,
+                                                   &new_timing));
+    assert(app_mesh_event_accept_classify(
+               &proposal,
+               PEER_ID,
+               LOCAL_ID,
+               PEER_ID,
+               UINT32_C(0x87654321),
+               77u,
+               app_mesh_event_accept_timing_compatible(&current_accept,
+                                                       &new_timing)) ==
+           APP_MESH_EVENT_ACCEPT_LEGACY);
+}
+
+static void test_legacy_accept_survives_wire_validation_before_app_correlation(void)
+{
+    const uint32_t proposal_session = UINT32_C(0x13579bdf);
+    const uint16_t proposal_sequence = 20u;
+    const uint8_t proposal_payload[] = {0x51u, 0x52u, 0x53u};
+    struct app_mesh_event_request_identity request = request_identity(
+        LOCAL_ID,
+        proposal_session,
+        proposal_sequence,
+        proposal_payload,
+        sizeof(proposal_payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        request.session_id,
+        request.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state proposal = {0};
+    struct mesh_event_params params = {
+        .event_interval_ms = EVENT_INTERVAL_MS,
+        .event_window_ms = 20u,
+        .first_event_time_ms = 2000u,
+        .guard_ms = 5u,
+        .peer_clock_skew_estimate_ppm = 10,
+        .max_missed_events = 4u,
+        .supervision_timeout_ms = 1000u,
+    };
+    struct mesh_event_timing proposed = {0};
+    struct mesh_event_timing decoded = {0};
+    struct proto_packet accept = {0};
+    uint8_t accept_payload[96];
+    size_t accept_payload_len = 0u;
+
+    assert(mesh_event_timing_negotiate(&proposed, &params, true) == PROTO_OK);
+    assert(mesh_event_timing_bind_proposal_session(&proposed,
+                                                   proposal_session));
+    assert(mesh_append_event_timing_tlvs_at(accept_payload,
+                                            sizeof(accept_payload),
+                                            &accept_payload_len,
+                                            &proposed,
+                                            1000u) == PROTO_OK);
+    assert(app_mesh_event_retry_begin(&proposal,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      1000u,
+                                      7000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+
+    assert(mesh_init_event_control(&accept,
+                                   MSG_MESH_EVENT_ACCEPT,
+                                   PEER_ID,
+                                   LOCAL_ID,
+                                   proposal_session,
+                                   proposal_sequence,
+                                   (uint8_t)accept_payload_len) == PROTO_OK);
+    assert(mesh_packet_rx_envelope_validate(
+               &accept,
+               accept_payload,
+               accept_payload_len,
+               PEER_ID,
+               LOCAL_ID,
+               LOCAL_ID,
+               UWB_CHANNEL_WAKE_CONTACT,
+               false) == PROTO_OK);
+    assert(mesh_event_timing_from_tlvs_at(&decoded,
+                                          accept_payload,
+                                          accept_payload_len,
+                                          1000u,
+                                          true) == PROTO_OK);
+    assert(app_mesh_event_accept_classify(
+               &proposal,
+               accept.src_id,
+               accept.dst_id,
+               PEER_ID,
+               accept.session_id,
+               accept.seq,
+               app_mesh_event_accept_timing_compatible(&decoded,
+                                                       &proposed)) ==
+           APP_MESH_EVENT_ACCEPT_EXACT);
+
+    accept.session_id = UINT32_C(0x87654321);
+    accept.seq = 77u;
+    assert(mesh_packet_rx_envelope_validate(
+               &accept,
+               accept_payload,
+               accept_payload_len,
+               PEER_ID,
+               LOCAL_ID,
+               LOCAL_ID,
+               UWB_CHANNEL_WAKE_CONTACT,
+               false) == PROTO_OK);
+    assert(app_mesh_event_accept_classify(
+               &proposal,
+               accept.src_id,
+               accept.dst_id,
+               PEER_ID,
+               accept.session_id,
+               accept.seq,
+               app_mesh_event_accept_timing_compatible(&decoded,
+                                                       &proposed)) ==
+           APP_MESH_EVENT_ACCEPT_LEGACY);
+
+    decoded.event_counter++;
+    assert(app_mesh_event_accept_classify(
+               &proposal,
+               accept.src_id,
+               accept.dst_id,
+               PEER_ID,
+               accept.session_id,
+               accept.seq,
+               app_mesh_event_accept_timing_compatible(&decoded,
+                                                       &proposed)) ==
            APP_MESH_EVENT_ACCEPT_REJECT);
 }
 
@@ -341,6 +562,62 @@ static void test_deadline_is_terminal_and_wrap_safe(void)
     assert(delay_ms == 0u);
 }
 
+static void test_retry_due_zero_remains_armed_across_uptime_wrap(void)
+{
+    const uint8_t payload[] = {0x5au};
+    struct app_mesh_event_request_identity request = request_identity(
+        LOCAL_ID, 10u, 3u, payload, sizeof(payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        request.session_id, request.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state probe = {0};
+    struct app_mesh_event_retry_state state = {0};
+    uint32_t delay_ms = 0u;
+    uint32_t wrap_now_ms;
+
+    assert(app_mesh_event_retry_begin(&probe,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      1000u,
+                                      10000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+    assert(app_mesh_event_retry_note_failure(
+        &probe,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        1000u,
+        0x10203040u,
+        false,
+        &delay_ms));
+    assert(delay_ms > 0u);
+
+    wrap_now_ms = 0u - delay_ms;
+    assert(app_mesh_event_retry_begin(&state,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      wrap_now_ms,
+                                      1000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+    assert(app_mesh_event_retry_note_failure(
+        &state,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        wrap_now_ms,
+        0x10203040u,
+        false,
+        &delay_ms));
+    assert(state.retry_due_armed);
+    assert(state.retry_due_ms == 0u);
+    assert(!app_mesh_event_retry_due(&state, UINT32_MAX));
+    assert(app_mesh_event_retry_due(&state, 0u));
+
+    app_mesh_event_retry_note_send_success(&state);
+    assert(!state.retry_due_armed);
+    assert(!app_mesh_event_retry_due(&state, 0u));
+}
+
 static void test_completed_accept_does_not_block_another_peer(void)
 {
     const uint8_t first_payload[] = {0x11u, 0x22u};
@@ -505,11 +782,15 @@ static void test_accept_rx_cache_is_scoped_to_one_live_session(void)
 int main(void)
 {
     test_duplicate_conflict_and_busy_are_distinct();
+    test_old_fnv_collision_is_a_digest_conflict();
     test_accept_correlates_with_exact_and_stable_release_identities();
+    test_delayed_legacy_accept_cannot_complete_newer_proposal();
+    test_legacy_accept_survives_wire_validation_before_app_correlation();
     test_pre_rf_and_actual_failures_share_backoff_without_identity_loss();
     test_duplicate_proposal_reuses_response_and_installs_once();
     test_fifty_simultaneous_proposals_diverge();
     test_deadline_is_terminal_and_wrap_safe();
+    test_retry_due_zero_remains_armed_across_uptime_wrap();
     test_completed_accept_does_not_block_another_peer();
     test_accept_rx_cache_is_scoped_to_one_live_session();
     puts("app mesh event retry tests passed");

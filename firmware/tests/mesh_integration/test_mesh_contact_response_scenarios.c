@@ -98,20 +98,27 @@ static int setup_fixture(struct fixture *fixture)
 
 static int make_parent_busy(struct fixture *fixture)
 {
+    static const uint8_t payload[] = {
+        TLV_MESH_TEST_PADDING, 1u, 0xa5u
+    };
     struct mesh_sim_role_instance *parent =
         mesh_sim_role(&fixture->world, fixture->parent);
     struct proto_packet packet = {
         .msg_type = MSG_MESH_DATA,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
         .src_id = PARENT_ID,
         .dst_id = GATEWAY_ID,
         .session_id = UINT32_C(0xe1020001),
         .seq = 1u,
         .ttl = MESH_DEFAULT_TTL,
-        .payload_len = 0u,
+        .payload_len = sizeof(payload),
     };
     struct mesh_outbound outbound;
-    int ret = mesh_relay_start_tx(&parent->relay, &packet, NULL, 0u, 1u,
+    int ret = mesh_relay_start_tx(&parent->relay,
+                                  &packet,
+                                  payload,
+                                  sizeof(payload),
+                                  1u,
                                   &outbound);
 
     if (ret == PROTO_OK) {
@@ -378,19 +385,56 @@ static uint8_t response_transmission_type(const struct fixture *fixture)
     return 0u;
 }
 
+static bool queued_packet_identity_present(
+    const struct mesh_sim_role_instance *node,
+    const struct proto_packet *packet)
+{
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
+
+        if (queued->valid &&
+            queued->outbound.packet.msg_type == packet->msg_type &&
+            queued->outbound.packet.src_id == packet->src_id &&
+            queued->outbound.packet.dst_id == packet->dst_id &&
+            queued->outbound.packet.session_id == packet->session_id &&
+            queued->outbound.packet.seq == packet->seq) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int run_next_connection_event(struct mesh_sim_world *world,
+                                     uint16_t connection)
+{
+    struct mesh_sim_connection_action action;
+    int ret = mesh_sim_connection_next_action(world, connection, &action);
+
+    if (ret != MESH_SIM_OK ||
+        action.kind != MESH_SIM_CONNECTION_ACTION_CHANNEL9_EVENT ||
+        action.already_scheduled) {
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_EVENT_ORDER : ret;
+    }
+    ret = mesh_sim_schedule_next_connection_event(world, connection, false);
+    return ret == MESH_SIM_OK ? mesh_sim_run_until(world, action.end_us) : ret;
+}
+
 static void run_relay_busy_case(enum response_window_case window_case)
 {
     static struct fixture fixture;
+    static const uint8_t payload[] = {
+        TLV_MESH_TEST_PADDING, 1u, 0xa5u
+    };
     struct mesh_sim_role_instance *child;
     struct proto_packet packet = {
         .msg_type = MSG_MESH_DATA,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
         .src_id = CHILD_ID,
         .dst_id = GATEWAY_ID,
         .session_id = UINT32_C(0xe1010001),
         .seq = 2u,
         .ttl = MESH_DEFAULT_TTL,
-        .payload_len = 0u,
+        .payload_len = sizeof(payload),
     };
     struct mesh_outbound request;
     struct mesh_pending_tx before;
@@ -403,7 +447,11 @@ static void run_relay_busy_case(enum response_window_case window_case)
     CHECK(setup_fixture(&fixture) == MESH_SIM_OK, "fixture setup failed");
     CHECK(make_parent_busy(&fixture) == PROTO_OK, "parent busy setup failed");
     child = mesh_sim_role(&fixture.world, fixture.child);
-    CHECK(mesh_relay_start_tx(&child->relay, &packet, NULL, 0u, 9u,
+    CHECK(mesh_relay_start_tx(&child->relay,
+                              &packet,
+                              payload,
+                              sizeof(payload),
+                              9u,
                               &request) == PROTO_OK,
           "child request setup failed");
     CHECK(apply_window_case(&fixture, window_case) == MESH_SIM_OK,
@@ -446,15 +494,16 @@ static void run_multihop_transit_busy_addressing_case(void)
     struct mesh_outbound request = {
         .packet = {
             .msg_type = MSG_MESH_DATA,
-            .flags = FLAG_GATEWAY_ACK_REQUIRED,
+            .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
             .src_id = ORIGIN_ID,
             .dst_id = GATEWAY_ID,
             .session_id = UINT32_C(0xe1000002),
             .seq = 3u,
-            .ttl = MESH_DEFAULT_TTL,
-            .payload_len = 0u,
+            .ttl = MESH_DEFAULT_TTL - 1u,
+            .payload_len = 3u,
         },
-        .payload_len = 0u,
+        .payload = {TLV_MESH_TEST_PADDING, 1u, 0xa5u},
+        .payload_len = 3u,
         .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
         .next_hop_id = PARENT_ID,
     };
@@ -476,8 +525,8 @@ static void run_multihop_transit_busy_addressing_case(void)
     CHECK(busy_tx->outbound.packet.msg_type == MSG_RELAY_BUSY,
           "busy relay transmitted message type %u",
           busy_tx->outbound.packet.msg_type);
-    CHECK(busy_tx->outbound.packet.dst_id == ORIGIN_ID,
-          "BUSY semantic destination was not the original source");
+    CHECK(busy_tx->outbound.packet.dst_id == CHILD_ID,
+          "BUSY semantic destination was not the physical sender");
     CHECK(busy_tx->outbound.next_hop_id == CHILD_ID,
           "BUSY physical next hop was not the previous relay");
 
@@ -496,8 +545,8 @@ static void run_multihop_transit_busy_addressing_case(void)
         }
     }
     CHECK(busy_rx != NULL, "previous relay did not decode the BUSY response");
-    CHECK(busy_rx->packet.dst_id == ORIGIN_ID,
-          "decoded BUSY lost its end-to-end destination");
+    CHECK(busy_rx->packet.dst_id == CHILD_ID,
+          "decoded BUSY lost its one-hop destination");
 
     mesh_relay_cancel_tx(
         &mesh_sim_role(&fixture.world, fixture.parent)->relay);
@@ -518,6 +567,9 @@ static void run_multihop_transit_busy_addressing_case(void)
 static void run_busy_response_reserves_future_connection_case(void)
 {
     static struct fixture fixture;
+    static const uint8_t payload[] = {
+        TLV_MESH_TEST_PADDING, 1u, 0xa5u
+    };
     const struct mesh_event_params params = {
         .first_event_time_ms = 15u,
         .event_interval_ms = 250u,
@@ -531,13 +583,13 @@ static void run_busy_response_reserves_future_connection_case(void)
     struct mesh_sim_role_instance *child;
     struct proto_packet packet = {
         .msg_type = MSG_MESH_DATA,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
         .src_id = CHILD_ID,
         .dst_id = GATEWAY_ID,
         .session_id = UINT32_C(0xe1010003),
         .seq = 4u,
         .ttl = MESH_DEFAULT_TTL,
-        .payload_len = 0u,
+        .payload_len = sizeof(payload),
     };
     struct mesh_outbound request;
     uint16_t connection;
@@ -555,7 +607,11 @@ static void run_busy_response_reserves_future_connection_case(void)
           "future connection setup failed");
     CHECK(make_parent_busy(&fixture) == PROTO_OK, "parent busy setup failed");
     child = mesh_sim_role(&fixture.world, fixture.child);
-    CHECK(mesh_relay_start_tx(&child->relay, &packet, NULL, 0u, 9u,
+    CHECK(mesh_relay_start_tx(&child->relay,
+                              &packet,
+                              payload,
+                              sizeof(payload),
+                              9u,
                               &request) == PROTO_OK,
           "child request setup failed");
     ret = transmit_request_until_response(&fixture, &request, &response_index);
@@ -580,6 +636,182 @@ static void run_busy_response_reserves_future_connection_case(void)
     CHECK(response_reception_count(&fixture, MSG_RELAY_BUSY,
                                    MESH_SIM_RX_DECODED) == 1u,
           "deferred BUSY response was not decoded exactly once");
+}
+
+static void run_scheduled_busy_response_preempts_later_channel9_case(void)
+{
+    static struct fixture fixture;
+    static const uint8_t busy_payload[] = {
+        TLV_MESH_TEST_PADDING, 1u, 0xa5u
+    };
+    static const uint8_t retained_payload[] = {
+        TLV_MESH_TEST_PADDING, 1u, 0x5au
+    };
+    const struct mesh_sim_contact_response_timing response_timing = {
+        .rx_delay_us = 0u,
+        .rx_window_us = 25000u,
+        .tx_delay_us = 5000u,
+    };
+    struct mesh_event_params child_parent_params = {
+        .event_interval_ms = 100u,
+        .event_window_ms = 20u,
+        .guard_ms = 4u,
+        .peer_clock_skew_estimate_ppm = 0,
+        .max_missed_events = 5u,
+        .supervision_timeout_ms = 2000u,
+    };
+    struct mesh_event_params parent_gateway_params = child_parent_params;
+    struct mesh_sim_role_instance *child;
+    struct mesh_sim_role_instance *parent;
+    struct proto_packet busy_request = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = CHILD_ID,
+        .dst_id = GATEWAY_ID,
+        .session_id = UINT32_C(0xe1010004),
+        .seq = 5u,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = sizeof(busy_payload),
+    };
+    struct proto_packet retained_packet = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = CHILD_ID,
+        .dst_id = GATEWAY_ID,
+        .session_id = UINT32_C(0xe1010005),
+        .seq = 6u,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = sizeof(retained_payload),
+    };
+    struct mesh_outbound request;
+    const struct mesh_sim_connection_event *blocked_event;
+    const struct mesh_sim_transmission *busy_response;
+    uint64_t blocked_end_us;
+    uint16_t child_parent_connection;
+    uint16_t parent_gateway_connection;
+    uint16_t response_index;
+    size_t blocked_event_index;
+    int ret;
+
+    phase = "scheduled-c5-busy-preempts-later-c9";
+    CHECK(setup_fixture(&fixture) == MESH_SIM_OK, "fixture setup failed");
+    CHECK(make_parent_busy(&fixture) == PROTO_OK, "parent busy setup failed");
+    child = mesh_sim_role(&fixture.world, fixture.child);
+    parent = mesh_sim_role(&fixture.world, fixture.parent);
+    CHECK(child != NULL && parent != NULL, "fixture roles unavailable");
+    CHECK(mesh_relay_start_tx(&child->relay,
+                              &busy_request,
+                              busy_payload,
+                              sizeof(busy_payload),
+                              9u,
+                              &request) == PROTO_OK,
+          "child busy request setup failed");
+    CHECK(mesh_sim_override_next_contact_response_timing(
+              &fixture.world, &response_timing) == MESH_SIM_OK,
+          "BUSY response timing setup failed");
+    ret = transmit_request_until_response(&fixture, &request, &response_index);
+    CHECK(ret == MESH_SIM_OK, "BUSY request exchange failed: %d", ret);
+    busy_response = &fixture.world.transmissions[response_index];
+    CHECK(busy_response->has_outbound &&
+              busy_response->outbound.packet.msg_type == MSG_RELAY_BUSY,
+          "parent did not pre-schedule the expected C5 BUSY response");
+    CHECK(busy_response->start_us >= fixture.world.now_us + 4000u,
+          "C5 BUSY response was not far enough in the future for the overlap");
+
+    child_parent_params.first_event_time_ms =
+        (uint32_t)(busy_response->start_us / 1000u);
+    CHECK((uint64_t)child_parent_params.first_event_time_ms * 1000u >=
+              fixture.world.now_us,
+          "overlap event rounded before current time");
+    CHECK(mesh_sim_add_connection(&fixture.world,
+                                  fixture.child,
+                                  fixture.parent,
+                                  &child_parent_params,
+                                  true,
+                                  &child_parent_connection) == MESH_SIM_OK,
+          "child-parent connection setup failed");
+    CHECK(mesh_sim_queue_originated(&fixture.world,
+                                    fixture.child,
+                                    &retained_packet,
+                                    retained_payload,
+                                    sizeof(retained_payload)) == MESH_SIM_OK,
+          "retained packet queue setup failed");
+    CHECK(queued_packet_identity_present(child, &retained_packet),
+          "retained packet missing before overlap");
+
+    blocked_event_index = fixture.world.connection_event_count;
+    CHECK(mesh_sim_schedule_next_connection_event(&fixture.world,
+                                                  child_parent_connection,
+                                                  false) == MESH_SIM_OK,
+          "overlapping C9 event scheduling failed");
+    CHECK(fixture.world.connection_event_count == blocked_event_index + 1u,
+          "overlapping connection event was not retained");
+    blocked_event = &fixture.world.connection_events[blocked_event_index];
+    blocked_end_us = blocked_event->end_us;
+    CHECK(blocked_event->sender_index == fixture.child &&
+              blocked_event->receiver_index == fixture.parent &&
+              blocked_event->sender_policy_deferred &&
+              blocked_event->receiver_policy_deferred,
+          "pre-scheduled C5 turn did not defer both overlapping C9 endpoints");
+
+    ret = mesh_sim_run_until(&fixture.world, blocked_end_us);
+    CHECK(ret == MESH_SIM_OK &&
+              fixture.world.last_error != MESH_SIM_ERR_RADIO_CONFLICT,
+          "overlapping C9 event became a fatal radio conflict: %d", ret);
+    blocked_event = &fixture.world.connection_events[blocked_event_index];
+    CHECK(!blocked_event->had_packet && !blocked_event->decoded,
+          "policy-deferred C9 event transmitted or decoded a packet");
+    CHECK(mesh_sim_count_transitions(
+              &fixture.world,
+              MESH_SIM_TRANSITION_CONNECTION_PREEMPTED,
+              CHILD_ID) >= 1u &&
+              mesh_sim_count_transitions(
+                  &fixture.world,
+                  MESH_SIM_TRANSITION_CONNECTION_PREEMPTED,
+                  PARENT_ID) >= 1u,
+          "sender/receiver policy deferral was not explicit in the trace");
+    CHECK(queued_packet_identity_present(child, &retained_packet),
+          "policy-deferred C9 event lost queued custody");
+    CHECK(response_reception_count(&fixture, MSG_RELAY_BUSY,
+                                   MESH_SIM_RX_DECODED) == 1u,
+          "the higher-priority C5 BUSY response did not complete");
+
+    mesh_relay_cancel_tx(&child->relay);
+    mesh_relay_cancel_tx(&parent->relay);
+    CHECK(run_next_connection_event(&fixture.world,
+                                    child_parent_connection) == MESH_SIM_OK,
+          "empty reverse connection turn failed");
+    CHECK(run_next_connection_event(&fixture.world,
+                                    child_parent_connection) == MESH_SIM_OK,
+          "deferred packet retry turn failed");
+    CHECK(!queued_packet_identity_present(child, &retained_packet),
+          "later child-parent turn did not consume retained custody");
+    CHECK(queued_packet_identity_present(parent, &retained_packet),
+          "parent did not retain the forwarded packet");
+
+    parent_gateway_params.first_event_time_ms =
+        (uint32_t)((fixture.world.now_us + 10999u) / 1000u);
+    CHECK(mesh_sim_add_connection(&fixture.world,
+                                  fixture.parent,
+                                  fixture.gateway,
+                                  &parent_gateway_params,
+                                  true,
+                                  &parent_gateway_connection) == MESH_SIM_OK,
+          "parent-gateway connection setup failed");
+    for (uint8_t turn = 0u;
+         turn < 4u && fixture.world.roles[fixture.gateway].delivery_count == 0u;
+         turn++) {
+        CHECK(run_next_connection_event(&fixture.world,
+                                        parent_gateway_connection) ==
+                  MESH_SIM_OK,
+              "parent-gateway delivery turn failed");
+    }
+    CHECK(fixture.world.roles[fixture.gateway].delivery_count == 1u &&
+              fixture.world.roles[fixture.gateway].deliveries[0].packet
+                      .session_id == retained_packet.session_id &&
+              fixture.world.roles[fixture.gateway].deliveries[0].packet.seq ==
+                  retained_packet.seq,
+          "retained custody did not reach the gateway on a later turn");
 }
 
 static void run_result_offer_case(bool parent_busy,
@@ -716,6 +948,7 @@ int main(void)
     run_relay_busy_case(RESPONSE_WINDOW_SHORT);
     run_multihop_transit_busy_addressing_case();
     run_busy_response_reserves_future_connection_case();
+    run_scheduled_busy_response_preempts_later_channel9_case();
     run_result_offer_case(true, RESPONSE_WINDOW_VALID);
     run_result_offer_case(false, RESPONSE_WINDOW_VALID);
     run_result_offer_case(false, RESPONSE_WINDOW_SHORT);

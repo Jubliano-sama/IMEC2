@@ -112,7 +112,34 @@ static void test_terminal_is_retained_across_backpressure_until_sent(void)
 
     gateway_command_observability_note_enqueue(&state, replay.event_seq, 0);
     assert(!gateway_command_observability_pending_terminal(&state, &replay));
+
+    /*
+     * Successful queue admission is not delivery.  The occupied terminal
+     * slot must still apply backpressure until the BLE completion callback.
+     */
+    for (size_t i = 1u;
+         i < GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH;
+         i++) {
+        struct gateway_command_event queued = sample_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+            (uint32_t)(123u + i));
+
+        assert(gateway_command_observability_prepare(
+                   &state, &queued, true) == 0);
+        gateway_command_observability_note_enqueue(
+            &state, queued.event_seq, 0);
+    }
+    struct gateway_command_event overflow = sample_event(
+        GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
+        GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+        999u);
+
+    assert(gateway_command_observability_prepare(
+               &state, &overflow, true) == -ENOSPC);
     gateway_command_observability_mark_sent(&state, terminal.event_seq);
+    assert(gateway_command_observability_prepare(
+               &state, &overflow, true) == 0);
     assert(!gateway_command_observability_reconnect_snapshot(
         &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION, &replay));
 }
@@ -175,6 +202,37 @@ static void test_sequential_and_concurrent_correlations_stay_distinct(void)
     assert(replay.correlation_id == 3003u);
 }
 
+static void test_durable_sequence_survives_runtime_reinitialization(void)
+{
+    struct gateway_command_observability_state state;
+    struct gateway_command_event first = sample_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        GATEWAY_COMMAND_EVENT_STAGE_QUEUED,
+        7007u);
+    struct gateway_command_event after_reboot = sample_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        GATEWAY_COMMAND_EVENT_STAGE_QUEUED,
+        8008u);
+    const uint32_t first_reserved = UINT32_C(0x10203040);
+    const uint32_t reboot_reserved = UINT32_C(0x10203140);
+
+    gateway_command_observability_init(&state);
+    assert(gateway_command_observability_prepare_with_sequence(
+               &state, &first, false, first_reserved) == 0);
+    assert(first.event_seq == first_reserved);
+    assert(state.next_event_seq == first_reserved);
+
+    /* A firmware reboot clears volatile snapshots, not the durable allocator. */
+    gateway_command_observability_init(&state);
+    assert(gateway_command_observability_prepare_with_sequence(
+               &state, &after_reboot, false, reboot_reserved) == 0);
+    assert(after_reboot.event_seq == reboot_reserved);
+    assert(after_reboot.event_seq != first.event_seq);
+    assert(state.next_event_seq == reboot_reserved);
+    assert(gateway_command_observability_prepare_with_sequence(
+               &state, &after_reboot, false, 0u) == -EINVAL);
+}
+
 static void test_two_unsent_sequential_terminals_do_not_overwrite(void)
 {
     struct gateway_command_observability_state state;
@@ -208,7 +266,8 @@ static void test_survey_terminal_failure_reason_is_specific_and_deterministic(vo
 
     reason = gateway_command_survey_failure_reason_merge(
         reason, GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
-    gateway_command_survey_terminal_outcome(2u, 1u, reason, &status, &reason);
+    gateway_command_survey_terminal_outcome(2u, 2u, true, true, 1u, reason,
+                                            &status, &reason);
     assert(status == COMMAND_INTERNAL_ERROR);
     assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 
@@ -227,21 +286,41 @@ static void test_survey_terminal_failure_reason_is_specific_and_deterministic(vo
     assert(reason == GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
 }
 
-static void test_survey_terminal_zero_pair_and_no_report_semantics(void)
+static void test_survey_terminal_requires_a_completed_useful_plan(void)
 {
     enum gateway_command_event_reason reason =
         GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
     enum command_status status = COMMAND_INTERNAL_ERROR;
 
     gateway_command_survey_terminal_outcome(
-        1u, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE, &status, &reason);
-    assert(status == COMMAND_OK);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
+        1u, 0u, true, true, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status, &reason);
+    assert(status == COMMAND_INTERNAL_ERROR);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 
     gateway_command_survey_terminal_outcome(
-        0u, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE, &status, &reason);
+        1u, 1u, false, false, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status, &reason);
+    assert(status == COMMAND_INTERNAL_ERROR);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+
+    gateway_command_survey_terminal_outcome(
+        0u, 0u, false, false, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status, &reason);
     assert(status == COMMAND_TIMEOUT);
     assert(reason == GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS);
+
+    gateway_command_survey_terminal_outcome(
+        1u, 1u, true, false, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status, &reason);
+    assert(status == COMMAND_INTERNAL_ERROR);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
+
+    gateway_command_survey_terminal_outcome(
+        1u, 1u, true, true, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status, &reason);
+    assert(status == COMMAND_OK);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
 }
 
 static void test_survey_sample_admission_matches_anchor_execution_capacity(void)
@@ -290,9 +369,10 @@ int main(void)
     test_terminal_is_retained_across_backpressure_until_sent();
     test_active_snapshot_survives_disconnect_without_false_loss();
     test_sequential_and_concurrent_correlations_stay_distinct();
+    test_durable_sequence_survives_runtime_reinitialization();
     test_two_unsent_sequential_terminals_do_not_overwrite();
     test_survey_terminal_failure_reason_is_specific_and_deterministic();
-    test_survey_terminal_zero_pair_and_no_report_semantics();
+    test_survey_terminal_requires_a_completed_useful_plan();
     test_survey_sample_admission_matches_anchor_execution_capacity();
     puts("gateway command observability tests passed");
     return 0;

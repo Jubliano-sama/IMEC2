@@ -454,6 +454,8 @@ static void invalidate_lease(struct node_comm *comm,
 {
     slot->lease_generation = next_lease_generation(comm);
     slot->rf_started = false;
+    slot->backend_guard_active = false;
+    slot->backend_guard_expires_at_ms = 0u;
 }
 
 static uint8_t total_attempts_started(
@@ -471,7 +473,8 @@ static uint8_t total_attempts_started(
 
 static void terminalize(struct node_comm *comm,
                         struct node_comm_request_slot *slot,
-                        enum node_comm_terminal_reason reason)
+                        enum node_comm_terminal_reason reason,
+                        uint64_t terminal_at_ms)
 {
     if (slot->state == NODE_COMM_SLOT_FREE ||
         slot->state == NODE_COMM_SLOT_TERMINAL) {
@@ -481,6 +484,7 @@ static void terminalize(struct node_comm *comm,
     slot->terminal = (struct node_comm_terminal_event) {
         .handle = slot->handle,
         .client_token = slot->request.client_token,
+        .terminal_at_ms = terminal_at_ms,
         .reason = reason,
         .attempts_started = total_attempts_started(slot),
     };
@@ -503,6 +507,18 @@ static int validate_lease(struct node_comm *comm,
     }
     *slot_out = slot;
     return 0;
+}
+
+static void release_backend_guard_for_lease(
+    struct node_comm *comm,
+    const struct node_comm_lease *lease)
+{
+    struct node_comm_request_slot *slot;
+
+    if (validate_lease(comm, lease, &slot) == 0) {
+        slot->backend_guard_active = false;
+        slot->backend_guard_expires_at_ms = 0u;
+    }
 }
 
 static void rebase_retry_timers(struct node_comm *comm,
@@ -738,7 +754,7 @@ int node_comm_stop(struct node_comm *comm,
             continue;
         }
         if (mode == NODE_COMM_STOP_CANCEL_ALL) {
-            terminalize(comm, slot, NODE_COMM_TERMINAL_CANCELLED);
+            terminalize(comm, slot, NODE_COMM_TERMINAL_CANCELLED, now_ms);
             continue;
         }
         if (slot->state == NODE_COMM_SLOT_LEASED) {
@@ -748,7 +764,8 @@ int node_comm_stop(struct node_comm *comm,
             if (rf_started) {
                 if (slot->attempts_started >= slot->max_attempts) {
                     terminalize(comm, slot,
-                                NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+                                NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
+                                now_ms);
                 } else {
                     schedule_retry(slot, now_ms);
                 }
@@ -859,6 +876,31 @@ int node_comm_acquire(struct node_comm *comm,
     return 0;
 }
 
+int node_comm_lease_backend_guard_begin(
+    struct node_comm *comm,
+    const struct node_comm_lease *lease,
+    uint64_t expires_at_ms,
+    uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    if (expires_at_ms <= now_ms) {
+        return -EINVAL;
+    }
+    (void)node_comm_service(comm, now_ms);
+    ret = validate_lease(comm, lease, &slot);
+    if (ret < 0) {
+        return ret;
+    }
+    if (slot->backend_guard_active) {
+        return -EALREADY;
+    }
+    slot->backend_guard_active = true;
+    slot->backend_guard_expires_at_ms = expires_at_ms;
+    return 0;
+}
+
 int node_comm_lease_note_rf_started(struct node_comm *comm,
                                     const struct node_comm_lease *lease,
                                     uint64_t now_ms)
@@ -866,6 +908,7 @@ int node_comm_lease_note_rf_started(struct node_comm *comm,
     struct node_comm_request_slot *slot;
     int ret;
 
+    release_backend_guard_for_lease(comm, lease);
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
@@ -878,7 +921,8 @@ int node_comm_lease_note_rf_started(struct node_comm *comm,
         return -EALREADY;
     }
     if (slot->attempts_started >= slot->max_attempts) {
-        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
+                    now_ms);
         return -ENOSPC;
     }
     slot->attempts_started++;
@@ -894,6 +938,7 @@ int node_comm_lease_defer_pre_rf(struct node_comm *comm,
     struct node_comm_request_slot *slot;
     int ret;
 
+    release_backend_guard_for_lease(comm, lease);
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
@@ -920,6 +965,7 @@ int node_comm_lease_defer_pre_rf_retry(
     struct node_comm_request_slot *slot;
     int ret;
 
+    release_backend_guard_for_lease(comm, lease);
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
@@ -940,6 +986,7 @@ int node_comm_lease_wait_resource(struct node_comm *comm,
     struct node_comm_request_slot *slot;
     int ret;
 
+    release_backend_guard_for_lease(comm, lease);
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
@@ -988,6 +1035,7 @@ int node_comm_lease_complete(struct node_comm *comm,
     if (outcome > NODE_COMM_DELIVERY_ATTEMPTS_EXHAUSTED) {
         return -EINVAL;
     }
+    release_backend_guard_for_lease(comm, lease);
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
@@ -1007,22 +1055,25 @@ int node_comm_lease_complete(struct node_comm *comm,
             slot->state = NODE_COMM_SLOT_WAIT_RETRY;
             return 0;
         }
-        terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED);
+        terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED, now_ms);
         return 0;
     }
     if (outcome == NODE_COMM_DELIVERY_FAILED) {
-        terminalize(comm, slot, NODE_COMM_TERMINAL_PERMANENT_FAILURE);
+        terminalize(comm, slot, NODE_COMM_TERMINAL_PERMANENT_FAILURE,
+                    now_ms);
         return 0;
     }
     if (outcome == NODE_COMM_DELIVERY_ATTEMPTS_EXHAUSTED) {
-        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
+                    now_ms);
         return 0;
     }
     if (!slot->rf_started) {
         return -EPROTO;
     }
     if (slot->attempts_started >= slot->max_attempts) {
-        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+        terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
+                    now_ms);
         return 0;
     }
     invalidate_lease(comm, slot);
@@ -1037,6 +1088,7 @@ int node_comm_lease_await_confirmation(struct node_comm *comm,
     struct node_comm_request_slot *slot;
     int ret;
 
+    release_backend_guard_for_lease(comm, lease);
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
@@ -1074,7 +1126,7 @@ int node_comm_confirm_delivery(struct node_comm *comm,
     if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
         return -EAGAIN;
     }
-    terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED);
+    terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED, now_ms);
     return 0;
 }
 
@@ -1102,7 +1154,7 @@ int node_comm_fail_delivery(struct node_comm *comm,
     if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
         return -EAGAIN;
     }
-    terminalize(comm, slot, reason);
+    terminalize(comm, slot, reason, now_ms);
     return 0;
 }
 
@@ -1139,7 +1191,8 @@ int node_comm_note_backend_rf_started(struct node_comm *comm,
         slot->backend_attempts_started++;
     }
     if (deadline_expired(slot, now_ms)) {
-        terminalize(comm, slot, NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+        terminalize(comm, slot, NODE_COMM_TERMINAL_DEADLINE_EXPIRED,
+                    now_ms);
         return -ETIMEDOUT;
     }
     return 0;
@@ -1162,7 +1215,7 @@ int node_comm_cancel(struct node_comm *comm,
     if (slot->state == NODE_COMM_SLOT_TERMINAL) {
         return -EALREADY;
     }
-    terminalize(comm, slot, NODE_COMM_TERMINAL_CANCELLED);
+    terminalize(comm, slot, NODE_COMM_TERMINAL_CANCELLED, now_ms);
     return 0;
 }
 
@@ -1180,7 +1233,13 @@ size_t node_comm_service(struct node_comm *comm, uint64_t now_ms)
         if (slot->state != NODE_COMM_SLOT_FREE &&
             slot->state != NODE_COMM_SLOT_TERMINAL &&
             deadline_expired(slot, now_ms)) {
-            terminalize(comm, slot, NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+            if (slot->state == NODE_COMM_SLOT_LEASED &&
+                slot->backend_guard_active &&
+                now_ms < slot->backend_guard_expires_at_ms) {
+                continue;
+            }
+            terminalize(comm, slot, NODE_COMM_TERMINAL_DEADLINE_EXPIRED,
+                        now_ms);
             expired++;
         }
     }
@@ -1192,20 +1251,36 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
                                    uint64_t *due_ms_out)
 {
     uint64_t due_ms = UINT64_MAX;
+    bool lease_active;
     bool found = false;
 
     if (comm == NULL || due_ms_out == NULL ||
         comm->control.state != NODE_COMM_RUNNING) {
         return false;
     }
+    lease_active = node_comm_lease_active(comm);
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         const struct node_comm_request_slot *slot = &comm->slots[i];
         uint64_t slot_due_ms = UINT64_MAX;
 
         if (slot->state == NODE_COMM_SLOT_READY) {
-            slot_due_ms = now_ms;
+            if (lease_active) {
+                if (slot->request.absolute_deadline_ms == 0u) {
+                    continue;
+                }
+                slot_due_ms = slot->request.absolute_deadline_ms;
+            } else {
+                slot_due_ms = now_ms;
+            }
         } else if (slot->state == NODE_COMM_SLOT_WAIT_RETRY) {
-            slot_due_ms = slot->retry_due_ms;
+            if (lease_active) {
+                if (slot->request.absolute_deadline_ms == 0u) {
+                    continue;
+                }
+                slot_due_ms = slot->request.absolute_deadline_ms;
+            } else {
+                slot_due_ms = slot->retry_due_ms;
+            }
         } else if (slot->state == NODE_COMM_SLOT_WAIT_CONFIRMATION ||
                    slot->state == NODE_COMM_SLOT_WAIT_RESOURCE) {
             if (slot->request.absolute_deadline_ms == 0u) {
@@ -1218,6 +1293,13 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
         if (slot->request.absolute_deadline_ms != 0u &&
             slot->request.absolute_deadline_ms < slot_due_ms) {
             slot_due_ms = slot->request.absolute_deadline_ms;
+        }
+        if (slot->state == NODE_COMM_SLOT_LEASED &&
+            slot->backend_guard_active &&
+            slot->request.absolute_deadline_ms != 0u &&
+            now_ms >= slot->request.absolute_deadline_ms &&
+            now_ms < slot->backend_guard_expires_at_ms) {
+            slot_due_ms = slot->backend_guard_expires_at_ms;
         }
         if (!found || slot_due_ms < due_ms) {
             due_ms = slot_due_ms;

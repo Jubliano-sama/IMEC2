@@ -41,6 +41,7 @@ static void test_payload_round_trip_and_crc(void)
     uint8_t payload[192];
     struct mesh_smoke_fast_payload decoded;
     size_t payload_len = append_payload(payload, sizeof(payload), 42u);
+    size_t extended_len;
 
     assert(mesh_smoke_fast_payload_decode(payload,
                                           payload_len,
@@ -63,6 +64,17 @@ static void test_payload_round_trip_and_crc(void)
     assert(mesh_smoke_fast_payload_decode(payload,
                                           payload_len,
                                           &decoded) == PROTO_ERR_BAD_CRC);
+
+    payload_len = append_payload(payload, sizeof(payload), 42u);
+    extended_len = payload_len;
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &extended_len,
+                          TLV_MESH_TEST_PACKET_ID,
+                          43u) == PROTO_OK);
+    assert(mesh_smoke_fast_payload_decode(payload,
+                                          extended_len,
+                                          &decoded) == PROTO_ERR_MALFORMED);
 }
 
 static void test_tx_decision_fast_and_busy(void)

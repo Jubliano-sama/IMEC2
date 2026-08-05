@@ -271,7 +271,7 @@ static void test_forwarded_child_result_defers_and_preserves_outbox(void)
     assert(!relay.outbox_record.gateway_acked);
 }
 
-static void test_non_collection_tx_is_left_for_caller_fallback(void)
+static void test_generic_gateway_host_tx_uses_same_durable_deferral(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(7u);
@@ -294,17 +294,18 @@ static void test_non_collection_tx_is_left_for_caller_fallback(void)
     assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
     assert(mesh_relay_start_tx(&relay, &packet, NULL, 0u, 5000u, &tx) == PROTO_OK);
 
-    assert(!app_mesh_collection_defer_active_result(&relay,
-                                                   5100u,
-                                                   UINT32_C(0x44444444),
-                                                   &ops,
-                                                   &result));
-    assert(!result.deferred);
-    assert(!result.outbox_saved);
-    assert(!result.retry_scheduled);
-    assert(ctx.save_count == 0);
-    assert(ctx.schedule_count == 0);
+    assert(app_mesh_collection_defer_active_result(&relay,
+                                                  5100u,
+                                                  UINT32_C(0x44444444),
+                                                  &ops,
+                                                  &result));
+    assert(result.deferred);
+    assert(result.outbox_saved);
+    assert(result.retry_scheduled);
+    assert(ctx.save_count == 1);
+    assert(ctx.schedule_count == 1);
     assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
     assert(relay.pending.packet.msg_type == MSG_ANCHOR_HEARTBEAT);
 
     mesh_relay_cancel_tx(&relay);
@@ -376,7 +377,7 @@ int main(void)
     test_collection_result_defers_and_runs_hooks_in_order();
     test_collection_result_defers_even_when_snapshot_save_fails();
     test_forwarded_child_result_defers_and_preserves_outbox();
-    test_non_collection_tx_is_left_for_caller_fallback();
+    test_generic_gateway_host_tx_uses_same_durable_deferral();
     test_repeated_owned_deferrals_preserve_identity_and_escalate();
     return 0;
 }

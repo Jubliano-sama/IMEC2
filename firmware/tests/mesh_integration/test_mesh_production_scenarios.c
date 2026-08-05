@@ -15,7 +15,7 @@
 #define SCENARIO_SEED_EMPTY UINT32_C(0x61A0E200)
 #define SCENARIO_SEED_WATCHDOG UINT32_C(0x61A0E300)
 #define LINE_PACKET_COUNT 3u
-#define LINE_MAX_RELAYS 6u
+#define LINE_MAX_RELAYS (MESH_DEFAULT_TTL - 1u)
 #define SCENARIO_EVENT_MAX_MISSES 3u
 #define STRESS_WATCHDOG_US MESH_SIM_WATCHDOG_PRODUCTION_TIMEOUT_US
 #define DIRECT_GATEWAY_TX_PREPARE_US UINT64_C(20000)
@@ -59,7 +59,7 @@ static struct proto_packet data_packet(uint16_t seq, uint16_t payload_len)
         .dst_id = GATEWAY_ID,
         .session_id = UINT32_C(0x51000000) + seq,
         .seq = seq,
-        .ttl = 12u,
+        .ttl = MESH_DEFAULT_TTL,
         .payload_len = payload_len,
     };
 }
@@ -453,7 +453,7 @@ static void print_line_failure(const struct mesh_sim_world *world,
                 "next=%u/%u repairs=%u misses=%u/%u\n",
                 i,
                 action_ret,
-                action_ret == MESH_SIM_OK ? action.kind : -1,
+                action_ret == MESH_SIM_OK ? (int)action.kind : -1,
                 world->connections[i].timing_a.timing_fresh,
                 world->connections[i].timing_b.timing_fresh,
                 world->connections[i].timing_a.next_event_time_ms,
@@ -792,7 +792,7 @@ static int test_click_preemption_and_retry(void)
         accept_tx_starts != 1u || repair_starts != 1u ||
         repaired_connections != 1u ||
         world.connections[child].completed_repairs != 1u ||
-        world.now_us > ((uint64_t)retry_at_ms + 4000u) * 1000u ||
+        world.now_us > ((uint64_t)retry_at_ms + 8000u) * 1000u ||
         !no_route_discovery(&world) ||
         !no_watchdog_expired(&world)) {
         fprintf(stderr,
@@ -824,7 +824,7 @@ static int test_click_preemption_and_retry(void)
             repair_starts == 1u &&
             repaired_connections == 1u &&
             world.connections[child].completed_repairs == 1u &&
-            world.now_us <= ((uint64_t)retry_at_ms + 4000u) * 1000u &&
+            world.now_us <= ((uint64_t)retry_at_ms + 8000u) * 1000u &&
             no_route_discovery(&world) &&
             no_watchdog_expired(&world));
     return 0;

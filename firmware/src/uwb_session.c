@@ -2,6 +2,14 @@
 
 #include <string.h>
 
+_Static_assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US <= UINT16_MAX &&
+               UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US <=
+                   UINT16_MAX,
+               "range schedule exchange stride must fit its wire field");
+_Static_assert(UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED <= UINT8_MAX &&
+               UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED <= UINT8_MAX,
+               "range schedule diagnostics mode must fit its wire field");
+
 static bool flags_valid(uint8_t flags)
 {
     uint8_t mode_flags = flags & (FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK);
@@ -779,15 +787,15 @@ int uwb_clicker_build_range_schedule(struct uwb_clicker_session *session,
     schedule->reply_delay_us = reply_delay_us;
     schedule->first_poll_delay_ms = first_poll_delay_ms;
     schedule->poll_spacing_ms = poll_spacing_ms;
-    schedule->exchange_stride_us = exchange_stride_us;
+    schedule->exchange_stride_us = (uint16_t)exchange_stride_us;
     schedule->max_exchanges = max_exchanges;
     schedule->burst_window_ms = UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS;
     schedule->min_successful_unique_anchors = session->config.min_anchor_count;
     schedule->sts_mode = UWB_RANGE_SCHEDULE_STS_DISABLED;
-    schedule->diagnostics_required =
+    schedule->diagnostics_required = (uint8_t)(
         (session->config.flags & FLAG_RANGE_ONLY) != 0u ?
-        UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED :
-        UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED;
+            UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED :
+            UWB_RANGE_SCHEDULE_DIAGNOSTICS_REQUIRED);
     schedule->samples_per_anchor = session->config.samples_per_anchor;
     schedule->flags = session->config.flags;
 
@@ -1294,9 +1302,17 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
                                      uint16_t guard_ms)
 {
     bool direct_range_only;
+    uint32_t wait_deadline_ms;
 
     if (session == NULL || schedule == NULL) {
         return PROTO_ERR_ARG;
+    }
+    if (session->epoch.active &&
+        deadline_reached(now_ms, session->epoch.epoch_ends_at_ms)) {
+        clear_anchor_schedule(session);
+        uwb_anchor_epoch_clear(&session->epoch);
+        session->state = UWB_ANCHOR_IDLE;
+        return PROTO_ERR_STALE;
     }
     direct_range_only = session->state == UWB_ANCHOR_CLAIMED &&
                         (schedule->flags & FLAG_RANGE_ONLY) != 0u;
@@ -1315,7 +1331,17 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
         return PROTO_ERR_MALFORMED;
     }
     if (uwb_validate_range_schedule(schedule) != PROTO_OK ||
-        uwb_range_schedule_total_samples(schedule) == 0u) {
+        uwb_range_schedule_total_samples(schedule) == 0u ||
+        schedule->selected_count > session->epoch.max_anchor_count ||
+        schedule->min_successful_unique_anchors !=
+            session->epoch.min_anchor_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    wait_deadline_ms = now_ms + schedule->first_poll_delay_ms +
+                       schedule->burst_window_ms + guard_ms;
+    if ((int32_t)(wait_deadline_ms - session->epoch.epoch_ends_at_ms) >
+        (int32_t)UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -1327,9 +1353,7 @@ int uwb_anchor_accept_range_schedule(struct uwb_anchor_session *session,
         session->schedule_entry = schedule->entries[i];
         session->reply_delay_us = schedule->reply_delay_us;
         session->expected_ranging_channel = schedule->ranging_channel;
-        session->uwb_wait_deadline_ms = now_ms + schedule->first_poll_delay_ms +
-                                        schedule->burst_window_ms +
-                                        guard_ms;
+        session->uwb_wait_deadline_ms = wait_deadline_ms;
         session->scheduled = true;
         session->state = UWB_ANCHOR_SCHEDULED;
         session->diagnostics.schedules++;
@@ -1360,7 +1384,8 @@ int uwb_anchor_accept_range_release(struct uwb_anchor_session *session,
         release->flags != session->epoch.flags) {
         return PROTO_ERR_MALFORMED;
     }
-    if (uwb_validate_range_release(release) != PROTO_OK) {
+    if (uwb_validate_range_release(release) != PROTO_OK ||
+        release->min_anchor_count != session->epoch.min_anchor_count) {
         return PROTO_ERR_MALFORMED;
     }
 

@@ -36,6 +36,22 @@ static bool packet_identity_matches(const struct proto_packet *left,
            left->seq == right->seq;
 }
 
+static bool route_reply_ack_custody_matches(
+    const struct mesh_outbound *left,
+    const struct mesh_outbound *right)
+{
+    return left->packet.msg_type == MSG_ROUTE_REPLY_ACK &&
+           right->packet.msg_type == MSG_ROUTE_REPLY_ACK &&
+           left->packet.flags == right->packet.flags &&
+           left->packet.src_id == right->packet.src_id &&
+           left->packet.dst_id == right->packet.dst_id &&
+           left->packet.session_id == right->packet.session_id &&
+           left->packet.ttl == right->packet.ttl &&
+           left->next_hop_id == right->next_hop_id &&
+           left->payload_len == right->payload_len &&
+           memcmp(left->payload, right->payload, right->payload_len) == 0;
+}
+
 static bool packet_identity_matches_pending(
     const struct proto_packet *packet,
     const struct mesh_pending_tx *pending)
@@ -290,6 +306,7 @@ int mesh_sim_queue_originated(struct mesh_sim_world *world,
     outbound.payload_len = (uint16_t)payload_len;
     outbound.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
     outbound.queued_at_ms = mesh_sim_time_ms(world->now_us);
+    outbound.queued_at_valid = true;
     ret = mesh_relay_select_next_hop(&node->relay,
                                      packet->dst_id,
                                      &outbound.next_hop_id);
@@ -641,6 +658,98 @@ static enum semantic_delivery_match semantic_delivery_classify(
     return SEMANTIC_DELIVERY_NEW;
 }
 
+static bool gateway_ack_confirm_matches_delivery(
+    const struct mesh_sim_role_instance *gateway,
+    const struct proto_packet *confirm_packet,
+    const uint8_t *confirm_payload,
+    size_t confirm_payload_len)
+{
+    bool found = false;
+
+    for (size_t i = 0u; i < gateway->delivery_count; i++) {
+        bool matches = false;
+
+        if (mesh_gateway_ack_confirm_matches_packet(
+                confirm_packet,
+                confirm_payload,
+                confirm_payload_len,
+                &gateway->deliveries[i].packet,
+                gateway->deliveries[i].payload,
+                gateway->deliveries[i].payload_len,
+                &matches) != PROTO_OK) {
+            return false;
+        }
+        if (matches) {
+            /*
+             * The simulator's durable gateway abstraction is the unique
+             * committed semantic-delivery record. A confirm may retire that
+             * record's transport journal, but it never creates another host
+             * delivery and must not ambiguously name two records.
+             */
+            if (found) {
+                return false;
+            }
+            found = true;
+        }
+    }
+    return found;
+}
+
+static int remove_queued_gateway_ack_confirm_predecessor(
+    struct mesh_sim_role_instance *node)
+{
+    const struct mesh_pending_tx *confirm = &node->relay.pending;
+    struct proto_packet acknowledged_packet;
+    uint8_t acknowledged_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    int ret;
+
+    if (confirm->state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF ||
+        confirm->packet.msg_type != MSG_GATEWAY_ACK_CONFIRM ||
+        !node->relay.outbox_record.valid ||
+        node->relay.outbox_record.packet_class != MSG_GATEWAY_ACK_CONFIRM ||
+        node->relay.outbox_record.delivery_state !=
+            MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK) {
+        return MESH_SIM_ERR_PROTOCOL;
+    }
+    ret = mesh_gateway_ack_confirm_identity_packet(
+        &confirm->packet,
+        confirm->payload,
+        confirm->payload_len,
+        &acknowledged_packet,
+        acknowledged_digest);
+    if (ret != PROTO_OK) {
+        return MESH_SIM_ERR_PROTOCOL;
+    }
+
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
+        bool matches = false;
+
+        if (!queued->valid ||
+            !packet_identity_matches(&queued->outbound.packet,
+                                     &acknowledged_packet)) {
+            continue;
+        }
+        ret = mesh_gateway_ack_confirm_matches_packet(
+            &confirm->packet,
+            confirm->payload,
+            confirm->payload_len,
+            &queued->outbound.packet,
+            queued->outbound.payload,
+            queued->outbound.payload_len,
+            &matches);
+        if (ret != PROTO_OK || !matches) {
+            /*
+             * A same-identity payload conflict cannot remain runnable after
+             * the durable successor took ownership.
+             */
+            return MESH_SIM_ERR_PROTOCOL;
+        }
+        mesh_sim_relay_remove_queue_entry(node, i);
+    }
+    return MESH_SIM_OK;
+}
+
 static uint64_t scheduled_connection_conflict_end_us(
     const struct mesh_sim_world *world,
     uint8_t node_index,
@@ -729,7 +838,9 @@ static uint64_t relay_action_safe_start_us(
     if (duration_us == 0u) {
         return UINT64_MAX;
     }
-    start_us = (uint64_t)outbound->earliest_tx_ms * 1000u;
+    start_us = outbound->earliest_tx_valid ?
+               (uint64_t)outbound->earliest_tx_ms * 1000u :
+               world->now_us;
     if (start_us < world->now_us) {
         start_us = world->now_us;
     }
@@ -1023,7 +1134,8 @@ static int schedule_contact_response(
         return mesh_sim_fail(world, MESH_SIM_ERR_EVENT_ORDER);
     }
     rx_end_us = rx_start_us + timing.rx_window_us;
-    if (tx_start_us < (uint64_t)outbound->earliest_tx_ms * 1000u) {
+    if (outbound->earliest_tx_valid &&
+        tx_start_us < (uint64_t)outbound->earliest_tx_ms * 1000u) {
         tx_start_us = (uint64_t)outbound->earliest_tx_ms * 1000u;
     }
 
@@ -1183,8 +1295,12 @@ static bool gateway_semantic_delivery_requires_commit(
 
     switch (packet->msg_type) {
     case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
+    case MSG_GATEWAY_ACK_CONFIRM:
     case MSG_SURVEY_DISCOVERY_REPORT:
     case MSG_SURVEY_PAIR_RESULT:
         return true;
@@ -1204,8 +1320,12 @@ static int process_relay_actions(struct mesh_sim_world *world,
     struct mesh_sim_role_instance *node = &world->roles[node_index];
     struct mesh_relay_result semantic_commit = {0};
     uint32_t unsupported;
-    bool semantic_delivery = gateway_semantic_delivery_requires_commit(
+    bool gateway_commit_required = gateway_semantic_delivery_requires_commit(
         node, received_packet);
+    bool gateway_ack_confirm =
+        gateway_commit_required && received_packet != NULL &&
+        received_packet->msg_type == MSG_GATEWAY_ACK_CONFIRM;
+    bool semantic_delivery = gateway_commit_required && !gateway_ack_confirm;
     bool semantic_committed = false;
     bool semantic_duplicate_redelivery = false;
     bool semantic_rejected = false;
@@ -1235,19 +1355,28 @@ static int process_relay_actions(struct mesh_sim_world *world,
     }
     if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
         received_packet != NULL) {
-        if (semantic_delivery &&
+        if (gateway_commit_required &&
             node->gateway_semantic_rejections_remaining != 0u) {
             node->gateway_semantic_rejections_remaining--;
             node->gateway_semantic_rejection_count++;
             semantic_rejected = true;
-        } else if (semantic_delivery) {
+        } else if (gateway_commit_required) {
             enum semantic_delivery_match delivery_match =
+                gateway_ack_confirm ? SEMANTIC_DELIVERY_NEW :
                 semantic_delivery_classify(node,
                                            received_packet,
                                            received_payload,
                                            received_payload_len);
 
-            if (received_packet->msg_type == MSG_CLICK_REPORT &&
+            if (gateway_ack_confirm &&
+                !gateway_ack_confirm_matches_delivery(
+                    node,
+                    received_packet,
+                    received_payload,
+                    received_payload_len)) {
+                node->gateway_semantic_rejection_count++;
+                semantic_rejected = true;
+            } else if (received_packet->msg_type == MSG_CLICK_REPORT &&
                 report_validate_click_payload(received_packet,
                                               received_payload,
                                               received_payload_len) !=
@@ -1286,17 +1415,18 @@ static int process_relay_actions(struct mesh_sim_world *world,
                     return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
                 }
                 semantic_committed = true;
-                if (delivery_match ==
-                    SEMANTIC_DELIVERY_EXACT_DUPLICATE) {
+                if (semantic_delivery &&
+                    delivery_match == SEMANTIC_DELIVERY_EXACT_DUPLICATE) {
                     node->gateway_semantic_duplicate_redelivery_count++;
                     semantic_duplicate_redelivery = true;
-                } else {
+                } else if (semantic_delivery) {
                     node->gateway_semantic_commit_count++;
                 }
             }
         }
 
-        if (!semantic_rejected && !semantic_duplicate_redelivery) {
+        if (!semantic_rejected && !semantic_duplicate_redelivery &&
+            (!gateway_commit_required || semantic_delivery)) {
             ret = append_delivery(world,
                                   node_index,
                                   previous_hop_id,
@@ -1372,6 +1502,19 @@ static int process_relay_actions(struct mesh_sim_world *world,
             return ret;
         }
     }
+    if ((result->actions &
+         MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING) != 0u) {
+        /*
+         * Core has atomically replaced the raw pending packet and outbox with
+         * its compact successor. Treat the validated in-memory outbox as the
+         * simulator's durable save/readback boundary, retire any runnable raw
+         * retry, and let the pending retry timer emit the exact confirm.
+         */
+        ret = remove_queued_gateway_ack_confirm_predecessor(node);
+        if (ret != MESH_SIM_OK) {
+            return mesh_sim_fail(world, ret);
+        }
+    }
     if ((result->actions & MESH_RELAY_ACTION_SEND_HOP_ACK) != 0u) {
         ret = queue_outbound(world, node_index, &result->hop_ack, false);
         if (ret != MESH_SIM_OK) {
@@ -1379,11 +1522,29 @@ static int process_relay_actions(struct mesh_sim_world *world,
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK) != 0u) {
-        ret = schedule_contact_response(world,
-                                        node_index,
-                                        &result->route_reply_ack);
-        if (ret != MESH_SIM_OK) {
-            return ret;
+        if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REPLY) != 0u) {
+            /*
+             * A transit reply remains in upstream custody until the next hop
+             * has accepted the forwarded reply.  The Zephyr runtime performs
+             * the same chained handoff synchronously; retain the child-facing
+             * ACK here so the asynchronous simulator cannot release custody
+             * before a downstream ROUTE_REPLY_ACK is decoded.
+             */
+            if (node->route_reply_upstream_ack_valid &&
+                !route_reply_ack_custody_matches(
+                    &node->route_reply_upstream_ack,
+                    &result->route_reply_ack)) {
+                return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+            }
+            node->route_reply_upstream_ack = result->route_reply_ack;
+            node->route_reply_upstream_ack_valid = true;
+        } else {
+            ret = schedule_contact_response(world,
+                                            node_index,
+                                            &result->route_reply_ack);
+            if (ret != MESH_SIM_OK) {
+                return ret;
+            }
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_SEND_ROUTE_REQ) != 0u) {
@@ -1401,6 +1562,19 @@ static int process_relay_actions(struct mesh_sim_world *world,
         if (ret != MESH_SIM_OK) {
             return ret;
         }
+    }
+    if ((result->actions & MESH_RELAY_ACTION_ROUTE_REPLY_ACKED) != 0u &&
+        node->route_reply_upstream_ack_valid) {
+        ret = schedule_contact_response(world,
+                                        node_index,
+                                        &node->route_reply_upstream_ack);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+        memset(&node->route_reply_upstream_ack,
+               0,
+               sizeof(node->route_reply_upstream_ack));
+        node->route_reply_upstream_ack_valid = false;
     }
     if ((result->actions & (MESH_RELAY_ACTION_SEND_RELAY_BUSY |
                             MESH_RELAY_ACTION_SEND_RESULT_BUSY)) != 0u) {
@@ -1436,13 +1610,26 @@ static int process_relay_actions(struct mesh_sim_world *world,
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) != 0u) {
-        remove_queued_packet_identity(node, &node->relay.pending.packet);
+        struct proto_packet confirmed_packet = node->relay.pending.packet;
+
+        remove_queued_packet_identity(node, &confirmed_packet);
+        if (confirmed_packet.msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+            ret = mesh_relay_commit_gateway_ack_confirm_terminal(
+                &node->relay,
+                &confirmed_packet,
+                node->relay.pending.payload,
+                node->relay.pending.payload_len,
+                mesh_sim_time_ms(world->now_us));
+            if (ret != PROTO_OK) {
+                return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+            }
+        }
         ret = mesh_sim_trace_add_packet(world,
                                         world->now_us,
                                         node->id,
                                         node->gateway_id,
                                         MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                        &node->relay.pending.packet,
+                                        &confirmed_packet,
                                         0u);
         if (ret != MESH_SIM_OK) {
             return ret;

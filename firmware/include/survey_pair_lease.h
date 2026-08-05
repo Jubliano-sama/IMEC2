@@ -41,14 +41,25 @@ struct survey_pair_lease {
     struct survey_pair_control_id start_id;
     struct survey_pair_control_id last_accepted_id;
     uint32_t prepared_deadline_ms;
+    /*
+     * Closed local RF-start deadline carried by a synchronized GO. Zero is a
+     * valid wrapped deadline; go_released is the independent armed state.
+     */
+    uint32_t go_execution_deadline_ms;
+    uint64_t last_accepted_operation_generation;
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t round_id;
     enum survey_pair_lease_phase phase;
     bool prepare_id_valid;
     bool start_id_valid;
     bool last_accepted_id_valid;
+    bool round_commitment_valid;
     /* Exact START command-result delivery has reached gateway confirmation. */
     bool start_released;
-    /* Matching nonzero-round GO has arrived; legacy round zero needs no GO. */
+    /*
+     * Matching nonzero-round GO and its execution deadline are armed; legacy
+     * round zero needs no GO.
+     */
     bool go_released;
 };
 
@@ -72,6 +83,14 @@ enum survey_pair_lease_decision survey_pair_lease_prepare_round(
     const struct survey_pair_control_id *control_id,
     uint32_t now_ms,
     uint32_t lease_ms);
+enum survey_pair_lease_decision survey_pair_lease_prepare_round_bound(
+    struct survey_pair_lease *lease,
+    const struct survey_pair *pair,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
+    const struct survey_pair_control_id *control_id,
+    uint32_t now_ms,
+    uint32_t lease_ms);
 
 /*
  * START must name the prepared pair and have a newer command sequence. An
@@ -92,6 +111,13 @@ enum survey_pair_lease_decision survey_pair_lease_start_round(
     uint16_t round_id,
     const struct survey_pair_control_id *control_id,
     uint32_t now_ms);
+enum survey_pair_lease_decision survey_pair_lease_start_round_bound(
+    struct survey_pair_lease *lease,
+    const struct survey_pair *pair,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
+    const struct survey_pair_control_id *control_id,
+    uint32_t now_ms);
 
 /*
  * A GO releases only the matching nonzero survey round. Repeated or late GO
@@ -102,6 +128,34 @@ enum survey_pair_lease_decision survey_pair_lease_go(
     uint32_t survey_id,
     uint16_t round_id,
     uint32_t now_ms);
+enum survey_pair_lease_decision survey_pair_lease_go_until(
+    struct survey_pair_lease *lease,
+    uint32_t survey_id,
+    uint16_t round_id,
+    uint32_t now_ms,
+    uint32_t execution_deadline_ms);
+enum survey_pair_lease_decision survey_pair_lease_go_until_bound(
+    struct survey_pair_lease *lease,
+    uint64_t operation_generation,
+    uint32_t survey_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
+    uint32_t now_ms,
+    uint32_t execution_deadline_ms);
+/*
+ * Roll back only a newly accepted matching GO when the local work queue
+ * refuses execution admission.  This keeps an exact retransmission eligible
+ * to release the same round; it cannot affect a running or different round.
+ */
+bool survey_pair_lease_revoke_go(struct survey_pair_lease *lease,
+                                 uint32_t survey_id,
+                                 uint16_t round_id);
+bool survey_pair_lease_revoke_go_bound(
+    struct survey_pair_lease *lease,
+    uint64_t operation_generation,
+    uint32_t survey_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN]);
 
 bool survey_pair_lease_pending_snapshot(const struct survey_pair_lease *lease,
                                         struct survey_pair *pair);
@@ -117,11 +171,26 @@ bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
 bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
                                     struct survey_pair *pair,
                                     uint16_t *round_id);
+bool survey_pair_lease_mark_running_at(struct survey_pair_lease *lease,
+                                       uint32_t now_ms,
+                                       struct survey_pair *pair,
+                                       uint16_t *round_id);
 bool survey_pair_lease_finish(struct survey_pair_lease *lease);
 bool survey_pair_lease_abort(struct survey_pair_lease *lease);
 bool survey_pair_lease_abort_matching(struct survey_pair_lease *lease,
                                       const struct survey_pair *pair,
                                       uint32_t session_id);
+bool survey_pair_lease_abort_matching_round(
+    struct survey_pair_lease *lease,
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id);
+bool survey_pair_lease_abort_matching_round_bound(
+    struct survey_pair_lease *lease,
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN]);
 bool survey_pair_lease_expire(struct survey_pair_lease *lease,
                               uint32_t now_ms);
 uint32_t survey_pair_lease_remaining_ms(const struct survey_pair_lease *lease,

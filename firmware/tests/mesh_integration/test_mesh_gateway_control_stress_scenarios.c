@@ -9,6 +9,7 @@
 #include "protocol.h"
 #include "serial_frame.h"
 #include "survey.h"
+#include "survey_round_control.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -49,7 +50,7 @@ static struct operation_policy_set complete_route_operation_policy(void)
     policy.discovery_present = true;
     policy.pair_present = true;
     policy.assignment.expected_anchor_count = 50u;
-    policy.assignment.operation_budget_ms = 180000u;
+    policy.assignment.operation_budget_ms = 300000u;
     policy.assignment.response_spread_ms = 750u;
     policy.discovery.start_delay_ms = 9000u;
     policy.discovery.slot_ms = 75u;
@@ -522,25 +523,41 @@ static int flood_send(const struct mesh_outbound *out, void *ctx)
     }
     if (has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL)) {
         fixture->deliveries++;
-        ret = mesh_append_command_result(result_payload,
-                                         sizeof(result_payload),
-                                         &result_payload_len,
-                                         fixture->command_id,
-                                         COMMAND_OK,
-                                         0u);
-        if (ret != PROTO_OK ||
-            mesh_init_command_result(&command_result,
-                                     fixture->receiver->local_id,
-                                     GATEWAY_ID,
-                                     out->packet.session_id,
-                                     out->packet.seq,
-                                     (uint8_t)result_payload_len,
-                                     false) != PROTO_OK ||
-            !gateway_command_pending_complete_result(fixture->pending,
-                                                     &command_result)) {
+        if (fixture->pending != NULL && fixture->pending->active) {
+            ret = mesh_append_command_result(result_payload,
+                                             sizeof(result_payload),
+                                             &result_payload_len,
+                                             fixture->command_id,
+                                             COMMAND_OK,
+                                             0u);
+            if (ret != PROTO_OK ||
+                mesh_init_command_result(&command_result,
+                                         fixture->receiver->local_id,
+                                         GATEWAY_ID,
+                                         out->packet.session_id,
+                                         out->packet.seq,
+                                         (uint8_t)result_payload_len,
+                                         false) != PROTO_OK ||
+                gateway_command_pending_claim_result(
+                    fixture->pending,
+                    &command_result,
+                    fixture->now_ms,
+                    NULL,
+                    NULL) !=
+                    GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED) {
+                return -EIO;
+            }
+            fixture->command_results++;
+        }
+        if (out->packet.msg_type == MSG_COMMAND &&
+            mesh_relay_commit_anchor_command_delivery(
+                fixture->receiver,
+                &out->packet,
+                out->payload,
+                out->payload_len,
+                fixture->now_ms) != PROTO_OK) {
             return -EIO;
         }
-        fixture->command_results++;
     }
     if (has_action(&result, MESH_RELAY_ACTION_FORWARD)) {
         fixture->forwards++;
@@ -562,7 +579,12 @@ static int build_survey_pair_control(struct mesh_outbound *out,
                                      uint64_t next_hop_id,
                                      uint16_t seq)
 {
+    static const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN] = {
+        0x52u, 0xc5u, 0x71u, 0xa3u,
+    };
     const struct survey_pair pair = {
+        .operation_generation =
+            (UINT64_C(1) << 32) | PAIR_SURVEY_ID,
         .survey_id = PAIR_SURVEY_ID,
         .initiator_id = target_id,
         .responder_id = target_id + UINT64_C(0x1000),
@@ -588,17 +610,32 @@ static int build_survey_pair_control(struct mesh_outbound *out,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = survey_round_id_append_tlv(out->payload,
+                                     sizeof(out->payload),
+                                     &payload_len,
+                                     1u);
+    if (ret == PROTO_OK) {
+        ret = survey_round_commitment_append_tlv(out->payload,
+                                                  sizeof(out->payload),
+                                                  &payload_len,
+                                                  round_commitment);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     if (command_id == CMD_SURVEY_PREPARE_PAIR) {
         ret = survey_init_pair_prepare_packet(&out->packet,
                                               &pair,
                                               GATEWAY_ID,
+                                              target_id,
                                               seq,
                                               (uint8_t)payload_len);
     } else if (command_id == CMD_SURVEY_START_PAIR) {
         out->packet.msg_type = MSG_COMMAND;
         out->packet.src_id = GATEWAY_ID;
         out->packet.dst_id = target_id;
-        out->packet.session_id = pair.survey_id;
+        out->packet.session_id =
+            survey_operation_session_id(pair.operation_generation);
         out->packet.seq = seq;
         out->packet.ttl = MESH_DEFAULT_TTL;
         out->packet.payload_len = (uint8_t)payload_len;
@@ -622,6 +659,7 @@ static void test_gateway_control_reverse_route_contract(void)
     const uint64_t relay_id = ANCHOR_BASE + UINT64_C(0x501);
     const uint64_t alternate_id = ANCHOR_BASE + UINT64_C(0x502);
     const struct survey_discovery_config discovery = {
+        .operation_generation = UINT64_C(0x0000000112345678),
         .survey_id = PAIR_SURVEY_ID,
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
@@ -642,7 +680,7 @@ static void test_gateway_control_reverse_route_contract(void)
     CHECK(build_survey_pair_control(&command, CMD_SURVEY_START_PAIR,
                                      target_id, target_id, 82u) == PROTO_OK);
     CHECK(survey_init_discovery_start_packet(&discovery_start, GATEWAY_ID,
-                                              &discovery, 83u, 0u) == PROTO_OK);
+                                              &discovery, 83u, 1u) == PROTO_OK);
 
     mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,
                     target_id, GATEWAY_ID, ROUTE_EPOCH);
@@ -868,8 +906,9 @@ static int host_admit(void *ctx, struct app_gateway_command_ingress_item *item)
     return app_gateway_command_lifecycle_admit(&fixture->lifecycle, item);
 }
 
-static int host_submit_priority(void *ctx)
+static int host_submit_priority(void *ctx, uint32_t admission_cutoff)
 {
+    (void)admission_cutoff;
     ((struct host_fixture *)ctx)->priority_count++;
     return 0;
 }
@@ -1278,10 +1317,15 @@ static void run_survey_pair_control_case(enum command_id command_id,
     CHECK(first.sends == app_mesh_flood_repeat_limit());
 
     if (!relayed) {
-        CHECK(first.deliveries == 1u);
+        CHECK(first.deliveries ==
+              (command_id == CMD_SURVEY_PREPARE_PAIR ?
+                   app_mesh_flood_repeat_limit() - first.awake_from_send + 1u :
+                   1u));
         CHECK(first.command_results == 1u);
         CHECK(first.duplicate_drops ==
-              app_mesh_flood_repeat_limit() - first.awake_from_send);
+              (command_id == CMD_SURVEY_PREPARE_PAIR ?
+                   0u :
+                   app_mesh_flood_repeat_limit() - first.awake_from_send));
         CHECK(!pending.active);
         return;
     }
@@ -1304,10 +1348,15 @@ static void run_survey_pair_control_case(enum command_id command_id,
                                        &second_ops,
                                        &flood_result) == 0);
     CHECK(flood_result.sent_count == app_mesh_flood_repeat_limit());
-    CHECK(second.deliveries == 1u);
+    CHECK(second.deliveries ==
+          (command_id == CMD_SURVEY_PREPARE_PAIR ?
+               app_mesh_flood_repeat_limit() - second.awake_from_send + 1u :
+               1u));
     CHECK(second.command_results == 1u);
     CHECK(second.duplicate_drops ==
-          app_mesh_flood_repeat_limit() - second.awake_from_send);
+          (command_id == CMD_SURVEY_PREPARE_PAIR ?
+               0u :
+               app_mesh_flood_repeat_limit() - second.awake_from_send));
     CHECK(!pending.active);
 }
 
@@ -1402,7 +1451,7 @@ static void test_bounded_control_retry_rewakes_missed_relay(void)
                  original.payload_len) == 0);
 }
 
-static void test_deep_responder_start_precedes_shared_relay_start(void)
+static void test_deterministic_roles_forward_initiator_start_through_responder(void)
 {
     static struct mesh_sim_world world;
     const uint64_t deep_id = ANCHOR_BASE + 320u;
@@ -1485,14 +1534,20 @@ static void test_deep_responder_start_precedes_shared_relay_start(void)
               &relay_hint) == PROTO_OK);
     CHECK(survey_gateway_plan_pairs(&survey_context) == PROTO_OK);
     CHECK(survey_context.pair_count == 1u);
-    CHECK(survey_context.pairs[0].initiator_id == relay_id);
-    CHECK(survey_context.pairs[0].responder_id == deep_id);
+    {
+        struct survey_pair planned;
+
+        CHECK(survey_gateway_pair_at(
+                  &survey_context, 0u, &planned) == PROTO_OK);
+        CHECK(planned.initiator_id == deep_id);
+        CHECK(planned.responder_id == relay_id);
+    }
     CHECK(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
 
     CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
                                            &action) == PROTO_OK);
     CHECK(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
-    CHECK(action.target_id == relay_id);
+    CHECK(action.target_id == deep_id);
     CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
     CHECK(survey_gateway_auto_note_result(
               &auto_context, action.command_id, action.target_id,
@@ -1503,7 +1558,7 @@ static void test_deep_responder_start_precedes_shared_relay_start(void)
     CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
                                            &action) == PROTO_OK);
     CHECK(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER);
-    CHECK(action.target_id == deep_id);
+    CHECK(action.target_id == relay_id);
     CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
     CHECK(survey_gateway_auto_note_result(
               &auto_context, action.command_id, action.target_id,
@@ -1514,9 +1569,22 @@ static void test_deep_responder_start_precedes_shared_relay_start(void)
     CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
                                            &action) == PROTO_OK);
     CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_RESPONDER);
+    CHECK(action.target_id == relay_id);
+    CHECK(action.pair.initiator_id == deep_id);
+    CHECK(action.pair.responder_id == relay_id);
+    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
+    CHECK(survey_gateway_auto_note_result(
+              &auto_context, action.command_id, action.target_id,
+              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
+          PROTO_OK);
+    CHECK(!launched && !skipped);
+
+    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
+                                           &action) == PROTO_OK);
+    CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR);
     CHECK(action.target_id == deep_id);
-    CHECK(action.pair.initiator_id == relay_id);
-    CHECK(action.pair.responder_id == deep_id);
+    CHECK(action.pair.initiator_id == deep_id);
+    CHECK(action.pair.responder_id == relay_id);
     CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
 
     CHECK(mesh_append_command_id(control.payload, sizeof(control.payload),
@@ -1548,8 +1616,8 @@ static void test_deep_responder_start_precedes_shared_relay_start(void)
     CHECK(survey_extract_pair_tlvs(relay_flood.forward.payload,
                                    relay_flood.forward.payload_len,
                                    &forwarded_pair) == PROTO_OK);
-    CHECK(forwarded_pair.initiator_id == relay_id);
-    CHECK(forwarded_pair.responder_id == deep_id);
+    CHECK(forwarded_pair.initiator_id == deep_id);
+    CHECK(forwarded_pair.responder_id == relay_id);
 
     relay_flood.forward.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     child_flood.receiver = &world.roles[deep_index].relay;
@@ -1566,11 +1634,7 @@ static void test_deep_responder_start_precedes_shared_relay_start(void)
               &auto_context, action.command_id, action.target_id,
               action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
           PROTO_OK);
-    CHECK(!launched && !skipped);
-    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
-                                           &action) == PROTO_OK);
-    CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR);
-    CHECK(action.target_id == relay_id);
+    CHECK(launched && !skipped);
     CHECK(relay_flood.forwards == 1u && child_flood.deliveries == 1u);
 }
 
@@ -1748,7 +1812,7 @@ int main(void)
     test_gateway_scheduled_delivery_due_handoff_sweep();
     test_survey_pair_control_bounded_flood_lane();
     test_bounded_control_retry_rewakes_missed_relay();
-    test_deep_responder_start_precedes_shared_relay_start();
+    test_deterministic_roles_forward_initiator_start_through_responder();
     test_here_i_am_radio_collision_containment_and_retry();
     test_simulator_fails_closed_without_flood_state_machine();
     if (failures == 0) {

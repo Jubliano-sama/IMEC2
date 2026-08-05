@@ -2,6 +2,8 @@
 #define APP_MESH_EVENT_RETRY_H
 
 #include "app_mesh_rf_retry.h"
+#include "mesh_event_timing.h"
+#include "semantic_digest.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -9,10 +11,9 @@
 
 struct app_mesh_event_request_identity {
     uint64_t source_id;
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t session_id;
     uint16_t sequence;
-    uint32_t payload_fingerprint;
-    uint16_t payload_len;
     uint8_t message_type;
 };
 
@@ -44,6 +45,8 @@ struct app_mesh_event_retry_state {
     bool active;
     bool response_sent;
     bool timing_installed;
+    /* retry_due_ms may validly wrap to zero; this owns its armed state. */
+    bool retry_due_armed;
 };
 
 struct app_mesh_event_completion {
@@ -53,8 +56,16 @@ struct app_mesh_event_completion {
     bool valid;
 };
 
-uint32_t app_mesh_event_payload_fingerprint(const uint8_t *payload,
-                                            size_t payload_len);
+bool app_mesh_event_payload_digest(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN]);
+bool app_mesh_event_request_payload_equal(
+    const struct app_mesh_event_request_identity *lhs,
+    const struct app_mesh_event_request_identity *rhs);
+bool app_mesh_event_accept_timing_compatible(
+    const struct mesh_event_timing *accepted,
+    const struct mesh_event_timing *proposed);
 enum app_mesh_event_request_match app_mesh_event_retry_match(
     const struct app_mesh_event_retry_state *state,
     uint64_t peer_id,

@@ -21,7 +21,7 @@ extern "C" {
  */
 #define OPERATION_POLICY_EXPECTED_ANCHOR_COUNT_MAX 50u
 #define OPERATION_POLICY_COMMAND_BUDGET_MIN_MS 1000u
-#define OPERATION_POLICY_COMMAND_BUDGET_MAX_MS 600000u
+#define OPERATION_POLICY_COMMAND_BUDGET_MAX_MS 900000u
 
 #define OPERATION_POLICY_ASSIGNMENT_DEFAULT_EXPECTED_ANCHOR_COUNT 0u
 #define OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS 235209u
@@ -133,6 +133,13 @@ struct operation_policy_set {
     bool pair_present;
 };
 
+struct operation_policy_discovery_budget_terms {
+    uint32_t report_slot_ms;
+    uint32_t report_custody_ms;
+    uint32_t report_delivery_tail_ms;
+    uint32_t terminal_scheduling_guard_ms;
+};
+
 void operation_policy_assignment_defaults(
     struct operation_policy_assignment *policy);
 void operation_policy_discovery_defaults(
@@ -151,6 +158,13 @@ int operation_policy_append_tlv(uint8_t *payload,
 int operation_policy_set_from_tlvs(const uint8_t *payload,
                                    size_t payload_len,
                                    struct operation_policy_set *set);
+int operation_policy_assignment_required_budget_ms(
+    const struct operation_policy_assignment *policy,
+    uint32_t *required_budget_ms);
+int operation_policy_discovery_required_budget_ms(
+    const struct operation_policy_discovery *policy,
+    const struct operation_policy_discovery_budget_terms *terms,
+    uint32_t *required_budget_ms);
 
 #ifdef __cplusplus
 }

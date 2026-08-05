@@ -13,6 +13,11 @@ SURVEY = (ROOT / "app/src/app_anchor_gateway_survey.inc").read_text(
 ROUND = (ROOT / "app/src/app_gateway_survey_round.c").read_text(
     encoding="utf-8"
 )
+ROUND_HEADER = (ROOT / "app/src/app_gateway_survey_round.h").read_text(
+    encoding="utf-8"
+)
+ANCHOR = (ROOT / "app/src/app_anchor.c").read_text(encoding="utf-8")
+SURVEY_CORE = (ROOT / "src/survey.c").read_text(encoding="utf-8")
 ANCHOR_RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text(
     encoding="utf-8"
 )
@@ -61,19 +66,112 @@ def block_end(source: str, opening_brace: int) -> int:
     raise AssertionError("unterminated source block")
 
 
-# PREPARE and START must both carry the exact nonzero runtime batch identity.
+# Accepted sample slots retain the exact distance/quality/status bytes. A
+# bounded hash is not equality authority because any width admits collisions.
+assert "survey_sample_semantic_fingerprint" not in SURVEY_CORE
+assert "struct survey_sample_observation_identity sample_identities" in (
+    ROUND_HEADER
+)
+assert "gateway_survey_pair_initiator_identities" in ANCHOR
+assert "gateway_survey_pair_responder_identities" in ANCHOR
+round_preflight = function_body(
+    ROUND, "app_gateway_survey_round_preflight_sample"
+)
+assert_ordered(
+    round_preflight,
+    "survey_sample_observation_identity_capture(",
+    "survey_sample_observation_identity_valid(existing_identity)",
+    "!survey_sample_observation_identity_equal(",
+)
+sequential_identity = function_body(
+    SURVEY, "gateway_survey_pair_sample_identity"
+)
+assert_ordered(
+    sequential_identity,
+    "survey_sample_observation_identity_capture(sample, &identity)",
+    "survey_sample_observation_identity_valid(existing_identity)",
+    "!survey_sample_observation_identity_equal(",
+)
+
+
+# PREPARE and START must both carry one exact nonzero run identity. Synchronized
+# work uses the batch generation; sequential work allocates a fresh generation
+# only at PREPARE_INITIATOR and retains it through that run's four controls.
+generation = function_body(SURVEY, "gateway_survey_action_round_id")
+assert_ordered(
+    generation,
+    "gateway_survey_round_active()",
+    "gateway_survey_round.runtime.batch_sequence",
+    "gateway_survey_sequential_run_matches(action)",
+    "action->stage != SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR",
+    "ret = survey_pair_result_next_round_id(",
+    "gateway_survey_sequential_run.generation_cursor",
+    "if (ret != PROTO_OK)",
+    ".pair = action->pair",
+    ".round_id = next_round_id",
+    ".generation_cursor = next_round_id",
+    ".reruns_started = gateway_survey_auto.pair_reruns_started",
+)
+assert "gateway_next_command_seq(" not in generation, (
+    "sequential survey generation must not share the command sequence domain"
+)
+
 prepare = function_body(SURVEY, "gateway_survey_auto_send_prepare")
 start = function_body(SURVEY, "gateway_survey_auto_send_start")
 for name, body in (("PREPARE", prepare), ("START", start)):
-    assert "gateway_survey_round_active()" in body, (
-        f"{name} must add a round ID only for synchronized round operation"
-    )
+    assert "gateway_survey_action_round_id(action, &round_id)" in body
     assert body.count("survey_round_id_append_tlv(") == 1, (
         f"{name} must carry exactly one round identity TLV"
     )
-    assert "gateway_survey_round.runtime.batch_sequence" in body, (
-        f"{name} must use the current runtime batch identity"
-    )
+
+# Cleanup is a generation-bound control as well. A delayed ABORT from round N
+# must not cancel the same pair while round N+1 owns it.
+cleanup = function_body(SURVEY, "gateway_survey_build_cleanup_outbound")
+assert_ordered(
+    cleanup,
+    "CMD_SURVEY_ABORT",
+    "survey_append_pair_tlvs(",
+    "survey_round_id_append_tlv(",
+    "cleanup->round_id",
+    "outbound->packet.msg_type = MSG_COMMAND",
+)
+
+# An initiator-only full result set is usable fallback geometry but cannot close
+# the frozen observation window while preferred RSL-bearing responder results
+# may still arrive. Both sequential and synchronized paths wake early only
+# when every slot has a usable responder result.
+sequential_note = function_body(SURVEY, "gateway_note_survey_pair_result")
+assert_ordered(
+    sequential_note,
+    "survey_sample_matches_pair_run(",
+    "survey_pair_note_sample_masks(",
+    "&gateway_survey_pair_responder_usable_mask",
+    "__builtin_popcount(",
+    "gateway_survey_pair_responder_usable_mask",
+    "gateway_survey_work_reschedule(0u)",
+)
+sequential_finalize = function_body(
+    SURVEY, "gateway_survey_finalize_pair_observation"
+)
+assert_ordered(
+    sequential_finalize,
+    "__builtin_popcount(",
+    "gateway_survey_pair_responder_usable_mask",
+    "!deadline",
+    "GATEWAY_SURVEY_PAIR_FINALIZE_CONTINUE",
+    "success = observed_count ==",
+)
+
+round_note = function_body(GLUE, "gateway_survey_round_note_sample")
+assert "survey_pair_round_lane_preferred_results_complete(lane)" in round_note
+assert "survey_pair_round_lane_results_complete(lane)" not in round_note
+round_finalize = function_body(GLUE, "gateway_survey_round_finalize_observation")
+assert_ordered(
+    round_finalize,
+    "survey_pair_round_lane_preferred_results_complete(lane)",
+    "if (!deadline)",
+    "survey_pair_round_lane_results_complete(lane)",
+)
 
 
 # The round dispatcher must serialize PREPARE/START for every live lane before
@@ -209,25 +307,33 @@ assert_ordered(
     build_go,
     ".survey_id = gateway_survey_context.survey_id",
     ".round_id = gateway_survey_round.runtime.batch_sequence",
+    "gateway_survey_round_commitment(go.round_commitment)",
+    "gateway_survey_build_go(",
+)
+go_encoder = function_body(GLUE, "gateway_survey_build_go")
+assert_ordered(
+    go_encoder,
     "survey_round_go_append_tlvs(",
     "CMD_SCOPE_ALL_HEARD",
     "CMD_RESPONSE_NONE",
     "survey_round_go_init_packet(",
     "outbound->packet.dst_id = MESH_BROADCAST_ID",
 )
-assert "outbound->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL" in build_go
+assert "outbound->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL" in go_encoder
 
 submit_go = function_body(GLUE, "gateway_survey_round_submit_go")
 assert_ordered(
     submit_go,
     "execute_delay_ms = survey_round_go_execute_delay_ms(",
-    "now_ms = k_uptime_get_32()",
-    "command_seq = gateway_next_command_seq()",
+    "full_now_ms = (uint64_t)k_uptime_get()",
+    "now_ms = (uint32_t)full_now_ms",
+    "command_seq = gateway_next_broadcast_command_seq()",
     "uptime_ms_until_deadline(now_ms",
     "gateway_survey_operation_deadline_ms",
     "gateway_survey_round_build_go(",
     "app_node_comm_submit_delivery(",
     "NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD",
+    "full_now_ms + execute_delay_ms",
     "gateway_survey_round_observation_deadline_ms = now_ms + required_ms",
 )
 assert submit_go.index(
@@ -282,23 +388,54 @@ assert_ordered(
 )
 
 finalize = function_body(GLUE, "gateway_survey_round_finalize_observation")
+start_observation_cleanup = function_body(
+    GLUE, "gateway_survey_round_start_next_observation_cleanup"
+)
 advance_completed = function_body(
     GLUE, "gateway_survey_round_advance_completed_batch"
 )
-assert finalize.count("app_gateway_survey_round_finalize_lane(") == 2, (
-    "success and failure must each finalize only the current lane"
+assert finalize.count("app_gateway_survey_round_finalize_lane(") == 3, (
+    "preferred success, deadline fallback success, and failure must each "
+    "finalize only the current lane"
 )
 assert_ordered(
     finalize,
     "for (size_t i = 0u; i < lane_count; i++)",
     "app_gateway_survey_round_finalize_lane(",
+    "SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK",
+    "gateway_survey_round_start_next_observation_cleanup()",
     "gateway_survey_round_advance_completed_batch()",
 )
+assert finalize.count("SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK") == 1, (
+    "every incomplete observation outcome must retain both possible "
+    "START_PENDING endpoint leases"
+)
+assert_ordered(
+    start_observation_cleanup,
+    "gateway_survey_round_cleanup_lane_valid",
+    "lane->state != SURVEY_PAIR_ROUND_LANE_CLEANUP",
+    "lane->cleanup_mask == 0u",
+    "survey_gateway_transaction_init(&gateway_survey_transaction)",
+    "survey_gateway_transaction_load_pair(",
+    "gateway_survey_transaction.possible_prepare_mask =",
+    "lane->cleanup_mask",
+    "survey_gateway_transaction_require_cleanup(",
+    "survey_gateway_transaction_cleanup_mask(",
+    "gateway_survey_round_cleanup_lane_index = i",
+    "gateway_survey_round_cleanup_lane_valid = true",
+    "gateway_survey_begin_cleanup()",
+)
+assert "gateway_survey_round_emit_lane_terminal(lane, false)" not in finalize, (
+    "a final incomplete lane must emit failure only after cleanup retires"
+)
+assert "gateway_survey_round_emit_lane_terminal(lane, false)" in (
+    retire_failed_control
+), "the retained lane must own its failure terminal after cleanup"
 assert_ordered(
     advance_completed,
     "app_gateway_survey_round_batch_complete(&gateway_survey_round)",
-    "app_gateway_survey_round_advance_batch(",
     "gateway_survey_round_release_go_delivery()",
+    "app_gateway_survey_round_advance_batch(",
     "gateway_survey_round_sync_auto()",
 )
 assert "gateway_survey_round_go_delivery_handle = 0u" not in finalize, (
@@ -314,18 +451,144 @@ release_go = function_body(GLUE, "gateway_survey_round_release_go_delivery")
 assert_ordered(
     release_go,
     "gateway_survey_round_go_delivery_handle == 0u",
-    "return;",
+    "return true;",
     "app_node_comm_abandon_delivery(",
     "gateway_survey_round_go_delivery_handle",
+    "ret < 0 && ret != -ENOENT && ret != -EALREADY",
+    "app_watchdog_stop_feeding()",
+    "return false;",
     "gateway_survey_round_go_delivery_handle = 0u",
+    "return true;",
 )
 
 reset_round = function_body(GLUE, "gateway_survey_round_reset")
 assert_ordered(
     reset_round,
-    "gateway_survey_round_release_go_delivery()",
+    "if (!gateway_survey_round_release_go_delivery())",
+    "return;",
     "memset(&gateway_survey_round",
 )
+
+
+# A terminal batch outcome converts every live prepared/started lane plus the
+# exact in-flight PREPARE uncertainty into serialized ABORT custody. The round
+# and commitment remain intact until the last endpoint retires.
+begin_termination = function_body(
+    ROUND, "app_gateway_survey_round_begin_termination"
+)
+assert_ordered(
+    begin_termination,
+    "matched_index = SIZE_MAX",
+    "if (active_pair != NULL)",
+    "app_gateway_survey_round_pair_equal(",
+    "if (matched_index == SIZE_MAX)",
+    "round->runtime.pending_rerun_count = 0u",
+    "lane->prepared_mask | lane->started_mask",
+    "lane->cleanup_mask",
+    "cleanup_mask |= active_cleanup_mask",
+    "lane->state = SURVEY_PAIR_ROUND_LANE_CLEANUP",
+    "round->phase = APP_GATEWAY_SURVEY_ROUND_TERMINATING",
+)
+assert begin_termination.index(
+    "if (matched_index == SIZE_MAX)"
+) < begin_termination.index(
+    "round->runtime.pending_rerun_count = 0u"
+), "unowned current-pair cleanup must fail before mutating any lane"
+
+finish_status = function_body(SURVEY, "gateway_survey_auto_finish_status")
+assert_ordered(
+    finish_status,
+    "gateway_survey_finish_pending = true",
+    "survey_gateway_transaction_require_cleanup(",
+    "active_cleanup_mask = survey_gateway_transaction_cleanup_mask(",
+    "app_gateway_survey_round_begin_termination(",
+    "gateway_survey_round_release_go_delivery()",
+    "app_node_comm_abandon_delivery(",
+    "gateway_survey_cancel_take_active_delivery(",
+    "gateway_survey_pair_observation_active = false",
+    "gateway_survey_active = false",
+    "gateway_survey_begin_cleanup()",
+)
+assert "gateway_survey_round_reset()" not in finish_status
+assert finish_status.count("gateway_observe_survey_terminal(") == 1
+assert finish_status.index("gateway_observe_survey_terminal(") > (
+    finish_status.rindex("#else")
+), "gateway terminal observability must follow retained remote cleanup"
+
+next_termination = function_body(
+    SURVEY, "gateway_survey_start_next_round_termination_cleanup"
+)
+assert_ordered(
+    next_termination,
+    "app_gateway_survey_round_next_termination_cleanup(",
+    "survey_gateway_transaction_init(&gateway_survey_transaction)",
+    "survey_gateway_transaction_load_pair(",
+    "gateway_survey_transaction.possible_prepare_mask = cleanup_mask",
+    "survey_gateway_transaction_require_cleanup(",
+    "gateway_survey_round_cleanup_lane_index = lane_index",
+    "gateway_survey_round_cleanup_lane_valid = true",
+    "gateway_survey_begin_cleanup()",
+)
+
+finish_cleanup = function_body(
+    SURVEY, "gateway_survey_finish_cleanup_if_complete"
+)
+assert_ordered(
+    finish_cleanup,
+    "survey_gateway_transaction_pair_complete(",
+    "app_gateway_survey_round_terminating(&gateway_survey_round)",
+    "gateway_survey_start_next_round_termination_cleanup(now_ms)",
+    "gateway_survey_round_reset()",
+    "gateway_observe_survey_terminal(",
+    "gateway_survey_finish_pending = false",
+    "gateway_operation_owner_release(",
+)
+
+cleanup_note = function_body(GLUE, "gateway_survey_round_note_cleanup_peer")
+assert_ordered(
+    cleanup_note,
+    "app_gateway_survey_round_terminating(&gateway_survey_round)",
+    "app_gateway_survey_round_note_termination_cleanup_complete(",
+    "gateway_survey_round_cleanup_lane_valid = false",
+)
+
+# A missing route, expired cleanup delivery, zero-RF pseudo-success, or failed
+# transport terminal cannot clear round cleanup debt. The anchor START lease is
+# longer than the cleanup attempt, so this path terminalizes and forces bounded
+# recovery before the transaction completion or lane advance calls.
+service_cleanup = function_body(SURVEY, "gateway_survey_service_cleanup")
+cleanup_failure = service_cleanup.index("if (cleanup->peer_unavailable)")
+cleanup_completion = service_cleanup.index(
+    "survey_gateway_transaction_note_cleanup_complete(",
+    cleanup_failure,
+)
+cleanup_failure_block = service_cleanup[
+    cleanup_failure:cleanup_completion
+]
+assert_ordered(
+    cleanup_failure_block,
+    "gateway_survey_auto_finish_status(",
+    "COMMAND_RADIO_ERROR",
+    "GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED",
+    "app_watchdog_stop_feeding()",
+    "return;",
+)
+assert "gateway_survey_round_note_cleanup_peer(" not in cleanup_failure_block
+assert_ordered(
+    service_cleanup,
+    "event.reason != NODE_COMM_TERMINAL_DELIVERED",
+    "event.attempts_started == 0u",
+    "cleanup->completion_ready = true",
+)
+deadline_abandon = service_cleanup.index(
+    "ret = app_node_comm_abandon_delivery(cleanup->handle)"
+)
+deadline_ready = service_cleanup.index(
+    "cleanup->completion_ready = true", deadline_abandon
+)
+assert service_cleanup.index(
+    "cleanup->peer_unavailable = true", deadline_abandon
+) < deadline_ready
 
 
 # The gateway may observe a batch only after the common GO has really started
@@ -367,7 +630,7 @@ submit_retry = submit_failure[
 assert_ordered(
     submit_retry,
     "app_gateway_survey_round_go_submit_retryable(ret)",
-    "k_work_reschedule(",
+    "gateway_survey_work_reschedule(",
     "GATEWAY_SURVEY_TRANSACTION_POLL_MS",
 )
 assert "gateway_survey_auto_finish_status(" not in submit_retry, (
@@ -400,7 +663,7 @@ assert_ordered(
     "event.reason",
     "event.attempts_started",
     "gateway_survey_round_go_delivery_handle = 0u",
-    "k_work_reschedule(",
+    "gateway_survey_work_reschedule(",
     "GATEWAY_SURVEY_TRANSACTION_POLL_MS",
     "return true;",
 )
@@ -416,8 +679,8 @@ assert "survey_pair_lease_ready_snapshot(&pair_lease, NULL)" in delivery_gate
 
 survey_worker = function_body(ANCHOR_RUNTIME, "survey_work_handler")
 running_claim = re.search(
-    r"survey_pair_lease_mark_running\s*\(\s*&pair_lease\s*,\s*"
-    r"&pair\s*,\s*&pair_round_id\s*\)",
+    r"survey_pair_lease_mark_running_at\s*\(\s*&pair_lease\s*,\s*"
+    r"k_uptime_get_32\(\)\s*,\s*&pair\s*,\s*&pair_round_id\s*\)",
     survey_worker,
 )
 assert running_claim is not None, (
@@ -429,10 +692,14 @@ assert_ordered(
     "return;",
     "survey_pair_lease_ready_snapshot(&pair_lease, &pair)",
     'radio_guard_uwb_start("survey pair DS-TWR")',
-    "survey_pair_lease_mark_running(&pair_lease",
+    "survey_pair_lease_mark_running_at(&pair_lease",
     "as_responder = pair.responder_id == DEVICE_ID",
-    "run_pair_responder(&pair, pair_round_id)",
-    "run_pair_initiator(&pair, pair_round_id)",
+    "run_pair_responder(&pair,",
+    "pair_round_id",
+    "&functional_radio_outcome",
+    "run_pair_initiator(&pair,",
+    "pair_round_id",
+    "&functional_radio_outcome",
 )
 assert "pair_round_id = pair_lease.round_id" not in survey_worker, (
     "a pre-claim round snapshot could mismatch the operation that enters RUNNING"

@@ -270,21 +270,54 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
      * schedule.  Current click and survey initiators leave capture_rsl false;
      * this preserves the shared driver's explicit opt-in behavior without
      * putting the production fast path back inside the deadline.
-     */
+    */
     if (request->capture_rsl) {
-        read_rx_diagnostics(&rsl_dbm,
-                            result->cir_sample,
-                            &result->cir_sampled,
-                            &result->clicker_clock_offset_raw,
-                            &result->clicker_clock_offset_sampled,
-                            &result->carrier_integrator,
-                            &result->carrier_integrator_sampled);
-        result->clicker_rx_diag_sampled = capture_rx_diag_raw(
-            result->clicker_rx_diag_raw,
-            &result->clicker_rx_diag_raw_len,
-            NULL);
-        result->rsl_dbm = rsl_dbm;
-        result->rsl_sampled = true;
+        bool diagnostics_valid = read_rx_diagnostics(
+            &rsl_dbm,
+            result->cir_sample,
+            &result->cir_sampled,
+            &result->clicker_clock_offset_raw,
+            &result->clicker_clock_offset_sampled,
+            &result->carrier_integrator,
+            &result->carrier_integrator_sampled);
+
+        result->clicker_rx_diag_sampled =
+            diagnostics_valid &&
+            capture_rx_diag_raw(result->clicker_rx_diag_raw,
+                                &result->clicker_rx_diag_raw_len,
+                                NULL);
+        if (diagnostics_valid && result->clicker_rx_diag_sampled) {
+            result->rsl_dbm = rsl_dbm;
+            result->rsl_sampled = true;
+        } else {
+            /*
+             * A port failure invalidates the software PHY state. The delayed
+             * FINAL may be armed, but continuing to wait for or transmit more
+             * frames would use hardware whose state can no longer be proven.
+             * Abort this exchange and let the next operation perform the full
+             * reset recovery.
+             */
+            dwt_forcetrxoff();
+            (void)take_port_error("post-arm-diagnostics-abort");
+            memset(result->cir_sample, 0, sizeof(result->cir_sample));
+            result->cir_sampled = false;
+            result->clicker_clock_offset_raw = 0;
+            result->clicker_clock_offset_sampled = false;
+            result->carrier_integrator = 0;
+            result->carrier_integrator_sampled = false;
+            memset(result->clicker_rx_diag_raw,
+                   0,
+                   sizeof(result->clicker_rx_diag_raw));
+            result->clicker_rx_diag_raw_len = 0u;
+            result->clicker_rx_diag_sampled = false;
+            result->rsl_dbm = 0;
+            result->rsl_sampled = false;
+            result_set_request_metadata(result, request);
+            result->responder_id = request->responder_id;
+            result->quality = quality;
+            result->status = RANGE_INTERNAL_ERROR;
+            return -EIO;
+        }
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_INIT stage=final-armed now=%u seq=%u round=%u tx_time=0x%08x final_tx=0x%08x report=%u\n",
@@ -564,8 +597,9 @@ static int responder_poll_once(uint64_t local_anchor_id,
     dwt_setpreambledetecttimeout(0u);
     dwt_setrxtimeout(0u);
     clear_all_events();
-    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
-        return -EIO;
+    ret = start_immediate_rx();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,

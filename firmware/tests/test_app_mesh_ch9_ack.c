@@ -73,6 +73,60 @@ static struct app_mesh_ch9_ack_batch_entry ack_batch_entry(uint32_t session_id,
     };
 }
 
+static void bind_ack_to_batch_entry(
+    struct mesh_outbound *ack,
+    const struct app_mesh_ch9_ack_batch_entry *entry)
+{
+    const struct proto_packet acknowledged = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ack->packet.dst_id,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = entry->session_id,
+        .seq = entry->seq,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = 0u,
+    };
+    size_t payload_len = 0u;
+
+    ack->packet.session_id = entry->session_id;
+    assert(mesh_append_requested_seq(ack->payload,
+                                     sizeof(ack->payload),
+                                     &payload_len,
+                                     entry->seq) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(ack->payload,
+                                             sizeof(ack->payload),
+                                             &payload_len,
+                                             &acknowledged,
+                                             NULL,
+                                             0u) == PROTO_OK);
+    ack->payload_len = (uint16_t)payload_len;
+    ack->packet.payload_len = (uint16_t)payload_len;
+}
+
+static int queue_ack_with_semantic_identity(
+    struct app_mesh_ch9_ack_table *table,
+    struct mesh_outbound *ack,
+    const struct app_mesh_ch9_ack_batch_entry *entry,
+    enum app_mesh_ch9_ack_queue_result *result)
+{
+    bind_ack_to_batch_entry(ack, entry);
+    return app_mesh_ch9_ack_table_queue(table, ack, entry, result);
+}
+
+static int queue_raw_ack(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    const struct app_mesh_ch9_ack_batch_entry *entry,
+    enum app_mesh_ch9_ack_queue_result *result)
+{
+    return app_mesh_ch9_ack_table_queue(table, ack, entry, result);
+}
+
+/* Every generated test ACK must exercise the production semantic binding. */
+#define app_mesh_ch9_ack_table_queue(table, ack, entry, result) \
+    queue_ack_with_semantic_identity((table), (ack), (entry), (result))
+
 static void assert_built_ack_entries(const struct mesh_outbound *outbound,
                                      const uint32_t *session_ids,
                                      const uint16_t *seqs,
@@ -119,8 +173,16 @@ static void assert_built_ack_entries(const struct mesh_outbound *outbound,
                     &value_len) == PROTO_OK);
     assert(value_len == count * sizeof(uint32_t));
     for (uint8_t i = 0u; i < count; i++) {
+        struct mesh_ack_semantic_identity identity;
+
         assert(proto_get_u32_le(&value[i * sizeof(uint32_t)]) ==
                packet_ids[i]);
+        assert(mesh_ack_semantic_identity_at(outbound->payload,
+                                             outbound->payload_len,
+                                             i,
+                                             &identity) == PROTO_OK);
+        assert(identity.session_id == session_ids[i]);
+        assert(identity.seq == seqs[i]);
     }
 }
 
@@ -213,7 +275,9 @@ static void test_unacked_retry_retains_ownership_until_queue_admits(void)
     assert(queue.item.packet.seq == SENT_SEQ_TEST + 1u);
 }
 
-static size_t requested_seq_payload(uint8_t *payload, size_t payload_cap)
+static size_t requested_seq_payload(uint8_t *payload,
+                                    size_t payload_cap,
+                                    const struct mesh_outbound *sent)
 {
     size_t payload_len = 0u;
 
@@ -221,21 +285,35 @@ static size_t requested_seq_payload(uint8_t *payload, size_t payload_cap)
                                      payload_cap,
                                      &payload_len,
                                      SENT_SEQ_TEST) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             payload_cap,
+                                             &payload_len,
+                                             &sent->packet,
+                                             sent->payload,
+                                             sent->payload_len) == PROTO_OK);
     return payload_len;
 }
 
 static size_t batched_ack_payload_with_matching_second(uint8_t *payload,
-                                                       size_t payload_cap)
+                                                       size_t payload_cap,
+                                                       const struct mesh_outbound *sent)
 {
+    struct proto_packet first = sent->packet;
     uint8_t seq_list[2u * sizeof(uint16_t)];
     uint8_t session_list[2u * sizeof(uint32_t)];
     size_t payload_len = 0u;
 
+    first.session_id++;
+    first.seq++;
     proto_put_u16_le(&seq_list[0], (uint16_t)(SENT_SEQ_TEST + 1u));
     proto_put_u16_le(&seq_list[sizeof(uint16_t)], SENT_SEQ_TEST);
     proto_put_u32_le(&session_list[0], SESSION_ID_TEST + 1u);
     proto_put_u32_le(&session_list[sizeof(uint32_t)], SESSION_ID_TEST);
 
+    assert(mesh_append_requested_seq(payload,
+                                     payload_cap,
+                                     &payload_len,
+                                     first.seq) == PROTO_OK);
     assert(tlv_append_bytes(payload,
                             payload_cap,
                             &payload_len,
@@ -248,6 +326,19 @@ static size_t batched_ack_payload_with_matching_second(uint8_t *payload,
                             TLV_MESH_ACK_SEQ_LIST,
                             seq_list,
                             sizeof(seq_list)) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             payload_cap,
+                                             &payload_len,
+                                             &first,
+                                             first.payload_len == 0u ?
+                                                 NULL : sent->payload,
+                                             first.payload_len) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             payload_cap,
+                                             &payload_len,
+                                             &sent->packet,
+                                             sent->payload,
+                                             sent->payload_len) == PROTO_OK);
     return payload_len;
 }
 
@@ -294,8 +385,9 @@ static void test_ack_complete_policy_is_disabled_outside_route_test(void)
 static void test_direct_gateway_ack_matches_transit_original_source(void)
 {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    const size_t payload_len = requested_seq_payload(payload, sizeof(payload));
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    const size_t payload_len =
+        requested_seq_payload(payload, sizeof(payload), &sent);
     const struct proto_packet ack = gateway_ack(TRANSMITTER_ID,
                                                 (uint16_t)payload_len);
 
@@ -310,8 +402,9 @@ static void test_direct_gateway_ack_matches_transit_original_source(void)
 static void test_direct_gateway_ack_rejects_relay_address_for_transit(void)
 {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    const size_t payload_len = requested_seq_payload(payload, sizeof(payload));
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    const size_t payload_len =
+        requested_seq_payload(payload, sizeof(payload), &sent);
     const struct proto_packet ack = gateway_ack(RELAY_ID,
                                                 (uint16_t)payload_len);
 
@@ -326,8 +419,9 @@ static void test_direct_gateway_ack_rejects_relay_address_for_transit(void)
 static void test_direct_gateway_ack_matches_local_source(void)
 {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    const size_t payload_len = requested_seq_payload(payload, sizeof(payload));
     const struct mesh_outbound sent = gateway_bound_outbound(RELAY_ID);
+    const size_t payload_len =
+        requested_seq_payload(payload, sizeof(payload), &sent);
     const struct proto_packet ack = gateway_ack(RELAY_ID,
                                                 (uint16_t)payload_len);
 
@@ -342,9 +436,11 @@ static void test_direct_gateway_ack_matches_local_source(void)
 static void test_direct_gateway_ack_matches_batched_session_list(void)
 {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    const size_t payload_len =
-        batched_ack_payload_with_matching_second(payload, sizeof(payload));
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    const size_t payload_len =
+        batched_ack_payload_with_matching_second(payload,
+                                                 sizeof(payload),
+                                                 &sent);
     struct proto_packet ack = gateway_ack(TRANSMITTER_ID,
                                           (uint16_t)payload_len);
 
@@ -358,15 +454,40 @@ static void test_direct_gateway_ack_matches_batched_session_list(void)
                                                GATEWAY_ID_TEST));
 }
 
-static void test_direct_gateway_legacy_ack_rejects_wrong_session(void)
+static void test_direct_gateway_ack_rejects_wrong_header_session(void)
 {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    const size_t payload_len = requested_seq_payload(payload, sizeof(payload));
     const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    const size_t payload_len =
+        requested_seq_payload(payload, sizeof(payload), &sent);
     struct proto_packet ack = gateway_ack(TRANSMITTER_ID,
                                           (uint16_t)payload_len);
 
     ack.session_id = SESSION_ID_TEST + 1u;
+
+    assert(!app_mesh_direct_gateway_ack_matches(&sent,
+                                                &ack,
+                                                payload,
+                                                payload_len,
+                                                GATEWAY_ID_TEST,
+                                                GATEWAY_ID_TEST));
+}
+
+static void test_direct_gateway_ack_rejects_reused_id_different_payload(void)
+{
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    const struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+    struct mesh_outbound stale = sent;
+    const struct proto_packet ack_template =
+        gateway_ack(TRANSMITTER_ID, 0u);
+    struct proto_packet ack = ack_template;
+    size_t payload_len;
+
+    stale.packet.payload_len = 1u;
+    stale.payload_len = 1u;
+    stale.payload[0] = 0xa5u;
+    payload_len = requested_seq_payload(payload, sizeof(payload), &stale);
+    ack.payload_len = (uint16_t)payload_len;
 
     assert(!app_mesh_direct_gateway_ack_matches(&sent,
                                                 &ack,
@@ -409,6 +530,46 @@ static void test_direct_local_gateway_ack_uses_single_core_owner(void)
                                                     8u));
 }
 
+static void test_gateway_ack_required_worst_case_is_always_single(void)
+{
+    static const uint8_t message_types[] = {
+        MSG_CLICK_REPORT,
+        MSG_COMMAND_RESULT,
+        MSG_RESULT_BUNDLE,
+        MSG_SURVEY_DISCOVERY_REPORT,
+        MSG_SURVEY_PAIR_RESULT,
+        MSG_MESH_DATA,
+    };
+    static const uint8_t configured_limits[] = {1u, 4u, 8u, UINT8_MAX};
+
+    for (size_t message_index = 0u;
+         message_index < sizeof(message_types);
+         message_index++) {
+        for (size_t limit_index = 0u;
+             limit_index < sizeof(configured_limits);
+             limit_index++) {
+            struct proto_packet packet = {
+                .msg_type = message_types[message_index],
+                .flags = FLAG_GATEWAY_ACK_REQUIRED,
+                .src_id = RELAY_ID,
+                .dst_id = GATEWAY_ID_TEST,
+            };
+            uint8_t configured_limit = configured_limits[limit_index];
+
+            assert(app_mesh_ch9_tx_max_in_flight(
+                       &packet, GATEWAY_ID_TEST, configured_limit) == 1u);
+            assert(app_mesh_ch9_tx_requires_tracked_single(
+                &packet, GATEWAY_ID_TEST, configured_limit));
+
+            packet.src_id = TRANSMITTER_ID;
+            assert(app_mesh_ch9_tx_max_in_flight(
+                       &packet, RELAY_ID, configured_limit) == 1u);
+            assert(app_mesh_ch9_tx_requires_tracked_single(
+                &packet, RELAY_ID, configured_limit));
+        }
+    }
+}
+
 static void test_retry_waits_for_next_local_tx_slot(void)
 {
     struct mesh_event_timing timing = {
@@ -427,6 +588,13 @@ static void test_retry_waits_for_next_local_tx_slot(void)
     assert(timing.next_event_time_ms == 105045u);
     assert(timing.event_counter == 23u);
 
+    timing.next_event_time_ms = UINT32_MAX - 439u;
+    assert(app_mesh_ch9_retry_next_local_tx_prepare_ms(&timing,
+                                                       30u,
+                                                       &prepare_ms));
+    assert(prepare_ms == UINT32_MAX - 29u);
+
+    timing.next_event_time_ms = 105045u;
     timing.event_counter = 24u;
     assert(!app_mesh_ch9_retry_next_local_tx_prepare_ms(&timing,
                                                         30u,
@@ -454,7 +622,13 @@ static void test_wait_plan_retries_at_slot_prepare_boundary(void)
                                                   30u,
                                                   &delay_ms));
     assert(delay_ms == 121u);
-    assert(!app_mesh_ch9_wait_plan_retry_delay_ms(1u, 0u, 30u, &delay_ms));
+    assert(app_mesh_ch9_wait_plan_retry_delay_ms(UINT32_MAX - 100u,
+                                                 0u,
+                                                 30u,
+                                                 &delay_ms));
+    assert(delay_ms == 71u);
+    assert(app_mesh_ch9_wait_plan_retry_delay_ms(1u, 0u, 30u, &delay_ms));
+    assert(delay_ms == 1u);
 }
 
 static void test_core_retry_backoff_keeps_channel9_rx_available(void)
@@ -656,6 +830,16 @@ static void test_selected_relay_timeout_counts_route_failure(void)
                                                         GATEWAY_ID_TEST));
 }
 
+static void test_other_peer_timeout_cannot_charge_this_route(void)
+{
+    struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
+
+    sent.next_hop_id = RELAY_ID;
+
+    assert(!app_mesh_ch9_tx_timeout_counts_route_failure(
+        &sent, SECOND_RELAY_ID, GATEWAY_ID_TEST));
+}
+
 static void test_non_gateway_ack_timeout_does_not_count_route_failure(void)
 {
     struct mesh_outbound sent = gateway_bound_outbound(TRANSMITTER_ID);
@@ -804,6 +988,52 @@ static void test_ack_table_duplicate_is_scoped_by_session_and_sequence(void)
                                         &result) == PROTO_OK);
     assert(result == APP_MESH_CH9_ACK_QUEUE_ADDED);
     assert(app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID)->count == 2u);
+}
+
+static void test_ack_table_rejects_same_id_different_semantic_packet(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound ack = ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    const struct app_mesh_ch9_ack_batch_entry entry =
+        ack_batch_entry(UINT32_C(0x1010),
+                        UINT16_C(0x0055),
+                        UINT32_C(10));
+    struct proto_packet conflicting_packet = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = RELAY_ID,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = entry.session_id,
+        .seq = entry.seq,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = 1u,
+    };
+    const uint8_t conflicting_payload[1] = {0xa5u};
+    enum app_mesh_ch9_ack_queue_result result;
+    size_t payload_len = 0u;
+
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &ack,
+                                        &entry,
+                                        &result) == PROTO_OK);
+    ack.packet.session_id = entry.session_id;
+    assert(mesh_append_requested_seq(ack.payload,
+                                     sizeof(ack.payload),
+                                     &payload_len,
+                                     entry.seq) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(ack.payload,
+                                             sizeof(ack.payload),
+                                             &payload_len,
+                                             &conflicting_packet,
+                                             conflicting_payload,
+                                             sizeof(conflicting_payload)) ==
+           PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    ack.packet.payload_len = (uint16_t)payload_len;
+    assert(queue_raw_ack(&table, &ack, &entry, &result) ==
+           PROTO_ERR_MALFORMED);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_SEMANTIC_CONFLICT);
+    assert(app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID)->count == 1u);
 }
 
 static void test_ack_table_pressure_rejects_without_eviction_and_reuses_slot(void)
@@ -1144,6 +1374,7 @@ int main(void)
     test_ack_table_interleaves_two_peers();
     test_ack_table_timeout_clear_is_peer_scoped();
     test_ack_table_duplicate_is_scoped_by_session_and_sequence();
+    test_ack_table_rejects_same_id_different_semantic_packet();
     test_ack_table_pressure_rejects_without_eviction_and_reuses_slot();
     test_ack_table_flush_retains_failure_and_clears_only_sent_peer();
     test_forwarded_gateway_ack_does_not_replace_other_peer();
@@ -1158,9 +1389,11 @@ int main(void)
     test_direct_gateway_ack_rejects_relay_address_for_transit();
     test_direct_gateway_ack_matches_local_source();
     test_direct_gateway_ack_matches_batched_session_list();
-    test_direct_gateway_legacy_ack_rejects_wrong_session();
+    test_direct_gateway_ack_rejects_wrong_header_session();
+    test_direct_gateway_ack_rejects_reused_id_different_payload();
     test_gateway_ack_relay_path_uses_single_core_tracked_packet();
     test_direct_local_gateway_ack_uses_single_core_owner();
+    test_gateway_ack_required_worst_case_is_always_single();
     test_retry_waits_for_next_local_tx_slot();
     test_wait_plan_retries_at_slot_prepare_boundary();
     test_core_retry_backoff_keeps_channel9_rx_available();
@@ -1180,6 +1413,7 @@ int main(void)
     test_non_ack_transit_keeps_configured_in_flight_limit();
     test_direct_gateway_timeout_counts_route_failure();
     test_selected_relay_timeout_counts_route_failure();
+    test_other_peer_timeout_cannot_charge_this_route();
     test_non_gateway_ack_timeout_does_not_count_route_failure();
     test_unacked_retry_retains_ownership_until_queue_admits();
     return 0;

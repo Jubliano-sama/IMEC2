@@ -1,4 +1,5 @@
 #include "operation_policy.h"
+#include "discovery_assignment.h"
 
 #include <assert.h>
 #include <string.h>
@@ -89,7 +90,7 @@ static void test_all_families_round_trip_in_one_payload(void)
     size_t payload_len = 0u;
 
     assignment.value.assignment.expected_anchor_count = 5u;
-    assignment.value.assignment.operation_budget_ms = 180000u;
+    assignment.value.assignment.operation_budget_ms = 300000u;
     assignment.value.assignment.response_spread_ms = 400u;
     discovery.value.discovery.start_delay_ms = 9000u;
     discovery.value.discovery.slot_ms = 75u;
@@ -118,7 +119,7 @@ static void test_all_families_round_trip_in_one_payload(void)
     assert(decoded.discovery_present);
     assert(decoded.pair_present);
     assert(decoded.assignment.expected_anchor_count == 5u);
-    assert(decoded.assignment.operation_budget_ms == 180000u);
+    assert(decoded.assignment.operation_budget_ms == 300000u);
     assert(decoded.assignment.response_spread_ms == 400u);
     assert(decoded.discovery.start_delay_ms == 9000u);
     assert(decoded.discovery.slot_ms == 75u);
@@ -140,7 +141,7 @@ static void test_assignment_is_equal_response_policy_without_hop_field(void)
     size_t payload_len = 0u;
 
     original.value.assignment.expected_anchor_count = 12u;
-    original.value.assignment.operation_budget_ms = 90000u;
+    original.value.assignment.operation_budget_ms = 300000u;
     original.value.assignment.response_spread_ms = 750u;
     assert(operation_policy_append_tlv(payload, sizeof(payload), &payload_len,
                                        &original) == PROTO_OK);
@@ -152,7 +153,7 @@ static void test_assignment_is_equal_response_policy_without_hop_field(void)
     assert(value[1] == OPERATION_POLICY_FAMILY_ASSIGNMENT);
     assert(value[2] == OPERATION_POLICY_FLAGS_NONE);
     assert(proto_get_u16_le(&value[3]) == 12u);
-    assert(proto_get_u32_le(&value[5]) == 90000u);
+    assert(proto_get_u32_le(&value[5]) == 300000u);
     assert(proto_get_u16_le(&value[9]) == 750u);
     assert(operation_policy_decode_value(value, value_len, &decoded) ==
            PROTO_OK);
@@ -221,7 +222,8 @@ static void test_decode_rejects_noncanonical_headers_and_lengths(void)
     value[2] = 1u;
     assert(operation_policy_decode_value(value, raw_len, &decoded) ==
            PROTO_ERR_MALFORMED);
-    assert(operation_policy_decode_value(raw, raw_len - 1u, &decoded) ==
+    assert(operation_policy_decode_value(
+               raw, (uint8_t)(raw_len - 1u), &decoded) ==
            PROTO_ERR_MALFORMED);
     assert(operation_policy_decode_value(NULL, raw_len, &decoded) ==
            PROTO_ERR_ARG);
@@ -230,6 +232,7 @@ static void test_decode_rejects_noncanonical_headers_and_lengths(void)
 static void test_assignment_bounds(void)
 {
     struct operation_policy policy = assignment_policy();
+    uint32_t required_budget_ms = 0u;
 
     policy.value.assignment.expected_anchor_count =
         OPERATION_POLICY_EXPECTED_ANCHOR_COUNT_MAX + 1u;
@@ -248,11 +251,41 @@ static void test_assignment_bounds(void)
     policy.value.assignment.response_spread_ms =
         OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS + 1u;
     assert(operation_policy_validate(&policy) == PROTO_ERR_MALFORMED);
+
+    policy = assignment_policy();
+    policy.value.assignment.response_spread_ms =
+        OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS;
+    assert(operation_policy_assignment_required_budget_ms(
+               &policy.value.assignment, &required_budget_ms) == PROTO_OK);
+    assert(required_budget_ms ==
+           DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS);
+    policy.value.assignment.operation_budget_ms = required_budget_ms;
+    assert(operation_policy_validate(&policy) == PROTO_OK);
+    policy.value.assignment.operation_budget_ms = required_budget_ms - 1u;
+    assert(operation_policy_validate(&policy) == PROTO_ERR_MALFORMED);
+
+    policy = assignment_policy();
+    assert(operation_policy_assignment_required_budget_ms(
+               &policy.value.assignment, &required_budget_ms) == PROTO_OK);
+    assert(required_budget_ms ==
+           OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS);
+    policy.value.assignment.response_spread_ms =
+        OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS;
+    assert(operation_policy_assignment_required_budget_ms(
+               &policy.value.assignment, &required_budget_ms) == PROTO_OK);
+    assert(required_budget_ms == 253209u);
 }
 
 static void test_discovery_bounds_include_configurable_rounds(void)
 {
     struct operation_policy policy = discovery_policy();
+    struct operation_policy_discovery_budget_terms terms = {
+        .report_slot_ms = 2270u,
+        .report_custody_ms = 17000u,
+        .report_delivery_tail_ms = 63060u,
+        .terminal_scheduling_guard_ms = 102u,
+    };
+    uint32_t required_budget_ms = 0u;
 
     policy.value.discovery.start_delay_ms =
         OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS - 1u;
@@ -277,6 +310,40 @@ static void test_discovery_bounds_include_configurable_rounds(void)
     policy.value.discovery.operation_budget_ms =
         OPERATION_POLICY_COMMAND_BUDGET_MAX_MS + 1u;
     assert(operation_policy_validate(&policy) == PROTO_ERR_MALFORMED);
+
+    policy = discovery_policy();
+    assert(operation_policy_discovery_required_budget_ms(
+               &policy.value.discovery, &terms, &required_budget_ms) ==
+           PROTO_OK);
+    assert(required_budget_ms == 100993u);
+    policy.value.discovery.operation_budget_ms = required_budget_ms;
+    assert(operation_policy_validate(&policy) == PROTO_OK);
+    policy.value.discovery.operation_budget_ms = required_budget_ms - 1u;
+    assert(operation_policy_validate(&policy) == PROTO_OK);
+
+    policy = discovery_policy();
+    policy.value.discovery.start_delay_ms =
+        OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS;
+    policy.value.discovery.slot_ms = OPERATION_POLICY_DISCOVERY_SLOT_MAX_MS;
+    policy.value.discovery.slot_count =
+        OPERATION_POLICY_DISCOVERY_SLOT_COUNT_MAX;
+    policy.value.discovery.round_count =
+        OPERATION_POLICY_DISCOVERY_ROUND_COUNT_MAX;
+    policy.value.discovery.report_grace_ms =
+        OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MAX_MS;
+    assert(operation_policy_discovery_required_budget_ms(
+               &policy.value.discovery, &terms, &required_budget_ms) ==
+           PROTO_OK);
+    assert(required_budget_ms == 513663u);
+    policy.value.discovery.operation_budget_ms = required_budget_ms;
+    assert(operation_policy_validate(&policy) == PROTO_OK);
+
+    terms.report_slot_ms = UINT32_MAX;
+    terms.report_custody_ms = UINT32_MAX;
+    terms.report_delivery_tail_ms = UINT32_MAX;
+    assert(operation_policy_discovery_required_budget_ms(
+               &policy.value.discovery, &terms, &required_budget_ms) ==
+           PROTO_ERR_NO_SPACE);
 }
 
 static void test_pair_bounds_never_bypass_conflict_admission(void)

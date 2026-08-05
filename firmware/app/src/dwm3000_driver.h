@@ -188,10 +188,28 @@ int dwm3000_driver_force_recovery(void);
 int dwm3000_driver_send_frame(const uint8_t *frame,
                               size_t frame_len,
                               uint32_t timeout_ms);
+struct dwm3000_tx_observation {
+    uint64_t rf_started_at_ms;
+    uint64_t tx_completed_at_ms;
+    /*
+     * Conservative ownership boundary: true once the start command transfer
+     * begins, including a host-side SPI failure that cannot prove RF stayed
+     * idle. tx_completed is exact and requires an observed TXFRS event.
+     */
+    bool rf_started;
+    bool tx_completed;
+};
+
 int dwm3000_driver_send_frame_tracked(const uint8_t *frame,
                                       size_t frame_len,
                                       uint32_t timeout_ms,
                                       bool *rf_started);
+int dwm3000_driver_send_frame_tracked_until(
+    const uint8_t *frame,
+    size_t frame_len,
+    uint32_t timeout_ms,
+    uint64_t absolute_deadline_ms,
+    struct dwm3000_tx_observation *observation);
 int dwm3000_driver_receive_frame(uint32_t timeout_ms,
                                  uint8_t *frame,
                                  size_t frame_cap,
@@ -238,9 +256,24 @@ int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
                                                   int8_t *rsl_dbm,
                                                   enum dwm3000_rx_failure *failure,
                                                   struct dwm3000_rx_frame_timing *timing);
-void dwm3000_driver_request_receive_abort(void);
-void dwm3000_driver_clear_receive_abort(void);
+
+enum dwm3000_receive_abort_owner {
+    DWM3000_RECEIVE_ABORT_NODE_COMM = 1u << 0,
+    DWM3000_RECEIVE_ABORT_MESH_CONTROL = 1u << 1,
+    DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY = 1u << 2,
+};
+
+#define DWM3000_RECEIVE_ABORT_OWNER_MASK \
+    (DWM3000_RECEIVE_ABORT_NODE_COMM | \
+     DWM3000_RECEIVE_ABORT_MESH_CONTROL | \
+     DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY)
+#define DWM3000_RECEIVE_ABORT_LEVEL_MASK \
+    DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY
+
+void dwm3000_driver_request_receive_abort(uint32_t owner_mask);
+void dwm3000_driver_clear_receive_abort(uint32_t owner_mask);
 bool dwm3000_driver_receive_abort_pending(void);
+int dwm3000_driver_last_rx_host_uptime(uint32_t *received_at_ms);
 int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                    struct dwm3000_range_result *result);
 int dwm3000_driver_responder_poll_expected(uint64_t local_anchor_id,

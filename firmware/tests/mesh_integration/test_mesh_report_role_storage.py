@@ -73,6 +73,22 @@ def _unguarded_pending_symbol_lines(source: str) -> list[int]:
     return failures
 
 
+def _function_body(source: str, name: str) -> str:
+    match = re.search(rf"\b{name}\s*\([^;]*?\)\s*\{{", source, re.DOTALL)
+    if match is None:
+        raise AssertionError(f"function not found: {name}")
+    start = match.end() - 1
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"unterminated function: {name}")
+
+
 class MeshReportRoleStorageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -89,9 +105,23 @@ class MeshReportRoleStorageTests(unittest.TestCase):
             + ",".join(str(line) for line in failures),
         )
         self.assertIn("sizeof(mesh_ch9_tx_pending) == 4184u", self.report_source)
+        self.assertIn("mesh_ch9_tx_batch_storage.pending", self.report_source)
+        self.assertIn("mesh_ch9_tx_batch_storage.candidates", self.report_source)
+        self.assertIn(
+            "sizeof(mesh_ch9_tx_batch_storage) == 4184u",
+            self.report_source,
+        )
+        self.assertIn(
+            "MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0",
+            self.report_source,
+        )
+        self.assertNotIn(
+            "mesh_ch9_batch_payload_scratch", self.report_source
+        )
+        self.assertNotIn("mesh_result_action_tx", self.report_source)
 
     def test_gateway_store_is_initialized_then_attached_after_relay_init(self) -> None:
-        self.assertIn("sizeof(mesh_gateway_ack_store) == 4000u", self.report_source)
+        self.assertIn("sizeof(mesh_gateway_ack_store) == 9432u", self.report_source)
         self.assertIn("mesh_gateway_ack_store_init(&mesh_gateway_ack_store)",
                       self.report_source)
         self.assertNotIn("struct mesh_gateway_ack_store", self.anchor_source)
@@ -103,9 +133,85 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         self.assertLess(relay_init, attach)
         self.assertIn("if (ret < 0)", body[attach:])
 
+    def test_gateway_transport_has_no_redundant_full_payload_scratch(self) -> None:
+        self.assertRegex(
+            self.report_source,
+            r"(?s)#if DEVICE_ROLE == ROLE_ANCHOR\s+"
+            r"/\*.*?\*/\s+"
+            r"static struct mesh_outbound mesh_send_scratch_tx;\s+#endif",
+        )
+        self.assertNotIn(
+            "mesh_deferred_gateway_ack_scratch", self.report_source
+        )
+
+        encode = _function_body(
+            self.report_source, "mesh_encode_outbound_tx_snapshot"
+        )
+        self.assertIn("out->payload", encode)
+        self.assertIn("packet_age_add_elapsed(tx_packet", encode)
+        self.assertIn("uwb_mesh_frame_sync_flood_packet_age(", encode)
+        self.assertNotIn("mesh_outbound_refresh_age", encode)
+        self.assertNotIn("memcpy(", encode)
+
+        reliable = _function_body(
+            self.report_source, "mesh_try_send_reliable_uplink_view"
+        )
+        self.assertIn(
+            "view->payload_len > APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN",
+            reliable,
+        )
+        self.assertIn("&mesh_route_waiting_tx_scratch", reliable)
+        self.assertIn(
+            "k_mutex_lock(&mesh_route_wait_scratch_lock, K_NO_WAIT)",
+            reliable,
+        )
+        self.assertIn(
+            "k_mutex_unlock(&mesh_route_wait_scratch_lock)", reliable
+        )
+        self.assertNotIn("static struct mesh_outbound out", reliable)
+        lock_at = reliable.index(
+            "k_mutex_lock(&mesh_route_wait_scratch_lock, K_NO_WAIT)"
+        )
+        unlock_at = reliable.index(
+            "k_mutex_unlock(&mesh_route_wait_scratch_lock)"
+        )
+        ownership_at = reliable.index("memset(out, 0, sizeof(*out))")
+        self.assertLess(
+            reliable.index("mesh_start_tracked_tx_with_retry(", lock_at),
+            unlock_at,
+        )
+        self.assertNotIn("return ", reliable[ownership_at:unlock_at])
+
+        deferred_ack = _function_body(
+            self.report_source,
+            "mesh_try_deferred_gateway_ack_on_channel9",
+        )
+        self.assertIn(
+            "mesh_send_outbound_with_release_on_channel(", deferred_ack
+        )
+        self.assertIn("MESH_EVENT_CHANNEL", deferred_ack)
+        self.assertNotIn("*ack = *pending", deferred_ack)
+
+        route_wait = _function_body(
+            self.report_source, "mesh_try_route_waiting_tx"
+        )
+        route_lock_at = route_wait.index(
+            "k_mutex_lock(&mesh_route_wait_scratch_lock, K_NO_WAIT)"
+        )
+        copy_at = route_wait.index("*pending = mesh_route_waiting_tx")
+        deferred_ack_at = route_wait.index(
+            "mesh_try_deferred_gateway_ack_on_channel9("
+        )
+        route_unlock_at = route_wait.index(
+            "k_mutex_unlock(&mesh_route_wait_scratch_lock)"
+        )
+        self.assertLess(route_lock_at, copy_at)
+        self.assertLess(copy_at, deferred_ack_at)
+        self.assertLess(deferred_ack_at, route_unlock_at)
+
     def test_shared_capacity_names_nominal_and_recovery_storage(self) -> None:
         self.assertIn("MESH_CONNECTED_MAX_ANCHORS 50u", self.capacity_header)
-        self.assertIn("MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 4u",
+        self.assertIn("MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 9u",
                       self.capacity_header)
         self.assertIn("MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY 1u",
                       self.capacity_header)

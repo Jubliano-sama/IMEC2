@@ -93,6 +93,61 @@ static void make_collection_result_payload(uint8_t *payload,
                                       0u) == PROTO_OK);
 }
 
+static void make_crc16_colliding_collection_result_payloads(
+    uint8_t *first,
+    size_t first_cap,
+    size_t *first_len,
+    uint8_t *second,
+    size_t second_cap,
+    size_t *second_len,
+    const struct command_result_id *id,
+    uint32_t collection_epoch_id)
+{
+    *first_len = 0u;
+    *second_len = 0u;
+    assert(gateway_command_append_collection_result_identity(
+               first,
+               first_cap,
+               first_len,
+               id,
+               collection_epoch_id) == PROTO_OK);
+    assert(mesh_append_command_result(first,
+                                      first_cap,
+                                      first_len,
+                                      CMD_GET_STATUS,
+                                      COMMAND_OK,
+                                      0u) == PROTO_OK);
+    assert(tlv_append_u16(first,
+                          first_cap,
+                          first_len,
+                          TLV_FW_VERSION,
+                          UINT16_C(0x3037)) == PROTO_OK);
+
+    assert(gateway_command_append_collection_result_identity(
+               second,
+               second_cap,
+               second_len,
+               id,
+               collection_epoch_id) == PROTO_OK);
+    assert(mesh_append_command_result(second,
+                                      second_cap,
+                                      second_len,
+                                      CMD_GET_STATUS,
+                                      COMMAND_OK,
+                                      1u) == PROTO_OK);
+    assert(tlv_append_u16(second,
+                          second_cap,
+                          second_len,
+                          TLV_FW_VERSION,
+                          0u) == PROTO_OK);
+
+    assert(*first_len == 61u);
+    assert(*second_len == *first_len);
+    assert(memcmp(first, second, *first_len) != 0);
+    assert(proto_crc16_ccitt_false(first, *first_len) == UINT16_C(0xfadf));
+    assert(proto_crc16_ccitt_false(second, *second_len) == UINT16_C(0xfadf));
+}
+
 static struct proto_packet make_collection_result_packet(const struct command_result_id *id,
                                                         size_t payload_len)
 {
@@ -216,6 +271,80 @@ static void make_two_record_collection_bundle(
                                   records_len);
 }
 
+static void make_collection_bundle_from_ids(
+    const struct command_result_id *ids,
+    size_t id_count,
+    uint16_t bundle_id,
+    uint8_t *bundle_payload,
+    size_t bundle_payload_cap,
+    size_t *bundle_payload_len,
+    struct proto_packet *bundle_packet)
+{
+    struct result_bundle_header bundle = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .collection_epoch_id = 3003u,
+        .bundle_id = bundle_id,
+        .record_count = (uint8_t)id_count,
+    };
+    uint8_t result_payload[96];
+    uint8_t records[PACKET_EXT_MAX_PAYLOAD_LEN];
+    size_t records_len = 0u;
+
+    assert(ids != NULL);
+    assert(id_count > 0u);
+    assert(id_count <= COLLECTION_BUNDLE_MAX_RECORDS);
+    for (size_t i = 0u; i < id_count; i++) {
+        size_t result_payload_len = 0u;
+
+        make_collection_result_payload(result_payload,
+                                       sizeof(result_payload),
+                                       &result_payload_len,
+                                       &ids[i],
+                                       3003u);
+        append_collection_result_record(records,
+                                        sizeof(records),
+                                        &records_len,
+                                        &ids[i],
+                                        result_payload,
+                                        result_payload_len);
+    }
+
+    *bundle_packet = (struct proto_packet) {
+        .msg_type = MSG_RESULT_BUNDLE,
+        .src_id = 0x2222333344445555ull,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 1001u,
+        .seq = bundle_id,
+        .ttl = 1u,
+    };
+    wrap_collection_result_bundle(bundle_payload,
+                                  bundle_payload_cap,
+                                  bundle_payload_len,
+                                  &bundle,
+                                  bundle_packet,
+                                  records,
+                                  records_len);
+}
+
+static size_t first_result_record_offset(const uint8_t *payload,
+                                         size_t payload_len)
+{
+    size_t offset = 0u;
+
+    while (offset < payload_len) {
+        assert(payload_len - offset >= 2u);
+        assert(payload_len - offset - 2u >= payload[offset + 1u]);
+        if (payload[offset] == TLV_RESULT_RECORD) {
+            return offset;
+        }
+        offset += 2u + payload[offset + 1u];
+    }
+    assert(false);
+    return 0u;
+}
+
 static void start_test_rostered_collection(
     struct gateway_collection_state *collection,
     const uint64_t *roster,
@@ -270,7 +399,7 @@ static void test_prepare_outbound_normalizes_host_command(void)
     assert(out.packet.dst_id == ANCHOR_ID_TEST);
     assert(out.packet.session_id == 1234u);
     assert(out.packet.seq == 9u);
-    assert(out.packet.ttl == MESH_DEFAULT_TTL);
+    assert(out.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
     assert(out.packet.flags == FLAG_DIAGNOSTIC);
     assert(gateway_command_transport_mode_from_outbound(&out) ==
            GATEWAY_COMMAND_TRANSPORT_UNICAST_TRACKED);
@@ -278,7 +407,7 @@ static void test_prepare_outbound_normalizes_host_command(void)
     assert(memcmp(out.payload, payload, payload_len) == 0);
 }
 
-static void test_prepare_outbound_preserves_host_session_sequence_and_ttl(void)
+static void test_prepare_outbound_preserves_host_session_sequence_and_normalizes_ttl(void)
 {
     uint8_t payload[16];
     size_t payload_len = 0u;
@@ -307,8 +436,68 @@ static void test_prepare_outbound_preserves_host_session_sequence_and_ttl(void)
     assert(command_id == CMD_PING);
     assert(out.packet.session_id == 77u);
     assert(out.packet.seq == 22u);
-    assert(out.packet.ttl == 2u);
+    assert(out.packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
     assert(out.packet.flags == 0u);
+}
+
+static void test_prepare_outbound_uses_command_class_ttl_for_every_host_value(void)
+{
+    static const struct {
+        enum command_id command_id;
+        uint8_t expected_ttl;
+    } command_cases[] = {
+        {CMD_PING, FLOOD_EPOCH_GLOBAL_TTL},
+        {CMD_ASSIGN_DISCOVERY_SLOTS, FLOOD_EPOCH_GLOBAL_TTL},
+        {CMD_SURVEY_GO, FLOOD_EPOCH_GLOBAL_TTL},
+        {CMD_SURVEY_PREPARE_PAIR, MESH_DEFAULT_TTL},
+        {CMD_SURVEY_START_PAIR, MESH_DEFAULT_TTL},
+        {CMD_SURVEY_ABORT, MESH_DEFAULT_TTL},
+    };
+    static const uint8_t host_ttls[] = {
+        0u,
+        FLOOD_EPOCH_GLOBAL_TTL,
+        1u,
+        UINT8_MAX,
+    };
+
+    for (size_t command_index = 0u;
+         command_index < sizeof(command_cases) / sizeof(command_cases[0]);
+         command_index++) {
+        for (size_t ttl_index = 0u;
+             ttl_index < sizeof(host_ttls) / sizeof(host_ttls[0]);
+             ttl_index++) {
+            uint8_t payload[16];
+            size_t payload_len = 0u;
+            struct proto_packet host = {
+                .msg_type = MSG_COMMAND,
+                .dst_id = ANCHOR_ID_TEST,
+                .session_id = 77u,
+                .seq = 22u,
+                .ttl = host_ttls[ttl_index],
+            };
+            struct mesh_outbound out = {0};
+            enum command_id decoded_command_id = CMD_VENDOR_BASE;
+
+            make_command_payload(payload,
+                                 sizeof(payload),
+                                 &payload_len,
+                                 command_cases[command_index].command_id);
+            host.payload_len = (uint8_t)payload_len;
+            assert(gateway_command_prepare_outbound(
+                       &host,
+                       payload,
+                       payload_len,
+                       GATEWAY_ID_TEST,
+                       555u,
+                       10u,
+                       &out,
+                       &decoded_command_id) == PROTO_OK);
+            assert(decoded_command_id ==
+                   command_cases[command_index].command_id);
+            assert(out.packet.ttl ==
+                   command_cases[command_index].expected_ttl);
+        }
+    }
 }
 
 static void test_prepare_outbound_rejects_invalid_host_packets(void)
@@ -378,6 +567,66 @@ static void test_prepare_outbound_rejects_malformed_command_id(void)
                                             &command_id) == PROTO_ERR_MALFORMED);
 }
 
+static void test_duplicate_command_singletons_are_rejected(void)
+{
+    struct gateway_command_options options;
+    enum command_id command_id = CMD_VENDOR_BASE;
+    enum device_role role = ROLE_CLICKER;
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+    uint32_t duration_ms = 0u;
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_PING);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_ID,
+                          CMD_GET_STATUS) == PROTO_OK);
+    assert(gateway_command_extract_id(payload,
+                                      payload_len,
+                                      &command_id) ==
+           PROTO_ERR_MALFORMED);
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_PING);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_SINGLE_NODE) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) ==
+           PROTO_ERR_MALFORMED);
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_PING);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_SEQ, 10u) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_SEQ, 11u) == PROTO_OK);
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_DEVICE_ROLE, ROLE_ANCHOR) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_DEVICE_ROLE, ROLE_GATEWAY) == PROTO_OK);
+    assert(gateway_command_extract_role(payload, payload_len, &role) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_DURATION_MS, 100u) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_DURATION_MS, 200u) == PROTO_OK);
+    assert(gateway_command_extract_duration_ms(
+               payload, payload_len, 50u, &duration_ms) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_extract_options_defaults_to_single_node_small_result(void)
 {
     uint8_t payload[16];
@@ -394,6 +643,110 @@ static void test_extract_options_defaults_to_single_node_small_result(void)
     assert(options.command_expiry_s == COMMAND_RESULT_EXPIRY_DEFAULT_S);
     assert(!options.flood_required);
     assert(!options.collection_required);
+}
+
+static void test_extract_options_rejects_unsupported_group_scope(void)
+{
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+    struct gateway_command_options options = {0};
+
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_GET_STATUS);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_GROUP) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          1001u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          2002u) == PROTO_OK);
+
+    /*
+     * No group identity or membership proof exists on the wire. Accepting
+     * this scope would therefore turn a nominally targeted command into an
+     * all-anchor broadcast.
+     */
+    assert(gateway_command_extract_options(payload,
+                                           payload_len,
+                                           &options) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_command_scope_applies_to_explicit_and_derived_membership(void)
+{
+    const uint32_t assignment_epoch = UINT32_C(0x12345678);
+    const uint16_t membership_epoch =
+        discovery_assignment_membership_epoch(assignment_epoch);
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_REGISTERED,
+        .membership_epoch = membership_epoch,
+        .expected_node_count = 2u,
+    };
+
+    options.expected_node_id_count = 2u;
+    options.expected_node_ids[0] = UINT64_C(0x2222333344445555);
+    options.expected_node_ids[1] = UINT64_C(0x6666777788889999);
+    assert(!gateway_command_applies_to_node(&options,
+                                            ANCHOR_ID_TEST,
+                                            true,
+                                            assignment_epoch));
+
+    /*
+     * The gateway has already bound an explicit roster to durable current
+     * membership. Local ID inclusion is therefore sufficient even while the
+     * anchor is restoring its assignment epoch.
+     */
+    options.expected_node_ids[1] = ANCHOR_ID_TEST;
+    assert(gateway_command_applies_to_node(&options,
+                                           ANCHOR_ID_TEST,
+                                           false,
+                                           0u));
+    assert(gateway_command_applies_to_node(&options,
+                                           ANCHOR_ID_TEST,
+                                           true,
+                                           assignment_epoch + 1u));
+    assert(gateway_command_applies_to_node(&options,
+                                           ANCHOR_ID_TEST,
+                                           true,
+                                           assignment_epoch));
+
+    options.expected_node_id_count = 0u;
+    assert(!gateway_command_applies_to_node(&options,
+                                            ANCHOR_ID_TEST,
+                                            false,
+                                            assignment_epoch));
+    assert(!gateway_command_applies_to_node(&options,
+                                            ANCHOR_ID_TEST,
+                                            true,
+                                            assignment_epoch + 1u));
+    assert(gateway_command_applies_to_node(&options,
+                                           ANCHOR_ID_TEST,
+                                           true,
+                                           assignment_epoch));
+
+    options.scope = CMD_SCOPE_GROUP;
+    assert(!gateway_command_applies_to_node(&options,
+                                            ANCHOR_ID_TEST,
+                                            true,
+                                            assignment_epoch));
+
+    options.scope = CMD_SCOPE_ALL_HEARD;
+    assert(gateway_command_applies_to_node(&options,
+                                           ANCHOR_ID_TEST,
+                                           false,
+                                           0u));
 }
 
 static void test_prepare_outbound_accepts_all_registered_command_flood_with_roster(void)
@@ -986,7 +1339,7 @@ static void test_command_receive_rejects_expired_or_unexecutable_delay(void)
     assert(gateway_command_expiry_remaining_ms(&packet, &options) == 1u);
 }
 
-static void test_command_rx_duplicate_cache_blocks_replay_until_expiry(void)
+static void test_command_rx_duplicate_history_blocks_replay_after_delivery_expiry(void)
 {
     struct gateway_command_rx_duplicate_cache cache = {0};
     struct gateway_command_options options = {
@@ -1008,7 +1361,136 @@ static void test_command_rx_duplicate_cache_blocks_replay_until_expiry(void)
     gateway_command_rx_duplicate_store(&cache, &packet, &options, 1000u);
     assert(gateway_command_rx_duplicate_seen(&cache, options.command_seq, 1000u));
     assert(gateway_command_rx_duplicate_seen(&cache, options.command_seq, 2899u));
-    assert(!gateway_command_rx_duplicate_seen(&cache, options.command_seq, 2900u));
+    /*
+     * Delivery expiry bounds fresh admission, but it cannot make a committed
+     * side-effect identity executable again.
+     */
+    assert(gateway_command_rx_duplicate_seen(&cache, options.command_seq, 2900u));
+    assert(gateway_command_rx_duplicate_seen(&cache, options.command_seq, 90000u));
+}
+
+static void test_command_rx_high_watermark_retains_more_than_legacy_capacity(void)
+{
+    struct gateway_command_rx_duplicate_cache cache = {0};
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_HEARD,
+        .response_mode = CMD_RESPONSE_NONE,
+        .flood_epoch_id = 88u,
+        .command_expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S,
+        .flood_required = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = MESH_BROADCAST_ID,
+    };
+    const uint32_t first_command_seq = 1001u;
+    const size_t command_count = 6u;
+
+    /*
+     * The legacy four-entry replacement cache made a still-unexpired command
+     * executable again after four later commands. Exercise beyond that old
+     * capacity and beyond the intermediate 64-bit bitset while every command
+     * remains inside the default one-day lifetime.
+     */
+    for (size_t i = 0u; i < command_count; i++) {
+        options.command_seq = first_command_seq + (uint32_t)i;
+        packet.session_id = options.command_seq;
+        packet.seq = (uint16_t)(i + 1u);
+        assert(!gateway_command_rx_duplicate_seen(&cache,
+                                                  options.command_seq,
+                                                  1000u + (uint32_t)i));
+        gateway_command_rx_duplicate_store(&cache,
+                                           &packet,
+                                           &options,
+                                           1000u + (uint32_t)i);
+    }
+
+    assert(gateway_command_rx_duplicate_seen(&cache,
+                                             first_command_seq,
+                                             2000u));
+
+    for (size_t i = command_count; i < 66u; i++) {
+        options.command_seq = first_command_seq + (uint32_t)i;
+        packet.session_id = options.command_seq;
+        packet.seq = (uint16_t)(i + 1u);
+        assert(!gateway_command_rx_duplicate_seen(&cache,
+                                                  options.command_seq,
+                                                  2000u + (uint32_t)i));
+        gateway_command_rx_duplicate_store(&cache,
+                                           &packet,
+                                           &options,
+                                           2000u + (uint32_t)i);
+    }
+    assert(gateway_command_rx_duplicate_seen(&cache,
+                                             first_command_seq,
+                                             3000u));
+}
+
+static void test_command_rx_high_watermark_rejects_uncommitted_older_gap(void)
+{
+    struct gateway_command_rx_duplicate_cache cache = {0};
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_HEARD,
+        .response_mode = CMD_RESPONSE_NONE,
+        .command_seq = 42u,
+        .flood_epoch_id = 42u,
+        .command_expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S,
+        .flood_required = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 42u,
+        .seq = 42u,
+    };
+
+    /* Sequence 41 was deferred and never committed before 42 executed. */
+    assert(!gateway_command_rx_duplicate_seen(&cache, 41u, 1000u));
+    gateway_command_rx_duplicate_store(&cache, &packet, &options, 1001u);
+    assert(gateway_command_rx_duplicate_seen(&cache, 42u, 1002u));
+    assert(gateway_command_rx_duplicate_seen(&cache, 41u, 1002u));
+    assert(gateway_command_rx_duplicate_seen(&cache, 1u, 1002u));
+    assert(!gateway_command_rx_duplicate_seen(&cache, 43u, 1002u));
+
+    /* RFC 1982 half-range ambiguity is neither newer nor replayable. */
+    assert(gateway_command_rx_duplicate_seen(
+        &cache, 42u + UINT32_C(0x80000000), 1002u));
+}
+
+static void test_command_rx_high_watermark_accepts_wrap_newer_only(void)
+{
+    struct gateway_command_rx_duplicate_cache cache = {0};
+    struct gateway_command_options options = {
+        .scope = CMD_SCOPE_ALL_HEARD,
+        .response_mode = CMD_RESPONSE_NONE,
+        .command_seq = UINT32_MAX,
+        .flood_epoch_id = UINT32_MAX,
+        .command_expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S,
+        .flood_required = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = UINT32_MAX,
+        .seq = UINT16_MAX,
+    };
+
+    gateway_command_rx_duplicate_store(&cache, &packet, &options, 1000u);
+    assert(!gateway_command_rx_duplicate_seen(&cache, 1u, 1001u));
+
+    options.command_seq = 1u;
+    options.flood_epoch_id = 1u;
+    packet.session_id = 1u;
+    packet.seq = 1u;
+    gateway_command_rx_duplicate_store(&cache, &packet, &options, 1001u);
+    assert(gateway_command_rx_duplicate_seen(&cache, UINT32_MAX, 1002u));
+    assert(gateway_command_rx_duplicate_seen(&cache, 1u, 1002u));
+    assert(!gateway_command_rx_duplicate_seen(&cache, 2u, 1002u));
+    assert(gateway_command_rx_duplicate_seen(
+        &cache, 1u + UINT32_C(0x80000000), 1002u));
 }
 
 static void test_collection_initial_due_is_deterministic_and_bounded(void)
@@ -1279,8 +1761,16 @@ static void test_collection_records_unique_results_and_builds_eack(void)
     assert(collection.eack_pending);
     assert(gateway_collection_contains_result(&collection, &id_a));
     assert_collection_result_id_equal(&collection, &collection.results[0].id, &id_a);
-    assert(collection.results[0].payload_crc ==
-           proto_crc16_ccitt_false(payload_a, payload_a_len));
+    {
+        uint8_t expected_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+        assert(semantic_digest_sha256(payload_a,
+                                      payload_a_len,
+                                      expected_digest));
+        assert(semantic_digest_equal(collection.results[0].payload_digest,
+                                     expected_digest,
+                                     sizeof(expected_digest)));
+    }
     assert(collection.results[0].payload_len == payload_a_len);
 
     duplicate = false;
@@ -1327,6 +1817,163 @@ static void test_collection_records_unique_results_and_builds_eack(void)
                                             &duplicate) == PROTO_OK);
     assert(duplicate);
     assert(collection.received_count == 2u);
+}
+
+static void test_collection_rejects_crc16_collision_before_and_after_restore(void)
+{
+    const struct command_result_id id = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    struct gateway_collection_state_snapshot snapshot;
+    struct proto_packet result;
+    uint8_t first[96];
+    uint8_t second[96];
+    size_t first_len;
+    size_t second_len;
+    bool duplicate = false;
+
+    make_crc16_colliding_collection_result_payloads(
+        first,
+        sizeof(first),
+        &first_len,
+        second,
+        sizeof(second),
+        &second_len,
+        &id,
+        3003u);
+    result = make_collection_result_packet(&id, first_len);
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    2u,
+                                    1u,
+                                    COLLECTION_RETRY_ROUND_1_MS) == PROTO_OK);
+    assert(gateway_collection_record_result(&collection,
+                                            &result,
+                                            first,
+                                            first_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
+
+    duplicate = false;
+    assert(gateway_collection_record_result(&collection,
+                                            &result,
+                                            second,
+                                            second_len,
+                                            &duplicate) ==
+           PROTO_ERR_MALFORMED);
+    assert(!duplicate);
+    assert(collection.received_count == 1u);
+
+    assert(gateway_collection_export_snapshot(&collection, &snapshot) ==
+           PROTO_OK);
+    assert(gateway_collection_restore_snapshot(&restored, &snapshot) ==
+           PROTO_OK);
+    duplicate = false;
+    assert(gateway_collection_record_result(&restored,
+                                            &result,
+                                            second,
+                                            second_len,
+                                            &duplicate) ==
+           PROTO_ERR_MALFORMED);
+    assert(!duplicate);
+    assert(restored.received_count == 1u);
+}
+
+static void test_collection_bundle_rejects_staged_crc16_collision(void)
+{
+    const struct command_result_id id = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct gateway_collection_state collection;
+    struct result_bundle_header bundle = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .collection_epoch_id = 3003u,
+        .bundle_id = 41u,
+        .record_count = 2u,
+    };
+    struct proto_packet bundle_packet = {
+        .msg_type = MSG_RESULT_BUNDLE,
+        .src_id = 0x2222333344445555ull,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 1001u,
+        .seq = 41u,
+        .ttl = 1u,
+    };
+    uint8_t first[96];
+    uint8_t second[96];
+    uint8_t records[256];
+    uint8_t bundle_payload[384];
+    size_t first_len;
+    size_t second_len;
+    size_t records_len = 0u;
+    size_t bundle_payload_len = 0u;
+    uint16_t accepted = UINT16_MAX;
+    uint16_t duplicates = UINT16_MAX;
+
+    make_crc16_colliding_collection_result_payloads(
+        first,
+        sizeof(first),
+        &first_len,
+        second,
+        sizeof(second),
+        &second_len,
+        &id,
+        3003u);
+    append_collection_result_record(records,
+                                    sizeof(records),
+                                    &records_len,
+                                    &id,
+                                    first,
+                                    first_len);
+    append_collection_result_record(records,
+                                    sizeof(records),
+                                    &records_len,
+                                    &id,
+                                    second,
+                                    second_len);
+    wrap_collection_result_bundle(bundle_payload,
+                                  sizeof(bundle_payload),
+                                  &bundle_payload_len,
+                                  &bundle,
+                                  &bundle_packet,
+                                  records,
+                                  records_len);
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    2u,
+                                    1u,
+                                    COLLECTION_RETRY_ROUND_1_MS) == PROTO_OK);
+    assert(gateway_collection_record_bundle(&collection,
+                                            &bundle_packet,
+                                            bundle_payload,
+                                            bundle_payload_len,
+                                            &accepted,
+                                            &duplicates) ==
+           PROTO_ERR_MALFORMED);
+    assert(collection.received_count == 0u);
+    assert(collection.collection_open);
 }
 
 static void test_collection_prepares_eack_broadcast_outbound(void)
@@ -1532,10 +2179,15 @@ static void test_collection_prepares_missing_list_from_roster(void)
     assert(listed);
 }
 
-static void test_collection_roster_resolution_prefers_explicit_roster(void)
+static void test_collection_roster_resolution_binds_explicit_roster_to_membership(void)
 {
     const uint64_t provider_ids[] = {
+        0x5555666677778888ull,
+        ANCHOR_ID_TEST,
+    };
+    const uint64_t mismatched_provider_ids[] = {
         0x9999000000000001ull,
+        ANCHOR_ID_TEST,
     };
     struct gateway_membership_roster membership;
     struct gateway_command_options options = {
@@ -1557,9 +2209,9 @@ static void test_collection_roster_resolution_prefers_explicit_roster(void)
 
     gateway_membership_clear(&membership);
     assert(gateway_membership_set_roster_preserve_order(&membership,
-                                                        99u,
+                                                        7u,
                                                         provider_ids,
-                                                        1u) == PROTO_OK);
+                                                        2u) == PROTO_OK);
 
     assert(gateway_command_resolve_collection_roster(&options,
                                                      &membership,
@@ -1571,6 +2223,23 @@ static void test_collection_roster_resolution_prefers_explicit_roster(void)
     assert(resolved_count == 2u);
     assert(resolved[0] == ANCHOR_ID_TEST);
     assert(resolved[1] == 0x5555666677778888ull);
+
+    /*
+     * An explicit collection roster is an ordering/filter over the frozen
+     * membership snapshot. It must never introduce an unregistered node.
+     */
+    assert(gateway_membership_set_roster_preserve_order(
+               &membership,
+               7u,
+               mismatched_provider_ids,
+               2u) == PROTO_OK);
+    assert(gateway_command_resolve_collection_roster(
+               &options,
+               &membership,
+               resolved,
+               sizeof(resolved) / sizeof(resolved[0]),
+               &resolved_count,
+               &source) == PROTO_ERR_STALE);
 }
 
 static void test_collection_roster_resolution_rejects_provider_mismatch(void)
@@ -3447,6 +4116,10 @@ static void test_pending_command_completes_on_matching_result(void)
         .session_id = 123u,
         .seq = 44u,
     };
+    struct proto_packet terminal_command = {
+        .session_id = UINT32_MAX,
+    };
+    enum command_id terminal_command_id = CMD_VENDOR_BASE;
 
     assert(gateway_command_pending_start(&pending,
                                          &command,
@@ -3456,12 +4129,36 @@ static void test_pending_command_completes_on_matching_result(void)
     assert(pending.active);
     assert(pending.deadline_ms == 1000u + GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
     assert(!gateway_command_pending_matches_result(&pending, &wrong_result));
-    assert(!gateway_command_pending_complete_result(&pending, &wrong_result));
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &wrong_result,
+               1001u,
+               &terminal_command,
+               &terminal_command_id) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE);
+    assert(terminal_command.session_id == UINT32_MAX);
+    assert(terminal_command_id == CMD_VENDOR_BASE);
     assert(pending.active);
 
     assert(gateway_command_pending_matches_result(&pending, &result));
-    assert(gateway_command_pending_complete_result(&pending, &result));
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               1001u,
+               &terminal_command,
+               &terminal_command_id) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED);
     assert(!pending.active);
+    assert(terminal_command.session_id == command.session_id);
+    assert(terminal_command.seq == command.seq);
+    assert(terminal_command_id == CMD_GET_STATUS);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               1002u,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE);
 }
 
 static void test_pending_command_expires_with_original_context(void)
@@ -3566,7 +4263,13 @@ static void test_pending_survey_prepare_completes_on_command_result(void)
                                          1000u,
                                          GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
     assert(gateway_command_pending_matches_result(&pending, &result));
-    assert(gateway_command_pending_complete_result(&pending, &result));
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               1001u,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED);
     assert(!pending.active);
 }
 
@@ -3629,7 +4332,13 @@ static void test_pair_result_admission_distinguishes_manual_and_automatic(void)
                                             true) ==
                GATEWAY_COMMAND_RESULT_ACCEPT);
 
-        assert(gateway_command_pending_complete_result(&pending, &result));
+        assert(gateway_command_pending_claim_result(
+                   &pending,
+                   &result,
+                   1001u,
+                   NULL,
+                   NULL) ==
+               GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED);
         assert(!pending.active);
         assert(gateway_command_pending_start(&pending,
                                              &command,
@@ -3664,13 +4373,710 @@ static void test_pending_command_rejects_second_start(void)
                                          GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_ERR_MALFORMED);
 }
 
+static void assert_pending_result_claim_boundaries(uint32_t start_ms,
+                                                   uint32_t timeout_ms)
+{
+    const struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 127u,
+        .seq = 47u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    const struct proto_packet result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = ANCHOR_ID_TEST,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 127u,
+        .seq = 47u,
+    };
+    const uint32_t deadline_ms = start_ms + timeout_ms;
+    const struct {
+        uint32_t now_ms;
+        enum gateway_command_pending_result_claim expected;
+    } cases[] = {
+        {
+            .now_ms = deadline_ms - 1u,
+            .expected =
+                GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED,
+        },
+        {
+            .now_ms = deadline_ms,
+            .expected =
+                GATEWAY_COMMAND_PENDING_RESULT_CLAIM_EXPIRED,
+        },
+        {
+            .now_ms = deadline_ms + 1u,
+            .expected =
+                GATEWAY_COMMAND_PENDING_RESULT_CLAIM_EXPIRED,
+        },
+    };
+
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        struct gateway_command_pending pending = {0};
+        struct proto_packet terminal_command = {0};
+        enum command_id terminal_command_id = CMD_VENDOR_BASE;
+
+        assert(gateway_command_pending_start(
+                   &pending,
+                   &command,
+                   CMD_PING,
+                   start_ms,
+                   timeout_ms) == PROTO_OK);
+        assert(gateway_command_pending_claim_result(
+                   &pending,
+                   &result,
+                   cases[i].now_ms,
+                   &terminal_command,
+                   &terminal_command_id) == cases[i].expected);
+        assert(!pending.active);
+        assert(terminal_command.session_id == command.session_id);
+        assert(terminal_command.seq == command.seq);
+        assert(terminal_command_id == CMD_PING);
+        assert(!gateway_command_pending_expired(
+            &pending,
+            deadline_ms + 1u,
+            NULL,
+            NULL));
+        assert(gateway_command_pending_claim_result(
+                   &pending,
+                   &result,
+                   cases[i].now_ms,
+                   NULL,
+                   NULL) ==
+               GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE);
+    }
+}
+
+static void test_pending_command_deadline_has_one_terminal_winner(void)
+{
+    const struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 128u,
+        .seq = 48u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    const struct proto_packet result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = ANCHOR_ID_TEST,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 128u,
+        .seq = 48u,
+    };
+    struct proto_packet wrong_result = result;
+    struct proto_packet terminal_command = {0};
+    enum command_id terminal_command_id = CMD_VENDOR_BASE;
+    struct gateway_command_pending pending = {0};
+    const uint32_t start_ms = 1000u;
+    const uint32_t deadline_ms =
+        start_ms + GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
+    const uint32_t wrap_start_ms = UINT32_MAX - 10u;
+    const uint32_t wrap_timeout_ms = 11u;
+
+    assert_pending_result_claim_boundaries(
+        start_ms, GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
+    assert(wrap_start_ms + wrap_timeout_ms < wrap_start_ms);
+    assert_pending_result_claim_boundaries(wrap_start_ms, wrap_timeout_ms);
+
+    assert(gateway_command_pending_start(
+               &pending,
+               &command,
+               CMD_PING,
+               start_ms,
+               GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
+    assert(gateway_command_pending_expired(
+        &pending,
+        deadline_ms,
+        &terminal_command,
+        &terminal_command_id));
+    assert(terminal_command.session_id == command.session_id);
+    assert(terminal_command_id == CMD_PING);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               deadline_ms,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE);
+
+    memset(&pending, 0, sizeof(pending));
+    wrong_result.src_id++;
+    assert(gateway_command_pending_start(
+               &pending,
+               &command,
+               CMD_PING,
+               start_ms,
+               GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &wrong_result,
+               deadline_ms,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE);
+    assert(pending.active);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               deadline_ms,
+               &terminal_command,
+               &terminal_command_id) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_EXPIRED);
+}
+
+static void test_pending_command_absolute_deadline_is_shared(void)
+{
+    const struct proto_packet command = {
+        .msg_type = MSG_SURVEY_PAIR_PREPARE,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 129u,
+        .seq = 49u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    const struct proto_packet result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = ANCHOR_ID_TEST,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 129u,
+        .seq = 49u,
+    };
+    const uint32_t deadline_ms = 1100u;
+    struct gateway_command_pending pending = {0};
+
+    assert(gateway_command_pending_start_until(
+               &pending,
+               &command,
+               CMD_SURVEY_PREPARE_PAIR,
+               1007u,
+               deadline_ms) == PROTO_OK);
+    assert(pending.deadline_ms == deadline_ms);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               deadline_ms - 1u,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED);
+
+    assert(gateway_command_pending_start_until(
+               &pending,
+               &command,
+               CMD_SURVEY_PREPARE_PAIR,
+               1099u,
+               deadline_ms) == PROTO_OK);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               deadline_ms,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_EXPIRED);
+    assert(gateway_command_pending_start_until(
+               &pending,
+               &command,
+               CMD_SURVEY_PREPARE_PAIR,
+               deadline_ms,
+               deadline_ms) == PROTO_ERR_ARG);
+}
+
+static void test_result_validation_lease_serializes_deadline(void)
+{
+    const struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID_TEST,
+        .dst_id = ANCHOR_ID_TEST,
+        .session_id = 130u,
+        .seq = 50u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    const struct proto_packet result = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = ANCHOR_ID_TEST,
+        .dst_id = GATEWAY_ID_TEST,
+        .session_id = 130u,
+        .seq = 50u,
+    };
+    struct gateway_command_result_validation_leases leases = {0};
+    struct gateway_command_pending pending = {0};
+    uint32_t first_token = 0u;
+    uint32_t second_token = 0u;
+    const uint32_t deadline_ms = 2000u;
+
+    assert(gateway_command_pending_start_until(
+               &pending,
+               &command,
+               CMD_PING,
+               1900u,
+               deadline_ms) == PROTO_OK);
+    assert(gateway_command_result_validation_acquire(
+               &leases,
+               &pending,
+               &result,
+               1899u,
+               &first_token) == PROTO_ERR_NOT_FOUND);
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               1899u,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE);
+    assert(gateway_command_result_validation_acquire(
+               &leases,
+               &pending,
+               &result,
+               (uint64_t)deadline_ms - 1u,
+               &first_token) == PROTO_OK);
+    assert(first_token != 0u);
+    assert(gateway_command_result_validation_contains(
+        &leases,
+        &pending,
+        first_token,
+        &result,
+        (uint64_t)deadline_ms - 1u));
+    assert(gateway_command_result_validation_blocks_timeout(
+        &leases, &pending));
+    assert(gateway_command_result_validation_acquire(
+               &leases,
+               &pending,
+               &result,
+               (uint64_t)deadline_ms - 1u,
+               &second_token) == PROTO_OK);
+    assert(second_token != 0u && second_token != first_token);
+    assert(gateway_command_result_validation_release(
+        &leases, first_token));
+    assert(gateway_command_result_validation_blocks_timeout(
+        &leases, &pending));
+    assert(gateway_command_pending_claim_result(
+               &pending,
+               &result,
+               deadline_ms - 1u,
+               NULL,
+               NULL) ==
+           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED);
+    gateway_command_result_validation_clear(&leases);
+
+    assert(gateway_command_pending_start_until(
+               &pending,
+               &command,
+               CMD_PING,
+               1900u,
+               deadline_ms) == PROTO_OK);
+    assert(gateway_command_result_validation_acquire(
+               &leases,
+               &pending,
+               &result,
+               deadline_ms,
+               &first_token) == PROTO_ERR_NOT_FOUND);
+    assert(!gateway_command_result_validation_blocks_timeout(
+        &leases, &pending));
+    assert(gateway_command_pending_expired(
+        &pending, deadline_ms, NULL, NULL));
+
+    assert(gateway_command_pending_start_until(
+               &pending,
+               &command,
+               CMD_PING,
+               1900u,
+               deadline_ms) == PROTO_OK);
+    assert(gateway_command_result_validation_acquire(
+               &leases,
+               &pending,
+               &result,
+               (uint64_t)deadline_ms - 1u,
+               &first_token) == PROTO_OK);
+    assert(gateway_command_result_validation_release(
+        &leases, first_token));
+    assert(!gateway_command_result_validation_blocks_timeout(
+        &leases, &pending));
+    assert(gateway_command_pending_expired(
+        &pending, deadline_ms, NULL, NULL));
+}
+
+static void test_collection_preflight_is_exact_and_read_only(void)
+{
+    struct command_result_id id_a = {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    struct command_result_id id_b = id_a;
+    struct command_result_id id_c = id_a;
+    struct gateway_collection_state collection;
+    struct gateway_collection_state before;
+    struct proto_packet result;
+    struct proto_packet bundle_packet;
+    uint8_t result_payload[96];
+    uint8_t bundle_payload[256];
+    size_t result_payload_len = 0u;
+    size_t bundle_payload_len = 0u;
+    uint16_t accepted_count = 0u;
+    uint16_t duplicate_count = 0u;
+    bool duplicate = true;
+
+    id_b.node_id = 0x2222333344445555ull;
+    id_b.node_boot_counter++;
+    id_b.result_seq++;
+    id_c.node_id = 0x3333444455556666ull;
+    id_c.node_boot_counter += 2u;
+    id_c.result_seq += 2u;
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    3u,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+
+    make_collection_result_payload(result_payload,
+                                   sizeof(result_payload),
+                                   &result_payload_len,
+                                   &id_a,
+                                   3003u);
+    result = make_collection_result_packet(&id_a, result_payload_len);
+    before = collection;
+    assert(gateway_collection_preflight_result_from_hop(
+               &collection,
+               &result,
+               result_payload,
+               result_payload_len,
+               0x777788889999aaaau,
+               &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    assert(memcmp(&collection, &before, sizeof(collection)) == 0);
+    assert(gateway_collection_record_result_from_hop(
+               &collection,
+               &result,
+               result_payload,
+               result_payload_len,
+               0x777788889999aaaau,
+               &duplicate) == PROTO_OK);
+
+    before = collection;
+    duplicate = false;
+    assert(gateway_collection_preflight_result_from_hop(
+               &collection,
+               &result,
+               result_payload,
+               result_payload_len,
+               0x777788889999aaaau,
+               &duplicate) == PROTO_OK);
+    assert(duplicate);
+    assert(memcmp(&collection, &before, sizeof(collection)) == 0);
+
+    make_two_record_collection_bundle(&id_b,
+                                      &id_b,
+                                      &id_c,
+                                      &id_c,
+                                      88u,
+                                      bundle_payload,
+                                      sizeof(bundle_payload),
+                                      &bundle_payload_len,
+                                      &bundle_packet);
+    before = collection;
+    assert(gateway_collection_preflight_bundle_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               0x88889999aaaabbbbu,
+               &accepted_count,
+               &duplicate_count) == PROTO_OK);
+    assert(accepted_count == 2u);
+    assert(duplicate_count == 0u);
+    assert(memcmp(&collection, &before, sizeof(collection)) == 0);
+    assert(gateway_collection_record_bundle_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               0x88889999aaaabbbbu,
+               &accepted_count,
+               &duplicate_count) == PROTO_OK);
+
+    before = collection;
+    accepted_count = UINT16_MAX;
+    duplicate_count = 0u;
+    assert(gateway_collection_preflight_bundle_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               0x88889999aaaabbbbu,
+               &accepted_count,
+               &duplicate_count) == PROTO_OK);
+    assert(accepted_count == 0u);
+    assert(duplicate_count == 2u);
+    assert(memcmp(&collection, &before, sizeof(collection)) == 0);
+}
+
+static void test_collection_bundle_host_projection_is_canonical(void)
+{
+    struct command_result_id ids[COLLECTION_BUNDLE_MAX_RECORDS];
+    struct command_result_id reversed[2];
+    struct gateway_collection_state collection;
+    struct gateway_collection_state before;
+    struct gateway_collection_bundle_projection projection;
+    struct proto_packet direct_packet;
+    struct proto_packet bundle_packet;
+    struct result_bundle_header projected_header;
+    struct result_bundle_record projected_record;
+    uint8_t direct_payload[96];
+    uint8_t bundle_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    uint8_t projected_payload[PACKET_EXT_MAX_PAYLOAD_LEN];
+    size_t direct_payload_len = 0u;
+    size_t bundle_payload_len = 0u;
+    size_t projected_payload_len = 0u;
+    size_t cursor;
+    bool duplicate = false;
+
+    ids[0] = (struct command_result_id) {
+        .gateway_id = GATEWAY_ID_TEST,
+        .gateway_epoch = 9u,
+        .command_seq = 1001u,
+        .node_id = ANCHOR_ID_TEST,
+        .node_boot_counter = 77u,
+        .result_seq = 1u,
+    };
+    for (size_t i = 1u; i < COLLECTION_BUNDLE_MAX_RECORDS; i++) {
+        ids[i] = ids[0];
+        ids[i].node_id += i;
+        ids[i].node_boot_counter += (uint32_t)i;
+        ids[i].result_seq += (uint16_t)i;
+    }
+
+    assert(gateway_collection_start(&collection,
+                                    GATEWAY_ID_TEST,
+                                    9u,
+                                    1001u,
+                                    3003u,
+                                    4u,
+                                    COLLECTION_BUNDLE_MAX_RECORDS,
+                                    0u,
+                                    COLLECTION_RETRY_ROUND_0_MS) == PROTO_OK);
+    make_collection_result_payload(direct_payload,
+                                   sizeof(direct_payload),
+                                   &direct_payload_len,
+                                   &ids[0],
+                                   3003u);
+    direct_packet = make_collection_result_packet(&ids[0],
+                                                  direct_payload_len);
+    assert(gateway_collection_record_result(&collection,
+                                            &direct_packet,
+                                            direct_payload,
+                                            direct_payload_len,
+                                            &duplicate) == PROTO_OK);
+    assert(!duplicate);
+
+    make_collection_bundle_from_ids(ids,
+                                    2u,
+                                    90u,
+                                    bundle_payload,
+                                    sizeof(bundle_payload),
+                                    &bundle_payload_len,
+                                    &bundle_packet);
+    before = collection;
+    memset(&projection, 0xa5, sizeof(projection));
+    assert(gateway_collection_preflight_bundle_projection_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               bundle_packet.src_id,
+               &projection) == PROTO_OK);
+    assert(projection.accepted_record_mask == 0x02u);
+    assert(projection.accepted_count == 1u);
+    assert(projection.duplicate_count == 1u);
+    assert(memcmp(&collection, &before, sizeof(collection)) == 0);
+    assert(gateway_collection_project_bundle_payload(
+               bundle_payload,
+               bundle_payload_len,
+               projection.accepted_record_mask,
+               projected_payload,
+               sizeof(projected_payload),
+               &projected_payload_len) == PROTO_OK);
+    assert(projected_payload_len < bundle_payload_len);
+    assert(result_bundle_header_from_tlvs(projected_payload,
+                                          projected_payload_len,
+                                          &projected_header) == PROTO_OK);
+    assert(projected_header.record_count == 1u);
+    cursor = first_result_record_offset(projected_payload,
+                                        projected_payload_len);
+    assert(projected_header.bundle_crc ==
+           proto_crc16_ccitt_false(&projected_payload[cursor],
+                                   projected_payload_len - cursor));
+    assert(result_bundle_record_next_from_tlvs(projected_payload,
+                                               projected_payload_len,
+                                               &cursor,
+                                               &projected_record) == PROTO_OK);
+    assert_command_result_id_equal(&projected_record.result_id, &ids[1]);
+    assert(cursor == projected_payload_len);
+
+    reversed[0] = ids[1];
+    reversed[1] = ids[0];
+    make_collection_bundle_from_ids(reversed,
+                                    2u,
+                                    91u,
+                                    bundle_payload,
+                                    sizeof(bundle_payload),
+                                    &bundle_payload_len,
+                                    &bundle_packet);
+    assert(gateway_collection_preflight_bundle_projection_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               bundle_packet.src_id,
+               &projection) == PROTO_OK);
+    assert(projection.accepted_record_mask == 0x01u);
+    assert(projection.accepted_count == 1u);
+    assert(projection.duplicate_count == 1u);
+
+    reversed[0] = ids[0];
+    reversed[1] = ids[0];
+    make_collection_bundle_from_ids(reversed,
+                                    2u,
+                                    92u,
+                                    bundle_payload,
+                                    sizeof(bundle_payload),
+                                    &bundle_payload_len,
+                                    &bundle_packet);
+    assert(gateway_collection_preflight_bundle_projection_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               bundle_packet.src_id,
+               &projection) == PROTO_OK);
+    assert(projection.accepted_record_mask == 0u);
+    assert(projection.accepted_count == 0u);
+    assert(projection.duplicate_count == 2u);
+    assert(gateway_collection_project_bundle_payload(
+               bundle_payload,
+               bundle_payload_len,
+               0u,
+               projected_payload,
+               sizeof(projected_payload),
+               &projected_payload_len) == PROTO_ERR_MALFORMED);
+
+    {
+        struct command_result_id conflict_payload_id = ids[0];
+
+        conflict_payload_id.result_seq++;
+        make_two_record_collection_bundle(&ids[0],
+                                          &ids[0],
+                                          &ids[1],
+                                          &conflict_payload_id,
+                                          93u,
+                                          bundle_payload,
+                                          sizeof(bundle_payload),
+                                          &bundle_payload_len,
+                                          &bundle_packet);
+        memset(&projection, 0xa5, sizeof(projection));
+        assert(gateway_collection_preflight_bundle_projection_from_hop(
+                   &collection,
+                   &bundle_packet,
+                   bundle_payload,
+                   bundle_payload_len,
+                   bundle_packet.src_id,
+                   &projection) == PROTO_ERR_MALFORMED);
+        assert(projection.accepted_record_mask == 0u);
+        assert(projection.accepted_count == 0u);
+        assert(projection.duplicate_count == 0u);
+        assert(memcmp(&collection, &before, sizeof(collection)) == 0);
+    }
+
+    for (size_t i = 2u; i < COLLECTION_BUNDLE_MAX_RECORDS; i += 2u) {
+        make_collection_result_payload(direct_payload,
+                                       sizeof(direct_payload),
+                                       &direct_payload_len,
+                                       &ids[i],
+                                       3003u);
+        direct_packet = make_collection_result_packet(&ids[i],
+                                                      direct_payload_len);
+        assert(gateway_collection_record_result(&collection,
+                                                &direct_packet,
+                                                direct_payload,
+                                                direct_payload_len,
+                                                &duplicate) == PROTO_OK);
+        assert(!duplicate);
+    }
+    make_collection_bundle_from_ids(ids,
+                                    COLLECTION_BUNDLE_MAX_RECORDS,
+                                    94u,
+                                    bundle_payload,
+                                    sizeof(bundle_payload),
+                                    &bundle_payload_len,
+                                    &bundle_packet);
+    assert(gateway_collection_preflight_bundle_projection_from_hop(
+               &collection,
+               &bundle_packet,
+               bundle_payload,
+               bundle_payload_len,
+               bundle_packet.src_id,
+               &projection) == PROTO_OK);
+    assert(projection.accepted_record_mask == 0xaau);
+    assert(projection.accepted_count == 4u);
+    assert(projection.duplicate_count == 4u);
+    assert(gateway_collection_project_bundle_payload(
+               bundle_payload,
+               bundle_payload_len,
+               projection.accepted_record_mask,
+               projected_payload,
+               sizeof(projected_payload),
+               &projected_payload_len) == PROTO_OK);
+    assert(result_bundle_header_from_tlvs(projected_payload,
+                                          projected_payload_len,
+                                          &projected_header) == PROTO_OK);
+    assert(projected_header.record_count == 4u);
+    cursor = first_result_record_offset(projected_payload,
+                                        projected_payload_len);
+    assert(projected_header.bundle_crc ==
+           proto_crc16_ccitt_false(&projected_payload[cursor],
+                                   projected_payload_len - cursor));
+    for (size_t i = 1u; i < COLLECTION_BUNDLE_MAX_RECORDS; i += 2u) {
+        assert(result_bundle_record_next_from_tlvs(projected_payload,
+                                                   projected_payload_len,
+                                                   &cursor,
+                                                   &projected_record) == PROTO_OK);
+        assert_command_result_id_equal(&projected_record.result_id, &ids[i]);
+    }
+    assert(cursor == projected_payload_len);
+
+    memcpy(projected_payload, bundle_payload, bundle_payload_len);
+    assert(gateway_collection_project_bundle_payload(
+               projected_payload,
+               bundle_payload_len,
+               projection.accepted_record_mask,
+               projected_payload,
+               sizeof(projected_payload),
+               &projected_payload_len) == PROTO_OK);
+    assert(result_bundle_header_from_tlvs(projected_payload,
+                                          projected_payload_len,
+                                          &projected_header) == PROTO_OK);
+    assert(projected_header.record_count == 4u);
+}
+
 int main(void)
 {
     test_prepare_outbound_normalizes_host_command();
-    test_prepare_outbound_preserves_host_session_sequence_and_ttl();
+    test_prepare_outbound_preserves_host_session_sequence_and_normalizes_ttl();
+    test_prepare_outbound_uses_command_class_ttl_for_every_host_value();
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
+    test_duplicate_command_singletons_are_rejected();
     test_extract_options_defaults_to_single_node_small_result();
+    test_extract_options_rejects_unsupported_group_scope();
+    test_command_scope_applies_to_explicit_and_derived_membership();
     test_prepare_outbound_accepts_all_registered_command_flood_with_roster();
     test_extract_options_accepts_all_registered_collection_without_roster();
     test_extract_options_rejects_all_registered_missing_membership_identity();
@@ -3682,16 +5088,21 @@ int main(void)
     test_tracking_mode_uses_collection_for_broadcast_results();
     test_command_receive_timing_waits_until_execute_delay();
     test_command_receive_rejects_expired_or_unexecutable_delay();
-    test_command_rx_duplicate_cache_blocks_replay_until_expiry();
+    test_command_rx_duplicate_history_blocks_replay_after_delivery_expiry();
+    test_command_rx_high_watermark_retains_more_than_legacy_capacity();
+    test_command_rx_high_watermark_rejects_uncommitted_older_gap();
+    test_command_rx_high_watermark_accepts_wrap_newer_only();
     test_collection_initial_due_is_deterministic_and_bounded();
     test_all_node_collection_due_spreads_responses();
     test_collection_retry_round_advances_spread();
     test_collection_eack_sequence_wraps_nonzero_after_dedup_horizon();
     test_append_collection_result_identity_requires_epoch();
     test_collection_records_unique_results_and_builds_eack();
+    test_collection_rejects_crc16_collision_before_and_after_restore();
+    test_collection_bundle_rejects_staged_crc16_collision();
     test_collection_prepares_eack_broadcast_outbound();
     test_collection_prepares_missing_list_from_roster();
-    test_collection_roster_resolution_prefers_explicit_roster();
+    test_collection_roster_resolution_binds_explicit_roster_to_membership();
     test_collection_roster_resolution_rejects_provider_mismatch();
     test_collection_roster_resolution_leaves_all_heard_best_effort();
     test_collection_roster_binding_validates_exact_membership();
@@ -3725,5 +5136,10 @@ int main(void)
     test_pending_survey_prepare_completes_on_command_result();
     test_pair_result_admission_distinguishes_manual_and_automatic();
     test_pending_command_rejects_second_start();
+    test_pending_command_deadline_has_one_terminal_winner();
+    test_pending_command_absolute_deadline_is_shared();
+    test_result_validation_lease_serializes_deadline();
+    test_collection_preflight_is_exact_and_read_only();
+    test_collection_bundle_host_projection_is_canonical();
     return 0;
 }

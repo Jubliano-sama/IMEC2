@@ -38,12 +38,14 @@ int app_mesh_command_orchestrator_activate(
     const struct app_gateway_command_ingress_item *item);
 void app_mesh_command_orchestrator_clear_safe_boundary(
     struct app_mesh_command_orchestrator *orchestrator);
+void app_mesh_command_orchestrator_mark_safe_boundary(
+    struct app_mesh_command_orchestrator *orchestrator);
 
 int app_mesh_command_orchestrator_gateway_ingress(
-    struct app_mesh_command_orchestrator *orchestrator,
     const struct app_gateway_command_ingress_ops *ops,
     const uint8_t *frame,
     size_t frame_len,
+    struct app_gateway_command_ingress_item *decoded,
     bool *command_handled);
 
 int app_mesh_command_orchestrator_decide(
@@ -79,12 +81,18 @@ int app_mesh_command_orchestrator_anchor_receive(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint64_t gateway_id,
     uint32_t now_ms,
     enum command_id *command_id,
     struct gateway_command_options *options,
     bool *broadcast,
     bool *expired,
     bool *duplicate);
+void app_mesh_command_orchestrator_anchor_commit(
+    struct app_mesh_command_orchestrator *orchestrator,
+    const struct proto_packet *packet,
+    const struct gateway_command_options *options,
+    uint32_t now_ms);
 
 int app_mesh_command_orchestrator_anchor_result(
     const struct proto_packet *command,

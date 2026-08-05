@@ -7,6 +7,7 @@
 #include "mesh_relay.h"
 #include "protocol.h"
 #include "survey.h"
+#include "survey_round_control.h"
 #include "uwb.h"
 
 #include <errno.h>
@@ -28,6 +29,8 @@
 #define FORCEDHOP_PAYLOAD_LEN 900u
 #define FORCEDHOP_BATCH_ID UINT32_C(0x54f09ced)
 #define TARGETED_SURVEY_ID UINT32_C(0x07130071)
+#define TARGETED_SURVEY_GENERATION UINT64_C(0x0000000107130071)
+#define TARGETED_SURVEY_ROUND_ID UINT16_C(1)
 #define FORCEDHOP_BATCH_FLAG_FINAL 0x01u
 #define DIRECT_TX_PREPARE_US UINT64_C(20000)
 #define DIRECT_PAYLOAD_SERVICE_US UINT64_C(50000)
@@ -523,6 +526,65 @@ static size_t count_matching_receptions(const struct mesh_sim_world *world,
     return count;
 }
 
+static int build_forcedhop_payload(uint8_t *payload,
+                                   size_t payload_cap,
+                                   uint32_t batch_id,
+                                   uint8_t fill)
+{
+    uint8_t padding[UINT8_MAX];
+    size_t payload_len = 0u;
+    int ret;
+
+    if (payload == NULL || payload_cap != FORCEDHOP_PAYLOAD_LEN ||
+        batch_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_append_u32(payload,
+                         payload_cap,
+                         &payload_len,
+                         TLV_MESH_CH9_BATCH_ID,
+                         batch_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload,
+                        payload_cap,
+                        &payload_len,
+                        TLV_MESH_CH9_BATCH_FLAGS,
+                        FORCEDHOP_BATCH_FLAG_FINAL);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(padding, fill, sizeof(padding));
+    while (payload_len < payload_cap) {
+        size_t remaining = payload_cap - payload_len;
+        size_t value_len;
+
+        if (remaining < PROTO_TLV_HEADER_LEN) {
+            return PROTO_ERR_MALFORMED;
+        }
+        value_len = remaining - PROTO_TLV_HEADER_LEN;
+        if (value_len > UINT8_MAX) {
+            value_len = UINT8_MAX;
+        }
+        if (remaining - (PROTO_TLV_HEADER_LEN + value_len) == 1u) {
+            value_len--;
+        }
+        ret = tlv_append_bytes(payload,
+                               payload_cap,
+                               &payload_len,
+                               TLV_MESH_TEST_PADDING,
+                               padding,
+                               value_len);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    return payload_len == payload_cap ? PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
 static const struct mesh_sim_queued_tx *queued_packet_for_peer(
     const struct mesh_sim_role_instance *node,
     uint64_t peer_id,
@@ -560,6 +622,24 @@ static const struct mesh_sim_queued_tx *queued_gateway_ack_for_sender(
         }
     }
     return NULL;
+}
+
+static uint64_t direct_pair_ready_us(const struct mesh_sim_world *world,
+                                     uint8_t first,
+                                     uint8_t second)
+{
+    uint64_t ready_us = world->now_us;
+    const uint8_t nodes[] = {first, second};
+
+    for (size_t i = 0u; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
+        const struct dwm3000_runtime *runtime =
+            &world->roles[nodes[i]].dwm3000;
+
+        ready_us = max_u64(ready_us, runtime->cpu_busy_until_us);
+        ready_us = max_u64(ready_us, runtime->spi_busy_until_us);
+        ready_us = max_u64(ready_us, runtime->radio_busy_until_us);
+    }
+    return ready_us;
 }
 
 static int keep_connection_alive_until(struct mesh_sim_world *world,
@@ -607,7 +687,13 @@ static int schedule_origin_retry(struct mesh_sim_world *world,
     CHECK(mesh_sim_schedule_relay_tick(world, transmitter, due_us) ==
           MESH_SIM_OK);
     CHECK(keep_connection_alive_until(world, connection, due_us) == MESH_SIM_OK);
-    CHECK(world->roles[transmitter].tx_queue_count > 0u);
+    /*
+     * If the retry deadline coincides with the next owned Channel-9 turn,
+     * the scheduler may admit the freshly queued retry immediately.  The
+     * durable source custody is the invariant; queue occupancy is only one
+     * transient implementation state.
+     */
+    CHECK(mesh_relay_tx_active(relay));
     return 0;
 }
 
@@ -653,8 +739,9 @@ static int run_relay_to_gateway_payload_attempt(
 {
     const struct mesh_sim_queued_tx *queued = queued_packet_for_peer(
         &world->roles[anchor], GATEWAY_ID, MSG_MESH_DATA, session_id, seq);
-    uint64_t air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
-    uint64_t window_end_us = air_start_us + DIRECT_PAYLOAD_SERVICE_US;
+    uint64_t ready_us = direct_pair_ready_us(world, anchor, gateway);
+    uint64_t air_start_us;
+    uint64_t window_end_us;
     bool reachable = world->reachable[anchor][gateway];
 
     CHECK(queued != NULL);
@@ -662,6 +749,11 @@ static int run_relay_to_gateway_payload_attempt(
     CHECK(app_mesh_ch9_timeout_pressure_decide(
               &queued->outbound, true, true, false, ANCHOR_ID) ==
           APP_MESH_CH9_TIMEOUT_RETRY);
+    if (ready_us > world->now_us) {
+        CHECK(mesh_sim_run_until(world, ready_us) == MESH_SIM_OK);
+    }
+    air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + DIRECT_PAYLOAD_SERVICE_US;
     CHECK(mesh_sim_direct_gateway_arm_rx(world, gateway,
                                          air_start_us, window_end_us) ==
           MESH_SIM_OK);
@@ -681,15 +773,76 @@ static int run_relay_to_gateway_payload_attempt(
     return 0;
 }
 
+static int run_relay_to_gateway_confirm_attempt(
+    struct mesh_sim_world *world,
+    uint8_t anchor,
+    uint8_t gateway,
+    uint32_t session_id,
+    uint16_t seq)
+{
+    const struct mesh_sim_queued_tx *queued = queued_packet_for_peer(
+        &world->roles[anchor], GATEWAY_ID, MSG_GATEWAY_ACK_CONFIRM,
+        session_id, seq);
+    uint64_t ready_us = direct_pair_ready_us(world, anchor, gateway);
+    uint64_t air_start_us;
+    uint64_t window_end_us;
+    int ret;
+
+    CHECK(queued != NULL);
+    CHECK(queued->outbound.payload_len ==
+          MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN);
+    if (ready_us > world->now_us) {
+        CHECK(mesh_sim_run_until(world, ready_us) == MESH_SIM_OK);
+    }
+    air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + DIRECT_PAYLOAD_SERVICE_US;
+    CHECK(mesh_sim_direct_gateway_arm_rx(world, gateway,
+                                         air_start_us, window_end_us) ==
+          MESH_SIM_OK);
+    ret = mesh_sim_direct_gateway_start_queued_tx(world,
+                                                  anchor,
+                                                  air_start_us,
+                                                  window_end_us,
+                                                  NULL);
+    if (ret != MESH_SIM_OK) {
+        fprintf(stderr,
+                "confirm direct ret=%d last=%d pending=%u pending-msg=0x%02x "
+                "flags=0x%02x ttl=%u needs-start=%u queue=%zu now=%llu\n",
+                ret,
+                world->last_error,
+                world->roles[anchor].relay.pending.state,
+                world->roles[anchor].relay.pending.packet.msg_type,
+                queued->outbound.packet.flags,
+                queued->outbound.packet.ttl,
+                queued->needs_relay_start,
+                world->roles[anchor].tx_queue_count,
+                (unsigned long long)world->now_us);
+    }
+    CHECK(ret == MESH_SIM_OK);
+    CHECK(mesh_sim_run_until(world, window_end_us) == MESH_SIM_OK);
+    if (world->roles[gateway].dwm3000.cpu_busy_until_us > world->now_us) {
+        CHECK(mesh_sim_run_until(
+                  world, world->roles[gateway].dwm3000.cpu_busy_until_us) ==
+              MESH_SIM_OK);
+    }
+    return 0;
+}
+
 static int run_gateway_to_relay_ack_attempt(struct mesh_sim_world *world,
                                             uint8_t anchor,
                                             uint8_t gateway,
                                             bool lose_on_air)
 {
-    uint64_t air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
-    uint64_t window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
+    uint64_t ready_us = direct_pair_ready_us(world, anchor, gateway);
+    uint64_t air_start_us;
+    uint64_t window_end_us;
     bool reachable = world->reachable[gateway][anchor];
 
+    if (ready_us > world->now_us) {
+        CHECK(mesh_sim_run_until(world, ready_us) == MESH_SIM_OK);
+    }
+    air_start_us = world->now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
     CHECK(mesh_sim_direct_gateway_schedule_ack(world, gateway, anchor,
                                                 air_start_us, window_end_us,
                                                 NULL) == MESH_SIM_OK);
@@ -747,7 +900,7 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
          packet_index++) {
         struct proto_packet packet = {
             .msg_type = MSG_MESH_DATA,
-            .flags = FLAG_GATEWAY_ACK_REQUIRED,
+            .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
             .src_id = TRANSMITTER_ID,
             .dst_id = GATEWAY_ID,
             .session_id = UINT32_C(0xe2e10000) |
@@ -769,7 +922,11 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
             &world, MESH_SIM_TRANSITION_GATEWAY_ACKED, TRANSMITTER_ID);
         bool delivered = false;
 
-        memset(payload, (int)(0x20u + packet_index), sizeof(payload));
+        CHECK(build_forcedhop_payload(
+                  payload,
+                  sizeof(payload),
+                  packet.session_id ^ packet.seq,
+                  (uint8_t)(0x20u + packet_index)) == PROTO_OK);
         CHECK(mesh_sim_queue_originated(&world, transmitter, &packet,
                                         payload, sizeof(payload)) ==
               MESH_SIM_OK);
@@ -816,6 +973,45 @@ static int run_forcedhop_delivery_loss_case(uint8_t payload_loss_mask,
                 continue;
             }
 
+            {
+                size_t confirm_receptions = count_matching_receptions(
+                    &world,
+                    ANCHOR_ID,
+                    MSG_GATEWAY_ACK_CONFIRM,
+                    packet.session_id,
+                    packet.seq);
+
+                for (size_t step = 0u;
+                     step < 32u &&
+                     count_matching_receptions(
+                         &world,
+                         ANCHOR_ID,
+                         MSG_GATEWAY_ACK_CONFIRM,
+                         packet.session_id,
+                         packet.seq) == confirm_receptions;
+                     step++) {
+                    CHECK(run_connection_action(&world, connection, false) ==
+                          MESH_SIM_OK);
+                }
+                CHECK(count_matching_receptions(
+                          &world,
+                          ANCHOR_ID,
+                          MSG_GATEWAY_ACK_CONFIRM,
+                          packet.session_id,
+                          packet.seq) == confirm_receptions + 1u);
+            }
+            CHECK(run_relay_to_gateway_confirm_attempt(
+                      &world,
+                      anchor,
+                      gateway,
+                      packet.session_id,
+                      packet.seq) == 0);
+            CHECK(world.roles[gateway].delivery_count == packet_index + 1u);
+            CHECK(queued_gateway_ack_for_sender(
+                      &world.roles[gateway], ANCHOR_ID, TRANSMITTER_ID,
+                      packet.session_id) != NULL);
+            CHECK(run_gateway_to_relay_ack_attempt(
+                      &world, anchor, gateway, false) == 0);
             gateway_confirms++;
             CHECK(drive_until_transition_count(
                       &world, connection, MESH_SIM_TRANSITION_GATEWAY_ACKED,
@@ -902,11 +1098,13 @@ static int build_targeted_survey_control(struct mesh_outbound *out,
                                          uint16_t seq)
 {
     const struct survey_pair pair = {
+        .operation_generation = TARGETED_SURVEY_GENERATION,
         .survey_id = TARGETED_SURVEY_ID,
         .initiator_id = target_id,
         .responder_id = target_id + UINT64_C(0x1000),
         .sample_count = 3u,
     };
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     size_t payload_len = 0u;
     int ret;
 
@@ -924,6 +1122,17 @@ static int build_targeted_survey_control(struct mesh_outbound *out,
                                   sizeof(out->payload),
                                   &payload_len,
                                   &pair);
+    if (ret == PROTO_OK) {
+        ret = survey_round_id_append_tlv(
+            out->payload, sizeof(out->payload), &payload_len,
+            TARGETED_SURVEY_ROUND_ID);
+    }
+    if (ret == PROTO_OK) {
+        proto_put_u16_le(round_commitment, TARGETED_SURVEY_ROUND_ID);
+        ret = survey_round_commitment_append_tlv(
+            out->payload, sizeof(out->payload), &payload_len,
+            round_commitment);
+    }
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -932,13 +1141,15 @@ static int build_targeted_survey_control(struct mesh_outbound *out,
         ret = mesh_init_command(&out->packet,
                                 GATEWAY_ID,
                                 target_id,
-                                pair.survey_id,
+                                survey_operation_session_id(
+                                    pair.operation_generation),
                                 seq,
                                 (uint8_t)payload_len);
     } else if (msg_type == MSG_SURVEY_PAIR_PREPARE) {
         ret = survey_init_pair_prepare_packet(&out->packet,
                                               &pair,
                                               GATEWAY_ID,
+                                              target_id,
                                               seq,
                                               (uint8_t)payload_len);
     } else {
@@ -1274,8 +1485,9 @@ static int run_targeted_gateway_control_bypasses_unrelated_custody_scenario(void
     {
         struct proto_packet ordinary = {
             .msg_type = MSG_MESH_DATA,
-            .src_id = GATEWAY_ID,
-            .dst_id = target_id,
+            .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            .src_id = target_id,
+            .dst_id = GATEWAY_ID,
             .session_id = UINT32_C(0x73007300),
             .seq = UINT16_C(0x7300),
             .ttl = MESH_DEFAULT_TTL,
@@ -1288,7 +1500,7 @@ static int run_targeted_gateway_control_bypasses_unrelated_custody_scenario(void
                                    &ordinary,
                                    payload,
                                    sizeof(payload),
-                                   GATEWAY_ID,
+                                   target_id,
                                    96u,
                                    5030u,
                                    &result) == PROTO_OK);
@@ -1415,8 +1627,26 @@ static int run_forcedhop_batch_ack_scenario(void)
         CHECK(value[0] == (i + 1u == FORCEDHOP_BURST_COUNT ?
                            FORCEDHOP_BATCH_FLAG_FINAL : 0u));
 
-        tracked[i].session_id = entry.session_id;
-        tracked[i].seq = entry.seq;
+        {
+            size_t ack_payload_len = 0u;
+
+            ack_template.packet.session_id = entry.session_id;
+            CHECK(mesh_append_requested_seq(
+                      ack_template.payload,
+                      sizeof(ack_template.payload),
+                      &ack_payload_len,
+                      entry.seq) == PROTO_OK);
+            CHECK(mesh_append_ack_semantic_identity(
+                      ack_template.payload,
+                      sizeof(ack_template.payload),
+                      &ack_payload_len,
+                      &frames[i].packet,
+                      frames[i].payload,
+                      frames[i].payload_len) == PROTO_OK);
+            ack_template.payload_len = (uint16_t)ack_payload_len;
+            ack_template.packet.payload_len = (uint16_t)ack_payload_len;
+        }
+        tracked[i].outbound = &frames[i];
         tracked[i].acked = false;
 
         /* The first final frame is lost, so the gateway cannot ACK yet. */

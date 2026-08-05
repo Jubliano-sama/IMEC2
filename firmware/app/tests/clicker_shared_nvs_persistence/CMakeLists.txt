@@ -1,0 +1,38 @@
+cmake_minimum_required(VERSION 3.20.0)
+
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(clicker_shared_nvs_persistence_test)
+
+target_compile_definitions(app PRIVATE
+    CONFIG_IMEC_CLICK_EVENT_SEQUENCE_PERSISTENCE=1
+    DEVICE_ROLE=1
+)
+
+target_include_directories(app PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/../../../include
+    ${CMAKE_CURRENT_LIST_DIR}/../../src
+)
+
+target_sources(app PRIVATE
+    src/main.c
+    ../../src/app_nvs_storage.c
+    ../../src/app_click_event_sequence.c
+    ../../src/app_mesh_persistence.c
+    ../../../src/debug_log.c
+    ../../../src/discovery_assignment.c
+    ../../../src/dwm3000_timing.c
+    ../../../src/gateway_command.c
+    ../../../src/gateway_collection_journal.c
+    ../../../src/gateway_membership.c
+    ../../../src/mesh.c
+    ../../../src/mesh_preemption.c
+    ../../../src/mesh_relay.c
+    ../../../src/mesh_relay_channel9.c
+    ../../../src/mesh_route_path.c
+    ../../../src/operation_policy.c
+    ../../../src/protocol.c
+    ../../../src/route.c
+    ../../../src/semantic_digest.c
+    ../../../src/survey.c
+    ../../../src/survey_round_control.c
+)

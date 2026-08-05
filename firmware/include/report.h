@@ -14,6 +14,14 @@ extern "C" {
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES 96u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 13u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 13u
+/*
+ * The first packet also carries diagnostics and may fit only one distance
+ * sample.  Every later packet can use the normal fragment capacity.
+ */
+#define RANGE_REPORT_MAX_PACKET_FRAGMENTS \
+    (1u + ((RANGE_REPORT_MAX_DISTANCE_SAMPLES - 1u + \
+            RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u) / \
+           RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT))
 #define RANGE_REPORT_MAX_DIAGNOSTIC_BYTES_SINGLE_PACKET 48u
 #define RANGE_REPORT_CIR_WINDOW_RAW_BYTES 1152u
 #define RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES 881u
@@ -27,6 +35,15 @@ extern "C" {
 #define RANGE_REPORT_CIR_REMAINDER_PAYLOAD_BYTES \
     (RANGE_REPORT_CIR_PACKET_METADATA_BYTES + RANGE_REPORT_CIR_REMAINDER_RAW_BYTES + \
      (2u * RANGE_REPORT_CIR_REMAINDER_CHUNK_TLV_COUNT))
+#define RANGE_REPORT_MAX_CIR_FRAGMENTS \
+    ((RANGE_REPORT_CIR_WINDOW_RAW_BYTES + \
+      RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES - 1u) / \
+     RANGE_REPORT_CIR_PACKET_RAW_MAX_BYTES)
+#define RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS \
+    (RANGE_REPORT_MAX_PACKET_FRAGMENTS + RANGE_REPORT_MAX_CIR_FRAGMENTS)
+
+_Static_assert(UINT8_MAX * RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS <= UINT16_MAX,
+               "range report attempt/fragment identity must fit packet seq");
 
 enum range_diagnostic_status_flag {
     RANGE_DIAG_CLICKER_PRESENT = 1u << 0,
@@ -144,6 +161,9 @@ int report_append_anchor_heartbeat_tlvs(uint8_t *payload,
                                         size_t payload_cap,
                                         size_t *offset,
                                         const struct anchor_heartbeat_fields *fields);
+int report_range_transport_seq(uint8_t attempt_index,
+                               uint16_t fragment_index,
+                               uint16_t *packet_seq);
 int report_init_range_packet(struct proto_packet *packet,
                                   uint64_t anchor_id,
                                   uint64_t gateway_id,

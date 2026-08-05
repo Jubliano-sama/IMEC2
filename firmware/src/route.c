@@ -12,6 +12,13 @@ static bool time_after(uint32_t now_ms, uint32_t timestamp_ms)
     return (int32_t)(now_ms - timestamp_ms) > 0;
 }
 
+bool route_epoch_strictly_newer(uint32_t candidate, uint32_t current)
+{
+    uint32_t delta = candidate - current;
+
+    return delta != 0u && delta < UINT32_C(0x80000000);
+}
+
 static bool candidate_valid_for_epoch(const struct route_candidate *candidate, uint32_t epoch)
 {
     return candidate->valid && candidate->route_epoch == epoch;
@@ -35,8 +42,18 @@ static uint16_t candidate_effective_cost(const struct route_candidate *candidate
 
 static bool candidate_in_hold_down(const struct route_candidate *candidate, uint32_t now_ms)
 {
-    return candidate->hold_down_until_ms != 0u &&
+    return candidate->hold_down_valid &&
            !deadline_reached(now_ms, candidate->hold_down_until_ms);
+}
+
+static void normalize_candidate_hold_down(struct route_candidate *candidate,
+                                          uint32_t now_ms)
+{
+    if (candidate->hold_down_valid &&
+        deadline_reached(now_ms, candidate->hold_down_until_ms)) {
+        candidate->hold_down_until_ms = 0u;
+        candidate->hold_down_valid = false;
+    }
 }
 
 static uint8_t normalized_capacity_state(uint8_t capacity_state)
@@ -47,7 +64,7 @@ static uint8_t normalized_capacity_state(uint8_t capacity_state)
 static uint8_t candidate_effective_capacity(const struct route_candidate *candidate,
                                             uint32_t now_ms)
 {
-    if (candidate->capacity_valid_until_ms == 0u ||
+    if (!candidate->capacity_hint_valid ||
         time_after(now_ms, candidate->capacity_valid_until_ms)) {
         return RELAY_CAP_UNKNOWN;
     }
@@ -78,13 +95,14 @@ static void normalize_candidate_capacity_hint(struct route_candidate *candidate,
     candidate->relay_capacity_state =
         normalized_capacity_state(candidate->relay_capacity_state);
     if (candidate->relay_capacity_state == RELAY_CAP_UNKNOWN ||
-        candidate->capacity_valid_until_ms == 0u ||
+        !candidate->capacity_hint_valid ||
         time_after(now_ms, candidate->capacity_valid_until_ms)) {
         candidate->relay_capacity_state = RELAY_CAP_UNKNOWN;
         candidate->queue_free_hint = 0u;
         candidate->channel9_busy_hint = 0u;
         candidate->capacity_observed_at_ms = 0u;
         candidate->capacity_valid_until_ms = 0u;
+        candidate->capacity_hint_valid = false;
     }
 }
 
@@ -129,7 +147,8 @@ static bool candidate_is_better(const struct route_candidate *candidate,
         return candidate_capacity < selected_capacity;
     }
     if (candidate->last_success_ms != selected->last_success_ms) {
-        return candidate->last_success_ms > selected->last_success_ms;
+        return time_after(candidate->last_success_ms,
+                          selected->last_success_ms);
     }
     return candidate->next_hop_id < selected->next_hop_id;
 }
@@ -216,7 +235,9 @@ int route_select_best_at(struct route_table *table, uint32_t now_ms)
     }
 
     for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
-        const struct route_candidate *candidate = &table->candidates[i];
+        struct route_candidate *candidate = &table->candidates[i];
+
+        normalize_candidate_hold_down(candidate, now_ms);
         if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
             continue;
         }
@@ -254,14 +275,17 @@ int route_upsert_candidate(struct route_table *table,
     }
     if (candidate->next_hop_id == 0u ||
         candidate->gateway_id == 0u ||
+        (uint16_t)candidate->route_epoch == 0u ||
         candidate->hop_count == UINT8_MAX ||
         candidate->link_quality > 100u) {
         return PROTO_ERR_ARG;
     }
-    if (candidate->route_epoch < table->current_epoch) {
+    if (candidate->route_epoch != table->current_epoch &&
+        !route_epoch_strictly_newer(candidate->route_epoch,
+                                    table->current_epoch)) {
         return PROTO_ERR_STALE;
     }
-    if (candidate->route_epoch > table->current_epoch) {
+    if (candidate->route_epoch != table->current_epoch) {
         table->current_epoch = candidate->route_epoch;
         invalidate_candidates(table);
     }
@@ -291,12 +315,14 @@ int route_upsert_candidate(struct route_table *table,
         stored.last_success_ms = previous.last_success_ms;
         stored.failure_count = 0u;
         stored.hold_down_until_ms = 0u;
+        stored.hold_down_valid = false;
         stored.channel9_timing_valid = stored.channel9_timing_valid ||
                                        previous.channel9_timing_valid;
     } else {
         stored.failure_count = 0u;
         stored.last_success_ms = 0u;
         stored.hold_down_until_ms = 0u;
+        stored.hold_down_valid = false;
     }
 
     table->candidates[index] = stored;
@@ -341,6 +367,7 @@ void route_update_capacity_hint(struct route_table *table,
                                 uint8_t relay_capacity_state,
                                 uint16_t queue_free_hint,
                                 uint8_t channel9_busy_hint,
+                                bool capacity_hint_valid,
                                 uint32_t observed_at_ms,
                                 uint32_t valid_until_ms,
                                 uint32_t now_ms)
@@ -361,6 +388,7 @@ void route_update_capacity_hint(struct route_table *table,
     candidate->relay_capacity_state = relay_capacity_state;
     candidate->queue_free_hint = queue_free_hint;
     candidate->channel9_busy_hint = channel9_busy_hint;
+    candidate->capacity_hint_valid = capacity_hint_valid;
     candidate->capacity_observed_at_ms = observed_at_ms;
     candidate->capacity_valid_until_ms = valid_until_ms;
     normalize_candidate_capacity_hint(candidate, now_ms);
@@ -380,6 +408,7 @@ void route_record_success(struct route_table *table)
     if (candidate_valid_for_epoch(candidate, table->current_epoch)) {
         candidate->failure_count = 0u;
         candidate->hold_down_until_ms = 0u;
+        candidate->hold_down_valid = false;
     }
 }
 
@@ -398,6 +427,7 @@ void route_record_success_at(struct route_table *table, uint32_t now_ms)
         candidate->last_seen_ms = now_ms;
         candidate->last_success_ms = now_ms;
         candidate->hold_down_until_ms = 0u;
+        candidate->hold_down_valid = false;
     }
 }
 
@@ -427,6 +457,7 @@ int route_record_candidate_success_at(struct route_table *table,
     candidate->last_seen_ms = now_ms;
     candidate->last_success_ms = now_ms;
     candidate->hold_down_until_ms = 0u;
+    candidate->hold_down_valid = false;
     return route_select_best_at(table, now_ms);
 }
 
@@ -474,9 +505,7 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
 
     candidate->failure_count = 0u;
     candidate->hold_down_until_ms = now_ms + ROUTE_PARENT_HOLDDOWN_MS;
-    if (candidate->hold_down_until_ms == 0u) {
-        candidate->hold_down_until_ms = 1u;
-    }
+    candidate->hold_down_valid = true;
     if (route_select_best_at(table, now_ms) == PROTO_OK) {
         return ROUTE_DELIVERY_TRY_ALTERNATE;
     }

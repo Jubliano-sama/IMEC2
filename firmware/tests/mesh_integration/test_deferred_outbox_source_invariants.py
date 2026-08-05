@@ -9,6 +9,8 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 PERSISTENCE = read_composed_source(ROOT / "app" / "src" / "app_mesh_persistence.c")
+NVS_STORAGE = (ROOT / "app" / "src" / "app_nvs_storage.c").read_text()
+NVS_STORAGE_H = (ROOT / "app" / "src" / "app_nvs_storage.h").read_text()
 REPORT = read_composed_source(ROOT / "app" / "src" / "app_mesh_report.c")
 PREEMPTION = read_composed_source(ROOT / "app" / "src" / "app_mesh_preemption.c")
 
@@ -30,14 +32,62 @@ def function_body(source: str, name: str) -> str:
 
 
 class DeferredOutboxSourceInvariantTests(unittest.TestCase):
+    def test_shared_nvs_mount_and_health_publication_are_serialized(self):
+        init = function_body(PERSISTENCE, "app_mesh_persistence_init")
+        storage_init = function_body(NVS_STORAGE, "app_nvs_storage_init")
+        health = function_body(
+            PERSISTENCE, "app_mesh_persistence_get_health"
+        )
+        note_failure = function_body(
+            PERSISTENCE, "mesh_persistence_note_failure"
+        )
+        note_success = function_body(
+            PERSISTENCE, "mesh_persistence_note_success"
+        )
+
+        # The partition has exactly one mounted nvs_fs owner. Role persistence
+        # may serialize its own recovery policy, but it delegates the actual
+        # mount and geometry to app_nvs_storage.
+        self.assertEqual(NVS_STORAGE.count("nvs_mount("), 1)
+        self.assertNotIn("nvs_mount(", PERSISTENCE)
+        self.assertIn("K_MUTEX_DEFINE(app_storage_init_lock)", NVS_STORAGE)
+        lock = storage_init.index("k_mutex_lock(&app_storage_init_lock")
+        second_ready_check = storage_init.index(
+            "atomic_get(&app_storage_ready)", lock
+        )
+        mount = storage_init.index("nvs_mount(&app_storage_nvs)", second_ready_check)
+        unlock = storage_init.index(
+            "k_mutex_unlock(&app_storage_init_lock)", mount
+        )
+        self.assertLess(lock, second_ready_check)
+        self.assertLess(second_ready_check, mount)
+        self.assertLess(mount, unlock)
+        self.assertIn("k_is_in_isr()", storage_init[:lock])
+        self.assertIn("atomic_set(&app_storage_ready, 1)", storage_init)
+        self.assertIn("app_nvs_storage_init()", init)
+        for body in (health, note_failure, note_success):
+            self.assertIn(
+                "k_spin_lock(&mesh_persistence_health_lock)", body
+            )
+            self.assertIn(
+                "k_spin_unlock(&mesh_persistence_health_lock", body
+            )
+
     def test_deferred_slot_is_distinct_and_reserved_in_capacity_budget(self):
-        active = re.search(r"APP_MESH_NVS_OUTBOX_ID\s+(0x[0-9A-Fa-f]+)u", PERSISTENCE)
+        active = re.search(
+            r"APP_NVS_ID_MESH_OUTBOX\s+(0x[0-9A-Fa-f]+)u",
+            NVS_STORAGE_H,
+        )
         deferred = re.search(
             r"APP_MESH_NVS_DEFERRED_OUTBOX_ID\s+(0x[0-9A-Fa-f]+)u", PERSISTENCE
         )
         self.assertIsNotNone(active)
         self.assertIsNotNone(deferred)
         self.assertNotEqual(active.group(1), deferred.group(1))
+        self.assertIn(
+            "#define APP_MESH_NVS_OUTBOX_ID APP_NVS_ID_MESH_OUTBOX",
+            PERSISTENCE,
+        )
         self.assertGreaterEqual(
             PERSISTENCE.count(
                 "APP_MESH_NVS_ENTRY_BYTES(sizeof(struct mesh_relay_outbox_snapshot))"
@@ -99,17 +149,25 @@ class DeferredOutboxSourceInvariantTests(unittest.TestCase):
         self.assertLess(promote, verify)
         self.assertLess(promote, clear)
 
-    def test_restore_does_not_clear_transient_read_errors(self):
+    def test_restore_preserves_every_rejected_sole_custody_record(self):
         restore = function_body(
             PERSISTENCE, "app_mesh_persistence_restore_deferred_outbox"
         )
         read_error = restore.index("if (read_ret < 0)")
         read_error_end = restore.index("return read_ret;", read_error)
         error_branch = restore[read_error:read_error_end]
-        corrupt_branch = error_branch[error_branch.index("if (read_ret == -EBADMSG)") :]
-        self.assertIn("read_ret == -EBADMSG", corrupt_branch)
-        self.assertIn("clear_deferred_outbox_locked()", corrupt_branch)
-        self.assertNotIn("return ret;", error_branch[: error_branch.index(corrupt_branch)])
+        self.assertNotIn("clear_deferred_outbox_locked()", error_branch)
+
+        semantic_error = restore.index(
+            "if (ret != PROTO_OK)", read_error_end
+        )
+        semantic_error_end = restore.index(
+            "return -EINVAL;", semantic_error
+        )
+        self.assertNotIn(
+            "clear_deferred_outbox_locked()",
+            restore[semantic_error:semantic_error_end],
+        )
 
     def test_save_retries_same_owner_and_rejects_conflicting_owner(self):
         save = function_body(PERSISTENCE, "app_mesh_persistence_save_deferred_outbox")
@@ -128,6 +186,10 @@ class DeferredOutboxSourceInvariantTests(unittest.TestCase):
         self.assertIn("app_mesh_persistence_test_fail_deferred_read", source)
         self.assertIn("test_deferred_outbox_contention_is_retryable", source)
         self.assertIn("test_deferred_outbox_same_snapshot_is_idempotent", source)
+        self.assertIn(
+            "test_deferred_outbox_corruption_remains_fail_closed_across_restore",
+            source,
+        )
 
     def test_anchor_preemption_registers_deferred_owner(self):
         preempt = function_body(REPORT, "mesh_preempt_for_click_event")
@@ -139,7 +201,9 @@ class DeferredOutboxSourceInvariantTests(unittest.TestCase):
     def test_ack_reconciles_deferred_before_active_clear(self):
         delivery = function_body(REPORT, "mesh_handle_result_actions")
         cleanup = delivery.index("app_mesh_persistence_clear_deferred_outbox_if_matches")
-        active_clear = delivery.index("app_mesh_persistence_clear_outbox", cleanup)
+        active_clear = delivery.index(
+            'mesh_save_outbox_durable("gateway-confirmed")', cleanup
+        )
         self.assertLess(cleanup, active_clear)
 
     def test_scheduler_predicate_keeps_deferred_owner(self):

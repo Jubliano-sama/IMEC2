@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -21,6 +23,8 @@ from tools.gateway_gui.protocol import (
     CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+    GATEWAY_COMMAND_BUDGET_MAX_MS,
+    MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
@@ -196,6 +200,59 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("identity contradiction", errors[0])
 
+    def test_conflicting_click_remains_visible_without_mutating_canonical_models(
+        self,
+    ) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock()
+        gui.__dict__["_packet_summary"] = Mock(return_value="click")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+        canonical = Packet(
+            transport="test",
+            raw_transport=b"",
+            raw_packet=None,
+            msg_type=MSG_CLICK_REPORT,
+            flags=0x24,
+            src_id=0x1111,
+            dst_id=0x2222,
+            session_id=7,
+            seq=3,
+            ttl=4,
+            age_ms=0,
+            age_kind="test",
+            payload=b"canonical",
+            tlvs=(),
+        )
+        conflict = replace(canonical, payload=b"changed")
+
+        gui._add_packet(canonical)
+        gui._add_packet(conflict)
+
+        gui._observe_diagnostic_packet.assert_called_once_with(
+            canonical, received_at=None
+        )
+        gui.cir_reassembler.ingest.assert_called_once_with(canonical)
+        self.assertEqual(gui.packet_tree.insert.call_count, 2)
+        self.assertIs(gui.packet_by_iid["packet-2"], conflict)
+        self.assertTrue(any(
+            "Conflicting click report" in call.args[1]
+            for call in gui._append_log.call_args_list
+        ))
+
     def test_auto_survey_id_is_fresh_for_each_send_with_frozen_clocks(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = True
@@ -217,7 +274,8 @@ class AppModelTests(unittest.TestCase):
         gui.click_location_model.state = Mock()
         gui.anchor_geometry_view = Mock()
         gui.click_diagnostics_view = Mock()
-        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
+        submit_command = Mock(return_value=True)
+        gui.__dict__["_submit_gateway_command"] = submit_command
         gui.__dict__["_show_error"] = Mock()
         command = Mock(
             frame=b"survey-frame",
@@ -244,8 +302,8 @@ class AppModelTests(unittest.TestCase):
         self.assertNotEqual(survey_ids[0], survey_ids[1])
         self.assertTrue(all(1 <= survey_id <= 0xFFFFFFFF for survey_id in survey_ids))
         self.assertEqual(gui.survey_id_text.get(), str(survey_ids[-1]))
-        self.assertEqual(gui._submit_gateway_command.call_count, 2)
-        plans = [call.args[0] for call in gui._submit_gateway_command.call_args_list]
+        self.assertEqual(submit_command.call_count, 2)
+        plans = [call.args[0] for call in submit_command.call_args_list]
         self.assertTrue(all(plan.preflight is not None for plan in plans))
         self.assertTrue(all(
             plan.preflight.session_id != plan.target.session_id for plan in plans
@@ -338,14 +396,16 @@ class AppModelTests(unittest.TestCase):
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui, expected_anchors="5")
-        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
-        gui.__dict__["_show_error"] = Mock()
+        submit_command = Mock(return_value=True)
+        show_error = Mock()
+        gui.__dict__["_submit_gateway_command"] = submit_command
+        gui.__dict__["_show_error"] = show_error
 
         with patch("tools.gateway_gui.app.time.monotonic_ns", return_value=123):
             gui._send_assign_discovery_slots()
 
-        gui._show_error.assert_not_called()
-        plan = gui._submit_gateway_command.call_args.args[0]
+        show_error.assert_not_called()
+        plan = submit_command.call_args.args[0]
         self.assertEqual(plan.target.command_id, CMD_ASSIGN_DISCOVERY_SLOTS)
         self.assertIsNotNone(plan.preflight)
         assert plan.preflight is not None
@@ -380,13 +440,15 @@ class AppModelTests(unittest.TestCase):
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui)
-        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
-        gui.__dict__["_show_error"] = Mock()
+        submit_command = Mock(return_value=True)
+        show_error = Mock()
+        gui.__dict__["_submit_gateway_command"] = submit_command
+        gui.__dict__["_show_error"] = show_error
 
         gui._send_assign_discovery_slots()
 
-        gui._show_error.assert_not_called()
-        plan = gui._submit_gateway_command.call_args.args[0]
+        show_error.assert_not_called()
+        plan = submit_command.call_args.args[0]
         self.assertEqual(
             plan.target.status_text,
             "Enumerating an unknown anchor roster across the full 8-hop "
@@ -405,13 +467,14 @@ class AppModelTests(unittest.TestCase):
         gui.assignment_response_spread_text = FakeVariable("750")  # type: ignore[assignment]
         gui.discovery_round_count_text = FakeVariable("3")  # type: ignore[assignment]
         gui.pair_max_parallel_text = FakeVariable("8")  # type: ignore[assignment]
-        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
+        submit_command = Mock(return_value=True)
+        gui.__dict__["_submit_gateway_command"] = submit_command
         gui.__dict__["_show_error"] = Mock()
 
         with patch("tools.gateway_gui.app.time.monotonic_ns", return_value=456):
             gui._send_here_i_am()
 
-        plan = gui._submit_gateway_command.call_args.args[0]
+        plan = submit_command.call_args.args[0]
         self.assertIsNone(plan.preflight)
         policies = tuple(
             value.decoded for value in parse_cobs_packet(plan.target.frame).tlvs
@@ -454,6 +517,21 @@ class AppModelTests(unittest.TestCase):
         gui.geometry_model.observe_command_event.assert_called_once_with(telemetry_event)
         gui.anchor_geometry_view.show_model.assert_called_once_with(gui.geometry_model)
 
+    def test_event_drain_consumes_received_packets_before_wall_clock_expiry(
+        self,
+    ) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app.py"
+        ).read_text(encoding="utf-8")
+        body_start = source.index("    def _drain_events")
+        body_end = source.index("\n    def ", body_start + 1)
+        body = source[body_start:body_end]
+
+        self.assertLess(
+            body.index("self._handle_event(event)"),
+            body.index("self._expire_gateway_command()"),
+        )
+
     def test_immediate_ok_result_does_not_release_command_before_typed_terminal(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.command_request_tracker = GatewayCommandRequestTracker()
@@ -476,16 +554,17 @@ class AppModelTests(unittest.TestCase):
         gui.geometry_model = Mock()
         gui.geometry_model.observe_pair_packet.return_value = None
         gui.status_text = FakeVariable()  # type: ignore[assignment]
-        gui.__dict__["_update_command_state"] = Mock()
+        update_command_state = Mock()
+        gui.__dict__["_update_command_state"] = update_command_state
 
         gui._observe_diagnostic_packet(assignment_result_packet(status=0, reason=0))
 
         self.assertIsNotNone(gui.command_request_tracker.pending)
-        gui._update_command_state.assert_not_called()
+        update_command_state.assert_not_called()
 
         gui._observe_diagnostic_packet(assignment_result_packet(status=2, reason=2))
         self.assertIsNone(gui.command_request_tracker.pending)
-        gui._update_command_state.assert_called_once()
+        update_command_state.assert_called_once()
 
     def test_auto_survey_id_wraps_past_zero(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
@@ -506,7 +585,10 @@ class AppModelTests(unittest.TestCase):
         )
 
         self.assertIsNone(gui._command_budget_ms())
-        self.assertEqual(gui._command_timeout_s(None), 602.0)
+        self.assertEqual(
+            gui._command_timeout_s(None),
+            GATEWAY_COMMAND_BUDGET_MAX_MS / 1000.0 + 2.0,
+        )
         self.assertEqual(
             gui._command_timeout_s(
                 None,

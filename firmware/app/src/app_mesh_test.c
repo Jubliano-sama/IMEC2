@@ -411,6 +411,7 @@ static int mesh_test_build_packet(struct mesh_outbound *outbound,
     outbound->payload_len = (uint16_t)payload_len;
     outbound->radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
     outbound->queued_at_ms = k_uptime_get_32();
+    outbound->queued_at_valid = true;
     return 0;
 }
 

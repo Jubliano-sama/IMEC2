@@ -34,9 +34,14 @@ def click(anchor, distance_m, *, event=1, session=7, sequence=1, clicker=0xC1):
 
 def pair_result(
     a, b, distance, status, sequence, *, survey=10, sample_index=0,
-    sample_count=1, reporter=None,
+    sample_count=1, reporter=None, operation_generation=None,
+    round_id=None, round_commitment=None, packet_session=None,
 ):
-    payload = b"".join((
+    if operation_generation is None:
+        operation_generation = survey
+    if round_id is None:
+        round_id = 1
+    values = [
         tlv(0x15, survey.to_bytes(4, "little")),
         tlv(0x1F, a.to_bytes(8, "little")),
         tlv(0x20, b.to_bytes(8, "little")),
@@ -44,8 +49,24 @@ def pair_result(
         tlv(0x0E, sample_index.to_bytes(2, "little")),
         tlv(0x0C, distance.to_bytes(4, "little", signed=True)),
         tlv(0x21, bytes((status,))),
-    ))
-    result = packet(0x53, payload, session=survey, sequence=sequence)
+    ]
+    if operation_generation is not None:
+        values.append(tlv(0xB6, operation_generation.to_bytes(8, "little")))
+    if round_id is not None:
+        values.append(tlv(0xAF, round_id.to_bytes(2, "little")))
+    if round_commitment is not None:
+        values.append(tlv(0xB7, round_commitment))
+    payload = b"".join(values)
+    session = (
+        packet_session
+        if packet_session is not None
+        else (
+            operation_generation & 0xFFFFFFFF
+            if operation_generation is not None
+            else survey
+        )
+    )
+    result = packet(0x53, payload, session=session, sequence=sequence)
     return replace(result, src_id=a if reporter is None else reporter)
 
 
@@ -100,7 +121,13 @@ class SurveyAndClickTests(unittest.TestCase):
             ),
         )
         for sequence, (reporter, raw) in enumerate(live_payloads, 1):
-            payload = bytes.fromhex(raw)
+            # Preserve the captured range diagnostics while applying the
+            # current production survey-run identity envelope.
+            payload = (
+                bytes.fromhex(raw)
+                + tlv(0xB6, survey_id.to_bytes(8, "little"))
+                + tlv(0xAF, (1).to_bytes(2, "little"))
+            )
             live_packet = replace(
                 packet(0x53, payload, session=survey_id, sequence=sequence),
                 src_id=reporter,
@@ -156,6 +183,124 @@ class SurveyAndClickTests(unittest.TestCase):
         self.assertEqual(model.pairs, {})
         self.assertFalse(model.terminal_complete)
 
+    def test_pair_results_bind_generation_round_and_commitment(self):
+        model = SurveyGeometryModel()
+        survey_id = 20
+        generation = 0x1122334400000051
+        commitment = bytes(range(32))
+        model.begin_survey(survey_id, host_session_id=100, host_sequence=4)
+
+        accepted = model.observe_pair_packet(pair_result(
+            1,
+            2,
+            1000,
+            0,
+            1,
+            survey=survey_id,
+            operation_generation=generation,
+            round_id=1,
+            round_commitment=commitment,
+        ))
+        self.assertIsNotNone(accepted)
+        self.assertEqual(len(model.pairs), 1)
+
+        # Reusing the host survey ID and projected packet session must not let
+        # an unrelated durable operation enter the active geometry run.
+        stale_generation = generation - (1 << 32)
+        self.assertIsNone(model.observe_pair_packet(pair_result(
+            2,
+            3,
+            2000,
+            0,
+            2,
+            survey=survey_id,
+            operation_generation=stale_generation,
+            round_id=1,
+            round_commitment=commitment,
+        )))
+
+        # One synchronized round has one immutable plan commitment.
+        conflicting_commitment = bytes(reversed(range(32)))
+        self.assertIsNone(model.observe_pair_packet(pair_result(
+            2,
+            3,
+            2000,
+            0,
+            3,
+            survey=survey_id,
+            operation_generation=generation,
+            round_id=1,
+            round_commitment=conflicting_commitment,
+        )))
+
+        # The packet header is the projected generation identity, so it must
+        # agree with the full-width operation-generation TLV.
+        self.assertIsNone(model.observe_pair_packet(pair_result(
+            2,
+            3,
+            2000,
+            0,
+            4,
+            survey=survey_id,
+            operation_generation=generation,
+            round_id=2,
+            round_commitment=conflicting_commitment,
+            packet_session=(generation + 1) & 0xFFFFFFFF,
+        )))
+        self.assertEqual(len(model.pairs), 1)
+
+        # A later synchronized round may legitimately commit another plan.
+        accepted_next_round = model.observe_pair_packet(pair_result(
+            2,
+            3,
+            2000,
+            0,
+            5,
+            survey=survey_id,
+            operation_generation=generation,
+            round_id=2,
+            round_commitment=conflicting_commitment,
+        ))
+        self.assertIsNotNone(accepted_next_round)
+        self.assertEqual(len(model.pairs), 2)
+
+    def test_newer_generation_evicts_stale_first_pair_results(self):
+        model = SurveyGeometryModel()
+        survey_id = 20
+        current_generation = 0x1122334400000051
+        stale_generation = current_generation - (1 << 32)
+        model.begin_survey(survey_id, host_session_id=100, host_sequence=4)
+
+        # A recovered host-journal packet can be delivered after a new host
+        # command starts even though it belongs to the previous use of the
+        # same 32-bit survey/session identity.
+        self.assertIsNotNone(model.observe_pair_packet(pair_result(
+            1,
+            2,
+            9000,
+            0,
+            1,
+            survey=survey_id,
+            operation_generation=stale_generation,
+            round_id=1,
+        )))
+
+        accepted = model.observe_pair_packet(pair_result(
+            2,
+            3,
+            2000,
+            0,
+            2,
+            survey=survey_id,
+            operation_generation=current_generation,
+            round_id=1,
+        ))
+        self.assertIsNotNone(accepted)
+        self.assertEqual(
+            set(model.pairs),
+            {("0x0000000000000002", "0x0000000000000003")},
+        )
+
     def test_multi_sample_result_is_complete_and_reporter_order_independent(self):
         for reverse in (False, True):
             model = SurveyGeometryModel()
@@ -182,6 +327,45 @@ class SurveyAndClickTests(unittest.TestCase):
             )
             model.observe_pair_packet(duplicate_failure)
             self.assertEqual(len(model.pairs), 1)
+
+    def test_multi_sample_rounds_never_mix_and_latest_round_wins(self):
+        records = (
+            pair_result(
+                1, 2, 1000, 0, 1, survey=30, sample_index=0,
+                sample_count=2, round_id=1,
+            ),
+            pair_result(
+                1, 2, 1000, 0, 2, survey=30, sample_index=1,
+                sample_count=2, round_id=1,
+            ),
+            pair_result(
+                1, 2, 9000, 0, 3, survey=30, sample_index=0,
+                sample_count=2, round_id=2,
+            ),
+            pair_result(
+                1, 2, 3000, 0, 4, survey=30, sample_index=1,
+                sample_count=2, round_id=2,
+            ),
+        )
+        for ordered_records in (records, tuple(reversed(records))):
+            model = SurveyGeometryModel()
+            model.begin_survey(30, host_session_id=1, host_sequence=2)
+            for record in ordered_records:
+                model.observe_pair_packet(record)
+
+            distance = next(iter(model.pairs.values()))
+            self.assertAlmostEqual(distance.distance_m, 6.0)
+            self.assertIn("round 2", distance.source)
+            self.assertEqual(
+                model.observed_opportunities,
+                {("0x0000000000000001", "0x0000000000000002")},
+            )
+
+        incomplete_new_round = SurveyGeometryModel()
+        for record in records[:2] + records[2:3]:
+            incomplete_new_round.observe_pair_packet(record)
+        self.assertEqual(incomplete_new_round.pairs, {})
+        self.assertEqual(incomplete_new_round.observed_opportunities, set())
 
     def test_usable_report_wins_over_unusable_reporter_priority(self):
         for records in (
@@ -515,9 +699,26 @@ class WakeAndTopologyTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             model = TopologyBaselineModel(Path(temporary) / "baseline.json")
             model.baseline = AnchorBaseline((1, 2), "then", "deployment")
-            for correlation, ids, expected in ((20, (1,), "missing"), (21, (1,2,3), "added"), (22, (1,2), "exact")):
-                for seq, anchor in enumerate(ids, 1): model.observe(event(anchor=anchor, event_seq=seq, correlation=correlation))
-                result = model.observe(event(stage=12, flags=1, total=len(ids), event_seq=10, correlation=correlation))
+            cases = (
+                (20, (1,), "missing"),
+                (21, (1, 2, 3), "added"),
+                (22, (1, 2), "exact"),
+            )
+            for run_index, (correlation, ids, expected) in enumerate(cases):
+                first_sequence = run_index * 10 + 1
+                for offset, anchor in enumerate(ids):
+                    model.observe(event(
+                        anchor=anchor,
+                        event_seq=first_sequence + offset,
+                        correlation=correlation,
+                    ))
+                result = model.observe(event(
+                    stage=12,
+                    flags=1,
+                    total=len(ids),
+                    event_seq=first_sequence + len(ids),
+                    correlation=correlation,
+                ))
                 self.assertEqual(result.status, expected)
 
     def test_command_timeline_deduplicates_replays_and_is_bounded(self):
@@ -554,6 +755,111 @@ class WakeAndTopologyTests(unittest.TestCase):
             result = lossy.observe(event(stage=12, flags=1, correlation=81, event_seq=3, total=1, lost=8))
             self.assertFalse(result.complete)
             self.assertIn("1 telemetry event", result.eligibility_reason)
+
+    def test_topology_stale_replay_cannot_replace_newer_live_run(self):
+        stale_run = (
+            event(anchor=9, event_seq=10, correlation=100, flags=0x04),
+            event(
+                stage=12,
+                flags=0x07,
+                total=1,
+                event_seq=11,
+                correlation=100,
+            ),
+        )
+        current_run = (
+            event(anchor=1, event_seq=100, correlation=200),
+            event(anchor=2, event_seq=101, correlation=200),
+            event(
+                stage=12,
+                flags=0x01,
+                total=2,
+                event_seq=102,
+                correlation=200,
+            ),
+        )
+        for records in (stale_run + current_run, current_run + stale_run):
+            with TemporaryDirectory() as temporary:
+                model = TopologyBaselineModel(
+                    Path(temporary) / "baseline.json"
+                )
+                for record in records:
+                    model.observe(record)
+
+                self.assertEqual(model.current_key, current_run[0].correlation_key)
+                self.assertIsNotNone(model.latest)
+                self.assertTrue(model.latest.complete)
+                self.assertEqual(model.latest.actual, (1, 2))
+                self.assertEqual(model.accept_latest().anchor_ids, (1, 2))
+
+    def test_topology_loss_delta_is_arrival_order_independent(self):
+        records = (
+            event(stage=1, event_seq=10, correlation=90, lost=7),
+            event(anchor=1, event_seq=11, correlation=90, lost=7),
+            event(
+                stage=12,
+                flags=0x01,
+                total=1,
+                event_seq=12,
+                correlation=90,
+                lost=8,
+            ),
+        )
+        for ordered_records in (records, tuple(reversed(records))):
+            with TemporaryDirectory() as temporary:
+                model = TopologyBaselineModel(
+                    Path(temporary) / "baseline.json"
+                )
+                for record in ordered_records:
+                    result = model.observe(record)
+
+                self.assertIsNotNone(result)
+                self.assertFalse(result.complete)
+                self.assertIn("1 telemetry event", result.eligibility_reason)
+
+    def test_topology_replay_only_and_superseded_runs_are_not_eligible(self):
+        with TemporaryDirectory() as temporary:
+            model = TopologyBaselineModel(Path(temporary) / "baseline.json")
+            model.observe(event(
+                anchor=9,
+                event_seq=10,
+                correlation=100,
+                flags=0x04,
+            ))
+            replay = model.observe(event(
+                stage=12,
+                flags=0x07,
+                total=1,
+                event_seq=11,
+                correlation=100,
+            ))
+            self.assertFalse(replay.complete)
+            self.assertIn("replay", replay.eligibility_reason.lower())
+            with self.assertRaisesRegex(ValueError, "replay"):
+                model.accept_latest()
+
+            model.observe(event(
+                anchor=1,
+                event_seq=20,
+                correlation=200,
+            ))
+            current = model.observe(event(
+                stage=12,
+                flags=0x01,
+                total=1,
+                event_seq=21,
+                correlation=200,
+            ))
+            self.assertTrue(current.complete)
+
+            self.assertIsNone(model.observe(event(
+                stage=1,
+                event_seq=30,
+                correlation=300,
+            )))
+            self.assertIsNone(model.latest)
+            with self.assertRaisesRegex(ValueError, "terminal result"):
+                model.accept_latest()
 
     def test_human_facing_run_statuses_steps_and_visible_columns(self):
         expected_steps = {

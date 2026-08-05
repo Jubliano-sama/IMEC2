@@ -281,6 +281,16 @@ static int check_role(const struct mesh_sim_world *world,
                                   node_index, i, delivery->payload_len,
                                   "delivered frame payload is inconsistent");
         }
+        if (node->role == MESH_SIM_ROLE_GATEWAY &&
+            delivery->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+            return fail_invariant(
+                report,
+                MESH_SIM_INVARIANT_SEMANTIC_COUNT,
+                node_index,
+                i,
+                delivery->packet.seq,
+                "gateway ACK-confirm leaked into host semantic delivery");
+        }
         for (size_t j = i + 1u; j < node->delivery_count; j++) {
             if (delivery_identity_matches(delivery, &node->deliveries[j])) {
                 return fail_invariant(report,

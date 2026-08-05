@@ -12,6 +12,13 @@
 #define ROUTE_REFRESH_RETRY_MAX_MS 5000u
 #define ROUTE_REFRESH_PROTOCOL_DEADLINE_MS \
     APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS
+
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE > 0u &&
+                   APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE <=
+                       UINT16_MAX &&
+                   APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE <
+                       UINT32_C(0x80000000),
+               "route-refresh reservation must fit local and RFC 1982 bounds");
 struct route_refresh_correlation {
     uint32_t session_id;
     uint16_t seq;
@@ -24,11 +31,13 @@ struct route_refresh_state {
     struct app_mesh_flood_progress flood;
     struct route_refresh_correlation correlation;
     uint32_t sequence;
+    uint32_t reserved_sequence_next;
     uint32_t due_ms;
     uint32_t response_due_ms;
     uint32_t absolute_deadline_ms;
     uint32_t paused_at_ms;
     uint32_t operation_generation;
+    uint16_t reserved_sequence_remaining;
     uint8_t retry_round;
     uint8_t outer_sent_count;
     uint8_t burst_index;
@@ -52,11 +61,13 @@ struct route_refresh_operation {
     struct app_mesh_flood_progress flood;
     uint32_t generation;
     uint32_t sequence;
+    uint32_t reserved_sequence_next;
     uint32_t response_due_ms;
     uint32_t absolute_deadline_ms;
     uint8_t outer_sent_count;
     uint8_t burst_index;
     uint8_t burst_count;
+    uint16_t reserved_sequence_remaining;
     bool wake_sent;
     bool outer_sent;
     bool absolute_deadline_valid;
@@ -82,6 +93,51 @@ static uint32_t refresh_wait_ms(uint32_t now_ms, uint32_t deadline_ms)
 {
     return refresh_deadline_reached(now_ms, deadline_ms) ? 0u :
            deadline_ms - now_ms;
+}
+
+static uint32_t refresh_sequence_increment(uint32_t sequence)
+{
+    return sequence == UINT32_MAX ? 1u : sequence + 1u;
+}
+
+static int refresh_operation_next_sequence(
+    struct route_refresh_operation *operation)
+{
+    uint32_t first_sequence = 0u;
+    int ret;
+
+    if (operation == NULL || operation->config == NULL) {
+        return -EINVAL;
+    }
+    if (operation->config->reserve_sequences == NULL) {
+        operation->sequence =
+            refresh_sequence_increment(operation->sequence);
+        return 0;
+    }
+    if (operation->reserved_sequence_remaining == 0u) {
+        ret = operation->config->reserve_sequences(
+            operation->config->ctx,
+            APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE,
+            &first_sequence);
+        if (ret < 0) {
+            return ret;
+        }
+        if (first_sequence == 0u) {
+            return -EIO;
+        }
+        operation->sequence = first_sequence;
+        operation->reserved_sequence_next =
+            refresh_sequence_increment(first_sequence);
+        operation->reserved_sequence_remaining =
+            APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE - 1u;
+        return 0;
+    }
+
+    operation->sequence = operation->reserved_sequence_next;
+    operation->reserved_sequence_next =
+        refresh_sequence_increment(operation->reserved_sequence_next);
+    operation->reserved_sequence_remaining--;
+    return 0;
 }
 
 static int refresh_schedule(uint32_t delay_ms)
@@ -393,9 +449,9 @@ static int refresh_prepare_outer(struct route_refresh_operation *operation,
     }
     first_build = !operation->snapshot.valid;
     if (first_build) {
-        operation->sequence++;
-        if (operation->sequence == 0u) {
-            operation->sequence = 1u;
+        ret = refresh_operation_next_sequence(operation);
+        if (ret < 0) {
+            return ret;
         }
     }
     ret = operation->config->build == NULL ?
@@ -438,6 +494,10 @@ static void refresh_operation_copy_locked(
     operation->flood = route_refresh.flood;
     operation->generation = route_refresh.operation_generation;
     operation->sequence = route_refresh.sequence;
+    operation->reserved_sequence_next =
+        route_refresh.reserved_sequence_next;
+    operation->reserved_sequence_remaining =
+        route_refresh.reserved_sequence_remaining;
     operation->response_due_ms = route_refresh.response_due_ms;
     operation->response_due_valid = route_refresh.response_due_valid;
     operation->absolute_deadline_ms = route_refresh.absolute_deadline_ms;
@@ -456,6 +516,10 @@ static void refresh_operation_commit_locked(
     route_refresh.snapshot = operation->snapshot;
     route_refresh.flood = operation->flood;
     route_refresh.sequence = operation->sequence;
+    route_refresh.reserved_sequence_next =
+        operation->reserved_sequence_next;
+    route_refresh.reserved_sequence_remaining =
+        operation->reserved_sequence_remaining;
     route_refresh.outer_sent_count = operation->outer_sent_count;
     route_refresh.burst_index = operation->burst_index;
     route_refresh.burst_count = operation->burst_count;
@@ -615,6 +679,7 @@ static void refresh_work_handler(struct k_work *work)
                 refresh_deadline_add(config->now_ms == NULL ? 0u :
                                      config->now_ms(config->ctx),
                                      FLOOD_POST_ROOT_GUARD_MS);
+            outbound.earliest_tx_valid = true;
         }
     }
     ret = operation.outer_sent ? 0 : (ret < 0 ? ret : -EAGAIN);
@@ -748,6 +813,8 @@ static int route_refresh_request_bounded(
     bool allowed;
     bool response_priority;
     bool stop_role_scan = false;
+    bool restart_role_scan = false;
+    uint32_t request_generation = 0u;
     int ret;
 
     if (timeout_ms == 0u || UINT32_MAX - delay_ms < timeout_ms) {
@@ -836,8 +903,34 @@ static int route_refresh_request_bounded(
             stop_role_scan = config->stop_role_scan != NULL;
         }
     }
+    request_generation = route_refresh.operation_generation;
+    if (stop_role_scan) {
+        /*
+         * Transfer scan ownership before publishing zero-delay work. A
+         * scheduler is allowed to run the worker inline, so stopping after
+         * refresh_schedule() can undo the worker's final restart.
+         */
+        app_node_comm_sync_unlock();
+        config->stop_role_scan(config->ctx);
+        ret = app_node_comm_sync_lock();
+        if (ret < 0) {
+            if (config->restart_role_scan != NULL) {
+                config->restart_role_scan(config->ctx);
+            }
+            return ret;
+        }
+        if (route_refresh.config != config ||
+            route_refresh.operation_generation != request_generation ||
+            route_refresh.paused || !route_refresh.active) {
+            restart_role_scan = !route_refresh.paused;
+            ret = -ECANCELED;
+            goto out;
+        }
+    }
     ret = refresh_schedule(delay_ms);
-    if (ret < 0) {
+    if (ret < 0 &&
+        route_refresh.config == config &&
+        route_refresh.operation_generation == request_generation) {
         route_refresh.active = false;
         route_refresh.due_ms = 0u;
         route_refresh.scheduled = false;
@@ -846,10 +939,13 @@ static int route_refresh_request_bounded(
             route_refresh.correlated = false;
         }
     }
+    if (ret < 0 && stop_role_scan && !route_refresh.paused) {
+        restart_role_scan = true;
+    }
 out:
     app_node_comm_sync_unlock();
-    if (stop_role_scan) {
-        config->stop_role_scan(config->ctx);
+    if (restart_role_scan && config->restart_role_scan != NULL) {
+        config->restart_role_scan(config->ctx);
     }
     return ret;
 }

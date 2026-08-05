@@ -24,8 +24,8 @@
 #define MAX_IDENTICAL_RESULT_BUNDLE_TX 4u
 #define MAX_IDENTICAL_RESULT_BUNDLE_TX_PER_RADIO 4u
 #define MAX_IDENTICAL_EACK_TX_PER_RADIO 2u
-#define MAX_TOTAL_EACK_TX 11u
-#define EXPECTED_LEAF_EACK_FORWARDS 2u
+#define MAX_TOTAL_EACK_TX 9u
+#define EXPECTED_LEAF_EACK_FORWARDS 1u
 
 struct fixture {
     struct mesh_sim_world world;
@@ -525,12 +525,10 @@ static bool reject_mutated_bundle_then_restore(
     mutated = bundle_tx;
     CHECK(mutated.payload_len > 0u);
     mutated.payload[mutated.payload_len - 1u] ^= 0x01u;
-    CHECK(mesh_sim_gateway_reject_next_semantic_deliveries(
-              &f->world, f->gateway, 1u) == MESH_SIM_OK);
     CHECK(transmit_outbound(f, f->collector, &gateway_receiver, 1u, &mutated,
                             NULL) == MESH_SIM_OK);
     CHECK(gateway->delivery_count == 0u);
-    CHECK(gateway->gateway_semantic_rejection_count == 1u);
+    CHECK(gateway->gateway_semantic_rejection_count == 0u);
     CHECK(gateway_collection_record_bundle_from_hop(
               &f->collection,
               &mutated.packet,
@@ -614,7 +612,9 @@ static bool gateway_accepts_exact_retry(
                             NULL) == MESH_SIM_OK);
     CHECK(gateway->delivery_count == 1u);
     CHECK(gateway->gateway_semantic_commit_count == 1u);
-    CHECK(gateway->gateway_semantic_rejection_count == 2u);
+    /* The immutable transport identity rejects the same-header mutation
+     * before the application semantic-admission boundary. */
+    CHECK(gateway->gateway_semantic_rejection_count == 0u);
     CHECK(queued_type_count(gateway, MSG_GATEWAY_ACK) == 1u);
     accepted_count = 0u;
     duplicate_count = 0u;
@@ -849,6 +849,11 @@ static bool deliver_eack_with_loss_stale_and_duplicate(struct fixture *f)
     CHECK(f->world.roles[f->child_b].relay.pending.state ==
           MESH_RELAY_TX_WAIT_GATEWAY_ACK);
 
+    /*
+     * Both adversarial copies arrive at TTL one. They may be inspected
+     * locally, but neither may create an invalid zero-TTL forward. Each child
+     * therefore queues only its first decodable copy of the real EACK below.
+     */
     CHECK(mesh_sim_set_directed_rx_failures(&f->world,
                                             f->collector,
                                             f->child_a,
@@ -965,7 +970,7 @@ static bool assert_bounded_traffic_and_settled(
               .gateway_semantic_duplicate_redelivery_count == 1u);
     CHECK(f->world.roles[f->gateway].gateway_semantic_duplicate_ack_count ==
           0u);
-    CHECK(f->world.roles[f->gateway].gateway_semantic_rejection_count == 2u);
+    CHECK(f->world.roles[f->gateway].gateway_semantic_rejection_count == 0u);
     for (size_t i = 0u; i < f->world.role_count; i++) {
         CHECK(f->world.roles[i].tx_queue_count == 0u);
         CHECK(f->world.roles[i].relay.pending.state == MESH_RELAY_TX_IDLE);

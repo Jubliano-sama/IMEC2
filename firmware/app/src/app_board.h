@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 int status_leds_init(void);
+int status_leds_connect(void);
 void status_leds_set(bool red, bool green, bool blue);
 void status_led0_set(bool red, bool green, bool blue);
 void status_led1_set(bool red, bool green, bool blue);
@@ -23,6 +24,9 @@ void status_debug_tx_mesh_frame_sent_pulse(void);
 void status_debug_tx_gateway_ack_rx_pulse(void);
 void status_debug_gateway_ack_tx_pulse(void);
 void status_debug_note(const char *text);
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 1, 2)))
+#endif
 void status_debug_printf(const char *fmt, ...);
 int status_stack_diag_transaction_begin(void);
 int status_stack_diag_note(const char *text);

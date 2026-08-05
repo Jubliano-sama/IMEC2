@@ -60,6 +60,8 @@ struct route_candidate {
     uint8_t channel9_busy_hint;
     uint32_t capacity_observed_at_ms;
     uint32_t capacity_valid_until_ms;
+    bool capacity_hint_valid;
+    bool hold_down_valid;
     bool channel9_timing_valid;
     bool valid;
 };
@@ -71,6 +73,7 @@ struct route_table {
 };
 
 void route_table_init(struct route_table *table, uint32_t current_epoch);
+bool route_epoch_strictly_newer(uint32_t candidate, uint32_t current);
 uint16_t route_candidate_cost(uint8_t hop_count, uint8_t link_quality);
 int route_upsert_candidate(struct route_table *table,
                                 const struct route_candidate *candidate);
@@ -89,6 +92,7 @@ void route_update_capacity_hint(struct route_table *table,
                                 uint8_t relay_capacity_state,
                                 uint16_t queue_free_hint,
                                 uint8_t channel9_busy_hint,
+                                bool capacity_hint_valid,
                                 uint32_t observed_at_ms,
                                 uint32_t valid_until_ms,
                                 uint32_t now_ms);

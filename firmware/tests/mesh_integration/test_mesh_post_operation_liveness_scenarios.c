@@ -18,7 +18,7 @@ struct transit_operation {
     uint8_t payload[96];
     size_t payload_len;
     struct proto_packet gateway_ack;
-    uint8_t gateway_ack_payload[8];
+    uint8_t gateway_ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
     size_t gateway_ack_payload_len;
     struct mesh_outbound forwarded_ack;
 };
@@ -128,6 +128,16 @@ static int build_operation(struct transit_operation *operation,
                                     sizeof(operation->gateway_ack_payload),
                                     &operation->gateway_ack_payload_len,
                                     seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_ack_semantic_identity(
+        operation->gateway_ack_payload,
+        sizeof(operation->gateway_ack_payload),
+        &operation->gateway_ack_payload_len,
+        &operation->packet,
+        operation->payload,
+        operation->payload_len);
     if (ret != PROTO_OK) {
         return ret;
     }

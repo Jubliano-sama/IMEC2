@@ -691,7 +691,8 @@ static void test_survey_partial_rounds_still_produce_reports(void)
           "partial discovery could not encode its useful peer report");
     CHECK(survey_init_discovery_report_packet(
               &packet, anchor_id, UINT64_C(0xa001000000000001),
-              config.survey_id, 77u, (uint8_t)payload_len) == PROTO_OK,
+              config.survey_id, config.operation_generation, 77u,
+              (uint8_t)payload_len) == PROTO_OK,
           "partial discovery could not wrap its report");
     CHECK(survey_extract_reach_report_tlvs(
               payload, payload_len, &survey_id, &decoded_anchor_id,

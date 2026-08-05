@@ -6,7 +6,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define APP_GATEWAY_COMMAND_LIFECYCLE_MAX_ITEMS 8u
+/*
+ * Production admission has two serialized command slots. Keeping unused
+ * lifecycle identities here would consume RAM that is required to retain the
+ * terminal event for every independently accepted host-command credit.
+ */
+#define APP_GATEWAY_COMMAND_LIFECYCLE_MAX_ITEMS 2u
 
 enum app_gateway_command_lifecycle_state {
     APP_GATEWAY_COMMAND_LIFECYCLE_EMPTY = 0,

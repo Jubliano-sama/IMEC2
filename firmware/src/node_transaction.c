@@ -4,45 +4,31 @@
 #include <errno.h>
 #include <string.h>
 
-#define NODE_TRANSACTION_FINGERPRINT_OFFSET UINT32_C(2166136261)
-#define NODE_TRANSACTION_FINGERPRINT_PRIME UINT32_C(16777619)
-
-uint32_t node_transaction_fingerprint_bytes(uint32_t seed,
-                                            const uint8_t *bytes,
-                                            size_t length)
+bool node_transaction_digest_bytes(
+    const uint8_t *bytes,
+    size_t length,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
-    uint32_t fingerprint = seed == 0u ?
-                           NODE_TRANSACTION_FINGERPRINT_OFFSET : seed;
-
-    if (bytes == NULL && length != 0u) {
-        return 0u;
-    }
-    for (size_t i = 0u; i < length; i++) {
-        fingerprint ^= bytes[i];
-        fingerprint *= NODE_TRANSACTION_FINGERPRINT_PRIME;
-        if (fingerprint == 0u) {
-            fingerprint = NODE_TRANSACTION_FINGERPRINT_OFFSET;
-        }
-    }
-    return fingerprint;
+    return semantic_digest_sha256(bytes, length, digest);
 }
 
-uint32_t node_transaction_fingerprint_packet(
+bool node_transaction_digest_packet(
     const struct proto_packet *packet,
     const uint8_t *payload,
-    size_t payload_len)
+    size_t payload_len,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
+    struct semantic_digest_sha256_context digest_context;
     uint8_t header[PACKET_EXT_HEADER_LEN] = {0};
     uint8_t encoded_crc[PACKET_CRC_LEN];
     size_t header_len;
     uint16_t crc;
-    uint32_t fingerprint;
 
-    if (packet == NULL ||
+    if (packet == NULL || digest == NULL ||
         packet->payload_len != payload_len ||
         payload_len > PACKET_EXT_MAX_PAYLOAD_LEN ||
         (payload_len != 0u && payload == NULL)) {
-        return 0u;
+        return false;
     }
 
     header[0] = PROTO_MAGIC;
@@ -64,17 +50,21 @@ uint32_t node_transaction_fingerprint_packet(
     }
     header_len = proto_packet_header_len((uint16_t)payload_len);
 
-    fingerprint = node_transaction_fingerprint_bytes(
-        0u, header, header_len);
-    fingerprint = node_transaction_fingerprint_bytes(
-        fingerprint, payload, payload_len);
-
     crc = proto_crc16_ccitt_false_update(
         UINT16_C(0xFFFF), header, header_len);
     crc = proto_crc16_ccitt_false_update(crc, payload, payload_len);
     proto_put_u16_le(encoded_crc, crc);
-    return node_transaction_fingerprint_bytes(
-        fingerprint, encoded_crc, sizeof(encoded_crc));
+    return semantic_digest_sha256_init(&digest_context) &&
+           semantic_digest_sha256_update(&digest_context,
+                                         header,
+                                         header_len) &&
+           semantic_digest_sha256_update(&digest_context,
+                                         payload,
+                                         payload_len) &&
+           semantic_digest_sha256_update(&digest_context,
+                                         encoded_crc,
+                                         sizeof(encoded_crc)) &&
+           semantic_digest_sha256_final(&digest_context, digest);
 }
 
 static bool node_transaction_key_valid(const struct node_transaction_key *key)
@@ -197,7 +187,10 @@ int node_transaction_note_request_terminal(
     uint64_t now_ms,
     enum node_transaction_action *action)
 {
+    bool zero_rf_authoritative;
+
     if (transaction == NULL || event == NULL ||
+        (int)event->reason < (int)NODE_COMM_TERMINAL_DELIVERED ||
         event->reason > NODE_COMM_TERMINAL_CANCELLED) {
         return -EINVAL;
     }
@@ -206,19 +199,36 @@ int node_transaction_note_request_terminal(
         event->client_token != transaction->spec.client_token) {
         return -ESTALE;
     }
+    if (event->reason == NODE_COMM_TERMINAL_DELIVERED &&
+        event->attempts_started == 0u) {
+        return -EPROTO;
+    }
 
+    zero_rf_authoritative =
+        event->attempts_started == 0u &&
+        event->reason != NODE_COMM_TERMINAL_DELIVERED &&
+        transaction->request_attempts_started == 0u &&
+        transaction->state != NODE_TRANSACTION_SUCCEEDED;
     if (event->attempts_started > transaction->request_attempts_started) {
         transaction->request_attempts_started = event->attempts_started;
     }
     transaction->request_delivery_terminal = true;
-    if (event->attempts_started == 0u &&
-        event->reason != NODE_COMM_TERMINAL_DELIVERED) {
+    if (zero_rf_authoritative) {
         transaction->remote_side_effect_possible = false;
     } else {
         transaction->remote_side_effect_possible = true;
     }
 
     (void)node_transaction_service(transaction, now_ms, action);
+    if (transaction->state == NODE_TRANSACTION_ABANDONING &&
+        zero_rf_authoritative) {
+        /*
+         * Deadline/cancel may have conservatively entered ABANDONING before
+         * the delivery owner supplied its terminal proof. Zero RF attempts
+         * remove the only possible remote side effect, so no cleanup remains.
+         */
+        transaction->state = NODE_TRANSACTION_ABANDONED;
+    }
     if (transaction->state != NODE_TRANSACTION_ACTIVE) {
         node_transaction_set_action(transaction, action);
         return 0;
@@ -240,15 +250,15 @@ int node_transaction_note_request_terminal(
 int node_transaction_reconcile_result(
     struct node_transaction *transaction,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
-    uint32_t result_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    const uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t result_token,
     uint64_t now_ms,
     enum node_transaction_result_disposition *disposition,
     enum node_transaction_action *action)
 {
-    if (transaction == NULL || key == NULL || disposition == NULL ||
-        action == NULL) {
+    if (transaction == NULL || key == NULL || request_digest == NULL ||
+        result_digest == NULL || disposition == NULL || action == NULL) {
         return -EINVAL;
     }
     *action = NODE_TRANSACTION_ACTION_NONE;
@@ -258,7 +268,9 @@ int node_transaction_reconcile_result(
         return 0;
     }
     (void)node_transaction_service(transaction, now_ms, action);
-    if (request_fingerprint != transaction->spec.request_fingerprint) {
+    if (!semantic_digest_equal(request_digest,
+                               transaction->spec.request_digest,
+                               SEMANTIC_DIGEST_SHA256_LEN)) {
         *disposition = NODE_TRANSACTION_RESULT_CONFLICT;
         node_transaction_set_action(transaction, action);
         return 0;
@@ -271,7 +283,9 @@ int node_transaction_reconcile_result(
         return 0;
     }
     if (transaction->state == NODE_TRANSACTION_SUCCEEDED) {
-        if (transaction->accepted_result_fingerprint == result_fingerprint &&
+        if (semantic_digest_equal(transaction->accepted_result_digest,
+                                  result_digest,
+                                  SEMANTIC_DIGEST_SHA256_LEN) &&
             transaction->result_token == result_token) {
             *disposition = NODE_TRANSACTION_RESULT_DUPLICATE;
         } else {
@@ -286,7 +300,9 @@ int node_transaction_reconcile_result(
         return 0;
     }
 
-    transaction->accepted_result_fingerprint = result_fingerprint;
+    memcpy(transaction->accepted_result_digest,
+           result_digest,
+           sizeof(transaction->accepted_result_digest));
     transaction->result_token = result_token;
     transaction->remote_side_effect_possible = true;
     transaction->state = NODE_TRANSACTION_SUCCEEDED;
@@ -420,17 +436,28 @@ size_t node_transaction_responder_service(
 int node_transaction_responder_receive(
     struct node_transaction_responder *responder,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint64_t expires_at_ms,
     uint64_t now_ms,
     enum node_transaction_receive_disposition *disposition,
+    uint8_t cached_result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t *cached_result_token)
 {
     struct node_transaction_response_record *record;
+    uint8_t request_digest_copy[SEMANTIC_DIGEST_SHA256_LEN];
 
     if (responder == NULL || !node_transaction_key_valid(key) ||
-        disposition == NULL) {
+        request_digest == NULL || disposition == NULL) {
         return -EINVAL;
+    }
+    /*
+     * The optional replay output may alias caller-owned request storage. Copy
+     * the authority before clearing outputs so aliasing cannot turn an exact
+     * request into a conflict or a different cache record.
+     */
+    memcpy(request_digest_copy, request_digest, sizeof(request_digest_copy));
+    if (cached_result_digest != NULL) {
+        memset(cached_result_digest, 0, SEMANTIC_DIGEST_SHA256_LEN);
     }
     if (cached_result_token != NULL) {
         *cached_result_token = 0u;
@@ -447,7 +474,9 @@ int node_transaction_responder_receive(
             *disposition = NODE_TRANSACTION_RECEIVE_ABANDONED;
             return 0;
         }
-        if (record->request_fingerprint != request_fingerprint) {
+        if (!semantic_digest_equal(record->request_digest,
+                                   request_digest_copy,
+                                   SEMANTIC_DIGEST_SHA256_LEN)) {
             *disposition = NODE_TRANSACTION_RECEIVE_CONFLICT;
             return 0;
         }
@@ -460,6 +489,11 @@ int node_transaction_responder_receive(
             return 0;
         case NODE_TRANSACTION_RESPONSE_COMMITTED:
             *disposition = NODE_TRANSACTION_RECEIVE_REPLAY;
+            if (cached_result_digest != NULL) {
+                memcpy(cached_result_digest,
+                       record->result_digest,
+                       SEMANTIC_DIGEST_SHA256_LEN);
+            }
             if (cached_result_token != NULL) {
                 *cached_result_token = record->result_token;
             }
@@ -478,7 +512,9 @@ int node_transaction_responder_receive(
     }
     memset(record, 0, sizeof(*record));
     record->key = *key;
-    record->request_fingerprint = request_fingerprint;
+    memcpy(record->request_digest,
+           request_digest_copy,
+           sizeof(record->request_digest));
     record->expires_at_ms = expires_at_ms;
     record->state = NODE_TRANSACTION_RESPONSE_EXECUTING;
     *disposition = NODE_TRANSACTION_RECEIVE_EXECUTE;
@@ -488,34 +524,41 @@ int node_transaction_responder_receive(
 int node_transaction_responder_commit(
     struct node_transaction_responder *responder,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
-    uint32_t result_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    const uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t result_token)
 {
     struct node_transaction_response_record *record;
 
-    if (responder == NULL || !node_transaction_key_valid(key)) {
+    if (responder == NULL || !node_transaction_key_valid(key) ||
+        request_digest == NULL || result_digest == NULL) {
         return -EINVAL;
     }
     record = responder_find(responder, key);
     if (record == NULL) {
         return -ENOENT;
     }
-    if (record->request_fingerprint != request_fingerprint) {
+    if (!semantic_digest_equal(record->request_digest,
+                               request_digest,
+                               SEMANTIC_DIGEST_SHA256_LEN)) {
         return -EPROTO;
     }
     if (record->state == NODE_TRANSACTION_RESPONSE_ABANDONED) {
         return -ESTALE;
     }
     if (record->state == NODE_TRANSACTION_RESPONSE_COMMITTED) {
-        return record->result_fingerprint == result_fingerprint &&
+        return semantic_digest_equal(record->result_digest,
+                                     result_digest,
+                                     SEMANTIC_DIGEST_SHA256_LEN) &&
                record->result_token == result_token ? 0 : -EEXIST;
     }
     if (record->state != NODE_TRANSACTION_RESPONSE_EXECUTING) {
         return -EPROTO;
     }
 
-    record->result_fingerprint = result_fingerprint;
+    memcpy(record->result_digest,
+           result_digest,
+           sizeof(record->result_digest));
     record->result_token = result_token;
     record->state = NODE_TRANSACTION_RESPONSE_COMMITTED;
     return 0;
@@ -548,7 +591,7 @@ int node_transaction_responder_abandon(
     if (expires_at_ms > record->expires_at_ms) {
         record->expires_at_ms = expires_at_ms;
     }
-    record->result_fingerprint = 0u;
+    memset(record->result_digest, 0, sizeof(record->result_digest));
     record->result_token = 0u;
     record->state = NODE_TRANSACTION_RESPONSE_ABANDONED;
     return 0;

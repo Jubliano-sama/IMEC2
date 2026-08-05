@@ -89,7 +89,9 @@ class GatewayDiagnosticsMixin:
         split = cast(ttk.Panedwindow, self.activity_notebook.master)
         self.root.after_idle(lambda: split.sashpos(0, max(360, int(split.winfo_height() * 0.68))))
 
-    def _observe_diagnostic_packet(self, packet: Packet) -> None:
+    def _observe_diagnostic_packet(
+        self, packet: Packet, *, received_at: float | None = None
+    ) -> None:
         if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
             try:
                 event = decode_gateway_command_event(packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES))
@@ -98,7 +100,9 @@ class GatewayDiagnosticsMixin:
                 return
             self.command_timeline_model.observe(event)
             self._apply_gateway_command_transition(
-                self.command_orchestrator.observe_event(event)
+                self.command_orchestrator.observe_event(
+                    event, received_at=received_at
+                )
             )
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
             if self.geometry_model.observe_command_event(event):
@@ -119,6 +123,7 @@ class GatewayDiagnosticsMixin:
                         host_session_id=packet.session_id,
                         host_sequence=packet.seq,
                         command_status=status,
+                        received_at=received_at,
                     )
                 )
         observation = self.geometry_model.observe_pair_packet(packet)

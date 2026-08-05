@@ -11,6 +11,12 @@
 #define SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK 0x02u
 #define SURVEY_GATEWAY_TRANSACTION_RECENT_COUNT 4u
 #define SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS 3000u
+#define SURVEY_GATEWAY_PAIR_CONTROL_PHASE_COUNT 4u
+#define SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS \
+    (SURVEY_GATEWAY_PAIR_CONTROL_PHASE_COUNT * \
+     SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS)
+#define SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS \
+    SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS
 
 enum survey_gateway_transaction_result {
     SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK = 0,
@@ -42,14 +48,15 @@ struct survey_gateway_drive_state {
 };
 
 struct survey_gateway_response_ack_settle {
-    uint64_t deadline_ms;
+    uint32_t started_at_ms;
+    uint32_t deadline_ms;
     bool active;
 };
 
 struct survey_gateway_transaction_recent {
     struct node_transaction_key key;
-    uint32_t request_fingerprint;
-    uint32_t result_fingerprint;
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t result_token;
     uint64_t expires_at_ms;
     bool valid;
@@ -62,6 +69,8 @@ struct survey_gateway_transaction {
     struct survey_pair pair;
     enum command_id active_command_id;
     uint64_t active_target_id;
+    uint64_t cleanup_deadline_ms;
+    uint32_t active_started_at_ms;
     uint8_t prepared_mask;
     uint8_t possible_prepare_mask;
     uint8_t cleanup_mask;
@@ -80,7 +89,7 @@ int survey_gateway_transaction_begin(
     struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,
     enum command_id command_id,
-    uint32_t request_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t client_token,
     uint32_t delivery_handle,
     uint64_t absolute_deadline_ms,
@@ -93,8 +102,8 @@ int survey_gateway_transaction_note_delivery_terminal(
 int survey_gateway_transaction_reconcile_result(
     struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
-    uint32_t result_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    const uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t result_token,
     enum command_status status,
     uint64_t now_ms,
@@ -114,20 +123,35 @@ uint8_t survey_gateway_transaction_cleanup_mask(
     const struct survey_gateway_transaction *context);
 bool survey_gateway_transaction_cleanup_pending(
     const struct survey_gateway_transaction *context);
+uint64_t survey_gateway_transaction_cleanup_deadline(
+    const struct survey_gateway_transaction *context);
+bool survey_gateway_transaction_pair_plan_fits_minimum_budget(
+    size_t pair_count,
+    uint32_t remaining_ms);
 enum survey_gateway_drive_action survey_gateway_drive_action(
     const struct survey_gateway_drive_state *state);
 void survey_gateway_response_ack_settle_init(
     struct survey_gateway_response_ack_settle *state);
 void survey_gateway_response_ack_settle_note_result(
     struct survey_gateway_response_ack_settle *state,
-    uint64_t now_ms);
+    uint64_t now_ms,
+    uint32_t operation_deadline_ms);
+void survey_gateway_response_ack_settle_note_duplicate(
+    struct survey_gateway_response_ack_settle *state,
+    uint64_t received_at_ms,
+    uint32_t operation_deadline_ms);
 bool survey_gateway_response_ack_settle_pending(
     struct survey_gateway_response_ack_settle *state,
     uint64_t now_ms);
-bool survey_gateway_transaction_request_fingerprint(
+bool survey_gateway_response_ack_settle_deadline_reached(
+    const struct survey_gateway_response_ack_settle *state,
+    uint64_t now_ms);
+void survey_gateway_response_ack_settle_complete(
+    struct survey_gateway_response_ack_settle *state);
+bool survey_gateway_transaction_request_digest(
     const struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,
-    uint32_t *request_fingerprint);
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN]);
 int survey_gateway_transaction_note_cleanup_started(
     struct survey_gateway_transaction *context,
     uint8_t peer_mask);

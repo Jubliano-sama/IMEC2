@@ -1,12 +1,18 @@
 #include "app_clicker.h"
 
 #include "app_board.h"
+#include "app_click_event_sequence.h"
+#include "app_radio_recovery.h"
 #include "app_config.h"
 #include "app_high_debug.h"
+#include "app_node_comm.h"
 #include "app_radio_low_power_policy.h"
 #include "app_stack_workload_diag.h"
 #include "app_state.h"
 #include "app_wake_train_politeness.h"
+#include "app_watchdog.h"
+#include "button_action_handoff.h"
+#include "button_wake_recovery.h"
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "mesh_relay.h"
@@ -36,6 +42,7 @@
 #include <zephyr/random/random.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/poweroff.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
 #include <errno.h>
@@ -49,6 +56,11 @@ LOG_MODULE_REGISTER(app_clicker, LOG_LEVEL_DBG);
 #define BLE_COURTESY_STOP_RETRY_COUNT 3u
 #define BLE_COURTESY_STOP_RETRY_DELAY_MS 5u
 #define STAGE1_CLICK_SPAM_MAX_DELAY_MS 5000u
+#define CLICK_BUTTON_RECOVERY_MAX_FAILURES 8u
+#define CLICK_BUTTON_RECOVERY_RETRY_MS 20u
+#define CLICK_BUTTON_RECOVERY_REBOOT_DELAY_MS 1000u
+#define CLICKER_STATUS_LED_CONNECT_ATTEMPTS 2u
+#define CLICKER_STATUS_LED_CONNECT_RETRY_US 100u
 
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
     .wake_adv_ms = WAKE_ADV_MS,
@@ -71,6 +83,13 @@ static const struct app_clicker_range_tx_config clicker_range_tx_config = {
     .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
     .prepare_range_mode_after_schedule = false,
 };
+
+#define SELF_TEST_REPORT_DELIVERY_TIMEOUT_MS CLICK_REPORT_DEADLINE_MS
+#define SELF_TEST_REPORT_DELIVERY_POLL_MS 20u
+
+BUILD_ASSERT(SELF_TEST_REPORT_DELIVERY_POLL_MS <
+                 SELF_TEST_REPORT_DELIVERY_TIMEOUT_MS,
+             "self-test report polling must fit its reliable-delivery bound");
 
 static struct app_clicker_callbacks clicker_callbacks;
 
@@ -225,8 +244,10 @@ static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
                 (unsigned int)rx_failure);
         ret = 0;
     } else if (ret != -ETIMEDOUT) {
-        LOG_DBG("clicker UWB gate receive sample failed: ret=%d", ret);
-        ret = 0;
+        LOG_WRN("clicker UWB gate aborted on hard receive failure: ret=%d failure=%u",
+                ret,
+                (unsigned int)rx_failure);
+        return ret;
     } else {
         ret = 0;
     }
@@ -253,21 +274,38 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                     uint32_t event_seq,
                                     uint64_t priority_id,
                                     bool use_ble_courtesy,
+                                    int64_t click_deadline_ms,
                                     uint32_t *uwb_restart_wait_ms,
                                     uint32_t *ble_defer_wait_ms,
                                     const struct app_clicker_attempt_gate_config *config)
 {
-    int64_t deadline_ms = k_uptime_get() + config->max_politeness_wait_ms;
+    int64_t now_ms;
+    int64_t deadline_ms;
+    uint32_t phase_budget_ms;
     uint8_t quiet_samples = 0u;
     uint32_t sample_count = 0u;
     uint32_t activity_count = 0u;
     bool ble_started = false;
     int64_t ble_courtesy_until_ms = 0;
+    int release_ret;
     int ret;
 
     if (session == NULL || config == NULL) {
         return -EINVAL;
     }
+    now_ms = k_uptime_get();
+    if (!app_wake_train_deadline_clip_delay(
+            now_ms,
+            click_deadline_ms,
+            config->max_politeness_wait_ms,
+            config->wake_adv_ms,
+            &phase_budget_ms)) {
+        return -ETIMEDOUT;
+    }
+    if (phase_budget_ms == 0u) {
+        return -ETIMEDOUT;
+    }
+    deadline_ms = now_ms + phase_budget_ms;
     if (uwb_restart_wait_ms != NULL) {
         *uwb_restart_wait_ms = 0u;
     }
@@ -299,11 +337,22 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
     }
     ret = dwm3000_driver_configure_range_mode();
     if (ret < 0) {
+        release_ret = app_radio_standby_with_bounded_recovery(
+            "politeness configure failure");
         radio_guard_uwb_stop();
         if (ble_started) {
             app_clicker_ble_courtesy_stop();
         }
-        return ret;
+        return release_ret < 0 ? release_ret : ret;
+    }
+    if (k_uptime_get() >= deadline_ms) {
+        release_ret = app_radio_standby_with_bounded_recovery(
+            "politeness deadline");
+        radio_guard_uwb_stop();
+        if (ble_started) {
+            app_clicker_ble_courtesy_stop();
+        }
+        return release_ret < 0 ? release_ret : -ETIMEDOUT;
     }
 
     /* BLE courtesy remains active while the external DWM3000 rearms without gaps. */
@@ -331,6 +380,14 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         if (ret == CLICKER_POLITENESS_UWB_RESTART) {
             break;
         }
+        if (ret < 0) {
+            /*
+             * A hard receive failure is not evidence of a quiet channel.  Stop
+             * this attempt and preserve the error through radio cleanup so a
+             * broken DWM3000 path cannot be treated as politeness success.
+             */
+            break;
+        }
         if (ble_started) {
             uint32_t peer_wait_ms = app_clicker_ble_courtesy_higher_wait_ms();
 
@@ -355,10 +412,16 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         }
     }
 
-    (void)dwm3000_driver_standby();
+    release_ret = app_radio_standby_with_bounded_recovery(
+        "politeness complete");
     radio_guard_uwb_stop();
     if (ble_started) {
         app_clicker_ble_courtesy_stop();
+    }
+    if (release_ret < 0) {
+        LOG_ERR("clicker politeness radio release failed: %d",
+                release_ret);
+        return release_ret;
     }
     if (ret == -EAGAIN) {
         LOG_INF("clicker BLE courtesy deferred attempt=%u event_seq=%u priority=%llx peer_wait_ms=%u",
@@ -372,6 +435,14 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         LOG_INF("clicker UWB gate will restart after relevant packet wait: attempt=%u wait_ms=%u samples=%u activity=%u",
                 session->attempt_index,
                 uwb_restart_wait_ms != NULL ? *uwb_restart_wait_ms : 0u,
+                sample_count,
+                activity_count);
+        return ret;
+    }
+    if (ret < 0) {
+        LOG_ERR("clicker UWB politeness receive failed closed: attempt=%u ret=%d samples=%u activity=%u",
+                session->attempt_index,
+                ret,
                 sample_count,
                 activity_count);
         return ret;
@@ -419,6 +490,7 @@ int app_clicker_attempt_gate(struct uwb_clicker_session *session,
                                        event_seq,
                                        priority_id,
                                        ble_courtesy_allowed,
+                                       click_deadline_ms,
                                        &uwb_restart_wait_ms,
                                        &ble_defer_wait_ms,
                                        config);
@@ -471,9 +543,12 @@ int app_clicker_attempt_gate(struct uwb_clicker_session *session,
 static int clicker_wake_train_sniff_activity(const char *phase,
                                              struct uwb_clicker_session *session,
                                              uint8_t retry_index,
+                                             int64_t deadline_ms,
+                                             uint32_t required_after_sniff_ms,
                                              bool *activity)
 {
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
+    int release_ret;
     int ret;
 
     if (activity == NULL) {
@@ -485,9 +560,25 @@ static int clicker_wake_train_sniff_activity(const char *phase,
     if (ret < 0) {
         return ret;
     }
+    if (!app_wake_train_deadline_fits(
+            k_uptime_get(),
+            deadline_ms,
+            u32_saturating_add(APP_WAKE_TRAIN_POLITE_SNIFF_MS,
+                               required_after_sniff_ms))) {
+        release_ret = app_radio_standby_with_bounded_recovery(
+            "wake sniff deadline");
+        return release_ret < 0 ? release_ret : -ETIMEDOUT;
+    }
     ret = dwm3000_driver_sniff_activity(APP_WAKE_TRAIN_POLITE_SNIFF_MS,
                                         &rx_failure);
-    (void)dwm3000_driver_standby();
+    release_ret = app_radio_standby_with_bounded_recovery(
+        "wake sniff complete");
+    if (release_ret < 0) {
+        LOG_ERR("clicker wake sniff radio release failed: phase=%s ret=%d",
+                phase == NULL ? "unknown" : phase,
+                release_ret);
+        return release_ret;
+    }
 
     *activity = app_wake_train_politeness_rx_activity(ret, rx_failure);
     if (*activity) {
@@ -504,22 +595,65 @@ static int clicker_wake_train_sniff_activity(const char *phase,
     return ret == -ETIMEDOUT ? 0 : ret;
 }
 
-static void clicker_wake_train_backoff(struct uwb_clicker_session *session,
-                                       const char *phase,
-                                       uint8_t retry_index)
+uint32_t app_clicker_wake_train_opportunity_tail_ms(
+    const struct app_clicker_wake_train_config *config)
 {
-    uint32_t delay_ms = app_wake_train_politeness_backoff_ms(
+    uint64_t required_ms;
+
+    if (config == NULL) {
+        return UINT32_MAX;
+    }
+    required_ms = (2ull * APP_WAKE_TRAIN_POLITE_SNIFF_MS) +
+                  config->wake_adv_ms +
+                  config->control_tx_timeout_ms +
+                  config->post_wake_claimed_duration_ms;
+    return required_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)required_ms;
+}
+
+static uint32_t clicker_wake_train_after_pre_tail_ms(
+    const struct app_clicker_wake_train_config *config)
+{
+    uint64_t required_ms;
+
+    if (config == NULL) {
+        return UINT32_MAX;
+    }
+    required_ms = APP_WAKE_TRAIN_POLITE_SNIFF_MS +
+                  config->wake_adv_ms +
+                  config->control_tx_timeout_ms +
+                  config->post_wake_claimed_duration_ms;
+    return required_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)required_ms;
+}
+
+static int clicker_wake_train_backoff(struct uwb_clicker_session *session,
+                                      const char *phase,
+                                      uint8_t retry_index,
+                                      int64_t deadline_ms,
+                                      uint32_t required_tail_ms)
+{
+    uint32_t requested_delay_ms = app_wake_train_politeness_backoff_ms(
         retry_index,
         sys_rand32_get());
+    uint32_t delay_ms;
 
-    LOG_INF("clicker wake train deferred after C5 activity: event_seq=%u attempt=%u retry=%u/%u phase=%s backoff_ms=%u",
+    if (!app_wake_train_deadline_clip_delay(k_uptime_get(),
+                                             deadline_ms,
+                                             requested_delay_ms,
+                                             required_tail_ms,
+                                             &delay_ms)) {
+        return -ETIMEDOUT;
+    }
+
+    LOG_INF("clicker wake train deferred after C5 activity: event_seq=%u attempt=%u retry=%u/%u phase=%s requested_backoff_ms=%u backoff_ms=%u",
             session != NULL ? session->config.click_event_id : 0u,
             session != NULL ? session->attempt_index : 0u,
             (uint32_t)retry_index + 1u,
             APP_WAKE_TRAIN_POLITE_MAX_RETRIES,
             phase == NULL ? "unknown" : phase,
+            requested_delay_ms,
             delay_ms);
     k_msleep(delay_ms);
+    return 0;
 }
 
 static uint16_t clicker_claimed_duration_ms(
@@ -532,17 +666,25 @@ static uint16_t clicker_claimed_duration_ms(
     return claimed_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)claimed_ms;
 }
 
-int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
-                                      uint64_t priority_id,
-                                      const struct app_clicker_wake_train_config *config)
+static int clicker_send_wake_claim_train_until(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    const struct app_clicker_wake_train_config *config,
+    int64_t deadline_ms)
 {
     uint8_t frame[UWB_WAKE_CLAIM_LEN];
     uint8_t polite_retry = 0u;
+    uint32_t required_after_pre_ms;
+    uint32_t required_tail_ms;
+    int release_ret;
     int ret = -EAGAIN;
 
     if (session == NULL || config == NULL) {
         return -EINVAL;
     }
+    required_tail_ms = app_clicker_wake_train_opportunity_tail_ms(config);
+    required_after_pre_ms =
+        clicker_wake_train_after_pre_tail_ms(config);
 
     while (polite_retry <= APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
         size_t frame_len = 0u;
@@ -550,6 +692,17 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
         uint16_t sent_count = 0u;
         bool c5_activity = false;
         const char *activity_phase = NULL;
+
+        if (!app_wake_train_deadline_fits(k_uptime_get(),
+                                           deadline_ms,
+                                           required_tail_ms)) {
+            LOG_INF("clicker wake train deadline cannot fit complete opportunity: event_seq=%u attempt=%u retry=%u required_ms=%u",
+                    session->config.click_event_id,
+                    session->attempt_index,
+                    polite_retry,
+                    required_tail_ms);
+            return -ETIMEDOUT;
+        }
 
         ret = radio_guard_uwb_start("clicker UWB WAKE_CLAIM train");
         if (ret < 0) {
@@ -562,6 +715,8 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
         ret = clicker_wake_train_sniff_activity("pre",
                                                 session,
                                                 polite_retry,
+                                                deadline_ms,
+                                                required_after_pre_ms,
                                                 &c5_activity);
         if (ret < 0) {
             goto attempt_out;
@@ -584,6 +739,12 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
             goto attempt_out;
         }
         status_debug_note("DBG_WAKE_TRAIN_CONFIG_OK\n");
+        if (!app_wake_train_deadline_fits(k_uptime_get(),
+                                           deadline_ms,
+                                           required_after_pre_ms)) {
+            ret = -ETIMEDOUT;
+            goto attempt_out;
+        }
 
         high_debug_log_event("WAKE_CLAIM_TX",
                              "phase=start event_seq=%u attempt=%u duration_ms=%u retry=%u",
@@ -623,6 +784,15 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
             if (sent_count == 0u) {
                 status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_BEGIN\n");
             }
+            if (!app_wake_train_deadline_fits(
+                    k_uptime_get(),
+                    deadline_ms,
+                    config->control_tx_timeout_ms +
+                        APP_WAKE_TRAIN_POLITE_SNIFF_MS +
+                        config->post_wake_claimed_duration_ms)) {
+                ret = -ETIMEDOUT;
+                break;
+            }
             ret = dwm3000_driver_send_frame(frame,
                                             frame_len,
                                             config->control_tx_timeout_ms);
@@ -654,9 +824,19 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
         }
 
         if (ret >= 0 && sent_count > 0u) {
+            if (!app_wake_train_deadline_fits(
+                    k_uptime_get(),
+                    deadline_ms,
+                    APP_WAKE_TRAIN_POLITE_SNIFF_MS +
+                        config->post_wake_claimed_duration_ms)) {
+                ret = -ETIMEDOUT;
+                goto attempt_out;
+            }
             ret = clicker_wake_train_sniff_activity("post",
                                                     session,
                                                     polite_retry,
+                                                    deadline_ms,
+                                                    config->post_wake_claimed_duration_ms,
                                                     &c5_activity);
             if (ret < 0) {
                 goto attempt_out;
@@ -669,11 +849,25 @@ int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
         }
 
 attempt_out:
-        (void)dwm3000_driver_standby();
+        release_ret = app_radio_standby_with_bounded_recovery(
+            "wake claim train");
         radio_guard_uwb_stop();
+        if (release_ret < 0) {
+            LOG_ERR("clicker wake train radio release failed: %d",
+                    release_ret);
+            ret = release_ret;
+        }
         if (ret == -EAGAIN && c5_activity &&
             polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
-            clicker_wake_train_backoff(session, activity_phase, polite_retry);
+            ret = clicker_wake_train_backoff(session,
+                                             activity_phase,
+                                             polite_retry,
+                                             deadline_ms,
+                                             required_tail_ms);
+            if (ret < 0) {
+                stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
+                return ret;
+            }
             polite_retry++;
             continue;
         }
@@ -708,6 +902,29 @@ attempt_out:
     return ret;
 }
 
+int app_clicker_send_wake_claim_train(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    const struct app_clicker_wake_train_config *config)
+{
+    return app_clicker_send_wake_claim_train_until(session,
+                                                   priority_id,
+                                                   config,
+                                                   INT64_MAX);
+}
+
+int app_clicker_send_wake_claim_train_until(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    const struct app_clicker_wake_train_config *config,
+    int64_t deadline_ms)
+{
+    return clicker_send_wake_claim_train_until(session,
+                                               priority_id,
+                                               config,
+                                               deadline_ms);
+}
+
 static void clicker_log_range_schedule_entries(const struct uwb_range_schedule_frame *schedule)
 {
     if (schedule == NULL) {
@@ -729,13 +946,76 @@ static void clicker_log_range_schedule_entries(const struct uwb_range_schedule_f
     }
 }
 
-int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *schedule,
-                                    const struct app_clicker_range_tx_config *config)
+static uint32_t clicker_range_slot_timeout_ms(
+    const struct uwb_range_schedule_frame *schedule)
+{
+    uint32_t stride_timeout_ms;
+
+    if (schedule == NULL) {
+        return UINT32_MAX;
+    }
+    stride_timeout_ms = u32_saturating_add(
+        (uint32_t)ceil_us_to_ms(schedule->exchange_stride_us),
+        UWB_SCHEDULE_GUARD_MS);
+    return MIN(CLICK_UWB_TIMEOUT_MS, stride_timeout_ms);
+}
+
+static uint32_t clicker_range_schedule_tail_ms(
+    const struct uwb_range_schedule_frame *schedule)
+{
+    size_t total_samples;
+    uint64_t tail_us;
+
+    if (schedule == NULL) {
+        return UINT32_MAX;
+    }
+    total_samples = uwb_range_schedule_total_samples(schedule);
+    if (total_samples == 0u) {
+        return UINT32_MAX;
+    }
+
+    /*
+     * The burst window starts at the first scheduled POLL, not at schedule
+     * transmission. Budget from the schedule-TX completion through the last
+     * complete exchange so a late setup cannot emit a schedule that the
+     * clicker must abandon before its advertised burst is over.
+     */
+    tail_us = ((uint64_t)schedule->first_poll_delay_ms * 1000u) +
+              ((uint64_t)(total_samples - 1u) *
+               schedule->exchange_stride_us) +
+              ((uint64_t)clicker_range_slot_timeout_ms(schedule) * 1000u);
+    return tail_us > ((uint64_t)UINT32_MAX * 1000u) ?
+           UINT32_MAX : (uint32_t)((tail_us + 999u) / 1000u);
+}
+
+static uint32_t clicker_range_schedule_deadline_budget_ms(
+    const struct uwb_range_schedule_frame *schedule,
+    const struct app_clicker_range_tx_config *config)
+{
+    if (config == NULL) {
+        return UINT32_MAX;
+    }
+    return u32_saturating_add(
+        config->control_tx_timeout_ms,
+        u32_saturating_add(clicker_range_schedule_tail_ms(schedule),
+                           CLICK_REPORT_BUILD_GUARD_MS));
+}
+
+static int clicker_send_range_schedule_until(
+    const struct uwb_range_schedule_frame *schedule,
+    const struct app_clicker_range_tx_config *config,
+    int64_t deadline_ms,
+    int64_t *schedule_tx_ms)
 {
     uint8_t frame[UWB_RANGE_SCHEDULE_MAX_LEN];
     size_t frame_len = 0u;
+    int64_t tx_complete_ms = -1;
+    int release_ret;
     int ret;
 
+    if (schedule_tx_ms != NULL) {
+        *schedule_tx_ms = -1;
+    }
     if (schedule == NULL || config == NULL) {
         return -EINVAL;
     }
@@ -753,9 +1033,20 @@ int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *sched
     stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
-        ret = dwm3000_driver_send_frame(frame,
-                                        frame_len,
-                                        config->control_tx_timeout_ms);
+        if (!app_wake_train_deadline_fits(
+                k_uptime_get(),
+                deadline_ms,
+                clicker_range_schedule_deadline_budget_ms(schedule,
+                                                          config))) {
+            ret = -ETIMEDOUT;
+        } else {
+            ret = dwm3000_driver_send_frame(frame,
+                                            frame_len,
+                                            config->control_tx_timeout_ms);
+            if (ret == 0) {
+                tx_complete_ms = k_uptime_get();
+            }
+        }
     }
     if (ret == 0 && config->prepare_range_mode_after_schedule) {
         int prep_ret = dwm3000_driver_configure_range_mode();
@@ -765,16 +1056,24 @@ int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *sched
                     prep_ret);
             ret = prep_ret;
         }
-        (void)dwm3000_driver_idle();
+        release_ret = app_radio_idle_with_bounded_recovery(
+            "range schedule prepared");
     } else {
-        (void)dwm3000_driver_standby();
+        release_ret = app_radio_standby_with_bounded_recovery(
+            "range schedule complete");
     }
     radio_guard_uwb_stop();
+    if (ret >= 0 && release_ret < 0) {
+        ret = release_ret;
+    }
 
     if (ret < 0) {
         stage1_led_result(STAGE1_LED_RESULT_ERROR);
         LOG_WRN("clicker UWB RANGE_SCHEDULE TX failed: ret=%d", ret);
         return ret;
+    }
+    if (schedule_tx_ms != NULL) {
+        *schedule_tx_ms = tx_complete_ms;
     }
     HIGH_DEBUG_COUNTER_INC(schedules_tx);
     stage1_led_result(STAGE1_LED_RESULT_OK);
@@ -798,6 +1097,14 @@ int app_clicker_send_range_schedule(const struct uwb_range_schedule_frame *sched
     return 0;
 }
 
+int app_clicker_send_range_schedule(
+    const struct uwb_range_schedule_frame *schedule,
+    const struct app_clicker_range_tx_config *config)
+{
+    return clicker_send_range_schedule_until(
+        schedule, config, INT64_MAX, NULL);
+}
+
 int app_clicker_send_range_release(struct uwb_clicker_session *session,
                                    uint8_t reason,
                                    const struct app_clicker_range_tx_config *config)
@@ -805,6 +1112,7 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
     struct uwb_range_release_frame release;
     uint8_t frame[UWB_RANGE_RELEASE_LEN];
     size_t frame_len = 0u;
+    int release_ret;
     int ret;
 
     if (session == NULL || config == NULL) {
@@ -830,8 +1138,12 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
                                         frame_len,
                                         config->control_tx_timeout_ms);
     }
-    (void)dwm3000_driver_standby();
+    release_ret = app_radio_standby_with_bounded_recovery(
+        "range release complete");
     radio_guard_uwb_stop();
+    if (ret >= 0 && release_ret < 0) {
+        ret = release_ret;
+    }
 
     if (ret < 0) {
         LOG_WRN("clicker UWB RANGE_RELEASE TX failed: ret=%d", ret);
@@ -854,10 +1166,21 @@ void app_clicker_run_continuous_wake_claims(
     }
 
     while (true) {
-        uint32_t event_seq = next_click_event_seq();
-        uint64_t priority_id = clicker_priority_id(event_seq, 1u);
+        uint32_t event_seq;
+        uint64_t priority_id;
         struct uwb_clicker_session session;
-        struct uwb_clicker_config clicker_config = {
+        struct uwb_clicker_config clicker_config;
+        int ret;
+
+        ret = app_click_event_sequence_next(&event_seq);
+        if (ret < 0) {
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            LOG_ERR("continuous WAKE_CLAIM identity allocation failed closed: %d",
+                    ret);
+            return;
+        }
+        priority_id = clicker_priority_id(event_seq, 1u);
+        clicker_config = (struct uwb_clicker_config) {
             .network_id = NETWORK_ID,
             .clicker_id = DEVICE_ID,
             .click_event_id = event_seq,
@@ -870,7 +1193,6 @@ void app_clicker_run_continuous_wake_claims(
             .ranging_channel = config->ranging_channel,
             .flags = config->flags,
         };
-        int ret;
 
         ret = uwb_clicker_session_start(&session, &clicker_config);
         if (ret != PROTO_OK) {
@@ -1007,7 +1329,9 @@ int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_start_continuous_click_sessions(
 }
 #endif
 
-int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
+static int clicker_discover_uwb_anchors_until(
+    struct uwb_clicker_session *session,
+    int64_t absolute_deadline_ms)
 {
     struct uwb_discover_frame discover;
     uint8_t frame[UWB_DISCOVERY_REPLY_LEN];
@@ -1018,6 +1342,7 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     uint16_t decoded_replies = 0u;
     uint16_t malformed_frames = 0u;
     uint16_t rejected_replies = 0u;
+    int release_ret;
     int ret;
     int last_ret = -ETIMEDOUT;
 
@@ -1040,6 +1365,12 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
     if (ret != PROTO_OK) {
         return -EINVAL;
     }
+    if (!app_wake_train_deadline_fits(
+            k_uptime_get(),
+            absolute_deadline_ms,
+            UWB_CONTROL_TX_TIMEOUT_MS + 1u)) {
+        return -ETIMEDOUT;
+    }
 
     ret = radio_guard_uwb_start("clicker UWB DISCOVER");
     if (ret < 0) {
@@ -1052,6 +1383,13 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
         goto out;
     }
 
+    if (!app_wake_train_deadline_fits(
+            k_uptime_get(),
+            absolute_deadline_ms,
+            UWB_CONTROL_TX_TIMEOUT_MS + 1u)) {
+        ret = -ETIMEDOUT;
+        goto out;
+    }
     ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
     if (ret < 0) {
         goto out;
@@ -1064,8 +1402,17 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
                          reply_window_ms);
 
     deadline_ms = k_uptime_get() + reply_window_ms;
+    if (absolute_deadline_ms != INT64_MAX &&
+        deadline_ms > absolute_deadline_ms) {
+        deadline_ms = absolute_deadline_ms;
+    }
+    if (k_uptime_get() >= deadline_ms) {
+        ret = -ETIMEDOUT;
+        goto out;
+    }
     while (k_uptime_get() < deadline_ms) {
         struct uwb_discovery_reply_frame reply;
+        enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
         uint8_t quality = 0u;
         int64_t remaining_ms = deadline_ms - k_uptime_get();
 
@@ -1075,12 +1422,17 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
                                                       &frame_len,
                                                       &quality,
                                                       NULL,
-                                                      NULL);
+                                                      &rx_failure);
         if (ret == -ETIMEDOUT) {
             break;
         }
         if (ret < 0) {
             last_ret = ret;
+            if (rx_failure == DWM3000_RX_FAILURE_NONE) {
+                LOG_ERR("clicker discovery aborted on hard radio receive failure: ret=%d",
+                        ret);
+                goto out;
+            }
             continue;
         }
         rx_frames++;
@@ -1149,8 +1501,12 @@ int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
             ret);
 
 out:
-    (void)dwm3000_driver_standby();
+    release_ret = app_radio_standby_with_bounded_recovery(
+        "discovery complete");
     radio_guard_uwb_stop();
+    if (ret >= 0 && release_ret < 0) {
+        ret = release_ret;
+    }
     if (ret < 0) {
         stage1_led_result(ret == -ETIMEDOUT ?
                           STAGE1_LED_RESULT_TIMEOUT :
@@ -1159,20 +1515,38 @@ out:
     return ret;
 }
 
-int app_clicker_collect_uwb_attempt_with_options(
+int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session)
+{
+    return app_clicker_discover_uwb_anchors_until(session, INT64_MAX);
+}
+
+int app_clicker_discover_uwb_anchors_until(
+    struct uwb_clicker_session *session,
+    int64_t deadline_ms)
+{
+    return clicker_discover_uwb_anchors_until(session, deadline_ms);
+}
+
+static int clicker_collect_uwb_attempt_with_options_until(
     struct uwb_clicker_session *session,
     uint64_t priority_id,
     struct uwb_range_schedule_frame *schedule,
     bool allow_cached_discovery,
-    bool post_burst_diagnostics)
+    bool post_burst_diagnostics,
+    int64_t deadline_ms,
+    int64_t *schedule_tx_ms)
 {
     struct app_clicker_range_tx_config range_tx_config = clicker_range_tx_config;
     int ret;
     bool used_cached_discovery = false;
 
-    ret = app_clicker_send_wake_claim_train(session,
-                                            priority_id,
-                                            &clicker_wake_train_config);
+    if (schedule_tx_ms != NULL) {
+        *schedule_tx_ms = -1;
+    }
+    ret = clicker_send_wake_claim_train_until(session,
+                                              priority_id,
+                                              &clicker_wake_train_config,
+                                              deadline_ms);
     if (ret < 0) {
         return ret;
     }
@@ -1201,7 +1575,7 @@ int app_clicker_collect_uwb_attempt_with_options(
 #endif
 
     if (!used_cached_discovery) {
-        ret = app_clicker_discover_uwb_anchors(session);
+        ret = clicker_discover_uwb_anchors_until(session, deadline_ms);
         if (ret < 0) {
             return ret;
         }
@@ -1210,11 +1584,19 @@ int app_clicker_collect_uwb_attempt_with_options(
     if ((session->config.flags & FLAG_COUNT_AS_CLICK) != 0u &&
         session->candidate_count > 0u &&
         session->candidate_count < session->config.min_anchor_count) {
-        int release_ret = app_clicker_send_range_release(
-            session,
-            UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
-            &clicker_range_tx_config);
+        int release_ret;
 
+        if (!app_wake_train_deadline_fits(
+                k_uptime_get(),
+                deadline_ms,
+                clicker_range_tx_config.control_tx_timeout_ms)) {
+            release_ret = -ETIMEDOUT;
+        } else {
+            release_ret = app_clicker_send_range_release(
+                session,
+                UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS,
+                &clicker_range_tx_config);
+        }
         if (release_ret < 0) {
             LOG_WRN("clicker could not release anchors after insufficient discovery: ret=%d candidates=%u min=%u",
                     release_ret,
@@ -1237,6 +1619,7 @@ int app_clicker_collect_uwb_attempt_with_options(
     if (clicker_callbacks.ml_relax_range_schedule != NULL) {
         ret = clicker_callbacks.ml_relax_range_schedule(schedule, post_burst_diagnostics);
         if (ret < 0) {
+            (void)uwb_clicker_abort_attempt(session);
             return ret;
         }
     }
@@ -1247,7 +1630,18 @@ int app_clicker_collect_uwb_attempt_with_options(
     }
 #endif
 
-    ret = app_clicker_send_range_schedule(schedule, &range_tx_config);
+    if (!app_wake_train_deadline_fits(
+            k_uptime_get(),
+            deadline_ms,
+            clicker_range_schedule_deadline_budget_ms(schedule,
+                                                      &range_tx_config))) {
+        (void)uwb_clicker_abort_attempt(session);
+        return -ETIMEDOUT;
+    }
+    ret = clicker_send_range_schedule_until(schedule,
+                                            &range_tx_config,
+                                            deadline_ms,
+                                            schedule_tx_ms);
     if (ret < 0) {
         (void)uwb_clicker_abort_attempt(session);
         LOG_WRN("clicker aborting UWB attempt before DS-TWR: reason=range_schedule_tx ret=%d attempt=%u retries=%u ds_fail=%u",
@@ -1257,6 +1651,58 @@ int app_clicker_collect_uwb_attempt_with_options(
                 session->diagnostics.ds_twr_failures);
     }
     return ret;
+}
+
+int app_clicker_collect_uwb_attempt_with_options(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    struct uwb_range_schedule_frame *schedule,
+    bool allow_cached_discovery,
+    bool post_burst_diagnostics)
+{
+    return app_clicker_collect_uwb_attempt_with_options_until(
+        session,
+        priority_id,
+        schedule,
+        allow_cached_discovery,
+        post_burst_diagnostics,
+        INT64_MAX,
+        NULL);
+}
+
+int app_clicker_collect_uwb_attempt_with_options_until(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    struct uwb_range_schedule_frame *schedule,
+    bool allow_cached_discovery,
+    bool post_burst_diagnostics,
+    int64_t deadline_ms,
+    int64_t *schedule_tx_ms)
+{
+    return clicker_collect_uwb_attempt_with_options_until(
+        session,
+        priority_id,
+        schedule,
+        allow_cached_discovery,
+        post_burst_diagnostics,
+        deadline_ms,
+        schedule_tx_ms);
+}
+
+static int clicker_collect_uwb_attempt_until(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    struct uwb_range_schedule_frame *schedule,
+    int64_t deadline_ms,
+    int64_t *schedule_tx_ms)
+{
+    return clicker_collect_uwb_attempt_with_options_until(session,
+                                                          priority_id,
+                                                          schedule,
+                                                          false,
+                                                          true,
+                                                          deadline_ms,
+                                                          schedule_tx_ms);
 }
 
 int app_clicker_collect_uwb_attempt(struct uwb_clicker_session *session,
@@ -1270,33 +1716,53 @@ int app_clicker_collect_uwb_attempt(struct uwb_clicker_session *session,
                                                        true);
 }
 
-static void clicker_release_scheduled_range_radio(void)
+static int clicker_idle_scheduled_range_radio(void)
 {
-    int ret = dwm3000_driver_idle();
+    int ret = app_radio_idle_with_bounded_recovery(
+        "scheduled range sample");
 
     if (ret < 0) {
         LOG_WRN("clicker DW3000 idle after scheduled sample failed: %d", ret);
     }
+    return ret;
 }
 
-static void clicker_finish_scheduled_range_radio_burst(void)
+static int clicker_finish_scheduled_range_radio_burst(void)
 {
-    int ret = dwm3000_driver_standby();
+    int ret = app_radio_standby_with_bounded_recovery(
+        "scheduled range burst");
 
     if (ret < 0) {
         LOG_WRN("clicker DW3000 standby after scheduled burst failed: %d", ret);
     }
+    radio_guard_uwb_stop();
+    return ret;
 }
 
 int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                         const struct uwb_range_schedule_frame *schedule,
+                                        int64_t schedule_tx_ms,
                                         int64_t click_deadline_ms,
                                         uint8_t *attempted_count)
 {
-    int64_t schedule_tx_ms = k_uptime_get();
-    size_t total_samples = uwb_range_schedule_total_samples(schedule);
+    size_t total_samples;
     int last_ret = -ETIMEDOUT;
+    int finish_ret;
+    int ret;
 
+    if (session == NULL || schedule == NULL || schedule_tx_ms < 0 ||
+        schedule_tx_ms > k_uptime_get()) {
+        return -EINVAL;
+    }
+    total_samples = uwb_range_schedule_total_samples(schedule);
+    ret = radio_guard_uwb_start("clicker scheduled UWB range burst");
+    if (ret < 0) {
+        (void)uwb_clicker_abort_attempt(session);
+        LOG_WRN("scheduled click DS-TWR burst not started: reason=radio_guard ret=%d attempt=%u",
+                ret,
+                session->attempt_index);
+        return ret;
+    }
     while (session->state == UWB_CLICKER_RANGING) {
         struct uwb_range_step step;
         struct dwm3000_range_request range_request;
@@ -1304,29 +1770,62 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         struct proto_packet click_activity_packet = {0};
         int64_t target_us;
         int64_t remaining_ms;
-        uint32_t slot_timeout_ms = CLICK_UWB_TIMEOUT_MS;
-        int ret;
+        uint32_t slot_timeout_ms;
+        uint32_t slot_deadline_budget_ms;
+        int idle_ret;
 
         ret = uwb_clicker_next_range_step(session, &step);
         if (ret == PROTO_ERR_NOT_FOUND) {
             break;
         }
         if (ret != PROTO_OK) {
-            clicker_finish_scheduled_range_radio_burst();
-            return -EINVAL;
+            last_ret = -EINVAL;
+            break;
         }
 
-        target_us = scheduled_range_sample_target_us(schedule_tx_ms, schedule, step.sample_index);
+        slot_timeout_ms = clicker_range_slot_timeout_ms(schedule);
+        slot_deadline_budget_ms = u32_saturating_add(
+            slot_timeout_ms, CLICK_REPORT_BUILD_GUARD_MS);
+        target_us = scheduled_range_sample_target_us(schedule_tx_ms,
+                                                      schedule,
+                                                      step.sample_index);
+        if (click_deadline_ms != INT64_MAX) {
+            int64_t latest_start_ms =
+                click_deadline_ms - slot_deadline_budget_ms;
+
+            if (latest_start_ms < 0 ||
+                target_us > latest_start_ms * 1000) {
+                (void)uwb_clicker_record_range_result(session,
+                                                      &step,
+                                                      RANGE_RX_TIMEOUT);
+                (void)uwb_clicker_abort_attempt(session);
+                stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
+                LOG_WRN("scheduled click DS-TWR not started: reason=scheduled_target_after_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u target_us=%lld latest_start_ms=%lld exchange_budget_ms=%u attempt=%u ds_fail=%u",
+                        (unsigned long long)step.anchor_id,
+                        step.anchor_index,
+                        (unsigned int)(step.sample_index + 1u),
+                        (unsigned int)total_samples,
+                        step.round_index,
+                        step.seq,
+                        (long long)target_us,
+                        (long long)latest_start_ms,
+                        slot_deadline_budget_ms,
+                        session->attempt_index,
+                        session->diagnostics.ds_twr_failures);
+                last_ret = -ETIMEDOUT;
+                break;
+            }
+        }
         sleep_until_us(target_us);
         stage1_led_phase(STAGE1_LED_PHASE_RANGE);
         stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
         remaining_ms = click_deadline_ms - k_uptime_get();
-        if (remaining_ms <= CLICK_REPORT_BUILD_GUARD_MS) {
+        if (remaining_ms < slot_deadline_budget_ms) {
             (void)uwb_clicker_record_range_result(session, &step, RANGE_RX_TIMEOUT);
             (void)uwb_clicker_abort_attempt(session);
             stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
-            LOG_WRN("scheduled click DS-TWR not started: reason=click_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u remaining_ms=%lld guard_ms=%u attempt=%u ds_fail=%u",
+            LOG_WRN("scheduled click DS-TWR not started: reason=click_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u remaining_ms=%lld exchange_budget_ms=%u attempt=%u ds_fail=%u",
                     (unsigned long long)step.anchor_id,
                     step.anchor_index,
                     (unsigned int)(step.sample_index + 1u),
@@ -1334,7 +1833,7 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                     step.round_index,
                     step.seq,
                     (long long)remaining_ms,
-                    CLICK_REPORT_BUILD_GUARD_MS,
+                    slot_deadline_budget_ms,
                     session->attempt_index,
                     session->diagnostics.ds_twr_failures);
             last_ret = -ETIMEDOUT;
@@ -1357,35 +1856,13 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         range_request.send_clicker_diag = false;
         range_request.expect_anchor_diag = false;
         range_request.capture_rsl = false;
-        slot_timeout_ms = MIN(slot_timeout_ms,
-                              (uint32_t)ceil_us_to_ms(schedule->exchange_stride_us) +
-                              UWB_SCHEDULE_GUARD_MS);
-        range_request.timeout_ms = MIN(slot_timeout_ms,
-                                       (uint32_t)(remaining_ms - CLICK_REPORT_BUILD_GUARD_MS));
+        range_request.timeout_ms = slot_timeout_ms;
         click_activity_packet.src_id = range_request.initiator_id;
         click_activity_packet.dst_id = range_request.responder_id;
         click_activity_packet.session_id = range_request.session_id;
         click_activity_packet.seq = range_request.seq;
         click_activity_packet.msg_type = MSG_UWB_POLL;
 
-        ret = radio_guard_uwb_start("clicker scheduled UWB range");
-        if (ret < 0) {
-            (void)uwb_clicker_record_range_result(session, &step, RANGE_INTERNAL_ERROR);
-            (void)uwb_clicker_abort_attempt(session);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            LOG_WRN("scheduled click DS-TWR not started: reason=radio_guard anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d attempt=%u ds_fail=%u",
-                    (unsigned long long)step.anchor_id,
-                    step.anchor_index,
-                    (unsigned int)(step.sample_index + 1u),
-                    (unsigned int)total_samples,
-                    step.round_index,
-                    step.seq,
-                    ret,
-                    session->attempt_index,
-                    session->diagnostics.ds_twr_failures);
-            clicker_finish_scheduled_range_radio_burst();
-            return ret;
-        }
         LOG_INF("scheduled click DS-TWR start: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u timeout_ms=%u",
                 (unsigned long long)step.anchor_id,
                 step.anchor_index,
@@ -1418,11 +1895,36 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
             clicker_callbacks.ml_enter_range_quiet();
         }
 #endif
+        remaining_ms = click_deadline_ms - k_uptime_get();
+        if (remaining_ms < slot_deadline_budget_ms) {
+#if defined(CONFIG_IMEC_ML_CLICKER)
+            if (clicker_callbacks.ml_exit_range_quiet != NULL) {
+                clicker_callbacks.ml_exit_range_quiet();
+            }
+#endif
+            (void)uwb_clicker_record_range_result(session,
+                                                  &step,
+                                                  RANGE_RX_TIMEOUT);
+            (void)uwb_clicker_abort_attempt(session);
+            stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
+            LOG_WRN("scheduled click DS-TWR not started: reason=radio_setup_consumed_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u remaining_ms=%lld exchange_budget_ms=%u attempt=%u ds_fail=%u",
+                    (unsigned long long)step.anchor_id,
+                    step.anchor_index,
+                    (unsigned int)(step.sample_index + 1u),
+                    (unsigned int)total_samples,
+                    step.round_index,
+                    step.seq,
+                    (long long)remaining_ms,
+                    slot_deadline_budget_ms,
+                    session->attempt_index,
+                    session->diagnostics.ds_twr_failures);
+            last_ret = -ETIMEDOUT;
+            break;
+        }
         app_stack_workload_diag_click_activity_admit(&click_activity_packet,
                                                       1u, 0u);
         ret = dwm3000_driver_range_initiator(&range_request, &range_result);
-        clicker_release_scheduled_range_radio();
-        radio_guard_uwb_stop();
+        idle_ret = clicker_idle_scheduled_range_radio();
 #if defined(CONFIG_IMEC_ML_CLICKER)
         if (clicker_callbacks.ml_exit_range_quiet != NULL) {
             clicker_callbacks.ml_exit_range_quiet();
@@ -1437,6 +1939,18 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                 range_result.status == RANGE_OK ? 0 : -EIO,
             0u, 0u);
 
+        if (idle_ret < 0) {
+            (void)uwb_clicker_abort_attempt(session);
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            last_ret = idle_ret;
+            break;
+        }
+        if (ret == -ECANCELED) {
+            (void)uwb_clicker_abort_attempt(session);
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            last_ret = ret;
+            break;
+        }
         if (!range_result.exchange_started) {
             enum range_status status = range_result.status;
 
@@ -1500,8 +2014,8 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                         (unsigned long long)step.anchor_id,
                         step.seq,
                         record_ret);
-                clicker_finish_scheduled_range_radio_burst();
-                return -EINVAL;
+                last_ret = -EINVAL;
+                break;
             }
             LOG_INF("scheduled click DS-TWR complete: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u",
                     (unsigned long long)range_result.responder_id,
@@ -1559,8 +2073,8 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                         record_ret,
                         range_status_name(status),
                         status);
-                clicker_finish_scheduled_range_radio_burst();
-                return -EINVAL;
+                last_ret = -EINVAL;
+                break;
             }
             LOG_WRN("scheduled click DS-TWR failed: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
                     (unsigned long long)step.anchor_id,
@@ -1613,6 +2127,13 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         }
     }
 
+    if (last_ret < 0 && session->state == UWB_CLICKER_RANGING) {
+        (void)uwb_clicker_abort_attempt(session);
+    }
+    finish_ret = clicker_finish_scheduled_range_radio_burst();
+    if (finish_ret < 0) {
+        return finish_ret;
+    }
 #if defined(CONFIG_IMEC_ML_CLICKER)
     if (session->state == UWB_CLICKER_SUCCEEDED &&
         schedule->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED &&
@@ -1623,18 +2144,30 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                                         click_deadline_ms);
     }
 #endif
-    clicker_finish_scheduled_range_radio_burst();
+    if (last_ret < 0) {
+        return last_ret;
+    }
     return session->state == UWB_CLICKER_SUCCEEDED ? 0 : last_ret;
 }
 
 int app_clicker_run_normal_click(void)
 {
-    uint32_t event_seq = next_click_event_seq();
+    uint32_t event_seq;
     uint8_t attempted_count = 0u;
     uint16_t total_candidate_count = 0u;
     int64_t click_deadline_ms;
     struct uwb_clicker_session session;
-    struct uwb_clicker_config config = {
+    struct uwb_clicker_config config;
+    int last_ret = -ETIMEDOUT;
+    int ret;
+
+    ret = app_click_event_sequence_next(&event_seq);
+    if (ret < 0) {
+        LOG_ERR("normal click identity allocation failed closed: %d", ret);
+        stage1_led_result(STAGE1_LED_RESULT_ERROR);
+        return ret;
+    }
+    config = (struct uwb_clicker_config) {
         .network_id = NETWORK_ID,
         .clicker_id = DEVICE_ID,
         .click_event_id = event_seq,
@@ -1647,8 +2180,6 @@ int app_clicker_run_normal_click(void)
         .ranging_channel = UWB_RANGING_CHANNEL,
         .flags = app_clicker_debug_session_flags(),
     };
-    int last_ret = -ETIMEDOUT;
-    int ret;
 
     BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS <= MAX_SUCCESSFUL_ANCHORS,
                  "successful anchor result storage must cover the success threshold");
@@ -1716,6 +2247,7 @@ int app_clicker_run_normal_click(void)
 
     while (session.attempt_index <= session.config.max_attempts) {
         struct uwb_range_schedule_frame schedule;
+        int64_t schedule_tx_ms = -1;
         uint64_t priority_id = clicker_priority_id(event_seq, session.attempt_index);
 
         ret = app_clicker_attempt_gate(&session,
@@ -1744,20 +2276,26 @@ int app_clicker_run_normal_click(void)
             return ret;
         }
 
-        if (k_uptime_get() + WAKE_ADV_MS >= click_deadline_ms) {
+        if (!app_wake_train_deadline_fits(
+                k_uptime_get(),
+                click_deadline_ms,
+                app_clicker_wake_train_opportunity_tail_ms(
+                    &clicker_wake_train_config))) {
             high_debug_log_event("CLICK_TRACE",
-                                 "point=deadline_before_wake event_seq=%u attempt=%u now_ms=%lld deadline_ms=%lld wake_ms=%u",
+                                 "point=deadline_before_wake event_seq=%u attempt=%u now_ms=%lld deadline_ms=%lld required_tail_ms=%u",
                                  event_seq,
                                  session.attempt_index,
                                  (long long)k_uptime_get(),
                                  (long long)click_deadline_ms,
-                                 WAKE_ADV_MS);
-            stage1_click_diag("deadline_before_wake event_seq=%u attempt=%u now_ms=%lld deadline_ms=%lld wake_ms=%u",
+                                 app_clicker_wake_train_opportunity_tail_ms(
+                                     &clicker_wake_train_config));
+            stage1_click_diag("deadline_before_wake event_seq=%u attempt=%u now_ms=%lld deadline_ms=%lld required_tail_ms=%u",
                               event_seq,
                               session.attempt_index,
                               (long long)k_uptime_get(),
                               (long long)click_deadline_ms,
-                              WAKE_ADV_MS);
+                              app_clicker_wake_train_opportunity_tail_ms(
+                                  &clicker_wake_train_config));
             break;
         }
 
@@ -1770,7 +2308,11 @@ int app_clicker_run_normal_click(void)
                           event_seq,
                           session.attempt_index,
                           (unsigned long long)priority_id);
-        ret = app_clicker_collect_uwb_attempt(&session, priority_id, &schedule);
+        ret = clicker_collect_uwb_attempt_until(&session,
+                                                priority_id,
+                                                &schedule,
+                                                click_deadline_ms,
+                                                &schedule_tx_ms);
         if (ret < 0) {
             last_ret = ret;
             LOG_WRN("normal click UWB attempt found no scheduled anchors: event_seq=%u attempt=%u ret=%d",
@@ -1803,6 +2345,7 @@ int app_clicker_run_normal_click(void)
 
             ret = app_clicker_range_scheduled_anchors(&session,
                                                       &schedule,
+                                                      schedule_tx_ms,
                                                       click_deadline_ms,
                                                       &attempted_count);
             if (ret == 0 && session.state == UWB_CLICKER_SUCCEEDED) {
@@ -1858,9 +2401,17 @@ int app_clicker_run_normal_click(void)
                                   attempted_count,
                                   session.successful_unique_count,
                                   session.config.min_anchor_count);
+                if (ret == -ECANCELED) {
+                    stage1_led_result(STAGE1_LED_RESULT_ERROR);
+                    return ret;
+                }
             }
         }
 
+        if (session.state == UWB_CLICKER_SUCCEEDED && ret < 0) {
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            return ret;
+        }
         if (session.state == UWB_CLICKER_SUCCEEDED) {
             high_debug_log_event("CLICK_TRACE",
                                  "point=success_state event_seq=%u attempt=%u unique=%u/%u",
@@ -1877,6 +2428,10 @@ int app_clicker_run_normal_click(void)
             return 0;
         }
         if (session.attempt_index < session.config.max_attempts) {
+            uint32_t required_retry_tail_ms =
+                app_clicker_wake_train_opportunity_tail_ms(
+                    &clicker_wake_train_config);
+
             ret = uwb_clicker_prepare_retry(&session);
             if (ret != PROTO_OK) {
                 high_debug_log_event("CLICK_TRACE",
@@ -1894,10 +2449,10 @@ int app_clicker_run_normal_click(void)
             (void)app_clicker_apply_retry_delay(&session,
                                                 click_deadline_ms,
                                                 UWB_RETRY_BASE_DELAY_MS,
-                                                WAKE_ADV_MS);
+                                                required_retry_tail_ms);
             (void)app_clicker_apply_contention_delay(&session,
                                                      click_deadline_ms,
-                                                     WAKE_ADV_MS);
+                                                     required_retry_tail_ms);
             LOG_INF("normal click retry scheduled: event_seq=%u next_attempt=%u retries=%u unique_success=%u/%u ds_ok=%u ds_fail=%u timing_reject=%u",
                     event_seq,
                     session.attempt_index,
@@ -1957,6 +2512,7 @@ int app_clicker_run_uwb_diagnostic_click(uint32_t event_seq)
 {
     uint8_t attempted_count = 0u;
     int64_t click_deadline_ms = k_uptime_get() + CLICK_REPORT_DEADLINE_MS;
+    int64_t schedule_tx_ms = -1;
     struct uwb_clicker_session session;
     struct uwb_range_schedule_frame schedule;
     struct uwb_clicker_config config = {
@@ -1989,15 +2545,19 @@ int app_clicker_run_uwb_diagnostic_click(uint32_t event_seq)
         return ret;
     }
 
-    ret = app_clicker_collect_uwb_attempt(&session,
-                                          clicker_priority_id(event_seq, 1u),
-                                          &schedule);
+    ret = clicker_collect_uwb_attempt_until(
+        &session,
+        clicker_priority_id(event_seq, 1u),
+        &schedule,
+        click_deadline_ms,
+        &schedule_tx_ms);
     if (ret < 0) {
         return ret;
     }
 
     ret = app_clicker_range_scheduled_anchors(&session,
                                               &schedule,
+                                              schedule_tx_ms,
                                               click_deadline_ms,
                                               &attempted_count);
     if (ret == 0 && session.state == UWB_CLICKER_SUCCEEDED) {
@@ -2012,44 +2572,62 @@ int app_clicker_run_uwb_diagnostic_click(uint32_t event_seq)
 static enum self_test_failure app_clicker_run_self_test(uint32_t event_seq)
 {
     uint32_t dev_id;
+    enum self_test_failure radio_failure = SELF_TEST_FAILURE_DWM3000;
+    int release_ret;
     int ret;
 
     LOG_INF("self-test started on UWB wake path");
 
+    ret = radio_guard_uwb_start("clicker self-test DWM probe");
+    if (ret < 0) {
+        LOG_ERR("self-test DWM3000 radio ownership unavailable: %d", ret);
+        return SELF_TEST_FAILURE_DWM3000;
+    }
     ret = dwm3000_port_init();
     if (ret < 0) {
         LOG_ERR("self-test DWM3000 port init failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
+        goto self_test_radio_done;
     }
 
     ret = dwm3000_port_wakeup();
     if (ret < 0) {
         LOG_ERR("self-test DWM3000 wake failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
+        goto self_test_radio_done;
     }
 
     ret = dwm3000_port_hw_reset();
     if (ret < 0) {
         LOG_ERR("self-test DWM3000 reset failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
+        goto self_test_radio_done;
     }
 
     ret = dwm3000_driver_probe(&dev_id);
     if (ret < 0) {
         LOG_ERR("self-test DWM3000 decadriver DEV_ID probe failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
+        goto self_test_radio_done;
     }
 
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
         LOG_ERR("self-test DWM3000 fast SPI config failed: %d", ret);
-        return SELF_TEST_FAILURE_DWM3000;
+        goto self_test_radio_done;
     }
 
     LOG_INF("self-test DWM3000 decadriver DEV_ID=0x%08x; fast SPI config checked at %u Hz",
             dev_id,
             (unsigned int)dwm3000_port_current_spi_hz());
-    (void)dwm3000_driver_standby();
+    radio_failure = SELF_TEST_FAILURE_NONE;
+
+self_test_radio_done:
+    release_ret = app_radio_standby_with_bounded_recovery(
+        "self-test DWM probe");
+    radio_guard_uwb_stop();
+    if (release_ret < 0) {
+        radio_failure = SELF_TEST_FAILURE_DWM3000;
+    }
+    if (radio_failure != SELF_TEST_FAILURE_NONE) {
+        return radio_failure;
+    }
 
     ret = app_clicker_run_uwb_diagnostic_click(event_seq);
     if (ret == 0) {
@@ -2063,10 +2641,12 @@ static enum self_test_failure app_clicker_run_self_test(uint32_t event_seq)
     return SELF_TEST_FAILURE_UWB;
 }
 
+#if DEVICE_ROLE == ROLE_CLICKER
 static int app_clicker_emit_self_test_report(uint32_t event_seq,
                                              enum self_test_failure failure)
 {
     struct mesh_outbound outbound = {0};
+    struct node_comm_terminal_event event;
     struct self_test_report_fields fields = {
         .clicker_id = DEVICE_ID,
         .event_seq = event_seq,
@@ -2074,12 +2654,11 @@ static int app_clicker_emit_self_test_report(uint32_t event_seq,
         .battery_mv = 0u,
     };
     size_t payload_len = 0u;
+    uint64_t deadline_ms;
+    uint32_t delivery_handle = 0u;
     uint16_t packet_seq = (uint16_t)event_seq;
     int ret;
 
-    if (clicker_callbacks.send_mesh_outbound == NULL) {
-        return -ENOSYS;
-    }
     if (packet_seq == 0u) {
         packet_seq = 1u;
     }
@@ -2112,21 +2691,57 @@ static int app_clicker_emit_self_test_report(uint32_t event_seq,
 
     outbound.payload_len = (uint8_t)payload_len;
     outbound.next_hop_id = GATEWAY_ID;
+    outbound.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
 
-    ret = clicker_callbacks.send_mesh_outbound(&outbound, "self-test-report");
+    deadline_ms = (uint64_t)k_uptime_get() +
+                  SELF_TEST_REPORT_DELIVERY_TIMEOUT_MS;
+    ret = app_node_comm_submit_reliable_uplink(
+        &outbound,
+        deadline_ms,
+        ((uint32_t)MSG_SELF_TEST_REPORT << 16) | packet_seq,
+        &delivery_handle);
     if (ret < 0) {
-        LOG_WRN("self-test report UWB mesh TX failed: event_seq=%u failure=%u ret=%d",
+        LOG_WRN("self-test report reliable delivery admission failed: event_seq=%u failure=%u ret=%d",
                 event_seq,
                 (unsigned int)failure,
                 ret);
         return ret;
     }
 
-    LOG_INF("self-test report sent over UWB mesh: event_seq=%u failure=%u",
+    while ((uint64_t)k_uptime_get() < deadline_ms) {
+        if (app_node_comm_take_delivery_event_for(delivery_handle, &event)) {
+            if (event.reason == NODE_COMM_TERMINAL_DELIVERED) {
+                LOG_INF("self-test report gateway ACK received: event_seq=%u failure=%u attempts=%u",
+                        event_seq,
+                        (unsigned int)failure,
+                        event.attempts_started);
+                return 0;
+            }
+            LOG_WRN("self-test report delivery failed: event_seq=%u failure=%u terminal=%u attempts=%u",
+                    event_seq,
+                    (unsigned int)failure,
+                    (unsigned int)event.reason,
+                    event.attempts_started);
+            return -EHOSTUNREACH;
+        }
+        k_msleep(SELF_TEST_REPORT_DELIVERY_POLL_MS);
+    }
+
+    (void)app_node_comm_abandon_delivery(delivery_handle);
+    LOG_WRN("self-test report delivery timed out before low power: event_seq=%u failure=%u",
             event_seq,
             (unsigned int)failure);
-    return 0;
+    return -ETIMEDOUT;
 }
+#else
+static int app_clicker_emit_self_test_report(uint32_t event_seq,
+                                             enum self_test_failure failure)
+{
+    ARG_UNUSED(event_seq);
+    ARG_UNUSED(failure);
+    return -ENOTSUP;
+}
+#endif
 
 #if defined(CONFIG_BT) && DEVICE_ROLE == ROLE_CLICKER
 static bool ble_courtesy_init_attempted;
@@ -2504,6 +3119,7 @@ static const struct gpio_dt_spec click_button = GPIO_DT_SPEC_GET(CLICK_BUTTON_NO
 static struct gpio_callback click_button_cb;
 static struct k_work click_button_work;
 static struct k_work_delayable click_button_release_work;
+static struct k_work_delayable click_button_rearm_work;
 static struct k_work_delayable self_test_arm_timeout_work;
 static struct k_work clicker_action_work;
 #define CLICK_BUTTON_PORT_NUM DT_PROP(DT_GPIO_CTLR(CLICK_BUTTON_NODE, gpios), port)
@@ -2538,8 +3154,25 @@ static bool clicker_action_work_q_started;
 #endif
 #if HAS_CLICK_BUTTON
 static atomic_t clicker_action_active;
-static enum button_action clicker_pending_action;
+static struct button_action_handoff clicker_action_handoff;
+static struct k_spinlock clicker_action_handoff_lock;
+static uint32_t clicker_action_watchdog_generation;
+static struct k_work_delayable clicker_action_submit_retry_work;
+static struct button_wake_recovery clicker_action_submit_recovery;
+static struct k_spinlock click_button_edge_lock;
+static bool click_button_press_pending;
+static bool click_button_press_cycle_active;
+static uint32_t click_button_press_at_ms;
 static uint32_t clicker_low_power_transition_failures;
+static bool click_button_systemoff_wake_armed;
+static struct button_wake_recovery click_button_systemoff_recovery;
+static struct button_wake_recovery click_button_release_recovery;
+static struct button_wake_recovery click_button_rearm_recovery;
+static bool click_button_callback_initialized;
+static bool click_button_callback_registered;
+static void click_button_recovery_reset(const char *source, int error);
+static void click_button_schedule_rearm_recovery(int error,
+                                                 const char *source);
 #endif
 
 int app_clicker_init(const struct app_clicker_callbacks *callbacks)
@@ -2720,12 +3353,50 @@ uint8_t app_clicker_debug_session_flags(void)
     return FLAG_COUNT_AS_CLICK;
 }
 
+static int clicker_connect_status_leds_for_action(void)
+{
+    int ret = 0;
+
+    if (!clicker_systemon_retained_idle_enabled()) {
+        return 0;
+    }
+
+    for (uint8_t attempt = 0u;
+         attempt < CLICKER_STATUS_LED_CONNECT_ATTEMPTS;
+         attempt++) {
+        ret = status_leds_connect();
+        if (ret == 0) {
+            return 0;
+        }
+        if (attempt + 1u < CLICKER_STATUS_LED_CONNECT_ATTEMPTS) {
+            k_busy_wait(CLICKER_STATUS_LED_CONNECT_RETRY_US);
+        }
+    }
+    return ret;
+}
+
+static void clicker_hold_terminal_status(int ret)
+{
+    if (!stage1_led_hold_click_result(ret, STATUS_PASS_DURATION_MS)) {
+        k_msleep(STATUS_PASS_DURATION_MS);
+    }
+}
+
 void app_clicker_handle_button_action(enum button_action action)
 {
     struct status_inputs status = {0};
     enum self_test_failure failure;
     uint32_t self_test_event_seq;
+    bool self_test_event_allocated;
     int ret;
+
+    if (action != BUTTON_ACTION_NONE) {
+        ret = clicker_connect_status_leds_for_action();
+        if (ret < 0) {
+            LOG_ERR("clicker status LED reconnect failed after bounded retry: %d",
+                    ret);
+        }
+    }
 
     switch (action) {
     case BUTTON_ACTION_NORMAL_CLICK:
@@ -2736,7 +3407,7 @@ void app_clicker_handle_button_action(enum button_action action)
             status.click_accepted = ret == 0;
             status.click_failure = ret == 0 ? 0 : CLICK_FAILURE_INSUFFICIENT_RANGES;
             status_apply(&status);
-            app_clicker_enter_idle();
+            clicker_hold_terminal_status(ret);
             break;
         }
 #endif
@@ -2765,13 +3436,12 @@ void app_clicker_handle_button_action(enum button_action action)
                              "action=normal_click point=before_led_hold ret=%d",
                              ret);
         stage1_click_diag("button before_led_hold ret=%d", ret);
-        stage1_led_hold_click_result(ret, 2000u);
+        clicker_hold_terminal_status(ret);
         high_debug_log_event("BUTTON_ACTION",
                              "action=normal_click point=before_idle ret=%d",
                              ret);
         stage1_click_diag("button before_idle ret=%d", ret);
         stage1_click_trace_dump("before_idle");
-        app_clicker_enter_idle();
         break;
     case BUTTON_ACTION_SELF_TEST_ARMED:
         status.self_test_armed = true;
@@ -2783,16 +3453,23 @@ void app_clicker_handle_button_action(enum button_action action)
         app_clicker_cancel_self_test_timeout();
         status.self_test_running = true;
         status_apply(&status);
-        self_test_event_seq = next_click_event_seq();
+        ret = app_click_event_sequence_next(&self_test_event_seq);
+        self_test_event_allocated = ret == 0;
+        if (ret < 0) {
+            LOG_ERR("self-test identity allocation failed closed: %d", ret);
+            failure = SELF_TEST_FAILURE_INTERNAL;
+        } else {
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
-        if (DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0) {
-            ret = clicker_callbacks.run_stage0_hardware_self_test != NULL ?
-                  clicker_callbacks.run_stage0_hardware_self_test() : -ENOSYS;
-            failure = ret == 0 ? SELF_TEST_FAILURE_NONE : SELF_TEST_FAILURE_DWM3000;
-        } else
+            if (DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0) {
+                ret = clicker_callbacks.run_stage0_hardware_self_test != NULL ?
+                      clicker_callbacks.run_stage0_hardware_self_test() : -ENOSYS;
+                failure = ret == 0 ? SELF_TEST_FAILURE_NONE :
+                                     SELF_TEST_FAILURE_DWM3000;
+            } else
 #endif
-        {
-            failure = app_clicker_run_self_test(self_test_event_seq);
+            {
+                failure = app_clicker_run_self_test(self_test_event_seq);
+            }
         }
         status.self_test_running = false;
         status.failure = failure;
@@ -2802,17 +3479,17 @@ void app_clicker_handle_button_action(enum button_action action)
         if (!(DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0))
 #endif
         {
-            if (clicker_callbacks.send_mesh_outbound != NULL) {
+            if (self_test_event_allocated) {
                 (void)app_clicker_emit_self_test_report(self_test_event_seq,
                                                         failure);
             }
         }
-        app_clicker_enter_idle();
+        clicker_hold_terminal_status(
+            failure == SELF_TEST_FAILURE_NONE ? 0 : -EIO);
         break;
     case BUTTON_ACTION_SELF_TEST_CANCELLED:
         status_apply(&status);
         LOG_INF("self-test arm cancelled");
-        app_clicker_enter_idle();
         break;
     case BUTTON_ACTION_NONE:
     default:
@@ -2826,6 +3503,73 @@ static void clicker_notify_early_led(enum app_clicker_early_led_event event)
     if (clicker_callbacks.early_led != NULL) {
         clicker_callbacks.early_led(event);
     }
+}
+
+static bool click_button_latch_press(uint32_t pressed_at_ms)
+{
+    bool latched = false;
+    k_spinlock_key_t key = k_spin_lock(&click_button_edge_lock);
+
+    if (!click_button_press_pending && !click_button_press_cycle_active) {
+        click_button_press_at_ms = pressed_at_ms;
+        click_button_press_pending = true;
+        latched = true;
+    }
+    k_spin_unlock(&click_button_edge_lock, key);
+    return latched;
+}
+
+static bool click_button_press_is_pending(void)
+{
+    bool pending;
+    k_spinlock_key_t key = k_spin_lock(&click_button_edge_lock);
+
+    pending = click_button_press_pending;
+    k_spin_unlock(&click_button_edge_lock, key);
+    return pending;
+}
+
+static bool click_button_press_cycle_is_active(void)
+{
+    bool active;
+    k_spinlock_key_t key = k_spin_lock(&click_button_edge_lock);
+
+    active = click_button_press_cycle_active;
+    k_spin_unlock(&click_button_edge_lock, key);
+    return active;
+}
+
+static bool click_button_claim_press(uint32_t sampled_at_ms,
+                                     uint32_t *owned_press_at_ms,
+                                     bool *latched)
+{
+    k_spinlock_key_t key;
+
+    if (owned_press_at_ms == NULL || latched == NULL) {
+        return false;
+    }
+
+    key = k_spin_lock(&click_button_edge_lock);
+    if (click_button_press_cycle_active) {
+        k_spin_unlock(&click_button_edge_lock, key);
+        return false;
+    }
+
+    *latched = click_button_press_pending;
+    *owned_press_at_ms = click_button_press_pending ?
+                         click_button_press_at_ms : sampled_at_ms;
+    click_button_press_pending = false;
+    click_button_press_cycle_active = true;
+    k_spin_unlock(&click_button_edge_lock, key);
+    return true;
+}
+
+static void click_button_finish_press_cycle(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&click_button_edge_lock);
+
+    click_button_press_cycle_active = false;
+    k_spin_unlock(&click_button_edge_lock, key);
 }
 
 static int click_button_pressed(void)
@@ -2855,18 +3599,43 @@ static int click_button_configure_input(void)
     return gpio_pin_configure_dt(&click_button, GPIO_INPUT);
 }
 
+static int click_button_ensure_callback_registered(void)
+{
+    int ret;
+
+    if (click_button_callback_registered) {
+        return 0;
+    }
+    if (!click_button_callback_initialized) {
+        return -EAGAIN;
+    }
+
+    ret = gpio_add_callback(click_button.port, &click_button_cb);
+    if (ret < 0) {
+        return ret;
+    }
+    click_button_callback_registered = true;
+    return 0;
+}
+
 static bool click_button_wait_for_release(void)
 {
-    int64_t deadline_ms = k_uptime_get() + CLICK_BUTTON_RELEASE_TIMEOUT_MS;
     int64_t released_since_ms = -1;
+    uint8_t read_failures = 0u;
 
-    while (k_uptime_get() < deadline_ms) {
+    for (;;) {
         int64_t now_ms = k_uptime_get();
         int pressed = click_button_pressed();
 
         if (pressed < 0) {
-            return false;
+            read_failures++;
+            if (read_failures >= CLICK_BUTTON_RECOVERY_MAX_FAILURES) {
+                return false;
+            }
+            k_msleep(CLICK_BUTTON_RECOVERY_RETRY_MS);
+            continue;
         }
+        read_failures = 0u;
         if (pressed != 0) {
             released_since_ms = -1;
         } else {
@@ -2879,25 +3648,60 @@ static bool click_button_wait_for_release(void)
         }
         k_msleep(CLICK_BUTTON_RELEASE_POLL_MS);
     }
-
-    return click_button_pressed() == 0;
 }
 
 static int click_button_arm_idle_interrupt(void)
 {
+    int pressed;
     int ret;
 
     ret = click_button_configure_input();
     if (ret < 0) {
         return ret;
     }
-    (void)gpio_pin_interrupt_configure(click_button.port,
+    ret = click_button_ensure_callback_registered();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gpio_pin_interrupt_configure(click_button.port,
                                        click_button.pin,
                                        GPIO_INT_DISABLE);
+    if (ret < 0) {
+        return ret;
+    }
     click_button_clear_latch();
-    return gpio_pin_interrupt_configure(click_button.port,
-                                        click_button.pin,
-                                        GPIO_INT_EDGE_TO_ACTIVE);
+    ret = gpio_pin_interrupt_configure(click_button.port,
+                                       click_button.pin,
+                                       GPIO_INT_EDGE_TO_ACTIVE);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /*
+     * Close the clear/arm race: a press that became active before edge
+     * sensing was enabled may not produce an edge, so sample after arming and
+     * hand the already-active level to the same serialized work owner.
+     */
+    pressed = click_button_pressed();
+    if (pressed < 0) {
+        (void)gpio_pin_interrupt_configure(click_button.port,
+                                           click_button.pin,
+                                           GPIO_INT_DISABLE);
+        return pressed;
+    }
+    if (pressed != 0) {
+        (void)click_button_latch_press(k_uptime_get_32());
+    }
+    if (pressed != 0 || click_button_press_is_pending()) {
+        ret = k_work_submit(&click_button_work);
+        if (ret < 0) {
+            (void)gpio_pin_interrupt_configure(click_button.port,
+                                               click_button.pin,
+                                               GPIO_INT_DISABLE);
+            return ret;
+        }
+    }
+    return 0;
 }
 
 static bool clicker_capture_systemoff_button_action(enum button_action *action)
@@ -2915,9 +3719,13 @@ static bool clicker_capture_systemoff_button_action(enum button_action *action)
         LOG_WRN("click button input unavailable after wake: %d", ret);
         return false;
     }
-    (void)gpio_pin_interrupt_configure(click_button.port,
+    ret = gpio_pin_interrupt_configure(click_button.port,
                                        click_button.pin,
                                        GPIO_INT_DISABLE);
+    if (ret < 0) {
+        LOG_WRN("click button interrupt disable after wake failed: %d", ret);
+        return false;
+    }
     click_button_clear_latch();
 
     ret = button_fsm_handle(&button_fsm,
@@ -2986,13 +3794,80 @@ static void clicker_prepare_radio_systemoff(void)
 
 static void clicker_systemoff_now(void)
 {
+    if (!click_button_systemoff_wake_armed) {
+        click_button_recovery_reset("systemoff_unarmed", -EPERM);
+        return;
+    }
+
     clicker_request_systemoff_ram_retention();
     LOG_PANIC();
     sys_poweroff();
 }
 
+static int click_button_try_arm_systemoff_wake(void)
+{
+    int pressed;
+    int ret;
+
+    click_button_systemoff_wake_armed = false;
+    ret = click_button_configure_input();
+    if (ret < 0) {
+        LOG_WRN("click button wake input unavailable: %d", ret);
+        clicker_notify_early_led(
+            APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
+        return ret;
+    }
+
+    ret = gpio_pin_interrupt_configure(click_button.port,
+                                       click_button.pin,
+                                       GPIO_INT_DISABLE);
+    if (ret < 0) {
+        LOG_WRN("click button wake interrupt disable failed: %d", ret);
+        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_WAKE_ARM_FAILED);
+        return ret;
+    }
+
+    pressed = click_button_pressed();
+    if (pressed < 0) {
+        LOG_WRN("click button wake release read failed: %d", pressed);
+        clicker_notify_early_led(
+            APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
+        return pressed;
+    }
+    if (pressed != 0) {
+        return -EBUSY;
+    }
+
+    k_msleep(CLICK_BUTTON_RELEASE_STABLE_MS);
+    pressed = click_button_pressed();
+    if (pressed < 0) {
+        LOG_WRN("click button stable-release read failed: %d", pressed);
+        clicker_notify_early_led(
+            APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
+        return pressed;
+    }
+    if (pressed != 0) {
+        return -EBUSY;
+    }
+
+    click_button_clear_latch();
+    ret = gpio_pin_interrupt_configure(click_button.port,
+                                       click_button.pin,
+                                       GPIO_INT_LEVEL_LOW);
+    if (ret < 0) {
+        LOG_WRN("click button wake arm failed: %d", ret);
+        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_WAKE_ARM_FAILED);
+        return ret;
+    }
+
+    click_button_systemoff_wake_armed = true;
+    return 0;
+}
+
 void app_clicker_enter_systemoff_idle(void)
 {
+    enum button_wake_recovery_action action;
+    bool held_reported = false;
     int ret;
 
     if (!IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE) ||
@@ -3005,37 +3880,48 @@ void app_clicker_enter_systemoff_idle(void)
     status_leds_set(false, false, false);
     status_leds_disconnect();
 
-    ret = click_button_configure_input();
-    if (ret < 0) {
-        LOG_WRN("click button wake arm unavailable: %d", ret);
-        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
-        clicker_systemoff_now();
-        return;
-    }
+    button_wake_recovery_init(&click_button_systemoff_recovery,
+                              CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+    for (;;) {
+        ret = click_button_try_arm_systemoff_wake();
+        if (ret == 0) {
+            action = button_wake_recovery_note(
+                &click_button_systemoff_recovery,
+                BUTTON_WAKE_OBSERVATION_ARMED);
+            if (action != BUTTON_WAKE_RECOVERY_POWER_READY) {
+                click_button_recovery_reset("systemoff_policy", -EPERM);
+                return;
+            }
+            LOG_INF("clicker entering system-off idle; wake source=P0.%u physical-low",
+                    (unsigned int)CLICK_BUTTON_PIN_NUM);
+            clicker_systemoff_now();
+            return;
+        }
 
-    (void)gpio_pin_interrupt_configure(click_button.port,
-                                       click_button.pin,
-                                       GPIO_INT_DISABLE);
-    if (!click_button_wait_for_release()) {
-        LOG_WRN("click button still held; entering system-off without wake arm");
-        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_STILL_HELD_NO_WAKE_ARM);
-        (void)gpio_pin_configure_dt(&click_button, GPIO_DISCONNECTED);
-        clicker_systemoff_now();
-        return;
+        action = button_wake_recovery_note(
+            &click_button_systemoff_recovery,
+            ret == -EBUSY ? BUTTON_WAKE_OBSERVATION_WAITING :
+                            BUTTON_WAKE_OBSERVATION_FAILURE);
+        if (action == BUTTON_WAKE_RECOVERY_RESET) {
+            LOG_ERR("click button wake arm exhausted bounded recovery: ret=%d attempts=%u",
+                    ret,
+                    click_button_systemoff_recovery.consecutive_failures);
+            click_button_recovery_reset("systemoff_arm", ret);
+            return;
+        }
+        if (ret == -EBUSY) {
+            if (!held_reported) {
+                LOG_WRN("click button still held; keeping System ON until a wake source can be armed");
+                clicker_notify_early_led(
+                    APP_CLICKER_EARLY_LED_BUTTON_STILL_HELD_NO_WAKE_ARM);
+                held_reported = true;
+            }
+            k_msleep(CLICK_BUTTON_RELEASE_POLL_MS);
+        } else {
+            held_reported = false;
+            k_msleep(CLICK_BUTTON_RECOVERY_RETRY_MS);
+        }
     }
-    click_button_clear_latch();
-
-    ret = gpio_pin_interrupt_configure(click_button.port,
-                                       click_button.pin,
-                                       GPIO_INT_LEVEL_LOW);
-    if (ret < 0) {
-        LOG_WRN("click button wake arm failed: %d", ret);
-        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_WAKE_ARM_FAILED);
-    }
-
-    LOG_INF("clicker entering system-off idle; wake source=P0.%u physical-low",
-            (unsigned int)CLICK_BUTTON_PIN_NUM);
-    clicker_systemoff_now();
 }
 
 static int clicker_radio_retained_standby_transition(void)
@@ -3086,10 +3972,36 @@ static int clicker_enter_radio_retained_standby(void)
     return recovery_ret < 0 ? recovery_ret : retry_ret;
 }
 
+static int clicker_arm_retained_idle_wake(void)
+{
+    int ret = -EIO;
+
+    for (uint8_t attempt = 0u;
+         attempt < CLICK_BUTTON_RECOVERY_MAX_FAILURES;
+         attempt++) {
+        ret = click_button_arm_idle_interrupt();
+        if (ret == 0) {
+            return 0;
+        }
+        LOG_WRN("click button retained-idle wake arm failed: ret=%d attempt=%u/%u",
+                ret,
+                (unsigned int)(attempt + 1u),
+                CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+        if (clicker_action_watchdog_generation != 0u &&
+            !app_watchdog_note_clicker_action_progress(
+                clicker_action_watchdog_generation)) {
+            return -EIO;
+        }
+        if (attempt + 1u < CLICK_BUTTON_RECOVERY_MAX_FAILURES) {
+            k_msleep(CLICK_BUTTON_RECOVERY_RETRY_MS);
+        }
+    }
+    return ret;
+}
+
 static void clicker_enter_systemon_retained_idle(void)
 {
     bool pins_floated = false;
-    bool radio_retained = false;
     int ret;
 
     if (!clicker_systemon_retained_idle_enabled()) {
@@ -3098,40 +4010,47 @@ static void clicker_enter_systemon_retained_idle(void)
 
     ret = battery_adc_divider_disable();
     if (ret < 0) {
-        LOG_WRN("battery ADC divider disable before retained idle failed: %d",
+        LOG_ERR("battery ADC divider disable before retained idle failed: %d",
                 ret);
+        click_button_recovery_reset("retained_idle_adc", ret);
+        return;
     }
     ret = app_clicker_ble_courtesy_low_power_stop();
     if (ret < 0) {
-        LOG_WRN("BLE cleanup before retained idle incomplete: %d", ret);
+        LOG_ERR("BLE cleanup before retained idle incomplete: %d", ret);
+        click_button_recovery_reset("retained_idle_ble", ret);
+        return;
     }
     ret = clicker_enter_radio_retained_standby();
-    if (ret == 0) {
-        radio_retained = true;
-        for (uint8_t attempt = 0u; attempt < 2u; attempt++) {
-            ret = dwm3000_port_float_pins();
-            if (ret == 0) {
-                pins_floated = true;
-                break;
-            }
-            if (attempt == 0u) {
-                k_busy_wait(100u);
-            }
+    if (ret < 0) {
+        click_button_recovery_reset("retained_idle_radio", ret);
+        return;
+    }
+    for (uint8_t attempt = 0u; attempt < 2u; attempt++) {
+        ret = dwm3000_port_float_pins();
+        if (ret == 0) {
+            pins_floated = true;
+            break;
         }
-        if (!pins_floated) {
-            LOG_WRN("DWM3000 retained-idle pin float failed after retry: %d",
-                    ret);
+        if (attempt == 0u) {
+            k_busy_wait(100u);
         }
     }
-
-    ret = click_button_arm_idle_interrupt();
+    if (!pins_floated) {
+        LOG_ERR("DWM3000 retained-idle pin float failed after retry: %d",
+                ret);
+        click_button_recovery_reset("retained_idle_pins", ret);
+        return;
+    }
+    ret = clicker_arm_retained_idle_wake();
     if (ret < 0) {
-        LOG_WRN("click button retained-idle wake arm failed: %d", ret);
+        click_button_recovery_reset("retained_idle_wake", ret);
+        return;
     }
     high_debug_log_event("CLICKER_IDLE",
                          "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=%s",
                          (unsigned int)CLICK_BUTTON_PIN_NUM,
-                         radio_retained ? 1u : 0u,
+                         1u,
                          pins_floated ? "float" : "driven");
     LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",
             (unsigned int)CLICK_BUTTON_PIN_NUM);
@@ -3151,58 +4070,205 @@ void app_clicker_enter_idle(void)
 
 static void clicker_action_work_handler(struct k_work *work)
 {
-    enum button_action action = clicker_pending_action;
+    bool idle_after_drain = false;
+    k_spinlock_key_t recovery_key;
 
     ARG_UNUSED(work);
 
-    clicker_pending_action = BUTTON_ACTION_NONE;
-    high_debug_log_event("BUTTON_ACTION",
-                         "point=action_worker_begin action=%u",
-                         (unsigned int)action);
-    app_clicker_handle_button_action(action);
-    high_debug_log_event("BUTTON_ACTION",
-                         "point=action_worker_end action=%u",
-                         (unsigned int)action);
-    atomic_set(&clicker_action_active, 0);
+    (void)k_work_cancel_delayable(&clicker_action_submit_retry_work);
+    recovery_key = k_spin_lock(&clicker_action_handoff_lock);
+    button_wake_recovery_init(&clicker_action_submit_recovery,
+                              CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+    k_spin_unlock(&clicker_action_handoff_lock, recovery_key);
+
+    for (;;) {
+        enum button_action action = BUTTON_ACTION_NONE;
+        k_spinlock_key_t key =
+            k_spin_lock(&clicker_action_handoff_lock);
+
+        if (button_action_handoff_take(&clicker_action_handoff, &action)) {
+            k_spin_unlock(&clicker_action_handoff_lock, key);
+            if (!app_watchdog_note_clicker_action_progress(
+                    clicker_action_watchdog_generation)) {
+                click_button_recovery_reset(
+                    "action_watchdog_begin", -EIO);
+                return;
+            }
+            high_debug_log_event("BUTTON_ACTION",
+                                 "point=action_worker_begin action=%u",
+                                 (unsigned int)action);
+            app_clicker_handle_button_action(action);
+            high_debug_log_event("BUTTON_ACTION",
+                                 "point=action_worker_end action=%u",
+                                 (unsigned int)action);
+            if (!app_watchdog_note_clicker_action_progress(
+                    clicker_action_watchdog_generation)) {
+                click_button_recovery_reset(
+                    "action_watchdog_end", -EIO);
+                return;
+            }
+            idle_after_drain =
+                action == BUTTON_ACTION_NORMAL_CLICK ||
+                action == BUTTON_ACTION_SELF_TEST_START ||
+                action == BUTTON_ACTION_SELF_TEST_CANCELLED;
+            continue;
+        }
+
+        if (idle_after_drain) {
+            /*
+             * Keep ownership across the idle transition.  The retained FIFO
+             * accepts a press that arrives after GPIO re-arm but before this
+             * worker can inspect the queue again.
+             */
+            k_spin_unlock(&clicker_action_handoff_lock, key);
+            if (!app_watchdog_note_clicker_action_progress(
+                    clicker_action_watchdog_generation)) {
+                click_button_recovery_reset(
+                    "action_watchdog_idle_begin", -EIO);
+                return;
+            }
+            app_clicker_enter_idle();
+            if (!app_watchdog_note_clicker_action_progress(
+                    clicker_action_watchdog_generation)) {
+                click_button_recovery_reset(
+                    "action_watchdog_idle_end", -EIO);
+                return;
+            }
+            idle_after_drain = false;
+            continue;
+        }
+
+        if (!button_action_handoff_release_if_empty(
+                &clicker_action_handoff)) {
+            k_spin_unlock(&clicker_action_handoff_lock, key);
+            click_button_recovery_reset("action_handoff_release", -EIO);
+            return;
+        }
+        if (clicker_action_watchdog_generation != 0u &&
+            !app_watchdog_clicker_action_end(
+                clicker_action_watchdog_generation)) {
+            k_spin_unlock(&clicker_action_handoff_lock, key);
+            click_button_recovery_reset(
+                "action_watchdog_release", -EIO);
+            return;
+        }
+        clicker_action_watchdog_generation = 0u;
+        atomic_set(&clicker_action_active, 0);
+        k_spin_unlock(&clicker_action_handoff_lock, key);
+        return;
+    }
+}
+
+static void clicker_action_submit_or_recover(const char *source)
+{
+    enum button_wake_recovery_action recovery_action;
+    uint8_t consecutive_failures;
+    uint8_t max_failures;
+    k_spinlock_key_t key;
+    int ret;
+
+    ret = app_clicker_submit_work(&clicker_action_work);
+    key = k_spin_lock(&clicker_action_handoff_lock);
+    if (ret >= 0) {
+        button_wake_recovery_init(&clicker_action_submit_recovery,
+                                  CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+        k_spin_unlock(&clicker_action_handoff_lock, key);
+        return;
+    }
+
+    recovery_action = button_wake_recovery_note(
+        &clicker_action_submit_recovery,
+        BUTTON_WAKE_OBSERVATION_FAILURE);
+    consecutive_failures =
+        clicker_action_submit_recovery.consecutive_failures;
+    max_failures = clicker_action_submit_recovery.max_failures;
+    k_spin_unlock(&clicker_action_handoff_lock, key);
+    if (recovery_action == BUTTON_WAKE_RECOVERY_RESET) {
+        click_button_recovery_reset(source, ret);
+        return;
+    }
+
+    LOG_WRN("clicker button action worker submit deferred: source=%s ret=%d attempt=%u/%u",
+            source == NULL ? "unknown" : source,
+            ret,
+            consecutive_failures,
+            max_failures);
+    ret = k_work_reschedule(&clicker_action_submit_retry_work,
+                            K_MSEC(CLICK_BUTTON_RECOVERY_RETRY_MS));
+    if (ret < 0) {
+        click_button_recovery_reset("action_submit_retry_schedule", ret);
+    }
+}
+
+static void clicker_action_submit_retry_work_handler(struct k_work *work)
+{
+    bool submit_needed;
+    k_spinlock_key_t key;
+
+    ARG_UNUSED(work);
+
+    key = k_spin_lock(&clicker_action_handoff_lock);
+    submit_needed = clicker_action_handoff.owner_active &&
+                    clicker_action_handoff.count > 0u;
+    k_spin_unlock(&clicker_action_handoff_lock, key);
+    if (submit_needed) {
+        clicker_action_submit_or_recover("action_submit_retry");
+    }
 }
 
 void app_clicker_submit_button_action(enum button_action action)
 {
-    int ret;
+    enum button_action_handoff_submit_result submit_result;
+    uint8_t queue_depth;
+    k_spinlock_key_t key;
 
     if (action == BUTTON_ACTION_NONE) {
         return;
     }
-    if (!atomic_cas(&clicker_action_active, 0, 1)) {
-        high_debug_log_event("BUTTON_ACTION",
-                             "point=action_drop reason=busy action=%u",
-                             (unsigned int)action);
-        LOG_WRN("clicker button action ignored while previous action is active: %u",
-                (unsigned int)action);
+
+    key = k_spin_lock(&clicker_action_handoff_lock);
+    submit_result =
+        button_action_handoff_submit(&clicker_action_handoff, action);
+    if (submit_result == BUTTON_ACTION_HANDOFF_START_OWNER) {
+        clicker_action_watchdog_generation =
+            app_watchdog_clicker_action_begin();
+        if (clicker_action_watchdog_generation != 0u) {
+            atomic_set(&clicker_action_active, 1);
+        }
+    }
+    queue_depth = clicker_action_handoff.count;
+    k_spin_unlock(&clicker_action_handoff_lock, key);
+
+    if (submit_result == BUTTON_ACTION_HANDOFF_FULL) {
+        LOG_ERR("clicker button action FIFO exhausted: action=%u capacity=%u",
+                (unsigned int)action,
+                BUTTON_ACTION_HANDOFF_CAPACITY);
+        click_button_recovery_reset("action_handoff_full", -ENOSPC);
         return;
     }
-
-    clicker_pending_action = action;
-    ret = app_clicker_submit_work(&clicker_action_work);
-    if (ret < 0) {
-        clicker_pending_action = BUTTON_ACTION_NONE;
-        atomic_set(&clicker_action_active, 0);
+    if (submit_result == BUTTON_ACTION_HANDOFF_START_OWNER &&
+        clicker_action_watchdog_generation == 0u) {
+        click_button_recovery_reset("action_watchdog_admission", -EIO);
+        return;
+    }
+    if (submit_result == BUTTON_ACTION_HANDOFF_START_OWNER) {
+        clicker_action_submit_or_recover("action_submit");
+    } else {
         high_debug_log_event("BUTTON_ACTION",
-                             "point=action_submit_failed action=%u ret=%d",
+                             "point=action_queued action=%u depth=%u",
                              (unsigned int)action,
-                             ret);
-        LOG_ERR("clicker button action queue submit failed: action=%u ret=%d",
-                (unsigned int)action,
-                ret);
+                             queue_depth);
     }
 }
 
-static void click_button_handle_signal(enum button_signal signal, const char *source)
+static void click_button_handle_signal_at(enum button_signal signal,
+                                          uint32_t signal_at_ms,
+                                          const char *source)
 {
     enum button_action action;
     int ret;
 
-    ret = button_fsm_handle(&button_fsm, signal, k_uptime_get_32(), &action);
+    ret = button_fsm_handle(&button_fsm, signal, signal_at_ms, &action);
     if (ret != PROTO_OK) {
         LOG_ERR("button FSM rejected signal %u from %s: %d",
                 (unsigned int)signal,
@@ -3218,6 +4284,89 @@ static void click_button_handle_signal(enum button_signal signal, const char *so
     app_clicker_submit_button_action(action);
 }
 
+static void click_button_handle_signal(enum button_signal signal,
+                                       const char *source)
+{
+    click_button_handle_signal_at(signal, k_uptime_get_32(), source);
+}
+
+static void click_button_recovery_reset(const char *source, int error)
+{
+    LOG_ERR("click button recovery exhausted or lost its work owner: source=%s error=%d reboot_delay_ms=%u",
+            source == NULL ? "unknown" : source,
+            error,
+            CLICK_BUTTON_RECOVERY_REBOOT_DELAY_MS);
+    app_watchdog_stop_feeding();
+    LOG_PANIC();
+    k_msleep(CLICK_BUTTON_RECOVERY_REBOOT_DELAY_MS);
+    sys_reboot(SYS_REBOOT_COLD);
+    for (;;) {
+        k_cpu_idle();
+    }
+}
+
+static bool click_button_reschedule_or_reset(
+    struct k_work_delayable *work,
+    uint32_t delay_ms,
+    const char *source)
+{
+    int ret = k_work_reschedule(work, K_MSEC(delay_ms));
+
+    if (ret < 0) {
+        click_button_recovery_reset(source, ret);
+        return false;
+    }
+    return true;
+}
+
+static void click_button_schedule_rearm_recovery(int error,
+                                                 const char *source)
+{
+    enum button_wake_recovery_action action;
+
+    (void)gpio_pin_interrupt_configure(click_button.port,
+                                       click_button.pin,
+                                       GPIO_INT_DISABLE);
+    action = button_wake_recovery_note(
+        &click_button_rearm_recovery,
+        BUTTON_WAKE_OBSERVATION_FAILURE);
+    if (action == BUTTON_WAKE_RECOVERY_RESET) {
+        click_button_recovery_reset(source, error);
+        return;
+    }
+
+    LOG_WRN("click button interrupt recovery scheduled: source=%s error=%d attempt=%u/%u",
+            source == NULL ? "unknown" : source,
+            error,
+            click_button_rearm_recovery.consecutive_failures,
+            click_button_rearm_recovery.max_failures);
+    (void)click_button_reschedule_or_reset(
+        &click_button_rearm_work,
+        CLICK_BUTTON_RECOVERY_RETRY_MS,
+        source);
+}
+
+static void click_button_retry_release_poll(int error)
+{
+    enum button_wake_recovery_action action =
+        button_wake_recovery_note(&click_button_release_recovery,
+                                  BUTTON_WAKE_OBSERVATION_FAILURE);
+
+    if (action == BUTTON_WAKE_RECOVERY_RESET) {
+        click_button_recovery_reset("release_poll", error);
+        return;
+    }
+
+    LOG_WRN("click button release poll recovery scheduled: error=%d attempt=%u/%u",
+            error,
+            click_button_release_recovery.consecutive_failures,
+            click_button_release_recovery.max_failures);
+    (void)click_button_reschedule_or_reset(
+        &click_button_release_work,
+        CLICK_BUTTON_RECOVERY_RETRY_MS,
+        "release_poll");
+}
+
 static void click_button_release_work_handler(struct k_work *work)
 {
     int pressed;
@@ -3228,66 +4377,213 @@ static void click_button_release_work_handler(struct k_work *work)
     pressed = click_button_pressed();
     if (pressed < 0) {
         LOG_ERR("failed to poll click button release: %d", pressed);
+        click_button_retry_release_poll(pressed);
         return;
     }
+    (void)button_wake_recovery_note(
+        &click_button_release_recovery,
+        BUTTON_WAKE_OBSERVATION_WAITING);
     if (pressed != 0) {
-        (void)k_work_reschedule(&click_button_release_work,
-                                K_MSEC(CLICK_BUTTON_RELEASE_POLL_MS));
+        (void)click_button_reschedule_or_reset(
+            &click_button_release_work,
+            CLICK_BUTTON_RELEASE_POLL_MS,
+            "release_poll_held");
         return;
     }
 
     click_button_clear_latch();
     click_button_handle_signal(BUTTON_SIGNAL_RELEASE, "release_poll");
+    click_button_finish_press_cycle();
     ret = click_button_arm_idle_interrupt();
     if (ret < 0) {
         LOG_WRN("click button rearm after release poll failed: %d", ret);
+        click_button_schedule_rearm_recovery(
+            ret, "release_poll_rearm");
     }
 }
 
-static void click_button_work_handler(struct k_work *work)
+static void click_button_rearm_work_handler(struct k_work *work)
 {
-    enum button_signal signal;
+    enum button_wake_recovery_action action;
+    uint32_t press_at_ms;
+    bool latched;
     int pressed;
     int ret;
 
     ARG_UNUSED(work);
 
+    if (click_button_press_is_pending()) {
+        ret = k_work_submit(&click_button_work);
+        if (ret < 0) {
+            click_button_schedule_rearm_recovery(
+                ret, "rearm_latched_submit");
+        }
+        return;
+    }
+    if (click_button_press_cycle_is_active()) {
+        return;
+    }
+
     pressed = click_button_pressed();
     if (pressed < 0) {
-        LOG_ERR("failed to read click button: %d", pressed);
+        click_button_schedule_rearm_recovery(
+            pressed, "rearm_read");
         return;
     }
     if (pressed != 0) {
-        (void)gpio_pin_interrupt_configure(click_button.port,
+        ret = gpio_pin_interrupt_configure(click_button.port,
                                            click_button.pin,
                                            GPIO_INT_DISABLE);
-    }
-    if (pressed != 0 && clicker_systemon_retained_idle_enabled() &&
-        atomic_get(&clicker_action_active) == 0) {
-        clicker_notify_early_led(APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
+        if (ret < 0) {
+            click_button_schedule_rearm_recovery(
+                ret, "rearm_pressed_disable");
+            return;
+        }
+        (void)button_wake_recovery_note(
+            &click_button_rearm_recovery,
+            BUTTON_WAKE_OBSERVATION_WAITING);
+        if (!click_button_claim_press(k_uptime_get_32(),
+                                      &press_at_ms,
+                                      &latched)) {
+            return;
+        }
+        if (clicker_systemon_retained_idle_enabled() &&
+            atomic_get(&clicker_action_active) == 0) {
+            clicker_notify_early_led(
+                APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
+        }
+        click_button_handle_signal_at(
+            BUTTON_SIGNAL_PRESS,
+            press_at_ms,
+            latched ? "rearm_latched" : "rearm_recovery");
+        (void)click_button_reschedule_or_reset(
+            &click_button_release_work,
+            CLICK_BUTTON_RELEASE_STABLE_MS,
+            "rearm_pressed_release_poll");
+        return;
     }
 
-    signal = pressed != 0 ? BUTTON_SIGNAL_PRESS : BUTTON_SIGNAL_RELEASE;
-    click_button_handle_signal(signal, "irq");
-    if (pressed != 0) {
-        (void)k_work_reschedule(&click_button_release_work,
-                                K_MSEC(CLICK_BUTTON_RELEASE_STABLE_MS));
-    } else {
-        (void)k_work_cancel_delayable(&click_button_release_work);
-        ret = click_button_arm_idle_interrupt();
+    ret = click_button_arm_idle_interrupt();
+    if (ret < 0) {
+        click_button_schedule_rearm_recovery(
+            ret, "rearm_interrupt");
+        return;
+    }
+    action = button_wake_recovery_note(
+        &click_button_rearm_recovery,
+        BUTTON_WAKE_OBSERVATION_ARMED);
+    if (action != BUTTON_WAKE_RECOVERY_POWER_READY) {
+        click_button_recovery_reset("rearm_policy", -EIO);
+    }
+}
+
+static void click_button_work_handler(struct k_work *work)
+{
+    uint32_t press_at_ms;
+    bool latched;
+    int pressed;
+    int ret;
+
+    ARG_UNUSED(work);
+
+process_pending_press:
+    if (click_button_press_is_pending()) {
+        ret = gpio_pin_interrupt_configure(click_button.port,
+                                           click_button.pin,
+                                           GPIO_INT_DISABLE);
         if (ret < 0) {
-            LOG_WRN("click button rearm after release IRQ failed: %d", ret);
+            click_button_schedule_rearm_recovery(
+                ret, "irq_latched_disable");
+            return;
         }
+        if (!click_button_claim_press(k_uptime_get_32(),
+                                      &press_at_ms,
+                                      &latched)) {
+            return;
+        }
+        if (clicker_systemon_retained_idle_enabled() &&
+            atomic_get(&clicker_action_active) == 0) {
+            clicker_notify_early_led(
+                APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
+        }
+        click_button_handle_signal_at(BUTTON_SIGNAL_PRESS,
+                                      press_at_ms,
+                                      "irq_latched");
+        (void)click_button_reschedule_or_reset(
+            &click_button_release_work,
+            CLICK_BUTTON_RELEASE_STABLE_MS,
+            "irq_latched_release_poll");
+        return;
+    }
+    if (click_button_press_cycle_is_active()) {
+        return;
+    }
+
+    pressed = click_button_pressed();
+    if (pressed < 0) {
+        LOG_ERR("failed to read click button: %d", pressed);
+        click_button_schedule_rearm_recovery(
+            pressed, "irq_read");
+        return;
+    }
+    if (pressed != 0) {
+        ret = gpio_pin_interrupt_configure(click_button.port,
+                                           click_button.pin,
+                                           GPIO_INT_DISABLE);
+        if (ret < 0) {
+            click_button_schedule_rearm_recovery(
+                ret, "irq_press_disable");
+            return;
+        }
+        if (!click_button_claim_press(k_uptime_get_32(),
+                                      &press_at_ms,
+                                      &latched)) {
+            return;
+        }
+        if (clicker_systemon_retained_idle_enabled() &&
+            atomic_get(&clicker_action_active) == 0) {
+            clicker_notify_early_led(
+                APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
+        }
+        click_button_handle_signal_at(
+            BUTTON_SIGNAL_PRESS,
+            press_at_ms,
+            latched ? "irq_latched_race" : "irq_sample");
+        (void)click_button_reschedule_or_reset(
+            &click_button_release_work,
+            CLICK_BUTTON_RELEASE_STABLE_MS,
+            "irq_press_release_poll");
+        return;
+    }
+
+    if (click_button_press_is_pending()) {
+        goto process_pending_press;
+    }
+    click_button_handle_signal(BUTTON_SIGNAL_RELEASE, "irq_sample");
+    (void)k_work_cancel_delayable(&click_button_release_work);
+    ret = click_button_arm_idle_interrupt();
+    if (ret < 0) {
+        LOG_WRN("click button rearm after release IRQ failed: %d", ret);
+        click_button_schedule_rearm_recovery(
+            ret, "release_irq_rearm");
+    } else if (click_button_press_is_pending()) {
+        goto process_pending_press;
     }
 }
 
 static void click_button_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+    int ret;
+
     ARG_UNUSED(dev);
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
 
-    (void)k_work_submit(&click_button_work);
+    (void)click_button_latch_press(k_uptime_get_32());
+    ret = k_work_submit(&click_button_work);
+    if (ret < 0) {
+        app_watchdog_stop_feeding();
+    }
 }
 
 static void self_test_arm_timeout_handler(struct k_work *work)
@@ -3304,8 +4600,10 @@ static void self_test_arm_timeout_handler(struct k_work *work)
 
 void app_clicker_arm_self_test_timeout(void)
 {
-    (void)k_work_reschedule(&self_test_arm_timeout_work,
-                            K_MSEC(SELF_TEST_ARM_WINDOW_MS + 1u));
+    (void)click_button_reschedule_or_reset(
+        &self_test_arm_timeout_work,
+        SELF_TEST_ARM_WINDOW_MS + 1u,
+        "self_test_arm_timeout");
 }
 
 void app_clicker_cancel_self_test_timeout(void)
@@ -3315,37 +4613,52 @@ void app_clicker_cancel_self_test_timeout(void)
 
 int ML_CLICKER_BUTTON_UNUSED app_clicker_button_init(void)
 {
+    k_spinlock_key_t edge_key;
     int ret;
 
-    ret = click_button_configure_input();
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = gpio_pin_interrupt_configure(click_button.port,
-                                       click_button.pin,
-                                       GPIO_INT_DISABLE);
-    if (ret < 0) {
-        return ret;
-    }
-
     k_work_init(&click_button_work, click_button_work_handler);
-    k_work_init_delayable(&click_button_release_work, click_button_release_work_handler);
+    k_work_init_delayable(&click_button_release_work,
+                          click_button_release_work_handler);
+    k_work_init_delayable(&click_button_rearm_work,
+                          click_button_rearm_work_handler);
     k_work_init(&clicker_action_work, clicker_action_work_handler);
-    k_work_init_delayable(&self_test_arm_timeout_work, self_test_arm_timeout_handler);
-    gpio_init_callback(&click_button_cb, click_button_isr, BIT(click_button.pin));
-    ret = gpio_add_callback(click_button.port, &click_button_cb);
-    if (ret < 0) {
-        return ret;
+    k_work_init_delayable(&clicker_action_submit_retry_work,
+                          clicker_action_submit_retry_work_handler);
+    k_work_init_delayable(&self_test_arm_timeout_work,
+                          self_test_arm_timeout_handler);
+    button_action_handoff_init(&clicker_action_handoff);
+    clicker_action_watchdog_generation = 0u;
+    atomic_set(&clicker_action_active, 0);
+    edge_key = k_spin_lock(&click_button_edge_lock);
+    click_button_press_pending = false;
+    click_button_press_cycle_active = false;
+    click_button_press_at_ms = 0u;
+    k_spin_unlock(&click_button_edge_lock, edge_key);
+    button_wake_recovery_init(&clicker_action_submit_recovery,
+                              CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+    button_wake_recovery_init(&click_button_release_recovery,
+                              CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+    button_wake_recovery_init(&click_button_rearm_recovery,
+                              CLICK_BUTTON_RECOVERY_MAX_FAILURES);
+    if (!click_button_callback_initialized) {
+        gpio_init_callback(&click_button_cb,
+                           click_button_isr,
+                           BIT(click_button.pin));
+        click_button_callback_initialized = true;
     }
 
     ret = click_button_arm_idle_interrupt();
     if (ret < 0) {
-        (void)gpio_remove_callback(click_button.port, &click_button_cb);
-        return ret;
+        click_button_schedule_rearm_recovery(
+            ret, "button_init");
+        return 0;
     }
 
-    (void)k_work_submit(&click_button_work);
+    ret = k_work_submit(&click_button_work);
+    if (ret < 0) {
+        click_button_schedule_rearm_recovery(
+            ret, "button_init_close_race");
+    }
     return 0;
 }
 

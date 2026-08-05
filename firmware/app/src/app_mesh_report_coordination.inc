@@ -83,18 +83,12 @@ static bool mesh_gateway_route_test_preempt_active(uint32_t now_ms)
 
 static uint32_t mesh_gateway_route_test_preempt_window_ms(uint32_t now_ms)
 {
-    uint32_t remaining_ms;
-
     if (!mesh_gateway_route_test_preempt_active(now_ms)) {
         return 0u;
     }
 
-    remaining_ms = uptime_ms_until_deadline(now_ms,
-                                            mesh_gateway_route_preempt_deadline_ms);
-    if (remaining_ms == 0u) {
-        return 1u;
-    }
-    return remaining_ms;
+    return uptime_ms_until_deadline(
+        now_ms, mesh_gateway_route_preempt_deadline_ms);
 }
 
 static const char *mesh_c5_contact_purpose_name(uint8_t purpose)
@@ -157,6 +151,16 @@ static void mesh_c5_contact_clear_matching(uint64_t peer_id,
     mesh_c5_contact_clear(reason);
 }
 
+static bool mesh_c5_contact_expire_if_due(uint32_t now_ms)
+{
+    if (!app_mesh_c5_contact_expired(&mesh_c5_contact, now_ms)) {
+        return false;
+    }
+
+    mesh_c5_contact_clear("expired");
+    return true;
+}
+
 static bool mesh_c5_contact_active(uint64_t peer_id,
                                    uint8_t purpose,
                                    uint32_t now_ms)
@@ -166,12 +170,13 @@ static bool mesh_c5_contact_active(uint64_t peer_id,
         mesh_c5_contact.purpose != purpose) {
         return false;
     }
-    if (mesh_c5_contact.expires_at_ms != 0u &&
-        uptime_deadline_reached(now_ms, mesh_c5_contact.expires_at_ms)) {
-        mesh_c5_contact_clear("expired");
+    if (mesh_c5_contact_expire_if_due(now_ms)) {
         return false;
     }
-    return mesh_c5_contact.accepted;
+    return app_mesh_c5_contact_accepted(&mesh_c5_contact,
+                                        peer_id,
+                                        purpose,
+                                        now_ms);
 }
 
 static void mesh_c5_contact_open(uint64_t peer_id,
@@ -221,10 +226,7 @@ static void mesh_c5_contact_accept(uint64_t peer_id,
     matching_contact = mesh_c5_contact.state != C5_CONTACT_NONE &&
                        mesh_c5_contact.peer_id == peer_id &&
                        mesh_c5_contact.purpose == purpose;
-    if (matching_contact &&
-        mesh_c5_contact.expires_at_ms != 0u &&
-        uptime_deadline_reached(now_ms, mesh_c5_contact.expires_at_ms)) {
-        mesh_c5_contact_clear("expired");
+    if (matching_contact && mesh_c5_contact_expire_if_due(now_ms)) {
         matching_contact = false;
     }
     if (!matching_contact) {
@@ -268,9 +270,7 @@ static bool mesh_c5_contact_peer_active(uint64_t peer_id, uint32_t now_ms)
         mesh_c5_contact.peer_id != peer_id) {
         return false;
     }
-    if (mesh_c5_contact.expires_at_ms != 0u &&
-        uptime_deadline_reached(now_ms, mesh_c5_contact.expires_at_ms)) {
-        mesh_c5_contact_clear("expired");
+    if (mesh_c5_contact_expire_if_due(now_ms)) {
         return false;
     }
     return mesh_c5_contact.accepted;
@@ -314,12 +314,13 @@ static bool mesh_direct_gateway_bulk_probe_install_suppressed(uint64_t target_id
                                                               uint32_t now_ms)
 {
     if (target_id != GATEWAY_ID ||
-        mesh_direct_gateway_bulk_suppressed_until_ms == 0u) {
+        !mesh_direct_gateway_bulk_suppressed) {
         return false;
     }
     if (uptime_deadline_reached(now_ms,
                                 mesh_direct_gateway_bulk_suppressed_until_ms)) {
         mesh_direct_gateway_bulk_suppressed_until_ms = 0u;
+        mesh_direct_gateway_bulk_suppressed = false;
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DIRECT_GW_BULK_SUPPRESS_EXPIRED now=%u\n",
                                 now_ms);
@@ -329,8 +330,9 @@ static bool mesh_direct_gateway_bulk_probe_install_suppressed(uint64_t target_id
     return true;
 }
 
-static void mesh_direct_gateway_bulk_probe_suppress(uint32_t now_ms,
-                                                    const char *reason)
+static void __attribute__((unused))
+mesh_direct_gateway_bulk_probe_suppress(uint32_t now_ms,
+                                        const char *reason)
 {
     uint32_t until_ms;
 
@@ -340,10 +342,8 @@ static void mesh_direct_gateway_bulk_probe_suppress(uint32_t now_ms,
     }
 
     until_ms = now_ms + ROUTE_PARENT_HOLDDOWN_MS;
-    if (until_ms == 0u) {
-        until_ms = 1u;
-    }
     mesh_direct_gateway_bulk_suppressed_until_ms = until_ms;
+    mesh_direct_gateway_bulk_suppressed = true;
     status_debug_printf("DBG_DIRECT_GW_BULK_SUPPRESS now=%u until=%u reason=%s\n",
                         now_ms,
                         until_ms,
@@ -352,7 +352,7 @@ static void mesh_direct_gateway_bulk_probe_suppress(uint32_t now_ms,
 
 static void mesh_direct_gateway_bulk_probe_clear(const char *reason)
 {
-    if (mesh_direct_gateway_bulk_suppressed_until_ms == 0u) {
+    if (!mesh_direct_gateway_bulk_suppressed) {
         return;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -361,6 +361,7 @@ static void mesh_direct_gateway_bulk_probe_clear(const char *reason)
                             reason == NULL ? "direct-bulk-ack" : reason);
     }
     mesh_direct_gateway_bulk_suppressed_until_ms = 0u;
+    mesh_direct_gateway_bulk_suppressed = false;
 }
 
 static uint32_t mesh_c5_exchange_expires_at(uint8_t purpose)
@@ -581,6 +582,28 @@ static void mesh_note_c5_control_rx(const struct proto_packet *packet,
                            purpose,
                            mesh_c5_exchange_expires_at(purpose),
                            reason == NULL ? "c5-control-rx" : reason);
+}
+
+static bool mesh_c5_control_rx_semantically_admitted(
+    const struct proto_packet *packet,
+    const struct mesh_relay_result *result,
+    bool admitted_event_control)
+{
+    if (packet == NULL || result == NULL ||
+        mesh_c5_purpose_for_packet(packet) == 0u ||
+        result->status == PROTO_ERR_MALFORMED) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_MESH_EVENT_PROPOSE:
+    case MSG_MESH_EVENT_ACCEPT:
+    case MSG_MESH_EVENT_UPDATE:
+    case MSG_MESH_EVENT_END:
+        return admitted_event_control;
+    default:
+        return true;
+    }
 }
 
 static const char *mesh_ch9_event_state_name(enum ch9_event_state state)
@@ -973,10 +996,7 @@ static bool mesh_find_active_channel9_timing(uint64_t peer_id,
 
 static uint32_t mesh_channel9_skip_reference_ms(uint32_t now_ms)
 {
-    if (MESH_EVENT_RX_LATE_GUARD_MS > 0u && now_ms > MESH_EVENT_RX_LATE_GUARD_MS) {
-        return now_ms - MESH_EVENT_RX_LATE_GUARD_MS;
-    }
-    return now_ms;
+    return now_ms - MESH_EVENT_RX_LATE_GUARD_MS;
 }
 
 static uint8_t mesh_advance_channel9_entry_past(struct mesh_relay_event_timing_entry *entry,
@@ -1060,14 +1080,16 @@ static void mesh_report_note_anchor_uwb_awake_since(int64_t start_ms,
     }
 }
 
-static void mesh_report_anchor_handle_local_command(const struct proto_packet *packet,
-                                                    const uint8_t *payload,
-                                                    size_t payload_len)
+static int mesh_report_anchor_handle_local_command(const struct proto_packet *packet,
+                                                   const uint8_t *payload,
+                                                   size_t payload_len)
 {
     if (mesh_report_callbacks != NULL &&
         mesh_report_callbacks->anchor_handle_local_command != NULL) {
-        mesh_report_callbacks->anchor_handle_local_command(packet, payload, payload_len);
+        return mesh_report_callbacks->anchor_handle_local_command(
+            packet, payload, payload_len);
     }
+    return 0;
 }
 
 static void mesh_report_anchor_handle_survey_discovery_start(
@@ -1095,6 +1117,7 @@ static int mesh_report_gateway_handle_survey_discovery_report(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint64_t received_at_ms,
     uint64_t previous_hop_id,
     uint8_t radio_channel,
     uint8_t link_quality)
@@ -1105,6 +1128,7 @@ static int mesh_report_gateway_handle_survey_discovery_report(
             packet,
             payload,
             payload_len,
+            received_at_ms,
             previous_hop_id,
             radio_channel,
             link_quality);
@@ -1124,8 +1148,12 @@ static bool mesh_gateway_delivery_requires_semantic_acceptance(
 
     switch (packet->msg_type) {
     case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
+    case MSG_GATEWAY_ACK_CONFIRM:
     case MSG_SURVEY_DISCOVERY_REPORT:
     case MSG_SURVEY_PAIR_RESULT:
         return true;
@@ -1137,71 +1165,135 @@ static bool mesh_gateway_delivery_requires_semantic_acceptance(
 static bool mesh_gateway_delivery_is_internal_control(
     const struct mesh_rx_pending *pending)
 {
-    uint16_t command_id = 0u;
-    enum discovery_assignment_phase phase;
-    uint32_t epoch = 0u;
+    const uint8_t *command_id_raw = NULL;
+    uint8_t command_id_len = 0u;
 
-    if (pending == NULL || pending->packet.msg_type != MSG_COMMAND_RESULT ||
-        gateway_command_extract_id(pending->payload,
-                                   pending->payload_len,
-                                   &command_id) != PROTO_OK ||
-        command_id != CMD_ASSIGN_DISCOVERY_SLOTS ||
-        discovery_assignment_extract_control_tlvs(pending->payload,
-                                                  pending->payload_len,
-                                                  &phase,
-                                                  &epoch) != PROTO_OK ||
-        epoch == 0u) {
+    if (pending == NULL) {
+        return false;
+    }
+    if (pending->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+        return true;
+    }
+    if (pending->packet.msg_type != MSG_COMMAND_RESULT) {
         return false;
     }
 
-    return phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
-           phase == DISCOVERY_ASSIGNMENT_PHASE_ACK;
+    /*
+     * The command ID owns the namespace before the phase-specific parser
+     * decides whether the assignment control is valid.  Otherwise a
+     * well-framed assignment result with an unsupported phase/scheme can fall
+     * through the generic command-result path after enumeration is terminal,
+     * acquire host-output custody, and receive a gateway ACK even though the
+     * assignment coordinator rejected it.
+     */
+    return tlv_find_unique(pending->payload,
+                           pending->payload_len,
+                           TLV_COMMAND_ID,
+                           &command_id_raw,
+                           &command_id_len) == PROTO_OK &&
+           command_id_len == sizeof(uint16_t) &&
+           proto_get_u16_le(command_id_raw) ==
+               CMD_ASSIGN_DISCOVERY_SLOTS;
 }
 
 static int mesh_gateway_accept_semantic_delivery(
     const struct mesh_rx_pending *pending)
 {
     const struct mesh_event_plan *current_channel9_plan;
+    int assignment_admission;
 
     if (pending == NULL ||
         !mesh_gateway_delivery_requires_semantic_acceptance(&pending->packet)) {
         return -EINVAL;
     }
+    if (!mesh_gateway_delivery_is_internal_control(pending)) {
+        assignment_admission =
+            gateway_discovery_assignment_admit_nonassignment_source(
+                pending->packet.src_id);
+        if (assignment_admission < 0) {
+            return assignment_admission;
+        }
+        if (assignment_admission == 0) {
+            /*
+             * Keep the packet in sender custody. Once enumeration is terminal,
+             * an unprovisioned survey anchor or synthetic bench source may
+             * retry through the ordinary semantic path without having consumed
+             * a candidate origin partition while the roster was being built.
+             */
+            return -EAGAIN;
+        }
+    }
     current_channel9_plan = pending->current_channel9_plan_valid ?
                             &pending->current_channel9_plan : NULL;
 
     switch (pending->packet.msg_type) {
+    case MSG_GATEWAY_ACK_CONFIRM: {
+#if DEVICE_ROLE == ROLE_GATEWAY
+        int receipt_ret = app_gateway_terminal_receipts_confirm(
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            k_uptime_get_32());
+#else
+        int receipt_ret = 0;
+#endif
+        int ret;
+
+        if (receipt_ret < 0) {
+            return receipt_ret;
+        }
+        ret = app_mesh_persistence_confirm_gateway_host_journal(
+            &pending->packet,
+            pending->payload,
+            pending->payload_len);
+
+        if (ret < 0) {
+            return ret;
+        }
+        if (ret > 1) {
+            gateway_ble_require_host_journal_restore(
+                "gateway-ack-confirm");
+        }
+        return ret > 0 || receipt_ret > 0 ?
+                   APP_GATEWAY_SEMANTIC_ACCEPT_NEW :
+                   APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+    }
     case MSG_CLICK_REPORT:
         if (report_validate_click_payload(&pending->packet,
                                           pending->payload,
                                           pending->payload_len) != PROTO_OK) {
             return -EINVAL;
         }
-        {
-            int journal_ret =
-                app_mesh_persistence_gateway_click_journal_matches(
-                    &pending->packet,
-                    pending->payload,
-                    pending->payload_len);
-
-            if (journal_ret == 1) {
-                return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-            }
-            if (journal_ret < 0) {
-                return journal_ret;
-            }
-        }
         /*
-         * Click identity is committed by the relay runtime after validation,
-         * durable journal commit, and BLE reservation commit.  Treat a valid
-         * new click as accepted here so gateway ACK cannot precede host-output
-         * custody.
+         * Host-journal replay is classified before this application
+         * dispatcher.  A fresh click reaches this case only after validation
+         * capacity is reserved; transport identity is committed later, after
+         * durable host-output and BLE custody.
          */
         return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
+    case MSG_SELF_TEST_REPORT:
+        return proto_self_test_report_validate(
+                   &pending->packet,
+                   pending->payload,
+                   pending->payload_len) == PROTO_OK ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    case MSG_ANCHOR_HEARTBEAT:
+        return proto_anchor_heartbeat_validate(
+                   &pending->packet,
+                   pending->payload,
+                   pending->payload_len) == PROTO_OK ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    case MSG_MESH_DATA:
+        return pending->packet.flags ==
+                       (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC) &&
+                       pending->payload_len > 0u ?
+                   APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
     case MSG_COMMAND_RESULT:
         return gateway_note_command_result(&pending->packet,
                                            pending->payload,
                                            pending->payload_len,
+                                           pending->first_received_at_ms,
+                                           pending->result_validation_token,
                                            pending->previous_hop_id,
                                            pending->radio_channel,
                                            current_channel9_plan);
@@ -1218,6 +1310,110 @@ static int mesh_gateway_accept_semantic_delivery(
             &pending->packet,
             pending->payload,
             pending->payload_len,
+            pending->first_received_at_ms,
+            pending->previous_hop_id,
+            pending->radio_channel,
+            pending->link_quality);
+    default:
+        return -EINVAL;
+    }
+}
+
+/*
+ * Read-only admission pass for the write-ahead host journal. The mesh RX
+ * worker owns all relevant gateway protocol state across this call, PREPARED
+ * persistence, and mesh_gateway_accept_semantic_delivery().
+ */
+static int mesh_gateway_preflight_semantic_delivery(
+    const struct mesh_rx_pending *pending)
+{
+    int assignment_admission;
+
+    if (pending == NULL ||
+        !mesh_gateway_delivery_requires_semantic_acceptance(
+            &pending->packet)) {
+        return -EINVAL;
+    }
+    if (!mesh_gateway_delivery_is_internal_control(pending)) {
+        assignment_admission =
+            gateway_discovery_assignment_admit_nonassignment_source(
+                pending->packet.src_id);
+        if (assignment_admission < 0) {
+            return assignment_admission;
+        }
+        if (assignment_admission == 0) {
+            return -EAGAIN;
+        }
+    }
+
+    switch (pending->packet.msg_type) {
+    case MSG_GATEWAY_ACK_CONFIRM: {
+        struct mesh_gateway_ack_confirm_identity identity;
+
+        return mesh_gateway_ack_confirm_payload_parse(
+                   &pending->packet,
+                   pending->payload,
+                   pending->payload_len,
+                   &identity) == PROTO_OK ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    }
+    case MSG_CLICK_REPORT:
+        return report_validate_click_payload(&pending->packet,
+                                             pending->payload,
+                                             pending->payload_len) ==
+                   PROTO_OK ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    case MSG_SELF_TEST_REPORT:
+        return proto_self_test_report_validate(
+                   &pending->packet,
+                   pending->payload,
+                   pending->payload_len) == PROTO_OK ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    case MSG_ANCHOR_HEARTBEAT:
+        return proto_anchor_heartbeat_validate(
+                   &pending->packet,
+                   pending->payload,
+                   pending->payload_len) == PROTO_OK ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    case MSG_MESH_DATA:
+        return pending->packet.flags ==
+                       (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC) &&
+                       pending->payload_len > 0u ?
+                   APP_GATEWAY_SEMANTIC_ACCEPT_NEW : -EINVAL;
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+        return gateway_preflight_result_semantic_delivery(
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            pending->first_received_at_ms,
+            pending->result_validation_token,
+            pending->previous_hop_id);
+    case MSG_SURVEY_DISCOVERY_REPORT: {
+        int ret = gateway_survey_preflight_semantic_delivery(
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            pending->first_received_at_ms,
+            pending->previous_hop_id,
+            pending->radio_channel,
+            pending->link_quality);
+
+        return ret == -ESTALE ?
+               APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW : ret;
+    }
+    case MSG_SURVEY_PAIR_RESULT:
+        /*
+         * A stale pair result still belongs to the sender's bounded result
+         * delivery owner. Do not journal it as recovered host data or commit a
+         * gateway ACK: the live round must remain untouched and the sender
+         * retires this obsolete custody only at its existing deadline.
+         */
+        return gateway_survey_preflight_semantic_delivery(
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            pending->first_received_at_ms,
             pending->previous_hop_id,
             pending->radio_channel,
             pending->link_quality);
@@ -1232,10 +1428,11 @@ static void mesh_rx_pending_refresh_age(struct mesh_rx_pending *pending, uint32_
         return;
     }
 
-    if (pending->received_at_ms != 0u) {
+    if (pending->received_at_valid) {
         packet_age_add_elapsed(&pending->packet, now_ms - pending->received_at_ms);
     }
     pending->received_at_ms = now_ms;
+    pending->received_at_valid = true;
 }
 
 int mesh_preempt_for_click_event(void)
@@ -1294,16 +1491,58 @@ int mesh_preempt_for_click_event(void)
     return 0;
 }
 
+static uint32_t mesh_outbox_persistence_generation;
+static uint32_t mesh_child_custody_persistence_generation;
+
+static uint32_t mesh_persistence_generation_begin(uint32_t *generation)
+{
+    uint32_t next_generation;
+
+    if (generation == NULL) {
+        return 0u;
+    }
+
+    next_generation = *generation + 1u;
+    if (next_generation == 0u) {
+        next_generation = 1u;
+    }
+    *generation = next_generation;
+    return next_generation;
+}
+
+static bool mesh_persistence_generation_is_current(uint32_t current_generation,
+                                                   uint32_t generation)
+{
+    return generation != 0u && current_generation == generation;
+}
+
+static void mesh_persistence_retry_round_reset_if_clean(void)
+{
+    if (!mesh_outbox_persistence_dirty &&
+        !mesh_child_custody_persistence_dirty) {
+        mesh_persistence_retry_round = 0u;
+    }
+}
+
 static void mesh_schedule_persistence_retry(const char *reason)
 {
     uint32_t delay_ms = discovery_assignment_retry_backoff_ms(
         mesh_persistence_retry_round,
         sys_rand32_get());
+    int ret;
 
     if (mesh_persistence_retry_round < UINT8_MAX) {
         mesh_persistence_retry_round++;
     }
-    (void)k_work_reschedule(&mesh_persistence_retry_work, K_MSEC(delay_ms));
+    ret = mesh_route_owner_work_reschedule(&mesh_persistence_retry_work,
+                                           delay_ms);
+    if (ret < 0) {
+        LOG_ERR("mesh persistence retry owner scheduling failed closed: reason=%s ret=%d",
+                reason == NULL ? "unknown" : reason,
+                ret);
+        app_watchdog_stop_feeding();
+        return;
+    }
     LOG_WRN("mesh persistence retry scheduled: reason=%s round=%u delay_ms=%u",
             reason == NULL ? "unknown" : reason,
             mesh_persistence_retry_round,
@@ -1312,73 +1551,121 @@ static void mesh_schedule_persistence_retry(const char *reason)
 
 static int mesh_save_outbox_durable(const char *reason)
 {
+    uint32_t generation = mesh_persistence_generation_begin(
+        &mesh_outbox_persistence_generation);
     uint32_t now_ms = k_uptime_get_32();
-    int ret = app_mesh_persistence_save_outbox(&mesh_runtime, now_ms);
+    int ret;
 
-    if (ret < 0) {
-        mesh_outbox_persistence_dirty = true;
-        mesh_schedule_persistence_retry(reason);
+    mesh_outbox_persistence_dirty = true;
+    if (mesh_relay_tx_active(&mesh_runtime)) {
+        ret = app_mesh_persistence_save_outbox(&mesh_runtime, now_ms);
     } else {
-        mesh_outbox_persistence_dirty = false;
-        ret = app_mesh_persistence_complete_deferred_outbox(&mesh_runtime,
-                                                             now_ms);
-        if (ret < 0 && ret != -ENOTSUP) {
-            mesh_outbox_persistence_dirty = true;
+        ret = app_mesh_persistence_init();
+        if (ret == 0) {
+            ret = app_mesh_persistence_clear_outbox();
+        }
+    }
+    if (ret < 0) {
+        if (mesh_persistence_generation_is_current(
+                mesh_outbox_persistence_generation, generation)) {
+            mesh_schedule_persistence_retry(reason);
+        }
+        return ret;
+    }
+    if (!mesh_persistence_generation_is_current(
+            mesh_outbox_persistence_generation, generation)) {
+        return 0;
+    }
+
+    ret = app_mesh_persistence_complete_deferred_outbox(&mesh_runtime,
+                                                         now_ms);
+    if (ret < 0 && ret != -ENOTSUP) {
+        if (mesh_persistence_generation_is_current(
+                mesh_outbox_persistence_generation, generation)) {
             mesh_schedule_persistence_retry("deferred-outbox-cleanup");
-            LOG_WRN("mesh deferred outbox cleanup failed: %d", ret);
-            return ret;
         }
-        /* Reconcile the explicit deferred owner after every primary save so
-         * a failed delete cannot be hidden by a later scheduler cancellation. */
-        ret = app_mesh_persistence_deferred_outbox_present();
-        if (ret >= 0) {
-            mesh_deferred_outbox_pending = ret > 0;
-        } else if (ret != -ENOTSUP && ret != -ENODEV && ret != -EAGAIN) {
-            mesh_deferred_outbox_pending = true;
-        }
-        ret = app_mesh_persistence_complete_click_handoff(&mesh_runtime, now_ms);
-        if (ret < 0 && ret != -ENOTSUP) {
-            mesh_outbox_persistence_dirty = true;
+        LOG_WRN("mesh deferred outbox cleanup failed: %d", ret);
+        return ret;
+    }
+    if (!mesh_persistence_generation_is_current(
+            mesh_outbox_persistence_generation, generation)) {
+        return 0;
+    }
+
+    /* Reconcile the explicit deferred owner after every primary save so
+     * a failed delete cannot be hidden by a later scheduler cancellation. */
+    ret = app_mesh_persistence_deferred_outbox_present();
+    if (ret >= 0) {
+        mesh_deferred_outbox_pending = ret > 0;
+    } else if (ret != -ENOTSUP && ret != -ENODEV && ret != -EAGAIN) {
+        mesh_deferred_outbox_pending = true;
+    }
+    if (!mesh_persistence_generation_is_current(
+            mesh_outbox_persistence_generation, generation)) {
+        return 0;
+    }
+
+    ret = app_mesh_persistence_complete_click_handoff(&mesh_runtime, now_ms);
+    if (ret < 0 && ret != -ENOTSUP) {
+        if (mesh_persistence_generation_is_current(
+                mesh_outbox_persistence_generation, generation)) {
             mesh_schedule_persistence_retry("click-handoff-cleanup");
-            LOG_WRN("mesh committed click handoff cleanup failed: %d", ret);
-            return ret;
         }
-        mesh_persistence_retry_round = 0u;
+        LOG_WRN("mesh committed click handoff cleanup failed: %d", ret);
+        return ret;
+    }
+    if (mesh_persistence_generation_is_current(
+            mesh_outbox_persistence_generation, generation)) {
+        mesh_outbox_persistence_dirty = false;
+        mesh_persistence_retry_round_reset_if_clean();
     }
     return ret;
 }
 
 static int mesh_save_child_custody_durable(const char *reason)
 {
-    int ret = app_mesh_persistence_save_child_custody(&mesh_runtime,
-                                                      k_uptime_get_32());
+    uint32_t generation = mesh_persistence_generation_begin(
+        &mesh_child_custody_persistence_generation);
+    int ret;
 
+    mesh_child_custody_persistence_dirty = true;
+    ret = app_mesh_persistence_save_child_custody(&mesh_runtime,
+                                                  k_uptime_get_32());
     if (ret < 0) {
-        mesh_child_custody_persistence_dirty = true;
-        mesh_schedule_persistence_retry(reason);
-    } else {
+        if (mesh_persistence_generation_is_current(
+                mesh_child_custody_persistence_generation, generation)) {
+            mesh_schedule_persistence_retry(reason);
+        }
+    } else if (mesh_persistence_generation_is_current(
+                   mesh_child_custody_persistence_generation, generation)) {
         mesh_child_custody_persistence_dirty = false;
-        mesh_persistence_retry_round = 0u;
+        mesh_persistence_retry_round_reset_if_clean();
     }
     return ret;
 }
 
 static void mesh_persistence_retry_work_handler(struct k_work *work)
 {
+    bool outbox_retry_pending;
+
     ARG_UNUSED(work);
 
-    if (mesh_outbox_persistence_dirty) {
-        if (!mesh_relay_tx_active(&mesh_runtime)) {
-            mesh_outbox_persistence_dirty = false;
-        } else if (mesh_save_outbox_durable("outbox-dirty") < 0) {
+    outbox_retry_pending = mesh_outbox_persistence_dirty;
+    if (outbox_retry_pending) {
+        if (mesh_save_outbox_durable("outbox-dirty") < 0) {
             return;
+        }
+        if (mesh_relay_tx_active(&mesh_runtime) &&
+            mesh_runtime.pending.packet.msg_type ==
+                MSG_GATEWAY_ACK_CONFIRM) {
+            (void)mesh_schedule_tx_timeout();
         }
     }
     if (mesh_child_custody_persistence_dirty &&
         mesh_save_child_custody_durable("child-custody-dirty") < 0) {
         return;
     }
-    mesh_persistence_retry_round = 0u;
+    mesh_persistence_retry_round_reset_if_clean();
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -1402,13 +1689,28 @@ static int mesh_preempt_clear_outbox(void *ctx)
     const struct proto_packet *released_packet =
         mesh_relay_tx_active(&mesh_runtime) ?
         &mesh_runtime.pending.packet : NULL;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    int ret;
 
     ARG_UNUSED(ctx);
 
     if (mesh_report_callbacks != NULL &&
         mesh_report_callbacks->anchor_survey_delivery_transport_released != NULL) {
-        mesh_report_callbacks->anchor_survey_delivery_transport_released(
-            released_packet, true);
+        if (released_packet == NULL ||
+            !mesh_packet_semantic_digest(
+                released_packet,
+                mesh_runtime.pending.payload,
+                mesh_runtime.pending.payload_len,
+                semantic_digest)) {
+            return -EBADMSG;
+        }
+        ret =
+            mesh_report_callbacks->anchor_survey_delivery_transport_released(
+                released_packet, semantic_digest, true);
+        if (ret < 0 && ret != -ENOENT && ret != -ESTALE &&
+            ret != -ENOTSUP) {
+            return ret;
+        }
     }
     return app_mesh_persistence_clear_outbox();
 }
@@ -1636,9 +1938,13 @@ static int report_tx_queue_peek(struct mesh_outbound *outbound)
     if (ret != 0) {
         return ret;
     }
-    (void)report_tx_queue_restore_recovery_locked();
-    (void)report_tx_queue_promote_local_locked();
-    ret = k_msgq_peek(&report_tx_msgq, outbound);
+    if (anchor_range_report_batch_reservation.active) {
+        ret = -EBUSY;
+    } else {
+        (void)report_tx_queue_restore_recovery_locked();
+        (void)report_tx_queue_promote_local_locked();
+        ret = k_msgq_peek(&report_tx_msgq, outbound);
+    }
     k_mutex_unlock(&report_tx_queue_overflow_lock);
     return ret;
 }
@@ -1654,8 +1960,20 @@ static int report_tx_queue_append(const struct mesh_outbound *outbound)
     if (ret != 0) {
         return ret;
     }
-    (void)report_tx_queue_restore_recovery_locked();
-    if (report_tx_queue_recovery_valid) {
+    if (anchor_range_report_batch_reservation.active) {
+        /*
+         * The batch owns every nominal queue slot until its final fragment is
+         * visible.  Letting a retry append here would interleave unrelated
+         * custody with a partial batch, and abort could then remove that retry
+         * while rotating away the batch prefix.
+         */
+        ret = -EAGAIN;
+    } else {
+        (void)report_tx_queue_restore_recovery_locked();
+    }
+    if (ret == -EAGAIN) {
+        /* Keep the caller's existing retry owner unchanged. */
+    } else if (report_tx_queue_recovery_valid) {
         ret = -ENOSPC;
     } else {
         ret = k_msgq_put(&report_tx_msgq, outbound, K_NO_WAIT);
@@ -1678,12 +1996,16 @@ static int report_tx_queue_begin_head(
     if (ret != 0) {
         return ret;
     }
-    (void)report_tx_queue_restore_recovery_locked();
-    (void)report_tx_queue_promote_local_locked();
-    ret = app_mesh_queue_head_begin(&report_tx_queue_head_owner,
-                                    &report_tx_queue_head_ops,
-                                    outbound,
-                                    token);
+    if (anchor_range_report_batch_reservation.active) {
+        ret = -EBUSY;
+    } else {
+        (void)report_tx_queue_restore_recovery_locked();
+        (void)report_tx_queue_promote_local_locked();
+        ret = app_mesh_queue_head_begin(&report_tx_queue_head_owner,
+                                        &report_tx_queue_head_ops,
+                                        outbound,
+                                        token);
+    }
     k_mutex_unlock(&report_tx_queue_overflow_lock);
     return ret;
 }
@@ -1767,6 +2089,11 @@ static int mesh_preempt_discard_requeued_click_report(
     if (ret != 0) {
         k_mutex_unlock(&mesh_send_scratch_lock);
         return ret;
+    }
+    if (anchor_range_report_batch_reservation.active) {
+        k_mutex_unlock(&report_tx_queue_overflow_lock);
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        return -EBUSY;
     }
     (void)report_tx_queue_restore_recovery_locked();
     ret = app_mesh_queue_remove_first_owned(&report_tx_queue_head_owner,
@@ -1901,8 +2228,12 @@ static int mesh_schedule_tx_timeout(void)
          * promotion path on the normal retry cadence instead of cancelling. */
         deadline = now + REPORT_TX_RETRY_DELAY_MS;
     }
-    delay_ms = uptime_ms_until_deadline(now, deadline);
-    return mesh_reschedule_delayable(&mesh_tx_timeout_work, delay_ms);
+    delay_ms = uptime_deadline_reached(now, deadline) ?
+               1u :
+               uptime_ms_until_deadline(now, deadline);
+    return mesh_reschedule_owned_work(&mesh_tx_timeout_work,
+                                      delay_ms,
+                                      "tx-timeout");
 }
 
 static bool mesh_defer_active_collection_result(const char *reason)
@@ -2033,7 +2364,8 @@ static uint32_t mesh_rf_retry_bank_next_delay_ms(
 }
 #endif
 
-static const char *route_delivery_action_name(enum route_delivery_action action)
+static __attribute__((unused)) const char *
+route_delivery_action_name(enum route_delivery_action action)
 {
     switch (action) {
     case ROUTE_DELIVERY_RETRY_CURRENT:
@@ -2047,7 +2379,8 @@ static const char *route_delivery_action_name(enum route_delivery_action action)
     }
 }
 
-static void report_tx_set_retry_delay_override(uint32_t delay_ms)
+static void __attribute__((unused))
+report_tx_set_retry_delay_override(uint32_t delay_ms)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
     report_tx_retry_delay_override_ms = delay_ms;
@@ -2314,7 +2647,9 @@ static bool mesh_queue_embedded_route_request(
     pending.previous_hop_id = claim->clicker_id;
     pending.link_quality = link_quality;
     pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    pending.first_received_at_ms = mesh_expand_uptime32(now_ms);
     pending.received_at_ms = now_ms;
+    pending.received_at_valid = true;
     app_mesh_test_note_wake_event(&pending.packet,
                                   pending.previous_hop_id,
                                   pending.link_quality,
@@ -2350,7 +2685,8 @@ static bool mesh_queue_embedded_route_request(
                          (unsigned int)payload_len,
                          mesh_route_embedded_reply_hold_until_ms,
                          link_quality);
-    (void)mesh_submit_work(&mesh_rx_work);
+    (void)mesh_submit_owned_work(&mesh_rx_work,
+                                 "embedded-route-rx");
     return true;
 }
 
@@ -2368,9 +2704,10 @@ static void mesh_route_embedded_wait_before_reply(const struct mesh_outbound *ro
     }
 
     now_ms = k_uptime_get_32();
-    delay_ms = uptime_ms_until_deadline(now_ms,
-                                        mesh_route_embedded_reply_hold_until_ms);
-    if (delay_ms > 0u) {
+    if (!uptime_deadline_reached(
+            now_ms, mesh_route_embedded_reply_hold_until_ms)) {
+        delay_ms = uptime_ms_until_deadline(
+            now_ms, mesh_route_embedded_reply_hold_until_ms);
         status_debug_printf("DBG_EMBEDDED_ROUTE_REPLY_HOLD delay=%u peer=0x%llx\n",
                             delay_ms,
                             (unsigned long long)mesh_route_embedded_reply_peer_id);
@@ -2387,7 +2724,9 @@ static void mesh_schedule_route_waiting_retry_after(const char *reason, uint32_t
         return;
     }
 
-    (void)mesh_reschedule_delayable(&mesh_route_waiting_work, delay_ms);
+    (void)mesh_reschedule_owned_work(&mesh_route_waiting_work,
+                                     delay_ms,
+                                     "route-wait");
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_WAIT_RETRY reason=%s delay=%u msg=0x%02x dst=0x%llx seq=%u active=%u\n",
                             reason == NULL ? "route-wait" : reason,
@@ -2432,7 +2771,9 @@ static void mesh_schedule_route_waiting_retry(const char *reason)
     deadline = mesh_runtime.route_discovery.active ?
                mesh_runtime.route_discovery.next_request_ms :
                now + REPORT_TX_RETRY_DELAY_MS;
-    delay_ms = uptime_ms_until_deadline(now, deadline);
+    delay_ms = uptime_deadline_reached(now, deadline) ?
+               1u :
+               uptime_ms_until_deadline(now, deadline);
     mesh_schedule_route_waiting_retry_after(reason, delay_ms);
 }
 
@@ -2700,8 +3041,45 @@ static void mesh_debug_channel9_unavailable(const char *context,
     }
 }
 
+static bool mesh_clicker_on_demand_rx_required(void)
+{
+    const struct route_candidate *parent;
+    struct mesh_event_owner *owner;
+    struct mesh_event_timing timing;
+    bool exact_ack_wait;
+
+    if (DEVICE_ROLE != ROLE_CLICKER) {
+        return false;
+    }
+
+    exact_ack_wait =
+        mesh_ch9_tx_pending_is_active() ||
+        app_mesh_ch9_core_ack_wait_active(
+            &mesh_runtime.pending,
+            mesh_relay_tx_active(&mesh_runtime));
+    if (exact_ack_wait) {
+        return true;
+    }
+
+    parent = route_selected(&mesh_runtime.upstream);
+    if (parent == NULL || !parent->channel9_timing_valid) {
+        return false;
+    }
+    owner = mesh_event_owner_registry_find(&mesh_event_owner_registry,
+                                           parent->next_hop_id);
+    if (owner == NULL || !owner->active) {
+        return false;
+    }
+    return mesh_find_active_channel9_timing(parent->next_hop_id,
+                                            k_uptime_get_32(),
+                                            &timing);
+}
+
 static bool mesh_role_uses_uwb_rx(void)
 {
+    if (mesh_clicker_on_demand_rx_required()) {
+        return true;
+    }
     return app_mesh_rx_policy_role_uses_uwb_rx(
         stage1_anchor_focused_rx_logs_enabled(),
         DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY,
@@ -2762,7 +3140,8 @@ int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary)
          * The pending gate prevents rearm; this path never clears the shared
          * abort bit, so it cannot consume a concurrent host-command request.
          */
-        dwm3000_driver_request_receive_abort();
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
     }
     k_spin_unlock(&mesh_rx_handoff_lock, key);
     if (!accepted) {
@@ -2877,20 +3256,36 @@ static int mesh_rx_handoff_wait_for_control(void)
     return 0;
 }
 
-static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t delay_ms)
+int mesh_route_owner_work_reschedule_timeout(struct k_work_delayable *work,
+                                             k_timeout_t delay)
 {
-    if (mesh_transport_paused() && work != &mesh_persistence_retry_work) {
-        return -ESHUTDOWN;
+    if (work == NULL) {
+        return -EINVAL;
     }
 #if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-    return k_work_reschedule_for_queue(&mesh_route_work_q, work, K_MSEC(delay_ms));
+    return k_work_reschedule_for_queue(&mesh_route_work_q, work, delay);
 #else
     /*
      * Legacy and ML presets retain the system workqueue. Production mesh
      * presets enable the dedicated communication queue explicitly.
      */
-    return k_work_reschedule(work, K_MSEC(delay_ms));
+    return k_work_reschedule(work, delay);
 #endif
+}
+
+int mesh_route_owner_work_reschedule(struct k_work_delayable *work,
+                                     uint32_t delay_ms)
+{
+    return mesh_route_owner_work_reschedule_timeout(work,
+                                                    K_MSEC(delay_ms));
+}
+
+static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t delay_ms)
+{
+    if (mesh_transport_paused() && work != &mesh_persistence_retry_work) {
+        return -ESHUTDOWN;
+    }
+    return mesh_route_owner_work_reschedule(work, delay_ms);
 }
 
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms)
@@ -2902,20 +3297,67 @@ int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms)
     return mesh_reschedule_delayable(work, delay_ms);
 }
 
-static int mesh_submit_work(struct k_work *work)
+static int mesh_owned_schedule_result(int ret,
+                                      const char *owner,
+                                      bool pause_owned_rejection)
+{
+    enum app_mesh_schedule_recovery recovery =
+        app_mesh_schedule_recovery_decide(ret, pause_owned_rejection);
+
+    if (recovery == APP_MESH_SCHEDULE_RECOVERY_WATCHDOG) {
+        LOG_ERR("mesh accepted state lost its work owner: owner=%s ret=%d",
+                owner == NULL ? "unknown" : owner,
+                ret);
+        app_watchdog_stop_feeding();
+    } else if (recovery == APP_MESH_SCHEDULE_RECOVERY_ON_RESUME &&
+               IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_MESH_WORK_DEFER owner=%s ret=%d\n",
+                            owner == NULL ? "unknown" : owner,
+                            ret);
+    }
+    return ret;
+}
+
+static int mesh_reschedule_owned_work(struct k_work_delayable *work,
+                                      uint32_t delay_ms,
+                                      const char *owner)
 {
     if (mesh_transport_paused()) {
-        return -ESHUTDOWN;
+        return mesh_owned_schedule_result(-ESHUTDOWN, owner, true);
+    }
+    return mesh_owned_schedule_result(
+        mesh_route_owner_work_reschedule(work, delay_ms), owner, false);
+}
+
+static int mesh_submit_owned_work(struct k_work *work, const char *owner)
+{
+    int ret;
+
+    if (mesh_transport_paused()) {
+        return mesh_owned_schedule_result(-ESHUTDOWN, owner, true);
     }
 #if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
-    return k_work_submit_to_queue(&mesh_route_work_q, work);
+    ret = k_work_submit_to_queue(&mesh_route_work_q, work);
 #else
-    return k_work_submit(work);
+    ret = k_work_submit(work);
 #endif
+    return mesh_owned_schedule_result(ret, owner, false);
 }
 
 int mesh_schedule_route_request(uint64_t target_id, const char *reason)
 {
+    const struct app_mesh_async_route_transfer_identity transfer = {
+        .target_id = mesh_route_waiting_tx_valid ?
+                     mesh_route_waiting_tx.packet.dst_id : 0u,
+        .owner_generation = mesh_route_waiting_tx_valid ?
+                            mesh_route_waiting_tx.packet.session_id : 0u,
+        .packet_seq = mesh_route_waiting_tx_valid ?
+                      mesh_route_waiting_tx.packet.seq : 0u,
+        .msg_type = mesh_route_waiting_tx_valid ?
+                    mesh_route_waiting_tx.packet.msg_type : 0u,
+        .valid = mesh_route_waiting_tx_valid &&
+                 mesh_route_waiting_tx.packet.dst_id == target_id,
+    };
     int ret;
 
     if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
@@ -2923,24 +3365,54 @@ int mesh_schedule_route_request(uint64_t target_id, const char *reason)
     }
 
     k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
-    mesh_route_discovery_target_id = target_id;
-    mesh_route_discovery_reason = reason == NULL ? "async-route" : reason;
-    mesh_route_discovery_pending = true;
-    ret = mesh_reschedule_delayable(&mesh_route_discovery_work, 0u);
+    if (!app_mesh_async_route_request_submit(
+            &mesh_route_discovery_request,
+            target_id,
+            reason,
+            k_uptime_get_32(),
+            &transfer)) {
+        k_mutex_unlock(&mesh_route_discovery_lock);
+        return -EINVAL;
+    }
+    ret = mesh_reschedule_owned_work(&mesh_route_discovery_work,
+                                     0u,
+                                     "route-discovery");
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_ROUTE_REQ_ASYNC_SCHED target=0x%llx ret=%d reason=%s\n",
+        status_debug_printf("DBG_ROUTE_REQ_ASYNC_SCHED target=0x%llx generation=%u ret=%d reason=%s\n",
                             (unsigned long long)target_id,
+                            mesh_route_discovery_request.generation,
                             ret,
-                            mesh_route_discovery_reason);
+                            mesh_route_discovery_request.reason);
     }
     k_mutex_unlock(&mesh_route_discovery_lock);
     return ret;
 }
 
+static uint32_t mesh_route_discovery_async_retry_delay_ms(int ret)
+{
+    uint32_t now_ms = k_uptime_get_32();
+
+    if (ret == -ETIMEDOUT) {
+        return mesh_route_exhausted_retry_delay_ms(sys_rand32_get());
+    }
+    if (ret == -EBUSY) {
+        return MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS;
+    }
+    if (mesh_runtime.route_discovery.active &&
+        !uptime_deadline_reached(
+            now_ms, mesh_runtime.route_discovery.next_request_ms)) {
+        return uptime_ms_until_deadline(
+            now_ms, mesh_runtime.route_discovery.next_request_ms);
+    }
+    return REPORT_TX_RETRY_DELAY_MS;
+}
+
 static void mesh_route_discovery_work_handler(struct k_work *work)
 {
-    uint64_t target_id;
-    const char *reason;
+    struct app_mesh_async_route_attempt attempt;
+    uint32_t retry_delay_ms = 0u;
+    bool terminal_transferred = false;
+    bool retry_owned = false;
     int ret;
 
     ARG_UNUSED(work);
@@ -2950,35 +3422,72 @@ static void mesh_route_discovery_work_handler(struct k_work *work)
     }
 
     k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
-    if (!mesh_route_discovery_pending) {
+    if (!app_mesh_async_route_request_snapshot(
+            &mesh_route_discovery_request, &attempt)) {
         k_mutex_unlock(&mesh_route_discovery_lock);
         return;
     }
-    target_id = mesh_route_discovery_target_id;
-    reason = mesh_route_discovery_reason == NULL ?
-             "async-route" : mesh_route_discovery_reason;
-    mesh_route_discovery_pending = false;
-    mesh_route_discovery_target_id = 0u;
-    mesh_route_discovery_reason = NULL;
     k_mutex_unlock(&mesh_route_discovery_lock);
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_ROUTE_REQ_ASYNC_RUN target=0x%llx reason=%s\n",
-                            (unsigned long long)target_id,
-                            reason);
+        status_debug_printf("DBG_ROUTE_REQ_ASYNC_RUN target=0x%llx generation=%u reason=%s\n",
+                            (unsigned long long)attempt.target_id,
+                            attempt.generation,
+                            attempt.reason);
     }
-    ret = mesh_request_route(target_id, reason);
+    ret = mesh_request_route(attempt.target_id, attempt.reason);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_ROUTE_REQ_ASYNC_DONE target=0x%llx ret=%d reason=%s\n",
-                            (unsigned long long)target_id,
+        status_debug_printf("DBG_ROUTE_REQ_ASYNC_DONE target=0x%llx generation=%u ret=%d reason=%s\n",
+                            (unsigned long long)attempt.target_id,
+                            attempt.generation,
                             ret,
-                            reason);
+                            attempt.reason);
     }
-    if (ret == -ETIMEDOUT && mesh_route_waiting_tx_valid &&
+    if (ret == -ETIMEDOUT &&
+        app_mesh_async_route_request_transfer_matches(
+            &attempt,
+            mesh_route_waiting_tx_valid,
+            mesh_route_waiting_tx_valid ?
+                mesh_route_waiting_tx.packet.dst_id : 0u,
+            mesh_route_waiting_tx_valid ?
+                mesh_route_waiting_tx.packet.session_id : 0u,
+            mesh_route_waiting_tx_valid ?
+                mesh_route_waiting_tx.packet.seq : 0u,
+            mesh_route_waiting_tx_valid ?
+                mesh_route_waiting_tx.packet.msg_type : 0u) &&
         !mesh_relay_tx_active(&mesh_runtime)) {
         mesh_schedule_route_waiting_exhausted_retry(
             "async-route-exhausted");
+        terminal_transferred = true;
+    } else if (ret < 0) {
+        retry_delay_ms = mesh_route_discovery_async_retry_delay_ms(ret);
     }
+
+    k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
+    if (ret == 0 || terminal_transferred) {
+        (void)app_mesh_async_route_request_complete(
+            &mesh_route_discovery_request, &attempt);
+    } else if (app_mesh_async_route_request_defer(
+                   &mesh_route_discovery_request,
+                   &attempt,
+                   k_uptime_get_32(),
+                   retry_delay_ms)) {
+        retry_owned = true;
+        (void)mesh_reschedule_owned_work(
+            &mesh_route_discovery_work,
+            retry_delay_ms,
+            "route-discovery-retry");
+    }
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && ret < 0) {
+        status_debug_printf("DBG_ROUTE_REQ_ASYNC_RETAIN target=0x%llx generation=%u ret=%d retry=%u delay=%u transferred=%u\n",
+                            (unsigned long long)attempt.target_id,
+                            attempt.generation,
+                            ret,
+                            retry_owned ? 1u : 0u,
+                            retry_delay_ms,
+                            terminal_transferred ? 1u : 0u);
+    }
+    k_mutex_unlock(&mesh_route_discovery_lock);
 }
 
 static int mesh_cancel_delayable(struct k_work_delayable *work)

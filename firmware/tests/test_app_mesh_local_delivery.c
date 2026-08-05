@@ -1,7 +1,10 @@
 #include "app_mesh_local_delivery.h"
+#include "mesh.h"
+#include "survey.h"
 
 #include <assert.h>
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -57,28 +60,145 @@ static struct app_mesh_local_delivery make_delivery(struct journal_store *store)
     return delivery;
 }
 
-static struct mesh_outbound make_report(uint32_t survey_id, uint16_t seq)
+static struct mesh_outbound make_report_from(uint64_t anchor_id,
+                                             uint32_t survey_id,
+                                             uint16_t seq)
 {
     struct mesh_outbound outbound = {0};
+    size_t payload_len = 0u;
 
-    outbound.packet.msg_type = MSG_SURVEY_DISCOVERY_REPORT;
-    outbound.packet.src_id = UINT64_C(0x1020304050607080);
-    outbound.packet.dst_id = UINT64_C(0x8877665544332211);
-    outbound.packet.session_id = survey_id;
-    outbound.packet.seq = seq;
-    outbound.packet.ttl = 4u;
-    outbound.packet.payload_len = 5u;
-    outbound.payload_len = 5u;
-    outbound.payload[0] = 0x55u;
-    outbound.payload[1] = 0xa5u;
-    outbound.payload[2] = 0x11u;
-    outbound.payload[3] = 0x22u;
-    outbound.payload[4] = 0x33u;
+    assert(survey_append_reach_report_tlvs(
+               outbound.payload,
+               sizeof(outbound.payload),
+               &payload_len,
+               survey_id,
+               anchor_id,
+               NULL,
+               0u) == PROTO_OK);
+    assert(survey_operation_generation_append_tlv(
+               outbound.payload,
+               sizeof(outbound.payload),
+               &payload_len,
+               survey_id) == PROTO_OK);
+    assert(tlv_append_u16(outbound.payload,
+                          sizeof(outbound.payload),
+                          &payload_len,
+                          TLV_COMMAND_STATUS,
+                          COMMAND_OK) == PROTO_OK);
+    assert(survey_init_discovery_report_packet(
+               &outbound.packet,
+               anchor_id,
+               UINT64_C(0x8877665544332211),
+               survey_id,
+               survey_id,
+               seq,
+               (uint8_t)payload_len) == PROTO_OK);
+    outbound.payload_len = (uint16_t)payload_len;
     outbound.radio_channel = 9u;
     outbound.next_hop_id = UINT64_C(0x0102030405060708);
     outbound.queued_at_ms = 1234u;
+    outbound.queued_at_valid = true;
     outbound.earliest_tx_ms = 1275u;
+    outbound.earliest_tx_valid = true;
     return outbound;
+}
+
+static struct mesh_outbound make_report(uint32_t survey_id, uint16_t seq)
+{
+    return make_report_from(UINT64_C(0x1020304050607080),
+                            survey_id,
+                            seq);
+}
+
+static struct mesh_outbound make_pair_result(uint32_t survey_id,
+                                             uint16_t seq)
+{
+    struct mesh_outbound outbound = {0};
+    const struct survey_sample sample = {
+        .pair = {
+            .initiator_id = UINT64_C(0x1020304050607080),
+            .responder_id = UINT64_C(0x2030405060708090),
+            .operation_generation = survey_id,
+            .survey_id = survey_id,
+            .sample_count = 1u,
+        },
+        .round_id = 1u,
+        .sample_index = 0u,
+        .distance_mm = 2500,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+    };
+    size_t payload_len = 0u;
+
+    assert(survey_append_sample_tlvs(outbound.payload,
+                                     sizeof(outbound.payload),
+                                     &payload_len,
+                                     &sample) == PROTO_OK);
+    assert(survey_init_result_packet_from_reporter(
+               &outbound.packet,
+               &sample,
+               sample.pair.initiator_id,
+               UINT64_C(0x8877665544332211),
+               seq,
+               (uint8_t)payload_len) == PROTO_OK);
+    outbound.payload_len = (uint16_t)payload_len;
+    outbound.radio_channel = 9u;
+    outbound.next_hop_id = UINT64_C(0x0102030405060708);
+    outbound.queued_at_ms = 1234u;
+    outbound.queued_at_valid = true;
+    return outbound;
+}
+
+static void outbound_digest(
+    const struct mesh_outbound *outbound,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    assert(mesh_packet_semantic_digest(&outbound->packet,
+                                       outbound->payload,
+                                       outbound->payload_len,
+                                       digest));
+}
+
+static int commit_ack_for_outbound(
+    struct app_mesh_local_delivery *delivery,
+    const struct mesh_outbound *outbound)
+{
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    outbound_digest(outbound, digest);
+    return app_mesh_local_delivery_commit_ack(
+        delivery, &outbound->packet, digest);
+}
+
+static int note_ack_for_outbound(
+    struct app_mesh_local_delivery *delivery,
+    const struct mesh_outbound *outbound)
+{
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    outbound_digest(outbound, digest);
+    return app_mesh_local_delivery_note_ack(
+        delivery, &outbound->packet, digest);
+}
+
+static void snapshot_rechecksum(
+    struct app_mesh_local_delivery_snapshot *snapshot)
+{
+    const uint8_t *bytes = (const uint8_t *)snapshot;
+    uint32_t hash = UINT32_C(2166136261);
+
+    snapshot->checksum = 0u;
+    for (size_t i = 0u; i < sizeof(*snapshot); i++) {
+        uint8_t value =
+            i >= offsetof(struct app_mesh_local_delivery_snapshot, checksum) &&
+            i < offsetof(struct app_mesh_local_delivery_snapshot, checksum) +
+                    sizeof(snapshot->checksum) ?
+            0u : bytes[i];
+
+        hash ^= value;
+        hash *= UINT32_C(16777619);
+    }
+    snapshot->checksum = hash;
 }
 
 static void test_transactional_stage_and_back_to_back_rejection(void)
@@ -111,7 +231,7 @@ static void test_reboot_and_exact_ack_identity(void)
     struct app_mesh_local_delivery delivery = make_delivery(&store);
     struct app_mesh_local_delivery rebooted;
     struct mesh_outbound outbound = make_report(201u, 19u);
-    struct proto_packet wrong;
+    struct mesh_outbound wrong;
     unsigned int saves_before;
 
     assert(app_mesh_local_delivery_stage(&delivery, &outbound, 201u) == 0);
@@ -127,21 +247,22 @@ static void test_reboot_and_exact_ack_identity(void)
            APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS - 1u);
 
     saves_before = store.save_count;
-    wrong = outbound.packet;
-    wrong.seq++;
-    assert(app_mesh_local_delivery_note_ack(&rebooted, &wrong) ==
+    wrong = outbound;
+    wrong.packet.seq++;
+    assert(note_ack_for_outbound(&rebooted, &wrong) ==
            -EKEYREJECTED);
-    assert(app_mesh_local_delivery_note_ack(&rebooted, NULL) == -EINVAL);
+    assert(app_mesh_local_delivery_note_ack(&rebooted, NULL, NULL) ==
+           -EINVAL);
     assert(store.save_count == saves_before);
     assert(store.clear_count == 0u);
 
-    assert(app_mesh_local_delivery_note_ack(&rebooted, &outbound.packet) == 0);
+    assert(note_ack_for_outbound(&rebooted, &outbound) == 0);
     assert(!store.present);
     assert(!app_mesh_local_delivery_active(&rebooted));
     assert(store.clear_count == 1u);
 }
 
-static void test_reboot_rebases_boot_relative_delivery_times(void)
+static void test_reboot_clears_pretransport_delivery_times(void)
 {
     struct journal_store store = {0};
     struct app_mesh_local_delivery delivery = make_delivery(&store);
@@ -153,15 +274,188 @@ static void test_reboot_rebases_boot_relative_delivery_times(void)
     assert(app_mesh_local_delivery_restore(&rebooted, &store.persisted) == 0);
     assert(app_mesh_local_delivery_rebase_after_boot(&rebooted, 17u) == 0);
     assert(rebooted.snapshot.outbound.queued_at_ms == 0u);
-    assert(rebooted.snapshot.outbound.earliest_tx_ms == 17u);
+    assert(!rebooted.snapshot.outbound.queued_at_valid);
+    assert(rebooted.snapshot.outbound.earliest_tx_ms == 0u);
+    assert(!rebooted.snapshot.outbound.earliest_tx_valid);
     assert(store.persisted.outbound.queued_at_ms == 0u);
-    assert(store.persisted.outbound.earliest_tx_ms == 17u);
+    assert(!store.persisted.outbound.queued_at_valid);
+    assert(store.persisted.outbound.earliest_tx_ms == 0u);
+    assert(!store.persisted.outbound.earliest_tx_valid);
 
     store.save_result = -EIO;
     assert(app_mesh_local_delivery_rebase_after_boot(&rebooted, 33u) == -EIO);
-    assert(rebooted.snapshot.outbound.earliest_tx_ms == 33u);
+    assert(rebooted.snapshot.outbound.earliest_tx_ms == 0u);
+    assert(!rebooted.snapshot.outbound.earliest_tx_valid);
     assert(app_mesh_local_delivery_snapshot_valid(&rebooted.snapshot));
-    assert(store.persisted.outbound.earliest_tx_ms == 17u);
+    assert(store.persisted.outbound.earliest_tx_ms == 0u);
+}
+
+static void test_elapsed_not_before_is_retired_before_long_resource_wait(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct mesh_outbound outbound = make_report(216u, 22u);
+    const uint32_t due_ms = UINT32_C(0xfffffff0);
+
+    outbound.earliest_tx_ms = due_ms;
+    outbound.earliest_tx_valid = true;
+    assert(app_mesh_local_delivery_stage(&delivery, &outbound, 216u) == 0);
+    assert(app_mesh_local_delivery_retire_elapsed_not_before(
+               &delivery, due_ms - 10u) == -EAGAIN);
+    assert(delivery.snapshot.outbound.earliest_tx_valid);
+
+    store.save_result = -EIO;
+    assert(app_mesh_local_delivery_retire_elapsed_not_before(
+               &delivery, due_ms) == -EIO);
+    assert(delivery.snapshot.outbound.earliest_tx_valid);
+
+    store.save_result = 0;
+    assert(app_mesh_local_delivery_retire_elapsed_not_before(
+               &delivery, due_ms) == 0);
+    assert(!delivery.snapshot.outbound.earliest_tx_valid);
+    assert(!store.persisted.outbound.earliest_tx_valid);
+    /*
+     * Model an unrelated reliable owner holding nodecomm beyond the signed
+     * 32-bit comparison horizon and through uptime wrap. The source record no
+     * longer carries the old response slot, so eventual retry cannot wait for
+     * another wrap.
+     */
+    assert(app_mesh_local_delivery_retire_elapsed_not_before(
+               &delivery, due_ms + UINT32_C(0x80000020)) == 0);
+    assert(!delivery.snapshot.outbound.earliest_tx_valid);
+}
+
+static void test_pair_result_is_a_supported_exact_delivery_owner(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct app_mesh_local_delivery rebooted;
+    struct mesh_outbound pair_result = make_pair_result(221u, 21u);
+
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &pair_result, 221u) == 0);
+    assert(store.present);
+    assert(store.persisted.outbound.packet.msg_type ==
+           MSG_SURVEY_PAIR_RESULT);
+    rebooted = make_delivery(&store);
+    assert(app_mesh_local_delivery_restore(
+               &rebooted, &store.persisted) == 0);
+    assert(app_mesh_local_delivery_rebase_after_boot(
+               &rebooted, 600000u) == 0);
+    assert(!rebooted.snapshot.outbound.queued_at_valid);
+    assert(rebooted.snapshot.outbound.queued_at_ms == 0u);
+    assert(!rebooted.snapshot.outbound.earliest_tx_valid);
+    assert(!store.persisted.outbound.queued_at_valid);
+    assert(note_ack_for_outbound(&rebooted, &pair_result) == 0);
+    assert(!store.present);
+}
+
+static void test_canonical_payload_and_envelope_validation_fail_closed(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct app_mesh_local_delivery rebooted;
+    struct mesh_outbound discovery = make_report(231u, 23u);
+    struct mesh_outbound pair = make_pair_result(232u, 24u);
+    struct app_mesh_local_delivery_snapshot corrupt;
+
+    discovery.packet.flags ^= FLAG_DIAGNOSTIC;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &discovery, 231u) == -EINVAL);
+    discovery = make_report(231u, 23u);
+    discovery.packet.ttl--;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &discovery, 231u) == -EINVAL);
+    discovery = make_report(231u, 23u);
+    discovery.packet.dst_id = discovery.packet.src_id;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &discovery, 231u) == -EINVAL);
+    discovery = make_report(231u, 23u);
+    discovery.packet.session_id++;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &discovery, 231u) == -EINVAL);
+    discovery = make_report(231u, 23u);
+    discovery.payload[0] ^= 1u;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &discovery, 231u) == -EINVAL);
+
+    pair.packet.flags ^= FLAG_DIAGNOSTIC;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &pair, 232u) == -EINVAL);
+    pair = make_pair_result(232u, 24u);
+    pair.packet.ttl--;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &pair, 232u) == -EINVAL);
+    pair = make_pair_result(232u, 24u);
+    pair.packet.dst_id = pair.packet.src_id;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &pair, 232u) == -EINVAL);
+    pair = make_pair_result(232u, 24u);
+    pair.packet.session_id++;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &pair, 232u) == -EINVAL);
+    pair = make_pair_result(232u, 24u);
+    pair.payload[pair.payload_len - 3u] ^= UINT8_C(0x80);
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &pair, 232u) == -EINVAL);
+
+    discovery = make_report(233u, 25u);
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &discovery, 233u) == 0);
+    corrupt = store.persisted;
+    corrupt.outbound.packet.flags ^= FLAG_DIAGNOSTIC;
+    snapshot_rechecksum(&corrupt);
+    rebooted = make_delivery(&store);
+    assert(app_mesh_local_delivery_restore(&rebooted, &corrupt) == -EINVAL);
+    corrupt = store.persisted;
+    corrupt.outbound.payload[0] ^= 1u;
+    snapshot_rechecksum(&corrupt);
+    assert(app_mesh_local_delivery_restore(&rebooted, &corrupt) == -EINVAL);
+}
+
+static void test_ack_identity_rejects_header_flags_and_payload_aliases(void)
+{
+    struct journal_store discovery_store = {0};
+    struct journal_store pair_store = {0};
+    struct app_mesh_local_delivery discovery_delivery =
+        make_delivery(&discovery_store);
+    struct app_mesh_local_delivery pair_delivery = make_delivery(&pair_store);
+    const struct mesh_outbound discovery = make_report(241u, 26u);
+    const struct mesh_outbound pair = make_pair_result(242u, 27u);
+    struct mesh_outbound mutation;
+
+    assert(app_mesh_local_delivery_stage(
+               &discovery_delivery, &discovery, 241u) == 0);
+    mutation = discovery;
+    mutation.packet.session_id++;
+    assert(commit_ack_for_outbound(
+               &discovery_delivery, &mutation) == -EKEYREJECTED);
+    mutation = discovery;
+    mutation.packet.flags ^= FLAG_DIAGNOSTIC;
+    assert(commit_ack_for_outbound(
+               &discovery_delivery, &mutation) == -EKEYREJECTED);
+    mutation = discovery;
+    mutation.payload[mutation.payload_len - 1u] ^= 1u;
+    assert(commit_ack_for_outbound(
+               &discovery_delivery, &mutation) == -EKEYREJECTED);
+    assert(commit_ack_for_outbound(
+               &discovery_delivery, &discovery) == 0);
+
+    assert(app_mesh_local_delivery_stage(
+               &pair_delivery, &pair, 242u) == 0);
+    mutation = pair;
+    mutation.packet.session_id++;
+    assert(commit_ack_for_outbound(
+               &pair_delivery, &mutation) == -EKEYREJECTED);
+    mutation = pair;
+    mutation.packet.flags ^= FLAG_DIAGNOSTIC;
+    assert(commit_ack_for_outbound(
+               &pair_delivery, &mutation) == -EKEYREJECTED);
+    mutation = pair;
+    mutation.payload[mutation.payload_len - 1u] ^= 1u;
+    assert(commit_ack_for_outbound(
+               &pair_delivery, &mutation) == -EKEYREJECTED);
+    assert(commit_ack_for_outbound(&pair_delivery, &pair) == 0);
 }
 
 static void test_blocked_start_does_not_consume_attempt(void)
@@ -192,21 +486,85 @@ static void test_ack_commit_survives_clear_failure(void)
 {
     struct journal_store store = {0};
     struct app_mesh_local_delivery delivery = make_delivery(&store);
-    struct app_mesh_local_delivery rebooted;
     const struct mesh_outbound outbound = make_report(301u, 29u);
+    const struct mesh_outbound next = make_report(302u, 30u);
 
     assert(app_mesh_local_delivery_stage(&delivery, &outbound, 301u) == 0);
     store.clear_result = -EIO;
-    assert(app_mesh_local_delivery_note_ack(&delivery, &outbound.packet) == -EIO);
+    assert(commit_ack_for_outbound(&delivery, &outbound) == 0);
     assert(store.present);
     assert(store.persisted.state == APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED);
     assert(!app_mesh_local_delivery_active(&delivery));
+    assert(app_mesh_local_delivery_ack_committed(&delivery));
+    assert(app_mesh_local_delivery_occupied(&delivery));
+    assert(app_mesh_local_delivery_stage(&delivery, &next, 302u) == -EBUSY);
+    assert(app_mesh_local_delivery_cleanup_ack(&delivery) == -EIO);
+    assert(store.present);
+    assert(app_mesh_local_delivery_ack_committed(&delivery));
+    assert(app_mesh_local_delivery_stage(&delivery, &next, 302u) == -EBUSY);
 
     store.clear_result = 0;
-    rebooted = make_delivery(&store);
-    assert(app_mesh_local_delivery_restore(&rebooted, &store.persisted) == 0);
+    assert(app_mesh_local_delivery_cleanup_ack(&delivery) == 0);
     assert(!store.present);
-    assert(!app_mesh_local_delivery_active(&rebooted));
+    assert(!app_mesh_local_delivery_occupied(&delivery));
+    assert(app_mesh_local_delivery_stage(&delivery, &next, 302u) == 0);
+}
+
+static void test_ack_write_failure_preserves_owner_and_terminal_order(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    const struct mesh_outbound outbound = make_report(321u, 31u);
+    struct mesh_outbound stale = outbound;
+    unsigned int clears_before;
+
+    assert(app_mesh_local_delivery_stage(&delivery, &outbound, 321u) == 0);
+    stale.packet.seq++;
+    clears_before = store.clear_count;
+    assert(commit_ack_for_outbound(&delivery, &stale) ==
+           -EKEYREJECTED);
+    assert(store.clear_count == clears_before);
+    assert(app_mesh_local_delivery_active(&delivery));
+
+    store.save_result = -EIO;
+    assert(commit_ack_for_outbound(&delivery, &outbound) == -EIO);
+    assert(store.clear_count == clears_before);
+    assert(store.persisted.state != APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED);
+    assert(app_mesh_local_delivery_active(&delivery));
+
+    store.save_result = 0;
+    assert(commit_ack_for_outbound(&delivery, &outbound) == 0);
+    assert(store.persisted.state == APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED);
+    assert(store.clear_count == clears_before);
+    assert(app_mesh_local_delivery_cleanup_ack(&delivery) == 0);
+}
+
+static void test_recovery_retains_ack_cleanup_debt(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct app_mesh_local_delivery rebooted;
+    struct app_mesh_local_delivery_recovery recovery;
+    const struct mesh_outbound outbound = make_report(331u, 32u);
+    const struct mesh_outbound next = make_report(332u, 33u);
+
+    assert(app_mesh_local_delivery_stage(&delivery, &outbound, 331u) == 0);
+    assert(commit_ack_for_outbound(&delivery, &outbound) == 0);
+    store.clear_result = -EIO;
+    rebooted = make_delivery(&store);
+    assert(app_mesh_local_delivery_recover(
+               &rebooted, &store.persisted, 1, &recovery) == 0);
+    assert(!recovery.restored);
+    assert(recovery.retry_required);
+    assert(!recovery.quarantined);
+    assert(recovery.source_error == -EIO);
+    assert(app_mesh_local_delivery_ack_committed(&rebooted));
+    assert(app_mesh_local_delivery_stage(&rebooted, &next, 332u) == -EBUSY);
+
+    store.clear_result = 0;
+    assert(app_mesh_local_delivery_cleanup_ack(&rebooted) == 0);
+    assert(!store.present);
+    assert(!app_mesh_local_delivery_occupied(&rebooted));
 }
 
 static void test_last_inflight_attempt_can_still_be_acked(void)
@@ -221,7 +579,7 @@ static void test_last_inflight_attempt_can_still_be_acked(void)
     assert(app_mesh_local_delivery_note_tracked(&delivery) == 0);
     assert(delivery.snapshot.state == APP_MESH_LOCAL_DELIVERY_TRACKED);
     assert(delivery.snapshot.attempts_remaining == 0u);
-    assert(app_mesh_local_delivery_note_ack(&delivery, &outbound.packet) == 0);
+    assert(note_ack_for_outbound(&delivery, &outbound) == 0);
     assert(!store.present);
 }
 
@@ -270,6 +628,26 @@ static void test_corruption_and_bounded_attempts_fail_closed(void)
                APP_MESH_LOCAL_DELIVERY_RETRY) == 0);
     assert(app_mesh_local_delivery_begin_attempt(
                &delivery, &attempt_token) == -ETIMEDOUT);
+    assert(app_mesh_local_delivery_rearm_attempts(&delivery) == 0);
+    assert(delivery.snapshot.state == APP_MESH_LOCAL_DELIVERY_RETRY);
+    assert(delivery.snapshot.attempts_remaining ==
+           APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS);
+    assert(app_mesh_local_delivery_rearm_attempts(&delivery) == -EINVAL);
+    for (unsigned int i = 0u;
+         i < APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS; i++) {
+        assert(app_mesh_local_delivery_begin_attempt(
+                   &delivery, &attempt_token) == 0);
+        assert(app_mesh_local_delivery_note_attempt_sent(
+                   &delivery, attempt_token) == 0);
+        if (i + 1u < APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS) {
+            assert(app_mesh_local_delivery_note_attempt_released(
+                       &delivery, attempt_token,
+                       APP_MESH_LOCAL_DELIVERY_RETRY) == 0);
+        }
+    }
+    assert(app_mesh_local_delivery_note_attempt_released(
+               &delivery, attempt_token,
+               APP_MESH_LOCAL_DELIVERY_RETRY) == 0);
     assert(app_mesh_local_delivery_note_failed(&delivery) == 0);
     assert(delivery.snapshot.state == APP_MESH_LOCAL_DELIVERY_FAILED);
 
@@ -303,7 +681,7 @@ static void test_synchronous_ack_wins_post_send_resolution(void)
                &delivery, &attempt_token) == 0);
     assert(delivery.snapshot.attempts_remaining == 0u);
     assert(app_mesh_local_delivery_snapshot_valid(&store.persisted));
-    assert(app_mesh_local_delivery_note_ack(&delivery, &outbound.packet) == 0);
+    assert(note_ack_for_outbound(&delivery, &outbound) == 0);
     saves_after_ack = store.save_count;
     assert(app_mesh_local_delivery_note_attempt_sent(
                &delivery, attempt_token) == -EALREADY);
@@ -534,7 +912,7 @@ static void test_last_blocked_token_can_retry_send_and_ack(void)
     assert(app_mesh_local_delivery_note_attempt_sent(
                &delivery, attempt_token) == 0);
     assert(app_mesh_local_delivery_attempts_available(&delivery) == 0u);
-    assert(app_mesh_local_delivery_note_ack(&delivery, &outbound.packet) == 0);
+    assert(note_ack_for_outbound(&delivery, &outbound) == 0);
     assert(!app_mesh_local_delivery_active(&delivery));
 }
 
@@ -547,7 +925,7 @@ static void test_pending_delivery_rejects_replacement_until_ack(void)
 
     assert(app_mesh_local_delivery_stage(&delivery, &old_report, 801u) == 0);
     assert(app_mesh_local_delivery_stage(&delivery, &new_report, 802u) == -EBUSY);
-    assert(app_mesh_local_delivery_note_ack(&delivery, &old_report.packet) == 0);
+    assert(note_ack_for_outbound(&delivery, &old_report) == 0);
     assert(!app_mesh_local_delivery_active(&delivery));
     assert(!store.present);
     assert(app_mesh_local_delivery_stage(&delivery, &new_report, 802u) == 0);
@@ -564,17 +942,17 @@ static void test_fifty_anchors_survive_back_to_back_survey_and_lost_acks(void)
     memset(stores, 0, sizeof(stores));
     memset(deliveries, 0, sizeof(deliveries));
     for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
-        struct mesh_outbound old_report =
-            make_report(old_survey_id, (uint16_t)(100u + i));
-        struct mesh_outbound new_report =
-            make_report(new_survey_id, (uint16_t)(200u + i));
+        uint64_t anchor_id =
+            UINT64_C(0x1020304050607080) + i;
+        struct mesh_outbound old_report = make_report_from(
+            anchor_id, old_survey_id, (uint16_t)(100u + i));
+        struct mesh_outbound new_report = make_report_from(
+            anchor_id, new_survey_id, (uint16_t)(200u + i));
         uint8_t attempt_token;
         unsigned int destructive_collisions =
             (unsigned int)(i % APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS);
 
         deliveries[i] = make_delivery(&stores[i]);
-        old_report.packet.src_id += i;
-        new_report.packet.src_id += i;
         assert(app_mesh_local_delivery_stage(
                    &deliveries[i], &old_report, old_survey_id) == 0);
         assert(app_mesh_local_delivery_begin_attempt(
@@ -583,18 +961,18 @@ static void test_fifty_anchors_survive_back_to_back_survey_and_lost_acks(void)
                    &deliveries[i], attempt_token) == 0);
 
         if ((i % 4u) == 0u) {
-            assert(app_mesh_local_delivery_note_ack(
-                       &deliveries[i], &old_report.packet) == 0);
+            assert(note_ack_for_outbound(
+                       &deliveries[i], &old_report) == 0);
         } else {
             assert(app_mesh_local_delivery_stage(
                        &deliveries[i], &new_report, new_survey_id) == -EBUSY);
-            assert(app_mesh_local_delivery_note_ack(
-                       &deliveries[i], &old_report.packet) == 0);
+            assert(note_ack_for_outbound(
+                       &deliveries[i], &old_report) == 0);
         }
         assert(app_mesh_local_delivery_stage(
                    &deliveries[i], &new_report, new_survey_id) == 0);
-        assert(app_mesh_local_delivery_note_ack(
-                   &deliveries[i], &old_report.packet) == -EKEYREJECTED);
+        assert(note_ack_for_outbound(
+                   &deliveries[i], &old_report) == -EKEYREJECTED);
 
         for (unsigned int collision = 0u;
              collision < destructive_collisions;
@@ -611,8 +989,8 @@ static void test_fifty_anchors_survive_back_to_back_survey_and_lost_acks(void)
                    &deliveries[i], &attempt_token) == 0);
         assert(app_mesh_local_delivery_note_attempt_sent(
                    &deliveries[i], attempt_token) == 0);
-        assert(app_mesh_local_delivery_note_ack(
-                   &deliveries[i], &new_report.packet) == 0);
+        assert(note_ack_for_outbound(
+                   &deliveries[i], &new_report) == 0);
         assert(!app_mesh_local_delivery_active(&deliveries[i]));
         assert(!stores[i].present);
     }
@@ -622,9 +1000,15 @@ int main(void)
 {
     test_transactional_stage_and_back_to_back_rejection();
     test_reboot_and_exact_ack_identity();
-    test_reboot_rebases_boot_relative_delivery_times();
+    test_reboot_clears_pretransport_delivery_times();
+    test_elapsed_not_before_is_retired_before_long_resource_wait();
+    test_pair_result_is_a_supported_exact_delivery_owner();
+    test_canonical_payload_and_envelope_validation_fail_closed();
+    test_ack_identity_rejects_header_flags_and_payload_aliases();
     test_blocked_start_does_not_consume_attempt();
     test_ack_commit_survives_clear_failure();
+    test_ack_write_failure_preserves_owner_and_terminal_order();
+    test_recovery_retains_ack_cleanup_debt();
     test_last_inflight_attempt_can_still_be_acked();
     test_corruption_and_bounded_attempts_fail_closed();
     test_synchronous_ack_wins_post_send_resolution();

@@ -105,6 +105,7 @@ static void test_survey_start_repeats_age_from_one_origin(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = 1000u,
+        .earliest_tx_valid = true,
     };
     const struct survey_discovery_config config = {
         .survey_id = UINT32_C(0x50665006),
@@ -184,6 +185,7 @@ static void test_malformed_flood_age_fails_closed(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = 1000u,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_result result;
     struct flood_test_ctx ctx = {.now_ms = 900u};
@@ -215,6 +217,7 @@ static void test_resumable_deferral_saturates_and_rollover_rebases(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = 1000u,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_progress progress = {0};
     struct app_mesh_flood_result result = {0};
@@ -259,6 +262,7 @@ static void test_pause_after_quiet_check_prevents_send(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = 1000u,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_progress progress = {0};
     struct app_mesh_flood_result result = {0};
@@ -297,6 +301,7 @@ static void test_pre_rf_blocks_preserve_four_real_opportunities(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = 1000u,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_progress progress = {0};
     struct app_mesh_flood_result result = {0};
@@ -348,6 +353,7 @@ static void test_partial_success_never_completes_a_four_frame_burst(void)
             .next_hop_id = MESH_BROADCAST_ID,
             .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
             .earliest_tx_ms = 1000u,
+            .earliest_tx_valid = true,
         };
         struct app_mesh_flood_progress progress = {0};
         struct app_mesh_flood_result result = {0};
@@ -395,6 +401,7 @@ static void test_one_shot_continuous_busy_returns_boundedly(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = UINT32_MAX - 10u,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_result result = {0};
     struct flood_test_ctx ctx = {
@@ -432,6 +439,7 @@ static void test_scheduler_owned_opportunity_sends_exactly_once(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = 1000u,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_result result = {0};
     struct flood_test_ctx ctx = {
@@ -488,6 +496,7 @@ static void test_resumable_continuous_busy_times_out_across_rollover(void)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = start_ms,
+        .earliest_tx_valid = true,
     };
     struct app_mesh_flood_progress progress = {0};
     struct app_mesh_flood_result result = {0};
@@ -521,6 +530,79 @@ static void test_resumable_continuous_busy_times_out_across_rollover(void)
     assert(ctx.quiet_count == 2u);
 }
 
+static void test_valid_zero_due_waits_across_wrap(void)
+{
+    struct mesh_outbound gateway_adv = {
+        .packet = {
+            .msg_type = MSG_GATEWAY_ROUTE_ADV,
+            .src_id = TEST_GATEWAY,
+            .dst_id = MESH_BROADCAST_ID,
+            .session_id = 7u,
+            .seq = 7u,
+        },
+        .next_hop_id = MESH_BROADCAST_ID,
+        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .queued_at_ms = UINT32_MAX - 2u,
+        .earliest_tx_ms = 0u,
+        .queued_at_valid = true,
+        .earliest_tx_valid = true,
+    };
+    struct app_mesh_flood_result result = {0};
+    struct flood_test_ctx ctx = {.now_ms = UINT32_MAX - 2u};
+    const struct app_mesh_flood_ops ops = {
+        .now_ms = test_now_ms,
+        .sleep_until_ms = test_sleep_until_ms,
+        .defer_active = test_defer_active,
+        .c5_quiet = test_c5_quiet,
+        .random_u32 = test_random_u32,
+        .send = test_send,
+        .ctx = &ctx,
+    };
+
+    assert(app_mesh_flood_send_opportunity(
+               &gateway_adv, &ops, &result) == 0);
+    assert(result.first_due_ms == 0u);
+    assert(ctx.now_ms == 0u);
+    assert(ctx.message_ages_ms[0] == 3u);
+}
+
+static void test_valid_zero_queue_origin_accumulates_age(void)
+{
+    struct mesh_outbound gateway_adv = {
+        .packet = {
+            .msg_type = MSG_GATEWAY_ROUTE_ADV,
+            .src_id = TEST_GATEWAY,
+            .dst_id = MESH_BROADCAST_ID,
+            .session_id = 8u,
+            .seq = 8u,
+            .message_age_ms = 3u,
+        },
+        .next_hop_id = MESH_BROADCAST_ID,
+        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+        .queued_at_ms = 0u,
+        .earliest_tx_ms = 5u,
+        .queued_at_valid = true,
+        .earliest_tx_valid = true,
+    };
+    struct app_mesh_flood_result result = {0};
+    struct flood_test_ctx ctx = {.now_ms = 10u};
+    const struct app_mesh_flood_ops ops = {
+        .now_ms = test_now_ms,
+        .sleep_until_ms = test_sleep_until_ms,
+        .defer_active = test_defer_active,
+        .c5_quiet = test_c5_quiet,
+        .random_u32 = test_random_u32,
+        .send = test_send,
+        .ctx = &ctx,
+    };
+
+    assert(app_mesh_flood_send_opportunity(
+               &gateway_adv, &ops, &result) == 0);
+    assert(result.first_due_ms == 5u);
+    assert(ctx.message_ages_ms[0] == 13u);
+    assert(ctx.queued_at_ms[0] == 10u);
+}
+
 int main(void)
 {
     test_survey_start_repeats_age_from_one_origin();
@@ -532,5 +614,7 @@ int main(void)
     test_one_shot_continuous_busy_returns_boundedly();
     test_scheduler_owned_opportunity_sends_exactly_once();
     test_resumable_continuous_busy_times_out_across_rollover();
+    test_valid_zero_due_waits_across_wrap();
+    test_valid_zero_queue_origin_accumulates_age();
     return 0;
 }

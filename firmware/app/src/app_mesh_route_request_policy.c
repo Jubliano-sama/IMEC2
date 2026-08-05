@@ -89,7 +89,7 @@ void app_mesh_route_request_defer_decide(
 uint32_t app_mesh_route_request_defer_delay_ms(uint32_t now_ms,
                                                uint32_t due_ms)
 {
-    if (due_ms == 0u || (int32_t)(now_ms - due_ms) >= 0) {
+    if ((int32_t)(now_ms - due_ms) >= 0) {
         return 0u;
     }
 

@@ -876,7 +876,7 @@ static int validate_table_reception(
     const struct anchor_state *anchor)
 {
     struct discovery_assignment_entry entries[ANCHOR_COUNT];
-    struct proto_packet packet;
+    struct proto_packet packet = {0};
     enum discovery_assignment_phase phase = 0;
     const uint8_t *payload = NULL;
     uint8_t slot_count = 0u;
@@ -1346,6 +1346,8 @@ static int test_survey_pairing_ceiling(void)
             SURVEY_GATEWAY_MAX_PAIRS);
     for (size_t i = 0u; i < context.pair_count; i++) {
         struct survey_pair pair;
+        uint64_t initiator_offset;
+        uint64_t responder_offset;
         size_t initiator;
         size_t responder;
 
@@ -1353,19 +1355,35 @@ static int test_survey_pairing_ceiling(void)
         REQUIRE(ret == PROTO_OK,
                 "survey pair reconstruction index=%zu ret=%d", i, ret);
         REQUIRE(pair.initiator_id >= ANCHOR_ID_BASE &&
-                pair.initiator_id < ANCHOR_ID_BASE + ANCHOR_COUNT &&
-                pair.responder_id >= ANCHOR_ID_BASE &&
-                pair.responder_id < ANCHOR_ID_BASE + ANCHOR_COUNT &&
-                pair.survey_id == SURVEY_ID && pair.sample_count == 1u,
+                pair.responder_id >= ANCHOR_ID_BASE,
                 "survey pair index=%zu ids=0x%016" PRIx64 "/0x%016" PRIx64,
                 i, pair.initiator_id, pair.responder_id);
-        initiator = (size_t)(pair.initiator_id - ANCHOR_ID_BASE);
-        responder = (size_t)(pair.responder_id - ANCHOR_ID_BASE);
+        initiator_offset = pair.initiator_id - ANCHOR_ID_BASE;
+        responder_offset = pair.responder_id - ANCHOR_ID_BASE;
+        REQUIRE(initiator_offset < ANCHOR_COUNT,
+                "survey initiator index out of range pair=%zu offset=%" PRIu64,
+                i, initiator_offset);
+        REQUIRE(responder_offset < ANCHOR_COUNT,
+                "survey responder index out of range pair=%zu offset=%" PRIu64,
+                i, responder_offset);
+        REQUIRE(pair.survey_id == SURVEY_ID,
+                "survey pair ID mismatch index=%zu survey=%" PRIu32,
+                i, pair.survey_id);
+        REQUIRE(pair.sample_count == 1u,
+                "survey pair sample count index=%zu count=%u",
+                i, pair.sample_count);
+        initiator = (size_t)initiator_offset;
+        responder = (size_t)responder_offset;
         degree[initiator]++;
         degree[responder]++;
         for (size_t j = 0u; j < i; j++) {
-            REQUIRE(!(context.pairs[j].initiator_id == pair.initiator_id &&
-                      context.pairs[j].responder_id == pair.responder_id),
+            struct survey_pair previous_pair;
+
+            REQUIRE(survey_gateway_pair_at(
+                        &context, j, &previous_pair) == PROTO_OK,
+                    "previous survey pair reconstruction index=%zu", j);
+            REQUIRE(!(previous_pair.initiator_id == pair.initiator_id &&
+                      previous_pair.responder_id == pair.responder_id),
                     "duplicate survey pair index=%zu previous=%zu", i, j);
         }
     }

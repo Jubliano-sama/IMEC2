@@ -18,8 +18,7 @@
 #define APP_MESH_CH9_ACK_RETRY_BASE_MAX_MS 400u
 
 struct app_mesh_ch9_tx_ack_entry {
-    uint32_t session_id;
-    uint16_t seq;
+    const struct mesh_outbound *outbound;
     bool acked;
 };
 
@@ -67,6 +66,7 @@ enum app_mesh_ch9_ack_queue_result {
     APP_MESH_CH9_ACK_QUEUE_FORWARDED_BUSY,
     APP_MESH_CH9_ACK_QUEUE_BATCH_FULL,
     APP_MESH_CH9_ACK_QUEUE_TABLE_FULL,
+    APP_MESH_CH9_ACK_QUEUE_SEMANTIC_CONFLICT,
 };
 
 struct app_mesh_ch9_ack_batch_entry {
@@ -188,6 +188,7 @@ bool app_mesh_ch9_retry_next_local_tx_prepare_ms(
     const struct mesh_event_timing *timing,
     uint16_t minimum_guard_ms,
     uint32_t *prepare_ms);
+/* event_start_ms is an armed plan boundary; wrapped uptime zero is valid. */
 bool app_mesh_ch9_wait_plan_retry_delay_ms(uint32_t now_ms,
                                           uint32_t event_start_ms,
                                           uint16_t minimum_guard_ms,

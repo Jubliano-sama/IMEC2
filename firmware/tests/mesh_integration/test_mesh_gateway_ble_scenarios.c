@@ -1473,11 +1473,14 @@ static void run_shared_mesh_ble_timeline(void)
     verify_shared_mesh_state();
     verify_adversarial_interleaving_guards();
     CHECK(gateway_ble_stream_depth(&test_stream) == 0u &&
-              test_stream.pool_used == 0u && !test_stream.head_send_active,
+              test_stream.pool_used == 0u &&
+                  test_stream.head_send_phase ==
+                      GATEWAY_BLE_STREAM_HEAD_IDLE,
           "stream did not drain cleanly: depth=%u pool=%u active=%u",
           gateway_ble_stream_depth(&test_stream),
           test_stream.pool_used,
-          test_stream.head_send_active ? 1u : 0u);
+          test_stream.head_send_phase != GATEWAY_BLE_STREAM_HEAD_IDLE ? 1u :
+                                                                         0u);
     CHECK(test_link.connection_generation == 2u,
           "BLE connection generation mismatch: actual=%u expected=2",
           test_link.connection_generation);

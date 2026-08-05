@@ -23,6 +23,12 @@ int dwm3000_driver_capture_last_rx_cir(uint8_t *buffer,
                             &result->anchor_rx_diag_raw_len,
                             &result->anchor_full_cir_first_path_index);
     result->anchor_full_cir_total_len = DWM3000_FULL_CIR_BYTES;
+    if (!result->anchor_rx_diag_sampled) {
+        result->anchor_full_cir_len = 0u;
+        result->anchor_full_cir_sampled = false;
+        result->anchor_full_cir_truncated = true;
+        return -EIO;
+    }
     result->anchor_full_cir_len = read_cir_window(
         buffer,
         buffer_cap,
@@ -116,9 +122,24 @@ static int validate_range_request(const struct dwm3000_range_request *request)
     return 0;
 }
 
-static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_mode)
+static int send_range_frame_until(const uint8_t *frame,
+                                  size_t frame_len,
+                                  uint8_t tx_mode,
+                                  uint64_t absolute_deadline_ms,
+                                  bool *rf_start_possible,
+                                  uint64_t *rf_start_at_ms)
 {
+    uint8_t effective_tx_mode = tx_mode;
+    uint64_t scheduled_host_ms = 0u;
     int ret;
+    int start_ret;
+
+    if (rf_start_possible != NULL) {
+        *rf_start_possible = false;
+    }
+    if (rf_start_at_ms != NULL) {
+        *rf_start_at_ms = 0u;
+    }
 
     driver_stats.tx_starts++;
     dwm3000_debug_event(false,
@@ -126,6 +147,16 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
                         "frame_len=%u tx_mode=0x%02x",
                         (unsigned int)frame_len,
                         tx_mode);
+    ret = check_device_fatal_status("tx-preflight");
+    if (ret < 0) {
+        driver_stats.tx_failures++;
+        return ret;
+    }
+    if (!radio_configured || !radio_awake ||
+        active_phy_mode == DWM3000_PHY_NONE) {
+        driver_stats.tx_failures++;
+        return -EIO;
+    }
     ret = write_tx_frame(frame, frame_len);
     if (ret < 0) {
         driver_stats.tx_failures++;
@@ -141,30 +172,139 @@ static int send_range_frame(const uint8_t *frame, size_t frame_len, uint8_t tx_m
         return ret;
     }
 
-    if (dwt_starttx(tx_mode) != DWT_SUCCESS) {
+    if (absolute_deadline_ms != 0u) {
+        const uint64_t lead_ms =
+            (DWM3000_DEADLINE_TX_LEAD_UUS + 999u) / 1000u;
+        uint32_t device_now;
+        uint32_t delayed_tx_time;
+        uint64_t host_now_ms;
+
+        /*
+         * A host-side check followed by an immediate command has a preemption
+         * gap. Program a near-future DW3000 delayed TX instead: if software
+         * reaches the command after that target, dwt_starttx() detects HPDWARN
+         * or TXERR and cancels instead of emitting after the protocol window.
+         */
+        device_now = dwt_readsystimestamphi32();
+        host_now_ms = (uint64_t)k_uptime_get();
+        ret = take_port_error("deadline-tx-system-time");
+        if (ret < 0) {
+            driver_stats.tx_failures++;
+            return ret;
+        }
+        if (host_now_ms >= absolute_deadline_ms ||
+            absolute_deadline_ms - host_now_ms <= lead_ms) {
+            driver_stats.tx_failures++;
+            dwm3000_debug_event(
+                true,
+                "UWB_TX_DONE",
+                "status=deadline-before-start frame_len=%u deadline_ms=%llu",
+                (unsigned int)frame_len,
+                (unsigned long long)absolute_deadline_ms);
+            return -ETIMEDOUT;
+        }
+
+        delayed_tx_time =
+            device_now +
+            (uint32_t)(((uint64_t)DWM3000_DEADLINE_TX_LEAD_UUS *
+                        DWM3000_UUS_TO_DWT_TIME) >> 8);
+        dwt_setdelayedtrxtime(delayed_tx_time);
+        ret = take_port_error("deadline-tx-program");
+        if (ret < 0) {
+            driver_stats.tx_failures++;
+            return ret;
+        }
+        ret = check_device_fatal_status("deadline-tx-program");
+        if (ret < 0) {
+            driver_stats.tx_failures++;
+            return ret;
+        }
+        effective_tx_mode |= DWT_START_TX_DELAYED;
+        scheduled_host_ms = host_now_ms + lead_ms;
+    } else {
+        scheduled_host_ms = (uint64_t)k_uptime_get();
+    }
+
+    /*
+     * Once the command transfer starts, a host-side SPI error cannot prove
+     * that RF stayed idle. Mark the attempt conservatively so higher layers
+     * never refund airtime or retry an ambiguously emitted frame.
+     */
+    if (rf_start_possible != NULL) {
+        *rf_start_possible = true;
+    }
+    if (rf_start_at_ms != NULL) {
+        *rf_start_at_ms = scheduled_host_ms;
+    }
+    start_ret = dwt_starttx(effective_tx_mode);
+    ret = take_port_error("tx-start");
+    if (ret < 0) {
+        driver_stats.tx_failures++;
+        return ret;
+    }
+    ret = check_device_fatal_status("tx-start");
+    if (ret < 0) {
+        driver_stats.tx_failures++;
+        return ret;
+    }
+    if (start_ret != DWT_SUCCESS) {
         driver_stats.tx_failures++;
         LOG_WRN("DWM3000 TX start failed: frame_len=%u tx_mode=0x%02x",
                 (unsigned int)frame_len,
-                tx_mode);
+                effective_tx_mode);
         dwm3000_debug_event(true,
                             "UWB_TX_DONE",
                             "status=start-fail frame_len=%u tx_mode=0x%02x",
                             (unsigned int)frame_len,
-                            tx_mode);
+                            effective_tx_mode);
         return -EIO;
     }
     return 0;
 }
 
+static int send_range_frame(const uint8_t *frame,
+                            size_t frame_len,
+                            uint8_t tx_mode)
+{
+    return send_range_frame_until(frame, frame_len, tx_mode, 0u, NULL, NULL);
+}
+
 static int start_prepared_range_frame(size_t frame_len, uint8_t tx_mode)
 {
+    int ret;
+
     driver_stats.tx_starts++;
     dwm3000_debug_event(false,
                         "UWB_TX_START",
                         "frame_len=%u tx_mode=0x%02x prepared=1",
                         (unsigned int)frame_len,
                         tx_mode);
-    if (dwt_starttx(tx_mode) != DWT_SUCCESS) {
+    ret = check_device_fatal_status("prepared-tx-preflight");
+    if (ret < 0) {
+        driver_stats.tx_failures++;
+        return ret;
+    }
+    if (!radio_configured || !radio_awake ||
+        active_phy_mode == DWM3000_PHY_NONE) {
+        driver_stats.tx_failures++;
+        return -EIO;
+    }
+    {
+        int start_ret = dwt_starttx(tx_mode);
+
+        ret = take_port_error("prepared-tx-start");
+        if (ret < 0) {
+            driver_stats.tx_failures++;
+            return ret;
+        }
+        ret = check_device_fatal_status("prepared-tx-start");
+        if (ret < 0) {
+            driver_stats.tx_failures++;
+            return ret;
+        }
+        if (start_ret == DWT_SUCCESS) {
+            return 0;
+        }
         driver_stats.tx_failures++;
         LOG_WRN("DWM3000 prepared TX start failed: frame_len=%u tx_mode=0x%02x",
                 (unsigned int)frame_len,
@@ -176,7 +316,32 @@ static int start_prepared_range_frame(size_t frame_len, uint8_t tx_mode)
                             tx_mode);
         return -EIO;
     }
-    return 0;
+}
+
+static int start_immediate_rx(void)
+{
+    int ret = check_device_fatal_status("rx-arm-preflight");
+
+    if (ret < 0) {
+        return ret;
+    }
+    if (!radio_configured || !radio_awake ||
+        active_phy_mode == DWM3000_PHY_NONE) {
+        return -EIO;
+    }
+    {
+        int start_ret = dwt_rxenable(DWT_START_RX_IMMEDIATE);
+
+        ret = take_port_error("rx-arm");
+        if (ret < 0) {
+            return ret;
+        }
+        ret = check_device_fatal_status("rx-arm");
+        if (ret < 0) {
+            return ret;
+        }
+        return start_ret == DWT_SUCCESS ? 0 : -EIO;
+    }
 }
 
 static int receive_frame(uint32_t timeout_ms, uint32_t *status,
@@ -189,8 +354,13 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          bool *carrier_integrator_sampled,
                          bool capture_rsl, bool log_events)
 {
+    uint64_t observed_at_ms = 0u;
     int ret;
 
+    if (status == NULL || buffer == NULL || frame_len == NULL) {
+        return -EINVAL;
+    }
+    *frame_len = 0u;
     driver_stats.rx_starts++;
     if (log_events) {
         dwm3000_debug_event(false,
@@ -201,18 +371,27 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     }
     ret = wait_status_internal(SYS_STATUS_RXFCG_BIT_MASK |
                                SYS_STATUS_ALL_RX_TO |
-                               SYS_STATUS_ALL_RX_ERR,
+                               DWM3000_RX_ERROR_STATUS_MASK,
                                timeout_ms,
                                status,
-                               log_events);
+                               log_events,
+                               &observed_at_ms);
     if (ret < 0) {
-        if (ret != -ECANCELED) {
+        if (ret == -ETIMEDOUT) {
             driver_stats.rx_timeouts++;
+        } else if (ret != -ECANCELED) {
+            driver_stats.rx_failures++;
         }
-        dwt_forcetrxoff();
+        if (!radio_state_unknown) {
+            dwt_forcetrxoff();
+        }
         if (log_events) {
+            const char *event = ret == -ECANCELED ? "UWB_RX_ABORT" :
+                                ret == -ETIMEDOUT ? "UWB_RX_TIMEOUT" :
+                                "UWB_RX_ERROR";
+
             dwm3000_debug_event(ret != -ECANCELED,
-                                ret == -ECANCELED ? "UWB_RX_ABORT" : "UWB_RX_TIMEOUT",
+                                event,
                                 "ret=%d timeout_ms=%u sys_status=0x%08x",
                                 ret,
                                 timeout_ms,
@@ -229,41 +408,70 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         } else {
             driver_stats.rx_failures++;
         }
-        clear_status(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
         dwt_forcetrxoff();
+        ret = clear_status_checked(SYS_STATUS_ALL_RX_TO |
+                                       DWM3000_RX_ERROR_STATUS_MASK,
+                                   "rx-error-clear");
         if (log_events) {
             dwm3000_debug_event(true,
                                 "UWB_RX_DONE",
                                 "status=error sys_status=0x%08x",
                                 *status);
         }
-        return -EIO;
+        return ret < 0 ? ret : -EIO;
     }
 
+    /*
+     * Capture host time at the first software observation of RXFCG, before
+     * diagnostics, SPI frame extraction, logging, or a scheduler preemption
+     * can move protocol eligibility across its deadline.
+     */
+    last_rx_host_uptime_ms = (uint32_t)observed_at_ms;
+    last_rx_host_uptime_valid = true;
     if (rx_timestamp != NULL) {
         *rx_timestamp = read_rx_timestamp_u64();
+        ret = take_port_error("rx-timestamp");
+        if (ret < 0) {
+            return ret;
+        }
     }
     if (quality != NULL) {
         *quality = 100u;
     }
     if (capture_rsl) {
-        read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
-                            clock_offset_raw, clock_offset_sampled,
-                            carrier_integrator, carrier_integrator_sampled);
+        if (!read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
+                                 clock_offset_raw, clock_offset_sampled,
+                                 carrier_integrator,
+                                 carrier_integrator_sampled)) {
+            dwt_forcetrxoff();
+            return -EIO;
+        }
     }
 
-    *frame_len = read_rx_frame(buffer, buffer_len);
-    clear_status(SYS_STATUS_RXFCG_BIT_MASK);
-    if (*frame_len == 0u) {
+    ret = read_rx_frame(buffer, buffer_len, frame_len);
+    if (ret < 0 && ret != -EMSGSIZE) {
+        driver_stats.rx_failures++;
+        return ret;
+    }
+    {
+        int clear_ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK,
+                                             "rx-complete-clear");
+
+        if (clear_ret < 0) {
+            dwt_forcetrxoff();
+            return clear_ret;
+        }
+    }
+    if (ret < 0) {
         driver_stats.rx_failures++;
         dwt_forcetrxoff();
         if (log_events) {
             dwm3000_debug_event(true,
                                 "UWB_RX_DONE",
-                                "status=empty-frame sys_status=0x%08x",
+                                "status=invalid-frame-length sys_status=0x%08x",
                                 *status);
         }
-        return -EMSGSIZE;
+        return ret;
     }
 
     driver_stats.rx_dones++;
@@ -288,32 +496,59 @@ static int receive_response(const struct dwm3000_range_request *request,
     size_t frame_len;
     int ret;
 
-    ret = wait_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR,
+    ret = wait_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO |
+                      DWM3000_RX_ERROR_STATUS_MASK,
                       request->timeout_ms == 0u ? RESP_RX_TIMEOUT_MS : request->timeout_ms,
                       &status);
     if (ret < 0) {
         dwt_forcetrxoff();
-        *status_out = RANGE_RX_TIMEOUT;
+        *status_out = ret == -ETIMEDOUT ?
+                      RANGE_RX_TIMEOUT : RANGE_RX_ERROR;
         return ret;
     }
 
     if ((status & SYS_STATUS_RXFCG_BIT_MASK) == 0u) {
         *status_out = status_to_range_status(status);
-        clear_status(SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
         dwt_forcetrxoff();
+        ret = clear_status_checked(SYS_STATUS_ALL_RX_TO |
+                                       DWM3000_RX_ERROR_STATUS_MASK,
+                                   "response-error-clear");
+        if (ret < 0) {
+            *status_out = RANGE_RX_ERROR;
+            return ret;
+        }
         return -EIO;
     }
 
     *resp_rx_ts = read_rx_timestamp_u64();
+    ret = take_port_error("response-rx-timestamp");
+    if (ret < 0) {
+        *status_out = RANGE_RX_ERROR;
+        return ret;
+    }
     if (quality != NULL) {
         *quality = 100u;
     }
-    frame_len = read_rx_frame(rx_buffer, sizeof(rx_buffer));
-    clear_status(SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_TXFRS_BIT_MASK);
-    if (frame_len == 0u) {
+    ret = read_rx_frame(rx_buffer, sizeof(rx_buffer), &frame_len);
+    if (ret < 0 && ret != -EMSGSIZE) {
+        *status_out = RANGE_RX_ERROR;
+        return ret;
+    }
+    {
+        int clear_ret = clear_status_checked(SYS_STATUS_RXFCG_BIT_MASK |
+                                                 SYS_STATUS_TXFRS_BIT_MASK,
+                                             "response-complete-clear");
+
+        if (clear_ret < 0) {
+            dwt_forcetrxoff();
+            *status_out = RANGE_RX_ERROR;
+            return clear_ret;
+        }
+    }
+    if (ret < 0) {
         dwt_forcetrxoff();
         *status_out = RANGE_BAD_FRAME;
-        return -EMSGSIZE;
+        return ret;
     }
 
     ret = decode_response_frame(rx_buffer, frame_len, response);
@@ -484,7 +719,15 @@ static int send_clicker_diag(const struct dwm3000_range_request *request,
         return -EINVAL;
     }
 
-    clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    ret = ensure_current_phy_or_range();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = clear_status_checked(SYS_STATUS_TXFRS_BIT_MASK,
+                               "clicker-diag-tx-clear");
+    if (ret < 0) {
+        return ret;
+    }
     ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
     if (ret < 0) {
         return ret;
@@ -522,8 +765,9 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
                         CLICKER_DIAG_RX_TIMEOUT_MS,
                         CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
     clear_all_events();
-    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
-        return -EIO;
+    ret = start_immediate_rx();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = receive_frame(CLICKER_DIAG_RX_TIMEOUT_MS,
@@ -641,8 +885,9 @@ static int receive_anchor_diag(const struct dwm3000_range_request *request,
                         ANCHOR_DIAG_RX_TIMEOUT_MS,
                         ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
     clear_all_events();
-    if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
-        return -EIO;
+    ret = start_immediate_rx();
+    if (ret < 0) {
+        return ret;
     }
 
     ret = receive_frame(ANCHOR_DIAG_RX_TIMEOUT_MS,
@@ -729,8 +974,9 @@ static int receive_anchor_diag_fragments(const struct dwm3000_range_request *req
         dwt_setrxtimeout(0u);
         dwt_setpreambledetecttimeout(ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
         clear_all_events();
-        if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS) {
-            return -EIO;
+        ret = start_immediate_rx();
+        if (ret < 0) {
+            return ret;
         }
 
         ret = receive_frame((uint32_t)MAX(1, remaining_ms),
@@ -863,7 +1109,11 @@ static int send_anchor_diag_fragment_block(const struct uwb_range_header *poll,
         if (ret != PROTO_OK) {
             return -EINVAL;
         }
-        clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+        ret = clear_status_checked(SYS_STATUS_TXFRS_BIT_MASK,
+                                   "anchor-diag-fragment-tx-clear");
+        if (ret < 0) {
+            return ret;
+        }
         ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
         if (ret < 0) {
             return ret;
@@ -970,7 +1220,15 @@ static int send_anchor_diag(const struct uwb_range_header *poll,
         return -EINVAL;
     }
 
-    clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    ret = ensure_current_phy_or_range();
+    if (ret < 0) {
+        return ret;
+    }
+    ret = clear_status_checked(SYS_STATUS_TXFRS_BIT_MASK,
+                               "anchor-diag-tx-clear");
+    if (ret < 0) {
+        return ret;
+    }
     ret = send_range_frame(tx_buffer, tx_len, DWT_START_TX_IMMEDIATE);
     if (ret < 0) {
         return ret;

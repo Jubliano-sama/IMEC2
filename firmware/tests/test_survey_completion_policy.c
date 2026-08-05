@@ -1,6 +1,8 @@
 #include "survey.h"
+#include "operation_policy.h"
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 
 static void test_terminal_readiness_sweeps_every_pair_capacity(void)
@@ -138,6 +140,66 @@ static void test_absent_expected_count_preserves_legacy_safety_deadline(void)
     }
 }
 
+static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return (int32_t)(now_ms - deadline_ms) >= 0;
+}
+
+static void test_exact_minimum_budget_leaves_terminal_scheduling_guard(void)
+{
+    const struct operation_policy_discovery policy = {
+        .start_delay_ms = 6000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+        .round_count = 4u,
+        .report_grace_ms = 250u,
+        .operation_budget_ms = 600000u,
+    };
+    const struct operation_policy_discovery_budget_terms terms = {
+        .report_slot_ms = 2270u,
+        .report_custody_ms = 17000u,
+        .report_delivery_tail_ms = 63060u,
+        .terminal_scheduling_guard_ms = 102u,
+    };
+    const uint32_t collection_horizon_ms =
+        policy.start_delay_ms +
+        policy.slot_ms * policy.slot_count * policy.round_count +
+        terms.report_slot_ms * policy.slot_count +
+        policy.report_grace_ms +
+        terms.report_custody_ms +
+        terms.report_delivery_tail_ms;
+    const uint32_t origin_ms = UINT32_MAX - collection_horizon_ms + 1u;
+    const uint32_t flood_terminal_ms = origin_ms + 5000u;
+    const uint32_t collection_deadline_ms =
+        origin_ms + collection_horizon_ms;
+    const uint32_t report_arrival_ms = collection_deadline_ms - 1u;
+    uint32_t required_budget_ms = 0u;
+    uint32_t operation_deadline_ms;
+
+    assert(operation_policy_discovery_required_budget_ms(
+               &policy, &terms, &required_budget_ms) == PROTO_OK);
+    assert(required_budget_ms ==
+           collection_horizon_ms +
+               terms.terminal_scheduling_guard_ms +
+               SURVEY_DISCOVERY_OPERATION_TERMINAL_GUARD_MS);
+    operation_deadline_ms = origin_ms + required_budget_ms;
+
+    /* The delayed flood terminal only arms the frozen absolute horizon. */
+    assert(!deadline_reached(flood_terminal_ms, collection_deadline_ms));
+    assert(!deadline_reached(report_arrival_ms, collection_deadline_ms));
+    assert(collection_decide(true, false, 1u, 0u, false) ==
+           SURVEY_GATEWAY_COLLECTION_WAIT);
+
+    /* This witness deliberately wraps the collection deadline to zero. */
+    assert(collection_deadline_ms == 0u);
+    assert(deadline_reached(collection_deadline_ms,
+                            collection_deadline_ms));
+    assert(!deadline_reached(collection_deadline_ms,
+                             operation_deadline_ms));
+    assert(collection_decide(true, true, 1u, 0u, false) ==
+           SURVEY_GATEWAY_COLLECTION_CLOSE);
+}
+
 int main(void)
 {
     test_terminal_readiness_sweeps_every_pair_capacity();
@@ -146,6 +208,7 @@ int main(void)
     test_expected_count_shortfall_keeps_full_safety_deadline();
     test_expected_count_overflow_fails_without_truncating();
     test_absent_expected_count_preserves_legacy_safety_deadline();
+    test_exact_minimum_budget_leaves_terminal_scheduling_guard();
     puts("survey completion policy tests passed");
     return 0;
 }

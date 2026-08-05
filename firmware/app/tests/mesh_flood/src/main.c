@@ -31,6 +31,7 @@ static struct mesh_outbound make_flood(uint32_t earliest_tx_ms)
         .next_hop_id = MESH_BROADCAST_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
         .earliest_tx_ms = earliest_tx_ms,
+        .earliest_tx_valid = true,
     };
 }
 

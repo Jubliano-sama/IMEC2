@@ -1,8 +1,10 @@
 #include "app_high_debug.h"
 
 #include "app_board.h"
+#include "app_click_event_sequence.h"
 #include "app_clicker.h"
 #include "app_config.h"
+#include "app_radio_recovery.h"
 #include "app_state.h"
 #include "debug_log.h"
 #include "dwm3000_driver.h"
@@ -39,6 +41,7 @@ static struct app_high_debug_callbacks high_debug_callbacks;
 static bool high_debug_work_initialized;
 static char high_debug_command_buf[80];
 static size_t high_debug_command_len;
+static bool high_debug_manual_uwb_awake;
 
 int app_high_debug_init(void)
 {
@@ -580,12 +583,12 @@ void stage1_led_result(enum stage1_led_result result)
     }
 }
 
-void stage1_led_hold_click_result(int ret, uint32_t hold_ms)
+bool stage1_led_hold_click_result(int ret, uint32_t hold_ms)
 {
     enum stage1_led_result forced_result = stage1_led_result_for_ret(ret);
 
     if (!stage1_leds_enabled() || DEVICE_ROLE != ROLE_CLICKER) {
-        return;
+        return false;
     }
 
     high_debug_log_event("STAGE1_LED_HOLD",
@@ -604,6 +607,7 @@ void stage1_led_hold_click_result(int ret, uint32_t hold_ms)
     stage1_led_phase(stage1_led_last_phase);
     stage1_led_result(forced_result);
     k_msleep(hold_ms);
+    return true;
 }
 
 void stage1_clicker_early_led(const char *where,
@@ -615,7 +619,7 @@ void stage1_clicker_early_led(const char *where,
         return;
     }
 
-    (void)status_leds_init();
+    (void)status_leds_connect();
     stage1_led_phase(phase);
     stage1_led_result(result);
     printk("CLICKER_LED_CODE where=%s phase=%s result=%s hold_ms=%u\n",
@@ -772,21 +776,26 @@ void high_debug_boot_banner(void)
 int high_debug_probe_dwm3000(void)
 {
     uint32_t dev_id = 0u;
+    int cleanup_ret;
     int ret;
 
+    ret = radio_guard_uwb_start("high-debug DWM3000 probe");
+    if (ret < 0) {
+        return ret;
+    }
     high_debug_log_event("DWM_RESET_ASSERT", "action=probe_start");
     ret = dwm3000_port_init();
     if (ret < 0) {
         high_debug_log_event("DWM_DEV_ID_FAIL", "phase=port_init ret=%d", ret);
         HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
-        return ret;
+        goto cleanup;
     }
 
     ret = dwm3000_port_wakeup();
     if (ret < 0) {
         high_debug_log_event("DWM_DEV_ID_FAIL", "phase=wakeup ret=%d", ret);
         HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
-        return ret;
+        goto cleanup;
     }
     high_debug_log_event("UWB_WAKE", "source=probe");
 
@@ -794,7 +803,7 @@ int high_debug_probe_dwm3000(void)
     high_debug_log_event("DWM_RESET_RELEASE", "ret=%d", ret);
     if (ret < 0) {
         HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
-        return ret;
+        goto cleanup;
     }
 
     high_debug_log_event("DWM_DEV_ID_READ", "spi_hz=%u",
@@ -803,7 +812,7 @@ int high_debug_probe_dwm3000(void)
     if (ret < 0) {
         HIGH_DEBUG_COUNTER_INC(dwm_dev_id_failures);
         high_debug_log_event("DWM_DEV_ID_FAIL", "ret=%d dev_id=0x%08x", ret, dev_id);
-        return ret;
+        goto cleanup;
     }
 
     HIGH_DEBUG_COUNTER_INC(dwm_dev_id_successes);
@@ -812,6 +821,18 @@ int high_debug_probe_dwm3000(void)
     high_debug_log_event("DWM_SPI_SPEED_SET", "ret=%d spi_hz=%u",
                          ret,
                          (unsigned int)dwm3000_port_current_spi_hz());
+
+cleanup:
+    cleanup_ret = app_radio_standby_with_bounded_recovery(
+        "high-debug DWM3000 probe");
+    radio_guard_uwb_stop();
+    if (cleanup_ret < 0) {
+        high_debug_log_event("UWB_SLEEP",
+                             "phase=probe_cleanup operation_ret=%d cleanup_ret=%d",
+                             ret,
+                             cleanup_ret);
+        return cleanup_ret;
+    }
     return ret;
 }
 
@@ -886,6 +907,7 @@ int high_debug_stage0_ble_advertise_test(uint32_t event_seq,
 
 int high_debug_stage0_hardware_self_test(void)
 {
+    int cleanup_ret;
     int ret;
 
     ret = high_debug_probe_dwm3000();
@@ -893,19 +915,25 @@ int high_debug_stage0_hardware_self_test(void)
         return ret;
     }
 
-    ret = dwm3000_driver_standby();
-    high_debug_log_event("UWB_SLEEP", "phase=stage0_self_test ret=%d", ret);
+    k_msleep(10);
+    ret = radio_guard_uwb_start("high-debug stage0 self-test wake");
     if (ret < 0) {
         return ret;
     }
-
-    k_msleep(10);
     ret = dwm3000_driver_configure_default();
     high_debug_log_event("UWB_WAKE", "phase=stage0_self_test ret=%d spi_hz=%u",
                          ret,
                          (unsigned int)dwm3000_port_current_spi_hz());
-    (void)dwm3000_driver_standby();
-    high_debug_log_event("UWB_SLEEP", "phase=stage0_self_test_complete");
+    cleanup_ret = app_radio_standby_with_bounded_recovery(
+        "high-debug stage0 self-test wake");
+    radio_guard_uwb_stop();
+    high_debug_log_event("UWB_SLEEP",
+                         "phase=stage0_self_test_complete operation_ret=%d cleanup_ret=%d",
+                         ret,
+                         cleanup_ret);
+    if (cleanup_ret < 0) {
+        return cleanup_ret;
+    }
     return ret;
 }
 
@@ -913,8 +941,21 @@ static int high_debug_send_wake_claim_once(void)
 {
     struct uwb_clicker_session session;
     struct uwb_wake_claim_frame claim;
-    uint32_t event_seq = next_click_event_seq();
-    struct uwb_clicker_config config = {
+    uint32_t event_seq;
+    struct uwb_clicker_config config;
+    uint8_t frame[UWB_WAKE_CLAIM_LEN];
+    size_t frame_len = 0u;
+    int cleanup_ret;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_CLICKER) {
+        return -EINVAL;
+    }
+    ret = app_click_event_sequence_next(&event_seq);
+    if (ret < 0) {
+        return ret;
+    }
+    config = (struct uwb_clicker_config) {
         .network_id = NETWORK_ID,
         .clicker_id = DEVICE_ID,
         .click_event_id = event_seq,
@@ -927,13 +968,6 @@ static int high_debug_send_wake_claim_once(void)
         .ranging_channel = UWB_RANGING_CHANNEL,
         .flags = FLAG_DIAGNOSTIC,
     };
-    uint8_t frame[UWB_WAKE_CLAIM_LEN];
-    size_t frame_len = 0u;
-    int ret;
-
-    if (DEVICE_ROLE != ROLE_CLICKER) {
-        return -EINVAL;
-    }
 
     ret = uwb_clicker_session_start(&session, &config);
     if (ret != PROTO_OK) {
@@ -965,8 +999,16 @@ static int high_debug_send_wake_claim_once(void)
                              (unsigned long long)config.nonce);
         ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
     }
-    (void)dwm3000_driver_standby();
+    cleanup_ret = app_radio_standby_with_bounded_recovery(
+        "high-debug WAKE_CLAIM once");
     radio_guard_uwb_stop();
+    if (cleanup_ret < 0) {
+        high_debug_log_event("UWB_SLEEP",
+                             "phase=wake_claim_once operation_ret=%d cleanup_ret=%d",
+                             ret,
+                             cleanup_ret);
+        return cleanup_ret;
+    }
     if (ret == 0) {
         HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
     }
@@ -981,8 +1023,18 @@ static int high_debug_send_wake_train_command(void)
         .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
     };
     struct uwb_clicker_session session;
-    uint32_t event_seq = next_click_event_seq();
-    struct uwb_clicker_config config = {
+    uint32_t event_seq;
+    struct uwb_clicker_config config;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_CLICKER) {
+        return -EINVAL;
+    }
+    ret = app_click_event_sequence_next(&event_seq);
+    if (ret < 0) {
+        return ret;
+    }
+    config = (struct uwb_clicker_config) {
         .network_id = NETWORK_ID,
         .clicker_id = DEVICE_ID,
         .click_event_id = event_seq,
@@ -995,11 +1047,7 @@ static int high_debug_send_wake_train_command(void)
         .ranging_channel = UWB_RANGING_CHANNEL,
         .flags = FLAG_DIAGNOSTIC,
     };
-    int ret;
 
-    if (DEVICE_ROLE != ROLE_CLICKER) {
-        return -EINVAL;
-    }
     ret = uwb_clicker_session_start(&session, &config);
     if (ret != PROTO_OK) {
         return -EINVAL;
@@ -1012,6 +1060,59 @@ static int high_debug_send_wake_train_command(void)
         &session,
         clicker_priority_id(config.click_event_id, 1u),
         &clicker_wake_train_config);
+}
+
+static int high_debug_manual_uwb_wake(void)
+{
+    int cleanup_ret;
+    int ret;
+
+    if (high_debug_manual_uwb_awake) {
+        return -EALREADY;
+    }
+    ret = radio_guard_uwb_start("high-debug manual UWB wake");
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = dwm3000_driver_configure_default();
+    high_debug_log_event("UWB_WAKE", "command=uwb_wake ret=%d", ret);
+    if (ret < 0) {
+        cleanup_ret = app_radio_standby_with_bounded_recovery(
+            "high-debug manual UWB wake failure");
+        radio_guard_uwb_stop();
+        if (cleanup_ret < 0) {
+            high_debug_log_event(
+                "UWB_SLEEP",
+                "phase=manual_wake_failure operation_ret=%d cleanup_ret=%d",
+                ret,
+                cleanup_ret);
+            return cleanup_ret;
+        }
+        return ret;
+    }
+
+    high_debug_manual_uwb_awake = true;
+    return 0;
+}
+
+static int high_debug_manual_uwb_sleep(void)
+{
+    int ret;
+
+    if (!high_debug_manual_uwb_awake) {
+        ret = radio_guard_uwb_start("high-debug manual UWB sleep");
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    ret = app_radio_standby_with_bounded_recovery(
+        "high-debug manual UWB sleep");
+    high_debug_manual_uwb_awake = false;
+    radio_guard_uwb_stop();
+    high_debug_log_event("UWB_SLEEP", "command=uwb_sleep ret=%d", ret);
+    return ret;
 }
 
 int high_debug_handle_command(const char *command)
@@ -1034,13 +1135,10 @@ int high_debug_handle_command(const char *command)
         ret = 0;
     } else if (strcmp(command, "uwb_probe") == 0) {
         ret = high_debug_probe_dwm3000();
-        (void)dwm3000_driver_standby();
     } else if (strcmp(command, "uwb_sleep") == 0) {
-        ret = dwm3000_driver_standby();
-        high_debug_log_event("UWB_SLEEP", "command=uwb_sleep ret=%d", ret);
+        ret = high_debug_manual_uwb_sleep();
     } else if (strcmp(command, "uwb_wake") == 0) {
-        ret = dwm3000_driver_configure_default();
-        high_debug_log_event("UWB_WAKE", "command=uwb_wake ret=%d", ret);
+        ret = high_debug_manual_uwb_wake();
     } else if (strcmp(command, "send_wake_claim_once") == 0) {
         ret = high_debug_send_wake_claim_once();
     } else if (strcmp(command, "send_wake_train") == 0) {
@@ -1072,10 +1170,14 @@ int high_debug_handle_command(const char *command)
 int high_debug_stage0_simulated_click(void)
 {
     const uint32_t ble_test_ms = 10000u;
-    uint32_t event_seq = next_click_event_seq();
+    uint32_t event_seq;
     int ret = 0;
     int ble_ret;
 
+    ret = app_click_event_sequence_next(&event_seq);
+    if (ret < 0) {
+        return ret;
+    }
     high_debug_log_event("COMMAND_RX",
                          "source=button action=simulated_click event_seq=%u",
                          event_seq);

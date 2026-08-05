@@ -4,6 +4,9 @@
 
 #include <stddef.h>
 
+_Static_assert(MESH_DEFAULT_TTL == SURVEY_DEFAULT_TTL,
+               "survey MSG_COMMAND and dedicated controls must share one TTL");
+
 static bool event_control_type(uint8_t msg_type)
 {
     return msg_type == MSG_MESH_EVENT_PROPOSE ||
@@ -58,6 +61,31 @@ bool app_mesh_c5_gateway_rx_should_yield_to_response(
 bool app_mesh_c5_gateway_route_adv_allowed(bool mesh_route_test_enabled)
 {
     return !mesh_route_test_enabled;
+}
+
+bool app_mesh_c5_contact_expired(
+    const struct c5_contact_context *contact,
+    uint32_t now_ms)
+{
+    if (contact == NULL || contact->state == C5_CONTACT_NONE) {
+        return false;
+    }
+
+    return (int32_t)(now_ms - contact->expires_at_ms) >= 0;
+}
+
+bool app_mesh_c5_contact_accepted(
+    const struct c5_contact_context *contact,
+    uint64_t peer_id,
+    uint8_t purpose,
+    uint32_t now_ms)
+{
+    return contact != NULL &&
+           contact->state != C5_CONTACT_NONE &&
+           contact->peer_id == peer_id &&
+           contact->purpose == purpose &&
+           contact->accepted &&
+           !app_mesh_c5_contact_expired(contact, now_ms);
 }
 
 bool app_mesh_c5_route_capture_relevant(
@@ -184,10 +212,7 @@ bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
 
     switch (msg_type) {
     case MSG_COMMAND:
-        ttl = command_id == CMD_SURVEY_START_PAIR ||
-              command_id == CMD_SURVEY_ABORT ||
-              command_id == CMD_SURVEY_PREPARE_PAIR ?
-              MESH_DEFAULT_TTL : FLOOD_EPOCH_GLOBAL_TTL;
+        ttl = gateway_command_origin_ttl((enum command_id)command_id);
         break;
     case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_DISCOVERY_START:

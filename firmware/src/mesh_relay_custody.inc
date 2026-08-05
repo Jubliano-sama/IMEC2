@@ -23,7 +23,11 @@ static int collection_epoch_id_from_payload(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
     *collection_epoch_id = 0u;
-    ret = tlv_find(payload, payload_len, TLV_COLLECTION_EPOCH_ID, &value, &value_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_COLLECTION_EPOCH_ID,
+                          &value,
+                          &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -66,15 +70,42 @@ static uint8_t outbox_selected_parent_index(const struct mesh_relay *relay,
     return UINT8_MAX;
 }
 
-static uint32_t outbox_expiry_s_for(const struct proto_packet *packet,
-                                    const uint8_t *payload,
-                                    size_t payload_len)
+uint32_t mesh_relay_outbox_expiry_s_for_packet(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
 {
     uint32_t expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S;
     uint32_t requested_s = 0u;
 
+    /*
+     * Once the source has durably replaced an original report with its
+     * ACK-confirm, the gateway's notified journal can only be released by
+     * this exact proof.  Expiring it would permanently strand the gateway
+     * while also discarding the source's only terminal handshake.
+     */
+    if (packet->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+        return UINT32_MAX;
+    }
+    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
+        packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
+        return SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S;
+    }
     if (packet->msg_type != MSG_COMMAND_RESULT) {
         return expiry_s;
+    }
+    if (command_result_has_command_id(payload,
+                                      payload_len,
+                                      CMD_SURVEY_PREPARE_PAIR) ||
+        command_result_has_command_id(payload,
+                                      payload_len,
+                                      CMD_SURVEY_START_PAIR)) {
+        return SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S;
+    }
+    if (command_result_has_command_id(payload,
+                                      payload_len,
+                                      CMD_ASSIGN_DISCOVERY_SLOTS)) {
+        return DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S;
     }
     if (find_u32_tlv(payload, payload_len, TLV_COMMAND_EXPIRY_S, &requested_s) == PROTO_OK &&
         requested_s != 0u &&
@@ -92,10 +123,11 @@ static enum mesh_relay_delivery_state outbox_delivery_state_for(
     if (pending->packet.msg_type == MSG_COMMAND_RESULT && pending->result_offer_active) {
         return MESH_RELAY_DELIVERY_WAIT_LOCAL_CUSTODY_ACK;
     }
-    if (pending->packet.msg_type == MSG_COMMAND_RESULT &&
-        collection_epoch_id_from_payload(pending->payload,
-                                         pending->payload_len,
-                                         &collection_epoch_id) == PROTO_OK) {
+    if (pending->packet.msg_type == MSG_RESULT_BUNDLE ||
+        (pending->packet.msg_type == MSG_COMMAND_RESULT &&
+         collection_epoch_id_from_payload(pending->payload,
+                                          pending->payload_len,
+                                          &collection_epoch_id) == PROTO_OK)) {
         return MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK;
     }
     return MESH_RELAY_DELIVERY_WAIT_GATEWAY_ACK;
@@ -152,6 +184,41 @@ static bool pending_is_generic_transit_gateway_packet(
     return pending->packet.msg_type != MSG_COMMAND_RESULT;
 }
 
+static bool pending_is_gateway_ack_confirm(
+    const struct mesh_relay *relay,
+    const struct mesh_pending_tx *pending)
+{
+    struct mesh_gateway_ack_confirm_identity identity;
+
+    return outbox_should_track_pending(relay, pending) &&
+           pending->state != MESH_RELAY_TX_IDLE &&
+           pending->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM &&
+           mesh_gateway_ack_confirm_payload_parse(
+               &pending->packet,
+               pending->payload,
+               pending->payload_len,
+               &identity) == PROTO_OK;
+}
+
+static bool pending_is_local_gateway_host_packet(
+    const struct mesh_relay *relay,
+    const struct mesh_pending_tx *pending)
+{
+    if (!outbox_should_track_pending(relay, pending) ||
+        pending->state == MESH_RELAY_TX_IDLE ||
+        pending->packet.src_id != relay->local_id ||
+        pending->result_offer_active ||
+        pending->packet.msg_type == MSG_COMMAND_RESULT ||
+        pending->packet.msg_type == MSG_RESULT_BUNDLE ||
+        pending->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+        return false;
+    }
+    return mesh_gateway_ack_confirmed_type(pending->packet.msg_type) &&
+           mesh_gateway_ack_confirmed_flags_valid(
+               pending->packet.msg_type,
+               pending->packet.flags);
+}
+
 static bool pending_is_local_collection_result(const struct mesh_relay *relay,
                                                const struct mesh_pending_tx *pending)
 {
@@ -180,8 +247,7 @@ static bool pending_is_result_bundle(const struct mesh_relay *relay,
                                      const struct mesh_pending_tx *pending)
 {
     struct result_bundle_header bundle;
-    uint8_t header[64];
-    size_t header_len = 0u;
+    const size_t header_len = RESULT_BUNDLE_HEADER_TLV_BYTES;
 
     if (!outbox_should_track_pending(relay, pending) ||
         pending->state == MESH_RELAY_TX_IDLE ||
@@ -194,10 +260,6 @@ static bool pending_is_result_bundle(const struct mesh_relay *relay,
         bundle.command_seq == 0u ||
         bundle.collection_epoch_id == 0u ||
         bundle.record_count == 0u ||
-        result_bundle_header_append_tlvs(header,
-                                         sizeof(header),
-                                         &header_len,
-                                         &bundle) != PROTO_OK ||
         header_len >= pending->payload_len) {
         return false;
     }
@@ -242,6 +304,12 @@ static void outbox_record_track_pending(struct mesh_relay *relay,
 
     record = &relay->outbox_record;
     memset(record, 0, sizeof(*record));
+    if (!relay_semantic_packet_digest(&pending->packet,
+                                      pending->payload,
+                                      pending->payload_len,
+                                      record->semantic_digest)) {
+        return;
+    }
     record->valid = true;
     record->delivery_state = outbox_delivery_state_for(pending);
     record->packet_id = outbox_packet_id_for(&pending->packet);
@@ -252,9 +320,10 @@ static void outbox_record_track_pending(struct mesh_relay *relay,
     record->created_uptime_ms = now_ms;
     record->age_ms_saturating = pending->packet.message_age_ms;
     record->selected_parent_index = outbox_selected_parent_index(relay, pending->next_hop_id);
-    record->expiry_s = outbox_expiry_s_for(&pending->packet,
-                                           pending->payload,
-                                           pending->payload_len);
+    record->expiry_s = mesh_relay_outbox_expiry_s_for_packet(
+        &pending->packet,
+        pending->payload,
+        pending->payload_len);
     if (pending->result_offer_active &&
         record->expiry_s > MESH_RELAY_RESULT_OFFER_EXPIRY_S) {
         record->expiry_s = MESH_RELAY_RESULT_OFFER_EXPIRY_S;
@@ -321,28 +390,14 @@ static bool outbox_record_is_expired(struct mesh_relay *relay, uint32_t now_ms)
 
     if (relay == NULL ||
         !relay->outbox_record.valid ||
-        relay->outbox_record.packet_class != MSG_COMMAND_RESULT ||
         relay->outbox_record.expiry_s == 0u ||
+        relay->outbox_record.expiry_s == UINT32_MAX ||
         !mesh_relay_tx_active(relay)) {
         return false;
     }
 
     age_ms = outbox_age_from_pending(&relay->pending, now_ms);
     return (age_ms / 1000u) >= relay->outbox_record.expiry_s;
-}
-
-static void outbox_record_mark_expired(struct mesh_relay *relay, uint32_t now_ms)
-{
-    if (relay == NULL) {
-        return;
-    }
-    outbox_record_sync_age_from_pending(relay, now_ms);
-    if (relay->outbox_record.valid ||
-        relay->outbox_record.delivery_state != MESH_RELAY_DELIVERY_NONE) {
-        relay->outbox_record.valid = false;
-        relay->outbox_record.delivery_state = MESH_RELAY_DELIVERY_EXPIRED;
-        relay->outbox_record.gateway_acked = false;
-    }
 }
 
 static void outbox_record_note_result_offer_sent(struct mesh_relay *relay,
@@ -417,10 +472,10 @@ static void result_offer_finish_terminal(
     result->terminal.radio_channel = relay->pending.radio_channel;
     result->terminal.next_hop_id = relay->pending.next_hop_id;
     result->terminal.queued_at_ms = now_ms;
-    relay->outbox_record.valid = false;
+    result->terminal.queued_at_valid = true;
     relay->outbox_record.delivery_state = delivery_state;
     relay->outbox_record.gateway_acked = false;
-    relay->pending.state = MESH_RELAY_TX_IDLE;
+    relay->pending.state = MESH_RELAY_TX_WAIT_TERMINAL_COMMIT;
     result->actions |= MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL;
     result->status = status;
 }
@@ -448,6 +503,8 @@ static bool preserve_pending_gateway_result(struct mesh_relay *relay,
         (!pending_is_local_collection_result(relay, &relay->pending) &&
          !pending_is_forwarded_command_result(relay, &relay->pending) &&
          !pending_is_result_bundle(relay, &relay->pending) &&
+         !pending_is_gateway_ack_confirm(relay, &relay->pending) &&
+         !pending_is_local_gateway_host_packet(relay, &relay->pending) &&
          !pending_is_generic_transit_gateway_packet(relay, &relay->pending))) {
         return false;
     }
@@ -574,19 +631,25 @@ static bool result_bundle_key_matches(const struct mesh_result_bundle_queue *que
            queue->collection_epoch_id == collection_epoch_id;
 }
 
-static bool result_bundle_entry_exists(const struct mesh_result_bundle_queue *queue,
-                                       const struct command_result_id *result_id)
+static int result_bundle_entry_classify(
+    const struct mesh_result_bundle_queue *queue,
+    const struct command_result_id *result_id,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
-    if (queue == NULL || result_id == NULL) {
-        return false;
+    if (queue == NULL || result_id == NULL || semantic_digest == NULL) {
+        return PROTO_ERR_ARG;
     }
     for (uint8_t i = 0u; i < queue->record_count; i++) {
         if (queue->records[i].valid &&
             command_result_id_matches(&queue->records[i].result_id, result_id)) {
-            return true;
+            return semantic_digest_equal(queue->records[i].semantic_digest,
+                                         semantic_digest,
+                                         SEMANTIC_DIGEST_SHA256_LEN) ?
+                       PROTO_ERR_STALE :
+                       PROTO_ERR_MALFORMED;
         }
     }
-    return false;
+    return PROTO_ERR_NOT_FOUND;
 }
 
 static bool command_result_can_bundle(const struct mesh_relay *relay,
@@ -600,7 +663,7 @@ static bool command_result_can_bundle(const struct mesh_relay *relay,
 
     if (relay == NULL || packet == NULL || payload == NULL ||
         result_id == NULL || collection_epoch_id == NULL ||
-        relay->role == MESH_RELAY_ROLE_GATEWAY ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
         packet->msg_type != MSG_COMMAND_RESULT ||
         packet->dst_id != relay->gateway_id ||
         packet->ttl == 0u ||
@@ -643,11 +706,15 @@ static int result_bundle_enqueue_command_result(struct mesh_relay *relay,
 {
     struct mesh_result_bundle_queue *queue;
     struct mesh_result_bundle_entry *entry;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint64_t next_hop_id = 0u;
     int ret;
 
     if (relay == NULL || packet == NULL || payload == NULL || result_id == NULL ||
         payload_len > RESULT_BUNDLE_RECORD_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_ARG;
+    }
+    if (!semantic_digest_sha256(payload, payload_len, semantic_digest)) {
         return PROTO_ERR_ARG;
     }
 
@@ -669,8 +736,9 @@ static int result_bundle_enqueue_command_result(struct mesh_relay *relay,
         return PROTO_ERR_BUSY;
     }
 
-    if (result_bundle_entry_exists(queue, result_id)) {
-        return PROTO_ERR_STALE;
+    ret = result_bundle_entry_classify(queue, result_id, semantic_digest);
+    if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
     }
     if (queue->record_count >= MESH_RELAY_RESULT_BUNDLE_RECORDS) {
         return PROTO_ERR_BUSY;
@@ -679,6 +747,9 @@ static int result_bundle_enqueue_command_result(struct mesh_relay *relay,
     entry = &queue->records[queue->record_count];
     memset(entry, 0, sizeof(*entry));
     entry->result_id = *result_id;
+    memcpy(entry->semantic_digest,
+           semantic_digest,
+           sizeof(entry->semantic_digest));
     entry->payload_len = (uint16_t)payload_len;
     entry->payload_crc = proto_crc16_ccitt_false(payload, payload_len);
     entry->message_age_ms = packet->message_age_ms;
@@ -722,9 +793,16 @@ static int result_bundle_build_outbound(struct mesh_relay *relay,
     for (uint8_t i = 0u; i < queue->record_count; i++) {
         struct mesh_result_bundle_entry *entry = &queue->records[i];
         struct result_bundle_record record;
+        uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
         uint32_t age_ms;
 
-        if (!entry->valid) {
+        if (!entry->valid ||
+            !semantic_digest_sha256(entry->payload,
+                                    entry->payload_len,
+                                    semantic_digest) ||
+            !semantic_digest_equal(entry->semantic_digest,
+                                   semantic_digest,
+                                   sizeof(semantic_digest))) {
             return PROTO_ERR_MALFORMED;
         }
         memset(&record, 0, sizeof(record));
@@ -783,6 +861,7 @@ static int result_bundle_build_outbound(struct mesh_relay *relay,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = next_hop_id;
     out->queued_at_ms = now_ms;
+    out->queued_at_valid = true;
 
     return PROTO_OK;
 }
@@ -810,12 +889,24 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
         packet->dst_id == pending->packet.src_id;
     if (pending->state == MESH_RELAY_TX_IDLE ||
         (!ack_targets_local && !ack_targets_transit_origin) ||
-        packet->session_id != pending->packet.session_id ||
         previous_hop_id != pending->next_hop_id) {
         return false;
     }
+    if (packet->msg_type == MSG_MESH_HOP_ACK &&
+        packet->src_id != previous_hop_id) {
+        if (status != NULL) {
+            *status = PROTO_ERR_MALFORMED;
+        }
+        return false;
+    }
 
-    ret = ack_payload_contains_seq(payload, payload_len, pending->packet.seq, &contains);
+    ret = mesh_ack_payload_contains_packet(packet,
+                                           payload,
+                                           payload_len,
+                                           &pending->packet,
+                                           pending->payload,
+                                           pending->payload_len,
+                                           &contains);
     if (ret != PROTO_OK) {
         if (status != NULL) {
             *status = ret;
@@ -857,14 +948,28 @@ static void refresh_downlink(struct mesh_relay *relay,
 
 static int build_gateway_ack(struct mesh_relay *relay,
                              const struct proto_packet *packet,
+                             const uint8_t *payload,
+                             size_t acknowledged_payload_len,
                              uint64_t previous_hop_id,
                              struct mesh_outbound *out)
 {
     uint64_t next_hop_id = previous_hop_id;
-    size_t payload_len = 0u;
+    size_t ack_payload_len = 0u;
     int ret;
 
-    ret = mesh_append_requested_seq(out->payload, sizeof(out->payload), &payload_len, packet->seq);
+    ret = mesh_append_requested_seq(out->payload,
+                                    sizeof(out->payload),
+                                    &ack_payload_len,
+                                    packet->seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_ack_semantic_identity(out->payload,
+                                            sizeof(out->payload),
+                                            &ack_payload_len,
+                                            packet,
+                                            payload,
+                                            acknowledged_payload_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -873,7 +978,7 @@ static int build_gateway_ack(struct mesh_relay *relay,
                                 packet->src_id,
                                 packet->session_id,
                                 relay_next_seq(relay),
-                                (uint8_t)payload_len);
+                                (uint8_t)ack_payload_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -885,17 +990,19 @@ static int build_gateway_ack(struct mesh_relay *relay,
         return PROTO_ERR_NOT_FOUND;
     }
 
-    out->payload_len = (uint16_t)payload_len;
+    out->payload_len = (uint16_t)ack_payload_len;
     out->next_hop_id = next_hop_id;
     return PROTO_OK;
 }
 
 static int build_hop_ack(struct mesh_relay *relay,
                          const struct proto_packet *packet,
+                         const uint8_t *payload,
+                         size_t acknowledged_payload_len,
                          uint64_t previous_hop_id,
                          struct mesh_outbound *out)
 {
-    size_t payload_len = 0u;
+    size_t ack_payload_len = 0u;
     int ret;
 
     if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
@@ -907,7 +1014,19 @@ static int build_hop_ack(struct mesh_relay *relay,
         return PROTO_ERR_STALE;
     }
 
-    ret = mesh_append_requested_seq(out->payload, sizeof(out->payload), &payload_len, packet->seq);
+    ret = mesh_append_requested_seq(out->payload,
+                                    sizeof(out->payload),
+                                    &ack_payload_len,
+                                    packet->seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_ack_semantic_identity(out->payload,
+                                            sizeof(out->payload),
+                                            &ack_payload_len,
+                                            packet,
+                                            payload,
+                                            acknowledged_payload_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -919,8 +1038,8 @@ static int build_hop_ack(struct mesh_relay *relay,
     out->packet.session_id = packet->session_id;
     out->packet.seq = relay_next_seq(relay);
     out->packet.ttl = MESH_GATEWAY_ACK_TTL;
-    out->packet.payload_len = (uint16_t)payload_len;
-    out->payload_len = (uint16_t)payload_len;
+    out->packet.payload_len = (uint16_t)ack_payload_len;
+    out->payload_len = (uint16_t)ack_payload_len;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->next_hop_id = previous_hop_id;
     return PROTO_OK;
@@ -1094,7 +1213,12 @@ static int build_busy_response(struct mesh_relay *relay,
     out->packet.msg_type = msg_type;
     out->packet.flags = 0u;
     out->packet.src_id = relay->local_id;
-    out->packet.dst_id = packet->src_id;
+    /*
+     * BUSY is a one-hop custody response.  Address the physical sender whose
+     * pending state it correlates; targeting the end-to-end origin with TTL=1
+     * strands transit BUSY at the first relay and leaves that sender stalled.
+     */
+    out->packet.dst_id = previous_hop_id;
     out->packet.session_id = packet->session_id;
     out->packet.seq = relay_next_seq(relay);
     out->packet.ttl = 1u;
@@ -1244,6 +1368,7 @@ static int handle_result_offer(struct mesh_relay *relay,
                                const uint8_t *payload,
                                size_t payload_len,
                                uint64_t previous_hop_id,
+                               uint32_t now_ms,
                                struct mesh_relay_result *result)
 {
     struct result_offer offer;
@@ -1260,8 +1385,10 @@ static int handle_result_offer(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (offer.result_id.gateway_id != relay->gateway_id ||
+    if (!command_result_id_is_well_formed(&offer.result_id) ||
+        offer.result_id.gateway_id != relay->gateway_id ||
         offer.result_id.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        offer.result_id.node_id != packet->src_id ||
         offer.result_len == 0u ||
         offer.result_len > UWB_MESH_MAX_PAYLOAD_LEN) {
         return PROTO_ERR_MALFORMED;
@@ -1284,7 +1411,7 @@ static int handle_result_offer(struct mesh_relay *relay,
         return ret;
     }
 
-    ret = result_offer_reserve(relay, previous_hop_id, &offer);
+    ret = result_offer_reserve(relay, previous_hop_id, &offer, now_ms);
     if (ret == PROTO_ERR_BUSY) {
         ret = build_result_offer_busy_response(relay,
                                                packet,
@@ -1418,6 +1545,15 @@ static int handle_local_busy(struct mesh_relay *relay,
         fields.requested_seq != relay->pending.packet.seq) {
         return PROTO_OK;
     }
+    if (!id_is_unicast(relay->pending.next_hop_id) ||
+        previous_hop_id != relay->pending.next_hop_id) {
+        /*
+         * BUSY is physical-hop flow control, so matching the end-to-end
+         * packet identity is insufficient. A different peer must not defer
+         * this attempt or poison the selected parent's capacity hint.
+         */
+        return PROTO_ERR_MALFORMED;
+    }
     if (packet->msg_type == MSG_RESULT_BUSY &&
         relay->pending.packet.msg_type == MSG_COMMAND_RESULT &&
         relay->pending.result_offer_active) {
@@ -1464,6 +1600,7 @@ static int handle_local_busy(struct mesh_relay *relay,
                                fields.capacity_state,
                                0u,
                                0u,
+                               fields.capacity_validity_interval_ms != 0u,
                                now_ms,
                                capacity_valid_until_ms(
                                    now_ms,
@@ -1482,6 +1619,103 @@ static int build_forward(const struct mesh_relay *relay,
                          const uint8_t *payload,
                          size_t payload_len,
                          struct mesh_outbound *out);
+
+static bool pending_requires_gateway_ack_confirm(
+    const struct mesh_relay *relay,
+    const struct mesh_pending_tx *pending)
+{
+    if (relay == NULL || pending == NULL ||
+        pending->packet.src_id != relay->local_id ||
+        pending->packet.dst_id != relay->gateway_id ||
+        !mesh_gateway_ack_confirmed_type(pending->packet.msg_type) ||
+        pending->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+        return false;
+    }
+
+    /*
+     * Collection traffic has its own durable end-to-end EACK.  Its ordinary
+     * gateway ACK means only "gateway journal accepted", so converting on
+     * that intermediate ACK would bypass roster/retry completion.
+     */
+    if (pending->packet.msg_type == MSG_RESULT_BUNDLE ||
+        relay->outbox_record.delivery_state ==
+            MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK) {
+        return false;
+    }
+    return pending->packet.msg_type != MSG_MESH_DATA ||
+           pending->packet.flags ==
+               (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC);
+}
+
+static int pending_transition_to_gateway_ack_confirm(
+    struct mesh_relay *relay,
+    uint32_t now_ms)
+{
+    struct mesh_pending_tx original;
+    struct proto_packet confirm_packet;
+    uint8_t confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+    size_t confirm_payload_len = 0u;
+    uint64_t next_hop_id = 0u;
+    int ret;
+
+    if (relay == NULL ||
+        !pending_requires_gateway_ack_confirm(relay, &relay->pending)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    original = relay->pending;
+    pending_refresh_age(&original, now_ms);
+    ret = mesh_gateway_ack_confirm_payload_build(
+        &original.packet,
+        original.payload,
+        original.payload_len,
+        confirm_payload,
+        sizeof(confirm_payload),
+        &confirm_payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_init_gateway_ack_confirm(&confirm_packet,
+                                        relay->local_id,
+                                        relay->gateway_id,
+                                        original.packet.session_id,
+                                        original.packet.seq);
+    if (ret != PROTO_OK ||
+        confirm_payload_len != MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN) {
+        return ret != PROTO_OK ? ret : PROTO_ERR_MALFORMED;
+    }
+
+    /*
+     * A route can disappear at the ACK boundary.  The durable confirm still
+     * takes ownership and later enters ordinary route discovery with a zero
+     * next hop; reverting to the original report after the gateway has
+     * notified the host would allow duplicate host delivery.
+     */
+    (void)mesh_relay_expire_routes(relay, now_ms);
+    if (mesh_relay_select_next_hop(relay,
+                                   relay->gateway_id,
+                                   &next_hop_id) != PROTO_OK) {
+        next_hop_id = 0u;
+    }
+
+    memset(&relay->pending, 0, sizeof(relay->pending));
+    relay->pending.packet = confirm_packet;
+    memcpy(relay->pending.payload, confirm_payload, confirm_payload_len);
+    relay->pending.payload_len = (uint16_t)confirm_payload_len;
+    relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    relay->pending.next_hop_id = next_hop_id;
+    relay->pending.retry_after_ms = now_ms + 1u;
+    relay->pending.queued_at_ms = now_ms;
+    relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    outbox_record_track_pending(relay, now_ms);
+    if (!relay->outbox_record.valid ||
+        relay->outbox_record.expiry_s != UINT32_MAX) {
+        relay->pending = original;
+        outbox_record_track_pending(relay, now_ms);
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
 
 static int handle_local_ack(struct mesh_relay *relay,
                             const struct proto_packet *packet,
@@ -1568,6 +1802,25 @@ static int handle_local_ack(struct mesh_relay *relay,
                 MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING;
             return PROTO_OK;
         }
+        if (pending_is_gateway_ack_confirm(relay, &relay->pending)) {
+            /*
+             * The app must durably retire every producer-owned raw record
+             * before committing this compact tombstone.  Keep the pending
+             * confirm intact until mesh_relay_commit_gateway_ack_confirm_terminal().
+             */
+            result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+            return PROTO_OK;
+        }
+        if (pending_requires_gateway_ack_confirm(relay, &relay->pending)) {
+            ret = pending_transition_to_gateway_ack_confirm(relay, now_ms);
+            if (ret != PROTO_OK) {
+                result->status = ret;
+                return ret;
+            }
+            result->actions |=
+                MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING;
+            return PROTO_OK;
+        }
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
         mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
         outbox_record_mark_gateway_acked(relay, now_ms);
@@ -1576,12 +1829,107 @@ static int handle_local_ack(struct mesh_relay *relay,
     } else if (packet->msg_type == MSG_MESH_HOP_ACK &&
                (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
                 relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF)) {
+        if (relay->pending.hop_ack_observed_since_send) {
+            /*
+             * An exact duplicate ACK proves no new RF progress. Let the
+             * existing gateway-ACK deadline or retry backoff continue so an
+             * ACK replay storm cannot retain custody indefinitely.
+             */
+            return PROTO_OK;
+        }
+        relay->pending.hop_ack_observed_since_send = true;
         pending_set_deadlines(&relay->pending, now_ms);
         relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
         route_refresh_selected_at(&relay->upstream, now_ms);
         result->actions |= MESH_RELAY_ACTION_TX_HOP_PROGRESS;
     }
 
+    return PROTO_OK;
+}
+
+int mesh_relay_commit_gateway_ack_confirm_terminal(
+    struct mesh_relay *relay,
+    const struct proto_packet *confirm_packet,
+    const uint8_t *confirm_payload,
+    size_t confirm_payload_len,
+    uint32_t now_ms)
+{
+    struct mesh_gateway_ack_confirm_identity identity;
+
+    if (relay == NULL || confirm_packet == NULL ||
+        confirm_payload == NULL ||
+        mesh_gateway_ack_confirm_payload_parse(confirm_packet,
+                                               confirm_payload,
+                                               confirm_payload_len,
+                                               &identity) != PROTO_OK ||
+        !pending_is_gateway_ack_confirm(relay, &relay->pending) ||
+        relay->pending.packet.msg_type != confirm_packet->msg_type ||
+        relay->pending.packet.flags != confirm_packet->flags ||
+        relay->pending.packet.src_id != confirm_packet->src_id ||
+        relay->pending.packet.dst_id != confirm_packet->dst_id ||
+        relay->pending.packet.session_id != confirm_packet->session_id ||
+        relay->pending.packet.seq != confirm_packet->seq ||
+        relay->pending.payload_len != confirm_payload_len ||
+        !semantic_digest_equal(relay->pending.payload,
+                               confirm_payload,
+                               confirm_payload_len)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    mesh_relay_note_route_discovery_ready(relay,
+                                          relay->pending.packet.dst_id);
+    outbox_record_mark_gateway_acked(relay, now_ms);
+    relay->pending.state = MESH_RELAY_TX_IDLE;
+    route_record_success_at(&relay->upstream, now_ms);
+    return PROTO_OK;
+}
+
+int mesh_relay_commit_terminal_release(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    uint8_t pending_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t provided_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    if (relay == NULL || packet == NULL ||
+        (payload == NULL && payload_len != 0u) ||
+        relay->pending.state != MESH_RELAY_TX_WAIT_TERMINAL_COMMIT ||
+        !relay->outbox_record.valid ||
+        (relay->outbox_record.delivery_state !=
+             MESH_RELAY_DELIVERY_EXPIRED &&
+         relay->outbox_record.delivery_state !=
+             MESH_RELAY_DELIVERY_RESULT_GRANT_ATTEMPTS_EXHAUSTED) ||
+        relay->pending.packet.msg_type != packet->msg_type ||
+        relay->pending.packet.flags != packet->flags ||
+        relay->pending.packet.src_id != packet->src_id ||
+        relay->pending.packet.dst_id != packet->dst_id ||
+        relay->pending.packet.session_id != packet->session_id ||
+        relay->pending.packet.seq != packet->seq ||
+        relay->pending.packet.payload_len != packet->payload_len ||
+        relay->pending.payload_len != payload_len ||
+        packet->payload_len != payload_len ||
+        !relay_semantic_packet_digest(&relay->pending.packet,
+                                      relay->pending.payload,
+                                      relay->pending.payload_len,
+                                      pending_digest) ||
+        !relay_semantic_packet_digest(packet,
+                                      payload,
+                                      payload_len,
+                                      provided_digest) ||
+        !semantic_digest_equal(pending_digest,
+                               provided_digest,
+                               sizeof(pending_digest)) ||
+        !semantic_digest_equal(relay->outbox_record.semantic_digest,
+                               pending_digest,
+                               sizeof(pending_digest))) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    relay->outbox_record.valid = false;
+    relay->pending.result_offer_active = false;
+    relay->pending.state = MESH_RELAY_TX_IDLE;
     return PROTO_OK;
 }
 
@@ -1607,8 +1955,6 @@ int mesh_relay_commit_transit_gateway_ack_forward(
         forwarded_ack->packet.msg_type != MSG_GATEWAY_ACK ||
         forwarded_ack->packet.src_id != relay->gateway_id ||
         forwarded_ack->packet.dst_id != relay->pending.packet.src_id ||
-        forwarded_ack->packet.session_id !=
-            relay->pending.packet.session_id ||
         forwarded_ack->packet.payload_len != forwarded_ack->payload_len ||
         forwarded_ack->payload_len == 0u ||
         forwarded_ack->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
@@ -1624,10 +1970,14 @@ int mesh_relay_commit_transit_gateway_ack_forward(
         return PROTO_ERR_MALFORMED;
     }
 
-    ret = ack_payload_contains_seq(forwarded_ack->payload,
-                                   forwarded_ack->payload_len,
-                                   relay->pending.packet.seq,
-                                   &contains);
+    ret = mesh_ack_payload_contains_packet(
+        &forwarded_ack->packet,
+        forwarded_ack->payload,
+        forwarded_ack->payload_len,
+        &relay->pending.packet,
+        relay->pending.payload,
+        relay->pending.payload_len,
+        &contains);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -1663,7 +2013,7 @@ static int build_forward(const struct mesh_relay *relay,
     }
 
     out->packet = *packet;
-    out->packet.ttl = packet->ttl - 1u;
+    out->packet.ttl = (uint8_t)(packet->ttl - 1u);
     if (payload_len > 0u) {
         memcpy(out->payload, payload, payload_len);
     }
@@ -1718,6 +2068,7 @@ bool mesh_relay_packet_requires_channel9_payload_event(
     case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_GATEWAY_ACK:
+    case MSG_GATEWAY_ACK_CONFIRM:
     case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
@@ -1735,7 +2086,11 @@ static bool tlv_u32_nonzero(const uint8_t *payload, size_t payload_len, uint8_t 
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
 
-    return tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK &&
+    return tlv_find_unique(payload,
+                           payload_len,
+                           type,
+                           &value,
+                           &value_len) == PROTO_OK &&
            value_len == sizeof(uint32_t) &&
            proto_get_u32_le(value) != 0u;
 }
@@ -1745,7 +2100,11 @@ static bool tlv_u16_nonzero(const uint8_t *payload, size_t payload_len, uint8_t 
     const uint8_t *value = NULL;
     uint8_t value_len = 0u;
 
-    return tlv_find(payload, payload_len, type, &value, &value_len) == PROTO_OK &&
+    return tlv_find_unique(payload,
+                           payload_len,
+                           type,
+                           &value,
+                           &value_len) == PROTO_OK &&
            value_len == sizeof(uint16_t) &&
            proto_get_u16_le(value) != 0u;
 }
@@ -1758,19 +2117,26 @@ static bool command_flood_broadcast_valid(const uint8_t *payload, size_t payload
     uint8_t response_mode = CMD_RESPONSE_SMALL_RESULT;
     int ret;
 
-    ret = tlv_find(payload, payload_len, TLV_COMMAND_SCOPE, &value, &value_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_COMMAND_SCOPE,
+                          &value,
+                          &value_len);
     if (ret != PROTO_OK || value_len != sizeof(uint8_t)) {
         return false;
     }
     scope = value[0];
     if (scope == CMD_SCOPE_SINGLE_NODE ||
-        (scope != CMD_SCOPE_GROUP &&
-         scope != CMD_SCOPE_ALL_REGISTERED &&
+        (scope != CMD_SCOPE_ALL_REGISTERED &&
          scope != CMD_SCOPE_ALL_HEARD)) {
         return false;
     }
 
-    ret = tlv_find(payload, payload_len, TLV_COMMAND_RESPONSE_MODE, &value, &value_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_COMMAND_RESPONSE_MODE,
+                          &value,
+                          &value_len);
     if (ret == PROTO_OK) {
         if (value_len != sizeof(uint8_t)) {
             return false;
@@ -1804,30 +2170,161 @@ static bool command_flood_broadcast_valid(const uint8_t *payload, size_t payload
     return true;
 }
 
+/*
+ * A relayed command keeps the gateway as its immutable logical source while
+ * each physical relay decrements the gateway-owned origin TTL. Reject the
+ * envelope before replay, routing, or forwarding state can consume it.
+ */
+static bool command_packet_envelope_valid(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id)
+{
+    struct gateway_command_options options;
+    enum command_id command_id;
+    uint8_t origin_ttl;
+
+    if (relay == NULL || packet == NULL ||
+        packet->msg_type != MSG_COMMAND ||
+        !id_is_unicast(relay->gateway_id) ||
+        packet->src_id != relay->gateway_id ||
+        (packet->flags & (uint8_t)~FLAG_DIAGNOSTIC) != 0u ||
+        packet->payload_len != payload_len ||
+        payload == NULL ||
+        packet->ttl == 0u ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        (packet->dst_id != MESH_BROADCAST_ID &&
+         (packet->dst_id == 0u || packet->dst_id == relay->gateway_id)) ||
+        gateway_command_extract_id(payload,
+                                   payload_len,
+                                   &command_id) != PROTO_OK ||
+        gateway_command_extract_options(payload,
+                                        payload_len,
+                                        &options) != PROTO_OK) {
+        return false;
+    }
+
+    origin_ttl = gateway_command_origin_ttl(command_id);
+    if (packet->ttl > origin_ttl ||
+        ((packet->ttl == origin_ttl) !=
+         (previous_hop_id == relay->gateway_id))) {
+        return false;
+    }
+    if (packet->dst_id == MESH_BROADCAST_ID) {
+        /*
+         * Survey GO intentionally binds the header session to the durable
+         * operation generation rather than command_seq, so the latter remains
+         * the broadcast application identity without requiring equality here.
+         */
+        return options.flood_required &&
+               command_flood_broadcast_valid(payload, payload_len);
+    }
+    return !options.flood_required;
+}
+
+/*
+ * Gateway BLE prioritization consults FLAG_COUNT_AS_CLICK before msg_type.
+ * Enforce every gateway-bound producer's exact flag shape before a forged
+ * control/status packet can enter duplicate or durable delivery state as a
+ * highest-priority click.
+ */
+static bool gateway_bound_packet_flags_valid(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet)
+{
+    const uint8_t ack = FLAG_GATEWAY_ACK_REQUIRED;
+    const uint8_t diagnostic = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+
+    if (relay == NULL || packet == NULL ||
+        packet->dst_id != relay->gateway_id) {
+        return true;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+        return packet->flags == (ack | FLAG_COUNT_AS_CLICK) ||
+               packet->flags == diagnostic;
+    case MSG_SELF_TEST_REPORT:
+        return packet->flags == diagnostic;
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_RESULT_BUNDLE:
+        return packet->flags == ack;
+    case MSG_COMMAND_RESULT:
+        return packet->flags == ack || packet->flags == diagnostic;
+    case MSG_MESH_DATA:
+        return packet->flags == diagnostic;
+    case MSG_SURVEY_PAIR_RESULT:
+    case MSG_SURVEY_DISCOVERY_REPORT:
+        return packet->flags == diagnostic;
+    default:
+        return true;
+    }
+}
+
 static bool collection_eack_broadcast_valid(const struct mesh_relay *relay,
                                             const struct proto_packet *packet,
                                             const uint8_t *payload,
                                             size_t payload_len)
 {
     struct gateway_collection_eack eack;
+    uint32_t recovery_attempt_id = 0u;
+    int recovery_ret;
 
     if (relay == NULL || packet == NULL ||
         packet->src_id != relay->gateway_id ||
         packet->dst_id != MESH_BROADCAST_ID ||
+        packet->ttl > FLOOD_EPOCH_GLOBAL_TTL ||
         gateway_collection_eack_packet_validate(packet,
                                                 payload,
                                                 payload_len,
                                                 &eack) != PROTO_OK) {
         return false;
     }
+    recovery_ret = gateway_collection_eack_recovery_attempt_id(
+        payload, payload_len, &recovery_attempt_id);
+    if (recovery_ret != PROTO_OK &&
+        recovery_ret != PROTO_ERR_NOT_FOUND) {
+        return false;
+    }
     if (eack.gateway_id != relay->gateway_id ||
-        eack.gateway_epoch != (uint16_t)relay->upstream.current_epoch ||
+        (eack.gateway_epoch != (uint16_t)relay->upstream.current_epoch &&
+         recovery_ret != PROTO_OK) ||
         eack.command_seq == 0u ||
         eack.collection_epoch_id == 0u ||
         eack.received_count > eack.expected_count) {
         return false;
     }
     return true;
+}
+
+static bool collection_eack_rx_envelope_valid(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id)
+{
+    if (!collection_eack_broadcast_valid(relay,
+                                          packet,
+                                          payload,
+                                          payload_len) ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id) {
+        return false;
+    }
+
+    /*
+     * The gateway originates the broadcast at the network-wide TTL.  Every
+     * relay copy must have consumed at least one hop.  This relationship is
+     * checked before duplicate admission so a shortened forged copy cannot
+     * suppress the later canonical flood.
+     */
+    return previous_hop_id == relay->gateway_id ?
+           packet->ttl == FLOOD_EPOCH_GLOBAL_TTL :
+           packet->ttl < FLOOD_EPOCH_GLOBAL_TTL;
 }
 
 static int handle_collection_eack_for_pending(struct mesh_relay *relay,
@@ -1838,14 +2335,18 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
                                               struct mesh_relay_result *result)
 {
     struct gateway_collection_eack eack;
+    struct gateway_collection_recovery_identity recovery_identity;
     struct command_result_id pending_id;
+    uint8_t pending_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t collection_epoch_id = 0u;
+    uint32_t recovery_attempt_id = 0u;
     bool listed = false;
     int ret;
 
     if (relay == NULL || result == NULL || payload == NULL ||
         relay->pending.state == MESH_RELAY_TX_IDLE ||
-        relay->pending.packet.msg_type != MSG_COMMAND_RESULT ||
+        (relay->pending.packet.msg_type != MSG_COMMAND_RESULT &&
+         relay->pending.packet.msg_type != MSG_RESULT_BUNDLE) ||
         relay->pending.packet.dst_id != relay->gateway_id) {
         return PROTO_OK;
     }
@@ -1854,6 +2355,88 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = gateway_collection_eack_recovery_attempt_id(
+        payload, payload_len, &recovery_attempt_id);
+    if (ret == PROTO_OK) {
+        uint64_t pending_gateway_id = 0u;
+        uint16_t pending_gateway_epoch = 0u;
+        uint32_t pending_command_seq = 0u;
+
+        ret = gateway_collection_eack_recovery_identity(
+            payload, payload_len, &recovery_identity);
+        if (ret != PROTO_OK ||
+            !semantic_digest_sha256(relay->pending.payload,
+                                    relay->pending.payload_len,
+                                    pending_payload_digest)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (relay->pending.packet.msg_type == MSG_COMMAND_RESULT) {
+            ret = command_result_id_from_tlvs(relay->pending.payload,
+                                              relay->pending.payload_len,
+                                              &pending_id);
+            if (ret != PROTO_OK) {
+                return PROTO_ERR_MALFORMED;
+            }
+            ret = collection_epoch_id_from_payload(relay->pending.payload,
+                                                   relay->pending.payload_len,
+                                                   &collection_epoch_id);
+            if (ret != PROTO_OK) {
+                return PROTO_ERR_MALFORMED;
+            }
+            pending_gateway_id = pending_id.gateway_id;
+            pending_gateway_epoch = pending_id.gateway_epoch;
+            pending_command_seq = pending_id.command_seq;
+        } else {
+            struct result_bundle_header bundle = {0};
+
+            ret = result_bundle_header_from_tlvs(relay->pending.payload,
+                                                 relay->pending.payload_len,
+                                                 &bundle);
+            if (ret != PROTO_OK) {
+                return PROTO_ERR_MALFORMED;
+            }
+            pending_gateway_id = bundle.gateway_id;
+            pending_gateway_epoch = bundle.gateway_epoch;
+            pending_command_seq = bundle.command_seq;
+            collection_epoch_id = bundle.collection_epoch_id;
+        }
+
+        /*
+         * A durable receipt proves one immutable redriven packet, not every
+         * sender sharing its collection.  Match the complete packet owner and
+         * payload identity before releasing custody.  This also gives bundled
+         * relay packets an exact terminal path after the volatile transaction
+         * has disappeared at the gateway.
+         */
+        if (eack.gateway_id != pending_gateway_id ||
+            eack.gateway_epoch != pending_gateway_epoch ||
+            eack.command_seq != pending_command_seq ||
+            eack.collection_epoch_id != collection_epoch_id ||
+            recovery_identity.packet_src_id !=
+                relay->pending.packet.src_id ||
+            recovery_identity.packet_seq != relay->pending.packet.seq ||
+            recovery_identity.payload_len != relay->pending.payload_len ||
+            !semantic_digest_equal(recovery_identity.payload_digest,
+                                   pending_payload_digest,
+                                   sizeof(pending_payload_digest))) {
+            return PROTO_OK;
+        }
+
+        result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+        mesh_relay_note_route_discovery_ready(
+            relay, relay->pending.packet.dst_id);
+        outbox_record_mark_gateway_acked(relay, now_ms);
+        relay->pending.state = MESH_RELAY_TX_IDLE;
+        route_record_success_at(&relay->upstream, now_ms);
+        return PROTO_OK;
+    }
+    if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+    if (relay->pending.packet.msg_type != MSG_COMMAND_RESULT) {
+        return PROTO_OK;
+    }
+
     ret = command_result_id_from_tlvs(relay->pending.payload,
                                       relay->pending.payload_len,
                                       &pending_id);
@@ -1875,15 +2458,13 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
-    if (!eack.collection_open) {
-        result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
-        outbox_record_mark_collection_closed(relay, &eack, now_ms);
-        relay->pending.state = MESH_RELAY_TX_IDLE;
-        return PROTO_OK;
-    }
-
     if (eack.eack_format != EACK_FORMAT_EXPLICIT_RECEIVED_LIST &&
         eack.eack_format != EACK_FORMAT_EXPLICIT_MISSING_LIST) {
+        if (!eack.collection_open) {
+            result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
+            outbox_record_mark_collection_closed(relay, &eack, now_ms);
+            relay->pending.state = MESH_RELAY_TX_IDLE;
+        }
         return PROTO_OK;
     }
 
@@ -1894,7 +2475,8 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (eack.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST && listed) {
+    if ((eack.eack_format == EACK_FORMAT_EXPLICIT_RECEIVED_LIST && listed) ||
+        (eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && !listed)) {
         result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
         mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
         outbox_record_mark_gateway_acked(relay, now_ms);
@@ -1902,12 +2484,11 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         route_record_success_at(&relay->upstream, now_ms);
         return PROTO_OK;
     }
-    if (eack.eack_format == EACK_FORMAT_EXPLICIT_MISSING_LIST && !listed) {
-        result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
-        mesh_relay_note_route_discovery_ready(relay, relay->pending.packet.dst_id);
-        outbox_record_mark_gateway_acked(relay, now_ms);
+
+    if (!eack.collection_open) {
+        result->actions |= MESH_RELAY_ACTION_TX_COLLECTION_CLOSED;
+        outbox_record_mark_collection_closed(relay, &eack, now_ms);
         relay->pending.state = MESH_RELAY_TX_IDLE;
-        route_record_success_at(&relay->upstream, now_ms);
         return PROTO_OK;
     }
 
@@ -1932,12 +2513,98 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+/*
+ * Dedicated survey controls are gateway-owned protocol messages, not generic
+ * application datagrams. Validate their complete immutable envelope before
+ * duplicate history, local delivery, reverse-route learning, or forwarding
+ * can consume the packet.
+ */
+static bool survey_gateway_control_semantics_valid(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id)
+{
+    struct operation_policy_set policies;
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
+    uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
+    int ret;
+
+    if (packet == NULL ||
+        (packet->msg_type != MSG_SURVEY_DISCOVERY_START &&
+         packet->msg_type != MSG_SURVEY_PAIR_PREPARE)) {
+        return true;
+    }
+    if (relay == NULL || relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        !id_is_unicast(relay->gateway_id) ||
+        packet->src_id != relay->gateway_id ||
+        packet->flags != FLAG_DIAGNOSTIC ||
+        packet->payload_len != payload_len ||
+        payload == NULL ||
+        packet->ttl == 0u || packet->ttl > SURVEY_DEFAULT_TTL ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        ((packet->ttl == SURVEY_DEFAULT_TTL) !=
+         (previous_hop_id == relay->gateway_id))) {
+        return false;
+    }
+
+    if (packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
+        struct survey_discovery_config config;
+        struct survey_discovery_timing timing;
+
+        if (packet->dst_id != MESH_BROADCAST_ID) {
+            return false;
+        }
+        ret = survey_extract_discovery_start_tlvs(
+            payload, payload_len, &config);
+        if (ret != PROTO_OK || config.operation_generation == 0u ||
+            packet->session_id !=
+                survey_operation_session_id(config.operation_generation) ||
+            operation_policy_set_from_tlvs(
+                payload, payload_len, &policies) != PROTO_OK ||
+            policies.assignment_present) {
+            return false;
+        }
+        ret = survey_discovery_timing_from_age(
+            &config, packet->message_age_ms, &timing);
+        return ret == PROTO_OK && !timing.expired;
+    }
+
+    {
+        struct survey_pair pair;
+
+        if (!id_is_unicast(packet->dst_id) ||
+            packet->dst_id == relay->gateway_id ||
+            survey_extract_pair_tlvs(payload, payload_len, &pair) !=
+                PROTO_OK ||
+            pair.operation_generation == 0u ||
+            packet->session_id !=
+                survey_operation_session_id(pair.operation_generation) ||
+            (packet->dst_id != pair.initiator_id &&
+             packet->dst_id != pair.responder_id) ||
+            operation_policy_set_from_tlvs(
+                payload, payload_len, &policies) != PROTO_OK ||
+            policies.assignment_present ||
+            policies.discovery_present ||
+            survey_round_id_extract_tlv(
+                payload, payload_len, &round_id) != PROTO_OK ||
+            round_id == SURVEY_LEGACY_ROUND_ID ||
+            survey_round_commitment_extract_tlv(
+                payload, payload_len, round_commitment) != PROTO_OK) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool broadcast_packet_needs_forward(const struct mesh_relay *relay,
                                            const struct proto_packet *packet,
                                            const uint8_t *payload,
                                            size_t payload_len)
 {
-    if (packet->dst_id != MESH_BROADCAST_ID || packet->ttl == 0u) {
+    if (packet->dst_id != MESH_BROADCAST_ID || packet->ttl <= 1u) {
         return false;
     }
     if (packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
@@ -1975,7 +2642,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     }
 
     out->packet = *packet;
-    out->packet.ttl = packet->ttl - 1u;
+    out->packet.ttl = (uint8_t)(packet->ttl - 1u);
     if (payload_len > 0u) {
         memcpy(out->payload, payload, payload_len);
     }
@@ -1983,6 +2650,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->next_hop_id = MESH_BROADCAST_ID;
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->queued_at_ms = now_ms;
+    out->queued_at_valid = true;
     /*
      * Survey-start forwarding already owns four randomized RF opportunities
      * inside the bounded flood.  Inheriting the generic outer retry count
@@ -2006,6 +2674,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
         packet->ttl,
         packet->msg_type == MSG_COMMAND ? &flood_control : NULL,
         random_value);
+    out->earliest_tx_valid = true;
     return PROTO_OK;
 }
 
@@ -2024,6 +2693,8 @@ static bool local_delivery_needs_response(const struct mesh_relay *relay,
 
 static int add_gateway_ack_action(struct mesh_relay *relay,
                                   const struct proto_packet *packet,
+                                  const uint8_t *payload,
+                                  size_t payload_len,
                                   uint64_t previous_hop_id,
                                   struct mesh_relay_result *result)
 {
@@ -2034,7 +2705,12 @@ static int add_gateway_ack_action(struct mesh_relay *relay,
         return PROTO_OK;
     }
 
-    ret = build_gateway_ack(relay, packet, previous_hop_id, &result->gateway_ack);
+    ret = build_gateway_ack(relay,
+                            packet,
+                            payload,
+                            payload_len,
+                            previous_hop_id,
+                            &result->gateway_ack);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ACK;
     } else if (result->status == PROTO_OK) {
@@ -2056,8 +2732,12 @@ static bool gateway_delivery_requires_commit(
 
     switch (packet->msg_type) {
     case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
+    case MSG_GATEWAY_ACK_CONFIRM:
     case MSG_SURVEY_DISCOVERY_REPORT:
     case MSG_SURVEY_PAIR_RESULT:
         return true;
@@ -2078,11 +2758,11 @@ static bool gateway_collection_duplicate_requires_redelivery(
         return true;
     }
     return packet->msg_type == MSG_COMMAND_RESULT &&
-           tlv_find(payload,
-                    payload_len,
-                    TLV_COLLECTION_EPOCH_ID,
-                    &collection_epoch,
-                    &collection_epoch_len) == PROTO_OK &&
+           tlv_find_unique(payload,
+                           payload_len,
+                           TLV_COLLECTION_EPOCH_ID,
+                           &collection_epoch,
+                           &collection_epoch_len) == PROTO_OK &&
            collection_epoch_len == sizeof(uint32_t);
 }
 
@@ -2094,6 +2774,7 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
                                        uint32_t now_ms,
                                        struct mesh_relay_result *result)
 {
+    struct mesh_ch9_batch_metadata batch_metadata;
     int ret;
 
     if (result == NULL) {
@@ -2120,8 +2801,25 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
         result->status = PROTO_ERR_MALFORMED;
         return PROTO_ERR_MALFORMED;
     }
+    /*
+     * Validate batch framing before allocating an ACK sequence. The history
+     * store repeats this check as a fail-closed boundary, but a malformed
+     * direct commit must not mutate even transport sequencing first.
+     */
+    ret = mesh_ch9_batch_metadata_parse(payload,
+                                        payload_len,
+                                        &batch_metadata);
+    if (ret != PROTO_OK) {
+        result->status = ret;
+        return ret;
+    }
 
-    ret = build_gateway_ack(relay, packet, previous_hop_id, &result->gateway_ack);
+    ret = build_gateway_ack(relay,
+                            packet,
+                            payload,
+                            payload_len,
+                            previous_hop_id,
+                            &result->gateway_ack);
     if (ret != PROTO_OK) {
         result->status = ret;
         return ret;
@@ -2146,14 +2844,43 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+int mesh_relay_commit_anchor_command_delivery(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms)
+{
+    if (relay == NULL || packet == NULL ||
+        (payload_len != 0u && payload == NULL) ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        packet->msg_type != MSG_COMMAND ||
+        packet->src_id != relay->gateway_id ||
+        packet->dst_id != relay->local_id ||
+        packet->payload_len != payload_len ||
+        payload_len > UWB_MESH_MAX_PAYLOAD_LEN) {
+        return PROTO_ERR_ARG;
+    }
+    duplicate_store_payload_identity(
+        relay, packet, payload, payload_len, now_ms);
+    return PROTO_OK;
+}
+
 static void add_hop_ack_action(struct mesh_relay *relay,
                                const struct proto_packet *packet,
+                               const uint8_t *payload,
+                               size_t payload_len,
                                uint64_t previous_hop_id,
                                struct mesh_relay_result *result)
 {
     int ret;
 
-    ret = build_hop_ack(relay, packet, previous_hop_id, &result->hop_ack);
+    ret = build_hop_ack(relay,
+                        packet,
+                        payload,
+                        payload_len,
+                        previous_hop_id,
+                        &result->hop_ack);
     if (ret == PROTO_OK) {
         result->actions |= MESH_RELAY_ACTION_SEND_HOP_ACK;
     }
@@ -2253,6 +2980,8 @@ static int upsert_reactive_route(struct mesh_relay *relay,
             .capacity_valid_until_ms = capacity_valid_until_ms(
                 now_ms,
                 capacity_validity_interval_ms),
+            .capacity_hint_valid =
+                capacity_validity_interval_ms != 0u,
             .valid = true,
         };
 
@@ -2261,6 +2990,8 @@ static int upsert_reactive_route(struct mesh_relay *relay,
         }
         if (rollback != NULL) {
             rollback->kind = REACTIVE_ROUTE_ROLLBACK_UPSTREAM;
+            rollback->gateway_route_adv_seq =
+                relay->gateway_route_adv_seq;
             rollback->state.upstream = relay->upstream;
         }
         ret = route_upsert_candidate(&relay->upstream, &candidate);
@@ -2308,6 +3039,8 @@ static void rollback_reactive_route(struct mesh_relay *relay,
 
     if (rollback->kind == REACTIVE_ROUTE_ROLLBACK_UPSTREAM) {
         relay->upstream = rollback->state.upstream;
+        relay->gateway_route_adv_seq =
+            rollback->gateway_route_adv_seq;
     } else if (rollback->kind == REACTIVE_ROUTE_ROLLBACK_DOWNLINK &&
                rollback->state.downlink.valid &&
                rollback->state.downlink.index <

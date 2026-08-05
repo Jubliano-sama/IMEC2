@@ -8,14 +8,15 @@
 
 #include <string.h>
 
-_Static_assert(sizeof(struct survey_pair) == 24u,
+_Static_assert(sizeof(struct survey_pair) == 32u,
                "survey pair public layout changed");
 _Static_assert(SURVEY_GATEWAY_PAIR_MAX_RERUNS < UINT8_MAX,
                "survey pair rerun count must fit observability attempts");
 _Static_assert(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS >=
                    MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS,
                "survey control base must cover gateway-ACK custody retries");
-_Static_assert(PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +
+_Static_assert(PROTO_TLV_U32_ENCODED_LEN +
+                   (2u * PROTO_TLV_U64_ENCODED_LEN) +
                    PROTO_TLV_U16_ENCODED_LEN +
                    SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *
                        (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN) <=
@@ -57,7 +58,39 @@ uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count)
 
     return SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS +
            ((uint32_t)(effective_hop_count - 1u) *
-            SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS);
+           SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS);
+}
+
+uint64_t survey_discovery_report_deadline_ms(uint64_t now_ms,
+                                             uint32_t eligible_tx_ms,
+                                             uint8_t gateway_hop_count)
+{
+    int32_t until_eligible_ms =
+        (int32_t)(eligible_tx_ms - (uint32_t)now_ms);
+    uint64_t eligible_at_ms;
+    uint32_t custody_ms =
+        survey_discovery_report_custody_ms(gateway_hop_count);
+
+    if (until_eligible_ms > 0) {
+        uint32_t delay_ms = (uint32_t)until_eligible_ms;
+
+        if (UINT64_MAX - now_ms < delay_ms) {
+            return UINT64_MAX;
+        }
+        eligible_at_ms = now_ms + delay_ms;
+    } else {
+        uint64_t elapsed_ms = (uint64_t)(-(int64_t)until_eligible_ms);
+
+        /*
+         * eligible_tx_ms is a boot-relative 32-bit timestamp.  Within its
+         * half-range-valid service horizon, reconstruct the same 64-bit
+         * eligible instant instead of granting a fresh custody window on
+         * every delayed admission or preemption retry.
+         */
+        eligible_at_ms = elapsed_ms > now_ms ? 0u : now_ms - elapsed_ms;
+    }
+    return UINT64_MAX - eligible_at_ms < custody_ms ?
+           UINT64_MAX : eligible_at_ms + custody_ms;
 }
 
 int survey_extract_expected_node_count_tlv(const uint8_t *payload,
@@ -66,6 +99,7 @@ int survey_extract_expected_node_count_tlv(const uint8_t *payload,
                                            bool *present)
 {
     const uint8_t *value;
+    uint16_t decoded_count;
     uint8_t value_len;
     int ret;
 
@@ -73,8 +107,8 @@ int survey_extract_expected_node_count_tlv(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
 
-    ret = tlv_find(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
-                   &value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
+                          &value, &value_len);
     if (ret == PROTO_ERR_NOT_FOUND) {
         *expected_count = 0u;
         *present = false;
@@ -84,11 +118,12 @@ int survey_extract_expected_node_count_tlv(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
 
-    *expected_count = proto_get_u16_le(value);
-    if (*expected_count == 0u ||
-        *expected_count > SURVEY_GATEWAY_MAX_REPORTS) {
+    decoded_count = proto_get_u16_le(value);
+    if (decoded_count == 0u ||
+        decoded_count > SURVEY_GATEWAY_MAX_REPORTS) {
         return PROTO_ERR_MALFORMED;
     }
+    *expected_count = decoded_count;
     *present = true;
     return PROTO_OK;
 }
@@ -119,6 +154,13 @@ enum survey_gateway_collection_decision survey_gateway_collection_decide(
         SURVEY_GATEWAY_COLLECTION_WAIT;
 }
 
+bool survey_gateway_discovery_collection_survives_terminal(
+    bool delivered,
+    uint8_t attempts_started)
+{
+    return delivered || attempts_started > 0u;
+}
+
 static bool ids_are_valid(uint64_t src_id, uint64_t dst_id)
 {
     return src_id != 0u && dst_id != 0u && src_id != dst_id;
@@ -130,6 +172,8 @@ int survey_pair_validate(const struct survey_pair *pair)
         return PROTO_ERR_ARG;
     }
     if (pair->survey_id == 0u ||
+        (pair->operation_generation != 0u &&
+         survey_operation_session_id(pair->operation_generation) == 0u) ||
         pair->initiator_id == 0u ||
         pair->responder_id == 0u ||
         pair->initiator_id == pair->responder_id ||
@@ -155,9 +199,63 @@ int survey_sample_validate(const struct survey_sample *sample)
         return PROTO_ERR_MALFORMED;
     }
     if (sample->range_status < RANGE_OK ||
-        sample->range_status > RANGE_TIMING_INVALID) {
+        sample->range_status > RANGE_TIMING_INVALID ||
+        sample->range_status == RANGE_STS_QUALITY_FAIL) {
         return PROTO_ERR_MALFORMED;
     }
+    return PROTO_OK;
+}
+
+int survey_pair_result_next_round_id(uint16_t current_round_id,
+                                     uint16_t *next_round_id)
+{
+    if (next_round_id == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (current_round_id > SURVEY_PAIR_RESULT_MAX_BATCH_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (current_round_id == SURVEY_PAIR_RESULT_MAX_BATCH_COUNT) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    *next_round_id = (uint16_t)(current_round_id + 1u);
+    return PROTO_OK;
+}
+
+int survey_pair_result_transport_sequence(uint16_t round_id,
+                                          uint16_t sample_index,
+                                          uint16_t *sequence)
+{
+    uint32_t candidate;
+
+    if (sequence == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (round_id > SURVEY_PAIR_RESULT_MAX_BATCH_COUNT ||
+        sample_index >= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    /*
+     * Legacy PREPARE/START controls omit the synchronized-round TLV. Their
+     * immutable survey_id remains the packet session, while sample_index + 1
+     * supplies the nonzero per-run sequence. A legacy sender cannot express a
+     * rerun inside the same survey_id; first accepted results therefore remain
+     * authoritative for that compatibility mode.
+     */
+    candidate = round_id == SURVEY_LEGACY_ROUND_ID ?
+        (uint32_t)sample_index + 1u :
+        ((uint32_t)(round_id - 1u) *
+         SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) +
+        (uint32_t)sample_index + 1u;
+    if (candidate == 0u ||
+        candidate > SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX ||
+        candidate > UINT16_MAX) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *sequence = (uint16_t)candidate;
     return PROTO_OK;
 }
 
@@ -165,6 +263,127 @@ bool survey_sample_distance_usable(const struct survey_sample *sample)
 {
     return sample != NULL && sample->range_status == RANGE_OK &&
            sample->distance_mm > SURVEY_MIN_USABLE_DISTANCE_MM;
+}
+
+bool survey_sample_matches_pair_run(const struct survey_sample *sample,
+                                    const struct survey_pair *pair,
+                                    uint16_t round_id)
+{
+    return sample != NULL && pair != NULL && round_id != 0u &&
+           sample->round_id == round_id &&
+           sample->pair.operation_generation ==
+               pair->operation_generation &&
+           sample->pair.survey_id == pair->survey_id &&
+           sample->pair.initiator_id == pair->initiator_id &&
+           sample->pair.responder_id == pair->responder_id &&
+           sample->pair.sample_count == pair->sample_count;
+}
+
+int survey_sample_observation_identity_capture(
+    const struct survey_sample *sample,
+    struct survey_sample_observation_identity *identity)
+{
+    int ret;
+
+    if (sample == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_sample_validate(sample);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    proto_put_u32_le(identity->encoded, (uint32_t)sample->distance_mm);
+    identity->encoded[4] = sample->quality;
+    identity->encoded[5] = (uint8_t)sample->range_status;
+    return PROTO_OK;
+}
+
+bool survey_sample_observation_identity_valid(
+    const struct survey_sample_observation_identity *identity)
+{
+    return identity != NULL &&
+           identity->encoded[5] !=
+               SURVEY_SAMPLE_OBSERVATION_IDENTITY_INVALID;
+}
+
+bool survey_sample_observation_identity_equal(
+    const struct survey_sample_observation_identity *left,
+    const struct survey_sample_observation_identity *right)
+{
+    return survey_sample_observation_identity_valid(left) &&
+           survey_sample_observation_identity_valid(right) &&
+           memcmp(left->encoded,
+                  right->encoded,
+                  SURVEY_SAMPLE_OBSERVATION_IDENTITY_LEN) == 0;
+}
+
+int survey_pair_note_sample_masks(const struct survey_sample *sample,
+                                  uint64_t reporter_id,
+                                  uint16_t *usable_mask,
+                                  uint16_t *responder_usable_mask,
+                                  uint16_t *initiator_unusable_mask,
+                                  uint16_t *responder_unusable_mask,
+                                  bool *changed)
+{
+    uint16_t sample_bit;
+    bool responder_report;
+
+    if (sample == NULL || usable_mask == NULL ||
+        responder_usable_mask == NULL ||
+        initiator_unusable_mask == NULL ||
+        responder_unusable_mask == NULL || changed == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (survey_sample_validate(sample) != PROTO_OK ||
+        sample->pair.sample_count > 16u ||
+        (reporter_id != sample->pair.initiator_id &&
+         reporter_id != sample->pair.responder_id)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    *changed = false;
+    sample_bit = (uint16_t)(UINT16_C(1) << sample->sample_index);
+    responder_report = reporter_id == sample->pair.responder_id;
+    if (survey_sample_distance_usable(sample)) {
+        /*
+         * The responder captures link RSL while the initiator deliberately
+         * does not. A usable responder result therefore upgrades a usable
+         * initiator result for the same sample; the reverse arrival order is
+         * an idempotent duplicate.
+         */
+        if (responder_report) {
+            if ((*responder_usable_mask & sample_bit) != 0u) {
+                return PROTO_OK;
+            }
+            *responder_usable_mask |= sample_bit;
+        } else if ((*usable_mask & sample_bit) != 0u) {
+            return PROTO_OK;
+        }
+        *usable_mask |= sample_bit;
+        if (responder_report) {
+            *initiator_unusable_mask &= (uint16_t)~sample_bit;
+            *responder_unusable_mask &= (uint16_t)~sample_bit;
+        } else {
+            *initiator_unusable_mask &= (uint16_t)~sample_bit;
+            *responder_unusable_mask &= (uint16_t)~sample_bit;
+        }
+        *changed = true;
+        return PROTO_OK;
+    }
+
+    if ((*usable_mask & sample_bit) != 0u) {
+        return PROTO_OK;
+    }
+    if (!responder_report) {
+        if ((*initiator_unusable_mask & sample_bit) == 0u) {
+            *initiator_unusable_mask |= sample_bit;
+            *changed = true;
+        }
+    } else if ((*responder_unusable_mask & sample_bit) == 0u) {
+        *responder_unusable_mask |= sample_bit;
+        *changed = true;
+    }
+    return PROTO_OK;
 }
 
 bool survey_pair_missing_samples_all_unusable(
@@ -211,6 +430,17 @@ uint64_t survey_sample_nonce(const struct survey_pair *pair, uint16_t sample_ind
             (pair->responder_id << 1) ^
             ((uint64_t)(sample_index + 1u) << 16) ^
             ((uint64_t)sample_index << 48);
+    /*
+     * Production survey IDs are host correlation values and may be reused
+     * after a gateway restart.  Bind the PHY nonce to the durable operation
+     * generation so a delayed frame from an earlier incarnation cannot pass
+     * the expected-session check for the replacement operation.  Preserve the
+     * generation-zero derivation for bounded legacy/native callers.
+     */
+    if (pair->operation_generation != 0u) {
+        value ^= survey_mix64(
+            pair->operation_generation ^ UINT64_C(0x5355525645594e43));
+    }
     return survey_mix64(value);
 }
 
@@ -225,12 +455,139 @@ int survey_reachability_entry_validate(const struct survey_reachability_entry *e
     return PROTO_OK;
 }
 
+int survey_reachability_report_endpoints_validate(
+    uint64_t anchor_id,
+    uint64_t gateway_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count)
+{
+    if (entries == NULL && entry_count != 0u) {
+        return PROTO_ERR_ARG;
+    }
+    if (anchor_id == 0u || gateway_id == 0u ||
+        anchor_id == gateway_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (entry_count > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    for (size_t i = 0u; i < entry_count; i++) {
+        int ret = survey_reachability_entry_validate(&entries[i]);
+
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (entries[i].peer_id == anchor_id ||
+            entries[i].peer_id == gateway_id) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            if (entries[j].peer_id == entries[i].peer_id) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+    }
+    return PROTO_OK;
+}
+
+static bool survey_reachability_entry_precedes(
+    const struct survey_reachability_entry *left,
+    const struct survey_reachability_entry *right)
+{
+    if (left->quality != right->quality) {
+        return left->quality > right->quality;
+    }
+    if (left->rssi_dbm != right->rssi_dbm) {
+        return left->rssi_dbm > right->rssi_dbm;
+    }
+    return left->peer_id < right->peer_id;
+}
+
+static void survey_reachability_entries_sort(
+    struct survey_reachability_entry *entries,
+    size_t entry_count)
+{
+    for (size_t i = 1u; i < entry_count; i++) {
+        const struct survey_reachability_entry value = entries[i];
+        size_t insert = i;
+
+        while (insert > 0u &&
+               survey_reachability_entry_precedes(&value,
+                                                  &entries[insert - 1u])) {
+            entries[insert] = entries[insert - 1u];
+            insert--;
+        }
+        entries[insert] = value;
+    }
+}
+
+int survey_reachability_entry_retain(
+    struct survey_reachability_entry *entries,
+    size_t entry_cap,
+    size_t *entry_count,
+    const struct survey_reachability_entry *candidate)
+{
+    size_t candidate_index = SIZE_MAX;
+
+    if (entries == NULL || entry_count == NULL || candidate == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (*entry_count > entry_cap ||
+        entry_cap > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (survey_reachability_entry_validate(candidate) != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (size_t i = 0u; i < *entry_count; i++) {
+        if (survey_reachability_entry_validate(&entries[i]) != PROTO_OK) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (entries[i].peer_id == candidate->peer_id) {
+            candidate_index = i;
+        }
+    }
+
+    survey_reachability_entries_sort(entries, *entry_count);
+    if (candidate_index != SIZE_MAX) {
+        for (size_t i = 0u; i < *entry_count; i++) {
+            if (entries[i].peer_id == candidate->peer_id) {
+                candidate_index = i;
+                break;
+            }
+        }
+        if (survey_reachability_entry_precedes(candidate,
+                                               &entries[candidate_index])) {
+            entries[candidate_index] = *candidate;
+            survey_reachability_entries_sort(entries, *entry_count);
+        }
+        return PROTO_OK;
+    }
+    if (*entry_count < entry_cap) {
+        entries[*entry_count] = *candidate;
+        (*entry_count)++;
+        survey_reachability_entries_sort(entries, *entry_count);
+        return PROTO_OK;
+    }
+    if (entry_cap == 0u) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    if (survey_reachability_entry_precedes(candidate,
+                                           &entries[*entry_count - 1u])) {
+        entries[*entry_count - 1u] = *candidate;
+        survey_reachability_entries_sort(entries, *entry_count);
+    }
+    return PROTO_OK;
+}
+
 int survey_discovery_config_validate(const struct survey_discovery_config *config)
 {
     if (config == NULL) {
         return PROTO_ERR_ARG;
     }
     if (config->survey_id == 0u ||
+        (config->operation_generation != 0u &&
+         survey_operation_session_id(config->operation_generation) == 0u) ||
         config->start_delay_ms == 0u ||
         config->start_delay_ms > SURVEY_DISCOVERY_MAX_START_DELAY_MS ||
         config->slot_ms < survey_discovery_probe_tx_budget_ms() +
@@ -589,7 +946,8 @@ static int survey_find_u16_tlv(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
 
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, type,
+                          &tlv_value, &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -613,7 +971,8 @@ static int survey_find_u8_tlv(const uint8_t *payload,
     if (payload == NULL || value == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, type,
+                          &tlv_value, &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -637,7 +996,8 @@ static int survey_find_u32_tlv(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
 
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, type,
+                          &tlv_value, &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -662,7 +1022,8 @@ static int survey_find_u64_tlv(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
 
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, type,
+                          &tlv_value, &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -678,41 +1039,414 @@ int survey_gateway_begin(struct survey_gateway_context *context,
                          uint32_t survey_id,
                          uint16_t sample_count)
 {
+    return survey_gateway_begin_operation(context,
+                                          survey_id,
+                                          0u,
+                                          sample_count);
+}
+
+int survey_gateway_begin_operation(struct survey_gateway_context *context,
+                                   uint32_t survey_id,
+                                   uint64_t operation_generation,
+                                   uint16_t sample_count)
+{
     if (context == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (survey_id == 0u || !survey_sample_count_valid(sample_count)) {
+    if (survey_id == 0u ||
+        (operation_generation != 0u &&
+         survey_operation_session_id(operation_generation) == 0u) ||
+        !survey_sample_count_valid(sample_count)) {
         return PROTO_ERR_MALFORMED;
     }
 
     memset(context, 0, sizeof(*context));
+    for (size_t i = 0u; i < SURVEY_GATEWAY_MAX_REPORTS; i++) {
+        context->reports[i].metadata = UINT8_MAX;
+        context->reports[i].reverse_next_hop_index = UINT8_MAX;
+    }
+    context->operation_generation = operation_generation;
     context->survey_id = survey_id;
     context->sample_count = sample_count;
     return PROTO_OK;
 }
 
-static struct survey_gateway_report_slot *
-survey_gateway_find_report(struct survey_gateway_context *context,
-                           uint64_t anchor_id)
+static int survey_gateway_report_metadata_decode(
+    const struct survey_gateway_report_slot *slot,
+    size_t *entry_count,
+    enum command_status *report_status)
 {
-    for (size_t i = 0u; i < context->report_count; i++) {
-        if (context->reports[i].valid &&
-            context->reports[i].anchor_id == anchor_id) {
-            return &context->reports[i];
-        }
+    const uint8_t count = slot->metadata & 0x0fu;
+    const uint8_t status = slot->metadata >> 4u;
+
+    if (slot->metadata == UINT8_MAX ||
+        count > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT ||
+        status > COMMAND_INTERNAL_ERROR) {
+        return PROTO_ERR_MALFORMED;
     }
-    return NULL;
+    if (entry_count != NULL) {
+        *entry_count = count;
+    }
+    if (report_status != NULL) {
+        *report_status = (enum command_status)status;
+    }
+    return PROTO_OK;
 }
 
-int survey_gateway_note_reach_report_with_reverse_hint(
+static uint8_t survey_gateway_compact_entry_node_index(
+    const struct survey_gateway_compact_reachability_entry *entry)
+{
+    return entry->peer_index & SURVEY_GATEWAY_COMPACT_NODE_INDEX_MASK;
+}
+
+static uint8_t survey_gateway_report_order(
+    const struct survey_gateway_report_slot *slot)
+{
+    uint8_t report_order = 0u;
+
+    for (uint8_t i = 0u;
+         i < SURVEY_GATEWAY_REPORT_ORDER_PART_COUNT;
+         i++) {
+        report_order |=
+            (uint8_t)(((slot->entries[i].peer_index >> 6u) & 0x03u) <<
+                      (2u * i));
+    }
+    return report_order;
+}
+
+static void survey_gateway_report_order_set(
+    struct survey_gateway_report_slot *slot,
+    uint8_t report_order)
+{
+    for (uint8_t i = 0u;
+         i < SURVEY_GATEWAY_REPORT_ORDER_PART_COUNT;
+         i++) {
+        slot->entries[i].peer_index =
+            (uint8_t)((slot->entries[i].peer_index &
+                       SURVEY_GATEWAY_COMPACT_NODE_INDEX_MASK) |
+                      (((report_order >> (2u * i)) & 0x03u) << 6u));
+    }
+}
+
+static int survey_gateway_node_table_validate(
+    const struct survey_gateway_context *context)
+{
+    if (context->node_count > SURVEY_GATEWAY_MAX_REPORTS) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (size_t i = 0u; i < context->node_count; i++) {
+        if (context->node_ids[i] == 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            if (context->node_ids[j] == context->node_ids[i]) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+    }
+    return PROTO_OK;
+}
+
+int survey_gateway_context_validate(
+    const struct survey_gateway_context *context)
+{
+    size_t valid_report_count = 0u;
+    bool report_orders_seen[SURVEY_GATEWAY_MAX_REPORTS] = {false};
+    int ret;
+
+    if (context == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_gateway_node_table_validate(context);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (context->report_count > SURVEY_GATEWAY_MAX_REPORTS) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (size_t node_index = 0u;
+         node_index < SURVEY_GATEWAY_MAX_REPORTS;
+         node_index++) {
+        const struct survey_gateway_report_slot *slot =
+            &context->reports[node_index];
+        size_t entry_count;
+
+        if (slot->metadata == UINT8_MAX) {
+            continue;
+        }
+        if (node_index >= context->node_count ||
+            survey_gateway_report_metadata_decode(
+                slot, &entry_count, NULL) != PROTO_OK) {
+            return PROTO_ERR_MALFORMED;
+        }
+        const uint8_t report_order = survey_gateway_report_order(slot);
+
+        if (report_order >= context->report_count ||
+            report_orders_seen[report_order]) {
+            return PROTO_ERR_MALFORMED;
+        }
+        report_orders_seen[report_order] = true;
+        if (slot->reverse_next_hop_index != UINT8_MAX &&
+            slot->reverse_next_hop_index >= context->node_count) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (slot->reverse_quality > 100u ||
+            slot->reverse_hop_count > SURVEY_DEFAULT_TTL) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t i = 0u; i < entry_count; i++) {
+            const struct survey_gateway_compact_reachability_entry *entry =
+                &slot->entries[i];
+            const uint8_t peer_index =
+                survey_gateway_compact_entry_node_index(entry);
+
+            if ((i >= SURVEY_GATEWAY_REPORT_ORDER_PART_COUNT &&
+                 (entry->peer_index &
+                  (uint8_t)~SURVEY_GATEWAY_COMPACT_NODE_INDEX_MASK) != 0u) ||
+                peer_index >= context->node_count ||
+                peer_index == node_index ||
+                entry->quality > 100u) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+        valid_report_count++;
+    }
+    return valid_report_count == context->report_count ?
+           PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+static int survey_gateway_node_index_for_id(
+    const struct survey_gateway_context *context,
+    uint64_t node_id,
+    uint8_t *node_index)
+{
+    if (node_id == 0u || node_index == NULL) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (uint8_t i = 0u; i < context->node_count; i++) {
+        if (context->node_ids[i] == node_id) {
+            *node_index = i;
+            return PROTO_OK;
+        }
+    }
+    return PROTO_ERR_NOT_FOUND;
+}
+
+static int survey_gateway_report_node_index_at(
+    const struct survey_gateway_context *context,
+    size_t report_index,
+    uint8_t *node_index)
+{
+    int ret;
+
+    if (node_index == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_gateway_context_validate(context);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (report_index >= context->report_count) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    for (uint8_t i = 0u; i < context->node_count; i++) {
+        if (context->reports[i].metadata != UINT8_MAX &&
+            survey_gateway_report_order(&context->reports[i]) ==
+                report_index) {
+            *node_index = i;
+            return PROTO_OK;
+        }
+    }
+    return PROTO_ERR_MALFORMED;
+}
+
+static int survey_gateway_resolve_prospective_node(
+    const struct survey_gateway_context *context,
+    uint64_t node_id,
+    uint64_t *new_node_ids,
+    uint8_t *new_node_count,
+    uint8_t *node_index)
+{
+    int ret = survey_gateway_node_index_for_id(context, node_id, node_index);
+
+    if (ret == PROTO_OK) {
+        return PROTO_OK;
+    }
+    if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+    for (uint8_t i = 0u; i < *new_node_count; i++) {
+        if (new_node_ids[i] == node_id) {
+            *node_index = (uint8_t)(context->node_count + i);
+            return PROTO_OK;
+        }
+    }
+    if ((size_t)context->node_count + *new_node_count >=
+        SURVEY_GATEWAY_MAX_REPORTS) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    new_node_ids[*new_node_count] = node_id;
+    *node_index = (uint8_t)(context->node_count + *new_node_count);
+    (*new_node_count)++;
+    return PROTO_OK;
+}
+
+int survey_gateway_report_info_at(
+    const struct survey_gateway_context *context,
+    size_t report_index,
+    uint64_t *anchor_id,
+    size_t *entry_count,
+    enum command_status *report_status)
+{
+    uint8_t node_index;
+    int ret;
+
+    if (context == NULL || anchor_id == NULL || entry_count == NULL ||
+        report_status == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_gateway_report_node_index_at(
+        context, report_index, &node_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_gateway_report_metadata_decode(
+        &context->reports[node_index], entry_count, report_status);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    *anchor_id = context->node_ids[node_index];
+    return PROTO_OK;
+}
+
+int survey_gateway_report_entry_at(
+    const struct survey_gateway_context *context,
+    size_t report_index,
+    size_t entry_index,
+    struct survey_reachability_entry *entry)
+{
+    const struct survey_gateway_compact_reachability_entry *compact;
+    uint8_t node_index;
+    size_t entry_count;
+    int ret;
+
+    if (context == NULL || entry == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_gateway_report_node_index_at(
+        context, report_index, &node_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_gateway_report_metadata_decode(
+        &context->reports[node_index], &entry_count, NULL);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (entry_index >= entry_count) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    compact = &context->reports[node_index].entries[entry_index];
+    const uint8_t peer_index =
+        survey_gateway_compact_entry_node_index(compact);
+
+    if (peer_index >= context->node_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *entry = (struct survey_reachability_entry) {
+        .peer_id = context->node_ids[peer_index],
+        .rssi_dbm = compact->rssi_dbm,
+        .quality = compact->quality,
+    };
+    return PROTO_OK;
+}
+
+int survey_gateway_reach_report_compare(
+    const struct survey_gateway_context *context,
+    uint64_t anchor_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count,
+    enum command_status report_status)
+{
+    uint8_t node_index;
+    size_t stored_entry_count;
+    enum command_status stored_status;
+    int ret;
+
+    if (context == NULL || (entries == NULL && entry_count != 0u)) {
+        return PROTO_ERR_ARG;
+    }
+    if (anchor_id == 0u ||
+        report_status < COMMAND_OK ||
+        report_status > COMMAND_INTERNAL_ERROR) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (entry_count > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    for (size_t i = 0u; i < entry_count; i++) {
+        ret = survey_reachability_entry_validate(&entries[i]);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (entries[i].peer_id == anchor_id) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+    ret = survey_gateway_context_validate(context);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = survey_gateway_node_index_for_id(
+        context, anchor_id, &node_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (context->reports[node_index].metadata == UINT8_MAX) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    ret = survey_gateway_report_metadata_decode(
+        &context->reports[node_index],
+        &stored_entry_count,
+        &stored_status);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (stored_entry_count != entry_count || stored_status != report_status) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (size_t i = 0u; i < entry_count; i++) {
+        const struct survey_gateway_compact_reachability_entry *stored =
+            &context->reports[node_index].entries[i];
+        const uint8_t peer_index =
+            survey_gateway_compact_entry_node_index(stored);
+
+        if (peer_index >= context->node_count ||
+            context->node_ids[peer_index] != entries[i].peer_id ||
+            stored->rssi_dbm != entries[i].rssi_dbm ||
+            stored->quality != entries[i].quality) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+    return PROTO_OK;
+}
+
+int survey_gateway_note_reach_report_with_reverse_hint_status(
     struct survey_gateway_context *context,
     uint32_t survey_id,
     uint64_t anchor_id,
     const struct survey_reachability_entry *entries,
     size_t entry_count,
+    enum command_status report_status,
     const struct survey_gateway_reverse_hint *reverse_hint)
 {
+    uint64_t new_node_ids[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT + 2u];
+    uint8_t entry_node_indices[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    uint8_t new_node_count = 0u;
+    uint8_t anchor_index;
+    uint8_t reverse_next_hop_index = UINT8_MAX;
     struct survey_gateway_report_slot *slot;
+    int ret;
 
     if (context == NULL || (entries == NULL && entry_count != 0u)) {
         return PROTO_ERR_ARG;
@@ -720,7 +1454,9 @@ int survey_gateway_note_reach_report_with_reverse_hint(
     if (context->survey_id == 0u || survey_id != context->survey_id) {
         return PROTO_ERR_STALE;
     }
-    if (anchor_id == 0u) {
+    if (anchor_id == 0u ||
+        report_status < COMMAND_OK ||
+        report_status > COMMAND_INTERNAL_ERROR) {
         return PROTO_ERR_MALFORMED;
     }
     if (reverse_hint != NULL &&
@@ -736,7 +1472,7 @@ int survey_gateway_note_reach_report_with_reverse_hint(
     }
 
     for (size_t i = 0u; i < entry_count; i++) {
-        int ret = survey_reachability_entry_validate(&entries[i]);
+        ret = survey_reachability_entry_validate(&entries[i]);
 
         if (ret != PROTO_OK) {
             return ret;
@@ -746,33 +1482,96 @@ int survey_gateway_note_reach_report_with_reverse_hint(
         }
     }
 
-    slot = survey_gateway_find_report(context, anchor_id);
-    if (slot != NULL) {
+    ret = survey_gateway_reach_report_compare(
+        context, anchor_id, entries, entry_count, report_status);
+    if (ret == PROTO_OK) {
         return PROTO_OK;
+    }
+    if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
     }
     if (context->report_count >= SURVEY_GATEWAY_MAX_REPORTS) {
         return PROTO_ERR_NO_SPACE;
     }
-    slot = &context->reports[context->report_count];
-    context->report_count++;
 
-    memset(slot, 0, sizeof(*slot));
-    slot->anchor_id = anchor_id;
-    slot->entry_count = entry_count;
-    slot->valid = true;
+    ret = survey_gateway_resolve_prospective_node(
+        context, anchor_id, new_node_ids, &new_node_count, &anchor_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    for (size_t i = 0u; i < entry_count; i++) {
+        ret = survey_gateway_resolve_prospective_node(
+            context,
+            entries[i].peer_id,
+            new_node_ids,
+            &new_node_count,
+            &entry_node_indices[i]);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
     if (reverse_hint != NULL) {
-        slot->reverse_next_hop_id = reverse_hint->next_hop_id;
+        ret = survey_gateway_resolve_prospective_node(
+            context,
+            reverse_hint->next_hop_id,
+            new_node_ids,
+            &new_node_count,
+            &reverse_next_hop_index);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+
+    slot = &context->reports[anchor_index];
+    if (slot->metadata != UINT8_MAX) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (uint8_t i = 0u; i < new_node_count; i++) {
+        context->node_ids[context->node_count + i] = new_node_ids[i];
+    }
+    context->node_count = (uint8_t)(context->node_count + new_node_count);
+    memset(slot, 0, sizeof(*slot));
+    slot->reverse_next_hop_index = UINT8_MAX;
+    for (size_t i = 0u; i < entry_count; i++) {
+        slot->entries[i] =
+            (struct survey_gateway_compact_reachability_entry) {
+                .peer_index = entry_node_indices[i],
+                .rssi_dbm = entries[i].rssi_dbm,
+                .quality = entries[i].quality,
+            };
+    }
+    if (reverse_hint != NULL) {
+        slot->reverse_next_hop_index = reverse_next_hop_index;
         slot->reverse_quality = reverse_hint->quality;
         slot->reverse_hop_count = reverse_hint->hop_count;
-        slot->reverse_hint_valid = true;
     }
-    if (entry_count > 0u) {
-        memcpy(slot->entries, entries, entry_count * sizeof(entries[0]));
-    }
+    survey_gateway_report_order_set(slot, context->report_count);
+    slot->metadata =
+        (uint8_t)(((uint8_t)report_status << 4u) | (uint8_t)entry_count);
+    context->report_count++;
     context->pairs_planned = false;
+    context->topology_complete = false;
     context->pair_count = 0u;
     context->next_pair_index = 0u;
     return PROTO_OK;
+}
+
+int survey_gateway_note_reach_report_with_reverse_hint(
+    struct survey_gateway_context *context,
+    uint32_t survey_id,
+    uint64_t anchor_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count,
+    const struct survey_gateway_reverse_hint *reverse_hint)
+{
+    return survey_gateway_note_reach_report_with_reverse_hint_status(
+        context,
+        survey_id,
+        anchor_id,
+        entries,
+        entry_count,
+        COMMAND_OK,
+        reverse_hint);
 }
 
 int survey_gateway_note_reach_report(struct survey_gateway_context *context,
@@ -794,6 +1593,10 @@ int survey_gateway_reverse_hint_for_target(
     uint64_t target_id,
     struct survey_gateway_reverse_hint *reverse_hint)
 {
+    uint8_t node_index;
+    const struct survey_gateway_report_slot *slot;
+    int ret;
+
     if (context == NULL || reverse_hint == NULL) {
         return PROTO_ERR_ARG;
     }
@@ -804,29 +1607,42 @@ int survey_gateway_reverse_hint_for_target(
         return PROTO_ERR_MALFORMED;
     }
 
-    for (size_t i = 0u; i < context->report_count; i++) {
-        const struct survey_gateway_report_slot *slot = &context->reports[i];
-
-        if (slot->valid &&
-            slot->anchor_id == target_id &&
-            slot->reverse_hint_valid) {
-            *reverse_hint = (struct survey_gateway_reverse_hint) {
-                .target_id = slot->anchor_id,
-                .next_hop_id = slot->reverse_next_hop_id,
-                .quality = slot->reverse_quality,
-                .hop_count = slot->reverse_hop_count,
-                .valid = true,
-            };
-            return PROTO_OK;
-        }
+    ret = survey_gateway_context_validate(context);
+    if (ret != PROTO_OK) {
+        return ret;
     }
-    return PROTO_ERR_NOT_FOUND;
+    ret = survey_gateway_node_index_for_id(
+        context, target_id, &node_index);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    slot = &context->reports[node_index];
+    if (slot->metadata == UINT8_MAX ||
+        slot->reverse_next_hop_index == UINT8_MAX) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (slot->reverse_next_hop_index >= context->node_count) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *reverse_hint = (struct survey_gateway_reverse_hint) {
+        .target_id = context->node_ids[node_index],
+        .next_hop_id =
+            context->node_ids[slot->reverse_next_hop_index],
+        .quality = slot->reverse_quality,
+        .hop_count = slot->reverse_hop_count,
+        .valid = true,
+    };
+    return PROTO_OK;
 }
 
 int survey_gateway_pair_at(const struct survey_gateway_context *context,
                            size_t pair_index,
                            struct survey_pair *pair)
 {
+    const struct survey_gateway_pair_entry *stored;
+    struct survey_pair decoded;
+    int ret;
+
     if (context == NULL || pair == NULL) {
         return PROTO_ERR_ARG;
     }
@@ -836,13 +1652,29 @@ int survey_gateway_pair_at(const struct survey_gateway_context *context,
     if (pair_index >= context->pair_count) {
         return PROTO_ERR_NOT_FOUND;
     }
+    if (context->pair_count > SURVEY_GATEWAY_MAX_PAIRS ||
+        survey_gateway_context_validate(context) != PROTO_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+    stored = &context->pairs[pair_index];
+    if (stored->initiator_index >= context->node_count ||
+        stored->responder_index >= context->node_count ||
+        stored->initiator_index == stored->responder_index) {
+        return PROTO_ERR_MALFORMED;
+    }
 
-    *pair = (struct survey_pair) {
+    decoded = (struct survey_pair) {
+        .operation_generation = context->operation_generation,
         .survey_id = context->survey_id,
-        .initiator_id = context->pairs[pair_index].initiator_id,
-        .responder_id = context->pairs[pair_index].responder_id,
+        .initiator_id = context->node_ids[stored->initiator_index],
+        .responder_id = context->node_ids[stored->responder_index],
         .sample_count = context->sample_count,
     };
+    ret = survey_pair_validate(&decoded);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    *pair = decoded;
     return PROTO_OK;
 }
 
@@ -1017,29 +1849,33 @@ int survey_gateway_auto_mark_waiting(struct survey_gateway_auto_context *context
 bool survey_gateway_auto_command_matches(const struct survey_gateway_auto_context *context,
                                          enum command_id command_id,
                                          uint64_t target_id,
-                                         uint32_t survey_id)
+                                         uint32_t operation_session_id)
 {
     enum command_id expected_command = CMD_VENDOR_BASE;
     uint64_t expected_target = 0u;
+    uint32_t expected_session_id;
 
     if (context == NULL || !context->running || !context->waiting ||
-        survey_id == 0u || target_id == 0u) {
+        operation_session_id == 0u || target_id == 0u) {
         return false;
     }
     if (survey_gateway_auto_stage_command(context->stage, &expected_command) != PROTO_OK ||
         survey_gateway_auto_stage_target(context, &expected_target) != PROTO_OK) {
         return false;
     }
+    expected_session_id = context->pair.operation_generation == 0u ?
+        context->pair.survey_id :
+        survey_operation_session_id(context->pair.operation_generation);
 
     return command_id == expected_command &&
            target_id == expected_target &&
-           survey_id == context->pair.survey_id;
+           operation_session_id == expected_session_id;
 }
 
 int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *context,
                                       enum command_id command_id,
                                       uint64_t target_id,
-                                      uint32_t survey_id)
+                                      uint32_t operation_session_id)
 {
     if (context == NULL) {
         return PROTO_ERR_ARG;
@@ -1048,7 +1884,7 @@ int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *contex
         !survey_gateway_auto_command_matches(context,
                                              command_id,
                                              target_id,
-                                             survey_id)) {
+                                             operation_session_id)) {
         return PROTO_ERR_NOT_FOUND;
     }
 
@@ -1081,7 +1917,7 @@ int survey_gateway_auto_rerun_pair(
 int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
                                     enum command_id command_id,
                                     uint64_t target_id,
-                                    uint32_t survey_id,
+                                    uint32_t operation_session_id,
                                     enum command_status status,
                                     bool *pair_launched,
                                     bool *pair_skipped)
@@ -1095,7 +1931,10 @@ int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
     if (!survey_gateway_auto_status_valid(status)) {
         return PROTO_ERR_MALFORMED;
     }
-    if (!survey_gateway_auto_command_matches(context, command_id, target_id, survey_id)) {
+    if (!survey_gateway_auto_command_matches(context,
+                                             command_id,
+                                             target_id,
+                                             operation_session_id)) {
         return PROTO_ERR_NOT_FOUND;
     }
 
@@ -1137,17 +1976,33 @@ int survey_extract_reach_request_tlvs(const uint8_t *payload,
                                       uint32_t *survey_id,
                                       uint32_t *duration_ms)
 {
+    uint32_t decoded_duration_ms;
+    uint32_t decoded_survey_id;
     int ret;
 
-    ret = survey_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, survey_id);
+    if (payload == NULL || survey_id == NULL || duration_ms == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_find_u32_tlv(payload,
+                              payload_len,
+                              TLV_SURVEY_ID,
+                              &decoded_survey_id);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = survey_find_u32_tlv(payload, payload_len, TLV_DURATION_MS, duration_ms);
+    ret = survey_find_u32_tlv(payload,
+                              payload_len,
+                              TLV_DURATION_MS,
+                              &decoded_duration_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
-    return *survey_id == 0u || *duration_ms == 0u ? PROTO_ERR_MALFORMED : PROTO_OK;
+    if (decoded_survey_id == 0u || decoded_duration_ms == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *survey_id = decoded_survey_id;
+    *duration_ms = decoded_duration_ms;
+    return PROTO_OK;
 }
 
 int survey_extract_reach_report_tlvs(const uint8_t *payload,
@@ -1158,6 +2013,11 @@ int survey_extract_reach_report_tlvs(const uint8_t *payload,
                                      size_t entry_cap,
                                      size_t *entry_count)
 {
+    struct survey_reachability_entry decoded_entries[
+        SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    uint64_t decoded_anchor_id;
+    uint32_t decoded_survey_id;
+    size_t decoded_entry_count = 0u;
     size_t offset = 0u;
     int ret;
 
@@ -1166,19 +2026,24 @@ int survey_extract_reach_report_tlvs(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
 
-    ret = survey_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, survey_id);
+    ret = survey_find_u32_tlv(payload,
+                              payload_len,
+                              TLV_SURVEY_ID,
+                              &decoded_survey_id);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = survey_find_u64_tlv(payload, payload_len, TLV_ANCHOR_ID, anchor_id);
+    ret = survey_find_u64_tlv(payload,
+                              payload_len,
+                              TLV_ANCHOR_ID,
+                              &decoded_anchor_id);
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (*survey_id == 0u || *anchor_id == 0u) {
+    if (decoded_survey_id == 0u || decoded_anchor_id == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
-    *entry_count = 0u;
     while (offset < payload_len) {
         uint8_t type;
         uint8_t len;
@@ -1206,19 +2071,29 @@ int survey_extract_reach_report_tlvs(const uint8_t *payload,
             if (ret != PROTO_OK) {
                 return ret;
             }
-            if (entry.peer_id == *anchor_id) {
+            if (entry.peer_id == decoded_anchor_id) {
                 return PROTO_ERR_MALFORMED;
             }
-            if (*entry_count >= entry_cap) {
+            if (decoded_entry_count >= entry_cap ||
+                decoded_entry_count >=
+                    SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
                 return PROTO_ERR_NO_SPACE;
             }
-            entries[*entry_count] = entry;
-            (*entry_count)++;
+            decoded_entries[decoded_entry_count] = entry;
+            decoded_entry_count++;
         }
 
         offset += len;
     }
 
+    *survey_id = decoded_survey_id;
+    *anchor_id = decoded_anchor_id;
+    if (decoded_entry_count > 0u) {
+        memcpy(entries,
+               decoded_entries,
+               decoded_entry_count * sizeof(decoded_entries[0]));
+    }
+    *entry_count = decoded_entry_count;
     return PROTO_OK;
 }
 
@@ -1226,6 +2101,7 @@ int survey_extract_discovery_start_tlvs(const uint8_t *payload,
                                         size_t payload_len,
                                         struct survey_discovery_config *config)
 {
+    struct survey_discovery_config decoded = {0};
     struct operation_policy_set policies;
     const uint8_t *slot_count_value = NULL;
     uint8_t slot_count_len = 0u;
@@ -1236,58 +2112,66 @@ int survey_extract_discovery_start_tlvs(const uint8_t *payload,
         return PROTO_ERR_ARG;
     }
 
-    memset(config, 0, sizeof(*config));
-    ret = survey_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, &config->survey_id);
+    ret = survey_operation_generation_extract_tlv(
+        payload, payload_len, &decoded.operation_generation);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+    ret = survey_find_u32_tlv(payload,
+                              payload_len,
+                              TLV_SURVEY_ID,
+                              &decoded.survey_id);
     if (ret != PROTO_OK) {
         return ret;
     }
     ret = survey_find_u32_tlv(payload,
                               payload_len,
                               TLV_DISCOVERY_START_DELAY_MS,
-                              &config->start_delay_ms);
+                              &decoded.start_delay_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
     ret = survey_find_u16_tlv(payload,
                               payload_len,
                               TLV_DISCOVERY_SLOT_MS,
-                              &config->slot_ms);
+                              &decoded.slot_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_find(payload,
-                   payload_len,
-                   TLV_DISCOVERY_SLOT_COUNT,
-                   &slot_count_value,
-                   &slot_count_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_DISCOVERY_SLOT_COUNT,
+                          &slot_count_value,
+                          &slot_count_len);
     if (ret != PROTO_OK) {
         return ret;
     }
     if (slot_count_len != sizeof(uint8_t)) {
         return PROTO_ERR_MALFORMED;
     }
-    config->slot_count = slot_count_value[0];
-    config->round_count = SURVEY_DISCOVERY_MAX_ROUND_COUNT;
+    decoded.slot_count = slot_count_value[0];
+    decoded.round_count = SURVEY_DISCOVERY_MAX_ROUND_COUNT;
     ret = operation_policy_set_from_tlvs(payload, payload_len, &policies);
     if (ret != PROTO_OK) {
         return ret;
     }
     if (policies.discovery_present) {
-        if (policies.discovery.start_delay_ms != config->start_delay_ms ||
-            policies.discovery.slot_ms != config->slot_ms ||
-            policies.discovery.slot_count != config->slot_count) {
+        if (policies.discovery.start_delay_ms != decoded.start_delay_ms ||
+            policies.discovery.slot_ms != decoded.slot_ms ||
+            policies.discovery.slot_count != decoded.slot_count) {
             return PROTO_ERR_MALFORMED;
         }
-        config->round_count = policies.discovery.round_count;
+        decoded.round_count = policies.discovery.round_count;
     }
     ret = survey_find_u32_tlv(payload, payload_len, TLV_DURATION_MS, &duration_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (survey_discovery_config_validate(config) != PROTO_OK ||
-        duration_ms != survey_discovery_duration_ms(config)) {
+    if (survey_discovery_config_validate(&decoded) != PROTO_OK ||
+        duration_ms != survey_discovery_duration_ms(&decoded)) {
         return PROTO_ERR_MALFORMED;
     }
+    *config = decoded;
     return PROTO_OK;
 }
 
@@ -1309,11 +2193,11 @@ int survey_extract_discovery_slot_count_tlv(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
 
-    ret = tlv_find(payload,
-                   payload_len,
-                   TLV_DISCOVERY_SLOT_COUNT,
-                   &slot_count_value,
-                   &slot_count_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_DISCOVERY_SLOT_COUNT,
+                          &slot_count_value,
+                          &slot_count_len);
     if (ret == PROTO_ERR_NOT_FOUND) {
         *slot_count = value;
         return PROTO_OK;
@@ -1354,11 +2238,11 @@ int survey_extract_ml_anchor_pair_request_tlvs(
     }
 
     memset(request, 0, sizeof(*request));
-    ret = tlv_find(payload,
-                   payload_len,
-                   TLV_DISCOVERY_SLOT_COUNT,
-                   &slot_count_value,
-                   &slot_count_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_DISCOVERY_SLOT_COUNT,
+                          &slot_count_value,
+                          &slot_count_len);
     if (ret == PROTO_ERR_NOT_FOUND) {
         request->discovery_slot_count = slot_count;
         return PROTO_OK;
@@ -1384,30 +2268,85 @@ int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair)
 {
+    struct survey_pair parsed = {0};
     int ret;
 
     if (pair == NULL) {
         return PROTO_ERR_ARG;
     }
 
-    ret = survey_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, &pair->survey_id);
+    ret = survey_operation_generation_extract_tlv(
+        payload, payload_len, &parsed.operation_generation);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+    ret = survey_find_u32_tlv(payload, payload_len, TLV_SURVEY_ID, &parsed.survey_id);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = survey_find_u64_tlv(payload, payload_len, TLV_INITIATOR_ID, &pair->initiator_id);
+    ret = survey_find_u64_tlv(payload, payload_len, TLV_INITIATOR_ID, &parsed.initiator_id);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = survey_find_u64_tlv(payload, payload_len, TLV_RESPONDER_ID, &pair->responder_id);
+    ret = survey_find_u64_tlv(payload, payload_len, TLV_RESPONDER_ID, &parsed.responder_id);
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = survey_find_u16_tlv(payload, payload_len, TLV_SAMPLE_COUNT, &pair->sample_count);
+    ret = survey_find_u16_tlv(payload, payload_len, TLV_SAMPLE_COUNT, &parsed.sample_count);
     if (ret != PROTO_OK) {
         return ret;
     }
 
-    return survey_pair_validate(pair);
+    ret = survey_pair_validate(&parsed);
+    if (ret == PROTO_OK) {
+        *pair = parsed;
+    }
+    return ret;
+}
+
+uint32_t survey_operation_session_id(uint64_t operation_generation)
+{
+    uint32_t session_id = (uint32_t)operation_generation;
+
+    return operation_generation == 0u || session_id == 0u ? 0u : session_id;
+}
+
+int survey_operation_generation_append_tlv(uint8_t *payload,
+                                           size_t payload_cap,
+                                           size_t *offset,
+                                           uint64_t operation_generation)
+{
+    if (operation_generation == 0u ||
+        survey_operation_session_id(operation_generation) == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return tlv_append_u64(payload,
+                          payload_cap,
+                          offset,
+                          TLV_SURVEY_OPERATION_GENERATION,
+                          operation_generation);
+}
+
+int survey_operation_generation_extract_tlv(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t *operation_generation)
+{
+    int ret;
+
+    if (payload == NULL || operation_generation == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = survey_find_u64_tlv(payload,
+                              payload_len,
+                              TLV_SURVEY_OPERATION_GENERATION,
+                              operation_generation);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return *operation_generation == 0u ||
+           survey_operation_session_id(*operation_generation) == 0u ?
+               PROTO_ERR_MALFORMED : PROTO_OK;
 }
 
 int survey_append_reach_request_tlvs(uint8_t *payload,
@@ -1446,6 +2385,16 @@ int survey_append_discovery_start_tlvs(uint8_t *payload,
     ret = tlv_append_u32(payload, payload_cap, offset, TLV_SURVEY_ID, config->survey_id);
     if (ret != PROTO_OK) {
         return ret;
+    }
+    if (config->operation_generation != 0u) {
+        ret = survey_operation_generation_append_tlv(
+            payload,
+            payload_cap,
+            offset,
+            config->operation_generation);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     ret = tlv_append_u32(payload,
                          payload_cap,
@@ -1548,6 +2497,16 @@ int survey_append_pair_tlvs(uint8_t *payload,
     ret = tlv_append_u32(payload, payload_cap, offset, TLV_SURVEY_ID, pair->survey_id);
     if (ret != PROTO_OK) {
         return ret;
+    }
+    if (pair->operation_generation != 0u) {
+        ret = survey_operation_generation_append_tlv(
+            payload,
+            payload_cap,
+            offset,
+            pair->operation_generation);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     ret = tlv_append_u64(payload, payload_cap, offset, TLV_INITIATOR_ID, pair->initiator_id);
     if (ret != PROTO_OK) {
@@ -1654,9 +2613,10 @@ int survey_init_result_packet_from_reporter(struct proto_packet *packet,
                                             uint16_t seq,
                                             uint8_t payload_len)
 {
+    uint32_t session_id;
     int ret;
 
-    if (packet == NULL || gateway_id == 0u || reporter_id == 0u) {
+    if (packet == NULL || sample == NULL) {
         return PROTO_ERR_ARG;
     }
 
@@ -1664,20 +2624,27 @@ int survey_init_result_packet_from_reporter(struct proto_packet *packet,
     if (ret != PROTO_OK) {
         return ret;
     }
-    if (reporter_id != sample->pair.initiator_id &&
-        reporter_id != sample->pair.responder_id) {
+    session_id = sample->pair.operation_generation == 0u ?
+        sample->pair.survey_id :
+        survey_operation_session_id(sample->pair.operation_generation);
+    if (!ids_are_valid(reporter_id, gateway_id) ||
+        seq == 0u || payload_len == 0u || session_id == 0u ||
+        (reporter_id != sample->pair.initiator_id &&
+         reporter_id != sample->pair.responder_id)) {
         return PROTO_ERR_MALFORMED;
     }
 
-    packet->msg_type = MSG_SURVEY_PAIR_RESULT;
-    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
-    packet->src_id = reporter_id;
-    packet->dst_id = gateway_id;
-    packet->session_id = sample->pair.survey_id;
-    packet->seq = seq;
-    packet->ttl = SURVEY_DEFAULT_TTL;
-    packet->payload_len = payload_len;
-    packet->message_age_ms = 0u;
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_SURVEY_PAIR_RESULT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = reporter_id,
+        .dst_id = gateway_id,
+        .session_id = session_id,
+        .seq = seq,
+        .ttl = SURVEY_DEFAULT_TTL,
+        .payload_len = payload_len,
+        .message_age_ms = 0u,
+    };
     return PROTO_OK;
 }
 
@@ -1704,19 +2671,25 @@ int survey_init_reach_request_packet(struct proto_packet *packet,
                                      uint16_t seq,
                                      uint8_t payload_len)
 {
-    if (packet == NULL || gateway_id == 0u || survey_id == 0u) {
+    if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
+    if (gateway_id == MESH_BROADCAST_ID || survey_id == 0u || seq == 0u ||
+        payload_len == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
 
-    packet->msg_type = MSG_SURVEY_REACH_REQ;
-    packet->flags = FLAG_DIAGNOSTIC;
-    packet->src_id = gateway_id;
-    packet->dst_id = 0u;
-    packet->session_id = survey_id;
-    packet->seq = seq;
-    packet->ttl = SURVEY_DEFAULT_TTL;
-    packet->payload_len = payload_len;
-    packet->message_age_ms = 0u;
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_SURVEY_REACH_REQ,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = gateway_id,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = survey_id,
+        .seq = seq,
+        .ttl = SURVEY_DEFAULT_TTL,
+        .payload_len = payload_len,
+        .message_age_ms = 0u,
+    };
     return PROTO_OK;
 }
 
@@ -1730,19 +2703,22 @@ int survey_init_reach_report_packet(struct proto_packet *packet,
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(anchor_id, gateway_id) || survey_id == 0u) {
+    if (!ids_are_valid(anchor_id, gateway_id) || survey_id == 0u ||
+        seq == 0u || payload_len == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
-    packet->msg_type = MSG_SURVEY_REACH_REPORT;
-    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
-    packet->src_id = anchor_id;
-    packet->dst_id = gateway_id;
-    packet->session_id = survey_id;
-    packet->seq = seq;
-    packet->ttl = SURVEY_DEFAULT_TTL;
-    packet->payload_len = payload_len;
-    packet->message_age_ms = 0u;
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_SURVEY_REACH_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = anchor_id,
+        .dst_id = gateway_id,
+        .session_id = survey_id,
+        .seq = seq,
+        .ttl = SURVEY_DEFAULT_TTL,
+        .payload_len = payload_len,
+        .message_age_ms = 0u,
+    };
     return PROTO_OK;
 }
 
@@ -1752,25 +2728,36 @@ int survey_init_discovery_start_packet(struct proto_packet *packet,
                                        uint16_t seq,
                                        uint8_t payload_len)
 {
+    uint32_t session_id;
     int ret;
 
-    if (packet == NULL || gateway_id == 0u) {
+    if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
     ret = survey_discovery_config_validate(config);
     if (ret != PROTO_OK) {
         return ret;
     }
+    session_id = config->operation_generation == 0u ?
+        config->survey_id :
+        survey_operation_session_id(config->operation_generation);
+    if (gateway_id == MESH_BROADCAST_ID || seq == 0u ||
+        payload_len == 0u ||
+        session_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
 
-    packet->msg_type = MSG_SURVEY_DISCOVERY_START;
-    packet->flags = FLAG_DIAGNOSTIC;
-    packet->src_id = gateway_id;
-    packet->dst_id = 0u;
-    packet->session_id = config->survey_id;
-    packet->seq = seq;
-    packet->ttl = SURVEY_DEFAULT_TTL;
-    packet->payload_len = payload_len;
-    packet->message_age_ms = 0u;
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_SURVEY_DISCOVERY_START,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = gateway_id,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = session_id,
+        .seq = seq,
+        .ttl = SURVEY_DEFAULT_TTL,
+        .payload_len = payload_len,
+        .message_age_ms = 0u,
+    };
     return PROTO_OK;
 }
 
@@ -1778,37 +2765,47 @@ int survey_init_discovery_report_packet(struct proto_packet *packet,
                                         uint64_t anchor_id,
                                         uint64_t gateway_id,
                                         uint32_t survey_id,
+                                        uint64_t operation_generation,
                                         uint16_t seq,
                                         uint8_t payload_len)
 {
+    uint32_t session_id;
+
     if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!ids_are_valid(anchor_id, gateway_id) || survey_id == 0u) {
+    session_id = operation_generation == 0u ?
+        survey_id : survey_operation_session_id(operation_generation);
+    if (!ids_are_valid(anchor_id, gateway_id) || survey_id == 0u ||
+        seq == 0u || payload_len == 0u || session_id == 0u) {
         return PROTO_ERR_MALFORMED;
     }
 
-    packet->msg_type = MSG_SURVEY_DISCOVERY_REPORT;
-    packet->flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
-    packet->src_id = anchor_id;
-    packet->dst_id = gateway_id;
-    packet->session_id = survey_id;
-    packet->seq = seq;
-    packet->ttl = SURVEY_DEFAULT_TTL;
-    packet->payload_len = payload_len;
-    packet->message_age_ms = 0u;
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_SURVEY_DISCOVERY_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = anchor_id,
+        .dst_id = gateway_id,
+        .session_id = session_id,
+        .seq = seq,
+        .ttl = SURVEY_DEFAULT_TTL,
+        .payload_len = payload_len,
+        .message_age_ms = 0u,
+    };
     return PROTO_OK;
 }
 
 int survey_init_pair_prepare_packet(struct proto_packet *packet,
                                     const struct survey_pair *pair,
                                     uint64_t gateway_id,
+                                    uint64_t target_id,
                                     uint16_t seq,
                                     uint8_t payload_len)
 {
+    uint32_t session_id;
     int ret;
 
-    if (packet == NULL || gateway_id == 0u) {
+    if (packet == NULL) {
         return PROTO_ERR_ARG;
     }
 
@@ -1816,15 +2813,27 @@ int survey_init_pair_prepare_packet(struct proto_packet *packet,
     if (ret != PROTO_OK) {
         return ret;
     }
+    session_id = pair->operation_generation == 0u ?
+        pair->survey_id :
+        survey_operation_session_id(pair->operation_generation);
+    if (!ids_are_valid(gateway_id, pair->initiator_id) ||
+        !ids_are_valid(gateway_id, pair->responder_id) ||
+        (target_id != pair->initiator_id &&
+         target_id != pair->responder_id) ||
+        seq == 0u || payload_len == 0u || session_id == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
 
-    packet->msg_type = MSG_SURVEY_PAIR_PREPARE;
-    packet->flags = FLAG_DIAGNOSTIC;
-    packet->src_id = gateway_id;
-    packet->dst_id = pair->initiator_id;
-    packet->session_id = pair->survey_id;
-    packet->seq = seq;
-    packet->ttl = SURVEY_DEFAULT_TTL;
-    packet->payload_len = payload_len;
-    packet->message_age_ms = 0u;
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_SURVEY_PAIR_PREPARE,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = gateway_id,
+        .dst_id = target_id,
+        .session_id = session_id,
+        .seq = seq,
+        .ttl = SURVEY_DEFAULT_TTL,
+        .payload_len = payload_len,
+        .message_age_ms = 0u,
+    };
     return PROTO_OK;
 }

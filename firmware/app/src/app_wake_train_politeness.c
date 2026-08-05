@@ -1,5 +1,7 @@
 #include "app_wake_train_politeness.h"
 
+#include <limits.h>
+
 bool app_wake_train_politeness_rx_activity(int rx_ret,
                                            enum dwm3000_rx_failure failure)
 {
@@ -46,4 +48,46 @@ uint32_t app_wake_train_politeness_backoff_ms(uint8_t retry_index,
     }
 
     return base_ms + (random_value % (jitter_window_ms + 1u));
+}
+
+bool app_wake_train_deadline_fits(int64_t now_ms,
+                                  int64_t deadline_ms,
+                                  uint32_t required_ms)
+{
+    if (deadline_ms == INT64_MAX) {
+        return true;
+    }
+    if (now_ms < 0 || now_ms > deadline_ms) {
+        return false;
+    }
+    return (uint64_t)required_ms <= (uint64_t)(deadline_ms - now_ms);
+}
+
+bool app_wake_train_deadline_clip_delay(int64_t now_ms,
+                                        int64_t deadline_ms,
+                                        uint32_t requested_delay_ms,
+                                        uint32_t required_tail_ms,
+                                        uint32_t *delay_ms)
+{
+    uint64_t available_ms;
+
+    if (delay_ms == NULL) {
+        return false;
+    }
+    *delay_ms = 0u;
+
+    if (deadline_ms == INT64_MAX) {
+        *delay_ms = requested_delay_ms;
+        return true;
+    }
+    if (!app_wake_train_deadline_fits(now_ms,
+                                      deadline_ms,
+                                      required_tail_ms)) {
+        return false;
+    }
+
+    available_ms = (uint64_t)(deadline_ms - now_ms) - required_tail_ms;
+    *delay_ms = available_ms < requested_delay_ms ?
+                (uint32_t)available_ms : requested_delay_ms;
+    return true;
 }

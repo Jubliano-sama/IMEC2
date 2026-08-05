@@ -36,7 +36,7 @@ static int find_u8(const uint8_t *payload,
     if (value == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    ret = tlv_find_unique(payload, payload_len, type, &raw, &raw_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -59,7 +59,7 @@ static int find_u32(const uint8_t *payload,
     if (value == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    ret = tlv_find_unique(payload, payload_len, type, &raw, &raw_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -82,7 +82,7 @@ static int find_u64(const uint8_t *payload,
     if (value == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, type, &raw, &raw_len);
+    ret = tlv_find_unique(payload, payload_len, type, &raw, &raw_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -108,23 +108,57 @@ uint64_t discovery_assignment_hash(uint64_t anchor_id)
     return value == 0u ? 1u : value;
 }
 
+int discovery_assignment_reconcile_epoch_baseline(
+    uint32_t cursor_epoch,
+    uint32_t proof_epoch,
+    uint32_t *resolved_epoch,
+    bool *cursor_repair_required)
+{
+    if (resolved_epoch == NULL || cursor_repair_required == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    *resolved_epoch = 0u;
+    *cursor_repair_required = false;
+    if (cursor_epoch == 0u) {
+        *resolved_epoch = proof_epoch;
+        *cursor_repair_required = proof_epoch != 0u;
+        return PROTO_OK;
+    }
+    if (proof_epoch == 0u || cursor_epoch == proof_epoch ||
+        discovery_assignment_epoch_strictly_newer(cursor_epoch,
+                                                   proof_epoch)) {
+        *resolved_epoch = cursor_epoch;
+        return PROTO_OK;
+    }
+    if (discovery_assignment_epoch_strictly_newer(proof_epoch,
+                                                   cursor_epoch)) {
+        *resolved_epoch = proof_epoch;
+        *cursor_repair_required = true;
+        return PROTO_OK;
+    }
+
+    /*
+     * Unequal nonzero serials for which neither is newer differ by exactly
+     * half the uint32_t range. RFC 1982 deliberately leaves that ordering
+     * undefined, so recovery cannot safely reserve from either side.
+     */
+    return PROTO_ERR_STALE;
+}
+
 bool discovery_assignment_response_custody_matches(
     bool active,
     uint32_t pending_epoch,
     enum discovery_assignment_phase pending_phase,
-    uint32_t pending_session_id,
     uint32_t incoming_epoch,
-    enum discovery_assignment_phase incoming_phase,
-    uint32_t incoming_session_id)
+    enum discovery_assignment_phase incoming_phase)
 {
     return active &&
            pending_epoch != 0u &&
            pending_epoch == incoming_epoch &&
-           phase_valid(pending_phase) &&
-           pending_phase == incoming_phase &&
            (pending_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
-            (pending_session_id != 0u &&
-             pending_session_id == incoming_session_id));
+            pending_phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) &&
+           pending_phase == incoming_phase;
 }
 
 static bool claim_before(const struct discovery_assignment_claim *left,
@@ -200,6 +234,36 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
     return PROTO_OK;
 }
 
+int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
+                                                 size_t anchor_count,
+                                                 size_t prior_anchor_count)
+{
+    int ret;
+
+    if ((anchor_ids == NULL && anchor_count != 0u) ||
+        anchor_count > UWB_DISCOVERY_SLOT_COUNT ||
+        prior_anchor_count > anchor_count) {
+        return PROTO_ERR_ARG;
+    }
+    if (anchor_count == 0u) {
+        return PROTO_OK;
+    }
+    for (size_t i = 0u; i < anchor_count; i++) {
+        if (anchor_ids[i] == 0u) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t j = 0u; j < i; j++) {
+            if (anchor_ids[j] == anchor_ids[i]) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+    }
+    ret = discovery_assignment_sort_anchor_ids(
+        &anchor_ids[prior_anchor_count],
+        anchor_count - prior_anchor_count);
+    return ret;
+}
+
 int discovery_assignment_entries_from_claims(
     const struct discovery_assignment_claim *claims,
     size_t claim_count,
@@ -238,6 +302,12 @@ int discovery_assignment_append_control_tlvs(
         return PROTO_ERR_ARG;
     }
     ret = tlv_append_u8(payload, payload_cap, offset,
+                        TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION,
+                        DISCOVERY_ASSIGNMENT_SCHEME_VERSION);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u8(payload, payload_cap, offset,
                         TLV_DISCOVERY_ASSIGNMENT_PHASE, (uint8_t)phase);
     if (ret != PROTO_OK) {
         return ret;
@@ -252,11 +322,20 @@ int discovery_assignment_extract_control_tlvs(
     enum discovery_assignment_phase *phase,
     uint32_t *epoch)
 {
+    uint8_t scheme_version = 0u;
     uint8_t raw_phase = 0u;
     int ret;
 
     if (payload == NULL || phase == NULL || epoch == NULL) {
         return PROTO_ERR_ARG;
+    }
+    ret = find_u8(payload,
+                  payload_len,
+                  TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION,
+                  &scheme_version);
+    if (ret != PROTO_OK ||
+        scheme_version != DISCOVERY_ASSIGNMENT_SCHEME_VERSION) {
+        return PROTO_ERR_MALFORMED;
     }
     ret = find_u8(payload, payload_len, TLV_DISCOVERY_ASSIGNMENT_PHASE,
                   &raw_phase);
@@ -295,6 +374,131 @@ int discovery_assignment_extract_claim_hash(const uint8_t *payload,
         return ret;
     }
     return *hash == 0u ? PROTO_ERR_MALFORMED : PROTO_OK;
+}
+
+int discovery_assignment_parse_result_tlvs(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct discovery_assignment_result *result)
+{
+    struct discovery_assignment_result parsed = {0};
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    uint16_t command_id;
+    uint16_t status;
+    uint8_t reason;
+    int ret;
+
+    if (payload == NULL || result == NULL) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = tlv_find_unique(payload, payload_len, TLV_COMMAND_ID,
+                          &raw, &raw_len);
+    if (ret != PROTO_OK || raw_len != sizeof(uint16_t)) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+    command_id = proto_get_u16_le(raw);
+    if (command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    ret = tlv_find_unique(payload, payload_len, TLV_COMMAND_STATUS,
+                          &raw, &raw_len);
+    if (ret != PROTO_OK || raw_len != sizeof(uint16_t)) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+    status = proto_get_u16_le(raw);
+    if (status != COMMAND_OK) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = tlv_find_unique(payload, payload_len, TLV_REASON, &raw, &raw_len);
+    if (ret != PROTO_OK || raw_len != sizeof(uint8_t)) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+    reason = raw[0];
+    if (reason != 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = discovery_assignment_extract_control_tlvs(
+        payload, payload_len, &parsed.phase, &parsed.epoch);
+    if (ret != PROTO_OK ||
+        (parsed.phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
+         parsed.phase != DISCOVERY_ASSIGNMENT_PHASE_ACK)) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+    ret = discovery_assignment_extract_claim_hash(
+        payload, payload_len, &parsed.hash);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    ret = tlv_find_unique(
+        payload,
+        payload_len,
+        TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT,
+        &raw,
+        &raw_len);
+    if (parsed.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        if (ret != PROTO_OK ||
+            raw_len != sizeof(parsed.table_commitment.bytes)) {
+            return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+        }
+        memcpy(parsed.table_commitment.bytes,
+               raw,
+               sizeof(parsed.table_commitment.bytes));
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+
+    ret = tlv_find_unique(payload, payload_len, TLV_HOP_COUNT,
+                          &raw, &raw_len);
+    if (ret == PROTO_OK) {
+        if (raw_len != sizeof(uint8_t)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        parsed.hop_count = raw[0];
+        parsed.hop_count_present = true;
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
+
+    /*
+     * Batch metadata is an optional transport extension, but either field
+     * alone, a duplicate, a zero ID, or unknown flags is malformed.
+     */
+    {
+        const uint8_t *batch_id_raw = NULL;
+        const uint8_t *batch_flags_raw = NULL;
+        uint8_t batch_id_len = 0u;
+        uint8_t batch_flags_len = 0u;
+        int batch_id_ret = tlv_find_unique(
+            payload, payload_len, TLV_MESH_CH9_BATCH_ID,
+            &batch_id_raw, &batch_id_len);
+        int batch_flags_ret = tlv_find_unique(
+            payload, payload_len, TLV_MESH_CH9_BATCH_FLAGS,
+            &batch_flags_raw, &batch_flags_len);
+
+        if (batch_id_ret != batch_flags_ret) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (batch_id_ret != PROTO_OK &&
+            batch_id_ret != PROTO_ERR_NOT_FOUND) {
+            return batch_id_ret;
+        }
+        if (batch_id_ret == PROTO_OK &&
+            (batch_id_len != sizeof(uint32_t) ||
+             batch_flags_len != sizeof(uint8_t) ||
+             proto_get_u32_le(batch_id_raw) == 0u ||
+             (batch_flags_raw[0] & (uint8_t)~UINT8_C(0x01)) != 0u)) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+
+    *result = parsed;
+    return PROTO_OK;
 }
 
 int discovery_assignment_append_table_tlvs(
@@ -338,12 +542,14 @@ int discovery_assignment_append_table_tlvs(
 
             if (entry->anchor_id == 0u ||
                 entry->hash != discovery_assignment_hash(entry->anchor_id) ||
-                entry->slot != entry_index + i ||
-                (entry_index + i > 0u &&
-                 (entries[entry_index + i - 1u].hash > entry->hash ||
-                  (entries[entry_index + i - 1u].hash == entry->hash &&
-                   entries[entry_index + i - 1u].anchor_id >= entry->anchor_id)))) {
+                entry->slot >= UWB_DISCOVERY_SLOT_COUNT) {
                 return PROTO_ERR_MALFORMED;
+            }
+            for (size_t prior = 0u; prior < entry_index + i; prior++) {
+                if (entries[prior].anchor_id == entry->anchor_id ||
+                    entries[prior].slot == entry->slot) {
+                    return PROTO_ERR_MALFORMED;
+                }
             }
             proto_put_u64_le(&raw[raw_offset], entry->anchor_id);
             proto_put_u64_le(&raw[raw_offset + 8u], entry->hash);
@@ -400,10 +606,13 @@ int discovery_assignment_append_table_from_anchor_ids(
             uint64_t anchor_id = anchor_ids[index];
             uint64_t hash = discovery_assignment_hash(anchor_id);
 
-            if (anchor_id == 0u ||
-                (index > 0u &&
-                 !anchor_id_before(anchor_ids[index - 1u], anchor_id))) {
+            if (anchor_id == 0u) {
                 return PROTO_ERR_MALFORMED;
+            }
+            for (size_t prior = 0u; prior < index; prior++) {
+                if (anchor_ids[prior] == anchor_id) {
+                    return PROTO_ERR_MALFORMED;
+                }
             }
             proto_put_u64_le(&raw[raw_offset], anchor_id);
             proto_put_u64_le(&raw[raw_offset + 8u], hash);
@@ -445,8 +654,8 @@ int discovery_assignment_parse_table_tlvs(
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = tlv_find(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
-                   &expected_count_raw, &expected_count_len);
+    ret = tlv_find_unique(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
+                          &expected_count_raw, &expected_count_len);
     if (ret != PROTO_OK || expected_count_len != sizeof(uint16_t)) {
         return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
     }
@@ -490,12 +699,14 @@ int discovery_assignment_parse_table_tlvs(
                 entry->slot = payload[offset + raw_offset + 16u];
                 if (entry->anchor_id == 0u ||
                     entry->hash != discovery_assignment_hash(entry->anchor_id) ||
-                    entry->slot != count || entry->slot >= configured_slot_count ||
-                    (count > 0u &&
-                     (entries[count - 1u].hash > entry->hash ||
-                      (entries[count - 1u].hash == entry->hash &&
-                       entries[count - 1u].anchor_id >= entry->anchor_id)))) {
+                    entry->slot >= configured_slot_count) {
                     return PROTO_ERR_MALFORMED;
+                }
+                for (size_t prior = 0u; prior < count; prior++) {
+                    if (entries[prior].anchor_id == entry->anchor_id ||
+                        entries[prior].slot == entry->slot) {
+                        return PROTO_ERR_MALFORMED;
+                    }
                 }
                 count++;
             }
@@ -510,37 +721,109 @@ int discovery_assignment_parse_table_tlvs(
     return PROTO_OK;
 }
 
-uint32_t discovery_assignment_table_fingerprint(
+bool discovery_assignment_table_commitment(
     const struct discovery_assignment_entry *entries,
     size_t entry_count,
-    uint8_t slot_count)
+    uint8_t slot_count,
+    struct discovery_assignment_table_commitment *commitment)
 {
-    uint32_t hash = UINT32_C(2166136261);
+    static const uint8_t domain[] = {
+        'I', 'M', 'E', 'C', '-', 'A', 'S', 'S', 'I', 'G', 'N',
+        'M', 'E', 'N', 'T', '-', 'T', 'A', 'B', 'L', 'E',
+        DISCOVERY_ASSIGNMENT_SCHEME_VERSION,
+    };
+    struct semantic_digest_sha256_context context;
+    uint8_t header[2];
 
+    if (commitment == NULL) {
+        return false;
+    }
+    memset(commitment, 0, sizeof(*commitment));
     if (entries == NULL || entry_count == 0u ||
         entry_count > UWB_DISCOVERY_SLOT_COUNT || slot_count == 0u ||
         slot_count > UWB_DISCOVERY_SLOT_COUNT || entry_count > slot_count) {
-        return 0u;
+        return false;
     }
-    hash = (hash ^ slot_count) * UINT32_C(16777619);
-    hash = (hash ^ (uint8_t)entry_count) * UINT32_C(16777619);
+    if (!semantic_digest_sha256_init(&context) ||
+        !semantic_digest_sha256_update(&context, domain, sizeof(domain))) {
+        return false;
+    }
+    header[0] = slot_count;
+    header[1] = (uint8_t)entry_count;
+    if (!semantic_digest_sha256_update(&context, header, sizeof(header))) {
+        return false;
+    }
+
     for (size_t i = 0u; i < entry_count; i++) {
         const struct discovery_assignment_entry *entry = &entries[i];
-        uint8_t encoded[DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN];
 
         if (entry->anchor_id == 0u ||
             entry->hash != discovery_assignment_hash(entry->anchor_id) ||
-            entry->slot != i || entry->slot >= slot_count) {
-            return 0u;
+            entry->slot >= slot_count) {
+            return false;
+        }
+        for (size_t prior = 0u; prior < i; prior++) {
+            if (entries[prior].anchor_id == entry->anchor_id ||
+                entries[prior].slot == entry->slot) {
+                return false;
+            }
+        }
+    }
+
+    /*
+     * Hash by explicit slot rather than arrival order. Two valid TABLE
+     * encodings of the same sparse membership therefore have one semantic
+     * commitment, while the slot byte still binds every gap and owner.
+     */
+    for (uint8_t slot = 0u; slot < slot_count; slot++) {
+        const struct discovery_assignment_entry *entry = NULL;
+        uint8_t encoded[DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN];
+
+        for (size_t i = 0u; i < entry_count; i++) {
+            if (entries[i].slot == slot) {
+                entry = &entries[i];
+                break;
+            }
+        }
+        if (entry == NULL) {
+            continue;
         }
         proto_put_u64_le(encoded, entry->anchor_id);
         proto_put_u64_le(&encoded[8], entry->hash);
         encoded[16] = entry->slot;
-        for (size_t j = 0u; j < sizeof(encoded); j++) {
-            hash = (hash ^ encoded[j]) * UINT32_C(16777619);
+        if (!semantic_digest_sha256_update(
+                &context, encoded, sizeof(encoded))) {
+            return false;
         }
     }
-    return hash == 0u ? 1u : hash;
+    return semantic_digest_sha256_final(&context, commitment->bytes);
+}
+
+bool discovery_assignment_table_commitment_equal(
+    const struct discovery_assignment_table_commitment *left,
+    const struct discovery_assignment_table_commitment *right)
+{
+    return left != NULL && right != NULL &&
+           semantic_digest_equal(left->bytes,
+                                 right->bytes,
+                                 sizeof(left->bytes));
+}
+
+int discovery_assignment_append_table_commitment(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct discovery_assignment_table_commitment *commitment)
+{
+    if (commitment == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    return tlv_append_bytes(payload,
+                            payload_cap,
+                            offset,
+                            TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT,
+                            commitment->bytes,
+                            sizeof(commitment->bytes));
 }
 
 int discovery_assignment_response_delay_ms(uint16_t response_spread_ms,
@@ -653,6 +936,13 @@ uint64_t discovery_assignment_response_ack_settle_deadline_ms(uint64_t now_ms)
            UINT64_MAX : now_ms + DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS;
 }
 
+bool discovery_assignment_ack_quorum_settle_should_arm(
+    bool settle_armed,
+    uint8_t missing_ack_count)
+{
+    return missing_ack_count == 0u && !settle_armed;
+}
+
 uint32_t discovery_assignment_claim_ack_settle_duration_ms(uint8_t hop_count)
 {
     uint8_t effective_hop_count =
@@ -694,8 +984,8 @@ int discovery_assignment_extract_expected_count(const uint8_t *payload,
     if (payload == NULL || expected_count == NULL || present == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
-                   &raw, &raw_len);
+    ret = tlv_find_unique(payload, payload_len, TLV_EXPECTED_NODE_COUNT,
+                          &raw, &raw_len);
     if (ret == PROTO_ERR_NOT_FOUND) {
         *expected_count = 0u;
         *present = false;

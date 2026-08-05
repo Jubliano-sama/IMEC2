@@ -97,6 +97,7 @@ struct node_comm_lifecycle {
 struct node_comm_terminal_event {
     uint32_t handle;
     uint32_t client_token;
+    uint64_t terminal_at_ms;
     enum node_comm_terminal_reason reason;
     uint8_t attempts_started;
 };
@@ -106,6 +107,7 @@ struct node_comm_request_slot {
     struct node_comm_terminal_event terminal;
     uint64_t retry_due_ms;
     uint64_t enqueue_order;
+    uint64_t backend_guard_expires_at_ms;
     uint32_t handle;
     uint32_t lease_generation;
     uint32_t retry_delay_ms;
@@ -117,6 +119,7 @@ struct node_comm_request_slot {
     uint8_t retry_backoff_shift_cap;
     uint8_t priority;
     bool rf_started;
+    bool backend_guard_active;
 };
 
 struct node_comm {
@@ -205,6 +208,11 @@ int node_comm_acquire(struct node_comm *comm,
 int node_comm_lease_note_rf_started(struct node_comm *comm,
                                     const struct node_comm_lease *lease,
                                     uint64_t now_ms);
+int node_comm_lease_backend_guard_begin(
+    struct node_comm *comm,
+    const struct node_comm_lease *lease,
+    uint64_t expires_at_ms,
+    uint64_t now_ms);
 int node_comm_lease_defer_pre_rf(struct node_comm *comm,
                                 const struct node_comm_lease *lease,
                                 uint64_t not_before_ms,

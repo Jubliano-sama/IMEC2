@@ -1,0 +1,7 @@
+&flash0 {
+    erase-block-size = <0x400>;
+};
+
+&storage_partition {
+    reg = <0x000fa000 0x00006000>;
+};

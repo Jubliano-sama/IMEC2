@@ -11,5 +11,7 @@ target_include_directories(app PRIVATE
 target_sources(app PRIVATE
     src/main.c
     ../../src/app_mesh_ch9_ack.c
+    ../../../src/mesh.c
     ../../../src/protocol.c
+    ../../../src/semantic_digest.c
 )

@@ -23,9 +23,12 @@
 #define DEFAULT_MAX_STEPS 800u
 #define MAX_CONSECUTIVE_EMPTY_CHANNEL9_EVENTS 12u
 #define MAX_POST_COMPLETION_STEPS_PER_PATH_NODE \
-    (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u))
+    (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u) * \
+     ROUTE_MAX_CANDIDATES)
 #define MAX_POST_COMPLETION_EMPTY_CHANNEL9_PER_CONNECTION \
-    (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u))
+    (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u) * \
+     ROUTE_MAX_CANDIDATES)
+#define POST_COMPLETION_STEP_FIXED_ALLOWANCE 2u
 #define POST_COMPLETION_EMPTY_CHANNEL9_FIXED_ALLOWANCE 2u
 #define IDENTICAL_CONTROL_FIXED_ALLOWANCE 2u
 #define TRAFFIC_BOUND_FIXED_ALLOWANCE 64u
@@ -740,7 +743,7 @@ static bool network_idle(const struct runner *runner)
             return false;
         }
     }
-    return true;
+    return !mesh_sim_has_pending_finite_work(runner->world);
 }
 
 static int schedule_relay_deadlines(struct runner *runner)
@@ -817,9 +820,40 @@ static uint64_t operation_liveness_bound_us(const struct runner *runner)
 {
     size_t admitted_transactions = runner->transaction_count == 0u ?
                                    1u : runner->transaction_count;
+    const struct mesh_event_params params = connection_params(0u);
+    size_t path_phases = runner->path_node_count == 0u ?
+                         1u : runner->path_node_count;
+    uint64_t settlement_allowance_us =
+        ((uint64_t)params.event_interval_ms * path_phases +
+         params.event_window_ms) * 1000u +
+        DIRECT_GATEWAY_TX_PREPARE_US +
+        DIRECT_GATEWAY_PAYLOAD_SERVICE_US +
+        DIRECT_GATEWAY_ACK_SERVICE_US +
+        DIRECT_GATEWAY_RX_COMPLETION_GUARD_US +
+        runner->config.faults.max_extra_delay_us;
 
     return (uint64_t)MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS * 1000u *
-           admitted_transactions;
+           admitted_transactions * ROUTE_MAX_CANDIDATES +
+           settlement_allowance_us;
+}
+
+static uint64_t transaction_retry_bound(const struct runner *runner)
+{
+    uint64_t bounded_backoff_retries =
+        operation_liveness_bound_us(runner) /
+        ((uint64_t)RELAY_BUSY_RETRY_MIN_MS * 1000u);
+    uint64_t immediate_parent_switches =
+        (uint64_t)(runner->path_node_count == 0u ? 1u :
+                   runner->path_node_count) *
+        ROUTE_MAX_CANDIDATES;
+
+    /*
+     * A durable transaction may revisit a parent after hold-down and route
+     * repair, so ROUTE_MAX_FAILURES is not a transaction-wide retry budget.
+     * Bound retry rate by the shortest production backoff and allow one
+     * immediate switch per candidate at every custody owner.
+     */
+    return bounded_backoff_retries + immediate_parent_switches;
 }
 
 static void update_delivery_timestamps(struct runner *runner)
@@ -844,7 +878,9 @@ static int incremental_liveness_checks(const struct runner *runner)
     uint32_t post_completion_step_bound =
         (uint32_t)(runner->path_node_count == 0u ? 1u :
                    runner->path_node_count) *
-        MAX_POST_COMPLETION_STEPS_PER_PATH_NODE;
+        MAX_POST_COMPLETION_STEPS_PER_PATH_NODE +
+        (uint32_t)runner->connection_count * 2u +
+        POST_COMPLETION_STEP_FIXED_ALLOWANCE;
     uint32_t post_completion_empty_bound =
         (uint32_t)(runner->connection_count == 0u ? 1u :
                    runner->connection_count) *
@@ -936,7 +972,8 @@ static int traffic_liveness_checks(const struct runner *runner)
 {
     const struct mesh_sim_world *sim = runner->world;
     uint32_t identical_control_bound =
-        ((uint32_t)runner->path_node_count + 1u) * ROUTE_MAX_FAILURES +
+        ((uint32_t)runner->path_node_count + 1u) *
+        ROUTE_MAX_FAILURES * ROUTE_MAX_CANDIDATES +
         IDENTICAL_CONTROL_FIXED_ALLOWANCE;
     uint64_t traffic_bound = TRAFFIC_BOUND_FIXED_ALLOWANCE +
         (uint64_t)runner->transaction_count * runner->path_node_count *
@@ -1018,8 +1055,7 @@ static int traffic_liveness_checks(const struct runner *runner)
 
 static int terminal_checks(struct runner *runner)
 {
-    uint64_t retry_bound =
-        (uint64_t)runner->path_node_count * ROUTE_MAX_FAILURES;
+    uint64_t retry_bound = transaction_retry_bound(runner);
     int ret;
 
     if (runner->world->connection_count != runner->connection_count ||
@@ -1424,8 +1460,8 @@ static int write_trace(const struct runner *runner, int status)
     }
     retries = mesh_sim_count_transitions(
         runner->world, MESH_SIM_TRANSITION_RETRY_READY, 0u);
-    retry_bound = runner->expected_deliveries * runner->path_node_count *
-                  ROUTE_MAX_FAILURES;
+    retry_bound = runner->expected_deliveries *
+                  transaction_retry_bound(runner);
     fprintf(file,
             "{\"type\":\"summary\",\"status\":%d,"
             "\"now_us\":%" PRIu64 ",\"steps\":%" PRIu32

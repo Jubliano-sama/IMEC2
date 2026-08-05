@@ -4,6 +4,9 @@
 #include <limits.h>
 #include <string.h>
 
+_Static_assert(PACKET_EXT_MAX_PAYLOAD_LEN <= UINT16_MAX,
+               "simulated packet payload length must fit the protocol codec");
+
 static bool connection_event_work_current(
     const struct mesh_sim_world *world,
     const struct mesh_sim_connection_event *event)
@@ -132,20 +135,33 @@ static uint16_t connection_next_control_sequence(
     return node->event_control_seq;
 }
 
-static uint32_t connection_new_session(struct mesh_sim_world *world)
+static uint32_t connection_new_session(struct mesh_sim_world *world,
+                                       uint8_t proposer)
 {
-    uint32_t session_id = mesh_sim_random(world);
+    struct mesh_sim_role_instance *node;
+    uint32_t seed;
 
-    if (session_id == 0u) {
-        session_id = 1u;
+    if (!mesh_sim_node_index_valid(world, proposer)) {
+        return 0u;
     }
-    while (connection_session_retained(world, session_id)) {
-        session_id++;
-        if (session_id == 0u) {
-            session_id = 1u;
+    node = &world->roles[proposer];
+    /*
+     * Match the firmware's per-boot session allocator: seed once, then advance
+     * serially. Consume the established simulator RNG draw on every call so
+     * unrelated deterministic fault and scheduling streams do not shift.
+     */
+    seed = mesh_sim_random(world);
+    if (node->event_operation_session_next == 0u) {
+        node->event_operation_session_next = seed == 0u ? 1u : seed;
+    }
+    do {
+        node->event_operation_session_next++;
+        if (node->event_operation_session_next == 0u) {
+            node->event_operation_session_next = 1u;
         }
-    }
-    return session_id;
+    } while (connection_session_retained(
+        world, node->event_operation_session_next));
+    return node->event_operation_session_next;
 }
 
 static uint64_t connection_endpoints_ready_us(
@@ -171,6 +187,32 @@ static uint64_t connection_endpoints_ready_us(
         }
     }
     return ready_us;
+}
+
+static int connection_radio_policy_deferred(
+    const struct mesh_sim_world *world,
+    uint8_t node_index,
+    uint64_t start_us,
+    uint64_t end_us,
+    bool *deferred)
+{
+    int ret;
+
+    if (deferred == NULL) {
+        return MESH_SIM_ERR_ARG;
+    }
+    ret = mesh_sim_radio_operation_conflicts(world,
+                                             node_index,
+                                             start_us,
+                                             end_us);
+    if (ret == MESH_SIM_ERR_RADIO_CONFLICT) {
+        *deferred = true;
+        return MESH_SIM_OK;
+    }
+    if (ret == MESH_SIM_OK) {
+        *deferred = false;
+    }
+    return ret;
 }
 
 static int connection_control_frame_len(
@@ -357,6 +399,22 @@ static int sync_connection_timing(struct mesh_sim_world *world,
     return mesh_sim_publish_connection_timing(world, connection);
 }
 
+static void retire_connection_for_repair(
+    struct mesh_sim_world *world,
+    struct mesh_sim_connection *connection)
+{
+    mesh_sim_clear_connection_timing(world, connection);
+    mesh_event_owner_abandon(&connection->owner_a);
+    mesh_event_owner_abandon(&connection->owner_b);
+    connection->timing_a.route_fresh = false;
+    connection->timing_a.timing_fresh = false;
+    connection->timing_a.fallback_required = true;
+    connection->timing_b.route_fresh = false;
+    connection->timing_b.timing_fresh = false;
+    connection->timing_b.fallback_required = true;
+    connection->establishing = true;
+}
+
 int mesh_sim_add_connection(struct mesh_sim_world *world,
                             uint8_t node_a,
                             uint8_t node_b,
@@ -390,11 +448,13 @@ int mesh_sim_add_connection(struct mesh_sim_world *world,
     if (ret != PROTO_OK) {
         return ret;
     }
+    connection->repair_session_id = connection_new_session(world, node_a);
+    connection->timing_a.event_counter = connection->repair_session_id;
+    connection->timing_b.event_counter = connection->repair_session_id;
     mesh_event_timing_set_local_first_slot_tx(&connection->timing_a,
                                               node_a_transmits_first);
     mesh_event_timing_set_local_first_slot_tx(&connection->timing_b,
                                               !node_a_transmits_first);
-    connection->repair_session_id = connection_new_session(world);
     /* Preserve the established deterministic RNG stream while modeling the
      * production node's monotonic event-control sequence. */
     (void)mesh_sim_random(world);
@@ -434,7 +494,7 @@ static int schedule_connection_repair_exchange(
     connection->repair_end_us = end_us;
     connection->repair_requester = requester;
     connection->repair_control_frame_len = control_frame_len;
-    connection->repair_session_id = connection_new_session(world);
+    connection->repair_session_id = connection_new_session(world, requester);
     (void)mesh_sim_random(world);
     connection->repair_seq = connection_next_control_sequence(world,
                                                                requester);
@@ -482,12 +542,7 @@ int mesh_sim_add_connection_over_radio(struct mesh_sim_world *world,
         return ret;
     }
     connection = &world->connections[*connection_index];
-    mesh_sim_clear_connection_timing(world, connection);
-    mesh_event_owner_abandon(&connection->owner_a);
-    mesh_event_owner_abandon(&connection->owner_b);
-    connection->timing_a.timing_fresh = false;
-    connection->timing_b.timing_fresh = false;
-    connection->establishing = true;
+    retire_connection_for_repair(world, connection);
     ret = connection_repair_duration_us(world,
                                         connection,
                                         &duration_us,
@@ -528,16 +583,7 @@ int mesh_sim_renegotiate_connection_over_radio(
         return MESH_SIM_ERR_EVENT_ORDER;
     }
 
-    mesh_sim_clear_connection_timing(world, connection);
-    mesh_event_owner_abandon(&connection->owner_a);
-    mesh_event_owner_abandon(&connection->owner_b);
-    connection->timing_a.route_fresh = false;
-    connection->timing_a.timing_fresh = false;
-    connection->timing_a.fallback_required = true;
-    connection->timing_b.route_fresh = false;
-    connection->timing_b.timing_fresh = false;
-    connection->timing_b.fallback_required = true;
-    connection->establishing = true;
+    retire_connection_for_repair(world, connection);
 
     ret = connection_repair_duration_us(world, connection, &duration_us,
                                         &control_frame_len);
@@ -839,6 +885,7 @@ int mesh_sim_schedule_next_connection_event(struct mesh_sim_world *world,
     }
     if (action.kind == MESH_SIM_CONNECTION_ACTION_CHANNEL5_REPAIR) {
         uint64_t duration_us;
+        uint8_t requester = connection_repair_requester(world, connection);
 
         ret = connection_repair_duration_us(
             world,
@@ -850,10 +897,13 @@ int mesh_sim_schedule_next_connection_event(struct mesh_sim_world *world,
                             ret == MESH_SIM_OK ? MESH_SIM_ERR_CONNECTION_PLAN :
                                                 ret);
         }
+        if (requester == UINT8_MAX) {
+            return mesh_sim_fail(world, MESH_SIM_ERR_EVENT_ORDER);
+        }
         return schedule_connection_repair_exchange(
             world,
             connection_index,
-            connection_repair_requester(world, connection),
+            requester,
             action.start_us,
             action.end_us,
             connection->repair_control_frame_len);
@@ -870,6 +920,36 @@ int mesh_sim_schedule_next_connection_event(struct mesh_sim_world *world,
     event->node_a_work_epoch = world->roles[connection->node_a].work_epoch;
     event->node_b_work_epoch = world->roles[connection->node_b].work_epoch;
     event->receiver_preempted = receiver_preempted;
+    {
+        bool a_tx = mesh_event_timing_local_tx_slot(&connection->timing_a);
+        bool b_tx = mesh_event_timing_local_tx_slot(&connection->timing_b);
+
+        if (a_tx == b_tx) {
+            return mesh_sim_fail(world, MESH_SIM_ERR_SLOT_DIRECTION);
+        }
+        event->sender_index = a_tx ? connection->node_a : connection->node_b;
+        event->receiver_index = a_tx ? connection->node_b : connection->node_a;
+        ret = connection_radio_policy_deferred(
+            world,
+            event->sender_index,
+            event->start_us,
+            event->end_us,
+            &event->sender_policy_deferred);
+        if (ret != MESH_SIM_OK) {
+            return mesh_sim_fail(world, ret);
+        }
+        if (!event->receiver_preempted) {
+            ret = connection_radio_policy_deferred(
+                world,
+                event->receiver_index,
+                event->start_us,
+                event->end_us,
+                &event->receiver_policy_deferred);
+            if (ret != MESH_SIM_OK) {
+                return mesh_sim_fail(world, ret);
+            }
+        }
+    }
     event->valid = true;
     return mesh_sim_scheduler_schedule(world,
                           SIM_EVENT_CONNECTION_START,
@@ -906,6 +986,12 @@ static int build_connection_control_packet(
     } else {
         return MESH_SIM_ERR_ARG;
     }
+    if (connection->repair_session_id == 0u ||
+        timing->event_counter != connection->repair_session_id ||
+        mesh_event_timing_local_tx_slot(timing) !=
+            (msg_type == MSG_MESH_EVENT_PROPOSE)) {
+        return MESH_SIM_ERR_EVENT_ORDER;
+    }
     *payload_len = 0u;
     ret = mesh_append_event_timing_tlvs_at(payload,
                                            payload_cap,
@@ -925,13 +1011,8 @@ static int build_connection_control_packet(
             return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
         }
     }
+    /* Canonical ACCEPT echoes the proposal's complete packet identity. */
     seq = connection->repair_seq;
-    if (msg_type == MSG_MESH_EVENT_ACCEPT) {
-        seq++;
-        if (seq == 0u) {
-            seq = 1u;
-        }
-    }
     return mesh_init_event_control(packet,
                                    msg_type,
                                    world->roles[sender_index].id,
@@ -976,7 +1057,7 @@ static int schedule_connection_accept(struct mesh_sim_world *world,
     }
     duration_us = mesh_sim_frame_duration_us(
         MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
-        proto_packet_encoded_len(payload_len));
+        proto_packet_encoded_len((uint16_t)payload_len));
     if (duration_us == 0u || tx_start_us > UINT64_MAX - duration_us ||
         tx_start_us + duration_us > connection->repair_end_us) {
         return mesh_sim_fail(world, MESH_SIM_ERR_RADIO_DEADLINE);
@@ -1038,8 +1119,8 @@ static int apply_connection_control_to_endpoint(
     }
     *timing = *update_timing;
     if (!local_control) {
-        mesh_event_timing_set_local_first_slot_tx(
-            timing, !timing->local_tx_on_even_events);
+        timing->local_tx_on_even_events =
+            !timing->local_tx_on_even_events;
     }
     ret = mesh_relay_set_channel9_timing(&world->roles[node_index].relay,
                                          world->roles[peer_index].id,
@@ -1226,12 +1307,6 @@ int mesh_sim_connection_process_control_packet(
         return MESH_SIM_OK;
     }
     expected_seq = connection->repair_seq;
-    if (packet->msg_type == MSG_MESH_EVENT_ACCEPT) {
-        expected_seq++;
-        if (expected_seq == 0u) {
-            expected_seq = 1u;
-        }
-    }
     if (packet->seq != expected_seq) {
         return MESH_SIM_OK;
     }
@@ -1379,9 +1454,11 @@ int mesh_sim_connection_process_repair_start(struct mesh_sim_world *world,
     if (ret != PROTO_OK) {
         return mesh_sim_fail(world, ret);
     }
-    mesh_event_timing_set_local_first_slot_tx(
-        &connection->repair_requester_timing,
-        true);
+    if (!mesh_event_timing_bind_proposal_session(
+            &connection->repair_requester_timing,
+            connection->repair_session_id)) {
+        return mesh_sim_fail(world, MESH_SIM_ERR_EVENT_ORDER);
+    }
     connection->repair_peer_timing = connection->repair_requester_timing;
     mesh_event_timing_set_local_first_slot_tx(&connection->repair_peer_timing,
                                               false);
@@ -1405,7 +1482,8 @@ int mesh_sim_connection_process_repair_start(struct mesh_sim_world *world,
     if (ret != PROTO_OK) {
         return mesh_sim_fail(world, ret);
     }
-    proposal_frame_len = proto_packet_encoded_len(proposal_payload_len);
+    proposal_frame_len =
+        proto_packet_encoded_len((uint16_t)proposal_payload_len);
     proposal_airtime_us = mesh_sim_frame_duration_us(
         MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
         proposal_frame_len);
@@ -1482,6 +1560,7 @@ int mesh_sim_connection_process_repair_end(struct mesh_sim_world *world,
     struct mesh_sim_role_instance *node_b;
     uint64_t requester_id;
     uint64_t peer_id;
+    uint8_t expired_endpoints;
     int ret;
 
     if (connection_index >= world->connection_count) {
@@ -1492,6 +1571,17 @@ int mesh_sim_connection_process_repair_end(struct mesh_sim_world *world,
         connection->repair_end_us != world->now_us ||
         !world->reachable[connection->node_a][connection->node_b]) {
         return mesh_sim_fail(world, MESH_SIM_ERR_ROUTE_REQUIRED);
+    }
+    /*
+     * Resolve supervision at the actual repair boundary. A reset endpoint's
+     * peer may still retain a usable live owner and must reject that early
+     * replacement, while a connection whose supervision expired at both
+     * endpoints must retire the old operation before either side proposes.
+     */
+    ret = mesh_sim_expire_connection_ownership(
+        world, connection_index, &expired_endpoints);
+    if (ret != MESH_SIM_OK) {
+        return mesh_sim_fail(world, ret);
     }
     node_a = &world->roles[connection->node_a];
     node_b = &world->roles[connection->node_b];
@@ -1611,10 +1701,39 @@ int mesh_sim_connection_process_start(struct mesh_sim_world *world,
     event->receiver_index = a_tx ? connection->node_b : connection->node_a;
     sender = &world->roles[event->sender_index];
     receiver = &world->roles[event->receiver_index];
-    callbacks->worker_started(world, event->receiver_index);
+
+    /*
+     * Channel-5 control and another already-planned radio owner take
+     * precedence over this Channel-9 turn.  The conflict may have been
+     * scheduled after this connection event, so repeat the policy check at
+     * the actual boundary before starting a receiver worker.
+     */
+    ret = connection_radio_policy_deferred(
+        world,
+        event->sender_index,
+        event->start_us,
+        event->end_us,
+        &event->sender_policy_deferred);
+    if (ret != MESH_SIM_OK) {
+        return mesh_sim_fail(world, ret);
+    }
+    if (!event->receiver_preempted) {
+        ret = connection_radio_policy_deferred(
+            world,
+            event->receiver_index,
+            event->start_us,
+            event->end_us,
+            &event->receiver_policy_deferred);
+        if (ret != MESH_SIM_OK) {
+            return mesh_sim_fail(world, ret);
+        }
+    }
+    if (!event->receiver_policy_deferred) {
+        callbacks->worker_started(world, event->receiver_index);
+    }
 
     /* A live local operation owns the radio through its safe boundary. */
-    if (!event->receiver_preempted &&
+    if (!event->receiver_preempted && !event->receiver_policy_deferred &&
         !mesh_runtime_radio_safe(&receiver->runtime, event->start_us)) {
         event->receiver_preempted = true;
     }
@@ -1649,7 +1768,7 @@ int mesh_sim_connection_process_start(struct mesh_sim_world *world,
     if (tx_start_us >= event->end_us) {
         return mesh_sim_fail(world, MESH_SIM_ERR_RADIO_DEADLINE);
     }
-    if (!event->receiver_preempted) {
+    if (!event->receiver_preempted && !event->receiver_policy_deferred) {
         ret = mesh_sim_radio_schedule_channel9_runtime_rx(world,
                                            event->receiver_index,
                                            event->end_us,
@@ -1671,14 +1790,27 @@ int mesh_sim_connection_process_start(struct mesh_sim_world *world,
         }
     }
 
-    ret = tx_ready(world,
-                   event,
-                   &requirements,
-                   &plan_a,
-                   tx_start_us,
-                   &tx_result);
-    if (ret != MESH_SIM_OK) {
-        return ret;
+    if (!event->sender_policy_deferred) {
+        ret = tx_ready(world,
+                       event,
+                       &requirements,
+                       &plan_a,
+                       tx_start_us,
+                       &tx_result);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    } else {
+        ret = mesh_sim_trace_add(world,
+                                 event->start_us,
+                                 sender->id,
+                                 receiver->id,
+                                 MESH_SIM_TRANSITION_CONNECTION_PREEMPTED,
+                                 0u,
+                                 event->connection_index);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
     }
     event->had_packet = tx_result.had_packet;
     if (event->had_packet) {

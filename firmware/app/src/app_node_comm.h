@@ -8,13 +8,16 @@
 #include "node_comm.h"
 #include "protocol.h"
 
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
-/* Four immutable stress datagrams plus the protocol-priority reserve. */
+/*
+ * Four immutable survey samples (or stress datagrams) plus one slot that
+ * ordinary reliable uplinks cannot consume.  Survey execution reserves its
+ * complete four-record burst before taking the radio.
+ */
 #define APP_NODE_COMM_MAX_DELIVERIES 5u
-#else
-#define APP_NODE_COMM_MAX_DELIVERIES 4u
-#endif
 #define APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES 1u
+#define APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY \
+    (APP_NODE_COMM_MAX_DELIVERIES - \
+     APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES)
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
 /*
  * The synthetic transmitter deliberately owns full-size extended-PHR stress
@@ -133,25 +136,99 @@ int app_node_comm_submit_protocol_response(
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
+int app_node_comm_reserve_reliable_uplinks(
+    size_t reservation_count,
+    uint32_t *reservation_tokens,
+    size_t reservation_token_capacity);
+int app_node_comm_commit_reliable_uplink_reservation(
+    uint32_t reservation_token,
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+int app_node_comm_cancel_reliable_uplink_reservation(
+    uint32_t reservation_token);
+/*
+ * Reserve the ordinary-capacity records for a complete durable burst while
+ * retaining the protocol-response slot.  The committed records use the
+ * durable attempt journal, but they do not gain admission to the protocol
+ * reserve merely by selecting that retry profile.
+ */
+int app_node_comm_reserve_durable_reliable_uplinks(
+    size_t reservation_count,
+    uint32_t *reservation_tokens,
+    size_t reservation_token_capacity);
+int app_node_comm_commit_durable_reliable_uplink_reservation(
+    uint32_t reservation_token,
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+int app_node_comm_cancel_durable_reliable_uplink_reservation(
+    uint32_t reservation_token);
+int app_node_comm_reserve_protocol_response(uint32_t *reservation_token);
+int app_node_comm_commit_protocol_response(
+    uint32_t reservation_token,
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+int app_node_comm_cancel_protocol_response_reservation(
+    uint32_t reservation_token);
 int app_node_comm_service_deliveries(void);
 int app_node_comm_gateway_delivery_safe_boundary(void);
 int app_node_comm_cancel_delivery(uint32_t handle);
 int app_node_comm_abandon_delivery(uint32_t handle);
 int app_node_comm_auto_reap_delivery(uint32_t handle);
+/*
+ * Mesh-route publishes an exact asynchronous backend-release completion, then
+ * calls this wake edge so the communication owner can consume it. It does not
+ * itself release or reap the terminal record.
+ */
+void app_node_comm_backend_release_ready(uint32_t handle,
+                                         uint32_t request_token);
 bool app_node_comm_take_delivery_event(
     struct node_comm_terminal_event *event_out);
 bool app_node_comm_take_delivery_event_for(
     uint32_t handle,
     struct node_comm_terminal_event *event_out);
+bool app_node_comm_peek_delivery_event_for(
+    uint32_t handle,
+    struct node_comm_terminal_event *event_out);
 int app_node_comm_delivery_attempts_started(uint32_t handle,
                                             uint8_t *attempts_out);
+/*
+ * Read the already-recorded attempt count without advancing delivery policy.
+ * This is suitable for non-mutating semantic-admission preflight while the
+ * serialized RX owner remains held.
+ */
+int app_node_comm_peek_delivery_attempts_started(uint32_t handle,
+                                                 uint8_t *attempts_out);
 int app_node_comm_note_gateway_confirmed(const struct proto_packet *packet);
+int app_node_comm_note_gateway_confirmed_at(
+    const struct proto_packet *packet,
+    uint64_t confirmed_at_ms);
+int app_node_comm_note_gateway_confirmed_digest_at(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    uint64_t confirmed_at_ms);
 int app_node_comm_note_gateway_failed(
     const struct proto_packet *packet,
     enum node_comm_terminal_reason reason);
+int app_node_comm_note_gateway_failed_digest(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    enum node_comm_terminal_reason reason);
 int app_node_comm_backend_retry_preflight(const struct proto_packet *packet);
+int app_node_comm_backend_retry_preflight_until(
+    const struct proto_packet *packet,
+    uint64_t *absolute_deadline_ms_out);
 int app_node_comm_complete_backend_attempt(const struct proto_packet *packet,
                                            bool rf_started);
+int app_node_comm_complete_backend_attempt_at(
+    const struct proto_packet *packet,
+    bool rf_started,
+    uint64_t rf_started_at_ms);
 int app_node_comm_note_backend_rf_started(const struct proto_packet *packet);
 size_t app_node_comm_pending_delivery_count(void);
 size_t app_node_comm_reliable_delivery_targets(uint64_t *target_ids,

@@ -22,6 +22,7 @@ extern "C" {
  * execute without an explicit delivery outcome.
  */
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
+#define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_DEFAULT_TTL 4u
 #define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 600000u
 /*
@@ -33,7 +34,33 @@ extern "C" {
 #define SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS 30000u
 #define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
-#define SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS 5000u
+/*
+ * Gateway host output deliberately has one checksummed NVS journal owner.
+ * A different survey record is therefore flow-controlled at the gateway and
+ * remains in exact producer custody until the current host record retires.
+ * Size the gateway observation and one mesh-attempt planning horizon for the
+ * largest legal synchronized burst: 50 endpoints can each emit four sample
+ * records. The 500 ms accounting interval is conservative for one bounded
+ * pair-result record on the 30 ms BLE link; the remaining 20 s covers reset
+ * restoration, notification retry, scheduling jitter, and the last ACK
+ * handoff. This horizon never authorizes deleting an unconfirmed source
+ * record: anchors retain their bounded NVS slots until exact gateway proof,
+ * and backpressure prevents a later survey from overwriting them.
+ */
+#define SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS 500u
+#define SURVEY_PAIR_RESULT_MAX_BURST_RECORDS \
+    (SURVEY_GATEWAY_MAX_REPORTS * SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
+#define SURVEY_PAIR_RESULT_FLOW_CONTROL_GUARD_MS 20000u
+#define SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS \
+    ((SURVEY_PAIR_RESULT_MAX_BURST_RECORDS * \
+      SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS) + \
+     SURVEY_PAIR_RESULT_FLOW_CONTROL_GUARD_MS)
+#define SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS \
+    SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS
+#define SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S \
+    (((SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS + 999u) / 1000u) + 5u)
+#define SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S \
+    ((SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS + 999u) / 1000u)
 #define SURVEY_PAIR_INITIATOR_TIMEOUT_MS 150u
 #define SURVEY_PAIR_START_SKEW_MARGIN_MS 1000u
 /*
@@ -45,6 +72,8 @@ extern "C" {
 #define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
     (SURVEY_PAIR_START_SKEW_MARGIN_MS + SURVEY_PAIR_INITIATOR_TIMEOUT_MS)
 #define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS 30000u
+#define SURVEY_DISCOVERY_DELIVERY_TERMINAL_POLL_MS 5u
+#define SURVEY_DISCOVERY_OPERATION_TERMINAL_GUARD_MS 1u
 #define SURVEY_PAIR_PREPARED_LEASE_MS 660000u
 #if SURVEY_PAIR_INITIATOR_TIMEOUT_MS >                                       \
     (UINT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS)
@@ -80,10 +109,9 @@ extern "C" {
 #error "Survey pair prepared lease cannot cover one gateway operation and cleanup"
 #endif
 #define SURVEY_REACHABILITY_ENTRY_LEN 10u
-#define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 12u
 #define SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN                              \
-    (PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U64_ENCODED_LEN +           \
+    (PROTO_TLV_U32_ENCODED_LEN + 2u * PROTO_TLV_U64_ENCODED_LEN +      \
      PROTO_TLV_U16_ENCODED_LEN +                                        \
      SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *                              \
          (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN))
@@ -93,6 +121,23 @@ extern "C" {
 #define SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR 6u
 #define SURVEY_GATEWAY_MAX_PAIRS \
     ((SURVEY_GATEWAY_MAX_REPORTS * SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR) / 2u)
+/*
+ * One synchronized batch consumes one nonzero round generation. In the
+ * automatic path every planned pair can run once and rerun at most twice.
+ * Each reporter participates in at most one pair per batch and can emit at
+ * most four sample identities, so source/session/sequence remains injective.
+ */
+#define SURVEY_PAIR_RESULT_MAX_BATCH_COUNT \
+    (SURVEY_GATEWAY_MAX_PAIRS * (SURVEY_GATEWAY_PAIR_MAX_RERUNS + 1u))
+#define SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX \
+    (SURVEY_PAIR_RESULT_MAX_BATCH_COUNT * \
+     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
+_Static_assert(SURVEY_PAIR_RESULT_MAX_BATCH_COUNT == 450u,
+               "automatic survey must remain bounded to 450 pair batches");
+_Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX == 1800u,
+               "automatic survey pair-result identity space must remain 1800");
+_Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
+               "survey pair-result transport sequence must fit uint16_t");
 #define SURVEY_DISCOVERY_MAX_SLOT_COUNT 50u
 #define SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT 2u
 #define SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT 8u
@@ -103,7 +148,19 @@ extern "C" {
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
 #define SURVEY_DISCOVERY_MAX_ROUND_COUNT 4u
-#define SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS 5000u
+#define SURVEY_DISCOVERY_REPORT_MAX_BURST_RECORDS \
+    SURVEY_GATEWAY_MAX_REPORTS
+/*
+ * These bounds size gateway observation and one mesh-attempt planning window
+ * for the legal 50-report burst. They never authorize deletion at the anchor:
+ * an unconfirmed discovery report remains in its exact source journal, and
+ * later discovery generations are backpressured until gateway proof arrives.
+ */
+#define SURVEY_DISCOVERY_REPORT_FLOW_CONTROL_GUARD_MS 5000u
+#define SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS \
+    ((SURVEY_DISCOVERY_REPORT_MAX_BURST_RECORDS * \
+      SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS) + \
+     SURVEY_DISCOVERY_REPORT_FLOW_CONTROL_GUARD_MS)
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS 4000u
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS \
     (SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS + \
@@ -111,6 +168,16 @@ extern "C" {
       SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS))
 #define SURVEY_DISCOVERY_REPORT_RETRY_INITIAL_MS 50u
 #define SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS 500u
+
+_Static_assert(SURVEY_PAIR_RESULT_MAX_BURST_RECORDS == 200u,
+               "maximum synchronized survey burst must remain 200 records");
+_Static_assert(SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS == 120000u,
+               "survey pair-result flow-control horizon must remain 120 s");
+_Static_assert(SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS == 30000u,
+               "survey discovery flow-control horizon must remain 30 s");
+_Static_assert(SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u >=
+                   SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS + 5000u,
+               "survey relay outbox must outlive pair-result custody");
 
 struct survey_reachability_entry {
     uint64_t peer_id;
@@ -125,6 +192,11 @@ _Static_assert(sizeof(struct survey_reachability_entry) ==
 struct survey_pair {
     uint64_t initiator_id;
     uint64_t responder_id;
+    /*
+     * Gateway-reserved operation identity. Zero is retained only for
+     * bounded legacy/native helpers; production mesh handlers require it.
+     */
+    uint64_t operation_generation;
     uint32_t survey_id;
     uint16_t sample_count;
 };
@@ -139,8 +211,23 @@ struct survey_sample {
     enum range_status range_status;
 };
 
+/*
+ * Exact identity for the observation fields that may vary inside one already
+ * validated reporter/pair/round/sample-index slot. The last byte is also the
+ * validity sentinel, so arrays can be reset with UINT8_MAX without padding or
+ * a collision-prone hash.
+ */
+#define SURVEY_SAMPLE_OBSERVATION_IDENTITY_LEN 6u
+#define SURVEY_SAMPLE_OBSERVATION_IDENTITY_INVALID UINT8_MAX
+struct survey_sample_observation_identity {
+    uint8_t encoded[SURVEY_SAMPLE_OBSERVATION_IDENTITY_LEN];
+};
+_Static_assert(sizeof(struct survey_sample_observation_identity) ==
+                   SURVEY_SAMPLE_OBSERVATION_IDENTITY_LEN,
+               "survey sample observation identity must remain compact");
+
 #define SURVEY_SAMPLE_TLV_MAX_LEN                                         \
-    (2u * PROTO_TLV_U64_ENCODED_LEN + 2u * PROTO_TLV_U32_ENCODED_LEN +   \
+    (3u * PROTO_TLV_U64_ENCODED_LEN + 2u * PROTO_TLV_U32_ENCODED_LEN +   \
      3u * PROTO_TLV_U16_ENCODED_LEN + 2u * PROTO_TLV_U8_ENCODED_LEN)
 
 struct survey_reachability_report {
@@ -150,6 +237,7 @@ struct survey_reachability_report {
 };
 
 struct survey_discovery_config {
+    uint64_t operation_generation;
     uint32_t survey_id;
     uint32_t start_delay_ms;
     uint16_t slot_ms;
@@ -201,24 +289,64 @@ struct survey_gateway_reverse_hint {
     bool valid;
 };
 
+#define SURVEY_GATEWAY_COMPACT_NODE_INDEX_MASK UINT8_C(0x3f)
+#define SURVEY_GATEWAY_REPORT_ORDER_PART_COUNT 3u
+
+/*
+ * Gateway-only reachability storage interns every exact node ID once.  The
+ * compact entries retain all 600 directed report edges while keeping the
+ * 50-node/150-pair worst case within the gateway RAM budget.
+ */
+struct survey_gateway_compact_reachability_entry {
+    /*
+     * Low six bits select one of 50 interned IDs. In the first three entry
+     * cells, the two high bits preserve the report's six-bit acceptance
+     * ordinal, including for reports with fewer than three peers.
+     */
+    uint8_t peer_index;
+    int8_t rssi_dbm;
+    uint8_t quality;
+};
+
 struct survey_gateway_report_slot {
-    uint64_t anchor_id;
-    struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
-    uint64_t reverse_next_hop_id;
-    size_t entry_count;
+    struct survey_gateway_compact_reachability_entry
+        entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    uint8_t reverse_next_hop_index;
     uint8_t reverse_quality;
     uint8_t reverse_hop_count;
-    bool reverse_hint_valid;
-    bool valid;
+    /*
+     * High nibble: command status. Low nibble: entry count. UINT8_MAX marks
+     * an unused report slot; valid values cannot collide with that sentinel.
+     */
+    uint8_t metadata;
 };
 
 struct survey_gateway_pair_entry {
-    uint64_t initiator_id;
-    uint64_t responder_id;
+    uint8_t initiator_index;
+    uint8_t responder_index;
 };
 
-_Static_assert(sizeof(struct survey_gateway_pair_entry) == 16u,
-               "gateway survey pair storage must contain endpoints only");
+_Static_assert(SURVEY_GATEWAY_MAX_REPORTS < UINT8_MAX,
+               "gateway node indices must leave one invalid sentinel");
+_Static_assert(SURVEY_GATEWAY_MAX_REPORTS <=
+                   SURVEY_GATEWAY_COMPACT_NODE_INDEX_MASK + 1u,
+               "gateway node indices must fit the compact six-bit field");
+_Static_assert(SURVEY_GATEWAY_MAX_REPORTS <=
+                   (1u << (2u * SURVEY_GATEWAY_REPORT_ORDER_PART_COUNT)),
+               "gateway report ordinals must fit the compact order field");
+_Static_assert(SURVEY_GATEWAY_MAX_PEERS_PER_REPORT >=
+                   SURVEY_GATEWAY_REPORT_ORDER_PART_COUNT,
+               "gateway report slots must retain compact order cells");
+_Static_assert(SURVEY_GATEWAY_MAX_PEERS_PER_REPORT < 0x0fu,
+               "gateway report entry count must fit below invalid metadata");
+_Static_assert(COMMAND_INTERNAL_ERROR < 0x0fu,
+               "gateway report status must fit below invalid metadata");
+_Static_assert(sizeof(struct survey_gateway_compact_reachability_entry) == 3u,
+               "gateway reachability entries must remain index compact");
+_Static_assert(sizeof(struct survey_gateway_report_slot) == 40u,
+               "gateway report slots must retain the 40-byte RAM contract");
+_Static_assert(sizeof(struct survey_gateway_pair_entry) == 2u,
+               "gateway survey pairs must store two validated node indices");
 
 /*
  * Caller-owned launch metadata for one entry in the existing pair plan. The
@@ -237,15 +365,22 @@ _Static_assert(sizeof(struct survey_pair_round_metadata) == 3u,
                "survey round metadata must remain compact");
 
 struct survey_gateway_context {
+    uint64_t operation_generation;
+    uint64_t node_ids[SURVEY_GATEWAY_MAX_REPORTS];
     uint32_t survey_id;
-    uint16_t sample_count;
     struct survey_gateway_report_slot reports[SURVEY_GATEWAY_MAX_REPORTS];
     struct survey_gateway_pair_entry pairs[SURVEY_GATEWAY_MAX_PAIRS];
-    size_t report_count;
-    size_t pair_count;
-    size_t next_pair_index;
+    uint16_t sample_count;
+    uint8_t node_count;
+    uint8_t report_count;
+    uint8_t pair_count;
+    uint8_t next_pair_index;
     bool pairs_planned;
+    bool topology_complete;
 };
+
+_Static_assert(sizeof(struct survey_gateway_context) == 2720u,
+               "gateway survey context must preserve the 7 KiB RAM recovery");
 
 enum survey_gateway_auto_stage {
     SURVEY_GATEWAY_AUTO_IDLE = 0,
@@ -275,7 +410,36 @@ struct survey_gateway_auto_action {
 bool survey_sample_count_valid(uint16_t sample_count);
 int survey_pair_validate(const struct survey_pair *pair);
 int survey_sample_validate(const struct survey_sample *sample);
+int survey_pair_result_next_round_id(uint16_t current_round_id,
+                                     uint16_t *next_round_id);
+/*
+ * Maps one synchronized round/sample identity to nonzero wire sequence.
+ * Legacy round zero uses sample_index + 1 within its immutable survey session.
+ */
+int survey_pair_result_transport_sequence(uint16_t round_id,
+                                          uint16_t sample_index,
+                                          uint16_t *sequence);
 bool survey_sample_distance_usable(const struct survey_sample *sample);
+bool survey_sample_matches_pair_run(const struct survey_sample *sample,
+                                    const struct survey_pair *pair,
+                                    uint16_t round_id);
+/* Exact observation identity is used only after reporter, pair, round, and
+ * sample-index ownership have been validated by the caller. */
+int survey_sample_observation_identity_capture(
+    const struct survey_sample *sample,
+    struct survey_sample_observation_identity *identity);
+bool survey_sample_observation_identity_valid(
+    const struct survey_sample_observation_identity *identity);
+bool survey_sample_observation_identity_equal(
+    const struct survey_sample_observation_identity *left,
+    const struct survey_sample_observation_identity *right);
+int survey_pair_note_sample_masks(const struct survey_sample *sample,
+                                  uint64_t reporter_id,
+                                  uint16_t *usable_mask,
+                                  uint16_t *responder_usable_mask,
+                                  uint16_t *initiator_unusable_mask,
+                                  uint16_t *responder_unusable_mask,
+                                  bool *changed);
 bool survey_pair_missing_samples_all_unusable(
     uint16_t sample_count,
     uint16_t usable_mask,
@@ -283,6 +447,16 @@ bool survey_pair_missing_samples_all_unusable(
     uint16_t responder_unusable_mask);
 uint64_t survey_sample_nonce(const struct survey_pair *pair, uint16_t sample_index);
 int survey_reachability_entry_validate(const struct survey_reachability_entry *entry);
+int survey_reachability_report_endpoints_validate(
+    uint64_t anchor_id,
+    uint64_t gateway_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count);
+int survey_reachability_entry_retain(
+    struct survey_reachability_entry *entries,
+    size_t entry_cap,
+    size_t *entry_count,
+    const struct survey_reachability_entry *candidate);
 int survey_discovery_config_validate(const struct survey_discovery_config *config);
 uint32_t survey_discovery_duration_ms(const struct survey_discovery_config *config);
 uint8_t survey_discovery_opportunity_slot(uint64_t anchor_id,
@@ -333,6 +507,12 @@ int survey_discovery_report_delay_ms(const struct survey_discovery_config *confi
 int survey_gateway_begin(struct survey_gateway_context *context,
                          uint32_t survey_id,
                          uint16_t sample_count);
+int survey_gateway_begin_operation(struct survey_gateway_context *context,
+                                   uint32_t survey_id,
+                                   uint64_t operation_generation,
+                                   uint16_t sample_count);
+int survey_gateway_context_validate(
+    const struct survey_gateway_context *context);
 int survey_gateway_note_reach_report(struct survey_gateway_context *context,
                                      uint32_t survey_id,
                                      uint64_t anchor_id,
@@ -345,13 +525,51 @@ int survey_gateway_note_reach_report_with_reverse_hint(
     const struct survey_reachability_entry *entries,
     size_t entry_count,
     const struct survey_gateway_reverse_hint *reverse_hint);
+int survey_gateway_note_reach_report_with_reverse_hint_status(
+    struct survey_gateway_context *context,
+    uint32_t survey_id,
+    uint64_t anchor_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count,
+    enum command_status report_status,
+    const struct survey_gateway_reverse_hint *reverse_hint);
 int survey_gateway_reverse_hint_for_target(
     const struct survey_gateway_context *context,
     uint64_t target_id,
     struct survey_gateway_reverse_hint *reverse_hint);
+/*
+ * Report indices are stable logical ordinals over accepted reports, not
+ * intern-table indices. These accessors validate every compact index before
+ * reconstructing exact IDs.
+ */
+int survey_gateway_report_info_at(
+    const struct survey_gateway_context *context,
+    size_t report_index,
+    uint64_t *anchor_id,
+    size_t *entry_count,
+    enum command_status *report_status);
+int survey_gateway_report_entry_at(
+    const struct survey_gateway_context *context,
+    size_t report_index,
+    size_t entry_index,
+    struct survey_reachability_entry *entry);
+/*
+ * Returns PROTO_OK for an exact accepted duplicate, PROTO_ERR_NOT_FOUND when
+ * the anchor has not reported, and PROTO_ERR_MALFORMED for a conflicting
+ * duplicate or corrupt compact state.
+ */
+int survey_gateway_reach_report_compare(
+    const struct survey_gateway_context *context,
+    uint64_t anchor_id,
+    const struct survey_reachability_entry *entries,
+    size_t entry_count,
+    enum command_status report_status);
 uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl);
 uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count);
 uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count);
+uint64_t survey_discovery_report_deadline_ms(uint64_t now_ms,
+                                             uint32_t eligible_tx_ms,
+                                             uint8_t gateway_hop_count);
 int survey_extract_expected_node_count_tlv(const uint8_t *payload,
                                            size_t payload_len,
                                            uint16_t *expected_count,
@@ -369,6 +587,9 @@ enum survey_gateway_collection_decision survey_gateway_collection_decide(
     size_t report_count,
     uint16_t expected_count,
     bool expected_present);
+bool survey_gateway_discovery_collection_survives_terminal(
+    bool delivered,
+    uint8_t attempts_started);
 int survey_gateway_plan_pairs(struct survey_gateway_context *context);
 /*
  * Packs the existing pair plan into deterministic concurrent rounds without
@@ -398,17 +619,17 @@ int survey_gateway_auto_mark_waiting(struct survey_gateway_auto_context *context
 bool survey_gateway_auto_command_matches(const struct survey_gateway_auto_context *context,
                                          enum command_id command_id,
                                          uint64_t target_id,
-                                         uint32_t survey_id);
+                                         uint32_t operation_session_id);
 int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *context,
                                       enum command_id command_id,
                                       uint64_t target_id,
-                                      uint32_t survey_id);
+                                      uint32_t operation_session_id);
 int survey_gateway_auto_rerun_pair(
     struct survey_gateway_auto_context *context);
 int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
                                     enum command_id command_id,
                                     uint64_t target_id,
-                                    uint32_t survey_id,
+                                    uint32_t operation_session_id,
                                     enum command_status status,
                                     bool *pair_launched,
                                     bool *pair_skipped);
@@ -439,9 +660,22 @@ int survey_extract_pair_tlvs(const uint8_t *payload,
                              size_t payload_len,
                              struct survey_pair *pair);
 /*
- * Builds one connected, degree-bounded graph before adding preferred extra
- * pairs. Returns PROTO_ERR_NOT_FOUND when the reported reachability graph
- * cannot be connected without exceeding the per-anchor degree ceiling.
+ * Operation generations are strictly nonzero. Packet session IDs use the
+ * low 32 bits, and the durable allocator skips values whose low word is zero.
+ */
+uint32_t survey_operation_session_id(uint64_t operation_generation);
+int survey_operation_generation_append_tlv(uint8_t *payload,
+                                           size_t payload_cap,
+                                           size_t *offset,
+                                           uint64_t operation_generation);
+int survey_operation_generation_extract_tlv(const uint8_t *payload,
+                                            size_t payload_len,
+                                            uint64_t *operation_generation);
+/*
+ * Builds a deterministic degree-bounded forest, connecting every candidate
+ * component before adding preferred extra pairs. Disconnected input keeps all
+ * useful component work; PROTO_ERR_NOT_FOUND is reserved for input with no
+ * usable reachability edge.
  */
 int survey_plan_pairs_from_reachability(uint32_t survey_id,
                                         const struct survey_reachability_report *reports,
@@ -512,11 +746,13 @@ int survey_init_discovery_report_packet(struct proto_packet *packet,
                                         uint64_t anchor_id,
                                         uint64_t gateway_id,
                                         uint32_t survey_id,
+                                        uint64_t operation_generation,
                                         uint16_t seq,
                                         uint8_t payload_len);
 int survey_init_pair_prepare_packet(struct proto_packet *packet,
                                     const struct survey_pair *pair,
                                     uint64_t gateway_id,
+                                    uint64_t target_id,
                                     uint16_t seq,
                                     uint8_t payload_len);
 

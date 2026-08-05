@@ -1,6 +1,8 @@
 #include "mesh_route_path.h"
 
+#include "dwm3000_timing.h"
 #include "protocol.h"
+#include "uwb.h"
 
 #include <string.h>
 
@@ -14,7 +16,7 @@ _Static_assert(MESH_ROUTE_DISCOVERY_MIN_PAYLOAD_LEN == 72u,
                "minimum route request must include one exact path node");
 _Static_assert(MESH_ROUTE_REQUEST_MAX_PAYLOAD_LEN == 139u,
                "route-request payload bound changed");
-_Static_assert(MESH_ROUTE_REPLY_MAX_PAYLOAD_LEN == 164u,
+_Static_assert(MESH_ROUTE_REPLY_MAX_PAYLOAD_LEN == 198u,
                "route-reply payload bound changed");
 _Static_assert(MESH_GATEWAY_ROUTE_ADV_LEGACY_MAX_PAYLOAD_LEN == 138u,
                "legacy gateway-route advertisement payload bound changed");
@@ -22,6 +24,14 @@ _Static_assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN == 179u,
                "policy gateway-route advertisement payload bound changed");
 _Static_assert(MESH_ROUTE_REPLY_ACK_MAX_PAYLOAD_LEN == 34u,
                "route-reply ACK payload bound changed");
+_Static_assert(UWB_MESH_FRAME_HEADER_LEN +
+                       PACKET_HEADER_LEN +
+                       MESH_ROUTE_REPLY_ACK_MAX_PAYLOAD_LEN +
+                       PACKET_CRC_LEN +
+                       UWB_FRAME_CRC_LEN +
+                       UWB_PHY_FCS_LEN <=
+                   DWM3000_TIMING_STANDARD_PSDU_MAX_BYTES,
+               "route-reply ACK must fit the standard-PHR response path");
 _Static_assert(MESH_ROUTE_REQUEST_MAX_PAYLOAD_LEN <= PACKET_MAX_PAYLOAD_LEN &&
                MESH_ROUTE_REPLY_MAX_PAYLOAD_LEN <= PACKET_MAX_PAYLOAD_LEN &&
                MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN <=

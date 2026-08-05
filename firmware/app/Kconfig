@@ -4,6 +4,17 @@ source "Kconfig.zephyr"
 
 menu "IMEC power management"
 
+config IMEC_CLICK_EVENT_SEQUENCE_PERSISTENCE
+    bool "Reserve click event identities in NVS"
+    depends on FLASH && FLASH_MAP && FLASH_PAGE_LAYOUT && NVS && NVS_DATA_CRC
+    help
+      Reserve click event sequence numbers in durable blocks before use.
+      All clicker-role images enable this because these identities cross a
+      reset boundary as gateway de-duplication keys or ML collection
+      correlation keys. Mount, read, reservation, and read-back failures
+      reject allocation; there is no volatile fallback while this option is
+      enabled.
+
 config IMEC_CLICKER_SYSTEMOFF_IDLE
     bool "Put the clicker in system-off while idle"
     default n if IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
@@ -86,7 +97,7 @@ config IMEC_ML_DISCOVERY_SLOT_COUNT
 
 endmenu
 
-menu "IMEC mesh route test"
+menu "IMEC connected-routing mesh"
 
 config IMEC_DEDICATED_COMM_WORKQUEUE
     bool "Run communication and mesh work on a dedicated queue"
@@ -97,13 +108,12 @@ config IMEC_DEDICATED_COMM_WORKQUEUE
       enable this so protocol workers only admit immutable communication work.
 
 config IMEC_MESH_ROUTE_TEST
-    bool "Build the isolated mesh-routing test firmware"
+    bool "Build the connected-routing mesh runtime"
     help
-      Enables the isolated mesh-routing test profile. Mesh gateway and anchor
-      presets may expose the connected BLE packet/log service for debug, while
-      the transmitter preset can run without the Bluetooth stack. Normal
-      production roles are untouched unless a mesh_* build preset selects this
-      option.
+      Enables the production-successor connected-routing runtime used by the
+      mesh clicker, anchor, and gateway presets. Bench transmitter presets add
+      their synthetic traffic options separately. Legacy and ML roles remain
+      untouched unless a mesh_* build preset selects this option.
 
 config IMEC_MESH_ROUTE_TEST_TRANSMITTER
     bool "Continuously transmit synthetic mesh-test packets"

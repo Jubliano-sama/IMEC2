@@ -27,5 +27,13 @@ bool app_wake_train_politeness_rx_activity(int rx_ret,
                                            enum dwm3000_rx_failure failure);
 uint32_t app_wake_train_politeness_backoff_ms(uint8_t retry_index,
                                               uint32_t random_value);
+bool app_wake_train_deadline_fits(int64_t now_ms,
+                                  int64_t deadline_ms,
+                                  uint32_t required_ms);
+bool app_wake_train_deadline_clip_delay(int64_t now_ms,
+                                        int64_t deadline_ms,
+                                        uint32_t requested_delay_ms,
+                                        uint32_t required_tail_ms,
+                                        uint32_t *delay_ms);
 
 #endif

@@ -1,5 +1,17 @@
 #line 6569 __BASE_FILE__
-static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
+#define SURVEY_PAIR_RESULT_TIMING_TLV_MAX_LEN                            \
+    (PROTO_TLV_U8_ENCODED_LEN + (2u * PROTO_TLV_U16_ENCODED_LEN) +     \
+     PROTO_TLV_U32_ENCODED_LEN +                                       \
+     PROTO_TLV_HEADER_LEN + (6u * sizeof(uint32_t)))
+#define SURVEY_PAIR_RESULT_MAX_PAYLOAD_LEN                               \
+    (SURVEY_SAMPLE_TLV_MAX_LEN + PROTO_TLV_U64_ENCODED_LEN +           \
+     SURVEY_PAIR_RESULT_TIMING_TLV_MAX_LEN)
+
+BUILD_ASSERT(SURVEY_PAIR_RESULT_MAX_PAYLOAD_LEN <=
+                 APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN,
+             "maximum survey pair result must fit durable communication");
+
+static int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
@@ -12,8 +24,16 @@ static void anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
                             ret,
                             delay_ms);
     }
+    if (ret < 0) {
+        LOG_ERR("anchor channel-5 scan scheduling failed closed: ret=%d delay_ms=%u",
+                ret,
+                delay_ms);
+        app_watchdog_stop_feeding();
+    }
+    return ret;
 #else
     ARG_UNUSED(delay_ms);
+    return 0;
 #endif
 }
 
@@ -30,19 +50,27 @@ static int anchor_queue_survey_sample_result(
     uint16_t round_id,
     uint16_t sample_index,
     uint64_t reporter_id,
+    uint32_t delivery_reservation_token,
     const struct dwm3000_range_result *range_result)
 {
     struct mesh_outbound outbound = {0};
     struct survey_sample sample = {0};
-    uint64_t absolute_deadline_ms;
-    uint64_t now_ms;
+    struct dwm3000_range_result survey_result;
     size_t payload_len = 0u;
+    uint16_t transport_sequence;
     enum range_status status;
     int64_t sample_local_ms;
     int ret;
 
-    if (pair == NULL || reporter_id == 0u || range_result == NULL) {
+    if (pair == NULL || reporter_id == 0u ||
+        delivery_reservation_token == 0u || range_result == NULL) {
         return -EINVAL;
+    }
+    ret = survey_pair_result_transport_sequence(round_id,
+                                                sample_index,
+                                                &transport_sequence);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
     }
 
     status = range_status_valid(range_result->status) ?
@@ -54,6 +82,17 @@ static int anchor_queue_survey_sample_result(
     sample.distance_mm = range_result->distance_mm;
     sample.quality = range_result->quality;
     sample.range_status = status;
+    survey_result = *range_result;
+    /*
+     * Raw receiver diagnostics are click-debug artifacts and can add 110
+     * bytes to one record. Survey results retain the bounded scalar timing
+     * fields and raw DS-TWR timestamps, so every legal sample remains within
+     * the production durable-communication snapshot on every driver path.
+     */
+    survey_result.clicker_rx_diag_sampled = false;
+    survey_result.anchor_rx_diag_sampled = false;
+    survey_result.clicker_rx_diag_raw_len = 0u;
+    survey_result.anchor_rx_diag_raw_len = 0u;
 
     ret = survey_append_sample_tlvs(outbound.payload,
                                     sizeof(outbound.payload),
@@ -75,7 +114,7 @@ static int anchor_queue_survey_sample_result(
     ret = append_range_result_timing_tlvs(outbound.payload,
                                           sizeof(outbound.payload),
                                           &payload_len,
-                                          range_result);
+                                          &survey_result);
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
@@ -84,22 +123,15 @@ static int anchor_queue_survey_sample_result(
         &sample,
         reporter_id,
         GATEWAY_ID,
-        app_anchor_survey_runtime_next_sequence(),
+        transport_sequence,
         (uint8_t)payload_len);
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
     outbound.payload_len = (uint8_t)payload_len;
-    now_ms = (uint64_t)k_uptime_get();
-    absolute_deadline_ms = UINT64_MAX - now_ms <
-                           SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS ?
-                           UINT64_MAX :
-                           now_ms + SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS;
-    return app_node_comm_submit_reliable_uplink(
-        &outbound,
-        absolute_deadline_ms,
-        ((uint32_t)MSG_SURVEY_PAIR_RESULT << 16) | outbound.packet.seq,
-        NULL);
+    return app_anchor_survey_result_delivery_stage_reserved(
+        delivery_reservation_token,
+        &outbound);
 }
 
 static bool anchor_relay_tx_active(void)
@@ -311,7 +343,8 @@ static void anchor_hold_channel5_rx_until_ms(int64_t deadline_ms,
 
 static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_frame *schedule,
                                                 int64_t schedule_rx_ms,
-                                                bool *deferred_mesh_rx_queued)
+                                                bool *deferred_mesh_rx_queued,
+                                                int *report_status)
 {
     struct anchor_range_window_report window_report = {0};
     uint8_t *anchor_full_cir = NULL;
@@ -323,6 +356,9 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     bool poll_guard_expired = false;
     bool last_local_exchange_ok = false;
 
+    if (report_status != NULL) {
+        *report_status = 0;
+    }
     if (schedule == NULL) {
         return 0u;
     }
@@ -675,9 +711,29 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
 
     anchor_range_window_finalize(&window_report);
 #if !defined(CONFIG_IMEC_ML_ANCHOR)
-    build_uwb_schedule_report_if_relevant(&anchor_uwb_session,
-                                          schedule->flags,
-                                          &window_report);
+    {
+        int report_ret =
+            build_uwb_schedule_report_if_relevant(&anchor_uwb_session,
+                                                  schedule->flags,
+                                                  &window_report);
+
+        if (report_status != NULL) {
+            *report_status = report_ret;
+        }
+        if (report_ret < 0) {
+            stage1_led_result(STAGE1_LED_RESULT_ERROR);
+            high_debug_log_event(
+                "RANGE_REPORT_FAIL_CLOSED",
+                "clicker=0x%016llx event_seq=%u attempt=%u ret=%d",
+                (unsigned long long)schedule->clicker_id,
+                schedule->click_event_id,
+                schedule->attempt_index,
+                report_ret);
+            LOG_ERR("anchor accepted range could not obtain durable report ownership: event=%u ret=%d",
+                    schedule->click_event_id,
+                    report_ret);
+        }
+    }
 #endif
 #if defined(CONFIG_IMEC_ML_ANCHOR) && defined(CONFIG_IMEC_GATEWAY_BLE)
     gateway_ble_exit_uwb_quiet("ml-anchor-scheduled-uwb");
@@ -832,8 +888,6 @@ static uint32_t anchor_run_clicker_pair_survey(
             memset(&range_result, 0, sizeof(range_result));
             range_result.status = RANGE_RX_TIMEOUT;
             ret = dwm3000_driver_range_initiator(&request, &range_result);
-            low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
-                                                   "pair-survey-initiator");
             if (ret < 0 && !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_INTERNAL_ERROR;
             }
@@ -842,6 +896,8 @@ static uint32_t anchor_run_clicker_pair_survey(
                                                  initiator_id,
                                                  responder_id,
                                                  &range_result);
+            low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
+                                                   "pair-survey-initiator");
         } else {
             int64_t listen_start_ms = target_ms -
                                       UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS;
@@ -890,6 +946,8 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     uint8_t selected_quality = first_quality;
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
     size_t frame_len = 0u;
+    uint32_t range_sleep_us;
+    int range_report_ret = 0;
     int ret;
     int last_discovery_ret = -ETIMEDOUT;
     int last_discovery_decode_ret = PROTO_OK;
@@ -986,6 +1044,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         struct uwb_wake_claim_frame claim;
         uint8_t quality = 0u;
         int64_t remaining_ms = collect_deadline_ms - k_uptime_get();
+        bool same_epoch;
 
         ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
                                                       frame,
@@ -1025,6 +1084,12 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             continue;
         }
 
+        same_epoch = uwb_anchor_epoch_matches(&anchor_uwb_session.epoch,
+                                              claim.network_id,
+                                              claim.clicker_id,
+                                              claim.click_event_id,
+                                              claim.attempt_index,
+                                              claim.nonce);
         ret = uwb_anchor_accept_wake_claim(&anchor_uwb_session,
                                            &claim,
                                            k_uptime_get_32(),
@@ -1041,9 +1106,19 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             (decision == UWB_ANCHOR_CLAIM_ACCEPTED ||
              decision == UWB_ANCHOR_CLAIM_REPLACED_BY_PRIORITY)) {
             HIGH_DEBUG_COUNTER_INC(wake_claim_accepted);
-            selected_claim = claim;
-            selected_rx_ms = k_uptime_get();
-            selected_quality = quality;
+            /*
+             * Keep the first copy's absolute schedule.  Later copies carry
+             * countdowns and may arrive with bounded transport skew; using
+             * each last copy would let that skew accumulate into a missed
+             * discovery window.
+             */
+            if (!same_epoch) {
+                selected_claim = claim;
+                selected_rx_ms = k_uptime_get();
+                selected_quality = quality;
+            } else if (quality > selected_quality) {
+                selected_quality = quality;
+            }
             selected_decision = decision;
             stage1_led_result(STAGE1_LED_RESULT_OK);
             high_debug_log_event("WAKE_CLAIM_ACCEPT",
@@ -1553,16 +1628,23 @@ discovery_miss:
                              uwb_schedule_burst_id(schedule.click_event_id,
                                                    schedule.attempt_index));
 
+        range_sleep_us = anchor_run_scheduled_uwb_ranges(
+            &schedule,
+            schedule_rx_ms,
+            deferred_mesh_rx_queued,
+            &range_report_ret);
         if (retained_sleep_us != NULL) {
-            *retained_sleep_us = u32_saturating_add(
-                *retained_sleep_us,
-                anchor_run_scheduled_uwb_ranges(&schedule,
-                                                schedule_rx_ms,
-                                                deferred_mesh_rx_queued));
-        } else {
-            (void)anchor_run_scheduled_uwb_ranges(&schedule,
-                                                  schedule_rx_ms,
-                                                  deferred_mesh_rx_queued);
+            *retained_sleep_us =
+                u32_saturating_add(*retained_sleep_us, range_sleep_us);
+        }
+        if (range_report_ret < 0) {
+            /*
+             * The RF exchange happened, but this anchor did not complete the
+             * accepted click contract because it lacks confirmed durable
+             * ownership of the report. Keep the handler result truthful
+             * while the persistence boundary forces watchdog recovery.
+             */
+            return false;
         }
     } else {
         stage1_led_result(ret == -ETIMEDOUT ?
@@ -1593,9 +1675,29 @@ static bool anchor_run_mesh_click_wake_claim(
     }
 
     anchor_click_window_set_active(true);
+    /*
+     * Admission held enough queue capacity while this work was pending.
+     * Release that provisional hold before preemption because preemption may
+     * need to requeue older durable click custody into the same queue.  Then
+     * reserve against the post-preemption state before starting any new RF
+     * work, so an older local report wins rather than being overwritten.
+     */
+    mesh_range_report_batch_abort(claim->clicker_id,
+                                  claim->click_event_id,
+                                  claim->attempt_index);
     if (mesh_preempt_for_click_event() < 0) {
         anchor_click_window_set_active(false);
         LOG_ERR("anchor click handoff deferred because mesh custody preemption failed");
+        return false;
+    }
+    ret = mesh_range_report_batch_reserve(claim->clicker_id,
+                                          claim->click_event_id,
+                                          claim->attempt_index);
+    if (ret < 0) {
+        anchor_click_window_set_active(false);
+        LOG_WRN("anchor click handoff deferred because post-preemption report capacity is unavailable: ret=%d",
+                ret);
+        report_tx_schedule(0u);
         return false;
     }
     ret = radio_guard_uwb_start("anchor mesh click handoff");
@@ -1647,6 +1749,9 @@ release_radio:
     anchor_set_uwb_busy(false);
 
 complete:
+    mesh_range_report_batch_abort(claim->clicker_id,
+                                  claim->click_event_id,
+                                  claim->attempt_index);
     anchor_click_window_set_active(false);
     if (deferred_mesh_rx_queued) {
         mesh_stop_role_scan();
@@ -1691,6 +1796,17 @@ static bool anchor_handle_mesh_click_wake_claim(
         return false;
     }
 
+    ret = mesh_range_report_batch_reserve(claim->clicker_id,
+                                          claim->click_event_id,
+                                          claim->attempt_index);
+    if (ret < 0) {
+        status_debug_printf("DBG_ANCHOR_CLICK_REPORT_CAPACITY_BUSY evt=%u attempt=%u ret=%d\n",
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            ret);
+        return false;
+    }
+
     key = k_spin_lock(&anchor_pending_click_handoff_lock);
     if (anchor_pending_click_handoff.active) {
         k_spin_unlock(&anchor_pending_click_handoff_lock, key);
@@ -1724,6 +1840,9 @@ static bool anchor_handle_mesh_click_wake_claim(
         anchor_pending_click_handoff.active = false;
     }
     k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+    mesh_range_report_batch_abort(claim->clicker_id,
+                                  claim->click_event_id,
+                                  claim->attempt_index);
     LOG_ERR("anchor click handoff queue admission failed: ret=%d", ret);
     return false;
 #endif
@@ -1769,6 +1888,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool handled_claim = false;
     bool deferred_mesh_rx_queued = false;
     bool route_wake_handoff = false;
+    bool rx_attempted = false;
     size_t route_wake_frame_len = 0u;
     uint8_t route_wake_quality = 0u;
     bool route_waiting_active = false;
@@ -1787,7 +1907,6 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     int ret;
 
     ARG_UNUSED(work);
-    app_watchdog_note_radio_progress();
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_CH5_SCAN_HANDLER role=%u\n", DEVICE_ROLE);
@@ -1896,6 +2015,7 @@ focused_scan_attempt:
     }
     if (ret == 0) {
         scan_rx_start_cycles = k_cycle_get_32();
+        rx_attempted = true;
         ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
             ANCHOR_UWB_SCAN_RX_MS,
             ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
@@ -2116,6 +2236,11 @@ scan_complete:
     radio_guard_uwb_stop();
     anchor_set_uwb_busy(false);
     anchor_click_window_set_active(false);
+    if (low_power_ret == 0 && rx_attempted &&
+        (ret == 0 || ret == -ETIMEDOUT ||
+         app_anchor_rx_failure_detected_preamble(rx_failure))) {
+        app_watchdog_note_radio_progress();
+    }
     if (route_wake_handoff) {
         bool handed_off = mesh_anchor_handoff_route_wake_frame(
             frame,
@@ -2198,6 +2323,7 @@ scan_complete:
 static int anchor_start_uwb_scan(void)
 {
     uint32_t startup_delay_ms = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ? 2000u : 0u;
+    int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return -EINVAL;
@@ -2209,7 +2335,10 @@ static int anchor_start_uwb_scan(void)
         return 0;
     }
 
-    anchor_uwb_scan_schedule_ms(startup_delay_ms);
+    ret = anchor_uwb_scan_schedule_ms(startup_delay_ms);
+    if (ret < 0) {
+        return ret;
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_CH5_SCAN_SCHEDULED startup=%u interval=%u win=%u\n",
                             startup_delay_ms,
@@ -2225,6 +2354,43 @@ static int anchor_start_uwb_scan(void)
 }
 
 
+static int anchor_survey_delivery_gateway_confirmed(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    if (packet == NULL || semantic_digest == NULL) {
+        return -EINVAL;
+    }
+    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT) {
+        return app_anchor_survey_delivery_gateway_confirmed(
+            packet, semantic_digest);
+    }
+    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
+        return app_anchor_survey_result_delivery_gateway_confirmed(
+            packet, semantic_digest);
+    }
+    return -ENOENT;
+}
+
+static int anchor_survey_delivery_transport_released(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    bool preempted)
+{
+    if (packet == NULL || semantic_digest == NULL) {
+        return -EINVAL;
+    }
+    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT) {
+        return app_anchor_survey_delivery_transport_released(
+            packet, semantic_digest, preempted);
+    }
+    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
+        return app_anchor_survey_result_delivery_transport_released(
+            packet, semantic_digest, preempted);
+    }
+    return 0;
+}
+
 static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
     .anchor_survey_discovery_is_pending =
         app_anchor_survey_runtime_discovery_is_pending,
@@ -2237,9 +2403,9 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
         app_anchor_survey_runtime_handle_pair_prepare,
     .gateway_handle_survey_discovery_report = gateway_handle_survey_discovery_report,
     .anchor_survey_delivery_gateway_confirmed =
-        app_anchor_survey_delivery_gateway_confirmed,
+        anchor_survey_delivery_gateway_confirmed,
     .anchor_survey_delivery_transport_released =
-        app_anchor_survey_delivery_transport_released,
+        anchor_survey_delivery_transport_released,
     .gateway_route_refresh_event = gateway_route_refresh_observe,
 };
 

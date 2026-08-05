@@ -23,6 +23,20 @@ static struct gateway_collection_state collection(uint32_t command_seq,
     };
 }
 
+static void collection_set_received_results(struct gateway_collection_state *state,
+                                            uint16_t received_count)
+{
+    assert(state != NULL);
+    assert(received_count <= GATEWAY_COLLECTION_RESULT_CACHE_SIZE);
+    memset(state->results, 0, sizeof(state->results));
+    state->received_count = received_count;
+    for (uint16_t i = 0u; i < received_count; i++) {
+        state->results[i].id.node_id =
+            UINT64_C(0xA000000000000000) + (uint64_t)i + 1u;
+        state->results[i].valid = true;
+    }
+}
+
 static void test_repeated_total_failures_use_random_exponential_backoff(void)
 {
     struct app_gateway_eack_retry_state state = {0};
@@ -84,13 +98,13 @@ static void test_failed_eack_snapshot_is_exact_while_collection_changes(void)
     assert(app_gateway_eack_retry_snapshot_active(&state, &current));
     assert(state.snapshot.payload_len == original.payload_len);
 
-    current.received_count = 7u;
+    collection_set_received_results(&current, 7u);
     current.collection_open = false;
     assert(gateway_collection_prepare_eack_outbound(
                &current,
                EACK_FORMAT_EXPLICIT_RECEIVED_LIST,
                &rebuilt) == PROTO_OK);
-    assert(rebuilt.payload_len == original.payload_len);
+    assert(rebuilt.payload_len > original.payload_len);
     assert(memcmp(rebuilt.payload,
                   original.payload,
                   original.payload_len) != 0);

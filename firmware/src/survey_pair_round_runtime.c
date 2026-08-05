@@ -13,7 +13,8 @@ static bool survey_pair_round_runtime_pair_equal(
     const struct survey_pair *first,
     const struct survey_pair *second)
 {
-    return first->survey_id == second->survey_id &&
+    return first->operation_generation == second->operation_generation &&
+           first->survey_id == second->survey_id &&
            first->initiator_id == second->initiator_id &&
            first->responder_id == second->responder_id &&
            first->sample_count == second->sample_count;
@@ -24,19 +25,7 @@ static int survey_pair_round_runtime_pair_at(
     uint8_t pair_index,
     struct survey_pair *pair)
 {
-    const struct survey_gateway_pair_entry *entry;
-
-    if (pair_index >= runtime->plan->pair_count) {
-        return PROTO_ERR_NOT_FOUND;
-    }
-    entry = &runtime->plan->pairs[pair_index];
-    *pair = (struct survey_pair) {
-        .initiator_id = entry->initiator_id,
-        .responder_id = entry->responder_id,
-        .survey_id = runtime->plan->survey_id,
-        .sample_count = runtime->plan->sample_count,
-    };
-    return survey_pair_validate(pair);
+    return survey_gateway_pair_at(runtime->plan, pair_index, pair);
 }
 
 static int survey_pair_round_runtime_validate_plan(
@@ -59,14 +48,9 @@ static int survey_pair_round_runtime_validate_plan(
     }
 
     for (size_t i = 0u; i < plan->pair_count; i++) {
-        struct survey_pair pair = {
-            .initiator_id = plan->pairs[i].initiator_id,
-            .responder_id = plan->pairs[i].responder_id,
-            .survey_id = plan->survey_id,
-            .sample_count = plan->sample_count,
-        };
+        struct survey_pair pair;
 
-        if (survey_pair_validate(&pair) != PROTO_OK ||
+        if (survey_gateway_pair_at(plan, i, &pair) != PROTO_OK ||
             pair.sample_count > SURVEY_PAIR_ROUND_RUNTIME_MAX_RESULT_SAMPLES ||
             metadata[i].pair_count_in_round == 0u ||
             metadata[i].pair_index_in_round >=
@@ -422,8 +406,8 @@ int survey_pair_round_runtime_note_sample(
 {
     struct survey_pair_round_lane *matched = NULL;
     size_t matched_index = 0u;
-    uint16_t sample_bit;
     bool changed = false;
+    int ret;
 
     if (runtime == NULL || sample == NULL) {
         return PROTO_ERR_ARG;
@@ -455,24 +439,16 @@ int survey_pair_round_runtime_note_sample(
         return PROTO_ERR_STALE;
     }
 
-    sample_bit = (uint16_t)(UINT16_C(1) << sample->sample_index);
-    if ((matched->usable_result_mask & sample_bit) == 0u) {
-        if (survey_sample_distance_usable(sample)) {
-            matched->usable_result_mask |= sample_bit;
-            matched->initiator_unusable_mask &= (uint16_t)~sample_bit;
-            matched->responder_unusable_mask &= (uint16_t)~sample_bit;
-            changed = true;
-        } else {
-            uint16_t *unusable_mask =
-                reporter_id == sample->pair.initiator_id ?
-                    &matched->initiator_unusable_mask :
-                    &matched->responder_unusable_mask;
-
-            if ((*unusable_mask & sample_bit) == 0u) {
-                *unusable_mask |= sample_bit;
-                changed = true;
-            }
-        }
+    ret = survey_pair_note_sample_masks(
+        sample,
+        reporter_id,
+        &matched->usable_result_mask,
+        &matched->responder_usable_mask,
+        &matched->initiator_unusable_mask,
+        &matched->responder_unusable_mask,
+        &changed);
+    if (ret != PROTO_OK) {
+        return ret;
     }
     if (lane_index != NULL) {
         *lane_index = matched_index;
@@ -499,6 +475,19 @@ bool survey_pair_round_lane_results_complete(
         return false;
     }
     return lane->usable_result_mask ==
+        survey_pair_round_expected_mask(lane->pair.sample_count);
+}
+
+bool survey_pair_round_lane_preferred_results_complete(
+    const struct survey_pair_round_lane *lane)
+{
+    if (lane == NULL ||
+        lane->pair.sample_count == 0u ||
+        lane->pair.sample_count >
+            SURVEY_PAIR_ROUND_RUNTIME_MAX_RESULT_SAMPLES) {
+        return false;
+    }
+    return lane->responder_usable_mask ==
         survey_pair_round_expected_mask(lane->pair.sample_count);
 }
 

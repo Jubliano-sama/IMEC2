@@ -13,6 +13,7 @@ struct app_gateway_command_ingress_item {
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     size_t payload_len;
     uint32_t admission_id;
+    uint32_t result_reservation_token;
     enum command_id command_id;
 };
 
@@ -28,6 +29,12 @@ struct app_gateway_command_identity {
 
 struct app_gateway_command_ingress_ops {
     bool gateway_role;
+    /*
+     * A nonzero local identity enables command-specific host-envelope
+     * validation before any preemptive classification.  Zero retains the
+     * generic command/options validation used by isolated test fixtures.
+     */
+    uint64_t gateway_id;
     bool (*is_preemptive)(
         void *ctx,
         const struct app_gateway_command_ingress_item *item);
@@ -35,7 +42,12 @@ struct app_gateway_command_ingress_ops {
         void *ctx,
         const struct app_gateway_command_ingress_item *item);
     int (*admit)(void *ctx, struct app_gateway_command_ingress_item *item);
-    int (*submit_priority)(void *ctx);
+    /*
+     * A zero return transfers execution custody. Retryable contention may
+     * also return its errno after retaining an independent bounded retry
+     * owner; ingress then keeps the accepted item rather than cancelling it.
+     */
+    int (*submit_priority)(void *ctx, uint32_t admission_cutoff);
     int (*cancel_admitted)(void *ctx,
                             const struct app_gateway_command_identity *identity);
     void (*emit_result)(void *ctx,
@@ -62,5 +74,14 @@ bool app_gateway_command_identity_matches(
 int app_gateway_command_identity_from_item(
     const struct app_gateway_command_ingress_item *item,
     struct app_gateway_command_identity *identity);
+
+bool app_gateway_command_ingress_contention_retryable(int error);
+
+bool app_gateway_command_admission_within_cutoff(uint32_t admission_id,
+                                                uint32_t admission_cutoff);
+
+int app_gateway_command_ingress_validate_command(
+    const struct app_gateway_command_ingress_item *item,
+    uint64_t gateway_id);
 
 #endif

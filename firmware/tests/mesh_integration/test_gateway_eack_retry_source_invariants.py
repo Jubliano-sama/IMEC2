@@ -8,7 +8,7 @@ from source_text import read_composed_source
 
 
 ROOT = Path(__file__).resolve().parents[2]
-BLE = (ROOT / "app/src/app_gateway_ble.c").read_text(encoding="utf-8")
+BLE = read_composed_source(ROOT / "app/src/app_gateway_ble.c")
 REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 RETRY_HEADER = (ROOT / "app/src/app_gateway_eack_retry.h").read_text(
     encoding="utf-8"
@@ -21,6 +21,12 @@ COLLECTION = (ROOT / "app/src/app_gateway_collection_eack.c").read_text(
 )
 GATEWAY_COMMAND = (ROOT / "src/gateway_command.c").read_text(encoding="utf-8")
 MESH_RELAY = read_composed_source(ROOT / "src/mesh_relay.c")
+PERSISTENCE = (ROOT / "app/src/app_mesh_persistence.c").read_text(
+    encoding="utf-8"
+)
+PERSISTENCE_HEADER = (ROOT / "app/src/app_mesh_persistence.h").read_text(
+    encoding="utf-8"
+)
 
 
 def function_body(source: str, name: str) -> str:
@@ -81,6 +87,82 @@ class GatewayEackRetrySourceInvariantTests(unittest.TestCase):
             "k_work_reschedule(&gateway_persistence_retry_work", BLE
         )
 
+    def test_transport_resume_rearms_every_paused_gateway_owner(self):
+        persistence = function_body(BLE, "gateway_schedule_persistence_retry")
+        eack_round = function_body(
+            BLE, "gateway_schedule_collection_eack_round"
+        )
+        eack_retry = function_body(
+            BLE, "gateway_schedule_collection_eack_retry"
+        )
+        gateway_resume = function_body(
+            BLE, "gateway_command_result_tracking_resume"
+        )
+        transport_resume = function_body(REPORT, "mesh_transport_resume")
+
+        self.assertIn(
+            "atomic_set(&gateway_persistence_retry_schedule_deferred",
+            persistence,
+        )
+        self.assertIn(
+            "gateway_persistence_retry_deferred_delay_ms",
+            persistence,
+        )
+        self.assertIn(
+            "atomic_set(&gateway_collection_eack_schedule_deferred",
+            eack_round,
+        )
+        self.assertIn(
+            "gateway_collection_eack_deferred_delay_ms",
+            eack_round,
+        )
+        self.assertIn(
+            "atomic_set(&gateway_collection_eack_schedule_deferred",
+            eack_retry,
+        )
+        self.assertIn(
+            "gateway_collection_eack_deferred_delay_ms",
+            eack_retry,
+        )
+        self.assertIn(
+            "atomic_cas(&gateway_persistence_retry_schedule_deferred",
+            gateway_resume,
+        )
+        self.assertIn(
+            "atomic_cas(&gateway_collection_eack_schedule_deferred",
+            gateway_resume,
+        )
+        self.assertIn(
+            "gateway_persistence_retry_deferred_delay_ms",
+            gateway_resume,
+        )
+        self.assertIn(
+            "gateway_collection_eack_deferred_delay_ms",
+            gateway_resume,
+        )
+        self.assertNotIn("gateway_membership_restore_pending", gateway_resume)
+        self.assertNotIn("gateway_collection_state.eack_pending", gateway_resume)
+        self.assertIn(
+            "mesh_route_work_reschedule(\n"
+            "            &gateway_persistence_retry_work, delay_ms)",
+            gateway_resume,
+        )
+        self.assertIn(
+            "mesh_route_work_reschedule(\n"
+            "            &gateway_collection_eack_work, delay_ms)",
+            gateway_resume,
+        )
+
+        unpause = transport_resume.index(
+            "atomic_set(&mesh_transport_paused_state, 0)"
+        )
+        rearm = transport_resume.index(
+            "gateway_command_result_tracking_resume()", unpause
+        )
+        scan = transport_resume.index("mesh_restart_role_scan()", rearm)
+        self.assertLess(unpause, rearm)
+        self.assertLess(rearm, scan)
+
     def test_c5_pre_rf_deferral_remains_owned_by_eack_retry(self):
         callback = function_body(BLE, "gateway_eack_send_c5_flood")
         send = function_body(BLE, "gateway_send_collection_eack")
@@ -125,7 +207,7 @@ class GatewayEackRetrySourceInvariantTests(unittest.TestCase):
         failure = body.index("if (ret < 0)", persist)
         failure_return = body.index("return;", failure)
         commit = body.index("app_gateway_eack_retry_commit_success", failure_return)
-        clear = body.index("app_mesh_persistence_clear_gateway_eack_custody", commit)
+        clear = body.index("gateway_clear_eack_custody_or_defer", commit)
 
         self.assertLess(advance, persist)
         self.assertLess(persist, failure)
@@ -140,6 +222,102 @@ class GatewayEackRetrySourceInvariantTests(unittest.TestCase):
             RETRY, "app_gateway_eack_retry_commit_success"
         )
         self.assertIn("retry_key(&state->identity)", commit_success)
+
+    def test_eack_tombstone_failure_has_one_route_owned_retry_owner(self):
+        real_gateway = BLE[
+            BLE.index(
+                "static struct gateway_command_pending "
+                "gateway_command_pending_state"
+            ) :
+        ]
+        clear = function_body(BLE, "gateway_clear_eack_custody_or_defer")
+        pending = function_body(BLE, "gateway_collection_work_pending")
+        schedule = function_body(BLE, "gateway_schedule_collection_eack_round")
+        retry = function_body(BLE, "gateway_persistence_retry_work_handler")
+        begin = function_body(
+            real_gateway, "gateway_begin_command_collection"
+        )
+        preflight = function_body(
+            real_gateway, "gateway_preflight_result_semantic_delivery"
+        )
+        projection = function_body(
+            real_gateway, "gateway_result_bundle_host_projection_mask"
+        )
+
+        raw_clear = clear.index(
+            "app_mesh_persistence_clear_gateway_eack_custody"
+        )
+        failure = clear.index("if (ret < 0)", raw_clear)
+        mark = clear.index(
+            "gateway_eack_custody_clear_pending = true", failure
+        )
+        cancel = clear.index(
+            "k_work_cancel_delayable(&gateway_collection_eack_work)", mark
+        )
+        retry_schedule = clear.index(
+            "gateway_schedule_persistence_retry", cancel
+        )
+        self.assertLess(raw_clear, failure)
+        self.assertLess(failure, mark)
+        self.assertLess(mark, cancel)
+        self.assertLess(cancel, retry_schedule)
+        self.assertIn("gateway_eack_custody_clear_pending", pending)
+        self.assertIn("gateway_eack_custody_clear_pending", schedule)
+        self.assertIn("gateway_eack_custody_clear_pending", preflight)
+        self.assertIn("gateway_eack_custody_clear_pending", projection)
+
+        retry_gate = retry.index("if (gateway_eack_custody_clear_pending)")
+        retry_clear = retry.index(
+            "gateway_clear_eack_custody_or_defer", retry_gate
+        )
+        retry_failure = retry.index("if (ret < 0)", retry_clear)
+        retry_return = retry.index("return;", retry_failure)
+        resume = retry.index(
+            "gateway_schedule_collection_eack_round", retry_return
+        )
+        self.assertLess(retry_gate, retry_clear)
+        self.assertLess(retry_clear, retry_failure)
+        self.assertLess(retry_failure, retry_return)
+        self.assertLess(retry_return, resume)
+
+        begin_clear = begin.index("gateway_clear_eack_custody_or_defer")
+        begin_schedule = begin.index(
+            "gateway_schedule_collection_eack_round", begin_clear
+        )
+        self.assertLess(begin_clear, begin_schedule)
+
+        predecessor = function_body(
+            BLE, "gateway_restored_eack_is_committed_predecessor"
+        )
+        self.assertIn("next_sequence", predecessor)
+        self.assertIn("next_round", predecessor)
+        self.assertNotIn("eack->received_count", predecessor)
+        self.assertNotIn("eack->collection_open", predecessor)
+
+    def test_persistence_eack_and_inactive_outbox_deletes_propagate(self):
+        clear_eack = function_body(
+            PERSISTENCE,
+            "app_mesh_persistence_clear_gateway_eack_custody",
+        )
+        clear_outbox = function_body(
+            PERSISTENCE, "app_mesh_persistence_clear_outbox"
+        )
+        save_outbox = function_body(
+            PERSISTENCE, "app_mesh_persistence_save_outbox"
+        )
+
+        self.assertIn(
+            "int app_mesh_persistence_clear_gateway_eack_custody(void)",
+            PERSISTENCE_HEADER,
+        )
+        self.assertIn("gateway_eack_custody_delete_error", clear_eack)
+        self.assertIn("mesh_persistence_note_failure", clear_eack)
+        self.assertIn("return ret;", clear_eack)
+        self.assertIn("outbox_test_delete_error", clear_outbox)
+        self.assertIn("mesh_persistence_note_failure", clear_outbox)
+        self.assertIn(
+            "return app_mesh_persistence_clear_outbox();", save_outbox
+        )
 
     def test_retry_identity_includes_collection_and_protocol_round(self):
         body = function_body(RETRY, "collection_identity")
@@ -315,16 +493,24 @@ class GatewayEackRetrySourceInvariantTests(unittest.TestCase):
         restore_runtime = function_body(
             real_gateway, "gateway_restore_collection_runtime"
         )
+        recovery_import = function_body(
+            real_gateway,
+            "gateway_import_collection_recovery_eack_custody",
+        )
         init = function_body(real_gateway, "gateway_command_result_tracking_init")
 
         collection_restore = restore_runtime.index(
             "app_mesh_persistence_restore_gateway_collection"
         )
-        pending = restore_runtime.index(
-            "!gateway_collection_state.eack_pending", collection_restore
-        )
         restore = restore_runtime.index(
-            "app_mesh_persistence_restore_gateway_eack_custody", pending
+            "app_mesh_persistence_restore_gateway_eack_custody",
+            collection_restore,
+        )
+        import_recovery = restore_runtime.index(
+            "gateway_import_collection_recovery_eack_custody", restore
+        )
+        resume_recovery = restore_runtime.index(
+            "collection-receipt-eack-reset-resume", import_recovery
         )
         import_custody = restore_runtime.index(
             "app_gateway_eack_retry_import_custody", restore
@@ -335,19 +521,34 @@ class GatewayEackRetrySourceInvariantTests(unittest.TestCase):
         resume = restore_runtime.index(
             "collection-eack-reset-resume", exact_validate
         )
+        pending = restore_runtime.index(
+            "!gateway_collection_state.eack_pending", resume
+        )
         final_gap = restore_runtime.index("collection-eack-final-reset-gap", resume)
         membership_reload = init.index("gateway_restore_membership_runtime")
         collection_reload = init.index(
             "gateway_restore_collection_runtime", membership_reload
         )
 
-        self.assertLess(collection_restore, pending)
-        self.assertLess(pending, restore)
+        self.assertLess(collection_restore, restore)
+        self.assertLess(restore, import_recovery)
+        self.assertLess(import_recovery, resume_recovery)
         self.assertLess(restore, import_custody)
         self.assertLess(import_custody, exact_validate)
         self.assertLess(exact_validate, resume)
+        self.assertLess(resume, pending)
         self.assertLess(resume, final_gap)
         self.assertLess(membership_reload, collection_reload)
+        self.assertIn(
+            "gateway_collection_eack_custody_validate", recovery_import
+        )
+        self.assertIn(
+            "gateway_collection_eack_packet_validate", recovery_import
+        )
+        self.assertIn(
+            "gateway_collection_eack_recovery_attempt_id", recovery_import
+        )
+        self.assertIn("decoded.collection_open", recovery_import)
 
     def test_eack_dedup_is_exact_round_not_whole_session(self):
         body = function_body(MESH_RELAY, "duplicate_matches_packet")

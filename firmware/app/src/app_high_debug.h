@@ -102,7 +102,7 @@ void stage1_click_trace_reset(void);
 void stage1_click_trace_dump(const char *reason);
 void stage1_led_phase(enum stage1_led_phase phase);
 void stage1_led_result(enum stage1_led_result result);
-void stage1_led_hold_click_result(int ret, uint32_t hold_ms);
+bool stage1_led_hold_click_result(int ret, uint32_t hold_ms);
 void high_debug_clicker_early_led(enum app_clicker_early_led_event event);
 #else
 #define HIGH_DEBUG_COUNTER_INC(field) do { } while (0)
@@ -218,10 +218,11 @@ static inline void stage1_led_result(enum stage1_led_result result)
     (void)result;
 }
 
-static inline void stage1_led_hold_click_result(int ret, uint32_t hold_ms)
+static inline bool stage1_led_hold_click_result(int ret, uint32_t hold_ms)
 {
     (void)ret;
     (void)hold_ms;
+    return false;
 }
 
 static inline void high_debug_clicker_early_led(enum app_clicker_early_led_event event)

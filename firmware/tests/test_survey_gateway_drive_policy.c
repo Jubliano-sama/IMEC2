@@ -162,16 +162,27 @@ static void test_response_ack_settle_deadline_boundary(void)
                                                        accepted_at_ms));
 
     survey_gateway_response_ack_settle_note_result(&settle,
-                                                   accepted_at_ms);
+                                                   accepted_at_ms,
+                                                   (uint32_t)deadline_ms +
+                                                       10000u);
     assert(survey_gateway_response_ack_settle_pending(&settle,
                                                        accepted_at_ms));
     assert(survey_gateway_response_ack_settle_pending(&settle,
                                                        deadline_ms - 1u));
+    assert(!survey_gateway_response_ack_settle_deadline_reached(
+        &settle, deadline_ms - 1u));
+    assert(survey_gateway_response_ack_settle_pending(&settle,
+                                                       deadline_ms));
+    assert(survey_gateway_response_ack_settle_deadline_reached(
+        &settle, deadline_ms));
+    assert(settle.active);
+    survey_gateway_response_ack_settle_complete(&settle);
+    assert(!settle.active);
     assert(!survey_gateway_response_ack_settle_pending(&settle,
                                                         deadline_ms));
 }
 
-static void test_exact_duplicate_restarts_quiet_interval(void)
+static void test_d_minus_one_exact_duplicate_restarts_quiet_interval(void)
 {
     struct survey_gateway_response_ack_settle settle;
     uint64_t accepted_at_ms = 2000u;
@@ -179,21 +190,96 @@ static void test_exact_duplicate_restarts_quiet_interval(void)
         accepted_at_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS - 1u;
     uint64_t original_deadline_ms =
         accepted_at_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
-    uint64_t extended_deadline_ms =
+    uint64_t restarted_deadline_ms =
         duplicate_at_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+    uint32_t operation_deadline_ms = 12000u;
 
     survey_gateway_response_ack_settle_init(&settle);
     survey_gateway_response_ack_settle_note_result(&settle,
-                                                   accepted_at_ms);
-    survey_gateway_response_ack_settle_note_result(&settle,
-                                                   duplicate_at_ms);
+                                                   accepted_at_ms,
+                                                   operation_deadline_ms);
+    survey_gateway_response_ack_settle_note_duplicate(
+        &settle, duplicate_at_ms, operation_deadline_ms);
 
+    assert(operation_deadline_ms == 12000u);
+    assert(settle.started_at_ms == accepted_at_ms);
+    assert(settle.deadline_ms == restarted_deadline_ms);
     assert(survey_gateway_response_ack_settle_pending(&settle,
                                                        original_deadline_ms));
-    assert(survey_gateway_response_ack_settle_pending(&settle,
-                                                       extended_deadline_ms - 1u));
-    assert(!survey_gateway_response_ack_settle_pending(&settle,
-                                                        extended_deadline_ms));
+    assert(survey_gateway_response_ack_settle_pending(
+        &settle, restarted_deadline_ms - 1u));
+    assert(survey_gateway_response_ack_settle_deadline_reached(
+        &settle, restarted_deadline_ms));
+}
+
+static void test_out_of_order_duplicate_commit_cannot_shorten_settle(void)
+{
+    struct survey_gateway_response_ack_settle settle;
+    const uint32_t operation_deadline_ms = 12000u;
+    const uint32_t accepted_at_ms = 1000u;
+    const uint32_t later_duplicate_received_at_ms = 3999u;
+    const uint32_t earlier_duplicate_received_at_ms = 3900u;
+    const uint32_t later_deadline_ms =
+        later_duplicate_received_at_ms +
+            SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+
+    survey_gateway_response_ack_settle_init(&settle);
+    survey_gateway_response_ack_settle_note_result(&settle,
+                                                   accepted_at_ms,
+                                                   operation_deadline_ms);
+    survey_gateway_response_ack_settle_note_duplicate(
+        &settle, later_duplicate_received_at_ms, operation_deadline_ms);
+    assert(settle.deadline_ms == later_deadline_ms);
+
+    survey_gateway_response_ack_settle_note_duplicate(
+        &settle, earlier_duplicate_received_at_ms, operation_deadline_ms);
+    assert(settle.started_at_ms == accepted_at_ms);
+    assert(settle.deadline_ms == later_deadline_ms);
+}
+
+static void test_d_minus_one_operation_duplicate_is_clamped(void)
+{
+    struct survey_gateway_response_ack_settle settle;
+    uint32_t operation_deadline_ms = 10000u;
+    uint64_t duplicate_at_ms = operation_deadline_ms - 1u;
+
+    survey_gateway_response_ack_settle_init(&settle);
+    survey_gateway_response_ack_settle_note_result(
+        &settle, 6000u, operation_deadline_ms);
+    survey_gateway_response_ack_settle_note_duplicate(
+        &settle, duplicate_at_ms, operation_deadline_ms);
+
+    assert(operation_deadline_ms == 10000u);
+    assert(settle.started_at_ms == 6000u);
+    assert(settle.deadline_ms == operation_deadline_ms);
+    assert(survey_gateway_response_ack_settle_pending(
+        &settle, duplicate_at_ms));
+    assert(survey_gateway_response_ack_settle_deadline_reached(
+        &settle, operation_deadline_ms));
+}
+
+static void test_d_minus_one_initial_result_is_clamped(void)
+{
+    struct survey_gateway_response_ack_settle settle;
+    const uint32_t operation_deadline_ms = 10000u;
+    const uint32_t accepted_at_ms = operation_deadline_ms - 1u;
+
+    survey_gateway_response_ack_settle_init(&settle);
+    survey_gateway_response_ack_settle_note_result(
+        &settle, accepted_at_ms, operation_deadline_ms);
+
+    assert(settle.active);
+    assert(settle.started_at_ms == accepted_at_ms);
+    assert(settle.deadline_ms == operation_deadline_ms);
+    assert(survey_gateway_response_ack_settle_pending(
+        &settle, accepted_at_ms));
+    assert(survey_gateway_response_ack_settle_deadline_reached(
+        &settle, operation_deadline_ms));
+
+    survey_gateway_response_ack_settle_complete(&settle);
+    survey_gateway_response_ack_settle_note_result(
+        &settle, operation_deadline_ms, operation_deadline_ms);
+    assert(!settle.active);
 }
 
 static void test_each_phase_starts_a_fresh_quiet_interval(void)
@@ -207,16 +293,24 @@ static void test_each_phase_starts_a_fresh_quiet_interval(void)
 
     survey_gateway_response_ack_settle_init(&settle);
     survey_gateway_response_ack_settle_note_result(&settle,
-                                                   first_result_ms);
-    assert(!survey_gateway_response_ack_settle_pending(&settle,
-                                                        second_result_ms));
-
-    survey_gateway_response_ack_settle_note_result(&settle,
-                                                   second_result_ms);
+                                                   first_result_ms,
+                                                   (uint32_t)
+                                                       second_deadline_ms +
+                                                       10000u);
     assert(survey_gateway_response_ack_settle_pending(&settle,
                                                        second_result_ms));
-    assert(!survey_gateway_response_ack_settle_pending(&settle,
-                                                        second_deadline_ms));
+    assert(survey_gateway_response_ack_settle_deadline_reached(
+        &settle, second_result_ms));
+
+    survey_gateway_response_ack_settle_note_result(&settle,
+                                                   second_result_ms,
+                                                   (uint32_t)
+                                                       second_deadline_ms +
+                                                       10000u);
+    assert(survey_gateway_response_ack_settle_pending(&settle,
+                                                       second_result_ms));
+    assert(survey_gateway_response_ack_settle_deadline_reached(
+        &settle, second_deadline_ms));
 }
 
 static void test_every_nonterminal_round_control_result_blocks_dispatch(void)
@@ -247,7 +341,9 @@ static void test_every_nonterminal_round_control_result_blocks_dispatch(void)
          * control: advance its owner, arm ACK quiet time, then ask policy
          * whether the following control or common GO can run. */
         survey_gateway_response_ack_settle_note_result(&settle,
-                                                       accepted_at_ms);
+                                                       accepted_at_ms,
+                                                       (uint32_t)deadline_ms +
+                                                           10000u);
         settle_pending = survey_gateway_response_ack_settle_pending(
             &settle, accepted_at_ms);
         assert(settle_pending);
@@ -260,6 +356,12 @@ static void test_every_nonterminal_round_control_result_blocks_dispatch(void)
         assert(decide(true, true, false, false, false, false,
                       settle_pending) == SURVEY_GATEWAY_DRIVE_NONE);
 
+        settle_pending = survey_gateway_response_ack_settle_pending(
+            &settle, deadline_ms);
+        assert(settle_pending);
+        assert(survey_gateway_response_ack_settle_deadline_reached(
+            &settle, deadline_ms));
+        survey_gateway_response_ack_settle_complete(&settle);
         settle_pending = survey_gateway_response_ack_settle_pending(
             &settle, deadline_ms);
         assert(!settle_pending);
@@ -280,7 +382,10 @@ int main(void)
     test_response_ack_settle_blocks_next_phase();
     test_external_waits_keep_a_bounded_deadline_poll();
     test_response_ack_settle_deadline_boundary();
-    test_exact_duplicate_restarts_quiet_interval();
+    test_d_minus_one_exact_duplicate_restarts_quiet_interval();
+    test_out_of_order_duplicate_commit_cannot_shorten_settle();
+    test_d_minus_one_operation_duplicate_is_clamped();
+    test_d_minus_one_initial_result_is_clamped();
     test_each_phase_starts_a_fresh_quiet_interval();
     test_every_nonterminal_round_control_result_blocks_dispatch();
     assert(survey_gateway_drive_action(NULL) == SURVEY_GATEWAY_DRIVE_NONE);

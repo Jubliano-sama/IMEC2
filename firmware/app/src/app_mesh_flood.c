@@ -57,6 +57,7 @@ static int flood_prepare_attempt(const struct mesh_outbound *base,
     }
     /* The lower radio sender may account for a final bounded handoff delay. */
     attempt->queued_at_ms = now_ms;
+    attempt->queued_at_valid = true;
     return 0;
 }
 
@@ -143,9 +144,9 @@ static int app_mesh_flood_send_resume_limit(
         return -EINVAL;
     }
     if (!progress->initialized) {
-        progress->due_ms = out->earliest_tx_ms != 0u ?
+        progress->due_ms = out->earliest_tx_valid ?
                            out->earliest_tx_ms : ops->now_ms(ops->ctx);
-        progress->age_origin_ms = out->queued_at_ms != 0u ?
+        progress->age_origin_ms = out->queued_at_valid ?
                                   out->queued_at_ms : progress->due_ms;
         progress->absolute_deadline_ms = ops->absolute_deadline_ms;
         progress->absolute_deadline_valid = ops->absolute_deadline_valid;

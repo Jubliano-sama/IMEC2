@@ -51,10 +51,59 @@ static void test_production_opportunity_budget(void)
            MESH_RADIO_WAKE_OPPORTUNITIES);
 }
 
+static void test_deadline_requires_complete_opportunity_tail(void)
+{
+    const int64_t deadline_ms = 1000;
+    const uint32_t full_opportunity_ms =
+        (2u * APP_WAKE_TRAIN_POLITE_SNIFF_MS) + 400u + 20u;
+    uint32_t delay_ms = UINT32_MAX;
+
+    /* The old wake-only admission accepted deadline-401 here. */
+    assert(!app_wake_train_deadline_fits(599,
+                                         deadline_ms,
+                                         full_opportunity_ms));
+
+    /*
+     * One opportunity fits from deadline-500. Forced post-sniff activity
+     * leaves only 40 ms, so even a clipped minimum backoff cannot admit a
+     * second complete RF opportunity and no schedule can follow it.
+     */
+    assert(app_wake_train_deadline_fits(500,
+                                        deadline_ms,
+                                        full_opportunity_ms));
+    assert(!app_wake_train_deadline_clip_delay(
+        960,
+        deadline_ms,
+        APP_WAKE_TRAIN_POLITE_BACKOFF_MIN_MS,
+        full_opportunity_ms,
+        &delay_ms));
+    assert(delay_ms == 0u);
+}
+
+static void test_deadline_clips_backoff_but_preserves_required_tail(void)
+{
+    uint32_t delay_ms = 0u;
+
+    assert(app_wake_train_deadline_clip_delay(100,
+                                               1000,
+                                               400u,
+                                               700u,
+                                               &delay_ms));
+    assert(delay_ms == 200u);
+    assert(app_wake_train_deadline_clip_delay(100,
+                                               INT64_MAX,
+                                               400u,
+                                               700u,
+                                               &delay_ms));
+    assert(delay_ms == 400u);
+}
+
 int main(void)
 {
     test_rx_activity_matches_low_duty_preamble_failures();
     test_backoff_is_random_exponential_between_bounds();
     test_production_opportunity_budget();
+    test_deadline_requires_complete_opportunity_tail();
+    test_deadline_clips_backoff_but_preserves_required_tail();
     return 0;
 }

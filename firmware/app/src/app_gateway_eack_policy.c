@@ -123,6 +123,7 @@ int app_gateway_eack_send_to_candidates_with_current_channel9(
         eack->next_hop_id = current_channel9_next_hop_id;
         eack->radio_channel = MESH_EVENT_CHANNEL;
         eack->earliest_tx_ms = 0u;
+        eack->earliest_tx_valid = false;
         ret = ops->prepare_channel9(eack, current_channel9_plan, ops->ctx);
         result_note_channel9_prepare(result, ret);
         if (ret != 0) {
@@ -212,6 +213,7 @@ current_channel9_done:
     eack->next_hop_id = MESH_BROADCAST_ID;
     eack->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     eack->earliest_tx_ms = 0u;
+    eack->earliest_tx_valid = false;
     ret = ops->send_c5_flood(eack, ops->ctx);
     result_note_c5_send(result, ret);
     if (ret == 0) {

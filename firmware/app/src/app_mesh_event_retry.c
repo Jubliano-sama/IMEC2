@@ -28,19 +28,42 @@ static bool request_key_equal(
            lhs->message_type == rhs->message_type;
 }
 
-uint32_t app_mesh_event_payload_fingerprint(const uint8_t *payload,
-                                            size_t payload_len)
+bool app_mesh_event_payload_digest(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
-    uint32_t hash = UINT32_C(2166136261);
+    return semantic_digest_sha256(payload, payload_len, digest);
+}
 
-    if (payload == NULL && payload_len != 0u) {
-        return 0u;
+bool app_mesh_event_request_payload_equal(
+    const struct app_mesh_event_request_identity *lhs,
+    const struct app_mesh_event_request_identity *rhs)
+{
+    return lhs != NULL && rhs != NULL &&
+           semantic_digest_equal(lhs->payload_digest,
+                                 rhs->payload_digest,
+                                 sizeof(lhs->payload_digest));
+}
+
+bool app_mesh_event_accept_timing_compatible(
+    const struct mesh_event_timing *accepted,
+    const struct mesh_event_timing *proposed)
+{
+    if (accepted == NULL || proposed == NULL) {
+        return false;
     }
-    for (size_t i = 0u; i < payload_len; i++) {
-        hash ^= payload[i];
-        hash *= UINT32_C(16777619);
-    }
-    return hash == 0u ? UINT32_C(1) : hash;
+
+    return accepted->mesh_channel == proposed->mesh_channel &&
+           accepted->event_interval_ms == proposed->event_interval_ms &&
+           accepted->event_window_ms == proposed->event_window_ms &&
+           accepted->event_counter == proposed->event_counter &&
+           accepted->guard_ms == proposed->guard_ms &&
+           accepted->peer_clock_skew_estimate_ppm ==
+               proposed->peer_clock_skew_estimate_ppm &&
+           accepted->max_missed_events == proposed->max_missed_events &&
+           accepted->supervision_timeout_ms ==
+               proposed->supervision_timeout_ms;
 }
 
 enum app_mesh_event_request_match app_mesh_event_retry_match(
@@ -55,9 +78,7 @@ enum app_mesh_event_request_match app_mesh_event_retry_match(
         !request_key_equal(&state->request, request)) {
         return APP_MESH_EVENT_REQUEST_BUSY;
     }
-    if (request == NULL ||
-        state->request.payload_len != request->payload_len ||
-        state->request.payload_fingerprint != request->payload_fingerprint) {
+    if (!app_mesh_event_request_payload_equal(&state->request, request)) {
         return APP_MESH_EVENT_REQUEST_CONFLICT;
     }
     return APP_MESH_EVENT_REQUEST_DUPLICATE;
@@ -160,6 +181,10 @@ bool app_mesh_event_retry_note_failure(
     }
     if (state == NULL || !state->active ||
         deadline_reached(now_ms, state->deadline_ms)) {
+        if (state != NULL && state->active) {
+            state->retry_due_ms = 0u;
+            state->retry_due_armed = false;
+        }
         return false;
     }
 
@@ -176,6 +201,8 @@ bool app_mesh_event_retry_note_failure(
                                                     policy,
                                                     attempt_entropy);
     if (raw_delay_ms == 0u) {
+        state->retry_due_ms = 0u;
+        state->retry_due_armed = false;
         return false;
     }
     due_ms = now_ms + raw_delay_ms;
@@ -197,10 +224,12 @@ bool app_mesh_event_retry_note_failure(
     }
     if (deadline_reached(due_ms, state->deadline_ms)) {
         state->retry_due_ms = 0u;
+        state->retry_due_armed = false;
         return false;
     }
 
     state->retry_due_ms = due_ms;
+    state->retry_due_armed = true;
     if (delay_ms != NULL) {
         *delay_ms = due_ms - now_ms;
     }
@@ -215,6 +244,7 @@ void app_mesh_event_retry_note_send_success(
     }
     state->response_sent = true;
     state->retry_due_ms = 0u;
+    state->retry_due_armed = false;
     app_mesh_rf_retry_reset(&state->retry);
 }
 
@@ -231,7 +261,7 @@ bool app_mesh_event_retry_claim_timing_install(
 bool app_mesh_event_retry_due(const struct app_mesh_event_retry_state *state,
                               uint32_t now_ms)
 {
-    return state != NULL && state->active && state->retry_due_ms != 0u &&
+    return state != NULL && state->active && state->retry_due_armed &&
            !deadline_reached(now_ms, state->deadline_ms) &&
            deadline_reached(now_ms, state->retry_due_ms);
 }
@@ -263,10 +293,7 @@ enum app_mesh_event_request_match app_mesh_event_completion_match(
         !request_key_equal(&completion->request, request)) {
         return APP_MESH_EVENT_REQUEST_NEW;
     }
-    if (request == NULL ||
-        completion->request.payload_len != request->payload_len ||
-        completion->request.payload_fingerprint !=
-            request->payload_fingerprint) {
+    if (!app_mesh_event_request_payload_equal(&completion->request, request)) {
         return APP_MESH_EVENT_REQUEST_CONFLICT;
     }
     return APP_MESH_EVENT_REQUEST_DUPLICATE;

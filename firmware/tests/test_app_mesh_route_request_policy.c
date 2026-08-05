@@ -206,6 +206,7 @@ static void test_deferred_forward_due_delay_expires_to_zero(void)
     assert(app_mesh_route_request_defer_delay_ms(1001u, 1000u) == 0u);
     assert(app_mesh_route_request_defer_delay_ms(999u, 1000u) == 1u);
     assert(app_mesh_route_request_defer_delay_ms(UINT32_MAX - 2u, 2u) == 5u);
+    assert(app_mesh_route_request_defer_delay_ms(UINT32_MAX, 0u) == 1u);
     assert(app_mesh_route_request_defer_delay_ms(2u, UINT32_MAX - 2u) == 0u);
 }
 

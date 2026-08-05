@@ -32,11 +32,11 @@ typedef int (*mesh_sim_gateway_admit_fn)(
 #define MESH_SIM_MAX_CONNECTIONS 64u
 #define MESH_SIM_MAX_CONNECTION_EVENTS 1024u
 #define MESH_SIM_MAX_EVENTS 4096u
-#define MESH_SIM_MAX_RX_WINDOWS 512u
-#define MESH_SIM_MAX_TRANSMISSIONS 512u
+#define MESH_SIM_MAX_RX_WINDOWS 1024u
+#define MESH_SIM_MAX_TRANSMISSIONS 1024u
 #define MESH_SIM_MAX_RECEPTIONS 1024u
-/* Preserve a complete 300-step adversarial replay instead of a lossy tail. */
-#define MESH_SIM_MAX_TRANSITIONS 8192u
+/* Preserve a complete 800-step adversarial replay instead of a lossy tail. */
+#define MESH_SIM_MAX_TRANSITIONS 16384u
 #define MESH_SIM_MAX_DISPATCHES_PER_RUN (MESH_SIM_MAX_TRANSITIONS * 2u)
 #define MESH_SIM_MAX_SAME_TIME_DISPATCHES 1024u
 #define MESH_SIM_TX_QUEUE_CAPACITY 16u
@@ -324,6 +324,7 @@ struct mesh_sim_role_instance {
     struct mesh_sim_watchdog watchdog;
     struct mesh_sim_queued_tx tx_queue[MESH_SIM_TX_QUEUE_CAPACITY];
     struct mesh_outbound route_waiting_outbound;
+    struct mesh_outbound route_reply_upstream_ack;
     struct mesh_sim_delivery deliveries[MESH_SIM_DELIVERY_CAPACITY];
     size_t tx_queue_count;
     size_t tx_queue_capacity;
@@ -339,6 +340,7 @@ struct mesh_sim_role_instance {
     uint32_t runtime_action_duration_us[4];
     uint32_t next_relay_random;
     uint32_t work_epoch;
+    uint32_t event_operation_session_next;
     struct mesh_sim_relay_timer_guard relay_timer_guard;
     uint16_t event_control_seq;
     uint64_t event_boot_nonce;
@@ -353,6 +355,7 @@ struct mesh_sim_role_instance {
     bool resume_low_duty_after_ds_twr;
     bool next_relay_random_valid;
     bool route_waiting_valid;
+    bool route_reply_upstream_ack_valid;
 };
 
 struct mesh_sim_connection {
@@ -450,6 +453,8 @@ struct mesh_sim_connection_event {
     uint8_t sender_index;
     uint8_t receiver_index;
     bool receiver_preempted;
+    bool sender_policy_deferred;
+    bool receiver_policy_deferred;
     bool sender_worker_completed;
     bool receiver_worker_completed;
     bool had_packet;
@@ -602,6 +607,7 @@ int mesh_sim_renegotiate_connection_over_radio(
 int mesh_sim_schedule_next_connection_event(struct mesh_sim_world *world,
                                             uint16_t connection_index,
                                             bool receiver_preempted);
+bool mesh_sim_has_pending_finite_work(const struct mesh_sim_world *world);
 int mesh_sim_expire_connection_ownership(struct mesh_sim_world *world,
                                          uint16_t connection_index,
                                          uint8_t *expired_endpoints);

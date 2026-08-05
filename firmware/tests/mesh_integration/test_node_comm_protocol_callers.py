@@ -47,12 +47,16 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         cls.survey_runtime = (
             APP_SRC / "app_anchor_survey_runtime.c"
         ).read_text(encoding="utf-8")
+        cls.survey_result_delivery = (
+            APP_SRC / "app_anchor_survey_result_delivery.c"
+        ).read_text(encoding="utf-8")
+        cls.persistence_header = (
+            APP_SRC / "app_mesh_persistence.h"
+        ).read_text(encoding="utf-8")
         cls.command_completion = (
             APP_SRC / "app_anchor_command_completion.c"
         ).read_text(encoding="utf-8")
-        cls.gateway_ble = (APP_SRC / "app_gateway_ble.c").read_text(
-            encoding="utf-8"
-        )
+        cls.gateway_ble = read_composed_source(APP_SRC / "app_gateway_ble.c")
         cls.report_route_control = (
             APP_SRC / "app_mesh_report_route_control.inc"
         ).read_text(encoding="utf-8")
@@ -67,7 +71,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         for source_path in sorted(APP_SRC.glob("*.c")):
             if source_path.name == "app_node_comm.c":
                 continue
-            source = source_path.read_text(encoding="utf-8")
+            source = read_composed_source(source_path)
             for api in forbidden:
                 with self.subTest(source=source_path.name, api=api):
                     self.assertIsNone(
@@ -87,17 +91,73 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertNotIn("mesh_request_route(", body)
 
     def test_survey_pair_results_use_bounded_communication_custody(self):
-        body = function_body(
+        producer = function_body(
             self.anchor, "anchor_queue_survey_sample_result"
         )
+        stage = function_body(
+            self.survey_result_delivery,
+            "app_anchor_survey_result_delivery_stage_reserved",
+        )
+        service = function_body(
+            self.survey_result_delivery, "result_delivery_service_slot"
+        )
 
-        self.assertEqual(body.count("app_node_comm_submit_reliable_uplink("), 1)
-        self.assertIn("absolute_deadline_ms", body)
-        self.assertRegex(body, r"SURVEY_[A-Z0-9_]*DELIVERY_TIMEOUT_MS")
-        self.assertNotIn("queue_anchor_report(", body)
-        self.assertNotIn("mesh_start_tracked_tx(", body)
-        self.assertNotIn("mesh_start_tracked_tx_with_retry(", body)
-        self.assertNotIn("mesh_request_route(", body)
+        self.assertIn(
+            "#define APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS 4u",
+            self.persistence_header,
+        )
+        self.assertIn(
+            "result_delivery_slots[\n"
+            "    APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS]",
+            self.survey_result_delivery,
+        )
+        self.assertIn(
+            "APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS ==\n"
+            "                 SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT",
+            self.survey_result_delivery,
+        )
+        self.assertIn("delivery_reservation_token == 0u", producer)
+        self.assertEqual(
+            producer.count(
+                "app_anchor_survey_result_delivery_stage_reserved("
+            ),
+            1,
+        )
+        self.assertNotIn("app_node_comm_submit_reliable_uplink(", producer)
+
+        durable_stage = stage.index("app_mesh_local_delivery_stage(")
+        reserved_commit = stage.index(
+            "app_node_comm_commit_durable_reliable_uplink_reservation("
+        )
+        self.assertLess(durable_stage, reserved_commit)
+        self.assertIn("absolute_deadline_ms", stage)
+        self.assertIn("slot->admission_in_progress = true", stage)
+        self.assertIn("slot->handle = handle", stage)
+        self.assertIn("result_delivery_abandon_handle(", stage)
+
+        self.assertIn(
+            "app_node_comm_reserve_durable_reliable_uplinks(", service
+        )
+        self.assertIn(
+            "app_node_comm_commit_durable_reliable_uplink_reservation(",
+            service,
+        )
+        self.assertIn(
+            "result_delivery_ops.active_owner_matches_outbound(&outbound)",
+            service,
+        )
+        self.assertIn(
+            'result_delivery_ops.resume_restored_outbox(\n'
+            '                "survey-pair-result-owner")',
+            service,
+        )
+        for forbidden in (
+            "queue_anchor_report(",
+            "mesh_start_tracked_tx(",
+            "mesh_start_tracked_tx_with_retry(",
+            "mesh_request_route(",
+        ):
+            self.assertNotIn(forbidden, producer)
 
     def test_gateway_control_preempts_unrelated_route_reply_listener(self):
         body = function_body(
@@ -251,61 +311,128 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             self.survey, "app_anchor_survey_delivery_gateway_confirmed"
         )
 
-        ack_commit = body.index("app_mesh_local_delivery_note_ack(delivery, packet)")
+        ack_commit = body.index("app_mesh_local_delivery_commit_ack(")
         sample = body.index("app_stack_workload_diag_anchor_survey_sample(packet")
         terminal = body.index("app_stack_workload_diag_anchor_survey_release(packet")
 
         self.assertLess(ack_commit, sample)
         self.assertLess(sample, terminal)
 
-    def test_survey_terminal_events_commit_or_release_persisted_custody(self):
+    def test_survey_terminal_events_commit_or_retain_persisted_custody(self):
         poll = function_body(self.survey, "survey_delivery_poll_comm_result")
         confirmed = function_body(
             self.survey, "app_anchor_survey_delivery_gateway_confirmed"
         )
 
         self.assertIn("app_node_comm_take_delivery_event_for(handle, &event)", poll)
+        self.assertIn("app_node_comm_peek_delivery_event_for(handle, &event)", poll)
         self.assertIn("survey_delivery_handle != handle", poll)
         self.assertIn(
-            "outbound = *app_mesh_local_delivery_outbound(delivery);",
+            "outbound = delivery->snapshot.outbound;",
             poll,
         )
         self.assertIn("event.reason == NODE_COMM_TERMINAL_DELIVERED", poll)
+        digest = poll.index(
+            "mesh_packet_semantic_digest(&outbound.packet"
+        )
+        exact_confirm = poll.index(
+            "app_anchor_survey_delivery_gateway_confirmed(",
+            digest,
+        )
+        self.assertLess(digest, exact_confirm)
         self.assertIn(
-            "app_anchor_survey_delivery_gateway_confirmed(&outbound.packet)",
-            poll,
+            "&outbound.packet, semantic_digest",
+            poll[exact_confirm : exact_confirm + 180],
         )
-        self.assertIn("app_mesh_local_delivery_note_ack(delivery, packet)", confirmed)
-
-        failed = poll.index("app_mesh_local_delivery_note_failed(delivery)")
-        released = poll.index("app_mesh_local_delivery_discard_failed(delivery)")
-        self.assertLess(failed, released)
+        self.assertIn(
+            "app_mesh_local_delivery_commit_ack(",
+            confirmed,
+        )
+        self.assertIn("delivery, packet, semantic_digest", confirmed)
+        self.assertIn(
+            "survey_delivery_semantic_digest_matches(delivery,",
+            confirmed,
+        )
         self.assertLess(
-            released,
-            poll.index("app_stack_workload_diag_anchor_survey_release("),
+            poll.index("app_mesh_local_delivery_ack_committed(delivery)"),
+            poll.index("app_node_comm_take_delivery_event_for(handle, &event)"),
         )
 
-    def test_survey_rejects_new_start_while_report_custody_is_pending(self):
+        retained = poll.index("survey_delivery_retain_for_retry_locked(delivery)")
+        self.assertLess(
+            retained,
+            poll.index("app_node_comm_take_delivery_event_for(handle, &event)"),
+        )
+        self.assertNotIn("app_mesh_local_delivery_discard_failed(delivery)", poll)
+        self.assertIn("retained=%u", poll)
+
+    def test_newer_survey_rejects_and_preserves_older_report_custody(self):
         start = function_body(
             self.survey, "app_anchor_survey_discovery_handle_start"
+        )
+        custody = function_body(
+            self.survey,
+            "app_anchor_survey_discovery_report_custody_status",
         )
         retry = function_body(
             self.survey, "app_anchor_survey_discovery_retry_report"
         )
-
-        active = start.index("app_mesh_local_delivery_active(delivery)")
-        reject = start.index(
-            "survey discovery start rejected while earlier report custody is pending",
-            active,
+        restore = function_body(
+            self.survey, "app_anchor_survey_discovery_restore"
         )
+        admit = function_body(
+            self.survey_runtime, "survey_generation_admit_locked"
+        )
+        worker = function_body(self.survey_runtime, "survey_work_handler")
+
+        pending = worker.index("if (discovery_pending)")
+        recheck = worker.index(
+            "app_anchor_survey_discovery_report_custody_status(",
+            pending,
+        )
+        admit_start = start.index("discovery_ops.admit_start(&config)")
         queue_next = start.index("discovery_ops.queue_start(")
-        self.assertLess(active, reject)
-        self.assertLess(reject, queue_next)
-        self.assertNotIn("app_mesh_local_delivery_supersede(", start)
-        self.assertNotIn("app_node_comm_abandon_delivery(", start)
+        self.assertLess(admit_start, queue_next)
+        self.assertLess(pending, recheck)
+        self.assertIn("app_mesh_local_delivery_occupied(delivery)", custody)
+        self.assertIn("survey_operation_generation_extract_tlv(", custody)
+        self.assertIn("operation_generation == owned_generation ?", custody)
+
+        custody_gate = admit.index(
+            "app_anchor_survey_discovery_report_custody_status("
+        )
+        generation_write = admit.index(
+            "app_mesh_persistence_advance_anchor_survey_generation("
+        )
+        self.assertLess(custody_gate, generation_write)
+        self.assertIn("custody_status != -EALREADY", admit)
+
+        for destructive_api in (
+            "app_node_comm_abandon_delivery(",
+            "app_mesh_local_delivery_note_failed(",
+            "app_mesh_local_delivery_discard_failed(",
+            "app_mesh_local_delivery_cleanup_ack(",
+        ):
+            self.assertNotIn(destructive_api, custody)
+
+        conflict = worker.index("if (ret < 0)", recheck)
+        conflict_return = worker.index("return;", conflict)
+        conflict_block = worker[conflict:conflict_return]
+        self.assertIn(
+            "DBG_SURVEY_DISCOVERY_REPORT_CUSTODY_BLOCKED",
+            conflict_block,
+        )
+        self.assertNotIn("app_node_comm_abandon_delivery(", conflict_block)
+        self.assertNotIn(
+            "app_mesh_local_delivery_discard_failed(", conflict_block
+        )
 
         self.assertIn("stale_handle = delivery_handle", retry)
         self.assertIn("app_node_comm_abandon_delivery(stale_handle)", retry)
+        self.assertIn("app_node_comm_submit_delivery(", retry)
+        self.assertIn("app_mesh_local_delivery_recover(", restore)
+        self.assertIn("recovery.restored", restore)
+        self.assertIn("app_mesh_local_delivery_rebase_after_boot(", restore)
 
     def test_assignment_result_sends_use_delivery_facade(self):
         submit = function_body(self.anchor, "anchor_submit_command_result")
@@ -323,9 +450,11 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         )
         self.assertIn("app_node_comm_abandon_delivery(", schedule)
         self.assertIn(
-            "if (anchor_discovery_claim_pending.delivery_handle != 0u)",
+            "if (replaced_delivery_handle != 0u)",
             schedule,
         )
+        self.assertIn("anchor_discovery_claim_pending.generation =", schedule)
+        self.assertIn("anchor_discovery_claim_reschedule_locked(", schedule)
 
     def test_gateway_protocol_floods_use_resumable_delivery_queue(self):
         survey = function_body(self.anchor, "gateway_route_survey_reachability")
@@ -365,11 +494,11 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             self.assertIn("NODE_COMM_TERMINAL_DELIVERED", body)
         self.assertIn("gateway_discovery_assignment_window_ms_locked()", assignment_terminal)
         self.assertIn("gateway_survey_collection_deadline_ms", survey_terminal)
-        self.assertIn(
+        self.assertNotIn(
             "k_uptime_get_32() + gateway_survey_collection_duration_ms",
             survey_terminal,
         )
-        self.assertNotIn(
+        self.assertIn(
             "command_origin_ms + collection_delay_ms",
             survey,
         )
@@ -425,6 +554,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
 
         self.assertIn("survey_gateway_reverse_hint_for_target(", preparer)
         self.assertIn("mesh_relay_note_gateway_survey_reverse_route(", preparer)
+        self.assertIn("mesh_relay_find_current_downlink(", preparer)
         self.assertIn("outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT", preparer)
         self.assertIn("gateway_survey_prepare_pair_control(", sender)
         self.assertIn("app_node_comm_submit_delivery(", sender)
@@ -443,7 +573,36 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertNotIn("gateway_survey_transaction", manual)
         self.assertNotIn("app_node_comm_submit_delivery(", manual)
         self.assertNotIn("mesh_send_c5_flood(", automatic)
+        self.assertIn(
+            "gateway_manual_survey_pair_state.prepared_mask !=", manual
+        )
+        self.assertIn(
+            "SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK) == 0u", manual
+        )
+        manual_terminal = function_body(
+            self.anchor, "gateway_manual_survey_pair_note_terminal"
+        )
+        self.assertNotIn(
+            "gateway_manual_survey_pair_state.started_mask ==",
+            manual_terminal,
+        )
+        manual_sample = function_body(
+            self.anchor, "gateway_manual_survey_pair_note_sample"
+        )
+        self.assertIn(
+            "gateway_manual_survey_pair_state.initiator_result_mask ==",
+            manual_sample,
+        )
+        self.assertIn(
+            "gateway_manual_survey_pair_state.responder_result_mask ==",
+            manual_sample,
+        )
         self.assertNotIn("mesh_start_tracked_tx(", manual)
+        self.assertIn(
+            "outbound.packet.ttl = gateway_command_origin_ttl(command_id)",
+            manual,
+        )
+        self.assertNotIn("host_packet->ttl", manual)
 
         for command in ("CMD_SURVEY_PREPARE_PAIR", "CMD_SURVEY_START_PAIR"):
             with self.subTest(command=command):
@@ -482,13 +641,16 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         executor = function_body(self.anchor, "anchor_execute_command_side_effects")
         targeted = function_body(
             self.survey_runtime,
-            "app_anchor_survey_runtime_abort_pair_matching",
+            "app_anchor_survey_runtime_abort_pair_matching_round",
         )
 
         self.assertIn("survey_extract_pair_tlvs(", executor)
-        self.assertIn("app_anchor_survey_runtime_abort_pair_matching(", executor)
-        self.assertIn("payload_len == 4u", executor)
-        self.assertIn("survey_pair_lease_abort_matching(", targeted)
+        self.assertIn(
+            "app_anchor_survey_runtime_abort_pair_matching_round(", executor
+        )
+        self.assertIn("survey_round_commitment_extract_tlv(", executor)
+        self.assertIn("pair.operation_generation != 0u", executor)
+        self.assertIn("survey_pair_lease_abort_matching_round_bound(", targeted)
 
     def test_survey_result_releases_exact_delivery_before_phase_advance(self):
         close = function_body(
@@ -525,7 +687,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertIn("!gateway_survey_transaction.active.request_delivery_terminal",
                       finish)
         self.assertIn("if (gateway_survey_cleanup_pending())", finish)
-        self.assertIn("k_work_reschedule(", finish)
+        self.assertIn("gateway_survey_work_reschedule(", finish)
         self.assertIn("else {", finish)
         self.assertIn("k_work_cancel_delayable(&gateway_survey_work)", finish)
         self.assertIn("gateway_survey_cleanup_pending()", admission)
@@ -571,6 +733,7 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             "gateway_survey_finalize_pair_observation",
             "gateway_survey_auto_finish_status",
             "gateway_survey_auto_finish",
+            "gateway_survey_finish_cleanup_if_complete",
             "gateway_survey_work_handler",
         )
         bodies = {
@@ -596,17 +759,40 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         finalize = bodies["gateway_survey_finalize_pair_observation"]
         finish = bodies["gateway_survey_auto_finish_status"]
         automatic = bodies["gateway_survey_auto_finish"]
+        finish_cleanup = bodies[
+            "gateway_survey_finish_cleanup_if_complete"
+        ]
         self.assertNotIn("gateway_survey_auto_finish(", finalize)
         self.assertNotIn("gateway_survey_auto_finish_status(", finalize)
         self.assertEqual(1, automatic.count("gateway_survey_auto_finish_status("))
-        self.assertEqual(1, finish.count("gateway_observe_survey_terminal("))
         self.assertLess(
             finish.index("if (!gateway_survey_active)"),
-            finish.index("gateway_observe_survey_terminal("),
+            finish.index("gateway_survey_finish_pending_status = status"),
         )
         self.assertLess(
-            finish.index("gateway_observe_survey_terminal("),
+            finish.index("gateway_survey_finish_pending_status = status"),
             finish.index("gateway_survey_active = false"),
+        )
+        self.assertNotIn(
+            "gateway_survey_finalize_pair_observation()", finish
+        )
+        self.assertEqual(
+            1,
+            finish_cleanup.count("gateway_observe_survey_terminal("),
+        )
+        self.assertLess(
+            finish_cleanup.index(
+                "app_gateway_survey_round_terminating("
+            ),
+            finish_cleanup.index("gateway_survey_round_reset()"),
+        )
+        self.assertLess(
+            finish_cleanup.index("gateway_survey_round_reset()"),
+            finish_cleanup.index("gateway_observe_survey_terminal("),
+        )
+        self.assertLess(
+            finish_cleanup.index("gateway_observe_survey_terminal("),
+            finish_cleanup.index("gateway_operation_owner_release("),
         )
         self.assertIn(
             "GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL",
@@ -624,10 +810,13 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             ),
         )
 
-    def test_explicit_survey_deadline_reason_survives_final_pair_flush(self):
+    def test_explicit_survey_deadline_reason_survives_terminal_cleanup(self):
         worker = function_body(self.anchor, "gateway_survey_work_handler")
         finish = function_body(
             self.anchor, "gateway_survey_auto_finish_status"
+        )
+        finish_cleanup = function_body(
+            self.anchor, "gateway_survey_finish_cleanup_if_complete"
         )
         deadline = re.search(
             r"uptime_deadline_reached\s*\([^;]*?"
@@ -639,13 +828,32 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(deadline)
+        deadline_start = worker.index(
+            "if (uptime_deadline_reached("
+        )
+        deadline_end = worker.index(
+            "if (!gateway_survey_flush_boundary_event())",
+            deadline_start,
+        )
+        deadline_path = worker[deadline_start:deadline_end]
+        self.assertNotIn(
+            "gateway_survey_finalize_pair_observation()", deadline_path
+        )
         self.assertLess(
             worker.index("gateway_survey_operation_deadline_ms"),
             worker.index("gateway_survey_finalize_pair_observation()"),
         )
         self.assertLess(
-            finish.index("gateway_survey_finalize_pair_observation()"),
-            finish.index("gateway_observe_survey_terminal(status, reason)"),
+            finish.index("gateway_survey_finish_pending_status = status"),
+            finish.index("gateway_survey_active = false"),
+        )
+        self.assertIn(
+            "gateway_survey_finish_pending_status",
+            finish_cleanup,
+        )
+        self.assertIn(
+            "gateway_survey_finish_pending_reason",
+            finish_cleanup,
         )
         self.assertNotIn("gateway_command_survey_terminal_outcome(", finish)
 
@@ -656,14 +864,14 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         state = function_body(self.anchor, "gateway_survey_drive_state")
 
         self.assertIn("survey_gateway_drive_action(", scheduler)
-        self.assertIn("gateway_survey_drive_state()", scheduler)
+        self.assertIn("gateway_survey_drive_state(now_ms)", scheduler)
         self.assertIn("SURVEY_GATEWAY_DRIVE_POLL_CLEANUP", scheduler)
         self.assertIn("SURVEY_GATEWAY_DRIVE_POLL_WAIT", scheduler)
         self.assertIn("GATEWAY_SURVEY_TRANSACTION_POLL_MS", scheduler)
         self.assertIn("SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY", scheduler)
         self.assertIn("GATEWAY_BLE_TX_RETRY_MS", scheduler)
         self.assertIn("SURVEY_GATEWAY_DRIVE_RUN_NOW", scheduler)
-        self.assertIn("K_NO_WAIT", scheduler)
+        self.assertIn("gateway_survey_work_reschedule(0u)", scheduler)
         self.assertLess(
             scheduler.index("SURVEY_GATEWAY_DRIVE_POLL_CLEANUP"),
             scheduler.index("SURVEY_GATEWAY_DRIVE_RUN_NOW"),
@@ -698,12 +906,16 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
             "app_anchor_survey_runtime_bind_pair_start_delivery",
         )
         gate = function_body(self.survey_runtime, "pair_start_delivery_ready")
-        handler = function_body(self.anchor, "anchor_handle_local_command")
+        handler = function_body(
+            self.anchor, "anchor_handle_local_command_locked"
+        )
         worker = function_body(self.survey_runtime, "survey_work_handler")
 
         self.assertNotIn("schedule(K_NO_WAIT)", accept)
         self.assertIn("pair_start_delivery_handle = delivery_handle", bind)
-        self.assertIn("schedule(K_NO_WAIT)", bind)
+        self.assertIn("ret = schedule(K_NO_WAIT)", bind)
+        self.assertIn("k_work_reschedule(&pair_start_kick_work", bind)
+        self.assertIn("return fallback_ret;", bind)
         self.assertIn("app_node_comm_take_delivery_event_for(", gate)
         self.assertIn("event.reason == NODE_COMM_TERMINAL_DELIVERED", gate)
         self.assertIn("survey_pair_lease_release_start(", gate)
@@ -715,7 +927,8 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
 
     def test_survey_pair_start_handle_is_abandoned_on_every_early_exit(self):
         abandon = function_body(
-            self.survey_runtime, "abandon_pair_start_delivery"
+            self.survey_runtime,
+            "app_anchor_survey_runtime_abandon_pair_start_delivery",
         )
         cancel = function_body(
             self.survey_runtime,
@@ -733,24 +946,37 @@ class NodeCommProtocolCallerTests(unittest.TestCase):
         self.assertIn("app_node_comm_abandon_delivery(", abandon)
         for body in (cancel, expire, abort, targeted):
             self.assertIn("delivery_handle = pair_start_delivery_handle", body)
-            self.assertIn("abandon_pair_start_delivery(", body)
+            self.assertIn(
+                "app_anchor_survey_runtime_abandon_pair_start_delivery(",
+                body,
+            )
 
     def test_post_result_side_effects_require_terminal_delivery(self):
+        commit = function_body(
+            self.command_completion,
+            "app_anchor_command_completion_commit_terminal",
+        )
         worker = function_body(
-            self.command_completion, "completion_work_handler"
+            self.anchor, "anchor_collection_result_work_handler_locked"
         )
-        handler = function_body(self.anchor, "anchor_handle_local_command")
+        handler = function_body(
+            self.anchor, "anchor_handle_local_command_locked"
+        )
 
-        take = worker.index("app_node_comm_take_delivery_event_for(")
-        delivered = worker.index(
-            "event.reason != NODE_COMM_TERMINAL_DELIVERED"
+        clear = commit.index("clear_durable(context)")
+        take = commit.index("take_terminal(", clear)
+        peek = worker.index("app_node_comm_peek_delivery_event_for(")
+        terminal_commit = worker.index(
+            "app_anchor_command_completion_commit_terminal(", peek
         )
-        rediscovery = worker.index("completion_ops.force_rediscovery()")
-        reboot = worker.index("completion_ops.schedule_reboot()")
-        self.assertLess(take, delivered)
-        self.assertLess(delivered, rediscovery)
-        self.assertLess(delivered, reboot)
-        self.assertIn("app_anchor_command_completion_watch(", handler)
+        actions = worker.index(
+            "anchor_collection_result_apply_actions(", terminal_commit
+        )
+        self.assertLess(clear, take)
+        self.assertLess(peek, terminal_commit)
+        self.assertLess(terminal_commit, actions)
+        self.assertIn("anchor_admit_direct_action_result(", handler)
+        self.assertNotIn("app_anchor_command_completion_watch(", handler)
 
 
 if __name__ == "__main__":

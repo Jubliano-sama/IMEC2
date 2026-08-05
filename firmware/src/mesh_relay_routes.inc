@@ -14,6 +14,9 @@ void mesh_relay_init(struct mesh_relay *relay,
     relay->local_id = local_id;
     relay->gateway_id = gateway_id;
     relay->next_seq = 1u;
+    if (route_epoch != 0u && (uint16_t)route_epoch == 0u) {
+        route_epoch++;
+    }
     route_table_init(&relay->upstream, route_epoch);
 }
 
@@ -71,6 +74,39 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 
     index = downlink_index(relay, target_id);
     return index >= 0 ? mesh_relay_downlink_at(relay, (size_t)index) : NULL;
+}
+
+const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
+    const struct mesh_relay *relay,
+    uint64_t target_id)
+{
+    const struct mesh_downlink_entry *selected = NULL;
+
+    if (relay == NULL || !id_is_unicast(target_id) ||
+        relay->upstream.current_epoch == 0u) {
+        return NULL;
+    }
+
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        const struct mesh_downlink_entry *entry =
+            mesh_relay_downlink_at(relay, i);
+
+        if (entry == NULL || !entry->valid ||
+            entry->target_id != target_id ||
+            entry->gateway_id != relay->gateway_id ||
+            entry->route_epoch != relay->upstream.current_epoch ||
+            !id_is_unicast(entry->next_hop_id) ||
+            entry->next_hop_id == relay->local_id ||
+            entry->hop_count == 0u ||
+            entry->hop_count > MESH_NETWORK_MAX_HOPS ||
+            entry->quality > 100u) {
+            continue;
+        }
+        if (downlink_is_better(entry, selected)) {
+            selected = entry;
+        }
+    }
+    return selected;
 }
 
 int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
@@ -269,6 +305,10 @@ int mesh_relay_select_next_hop(const struct mesh_relay *relay,
     if (dst_id == relay->local_id) {
         return PROTO_ERR_MALFORMED;
     }
+    if (relay->role == MESH_RELAY_ROLE_CLICKER &&
+        dst_id != relay->gateway_id) {
+        return PROTO_ERR_NOT_FOUND;
+    }
 
     if (dst_id == relay->gateway_id) {
         if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
@@ -465,10 +505,11 @@ void mesh_relay_invalidate_routes(struct mesh_relay *relay)
     }
 
     next_epoch = relay->upstream.current_epoch + 1u;
-    if (next_epoch == 0u) {
-        next_epoch = 1u;
+    if ((uint16_t)next_epoch == 0u) {
+        next_epoch++;
     }
     mesh_relay_clear_routes_at_epoch(relay, next_epoch);
+    result_offer_reservation_clear(relay);
 }
 
 static int mesh_relay_require_channel9_event_for_slot(const struct mesh_relay *relay,
@@ -587,6 +628,8 @@ static int build_route_request_with_timing_flags_id(
         !id_is_unicast(relay->local_id) ||
         !id_is_unicast(target_id) ||
         target_id == relay->local_id ||
+        (relay->role == MESH_RELAY_ROLE_CLICKER &&
+         target_id != relay->gateway_id) ||
         (request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
         return PROTO_ERR_ARG;
     }
@@ -656,6 +699,8 @@ static int build_route_request_with_timing_flags_id(
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->queued_at_ms = now_ms;
     out->earliest_tx_ms = now_ms;
+    out->queued_at_valid = true;
+    out->earliest_tx_valid = true;
     return PROTO_OK;
 }
 
@@ -846,6 +891,8 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     out->queued_at_ms = snapshot->queued_at_ms;
     out->earliest_tx_ms = snapshot->queued_at_ms;
     out->flood_retry_count = fields.flood_retry_count;
+    out->queued_at_valid = true;
+    out->earliest_tx_valid = true;
     return PROTO_OK;
 }
 
@@ -894,6 +941,8 @@ int mesh_relay_prepare_route_request_with_timing_flags(
     if (relay == NULL || out == NULL ||
         !id_is_unicast(target_id) ||
         target_id == relay->local_id ||
+        (relay->role == MESH_RELAY_ROLE_CLICKER &&
+         target_id != relay->gateway_id) ||
         (request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
         return PROTO_ERR_ARG;
     }
@@ -928,6 +977,7 @@ int mesh_relay_prepare_route_request_with_timing_flags(
     if (ret != PROTO_OK) {
         return ret;
     }
+    relay->route_discovery.current_request_id = out->packet.session_id;
     out->packet.ttl = route_request_ttl_for_attempt(relay->route_discovery.attempts, false);
 
     if (relay->route_discovery.attempts < UINT8_MAX) {
@@ -1050,41 +1100,19 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
 
     if (relay == NULL || packet == NULL || out == NULL ||
         (payload_len > 0u && payload == NULL) ||
-        packet->msg_type != MSG_ROUTE_REQ ||
-        packet->dst_id != MESH_BROADCAST_ID ||
-        packet->payload_len != payload_len ||
-        !mesh_route_control_payload_len_valid(packet->msg_type, payload_len) ||
-        !id_is_unicast(previous_hop_id) ||
-        previous_hop_id == relay->local_id) {
+        packet->msg_type != MSG_ROUTE_REQ) {
         return PROTO_ERR_ARG;
     }
 
-    ret = parse_route_discovery_tlvs(payload,
-                                     payload_len,
-                                     packet->session_id,
-                                     now_ms,
-                                     &fields);
+    ret = validate_route_request_packet(relay,
+                                        packet,
+                                        payload,
+                                        payload_len,
+                                        previous_hop_id,
+                                        now_ms,
+                                        &fields);
     if (ret != PROTO_OK) {
         return ret;
-    }
-    ret = mesh_route_control_ttl_validate(packet->msg_type,
-                                          packet->ttl,
-                                          fields.hop_count);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (fields.origin_id != packet->src_id ||
-        !id_is_unicast(fields.target_id) ||
-        fields.target_id == fields.origin_id ||
-        fields.flood_epoch_id == 0u) {
-        return PROTO_ERR_MALFORMED;
-    }
-    if (fields.path.count != (uint8_t)(fields.hop_count + 1u) ||
-        mesh_route_path_validate(&fields.path,
-                                 fields.origin_id,
-                                 previous_hop_id) != PROTO_OK ||
-        mesh_route_path_contains(&fields.path, relay->local_id)) {
-        return PROTO_ERR_MALFORMED;
     }
 
     selected = route_selected(&relay->upstream);
@@ -1112,10 +1140,16 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
     }
 
     reply_epoch = fields.route_epoch;
-    if (selected != NULL && selected->route_epoch > reply_epoch) {
-        reply_epoch = selected->route_epoch;
-    } else if (relay->upstream.current_epoch > reply_epoch) {
-        reply_epoch = relay->upstream.current_epoch;
+    ret = route_epoch_select_newer(reply_epoch,
+                                   relay->upstream.current_epoch,
+                                   &reply_epoch);
+    if (ret == PROTO_OK && selected != NULL) {
+        ret = route_epoch_select_newer(reply_epoch,
+                                       selected->route_epoch,
+                                       &reply_epoch);
+    }
+    if (ret != PROTO_OK) {
+        return ret;
     }
 
     ret = build_route_reply(relay,
@@ -1131,6 +1165,7 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
             now_ms,
             fields.route_reply_rx_delay_ms,
             random_value);
+        out->earliest_tx_valid = true;
     }
     return ret;
 }
@@ -1155,7 +1190,7 @@ static uint8_t relay_parent_hold_down_count(const struct mesh_relay *relay)
         const struct route_candidate *candidate = &relay->upstream.candidates[i];
 
         if (candidate->valid &&
-            candidate->hold_down_until_ms != 0u &&
+            candidate->hold_down_valid &&
             count < UINT8_MAX) {
             count++;
         }

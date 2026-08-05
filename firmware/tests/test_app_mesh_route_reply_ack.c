@@ -108,18 +108,34 @@ static void test_primary_failure_without_distinct_backup_fails(void)
     assert(result.clear_reason != 0);
 }
 
+static void test_upstream_ack_waits_for_downstream_custody(void)
+{
+    assert(app_mesh_route_reply_upstream_ack_allowed(false, false));
+    assert(app_mesh_route_reply_upstream_ack_allowed(false, true));
+    assert(app_mesh_route_reply_upstream_ack_allowed(true, true));
+    assert(!app_mesh_route_reply_upstream_ack_allowed(true, false));
+}
+
 static void test_c5_preemption_extends_ack_deadline_by_full_timeout(void)
 {
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(1000u, 150u, 0u) == 1150u);
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(UINT32_MAX, 1u, 0u) == 1u);
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(10u, 0u, 0u) == 11u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               1000u, 150u, 0u, false) == 1150u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               UINT32_MAX, 1u, 0u, false) == 0u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               10u, 0u, 0u, false) == 11u);
 }
 
 static void test_c5_preemption_deadline_is_capped_by_attempt_budget(void)
 {
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(1000u, 150u, 1200u) == 1150u);
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(1100u, 150u, 1200u) == 1200u);
-    assert(app_mesh_route_reply_ack_deadline_after_preemption(UINT32_MAX, 2u, 1u) == 1u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               1000u, 150u, 1200u, true) == 1150u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               1100u, 150u, 1200u, true) == 1200u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               UINT32_MAX, 2u, 1u, true) == 1u);
+    assert(app_mesh_route_reply_ack_deadline_after_preemption(
+               UINT32_MAX, 2u, 0u, true) == 0u);
 }
 
 int main(void)
@@ -130,6 +146,7 @@ int main(void)
     test_final_listen_timeout_fails_without_retry_note();
     test_primary_failure_uses_valid_backup_hop();
     test_primary_failure_without_distinct_backup_fails();
+    test_upstream_ack_waits_for_downstream_custody();
     test_c5_preemption_extends_ack_deadline_by_full_timeout();
     test_c5_preemption_deadline_is_capped_by_attempt_budget();
     return 0;

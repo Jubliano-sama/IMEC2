@@ -393,7 +393,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         self._labeled_spin(
             discovery, 7, "Survey budget (ms)",
-            self.discovery_budget_text, 1000, 600000
+            self.discovery_budget_text, 1000, GATEWAY_COMMAND_BUDGET_MAX_MS
         )
         self._labeled_spin(
             discovery, 8, "Pair reruns", self.pair_max_reruns_text, 0, 2
@@ -461,7 +461,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             "Assignment budget (ms)",
             self.assignment_budget_text,
             1000,
-            600000,
+            GATEWAY_COMMAND_BUDGET_MAX_MS,
         )
         self._labeled_spin(
             refresh,
@@ -1090,13 +1090,17 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._submit_gateway_command(plan)
 
     def _drain_events(self) -> None:
-        self._expire_gateway_command()
         try:
             while True:
                 event = self.events.get_nowait()
                 self._handle_event(event)
         except queue.Empty:
             pass
+        # A packet completed by the BLE worker before its deadline remains
+        # eligible even if Tk did not service the queue until just after it.
+        # Each packet carries its immutable worker-side receive timestamp; only
+        # expire against wall time after all already-received events are seen.
+        self._expire_gateway_command()
         if self.root.winfo_exists():
             self.root.after(50, self._drain_events)
 
@@ -1146,7 +1150,15 @@ class GatewayGui(GatewayDiagnosticsMixin):
         elif kind == "packet":
             packet = event.get("packet")
             if isinstance(packet, Packet):
-                self._add_packet(packet)
+                received_at = event.get("received_at")
+                self._add_packet(
+                    packet,
+                    received_at=(
+                        float(received_at)
+                        if isinstance(received_at, (int, float))
+                        else None
+                    ),
+                )
         elif kind == "tx_written":
             label = str(event.get("label", "command"))
             byte_count = int(event.get("byte_count", 0))
@@ -1251,7 +1263,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    def _add_packet(self, packet: Packet) -> None:
+    def _add_packet(
+        self, packet: Packet, *, received_at: float | None = None
+    ) -> None:
         dedup = getattr(self, "click_delivery_dedup", None)
         if dedup is None:
             # Keep headless/model fixtures that construct GatewayGui via
@@ -1278,13 +1292,20 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 "Conflicting click report reused packet identity "
                 f"src={format_device_id(identity.src_id)} "
                 f"session={identity.session_id} seq={identity.seq}; "
-                "showing the record instead of suppressing it",
+                "showing the forensic record without applying it to "
+                "localization or CIR state",
             )
-        self._observe_diagnostic_packet(packet)
+        canonical_delivery = delivery.disposition is PacketDisposition.NEW
+        if canonical_delivery:
+            self._observe_diagnostic_packet(packet, received_at=received_at)
         self.packet_counter += 1
         iid = f"packet-{self.packet_counter}"
         self.packet_by_iid[iid] = packet
-        cir_result = self.cir_reassembler.ingest(packet)
+        cir_result = (
+            self.cir_reassembler.ingest(packet)
+            if canonical_delivery
+            else None
+        )
         if cir_result is not None:
             if cir_result.key is not None:
                 self.cir_key_by_packet_id[id(packet)] = cir_result.key

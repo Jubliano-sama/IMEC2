@@ -31,7 +31,11 @@ struct app_mesh_local_delivery_identity {
     uint64_t dst_id;
     uint32_t session_id;
     uint16_t seq;
+    uint16_t payload_len;
     uint8_t msg_type;
+    uint8_t flags;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    bool semantic_digest_valid;
 };
 
 struct app_mesh_local_delivery_snapshot {
@@ -76,6 +80,16 @@ void app_mesh_local_delivery_identity_from_outbound(
 bool app_mesh_local_delivery_identity_matches(
     const struct app_mesh_local_delivery_identity *identity,
     const struct proto_packet *packet);
+bool app_mesh_local_delivery_identity_matches_semantic(
+    const struct app_mesh_local_delivery_identity *identity,
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+bool app_mesh_local_delivery_identity_matches_outbound(
+    const struct app_mesh_local_delivery_identity *identity,
+    const struct mesh_outbound *outbound);
+bool app_mesh_local_delivery_identity_equal(
+    const struct app_mesh_local_delivery_identity *left,
+    const struct app_mesh_local_delivery_identity *right);
 int app_mesh_local_delivery_stage(struct app_mesh_local_delivery *delivery,
                                   const struct mesh_outbound *outbound,
                                   uint32_t generation);
@@ -83,6 +97,14 @@ int app_mesh_local_delivery_restore(
     struct app_mesh_local_delivery *delivery,
     const struct app_mesh_local_delivery_snapshot *snapshot);
 int app_mesh_local_delivery_rebase_after_boot(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t now_ms);
+/*
+ * Retires a source-only response-slot not-before once it has elapsed. This is
+ * persisted before the packet can wait behind another reliable owner, so a
+ * later retry cannot reinterpret a stale 32-bit uptime after half a wrap.
+ */
+int app_mesh_local_delivery_retire_elapsed_not_before(
     struct app_mesh_local_delivery *delivery,
     uint32_t now_ms);
 int app_mesh_local_delivery_recover(
@@ -119,12 +141,30 @@ uint16_t app_mesh_local_delivery_attempts_available(
     const struct app_mesh_local_delivery *delivery);
 int app_mesh_local_delivery_note_ack(
     struct app_mesh_local_delivery *delivery,
-    const struct proto_packet *packet);
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+int app_mesh_local_delivery_commit_ack(
+    struct app_mesh_local_delivery *delivery,
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+int app_mesh_local_delivery_cleanup_ack(
+    struct app_mesh_local_delivery *delivery);
 int app_mesh_local_delivery_note_failed(
+    struct app_mesh_local_delivery *delivery);
+/*
+ * Starts a fresh bounded attempt tranche while preserving the exact packet.
+ * Callers with a wall-clock custody horizon must enforce it before rearming;
+ * this helper only renews the per-tranche RF-attempt budget.
+ */
+int app_mesh_local_delivery_rearm_attempts(
     struct app_mesh_local_delivery *delivery);
 int app_mesh_local_delivery_discard_failed(
     struct app_mesh_local_delivery *delivery);
 bool app_mesh_local_delivery_active(const struct app_mesh_local_delivery *delivery);
+bool app_mesh_local_delivery_occupied(
+    const struct app_mesh_local_delivery *delivery);
+bool app_mesh_local_delivery_ack_committed(
+    const struct app_mesh_local_delivery *delivery);
 const struct mesh_outbound *app_mesh_local_delivery_outbound(
     const struct app_mesh_local_delivery *delivery);
 bool app_mesh_local_delivery_snapshot_valid(

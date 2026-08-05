@@ -5,6 +5,7 @@
 #include "app_radio_low_power_policy.h"
 #include "gateway_command.h"
 #include "protocol.h"
+#include "semantic_digest.h"
 #include "survey.h"
 
 #include <zephyr/kernel.h>
@@ -14,6 +15,7 @@
 #include <stdint.h>
 
 struct dwm3000_range_result;
+struct mesh_outbound;
 
 struct app_anchor_survey_runtime_ops {
     struct k_work_q *work_queue;
@@ -34,27 +36,36 @@ struct app_anchor_survey_runtime_ops {
         uint16_t round_id,
         uint16_t sample_index,
         uint64_t reporter_id,
+        uint32_t delivery_reservation_token,
         const struct dwm3000_range_result *range_result);
     uint32_t (*report_queue_used)(void);
     void (*report_schedule)(uint32_t delay_ms);
     bool (*relay_tx_active)(void);
     bool (*connected_radio_active)(void);
+    int (*active_owner_matches_outbound)(
+        const struct mesh_outbound *outbound);
+    void (*resume_restored_outbox)(const char *reason);
 };
 
 int app_anchor_survey_runtime_init(
     const struct app_anchor_survey_runtime_ops *ops);
 int app_anchor_survey_runtime_start(void);
+int app_anchor_survey_runtime_post_work_queue_start(void);
 
 uint16_t app_anchor_survey_runtime_next_sequence(void);
 void app_anchor_survey_runtime_seed_sequence(uint16_t observed_sequence);
 bool app_anchor_survey_runtime_discovery_is_pending(void);
 bool app_anchor_survey_runtime_abort_requested(void);
+bool app_anchor_survey_runtime_operation_generation_active(
+    uint64_t operation_generation);
 enum app_anchor_survey_discovery_admission
-app_anchor_survey_runtime_admit_discovery(uint32_t survey_id);
-void app_anchor_survey_runtime_queue_discovery(
+app_anchor_survey_runtime_admit_discovery(
+    const struct survey_discovery_config *config);
+int app_anchor_survey_runtime_queue_discovery(
     const struct survey_discovery_config *config,
-    uint32_t start_ms);
-void app_anchor_survey_runtime_schedule_ms(uint32_t delay_ms);
+    uint32_t start_ms,
+    uint32_t delay_ms);
+int app_anchor_survey_runtime_schedule_ms(uint32_t delay_ms);
 
 void app_anchor_survey_runtime_handle_pair_prepare(
     const struct proto_packet *packet,
@@ -70,16 +81,25 @@ int app_anchor_survey_runtime_go_round_from_command(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint32_t execution_deadline_ms,
     enum command_status *status,
     uint8_t *reason);
 int app_anchor_survey_runtime_bind_pair_start_delivery(
     const struct proto_packet *command,
     uint32_t delivery_handle);
+int app_anchor_survey_runtime_abandon_pair_start_delivery(
+    uint32_t delivery_handle,
+    const char *reason);
 bool app_anchor_survey_runtime_cancel_pair_start(
     const struct proto_packet *command);
 void app_anchor_survey_runtime_abort_pair(void);
 bool app_anchor_survey_runtime_abort_pair_matching(
     const struct survey_pair *pair,
     uint32_t session_id);
+bool app_anchor_survey_runtime_abort_pair_matching_round(
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN]);
 
 #endif

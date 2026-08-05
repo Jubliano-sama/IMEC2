@@ -1,5 +1,6 @@
 #include "app_anchor.h"
 #include "app_board.h"
+#include "app_click_event_sequence.h"
 #include "app_clicker.h"
 #include "app_config.h"
 #include "app_device_identity.h"
@@ -236,11 +237,17 @@ BUILD_ASSERT(UWB_ML_EXCHANGE_STRIDE_US >= UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE
              "ML exchange stride must satisfy range schedule validation");
 BUILD_ASSERT(ML_CLICKER_COLLECTION_DEADLINE_MS > UWB_ML_MAX_BURST_MS,
              "ML collection deadline must cover the largest scheduled burst");
+BUILD_ASSERT(ML_CLICKER_COLLECTION_DEADLINE_MS + 2500u <
+                 APP_WATCHDOG_PROGRESS_LEASE_MS,
+             "ML click action must finish before its watchdog lease expires");
 BUILD_ASSERT(UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS >=
              ((UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS *
                (UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS - 1u)) / 2u),
              "ML anchor-pair result storage must cover every scheduled pair");
 #endif
+BUILD_ASSERT(CLICK_REPORT_DEADLINE_MS + 2500u <
+                 APP_WATCHDOG_PROGRESS_LEASE_MS,
+             "normal click action must finish before its watchdog lease expires");
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
 BUILD_ASSERT(!(IS_ENABLED(CONFIG_IMEC_ROLE_TAG) || IS_ENABLED(CONFIG_IMEC_ROLE_CLICKER)) ||
              DEVICE_ROLE == ROLE_CLICKER,
@@ -257,6 +264,33 @@ static bool local_command_poll_enabled(void)
 }
 
 #endif
+
+static void watchdog_init_fail_closed(int error)
+{
+    printk("fatal: hardware watchdog initialization failed: %d; rebooting in %u ms\n",
+           error,
+           APP_WATCHDOG_INIT_RETRY_DELAY_MS);
+    app_watchdog_stop_feeding();
+    k_msleep(APP_WATCHDOG_INIT_RETRY_DELAY_MS);
+    sys_reboot(SYS_REBOOT_COLD);
+    for (;;) {
+        k_cpu_idle();
+    }
+}
+
+static void runtime_start_fail_closed(const char *phase, int error)
+{
+    printk("fatal: %s failed: %d; rebooting in %u ms\n",
+           phase == NULL ? "runtime startup" : phase,
+           error,
+           APP_WATCHDOG_INIT_RETRY_DELAY_MS);
+    app_watchdog_stop_feeding();
+    k_msleep(APP_WATCHDOG_INIT_RETRY_DELAY_MS);
+    sys_reboot(SYS_REBOOT_COLD);
+    for (;;) {
+        k_cpu_idle();
+    }
+}
 
 int main(void)
 {
@@ -276,7 +310,10 @@ int main(void)
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
         .run_stage0_hardware_self_test = high_debug_stage0_hardware_self_test,
 #endif
+#if !defined(CONFIG_IMEC_ML_CLICKER) && \
+    !defined(CONFIG_IMEC_ML_ANCHOR)
         .send_mesh_outbound = app_node_comm_send,
+#endif
 #if defined(CONFIG_IMEC_ML_CLICKER)
         .ml_discovery_slot_count_override = ml_clicker_discovery_slot_count_override,
         .ml_cache_note_discovery_reply = ml_clicker_cache_note_discovery_reply,
@@ -337,7 +374,7 @@ int main(void)
 #endif
     ret = app_watchdog_init();
     if (ret < 0) {
-        printk("hardware watchdog unavailable: %d\n", ret);
+        watchdog_init_fail_closed(ret);
     }
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
@@ -346,6 +383,15 @@ int main(void)
 #endif
 
     battery_adc_ret = battery_adc_divider_disable();
+    if (DEVICE_ROLE == ROLE_CLICKER) {
+        ret = app_click_event_sequence_init();
+        if (ret < 0) {
+            printk("fatal: click event identity reservation unavailable: %d\n",
+                   ret);
+            k_panic();
+            return ret;
+        }
+    }
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     ret = status_leds_init();
     if (ret < 0) {
@@ -410,6 +456,8 @@ int main(void)
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     stage1_click_spam_boot_marker("before_node_comm_init");
 #endif
+#if !defined(CONFIG_IMEC_ML_CLICKER) && \
+    !defined(CONFIG_IMEC_ML_ANCHOR)
     ret = app_node_comm_init(app_anchor_mesh_report_callbacks());
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     stage1_click_spam_boot_marker("after_node_comm_init");
@@ -422,6 +470,7 @@ int main(void)
 #endif
     if (ret < 0) {
         LOG_ERR("node communication initialization failed: %d", ret);
+        runtime_start_fail_closed("node communication initialization", ret);
     }
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     stage1_click_spam_boot_marker("before_mesh_test_init");
@@ -434,7 +483,16 @@ int main(void)
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     stage1_click_spam_boot_marker("after_gateway_tracking_init");
 #endif
-    (void)app_anchor_init();
+#endif
+#if !defined(CONFIG_IMEC_ML_CLICKER)
+    ret = app_anchor_init();
+    if (ret < 0) {
+        LOG_ERR("anchor/gateway runtime initialization failed closed: %d",
+                ret);
+        k_panic();
+        return ret;
+    }
+#endif
 #if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
     stage1_click_spam_boot_marker("after_anchor_init");
 #endif
@@ -475,7 +533,8 @@ int main(void)
     stage1_click_spam_boot_marker("after_dwm_port_init");
 #endif
     if (ret < 0) {
-        LOG_WRN("DWM3000 reset/wake setup failed: %d", ret);
+        LOG_ERR("DWM3000 reset/wake setup failed closed: %d", ret);
+        runtime_start_fail_closed("DWM3000 port initialization", ret);
     } else {
         LOG_INF("DWM3000 wake pin parked inactive; SYS_STATUS polling ready; radio init waits for UWB wake windows");
     }
@@ -491,7 +550,6 @@ int main(void)
         if (ret < 0) {
             LOG_WRN("high-debug DWM3000 boot probe failed: %d", ret);
         }
-        (void)dwm3000_driver_standby();
     }
 #endif
 
@@ -527,13 +585,21 @@ int main(void)
                                  "phase=worker_submit_failed ret=%d",
                                  ret);
             LOG_ERR("Stage 1 click-session spam worker submit failed: %d", ret);
+            runtime_start_fail_closed(
+                "Stage 1 click-session worker submission", ret);
         }
     }
 #endif
 
     if (DEVICE_ROLE == ROLE_CLICKER) {
 #if defined(CONFIG_IMEC_ML_CLICKER)
-        (void)app_ml_init();
+        ret = app_ml_init();
+        if (ret < 0) {
+            LOG_ERR("ML clicker runtime initialization failed closed: %d",
+                    ret);
+            k_panic();
+            return ret;
+        }
 #else
 #if !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) && \
     !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
@@ -564,8 +630,9 @@ int main(void)
                              role_name(),
                              ret);
         if (ret < 0) {
-            return 0;
+            runtime_start_fail_closed("anchor role startup", ret);
         }
+#if !defined(CONFIG_IMEC_ML_ANCHOR)
         if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)) {
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
             high_debug_log_event("MESH_BOOT_STAGE",
@@ -585,6 +652,7 @@ int main(void)
                                  ret);
             if (ret < 0) {
                 LOG_ERR("anchor UWB mesh RX unavailable: %d", ret);
+                runtime_start_fail_closed("anchor UWB mesh RX startup", ret);
             }
 #endif
         } else {
@@ -604,10 +672,13 @@ int main(void)
             LOG_ERR("mesh-test runtime unavailable: %d", ret);
         }
         app_stack_diag_start();
+#else
+        LOG_INF("ML anchor full-duty UWB scan active; connected mesh runtime disabled");
+#endif
     } else if (DEVICE_ROLE == ROLE_GATEWAY) {
         ret = app_anchor_start_gateway_role();
         if (ret < 0) {
-            return 0;
+            runtime_start_fail_closed("gateway role startup", ret);
         }
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
         status_debug_printf("DBG_GATEWAY_BOOT stage=ble_begin uptime=%u\n",
@@ -634,6 +705,7 @@ int main(void)
 #endif
         if (ret < 0) {
             LOG_ERR("gateway UWB mesh RX unavailable: %d", ret);
+            runtime_start_fail_closed("gateway UWB mesh RX startup", ret);
         }
         app_stack_diag_start();
         LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",

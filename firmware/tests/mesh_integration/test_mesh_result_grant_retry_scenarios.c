@@ -121,8 +121,8 @@ static bool initialise_children(void)
         CHECK(mesh_init_command_result(&child->result_packet,
                                        child_id,
                                        GATEWAY_ID,
-                                       0x30000u + i,
-                                       (uint16_t)i + 1u,
+                                       child->result_id.command_seq,
+                                       child->result_id.result_seq,
                                        (uint8_t)child->payload_len,
                                        false) == PROTO_OK);
         mesh_relay_init(&child->relay,
@@ -372,6 +372,21 @@ static bool test_fifty_children_all_loss_exhausts_once(void)
               MESH_RELAY_DELIVERY_RESULT_GRANT_ATTEMPTS_EXHAUSTED);
         CHECK(mesh_relay_tick_with_random(&children[i].relay,
                                            50000u,
+                                           i,
+                                           &result) == PROTO_OK);
+        CHECK(result.actions ==
+              MESH_RELAY_ACTION_TX_RESULT_GRANT_TERMINAL);
+        CHECK(result.status ==
+              MESH_RELAY_ERR_RESULT_GRANT_ATTEMPTS_EXHAUSTED);
+        CHECK(mesh_relay_commit_terminal_release(
+                  &children[i].relay,
+                  &result.terminal.packet,
+                  result.terminal.payload,
+                  result.terminal.payload_len) == PROTO_OK);
+        CHECK(children[i].relay.pending.state == MESH_RELAY_TX_IDLE);
+        CHECK(!children[i].relay.outbox_record.valid);
+        CHECK(mesh_relay_tick_with_random(&children[i].relay,
+                                           50001u,
                                            i,
                                            &result) == PROTO_OK);
         CHECK(result.actions == MESH_RELAY_ACTION_NONE);

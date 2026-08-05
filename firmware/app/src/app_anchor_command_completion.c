@@ -1,137 +1,57 @@
 #include "app_anchor_command_completion.h"
 
-#include "app_node_comm.h"
-
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-
 #include <errno.h>
-#include <stdbool.h>
-#include <stddef.h>
 #include <string.h>
 
-LOG_MODULE_REGISTER(app_anchor_command_completion, LOG_LEVEL_INF);
-
-#define COMMAND_COMPLETION_POLL_MS 5u
-
-struct command_completion_slot {
-    uint32_t delivery_handle;
-    enum command_id command_id;
-    uint8_t actions;
-    bool active;
-};
-
-static struct app_anchor_command_completion_ops completion_ops;
-static struct command_completion_slot
-    completion_slots[APP_NODE_COMM_MAX_DELIVERIES];
-static struct k_work_delayable completion_work;
-static struct k_spinlock completion_lock;
-static bool completion_initialized;
-
-static void completion_work_handler(struct k_work *work)
+uint16_t app_anchor_command_completion_next_result_seq(uint16_t current)
 {
-    bool pending = false;
-
-    ARG_UNUSED(work);
-    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
-        struct node_comm_terminal_event event;
-        struct command_completion_slot snapshot;
-        k_spinlock_key_t key = k_spin_lock(&completion_lock);
-
-        snapshot = completion_slots[i];
-        k_spin_unlock(&completion_lock, key);
-        if (!snapshot.active) {
-            continue;
-        }
-        if (!app_node_comm_take_delivery_event_for(snapshot.delivery_handle,
-                                                   &event)) {
-            pending = true;
-            continue;
-        }
-
-        key = k_spin_lock(&completion_lock);
-        if (completion_slots[i].active &&
-            completion_slots[i].delivery_handle == snapshot.delivery_handle) {
-            memset(&completion_slots[i], 0, sizeof(completion_slots[i]));
-        }
-        k_spin_unlock(&completion_lock, key);
-
-        if (event.reason != NODE_COMM_TERMINAL_DELIVERED) {
-            LOG_WRN("command result delivery failed: cmd=0x%04x handle=%u reason=%u attempts=%u",
-                    (unsigned int)snapshot.command_id,
-                    snapshot.delivery_handle,
-                    (unsigned int)event.reason,
-                    event.attempts_started);
-            continue;
-        }
-        if ((snapshot.actions &
-             APP_ANCHOR_COMMAND_COMPLETION_FORCE_REDISCOVERY) != 0u) {
-            completion_ops.force_rediscovery();
-        }
-        if ((snapshot.actions & APP_ANCHOR_COMMAND_COMPLETION_REBOOT) != 0u) {
-            completion_ops.schedule_reboot();
-        }
-        LOG_INF("command result gateway-confirmed: cmd=0x%04x handle=%u attempts=%u",
-                (unsigned int)snapshot.command_id,
-                snapshot.delivery_handle,
-                event.attempts_started);
-    }
-
-    if (pending) {
-        (void)k_work_reschedule(&completion_work,
-                                K_MSEC(COMMAND_COMPLETION_POLL_MS));
-    }
+    current++;
+    return current == 0u ? 1u : current;
 }
 
-int app_anchor_command_completion_init(
-    const struct app_anchor_command_completion_ops *ops)
-{
-    if (ops == NULL || ops->force_rediscovery == NULL ||
-        ops->schedule_reboot == NULL) {
-        return -EINVAL;
-    }
-    completion_ops = *ops;
-    memset(completion_slots, 0, sizeof(completion_slots));
-    k_work_init_delayable(&completion_work, completion_work_handler);
-    completion_initialized = true;
-    return 0;
-}
-
-int app_anchor_command_completion_watch(
+int app_anchor_command_completion_commit_terminal(
     uint32_t delivery_handle,
-    enum command_id command_id,
-    uint8_t actions)
+    const struct node_comm_terminal_event *peeked_event,
+    app_anchor_command_completion_clear_fn clear_durable,
+    app_anchor_command_completion_take_fn take_terminal,
+    void *context,
+    struct node_comm_terminal_event *taken_event_out)
 {
-    struct command_completion_slot *free_slot = NULL;
-    k_spinlock_key_t key;
+    struct node_comm_terminal_event taken_event;
+    int ret;
 
-    if (!completion_initialized || delivery_handle == 0u || actions == 0u) {
+    if (delivery_handle == 0u || peeked_event == NULL ||
+        clear_durable == NULL || take_terminal == NULL ||
+        taken_event_out == NULL) {
         return -EINVAL;
     }
-    key = k_spin_lock(&completion_lock);
-    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
-        if (completion_slots[i].active &&
-            completion_slots[i].delivery_handle == delivery_handle) {
-            completion_slots[i].actions |= actions;
-            k_spin_unlock(&completion_lock, key);
-            (void)k_work_reschedule(&completion_work, K_NO_WAIT);
-            return 0;
-        }
-        if (!completion_slots[i].active && free_slot == NULL) {
-            free_slot = &completion_slots[i];
+    if (peeked_event->handle != delivery_handle) {
+        return -ESTALE;
+    }
+
+    if (peeked_event->reason == NODE_COMM_TERMINAL_DELIVERED) {
+        ret = clear_durable(context);
+        if (ret < 0) {
+            return ret;
         }
     }
-    if (free_slot == NULL) {
-        k_spin_unlock(&completion_lock, key);
-        return -ENOSPC;
+
+    memset(&taken_event, 0, sizeof(taken_event));
+    if (!take_terminal(delivery_handle, &taken_event, context)) {
+        return -EAGAIN;
     }
-    *free_slot = (struct command_completion_slot) {
-        .delivery_handle = delivery_handle,
-        .command_id = command_id,
-        .actions = actions,
-        .active = true,
-    };
-    k_spin_unlock(&completion_lock, key);
-    (void)k_work_reschedule(&completion_work, K_NO_WAIT);
-    return 0;
+    if (taken_event.handle != peeked_event->handle ||
+        taken_event.client_token != peeked_event->client_token ||
+        taken_event.terminal_at_ms != peeked_event->terminal_at_ms ||
+        taken_event.reason != peeked_event->reason ||
+        taken_event.attempts_started != peeked_event->attempts_started) {
+        /*
+         * The exact terminal has already been consumed. Distinguish this
+         * impossible immutable-record mismatch from a stale peek so the
+         * durable caller can discard the dead handle and resubmit.
+         */
+        return -EPROTO;
+    }
+    *taken_event_out = taken_event;
+    return taken_event.reason == NODE_COMM_TERMINAL_DELIVERED ? 1 : 0;
 }

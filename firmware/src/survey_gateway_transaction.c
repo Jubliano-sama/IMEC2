@@ -3,6 +3,9 @@
 #include <errno.h>
 #include <string.h>
 
+_Static_assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS > 0u,
+               "survey pair control floor must be nonzero");
+
 static uint8_t peer_mask(const struct survey_pair *pair, uint64_t target_id)
 {
     if (pair == NULL || target_id == 0u) {
@@ -48,28 +51,48 @@ static struct survey_gateway_transaction_recent *find_recent(
 }
 
 static void retain_result(struct survey_gateway_transaction *context,
-                          uint32_t result_fingerprint,
+                          const uint8_t result_digest[
+                              SEMANTIC_DIGEST_SHA256_LEN],
                           uint32_t result_token)
 {
     struct survey_gateway_transaction_recent *recent =
         &context->recent[context->recent_next];
 
-    *recent = (struct survey_gateway_transaction_recent) {
-        .key = context->active.spec.key,
-        .request_fingerprint = context->active.spec.request_fingerprint,
-        .result_fingerprint = result_fingerprint,
-        .result_token = result_token,
-        .expires_at_ms = context->active.spec.absolute_deadline_ms,
-        .valid = true,
-    };
+    memset(recent, 0, sizeof(*recent));
+    recent->key = context->active.spec.key;
+    memcpy(recent->request_digest,
+           context->active.spec.request_digest,
+           sizeof(recent->request_digest));
+    memcpy(recent->result_digest,
+           result_digest,
+           sizeof(recent->result_digest));
+    recent->result_token = result_token;
+    recent->expires_at_ms = context->active.spec.absolute_deadline_ms;
+    recent->valid = true;
     context->recent_next =
         (uint8_t)((context->recent_next + 1u) %
                   SURVEY_GATEWAY_TRANSACTION_RECENT_COUNT);
 }
 
-static void set_cleanup_from_side_effects(
-    struct survey_gateway_transaction *context)
+static void freeze_cleanup_deadline(
+    struct survey_gateway_transaction *context,
+    uint64_t now_ms)
 {
+    if (context->cleanup_deadline_ms != 0u) {
+        return;
+    }
+    context->cleanup_deadline_ms =
+        UINT64_MAX - now_ms <
+                SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS ?
+            UINT64_MAX :
+            now_ms + SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS;
+}
+
+static void set_cleanup_from_side_effects(
+    struct survey_gateway_transaction *context,
+    uint64_t now_ms)
+{
+    freeze_cleanup_deadline(context, now_ms);
     context->cleanup_mask |= context->prepared_mask;
     if (context->active.remote_side_effect_possible &&
         context->active_command_id == CMD_SURVEY_PREPARE_PAIR) {
@@ -88,7 +111,7 @@ static void abandon_active(struct survey_gateway_transaction *context,
     if (context->active.state == NODE_TRANSACTION_ACTIVE) {
         (void)node_transaction_cancel(&context->active, now_ms, &action);
     }
-    set_cleanup_from_side_effects(context);
+    set_cleanup_from_side_effects(context, now_ms);
 }
 
 void survey_gateway_transaction_init(
@@ -117,6 +140,8 @@ int survey_gateway_transaction_load_pair(
     context->prepared_mask = 0u;
     context->possible_prepare_mask = 0u;
     context->cleanup_mask = 0u;
+    context->cleanup_deadline_ms = 0u;
+    context->active_started_at_ms = 0u;
     context->pair_loaded = true;
     context->conflict = false;
     return 0;
@@ -126,7 +151,7 @@ int survey_gateway_transaction_begin(
     struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,
     enum command_id command_id,
-    uint32_t request_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t client_token,
     uint32_t delivery_handle,
     uint64_t absolute_deadline_ms,
@@ -136,28 +161,36 @@ int survey_gateway_transaction_begin(
     uint8_t target_mask;
     int ret;
 
-    if (context == NULL || key == NULL || !context->pair_loaded ||
+    if (context == NULL || key == NULL || request_digest == NULL ||
+        !context->pair_loaded ||
         context->abandoning ||
-        !command_id_valid(command_id) || request_fingerprint == 0u ||
+        !command_id_valid(command_id) ||
         client_token == 0u) {
         return -EINVAL;
     }
     target_mask = peer_mask(&context->pair, key->responder_id);
+    const uint32_t operation_session_id =
+        context->pair.operation_generation == 0u ?
+            context->pair.survey_id :
+            survey_operation_session_id(
+                context->pair.operation_generation);
+
     if (target_mask == 0u || key->requester_id == 0u ||
         key->requester_id == key->responder_id ||
-        key->session_id != context->pair.survey_id ||
+        key->session_id != operation_session_id ||
         key->transaction_id == 0u ||
         key->operation_id != (uint16_t)command_id) {
         return -EINVAL;
     }
 
-    spec = (struct node_transaction_spec) {
-        .key = *key,
-        .request_fingerprint = request_fingerprint,
-        .client_token = client_token,
-        .absolute_deadline_ms = absolute_deadline_ms,
-        .cleanup_required = true,
-    };
+    memset(&spec, 0, sizeof(spec));
+    spec.key = *key;
+    memcpy(spec.request_digest,
+           request_digest,
+           sizeof(spec.request_digest));
+    spec.client_token = client_token;
+    spec.absolute_deadline_ms = absolute_deadline_ms;
+    spec.cleanup_required = true;
     ret = node_transaction_begin(&context->active, &spec,
                                  delivery_handle, now_ms);
     if (ret < 0) {
@@ -165,6 +198,7 @@ int survey_gateway_transaction_begin(
     }
     context->active_command_id = command_id;
     context->active_target_id = key->responder_id;
+    context->active_started_at_ms = (uint32_t)now_ms;
     if (command_id == CMD_SURVEY_PREPARE_PAIR) {
         context->possible_prepare_mask |= target_mask;
     }
@@ -191,11 +225,22 @@ int survey_gateway_transaction_note_delivery_terminal(
         context->active.state == NODE_TRANSACTION_ABANDONED) {
         if (!context->active.remote_side_effect_possible &&
             context->active_command_id == CMD_SURVEY_PREPARE_PAIR) {
+            uint8_t target_mask = peer_mask(
+                &context->pair, context->active_target_id);
+
             context->possible_prepare_mask &=
-                (uint8_t)~peer_mask(&context->pair,
-                                    context->active_target_id);
+                (uint8_t)~target_mask;
+            if ((context->prepared_mask & target_mask) == 0u) {
+                /*
+                 * A prior deadline/cancel may already have copied the
+                 * possible-PREPARE bit into cleanup_mask. Authoritative
+                 * zero-attempt terminal evidence retires that conservative
+                 * debt unless a confirmed PREPARE independently owns it.
+                 */
+                context->cleanup_mask &= (uint8_t)~target_mask;
+            }
         }
-        set_cleanup_from_side_effects(context);
+        set_cleanup_from_side_effects(context, now_ms);
     }
     return 0;
 }
@@ -203,8 +248,8 @@ int survey_gateway_transaction_note_delivery_terminal(
 int survey_gateway_transaction_reconcile_result(
     struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,
-    uint32_t request_fingerprint,
-    uint32_t result_fingerprint,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    const uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t result_token,
     enum command_status status,
     uint64_t now_ms,
@@ -216,7 +261,8 @@ int survey_gateway_transaction_reconcile_result(
     uint8_t target_mask;
     int ret;
 
-    if (context == NULL || key == NULL || result == NULL || action == NULL ||
+    if (context == NULL || key == NULL || request_digest == NULL ||
+        result_digest == NULL || result == NULL || action == NULL ||
         status > COMMAND_INTERNAL_ERROR) {
         return -EINVAL;
     }
@@ -224,8 +270,12 @@ int survey_gateway_transaction_reconcile_result(
     recent = find_recent(context, key);
     if (recent != NULL &&
         !node_transaction_key_equal(&context->active.spec.key, key)) {
-        if (recent->request_fingerprint == request_fingerprint &&
-            recent->result_fingerprint == result_fingerprint &&
+        if (semantic_digest_equal(recent->request_digest,
+                                  request_digest,
+                                  SEMANTIC_DIGEST_SHA256_LEN) &&
+            semantic_digest_equal(recent->result_digest,
+                                  result_digest,
+                                  SEMANTIC_DIGEST_SHA256_LEN) &&
             recent->result_token == result_token) {
             *result = SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE;
             *action = NODE_TRANSACTION_ACTION_NONE;
@@ -240,8 +290,8 @@ int survey_gateway_transaction_reconcile_result(
 
     ret = node_transaction_reconcile_result(&context->active,
                                             key,
-                                            request_fingerprint,
-                                            result_fingerprint,
+                                            request_digest,
+                                            result_digest,
                                             result_token,
                                             now_ms,
                                             &disposition,
@@ -251,7 +301,7 @@ int survey_gateway_transaction_reconcile_result(
     }
     switch (disposition) {
     case NODE_TRANSACTION_RESULT_ACCEPTED:
-        retain_result(context, result_fingerprint, result_token);
+        retain_result(context, result_digest, result_token);
         target_mask = peer_mask(&context->pair, context->active_target_id);
         if (status == COMMAND_OK) {
             if (context->active_command_id == CMD_SURVEY_PREPARE_PAIR) {
@@ -260,7 +310,7 @@ int survey_gateway_transaction_reconcile_result(
             }
             *result = SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK;
         } else {
-            set_cleanup_from_side_effects(context);
+            set_cleanup_from_side_effects(context, now_ms);
             *result = SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_FAILURE;
             *action = context->cleanup_mask != 0u ?
                       NODE_TRANSACTION_ACTION_CLEANUP_REQUIRED :
@@ -299,7 +349,7 @@ bool survey_gateway_transaction_service(
     expire_recent(context, now_ms);
     expired = node_transaction_service(&context->active, now_ms, action);
     if (expired) {
-        set_cleanup_from_side_effects(context);
+        set_cleanup_from_side_effects(context, now_ms);
     }
     return expired;
 }
@@ -322,6 +372,7 @@ int survey_gateway_transaction_phase_complete(
     }
     context->active_command_id = CMD_VENDOR_BASE;
     context->active_target_id = 0u;
+    context->active_started_at_ms = 0u;
     return 0;
 }
 
@@ -355,6 +406,20 @@ bool survey_gateway_transaction_cleanup_pending(
             context->active.state == NODE_TRANSACTION_ABANDONING);
 }
 
+uint64_t survey_gateway_transaction_cleanup_deadline(
+    const struct survey_gateway_transaction *context)
+{
+    return context == NULL ? 0u : context->cleanup_deadline_ms;
+}
+
+bool survey_gateway_transaction_pair_plan_fits_minimum_budget(
+    size_t pair_count,
+    uint32_t remaining_ms)
+{
+    return pair_count <=
+           (size_t)(remaining_ms / SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS);
+}
+
 void survey_gateway_response_ack_settle_init(
     struct survey_gateway_response_ack_settle *state)
 {
@@ -365,15 +430,80 @@ void survey_gateway_response_ack_settle_init(
 
 void survey_gateway_response_ack_settle_note_result(
     struct survey_gateway_response_ack_settle *state,
-    uint64_t now_ms)
+    uint64_t now_ms,
+    uint32_t operation_deadline_ms)
 {
+    uint32_t now_32;
+    uint32_t settle_deadline_ms;
+
     if (state == NULL) {
         return;
     }
-    state->deadline_ms =
-        UINT64_MAX - now_ms < SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS ?
-            UINT64_MAX :
-            now_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+    now_32 = (uint32_t)now_ms;
+    if ((int32_t)(now_32 - operation_deadline_ms) >= 0) {
+        return;
+    }
+    settle_deadline_ms =
+        now_32 + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+    if ((int32_t)(settle_deadline_ms - operation_deadline_ms) >= 0) {
+        settle_deadline_ms = operation_deadline_ms;
+    }
+    if (state->active &&
+        (int32_t)(now_32 - state->deadline_ms) < 0) {
+        if ((int32_t)(state->deadline_ms - operation_deadline_ms) > 0) {
+            state->deadline_ms = operation_deadline_ms;
+        }
+        /*
+         * A phase owner may observe its accepted result more than once while
+         * delivery cancellation settles. Exact over-the-air duplicates use
+         * the explicit re-arm helper below.
+         */
+        return;
+    }
+    state->started_at_ms = now_32;
+    state->deadline_ms = settle_deadline_ms;
+    state->active = true;
+}
+
+void survey_gateway_response_ack_settle_note_duplicate(
+    struct survey_gateway_response_ack_settle *state,
+    uint64_t received_at_ms,
+    uint32_t operation_deadline_ms)
+{
+    uint32_t received_at_32;
+    uint32_t settle_deadline_ms;
+
+    if (state == NULL) {
+        return;
+    }
+    received_at_32 = (uint32_t)received_at_ms;
+    if ((int32_t)(received_at_32 - operation_deadline_ms) >= 0) {
+        return;
+    }
+    settle_deadline_ms =
+        received_at_32 + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
+    if ((int32_t)(settle_deadline_ms - operation_deadline_ms) >= 0) {
+        settle_deadline_ms = operation_deadline_ms;
+    }
+    if (state->active) {
+        /*
+         * Semantic validation can complete out of physical receive order.
+         * Preserve one continuous causal interval and never let an older
+         * duplicate shorten the quiet ownership established by a later one.
+         */
+        if ((int32_t)(received_at_32 - state->started_at_ms) < 0) {
+            state->started_at_ms = received_at_32;
+        }
+        if ((int32_t)(state->deadline_ms - operation_deadline_ms) >= 0) {
+            state->deadline_ms = operation_deadline_ms;
+        }
+        if ((int32_t)(settle_deadline_ms - state->deadline_ms) > 0) {
+            state->deadline_ms = settle_deadline_ms;
+        }
+    } else {
+        state->started_at_ms = received_at_32;
+        state->deadline_ms = settle_deadline_ms;
+    }
     state->active = true;
 }
 
@@ -381,14 +511,22 @@ bool survey_gateway_response_ack_settle_pending(
     struct survey_gateway_response_ack_settle *state,
     uint64_t now_ms)
 {
-    if (state == NULL || !state->active) {
-        return false;
-    }
-    if (now_ms < state->deadline_ms) {
-        return true;
-    }
+    (void)now_ms;
+    return state != NULL && state->active;
+}
+
+bool survey_gateway_response_ack_settle_deadline_reached(
+    const struct survey_gateway_response_ack_settle *state,
+    uint64_t now_ms)
+{
+    return state != NULL && state->active &&
+           (int32_t)((uint32_t)now_ms - state->deadline_ms) >= 0;
+}
+
+void survey_gateway_response_ack_settle_complete(
+    struct survey_gateway_response_ack_settle *state)
+{
     survey_gateway_response_ack_settle_init(state);
-    return false;
 }
 
 enum survey_gateway_drive_action survey_gateway_drive_action(
@@ -429,23 +567,27 @@ enum survey_gateway_drive_action survey_gateway_drive_action(
     return SURVEY_GATEWAY_DRIVE_NONE;
 }
 
-bool survey_gateway_transaction_request_fingerprint(
+bool survey_gateway_transaction_request_digest(
     const struct survey_gateway_transaction *context,
     const struct node_transaction_key *key,
-    uint32_t *request_fingerprint)
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
-    if (context == NULL || key == NULL || request_fingerprint == NULL) {
+    if (context == NULL || key == NULL || request_digest == NULL) {
         return false;
     }
     if (context->active.state != NODE_TRANSACTION_EMPTY &&
         node_transaction_key_equal(&context->active.spec.key, key)) {
-        *request_fingerprint = context->active.spec.request_fingerprint;
+        memcpy(request_digest,
+               context->active.spec.request_digest,
+               SEMANTIC_DIGEST_SHA256_LEN);
         return true;
     }
     for (size_t i = 0u; i < SURVEY_GATEWAY_TRANSACTION_RECENT_COUNT; i++) {
         if (context->recent[i].valid &&
             node_transaction_key_equal(&context->recent[i].key, key)) {
-            *request_fingerprint = context->recent[i].request_fingerprint;
+            memcpy(request_digest,
+                   context->recent[i].request_digest,
+                   SEMANTIC_DIGEST_SHA256_LEN);
             return true;
         }
     }
@@ -508,8 +650,10 @@ int survey_gateway_transaction_note_cleanup_complete(
     }
     context->active_command_id = CMD_VENDOR_BASE;
     context->active_target_id = 0u;
+    context->active_started_at_ms = 0u;
     context->prepared_mask = 0u;
     context->possible_prepare_mask = 0u;
+    context->cleanup_deadline_ms = 0u;
     context->abandoning = false;
     return 0;
 }
@@ -529,6 +673,7 @@ void survey_gateway_transaction_pair_complete(
     context->prepared_mask = 0u;
     context->possible_prepare_mask = 0u;
     context->cleanup_mask = 0u;
+    context->cleanup_deadline_ms = 0u;
     context->pair_loaded = false;
     context->abandoning = false;
 }

@@ -6,6 +6,93 @@ _Static_assert(APP_MESH_CH9_ACK_PEER_MAX == 2u,
                "ACK table must cover one upstream and one downstream peer");
 _Static_assert(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX * sizeof(uint32_t) <= UINT8_MAX,
                "ACK batch TLV lengths must fit in one byte");
+_Static_assert(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX <=
+                   MESH_ACK_SEMANTIC_IDENTITY_MAX,
+               "ACK batch capacity must fit the wire identity bound");
+
+static bool ack_template_supported(const struct mesh_outbound *ack);
+
+static int ack_semantic_identity_append(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct mesh_ack_semantic_identity *identity)
+{
+    uint8_t value[MESH_ACK_SEMANTIC_IDENTITY_VALUE_LEN];
+
+    if (payload == NULL || offset == NULL || identity == NULL ||
+        identity->session_id == 0u || identity->seq == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    proto_put_u32_le(value, identity->session_id);
+    proto_put_u16_le(&value[sizeof(uint32_t)], identity->seq);
+    memcpy(&value[sizeof(uint32_t) + sizeof(uint16_t)],
+           identity->digest,
+           sizeof(identity->digest));
+    return tlv_append_bytes(payload,
+                            payload_cap,
+                            offset,
+                            TLV_MESH_ACK_SEMANTIC_IDENTITY,
+                            value,
+                            (uint8_t)sizeof(value));
+}
+
+static int ack_single_semantic_identity(
+    const struct mesh_outbound *ack,
+    struct mesh_ack_semantic_identity *identity)
+{
+    struct mesh_ack_semantic_identity extra;
+    const uint8_t *requested_seq = NULL;
+    const uint8_t *diagnostic = NULL;
+    uint8_t requested_seq_len = 0u;
+    uint8_t diagnostic_len = 0u;
+    int ret;
+
+    if (!ack_template_supported(ack) || identity == NULL ||
+        ack->packet.payload_len != ack->payload_len ||
+        ack->payload_len != MESH_ACK_SINGLE_PAYLOAD_LEN) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find_unique(ack->payload,
+                          ack->payload_len,
+                          TLV_REQUESTED_MSG_SEQ,
+                          &requested_seq,
+                          &requested_seq_len);
+    if (ret != PROTO_OK || requested_seq_len != sizeof(uint16_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (tlv_find_unique(ack->payload,
+                        ack->payload_len,
+                        TLV_MESH_ACK_SEQ_LIST,
+                        &diagnostic,
+                        &diagnostic_len) != PROTO_ERR_NOT_FOUND ||
+        tlv_find_unique(ack->payload,
+                        ack->payload_len,
+                        TLV_MESH_ACK_SESSION_LIST,
+                        &diagnostic,
+                        &diagnostic_len) != PROTO_ERR_NOT_FOUND ||
+        tlv_find_unique(ack->payload,
+                        ack->payload_len,
+                        TLV_MESH_ACK_PACKET_ID_LIST,
+                        &diagnostic,
+                        &diagnostic_len) != PROTO_ERR_NOT_FOUND) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = mesh_ack_semantic_identity_at(ack->payload,
+                                        ack->payload_len,
+                                        0u,
+                                        identity);
+    if (ret != PROTO_OK ||
+        mesh_ack_semantic_identity_at(ack->payload,
+                                      ack->payload_len,
+                                      1u,
+                                      &extra) != PROTO_ERR_NOT_FOUND ||
+        identity->session_id != ack->packet.session_id ||
+        identity->seq != proto_get_u16_le(requested_seq)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
 
 static void ack_queue_result_set(enum app_mesh_ch9_ack_queue_result *result,
                                  enum app_mesh_ch9_ack_queue_result value)
@@ -71,14 +158,41 @@ static struct app_mesh_ch9_ack_batch *ack_table_find_free(
     return NULL;
 }
 
-static void ack_batch_reset_generated(struct app_mesh_ch9_ack_batch *batch,
-                                      const struct mesh_outbound *ack)
+static int ack_batch_reset_generated(
+    struct app_mesh_ch9_ack_batch *batch,
+    const struct mesh_outbound *ack,
+    const struct mesh_ack_semantic_identity *identity)
 {
+    size_t payload_len = 0u;
+    int ret;
+
+    if (batch == NULL || ack == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
     memset(batch, 0, sizeof(*batch));
     batch->template_ack = *ack;
     batch->template_ack.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    ret = mesh_append_requested_seq(batch->template_ack.payload,
+                                    sizeof(batch->template_ack.payload),
+                                    &payload_len,
+                                    identity->seq);
+    if (ret != PROTO_OK) {
+        memset(batch, 0, sizeof(*batch));
+        return ret;
+    }
+    ret = ack_semantic_identity_append(batch->template_ack.payload,
+                                       sizeof(batch->template_ack.payload),
+                                       &payload_len,
+                                       identity);
+    if (ret != PROTO_OK) {
+        memset(batch, 0, sizeof(*batch));
+        return ret;
+    }
+    batch->template_ack.payload_len = (uint16_t)payload_len;
+    batch->template_ack.packet.payload_len = (uint16_t)payload_len;
     batch->peer_id = ack->next_hop_id;
     batch->valid = true;
+    return PROTO_OK;
 }
 
 static bool ack_batch_matches_generated(
@@ -89,6 +203,8 @@ static bool ack_batch_matches_generated(
            !batch->preserve_payload &&
            batch->peer_id == ack->next_hop_id &&
            batch->template_ack.packet.msg_type == ack->packet.msg_type &&
+           batch->template_ack.packet.flags == ack->packet.flags &&
+           batch->template_ack.packet.src_id == ack->packet.src_id &&
            batch->template_ack.packet.dst_id == ack->packet.dst_id;
 }
 
@@ -182,10 +298,22 @@ int app_mesh_ch9_ack_table_queue(
     enum app_mesh_ch9_ack_queue_result *result)
 {
     struct app_mesh_ch9_ack_batch *batch;
+    struct mesh_ack_semantic_identity candidate_identity;
+    bool reset_generated = false;
     bool replaced = false;
+    int ret;
 
     if (table == NULL || entry == NULL || !ack_template_supported(ack)) {
         return PROTO_ERR_ARG;
+    }
+    ret = ack_single_semantic_identity(ack, &candidate_identity);
+    if (ret != PROTO_OK ||
+        candidate_identity.session_id != entry->session_id ||
+        candidate_identity.seq != entry->seq) {
+        ack_queue_result_set(
+            result,
+            APP_MESH_CH9_ACK_QUEUE_SEMANTIC_CONFLICT);
+        return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
     }
 
     batch = ack_table_find_peer(table, ack->next_hop_id);
@@ -195,7 +323,11 @@ int app_mesh_ch9_ack_table_queue(
             ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_TABLE_FULL);
             return PROTO_ERR_NO_SPACE;
         }
-        ack_batch_reset_generated(batch, ack);
+        ret = ack_batch_reset_generated(batch, ack, &candidate_identity);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        reset_generated = true;
     } else if (ack_batch_is_forwarded_gateway_ack(batch)) {
         if (ack->packet.msg_type == MSG_MESH_HOP_ACK) {
             ack_queue_result_set(
@@ -206,13 +338,32 @@ int app_mesh_ch9_ack_table_queue(
         ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_FORWARDED_BUSY);
         return PROTO_ERR_NO_SPACE;
     } else if (!ack_batch_matches_generated(batch, ack)) {
-        ack_batch_reset_generated(batch, ack);
+        ret = ack_batch_reset_generated(batch, ack, &candidate_identity);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        reset_generated = true;
         replaced = true;
     }
 
     for (uint8_t i = 0u; i < batch->count; i++) {
         if (batch->entries[i].session_id == entry->session_id &&
             batch->entries[i].seq == entry->seq) {
+            struct mesh_ack_semantic_identity existing_identity;
+
+            if (mesh_ack_semantic_identity_at(
+                    batch->template_ack.payload,
+                    batch->template_ack.payload_len,
+                    i,
+                    &existing_identity) != PROTO_OK ||
+                !semantic_digest_equal(existing_identity.digest,
+                                       candidate_identity.digest,
+                                       sizeof(existing_identity.digest))) {
+                ack_queue_result_set(
+                    result,
+                    APP_MESH_CH9_ACK_QUEUE_SEMANTIC_CONFLICT);
+                return PROTO_ERR_MALFORMED;
+            }
             ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
             return PROTO_OK;
         }
@@ -223,6 +374,19 @@ int app_mesh_ch9_ack_table_queue(
         return PROTO_ERR_NO_SPACE;
     }
 
+    if (!reset_generated) {
+        size_t payload_len = batch->template_ack.payload_len;
+
+        ret = ack_semantic_identity_append(batch->template_ack.payload,
+                                           sizeof(batch->template_ack.payload),
+                                           &payload_len,
+                                           &candidate_identity);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        batch->template_ack.payload_len = (uint16_t)payload_len;
+        batch->template_ack.packet.payload_len = (uint16_t)payload_len;
+    }
     batch->entries[batch->count] = *entry;
     if (!batch->entries[batch->count].has_packet_id) {
         batch->entries[batch->count].packet_id = 0u;
@@ -305,12 +469,24 @@ int app_mesh_ch9_ack_table_build_peer(
     }
 
     for (uint8_t i = 0u; i < batch->count; i++) {
+        struct mesh_ack_semantic_identity identity;
+
         proto_put_u16_le(&seq_list[i * sizeof(uint16_t)],
                          batch->entries[i].seq);
         proto_put_u32_le(&session_list[i * sizeof(uint32_t)],
                          batch->entries[i].session_id);
         proto_put_u32_le(&packet_id_list[i * sizeof(uint32_t)],
                          batch->entries[i].packet_id);
+        ret = mesh_ack_semantic_identity_at(
+            batch->template_ack.payload,
+            batch->template_ack.payload_len,
+            i,
+            &identity);
+        if (ret != PROTO_OK ||
+            identity.session_id != batch->entries[i].session_id ||
+            identity.seq != batch->entries[i].seq) {
+            return PROTO_ERR_MALFORMED;
+        }
     }
 
     ret = mesh_append_requested_seq(outbound->payload,
@@ -346,6 +522,25 @@ int app_mesh_ch9_ack_table_build_peer(
                            (uint8_t)(batch->count * sizeof(uint32_t)));
     if (ret != PROTO_OK) {
         return ret;
+    }
+    for (uint8_t i = 0u; i < batch->count; i++) {
+        struct mesh_ack_semantic_identity identity;
+
+        ret = mesh_ack_semantic_identity_at(
+            batch->template_ack.payload,
+            batch->template_ack.payload_len,
+            i,
+            &identity);
+        if (ret != PROTO_OK) {
+            return PROTO_ERR_MALFORMED;
+        }
+        ret = ack_semantic_identity_append(outbound->payload,
+                                           sizeof(outbound->payload),
+                                           &payload_len,
+                                           &identity);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
 
     outbound->payload_len = (uint16_t)payload_len;
@@ -465,84 +660,24 @@ int app_mesh_ch9_ack_table_flush_peer(
     return ret;
 }
 
-static int ack_payload_contains_packet(const struct proto_packet *ack_packet,
-                                       const uint8_t *payload,
-                                       size_t payload_len,
-                                       uint32_t requested_session_id,
-                                       uint16_t requested_seq,
-                                       bool *contains)
+static int ack_payload_contains_packet(
+    const struct proto_packet *ack_packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    const struct mesh_outbound *acknowledged,
+    bool *contains)
 {
-    const uint8_t *seq_value = NULL;
-    const uint8_t *session_value = NULL;
-    uint8_t seq_value_len = 0u;
-    uint8_t session_value_len = 0u;
-    uint8_t seq_count;
-    int ret;
-    int session_ret;
-
-    if (contains == NULL) {
+    if (acknowledged == NULL ||
+        acknowledged->packet.payload_len != acknowledged->payload_len) {
         return PROTO_ERR_ARG;
     }
-    *contains = false;
-
-    ret = tlv_find(payload, payload_len, TLV_MESH_ACK_SEQ_LIST,
-                   &seq_value, &seq_value_len);
-    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
-        return ret;
-    }
-    session_ret = tlv_find(payload, payload_len, TLV_MESH_ACK_SESSION_LIST,
-                           &session_value, &session_value_len);
-    if (session_ret != PROTO_OK && session_ret != PROTO_ERR_NOT_FOUND) {
-        return session_ret;
-    }
-
-    if (ret == PROTO_OK) {
-        if ((seq_value_len % sizeof(uint16_t)) != 0u) {
-            return PROTO_ERR_MALFORMED;
-        }
-        seq_count = seq_value_len / sizeof(uint16_t);
-        if (session_ret == PROTO_OK &&
-            session_value_len != seq_count * sizeof(uint32_t)) {
-            return PROTO_ERR_MALFORMED;
-        }
-
-        for (uint8_t i = 0u; i < seq_count; i++) {
-            uint16_t seq = proto_get_u16_le(&seq_value[i * sizeof(uint16_t)]);
-
-            if (seq != requested_seq) {
-                continue;
-            }
-            if (session_ret == PROTO_OK) {
-                uint32_t session_id =
-                    proto_get_u32_le(&session_value[i * sizeof(uint32_t)]);
-
-                if (session_id != requested_session_id) {
-                    continue;
-                }
-            }
-            *contains = true;
-            return PROTO_OK;
-        }
-        return PROTO_OK;
-    }
-
-    ret = tlv_find(payload, payload_len, TLV_REQUESTED_MSG_SEQ,
-                   &seq_value, &seq_value_len);
-    if (ret == PROTO_ERR_NOT_FOUND) {
-        return PROTO_OK;
-    }
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (seq_value_len != sizeof(uint16_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    if (proto_get_u16_le(seq_value) == requested_seq &&
-        ack_packet != NULL &&
-        ack_packet->session_id == requested_session_id) {
-        *contains = true;
-    }
-    return PROTO_OK;
+    return mesh_ack_payload_contains_packet(ack_packet,
+                                            payload,
+                                            payload_len,
+                                            &acknowledged->packet,
+                                            acknowledged->payload,
+                                            acknowledged->payload_len,
+                                            contains);
 }
 
 int app_mesh_ch9_tx_ack_apply(const struct proto_packet *ack_packet,
@@ -572,12 +707,14 @@ int app_mesh_ch9_tx_ack_apply(const struct proto_packet *ack_packet,
         if (entries[i].acked) {
             continue;
         }
+        if (entries[i].outbound == NULL) {
+            return PROTO_ERR_ARG;
+        }
 
         ret = ack_payload_contains_packet(ack_packet,
                                           payload,
                                           payload_len,
-                                          entries[i].session_id,
-                                          entries[i].seq,
+                                          entries[i].outbound,
                                           &contains);
         if (ret != PROTO_OK) {
             return ret;
@@ -630,6 +767,7 @@ int app_mesh_ch9_tx_requeue_unacked(struct app_mesh_ch9_tx_retry_entry *entries,
         }
 
         entries[i].outbound->queued_at_ms = now_ms;
+        entries[i].outbound->queued_at_valid = true;
         if (ops->put(entries[i].outbound, ops->ctx) == 0) {
             *entries[i].acked = true;
             local_result.requeued++;
@@ -744,8 +882,7 @@ bool app_mesh_ch9_retry_next_local_tx_prepare_ms(
 
     guard_ms = next.guard_ms > minimum_guard_ms ?
                next.guard_ms : minimum_guard_ms;
-    *prepare_ms = next.next_event_time_ms > guard_ms ?
-                  next.next_event_time_ms - guard_ms : 1u;
+    *prepare_ms = next.next_event_time_ms - guard_ms;
     return true;
 }
 
@@ -757,7 +894,7 @@ bool app_mesh_ch9_wait_plan_retry_delay_ms(uint32_t now_ms,
     uint32_t prepare_ms;
     int32_t delta_ms;
 
-    if (event_start_ms == 0u || delay_ms == NULL) {
+    if (delay_ms == NULL) {
         return false;
     }
 
@@ -777,6 +914,7 @@ bool app_mesh_ch9_tx_timeout_counts_route_failure(
     }
 
     return outbound->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
+           outbound->next_hop_id == next_hop_id &&
            outbound->packet.dst_id == gateway_id &&
            (outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
 }
@@ -827,8 +965,7 @@ bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
     return ack_payload_contains_packet(ack_packet,
                                        payload,
                                        payload_len,
-                                       sent->packet.session_id,
-                                       sent->packet.seq,
+                                       sent,
                                        &contains) == PROTO_OK &&
            contains;
 }

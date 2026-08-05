@@ -31,6 +31,7 @@ int app_mesh_gateway_command_flow_anchor_receive(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint64_t gateway_id,
     uint32_t now_ms,
     enum command_id *command_id,
     struct gateway_command_options *options,

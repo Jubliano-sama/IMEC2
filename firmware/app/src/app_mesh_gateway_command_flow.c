@@ -15,7 +15,8 @@ static int find_u8_tlv(const uint8_t *payload,
     if (payload == NULL || value == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, type,
+                          &tlv_value, &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -38,7 +39,8 @@ static int gateway_command_flow_find_u16_tlv(const uint8_t *payload,
     if (payload == NULL || value == NULL) {
         return PROTO_ERR_ARG;
     }
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &value_len);
+    ret = tlv_find_unique(payload, payload_len, type,
+                          &tlv_value, &value_len);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -90,6 +92,7 @@ int app_mesh_gateway_command_flow_anchor_receive(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint64_t gateway_id,
     uint32_t now_ms,
     enum command_id *command_id,
     struct gateway_command_options *options,
@@ -101,8 +104,12 @@ int app_mesh_gateway_command_flow_anchor_receive(
 
     if (packet == NULL || payload == NULL || command_id == NULL ||
         options == NULL || broadcast == NULL || expired == NULL ||
-        duplicate == NULL || packet->msg_type != MSG_COMMAND) {
+        duplicate == NULL || gateway_id == 0u ||
+        packet->msg_type != MSG_COMMAND) {
         return PROTO_ERR_ARG;
+    }
+    if (packet->src_id != gateway_id) {
+        return PROTO_ERR_STALE;
     }
 
     memset(options, 0, sizeof(*options));

@@ -451,6 +451,7 @@ static int build_range_report_samples(uint64_t clicker_id,
     uint8_t encoded[PACKET_MAX_LEN];
     uint16_t sample_index = 0u;
     uint16_t packet_index = 0u;
+    int64_t persistence_deadline_ms;
     bool fragmented;
     int ret;
 
@@ -464,6 +465,14 @@ static int build_range_report_samples(uint64_t clicker_id,
           sample_sequence_start_ms == NULL)) ||
         sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES) {
         return -EINVAL;
+    }
+    persistence_deadline_ms =
+        k_uptime_get() + ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS;
+    ret = mesh_range_report_batch_reserve(clicker_id,
+                                          event_seq,
+                                          attempt_index);
+    if (ret < 0) {
+        return ret;
     }
     fragmented = sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET;
 
@@ -617,12 +626,17 @@ build_payload:
             goto build_payload;
         }
         if (ret != PROTO_OK) {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto fail;
         }
 
-        packet_seq = (uint16_t)((range_result->seq == 0u ?
-                                 (uint16_t)event_seq :
-                                 range_result->seq) + packet_index);
+        ret = report_range_transport_seq(attempt_index,
+                                         packet_index,
+                                         &packet_seq);
+        if (ret != PROTO_OK) {
+            ret = -EINVAL;
+            goto fail;
+        }
         ret = report_init_range_packet(&packet,
                                        range_result->responder_id,
                                        GATEWAY_ID,
@@ -631,12 +645,14 @@ build_payload:
                                        range_result->flags,
                                        (uint8_t)payload_len);
         if (ret != PROTO_OK) {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto fail;
         }
 
         ret = proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len);
         if (ret != PROTO_OK) {
-            return -EINVAL;
+            ret = -EINVAL;
+            goto fail;
         }
 
         LOG_INF("range report ready: clicker=0x%016llx event_seq=%u anchor=0x%016llx distance_mm=%d samples=%u chunk_index=%u chunk_samples=%u first_round=%u quality=%u diagnostic=%u rsl_included=%u packet_len=%u",
@@ -659,12 +675,20 @@ build_payload:
                 .payload_len = (uint8_t)payload_len,
             };
             uint16_t queue_depth;
+            bool final_fragment =
+                sample_index + chunk_count >= sample_count;
 
             memcpy(outbound.payload, payload, payload_len);
-            ret = queue_anchor_report(&outbound);
+            ret = queue_anchor_range_report_fragment(&outbound,
+                                                     clicker_id,
+                                                     event_seq,
+                                                     attempt_index,
+                                                     final_fragment,
+                                                     persistence_deadline_ms);
             if (ret < 0) {
-                LOG_WRN("click report could not be queued for mesh TX: %d", ret);
-                return ret;
+                LOG_WRN("range report batch fragment could not be queued for mesh TX: %d",
+                        ret);
+                goto fail;
             }
             queue_depth = (uint16_t)report_tx_queue_used();
             app_stack_workload_diag_cir_admit(&packet, queue_depth, queue_depth);
@@ -678,13 +702,18 @@ build_payload:
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (range_result->anchor_full_cir_sampled) {
         uint64_t cir_timestamp_ms = 0u;
-        uint16_t cir_seq = (uint16_t)((range_result->seq == 0u ?
-                                      (uint16_t)event_seq :
-                                      range_result->seq) + packet_index);
+        uint16_t cir_seq;
         int64_t cir_local_ms = range_result->exchange_started ?
                                range_result->exchange_start_ms :
                                k_uptime_get();
 
+        ret = report_range_transport_seq(attempt_index,
+                                         packet_index,
+                                         &cir_seq);
+        if (ret != PROTO_OK) {
+            ret = -EINVAL;
+            goto fail;
+        }
         anchor_sequence_timestamp_at(cir_local_ms, &cir_timestamp_ms);
         ret = anchor_cir_report_start(clicker_id,
                                       event_seq,
@@ -692,15 +721,19 @@ build_payload:
                                       cir_seq,
                                       range_result);
         if (ret < 0) {
-            return ret;
+            goto fail;
         }
     }
 #endif
 
     return 0;
+
+fail:
+    mesh_range_report_batch_abort(clicker_id, event_seq, attempt_index);
+    return ret;
 }
 
-void build_uwb_schedule_report_if_relevant(
+int build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
     uint8_t schedule_flags,
     const struct anchor_range_window_report *report)
@@ -708,10 +741,10 @@ void build_uwb_schedule_report_if_relevant(
     int ret;
 
     if ((schedule_flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) == 0u) {
-        return;
+        return 0;
     }
     if (session == NULL || report == NULL || !report->have_result) {
-        return;
+        return 0;
     }
 
     ret = build_range_report_samples(session->epoch.clicker_id,
@@ -727,4 +760,5 @@ void build_uwb_schedule_report_if_relevant(
     if (ret < 0) {
         LOG_WRN("failed to build UWB scheduled anchor range report: %d", ret);
     }
+    return ret;
 }

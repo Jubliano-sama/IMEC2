@@ -49,7 +49,7 @@ extern "C" {
 #define UWB_WAKE_CLAIM_LEN 49u
 #define UWB_DISCOVER_LEN 32u
 #define UWB_DISCOVERY_REPLY_LEN 44u
-#define UWB_SURVEY_DISCOVERY_PROBE_LEN 24u
+#define UWB_SURVEY_DISCOVERY_PROBE_LEN 32u
 #define UWB_DISCOVERY_SLOT_COUNT 50u
 #define UWB_RANGE_RELEASE_LEN 34u
 #define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
@@ -85,6 +85,13 @@ extern "C" {
 #define UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_DISCOVERY_START_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS 2000u
+/*
+ * A retransmitted claim carries countdowns sampled before RF transmission,
+ * while the anchor timestamps it after reception.  Allow bounded transport
+ * skew, but compare every copy with the first accepted absolute schedule so
+ * repeated frames cannot move the discovery or ownership horizon.
+ */
+#define UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS 25u
 #define UWB_RANGE_SCHEDULE_FIXED_LEN 47u
 #define UWB_RANGE_SCHEDULE_ENTRY_LEN 9u
 #define UWB_RANGE_SCHEDULE_MAX_ANCHORS 8u
@@ -258,6 +265,7 @@ struct uwb_discovery_reply_frame {
 struct uwb_survey_discovery_probe_frame {
     uint32_t network_id;
     uint32_t survey_id;
+    uint64_t operation_generation;
     uint64_t anchor_id;
     uint8_t anchor_slot;
     uint8_t slot_count;
@@ -357,6 +365,13 @@ struct uwb_anchor_epoch {
     uint64_t priority_id;
     uint64_t nonce;
     uint32_t epoch_ends_at_ms;
+    uint32_t wake_train_ends_at_ms;
+    uint16_t post_wake_claimed_duration_ms;
+    uint16_t discovery_after_wake_ms;
+    uint8_t wake_channel;
+    uint8_t ranging_channel;
+    uint8_t min_anchor_count;
+    uint8_t max_anchor_count;
     uint8_t flags;
 };
 
@@ -503,6 +518,7 @@ int uwb_mesh_frame_encode(uint32_t network_id,
                           uint8_t *out,
                           size_t out_cap,
                           size_t *written);
+int uwb_mesh_frame_sync_flood_packet_age(uint8_t *frame, size_t frame_len);
 int uwb_mesh_frame_decode(const uint8_t *data,
                           size_t len,
                           uint32_t expected_network_id,

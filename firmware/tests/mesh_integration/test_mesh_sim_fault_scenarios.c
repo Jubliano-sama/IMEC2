@@ -776,12 +776,69 @@ static int drain_connection_queue(struct mesh_sim_world *world,
             return MESH_SIM_OK;
         }
         {
+            struct mesh_sim_connection_action action;
+            int action_ret = mesh_sim_connection_next_action(
+                world, connection_index, &action);
             int ret = run_connection_turn(world, connection_index);
 
+            fprintf(stderr,
+                    "drain turn=%zu connection=%u action_ret=%d kind=%d "
+                    "start=%llu end=%llu already=%u ret=%d now=%llu "
+                    "queue=%zu completed=%u\n",
+                    turn,
+                    connection_index,
+                    action_ret,
+                    action.kind,
+                    (unsigned long long)action.start_us,
+                    (unsigned long long)action.end_us,
+                    action.already_scheduled ? 1u : 0u,
+                    ret,
+                    (unsigned long long)world->now_us,
+                    world->roles[queued_node_index].tx_queue_count,
+                    world->connections[connection_index].completed_events);
             if (ret != MESH_SIM_OK) {
                 return ret;
             }
         }
+    }
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued =
+            &world->roles[queued_node_index].tx_queue[i];
+
+        if (queued->valid) {
+            fprintf(stderr,
+                    "undrained queue node=%zu slot=%zu msg=%u src=%llx "
+                    "dst=%llx next=%llx session=%u seq=%u needs_start=%u\n",
+                    (size_t)queued_node_index,
+                    i,
+                    queued->outbound.packet.msg_type,
+                    (unsigned long long)queued->outbound.packet.src_id,
+                    (unsigned long long)queued->outbound.packet.dst_id,
+                    (unsigned long long)queued->outbound.next_hop_id,
+                    queued->outbound.packet.session_id,
+                    queued->outbound.packet.seq,
+                    queued->needs_relay_start ? 1u : 0u);
+        }
+    }
+    if (connection_index < world->connection_count) {
+        const struct mesh_sim_connection *connection =
+            &world->connections[connection_index];
+
+        fprintf(stderr,
+                "undrained connection=%u now=%llu repair=%u "
+                "counter_a=%u next_a=%u owner_a=%u counter_b=%u "
+                "next_b=%u owner_b=%u completed=%u repairs=%u\n",
+                connection_index,
+                (unsigned long long)world->now_us,
+                connection->repair_pending ? 1u : 0u,
+                connection->timing_a.event_counter,
+                connection->timing_a.next_event_time_ms,
+                connection->owner_a.active ? 1u : 0u,
+                connection->timing_b.event_counter,
+                connection->timing_b.next_event_time_ms,
+                connection->owner_b.active ? 1u : 0u,
+                connection->completed_events,
+                connection->completed_repairs);
     }
     return MESH_SIM_ERR_EVENT_ORDER;
 }

@@ -178,8 +178,8 @@ static void test_packet_rejects_retired_and_compact_only_message_types(void)
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
     packet.msg_type = MSG_UWB_CLICKER_DIAG;
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
-    packet.msg_type = 0x33u;
-    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
+    packet.msg_type = MSG_GATEWAY_ACK_CONFIRM;
+    assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_OK);
     packet.msg_type = 0x34u;
     assert(proto_packet_encode(&packet, payload, encoded, sizeof(encoded), &encoded_len) == PROTO_ERR_MALFORMED);
 
@@ -211,7 +211,17 @@ static void test_packet_rejects_retired_and_compact_only_message_types(void)
                                &decoded_payload,
                                &decoded_payload_len) == PROTO_ERR_MALFORMED);
 
-    set_packet_type_and_refresh_crc(encoded, encoded_len, 0x33u);
+    set_packet_type_and_refresh_crc(encoded,
+                                    encoded_len,
+                                    MSG_GATEWAY_ACK_CONFIRM);
+    assert(proto_packet_decode(encoded,
+                               encoded_len,
+                               &decoded,
+                               &decoded_payload,
+                               &decoded_payload_len) == PROTO_OK);
+    assert(decoded.msg_type == MSG_GATEWAY_ACK_CONFIRM);
+
+    set_packet_type_and_refresh_crc(encoded, encoded_len, 0x34u);
     assert(proto_packet_decode(encoded,
                                encoded_len,
                                &decoded,
@@ -387,6 +397,12 @@ static void test_result_offer_grant_busy_tlvs_round_trip(void)
         .result_id = id,
         .result_len = 1023u,
         .result_crc = 0xBEEFu,
+        .result_digest = {
+            0x00u, 0x01u, 0x02u, 0x03u, 0x04u, 0x05u, 0x06u, 0x07u,
+            0x08u, 0x09u, 0x0au, 0x0bu, 0x0cu, 0x0du, 0x0eu, 0x0fu,
+            0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
+            0x18u, 0x19u, 0x1au, 0x1bu, 0x1cu, 0x1du, 0x1eu, 0x1fu,
+        },
         .priority = 6u,
     };
     const struct result_grant grant = {
@@ -413,10 +429,14 @@ static void test_result_offer_grant_busy_tlvs_round_trip(void)
                                     sizeof(payload),
                                     &payload_len,
                                     &offer) == PROTO_OK);
+    assert(payload_len == RESULT_OFFER_TLV_BYTES);
     assert(result_offer_from_tlvs(payload, payload_len, &decoded_offer) == PROTO_OK);
     assert_command_result_id_equal(&decoded_offer.result_id, &id);
     assert(decoded_offer.result_len == offer.result_len);
     assert(decoded_offer.result_crc == offer.result_crc);
+    assert(memcmp(decoded_offer.result_digest,
+                  offer.result_digest,
+                  sizeof(offer.result_digest)) == 0);
     assert(decoded_offer.priority == offer.priority);
 
     payload_len = 0u;
@@ -442,6 +462,96 @@ static void test_result_offer_grant_busy_tlvs_round_trip(void)
     assert(decoded_busy.capacity_validity_interval_ms == busy.capacity_validity_interval_ms);
     assert(decoded_busy.has_optional_alternate_parent);
     assert(decoded_busy.optional_alternate_parent == busy.optional_alternate_parent);
+}
+
+static void test_result_offer_requires_full_semantic_commitment(void)
+{
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = 0x1000000000000001ull,
+            .gateway_epoch = 2u,
+            .command_seq = 3u,
+            .node_id = 0x2000000000000001ull,
+            .node_boot_counter = 4u,
+            .result_seq = 5u,
+        },
+        .result_len = 64u,
+        .result_crc = 0x1234u,
+        .result_digest = {0xa5u},
+        .priority = 1u,
+    };
+    struct result_offer decoded;
+    uint8_t payload[160];
+    uint8_t too_small[RESULT_OFFER_TLV_BYTES - 1u];
+    const uint8_t *digest_value = NULL;
+    uint8_t digest_len = 0u;
+    size_t payload_len = 0u;
+
+    assert(result_offer_from_tlvs(NULL, 0u, &decoded) == PROTO_ERR_ARG);
+    assert(result_offer_append_tlvs(NULL,
+                                    RESULT_OFFER_TLV_BYTES,
+                                    &payload_len,
+                                    &offer) == PROTO_ERR_ARG);
+    assert(result_offer_append_tlvs(too_small,
+                                    sizeof(too_small),
+                                    &payload_len,
+                                    &offer) == PROTO_ERR_NO_SPACE);
+    assert(payload_len == 0u);
+
+    assert(command_result_id_append_tlvs(payload,
+                                         sizeof(payload),
+                                         &payload_len,
+                                         &offer.result_id) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_PAYLOAD_LEN,
+                          offer.result_len) == PROTO_OK);
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_PAYLOAD_CRC,
+                          offer.result_crc) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_PRIORITY,
+                         offer.priority) == PROTO_OK);
+    assert(result_offer_from_tlvs(payload,
+                                  payload_len,
+                                  &decoded) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(result_offer_append_tlvs(payload,
+                                    sizeof(payload),
+                                    &payload_len,
+                                    &offer) == PROTO_OK);
+    assert(tlv_find_unique(payload,
+                           payload_len,
+                           TLV_RESULT_SHA256_COMMITMENT,
+                           &digest_value,
+                           &digest_len) == PROTO_OK);
+    assert(digest_len == SEMANTIC_DIGEST_SHA256_LEN);
+    payload[(size_t)(digest_value - payload) - 1u] =
+        SEMANTIC_DIGEST_SHA256_LEN - 1u;
+    assert(result_offer_from_tlvs(payload,
+                                  payload_len,
+                                  &decoded) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(result_offer_append_tlvs(payload,
+                                    sizeof(payload),
+                                    &payload_len,
+                                    &offer) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_RESULT_SHA256_COMMITMENT,
+                            offer.result_digest,
+                            sizeof(offer.result_digest)) == PROTO_OK);
+    assert(result_offer_from_tlvs(payload,
+                                  payload_len,
+                                  &decoded) == PROTO_ERR_MALFORMED);
 }
 
 static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
@@ -470,7 +580,7 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
         .command_seq = bundle.command_seq,
         .collection_epoch_id = bundle.collection_epoch_id,
         .membership_epoch = 15u,
-        .expected_count = 16u,
+        .expected_count = 12u,
         .received_count = 10u,
         .packet_sequence = 513u,
         .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
@@ -503,6 +613,7 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
                                             sizeof(payload),
                                             &payload_len,
                                             &bundle) == PROTO_OK);
+    assert(payload_len == RESULT_BUNDLE_HEADER_TLV_BYTES);
     assert(result_bundle_header_from_tlvs(payload,
                                           payload_len,
                                           &decoded_bundle) == PROTO_OK);
@@ -620,6 +731,426 @@ static void test_result_bundle_and_collection_eack_tlvs_round_trip(void)
                                                     payload_len,
                                                     0x12u,
                                                     &listed) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          0x12u) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_NODE_ID,
+                         0x34u) == PROTO_OK);
+    assert(gateway_collection_eack_contains_node_id(payload,
+                                                    payload_len,
+                                                    0x12u,
+                                                    &listed) == PROTO_ERR_MALFORMED);
+}
+
+static void test_collection_eack_rejects_ambiguous_lists_and_schema_smuggling(void)
+{
+    struct gateway_collection_eack eack = {
+        .gateway_id = UINT64_C(0x1000000000000001),
+        .gateway_epoch = 2u,
+        .command_seq = 3u,
+        .collection_epoch_id = 4u,
+        .membership_epoch = 5u,
+        .expected_count = 2u,
+        .received_count = 1u,
+        .packet_sequence = 6u,
+        .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
+        .retry_round = 1u,
+        .next_retry_spread_ms = 100u,
+        .collection_open = true,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .src_id = UINT64_C(0x1000000000000001),
+        .dst_id = 0u,
+        .session_id = 3u,
+        .seq = 6u,
+        .ttl = 1u,
+    };
+    uint8_t payload[PROTO_GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN];
+    size_t fixed_len = 0u;
+    size_t payload_len;
+
+    assert(gateway_collection_eack_append_tlvs(
+               payload, sizeof(payload), &fixed_len, &eack) == PROTO_OK);
+    packet.payload_len = (uint16_t)fixed_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, fixed_len, NULL) == PROTO_ERR_MALFORMED);
+
+    payload_len = fixed_len;
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          UINT64_C(0x2001)) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, payload_len, NULL) == PROTO_OK);
+
+    packet.flags = FLAG_DIAGNOSTIC;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, payload_len, NULL) == PROTO_ERR_MALFORMED);
+    packet.flags = 0u;
+
+    payload_len = fixed_len;
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          0u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, payload_len, NULL) == PROTO_ERR_MALFORMED);
+
+    eack.expected_count = 3u;
+    fixed_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(
+               payload, sizeof(payload), &fixed_len, &eack) == PROTO_OK);
+    payload_len = fixed_len;
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          UINT64_C(0x2001)) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          UINT64_C(0x2001)) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, payload_len, NULL) == PROTO_ERR_MALFORMED);
+
+    eack.expected_count = 2u;
+    fixed_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(
+               payload, sizeof(payload), &fixed_len, &eack) == PROTO_OK);
+    payload_len = fixed_len;
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_ID,
+                          UINT64_C(0x2001)) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_ERROR_DETAIL,
+                         0x55u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, payload_len, NULL) == PROTO_ERR_MALFORMED);
+
+    eack.eack_format = EACK_FORMAT_ROSTER_BITMAP;
+    fixed_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(
+               payload, sizeof(payload), &fixed_len, &eack) == PROTO_OK);
+    packet.payload_len = (uint16_t)fixed_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, fixed_len, NULL) == PROTO_ERR_MALFORMED);
+
+    eack.eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST;
+    eack.expected_count = PROTO_GATEWAY_COLLECTION_EACK_NODE_CAP + 1u;
+    fixed_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(
+               payload, sizeof(payload), &fixed_len, &eack) == PROTO_OK);
+    packet.payload_len = (uint16_t)fixed_len;
+    assert(gateway_collection_eack_packet_validate(
+               &packet, payload, fixed_len, NULL) == PROTO_ERR_MALFORMED);
+}
+
+static void test_unique_tlv_and_result_decoders_reject_duplicates(void)
+{
+    const struct command_result_id result_id = {
+        .gateway_id = 0x1000000000000001ull,
+        .gateway_epoch = 2u,
+        .command_seq = 3u,
+        .node_id = 0x2000000000000001ull,
+        .node_boot_counter = 4u,
+        .result_seq = 5u,
+    };
+    const struct result_offer offer = {
+        .result_id = result_id,
+        .result_len = 64u,
+        .result_crc = 0x1234u,
+        .priority = 1u,
+    };
+    const struct result_grant grant = {
+        .result_id = result_id,
+        .granted_channel = 9u,
+        .max_bytes = 255u,
+        .event_offset_hint = 10u,
+    };
+    const struct result_busy busy = {
+        .result_id = result_id,
+        .retry_after_ms = 25u,
+        .capacity_state = 1u,
+        .capacity_validity_interval_ms = 50u,
+        .optional_alternate_parent = 0x3000000000000001ull,
+        .has_optional_alternate_parent = true,
+    };
+    const struct result_bundle_header bundle = {
+        .gateway_id = result_id.gateway_id,
+        .gateway_epoch = result_id.gateway_epoch,
+        .command_seq = result_id.command_seq,
+        .collection_epoch_id = 6u,
+        .bundle_id = 7u,
+        .record_count = 1u,
+        .bundle_crc = 0x5678u,
+    };
+    const struct gateway_collection_eack eack = {
+        .gateway_id = result_id.gateway_id,
+        .gateway_epoch = result_id.gateway_epoch,
+        .command_seq = result_id.command_seq,
+        .collection_epoch_id = 6u,
+        .membership_epoch = 7u,
+        .expected_count = 2u,
+        .received_count = 1u,
+        .packet_sequence = 8u,
+        .eack_format = EACK_FORMAT_EXPLICIT_MISSING_LIST,
+        .retry_round = 1u,
+        .next_retry_spread_ms = 100u,
+        .collection_open = true,
+    };
+    struct command_result_id decoded_id;
+    struct result_offer decoded_offer;
+    struct result_grant decoded_grant;
+    struct result_busy decoded_busy;
+    struct result_bundle_header decoded_bundle;
+    struct gateway_collection_eack decoded_eack;
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    uint8_t payload[256];
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_SEQ, 1u) == PROTO_OK);
+    assert(tlv_find_unique(payload, payload_len, TLV_COMMAND_SEQ,
+                           &value, &value_len) == PROTO_OK);
+    assert(value_len == sizeof(uint32_t));
+    assert(proto_get_u32_le(value) == 1u);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_SEQ, 2u) == PROTO_OK);
+    assert(tlv_find_unique(payload, payload_len, TLV_COMMAND_SEQ,
+                           &value, &value_len) == PROTO_ERR_MALFORMED);
+    payload_len = PROTO_TLV_U32_ENCODED_LEN;
+    payload[payload_len++] = TLV_REASON;
+    assert(tlv_find_unique(payload, payload_len, TLV_COMMAND_SEQ,
+                           &value, &value_len) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(command_result_id_append_tlvs(payload, sizeof(payload),
+                                         &payload_len, &result_id) == PROTO_OK);
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_GATEWAY_ID,
+                          result_id.gateway_id + 1u) == PROTO_OK);
+    assert(command_result_id_from_tlvs(payload, payload_len,
+                                       &decoded_id) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(result_offer_append_tlvs(payload, sizeof(payload),
+                                    &payload_len, &offer) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_PRIORITY, offer.priority + 1u) == PROTO_OK);
+    assert(result_offer_from_tlvs(payload, payload_len,
+                                  &decoded_offer) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(result_grant_append_tlvs(payload, sizeof(payload),
+                                    &payload_len, &grant) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_MAX_BYTES, grant.max_bytes + 1u) == PROTO_OK);
+    assert(result_grant_from_tlvs(payload, payload_len,
+                                  &decoded_grant) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(result_busy_append_tlvs(payload, sizeof(payload),
+                                   &payload_len, &busy) == PROTO_OK);
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_ALTERNATE_PARENT_ID,
+                          busy.optional_alternate_parent + 1u) == PROTO_OK);
+    assert(result_busy_from_tlvs(payload, payload_len,
+                                 &decoded_busy) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(result_bundle_header_append_tlvs(payload, sizeof(payload),
+                                            &payload_len, &bundle) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_BUNDLE_CRC, bundle.bundle_crc + 1u) == PROTO_OK);
+    assert(result_bundle_header_from_tlvs(payload, payload_len,
+                                          &decoded_bundle) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(gateway_collection_eack_append_tlvs(payload, sizeof(payload),
+                                               &payload_len, &eack) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COLLECTION_OPEN, 0u) == PROTO_OK);
+    assert(gateway_collection_eack_from_tlvs(payload, payload_len,
+                                             &decoded_eack) == PROTO_ERR_MALFORMED);
+}
+
+static void test_report_validators_reject_schema_smuggling_and_mismatch(void)
+{
+    const uint64_t source_id = UINT64_C(0x1122334455667788);
+    const uint64_t gateway_id = UINT64_C(0x8877665544332211);
+    struct proto_packet packet = {
+        .msg_type = MSG_SELF_TEST_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = source_id,
+        .dst_id = gateway_id,
+        .session_id = UINT32_C(0x00010001),
+        .seq = 1u,
+        .ttl = 4u,
+    };
+    uint8_t payload[192];
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_CLICKER_ID, source_id) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_EVENT_SEQ, packet.session_id) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_ERROR_CODE, 6u) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_BATTERY_MV, 3000u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(proto_self_test_report_validate(&packet, payload, payload_len) ==
+           PROTO_OK);
+
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_REASON, 1u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(proto_self_test_report_validate(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+    payload_len -= PROTO_TLV_U8_ENCODED_LEN;
+    packet.payload_len = (uint16_t)payload_len;
+    packet.seq = 2u;
+    assert(proto_self_test_report_validate(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+
+    packet = (struct proto_packet) {
+        .msg_type = MSG_ANCHOR_HEARTBEAT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = source_id,
+        .dst_id = gateway_id,
+        .session_id = 7u,
+        .seq = 8u,
+        .ttl = 4u,
+    };
+    payload_len = 0u;
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_DEVICE_ROLE, ROLE_ANCHOR) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_BATTERY_MV, 0u) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_STATUS_BITS, 0u) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_UPTIME_MS, 100u) == PROTO_OK);
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_TIMESTAMP_MS, 101u) == PROTO_OK);
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_GATEWAY_ID, gateway_id) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_REASON, (uint8_t)(-PROTO_ERR_NOT_FOUND)) ==
+           PROTO_OK);
+    {
+        static const uint8_t telemetry_types[] = {
+            TLV_MESH_DUPLICATE_COUNT,
+            TLV_COLLECTION_PENDING_COUNT,
+            TLV_PARENT_HOLDDOWN_COUNT,
+            TLV_ROUTE_DISCOVERY_ATTEMPTS,
+            TLV_OUTBOX_DELIVERY_STATE,
+            TLV_FLOOD_SUPPRESSION_COUNT,
+            TLV_ROUTE_REPLY_RETRY_COUNT,
+            TLV_BUSY_RESPONSE_COUNT,
+        };
+        static const uint8_t metric_types[] = {
+            TLV_MESH_CHANNEL_SWITCHES,
+            TLV_MESH_PLL_READY_FAILURES,
+            TLV_MESH_LATE_CHANNEL5_RETURNS,
+            TLV_MESH_DEFERRALS,
+            TLV_MESH_CH9_EVENT_MISSES,
+            TLV_MESH_CHANNEL5_PREEMPTIONS,
+            TLV_MESH_CH9_REPORT_LATENCY_MS,
+        };
+
+        for (size_t i = 0u;
+             i < sizeof(telemetry_types) / sizeof(telemetry_types[0]);
+             i++) {
+            assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                                 telemetry_types[i], 0u) == PROTO_OK);
+        }
+        for (size_t i = 0u;
+             i < sizeof(metric_types) / sizeof(metric_types[0]);
+             i++) {
+            assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                                  metric_types[i], 0u) == PROTO_OK);
+        }
+    }
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_DISCOVERY_ASSIGNMENT_EPOCH, 1u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(proto_anchor_heartbeat_validate(&packet, payload, payload_len) ==
+           PROTO_OK);
+
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_GATEWAY_ID, gateway_id) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(proto_anchor_heartbeat_validate(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_result_busy_disambiguates_alternate_from_correlation(void)
+{
+    const struct result_busy busy = {
+        .result_id = {
+            .gateway_id = UINT64_C(0x1010101010101010),
+            .gateway_epoch = 3u,
+            .command_seq = 4u,
+            .node_id = UINT64_C(0x2020202020202020),
+            .node_boot_counter = 5u,
+            .result_seq = 6u,
+        },
+        .retry_after_ms = 100u,
+        .capacity_state = 2u,
+        .capacity_validity_interval_ms = 120u,
+        .optional_alternate_parent = UINT64_C(0x3030303030303030),
+        .has_optional_alternate_parent = true,
+    };
+    struct result_busy decoded = {0};
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(RESULT_BUSY_WITH_ALTERNATE_TLV_BYTES ==
+           RESULT_BUSY_CORRELATED_TLV_BYTES);
+    assert(result_busy_append_tlvs(payload, sizeof(payload), &payload_len,
+                                   &busy) == PROTO_OK);
+    assert(payload_len == RESULT_BUSY_WITH_ALTERNATE_TLV_BYTES);
+    assert(result_busy_from_tlvs(payload, payload_len, &decoded) == PROTO_OK);
+    assert(decoded.has_optional_alternate_parent);
+    assert(decoded.optional_alternate_parent ==
+           busy.optional_alternate_parent);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_REQUESTED_MSG_SESSION_ID, 77u) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_REQUESTED_MSG_SEQ, 8u) == PROTO_OK);
+    {
+        struct result_busy correlated = busy;
+
+        correlated.has_optional_alternate_parent = false;
+        assert(result_busy_append_tlvs(payload, sizeof(payload), &payload_len,
+                                       &correlated) == PROTO_OK);
+    }
+    assert(payload_len == RESULT_BUSY_CORRELATED_TLV_BYTES);
+    assert(result_busy_from_tlvs(payload, payload_len, &decoded) == PROTO_OK);
+    assert(!decoded.has_optional_alternate_parent);
 }
 
 static void test_cobs_round_trip(void)
@@ -668,7 +1199,12 @@ int main(void)
     test_collection_control_packet_types_round_trip();
     test_command_result_id_tlvs_round_trip_and_require_identity();
     test_result_offer_grant_busy_tlvs_round_trip();
+    test_result_offer_requires_full_semantic_commitment();
     test_result_bundle_and_collection_eack_tlvs_round_trip();
+    test_collection_eack_rejects_ambiguous_lists_and_schema_smuggling();
+    test_unique_tlv_and_result_decoders_reject_duplicates();
+    test_report_validators_reject_schema_smuggling_and_mismatch();
+    test_result_busy_disambiguates_alternate_from_correlation();
     test_cobs_round_trip();
     test_operation_policy_tlv_registration();
     return 0;

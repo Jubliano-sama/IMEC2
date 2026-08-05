@@ -66,19 +66,33 @@ int app_gateway_survey_observability_emit_collection_next(
         return -EINVAL;
     }
     if (!state->collection_complete) {
-        while (state->report_cursor < survey->report_count &&
-               (!survey->reports[state->report_cursor].valid)) {
-            state->report_cursor++;
-        }
         if (state->report_cursor < survey->report_count) {
-            const struct survey_gateway_report_slot *report =
-                &survey->reports[state->report_cursor];
+            struct survey_gateway_reverse_hint reverse_hint;
+            enum command_status report_status;
+            uint64_t anchor_id;
+            size_t entry_count;
+
+            ret = survey_gateway_report_info_at(
+                survey,
+                state->report_cursor,
+                &anchor_id,
+                &entry_count,
+                &report_status);
+            if (ret != PROTO_OK) {
+                return -EBADMSG;
+            }
+            ret = survey_gateway_reverse_hint_for_target(
+                survey, anchor_id, &reverse_hint);
+            if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+                return -EBADMSG;
+            }
 
             event = progress_event(
                 base_event, GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
                 duplicate_count);
-            event.anchor_id = report->anchor_id;
-            event.previous_hop_id = report->reverse_next_hop_id;
+            event.anchor_id = anchor_id;
+            event.previous_hop_id =
+                ret == PROTO_OK ? reverse_hint.next_hop_id : 0u;
             event.progress_count = (uint16_t)(state->report_cursor + 1u);
             event.total_count = (uint16_t)survey->report_count;
             ret = ops->emit_if_available(&event, false, ops->ctx);

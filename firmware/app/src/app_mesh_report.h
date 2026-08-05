@@ -13,7 +13,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS 1000u
+
+#if defined(__ZEPHYR__)
+#include <zephyr/kernel.h>
+#else
 struct k_work_delayable;
+#endif
 struct app_mesh_command_orchestrator;
 struct app_mesh_flood_progress;
 struct app_mesh_flood_result;
@@ -24,6 +30,26 @@ struct uwb_range_schedule_frame;
 enum app_gateway_semantic_acceptance {
     APP_GATEWAY_SEMANTIC_ACCEPT_NEW = 0,
     APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE = 1,
+    /*
+     * The payload is structurally valid, but reset or terminal operation
+     * cleanup removed the volatile state needed to apply it. Preserve the
+     * exact raw host record and retire sender custody without claiming a
+     * semantic state transition.
+     */
+    APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW = 2,
+    /*
+     * The collection record is already durable and host-visible custody no
+     * longer exists. Reapply only the durable collection/EACK transition; do
+     * not create another host journal or BLE record.
+     */
+    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE = 3,
+    /*
+     * Volatile collection state has moved on, but every represented result
+     * has a durable terminal host receipt (or a strictly later per-node
+     * receipt). Bypass host output and reconstruct a fresh CLOSED EACK without
+     * mutating the active collection.
+     */
+    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE = 4,
 };
 
 struct mesh_delivery_health {
@@ -60,9 +86,9 @@ struct app_mesh_report_callbacks {
         const struct uwb_wake_claim_frame *claim,
         uint8_t link_quality,
         int64_t received_at_ms);
-    void (*anchor_handle_local_command)(const struct proto_packet *packet,
-                                        const uint8_t *payload,
-                                        size_t payload_len);
+    int (*anchor_handle_local_command)(const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len);
     void (*anchor_handle_survey_discovery_start)(const struct proto_packet *packet,
                                                  const uint8_t *payload,
                                                  size_t payload_len);
@@ -72,12 +98,16 @@ struct app_mesh_report_callbacks {
     int (*gateway_handle_survey_discovery_report)(const struct proto_packet *packet,
                                                   const uint8_t *payload,
                                                   size_t payload_len,
+                                                  uint64_t received_at_ms,
                                                   uint64_t previous_hop_id,
                                                   uint8_t radio_channel,
                                                   uint8_t link_quality);
-    void (*anchor_survey_delivery_gateway_confirmed)(const struct proto_packet *packet);
-    void (*anchor_survey_delivery_transport_released)(
+    int (*anchor_survey_delivery_gateway_confirmed)(
         const struct proto_packet *packet,
+        const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+    int (*anchor_survey_delivery_transport_released)(
+        const struct proto_packet *packet,
+        const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
         bool preempted);
     void (*gateway_route_refresh_event)(
         const struct app_node_comm_route_refresh_event *event);
@@ -87,11 +117,24 @@ struct app_mesh_outbound_view {
     const struct proto_packet *packet;
     const uint8_t *payload;
     uint16_t payload_len;
+    uint64_t absolute_deadline_ms;
     uint8_t radio_channel;
     uint64_t next_hop_id;
     uint32_t queued_at_ms;
     uint32_t earliest_tx_ms;
     uint8_t flood_retry_count;
+    bool queued_at_valid;
+    bool earliest_tx_valid;
+};
+
+struct app_mesh_tx_observation {
+    uint64_t rf_started_at_ms;
+    uint64_t tx_completed_at_ms;
+    uint64_t gateway_confirmed_at_ms;
+    uint64_t result_at_ms;
+    bool rf_started;
+    bool tx_completed;
+    bool gateway_confirmed;
 };
 
 enum mesh_c5_control_send_mode {
@@ -113,7 +156,7 @@ int append_range_result_timing_tlvs(uint8_t *payload,
 int append_anchor_status_tlvs(uint8_t *payload,
                               size_t payload_cap,
                               size_t *payload_len);
-void build_uwb_schedule_report_if_relevant(
+int build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
     uint8_t schedule_flags,
     const struct anchor_range_window_report *report);
@@ -147,18 +190,30 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
                                 bool send_wake_train,
-                                bool *rf_started);
+                                struct app_mesh_tx_observation *observation);
 int mesh_try_send_control_response_view(
     const struct app_mesh_outbound_view *view,
     const char *reason,
-    bool *rf_started);
+    struct app_mesh_tx_observation *observation);
 int mesh_try_send_reliable_uplink_view(
     const struct app_mesh_outbound_view *view,
     const char *reason,
-    bool *rf_started,
-    bool *gateway_confirmed,
+    struct app_mesh_tx_observation *observation,
     uint32_t *scheduled_retry_delay_ms);
-int mesh_cancel_reliable_uplink(const struct proto_packet *packet);
+/*
+ * Reliable-backend release is asynchronous. The request freezes the exact
+ * semantic packet identity and hands cancellation to the mesh-route owner;
+ * callers must retain their terminal record until the matching result is
+ * available through mesh_take_reliable_uplink_cancel_result().
+ */
+int mesh_request_reliable_uplink_cancel(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    uint32_t delivery_handle,
+    uint32_t request_token);
+int mesh_take_reliable_uplink_cancel_result(uint32_t delivery_handle,
+                                            uint32_t request_token,
+                                            int *cancel_result);
 int mesh_send_gateway_command_flood(
     const struct app_mesh_command_orchestrator *orchestrator,
     const char *reason,
@@ -185,6 +240,39 @@ void report_tx_schedule(uint32_t delay_ms);
 uint32_t report_tx_queue_used(void);
 bool mesh_report_tx_backlog_active(void);
 bool mesh_report_ch9_ack_wait_active(void);
+int mesh_range_report_batch_reserve(uint64_t clicker_id,
+                                    uint32_t event_seq,
+                                    uint8_t attempt_index);
+void mesh_range_report_batch_abort(uint64_t clicker_id,
+                                   uint32_t event_seq,
+                                   uint8_t attempt_index);
+int queue_anchor_range_report_fragment(
+    const struct mesh_outbound *outbound,
+    uint64_t clicker_id,
+    uint32_t event_seq,
+    uint8_t attempt_index,
+    bool final_fragment,
+    int64_t persistence_deadline_ms);
+int mesh_restore_anchor_range_report_journal(void);
+/*
+ * Return 1 when the active relay owner is either the exact raw outbound or
+ * its durable gateway-ACK confirmation tombstone, 0 when unrelated/idle.
+ * Malformed active confirmation state fails closed with a negative errno.
+ */
+int mesh_report_active_owner_matches_outbound(
+    const struct mesh_outbound *outbound);
+/*
+ * Release the same-boot semantic-to-journal promotion owner after durable
+ * journal restoration or cleanup has made that bridge unnecessary.
+ */
+void mesh_gateway_semantic_commit_owner_clear(void);
+int mesh_anchor_range_report_note_gateway_confirmed(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+int mesh_anchor_range_report_note_terminal_release(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
 int queue_anchor_report(const struct mesh_outbound *outbound);
 bool mesh_queue_from_frame(const uint8_t *frame,
                            size_t frame_len,
@@ -212,6 +300,12 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms);
 bool mesh_anchor_connected_radio_active(void);
 int mesh_gateway_command_priority_submit(struct k_work_delayable *work);
 int mesh_gateway_command_priority_safe_boundary(void);
+#if defined(__ZEPHYR__)
+int mesh_route_owner_work_reschedule_timeout(struct k_work_delayable *work,
+                                             k_timeout_t delay);
+#endif
+int mesh_route_owner_work_reschedule(struct k_work_delayable *work,
+                                     uint32_t delay_ms);
 int mesh_route_work_reschedule(struct k_work_delayable *work, uint32_t delay_ms);
 int mesh_schedule_route_request(uint64_t target_id, const char *reason);
 int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary);

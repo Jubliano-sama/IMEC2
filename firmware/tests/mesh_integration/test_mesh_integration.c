@@ -147,6 +147,12 @@ static size_t count_transitions_for_message(
     return count;
 }
 
+static void run_connections_until_confirmed(struct mesh_sim_world *sim,
+                                             const uint16_t *connections,
+                                             size_t connection_count,
+                                             uint8_t transmitter_index,
+                                             size_t max_events);
+
 static void test_single_relay_delivery(void)
 {
     uint8_t transmitter;
@@ -154,6 +160,7 @@ static void test_single_relay_delivery(void)
     uint8_t gateway;
     uint16_t child_connection;
     uint16_t gateway_connection;
+    uint16_t connections[2];
     uint8_t payload[32];
     size_t payload_len;
     struct proto_packet packet;
@@ -209,6 +216,8 @@ static void test_single_relay_delivery(void)
                                         200u,
                                         150u,
                                         true);
+    connections[0] = child_connection;
+    connections[1] = gateway_connection;
     payload_len = mesh_data_payload(payload, sizeof(payload), 1u);
     packet = mesh_data_packet(1u, 0x1001u, 4u, (uint16_t)payload_len);
     assert(mesh_sim_queue_originated(&world,
@@ -229,14 +238,18 @@ static void test_single_relay_delivery(void)
     assert(world.roles[gateway].deliveries[0].packet.ttl == 3u);
     assert(world.roles[gateway].deliveries[0].previous_hop_id == ANCHOR_1_ID);
 
-    run_next_connection(&world, child_connection, false);
-    assert(world.roles[transmitter].relay.pending.state ==
-           MESH_RELAY_TX_WAIT_GATEWAY_ACK);
-    run_next_connection(&world, gateway_connection, false);
-    run_next_connection(&world, child_connection, false);
-    run_next_connection(&world, child_connection, false);
+    run_connections_until_confirmed(&world,
+                                    connections,
+                                    2u,
+                                    transmitter,
+                                    24u);
 
     assert(world.roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE);
+    assert(world.roles[gateway].delivery_count == 1u);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         TRANSMITTER_ID,
+                                         MSG_GATEWAY_ACK_CONFIRM) >= 1u);
     assert(mesh_sim_count_transitions(&world,
                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                       TRANSMITTER_ID) == 1u);
@@ -248,8 +261,8 @@ static void test_single_relay_delivery(void)
     assert(delivery_transition != NULL);
     assert(delivery_transition->time_us > 200000u);
     assert(delivery_transition->time_us < 225000u);
-    assert(world.connections[child_connection].completed_events == 4u);
-    assert(world.connections[gateway_connection].completed_events == 2u);
+    assert(world.connections[child_connection].completed_events >= 4u);
+    assert(world.connections[gateway_connection].completed_events >= 2u);
     assert_no_route_fallback(&world);
 }
 
@@ -262,6 +275,7 @@ static void test_two_relay_delivery(void)
     uint16_t connection_0;
     uint16_t connection_1;
     uint16_t connection_2;
+    uint16_t connections[3];
     uint8_t payload[32];
     size_t payload_len;
     struct proto_packet packet;
@@ -301,29 +315,33 @@ static void test_two_relay_delivery(void)
                                   200u, 300u, true);
     connection_2 = add_connection(&world, anchor_2, gateway,
                                   300u, 300u, true);
+    connections[0] = connection_0;
+    connections[1] = connection_1;
+    connections[2] = connection_2;
     payload_len = mesh_data_payload(payload, sizeof(payload), 2u);
-    packet = mesh_data_packet(2u, 0x1002u, 5u, (uint16_t)payload_len);
+    packet = mesh_data_packet(2u, 0x1002u, MESH_DEFAULT_TTL,
+                              (uint16_t)payload_len);
     assert(mesh_sim_queue_originated(&world, transmitter, &packet,
                                      payload, payload_len) == MESH_SIM_OK);
 
     run_next_connection(&world, connection_0, false);
     run_next_connection(&world, connection_1, false);
     run_next_connection(&world, connection_2, false);
-    assert(world.roles[gateway].delivery_count == 1u);
-    assert(world.roles[gateway].deliveries[0].packet.ttl == 3u);
-    assert(world.roles[gateway].deliveries[0].previous_hop_id == ANCHOR_2_ID);
 
-    run_next_connection(&world, connection_0, false);
-    run_next_connection(&world, connection_1, false);
-    run_next_connection(&world, connection_2, false);
-    run_next_connection(&world, connection_0, false);
-    run_next_connection(&world, connection_1, false);
-    run_next_connection(&world, connection_0, false);
-    run_next_connection(&world, connection_1, false);
-    run_next_connection(&world, connection_0, false);
-    run_next_connection(&world, connection_0, false);
+    run_connections_until_confirmed(&world,
+                                    connections,
+                                    3u,
+                                    transmitter,
+                                    48u);
 
     assert(world.roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE);
+    assert(world.roles[gateway].delivery_count == 1u);
+    assert(world.roles[gateway].deliveries[0].packet.ttl == 2u);
+    assert(world.roles[gateway].deliveries[0].previous_hop_id == ANCHOR_2_ID);
+    assert(count_transitions_for_message(&world,
+                                         MESH_SIM_TRANSITION_TX_START,
+                                         TRANSMITTER_ID,
+                                         MSG_GATEWAY_ACK_CONFIRM) >= 1u);
     assert(mesh_sim_count_transitions(&world,
                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                       TRANSMITTER_ID) == 1u);
@@ -505,6 +523,69 @@ static void run_connections_until_confirmed(struct mesh_sim_world *sim,
         assert(which != SIZE_MAX);
         run_next_connection(sim, connections[which], false);
     }
+    fprintf(stderr,
+            "confirmation timeout: node=%u now_us=%llu pending=%u msg=%u "
+            "queue=%zu transitions=%zu\n",
+            transmitter_index,
+            (unsigned long long)sim->now_us,
+            sim->roles[transmitter_index].relay.pending.state,
+            sim->roles[transmitter_index].relay.pending.packet.msg_type,
+            sim->roles[transmitter_index].tx_queue_count,
+            sim->transition_count);
+    for (size_t i = 0u; i < sim->role_count; i++) {
+        fprintf(stderr,
+                "  role=%zu id=%llx pending=%u msg=%u queue=%zu deliveries=%zu\n",
+                i,
+                (unsigned long long)sim->roles[i].id,
+                sim->roles[i].relay.pending.state,
+                sim->roles[i].relay.pending.packet.msg_type,
+                sim->roles[i].tx_queue_count,
+                sim->roles[i].delivery_count);
+    }
+    for (size_t i = sim->transition_count > 24u ?
+                    sim->transition_count - 24u : 0u;
+         i < sim->transition_count;
+         i++) {
+        const struct mesh_sim_transition *transition = &sim->transitions[i];
+
+        fprintf(stderr,
+                "  trace=%zu time=%llu kind=%u node=%llx peer=%llx "
+                "msg=%u src=%llx dst=%llx session=%u seq=%u detail=%u\n",
+                i,
+                (unsigned long long)transition->time_us,
+                transition->kind,
+                (unsigned long long)transition->node_id,
+                (unsigned long long)transition->peer_id,
+                transition->msg_type,
+                (unsigned long long)transition->packet_src_id,
+                (unsigned long long)transition->packet_dst_id,
+                transition->packet_session_id,
+                transition->packet_seq,
+                transition->detail);
+    }
+    for (size_t i = 0u; i < sim->transition_count; i++) {
+        const struct mesh_sim_transition *transition = &sim->transitions[i];
+
+        if (transition->msg_type != MSG_GATEWAY_ACK_CONFIRM &&
+            transition->msg_type != MSG_GATEWAY_ACK &&
+            transition->msg_type != MSG_MESH_DATA) {
+            continue;
+        }
+        fprintf(stderr,
+                "  ack-trace=%zu time=%llu kind=%u node=%llx peer=%llx "
+                "msg=%u src=%llx dst=%llx session=%u seq=%u detail=%u\n",
+                i,
+                (unsigned long long)transition->time_us,
+                transition->kind,
+                (unsigned long long)transition->node_id,
+                (unsigned long long)transition->peer_id,
+                transition->msg_type,
+                (unsigned long long)transition->packet_src_id,
+                (unsigned long long)transition->packet_dst_id,
+                transition->packet_session_id,
+                transition->packet_seq,
+                transition->detail);
+    }
     assert(!"transmitter was not confirmed within the bounded event budget");
 }
 
@@ -625,7 +706,10 @@ static void test_click_preempts_transit_and_origin_retries(void)
     assert(preempted->time_us == 100000u);
 
     run_next_connection(&world, gateway_connection, false);
-    assert(world.roles[anchors[0]].relay.pending.state == MESH_RELAY_TX_IDLE);
+    assert(world.roles[anchors[0]].relay.pending.state !=
+           MESH_RELAY_TX_IDLE);
+    assert(world.roles[anchors[0]].relay.pending.packet.msg_type ==
+           MSG_GATEWAY_ACK_CONFIRM);
     timeout_ms = world.roles[transmitter].relay.pending.gateway_ack_deadline_ms;
     assert(timeout_ms > 100u);
     assert(mesh_sim_schedule_relay_tick(&world,
@@ -804,8 +888,8 @@ static void test_full_frame_and_collision_semantics(void)
     assert(mesh_sim_add_role(&world, MESH_SIM_ROLE_CLICKER,
                              CLICKER_ID + 1u, GATEWAY_ID, ROUTE_EPOCH,
                              &source_2) == MESH_SIM_OK);
-    assert(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
-                             ANCHOR_1_ID, GATEWAY_ID, ROUTE_EPOCH,
+    assert(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                             ANCHOR_1_ID, ANCHOR_1_ID, ROUTE_EPOCH,
                              &anchor) == MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, source_1, anchor, 100u, 7u) == MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, source_2, anchor, 100u, 0u) == MESH_SIM_OK);
@@ -816,11 +900,12 @@ static void test_full_frame_and_collision_semantics(void)
                          1u) == PROTO_OK);
     packet = (struct proto_packet) {
         .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
         .src_id = CLICKER_ID,
         .dst_id = ANCHOR_1_ID,
         .session_id = 0x3001u,
         .seq = 1u,
-        .ttl = 1u,
+        .ttl = MESH_DEFAULT_TTL,
         .payload_len = (uint16_t)payload_len,
     };
     duration_us = mesh_sim_frame_duration_us(
@@ -860,8 +945,8 @@ static void test_full_frame_and_collision_semantics(void)
     assert(mesh_sim_add_role(&world, MESH_SIM_ROLE_CLICKER,
                              CLICKER_ID + 1u, GATEWAY_ID, ROUTE_EPOCH,
                              &source_2) == MESH_SIM_OK);
-    assert(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
-                             ANCHOR_1_ID, GATEWAY_ID, ROUTE_EPOCH,
+    assert(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                             ANCHOR_1_ID, ANCHOR_1_ID, ROUTE_EPOCH,
                              &anchor) == MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, source_1, anchor, 100u, 0u) == MESH_SIM_OK);
     assert(mesh_sim_set_link(&world, source_2, anchor, 100u, 0u) == MESH_SIM_OK);

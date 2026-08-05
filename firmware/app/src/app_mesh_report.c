@@ -1,10 +1,14 @@
 #include "app_mesh_report.h"
 #include "app_mesh_report_encode.h"
+#include "app_anchor.h"
 
 #include "app_board.h"
 #include "app_clicker.h"
 #include "app_config.h"
 #include "app_gateway_ble.h"
+#if DEVICE_ROLE == ROLE_GATEWAY
+#include "app_gateway_terminal_receipts.h"
+#endif
 #include "app_high_debug.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_direct_probe_diag.h"
@@ -19,13 +23,16 @@
 #include "app_mesh_gateway_ack_policy.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
+#include "app_mesh_route_state_persistence.h"
 #include "app_mesh_route_reply_ack.h"
 #include "app_mesh_route_ready_handoff.h"
+#include "app_mesh_async_route_request.h"
 #include "app_mesh_route_request_policy.h"
 #include "app_mesh_route_wait_tx.h"
 #include "app_mesh_rf_retry.h"
 #include "app_mesh_result_handoff.h"
 #include "app_mesh_rx_policy.h"
+#include "app_mesh_scheduler_liveness.h"
 #include "app_mesh_test.h"
 #include "app_mesh_tx_handoff_gate.h"
 #include "app_node_comm.h"
@@ -36,15 +43,18 @@
 #include "app_stack_workload_diag.h"
 #include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
+#include "anchor_range_fragment_policy.h"
 #include "dwm3000_driver.h"
 #include "discovery_assignment.h"
 #include "mesh.h"
 #include "mesh_event_owner.h"
+#include "mesh_event_owner_registry.h"
 #include "mesh_preemption.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 #include "report.h"
 #include "route.h"
+#include "semantic_digest.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -79,15 +89,23 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX 64u
 #define MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS 6000u
 #define MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS
+#define MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS \
+    MAX(MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS, \
+        MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS)
+#define MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS \
+    MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS
 #define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
 #define MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS 20u
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
+#define ANCHOR_RANGE_FRAGMENT_PERSISTENCE_RETRY_MS 10u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS \
     MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS
 #define MESH_RX_WINDOW_IDLE_LOG_INTERVAL_MS 1000u
-#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if defined(CONFIG_IMEC_ML_ANCHOR)
+#define MESH_CH9_TX_BATCH_MAX 1u
+#elif defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 #define MESH_CH9_TX_BATCH_MAX 4u
 #else
 #define MESH_CH9_TX_BATCH_MAX 8u
@@ -103,10 +121,23 @@ BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS +
 BUILD_ASSERT(MESH_ROUTE_REPLY_READY_POLL_MS <
              MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
              "route-ready listener polling must release channel 5 before the next channel-9 retry boundary");
+BUILD_ASSERT(ANCHOR_RANGE_FRAGMENT_PERSISTENCE_RETRY_MS <
+             ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS,
+             "range fragment retry interval must fit its post-range deadline");
+BUILD_ASSERT(ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS <
+             APP_WATCHDOG_PROGRESS_LEASE_MS,
+             "range fragment persistence deadline must fail before the watchdog progress lease");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "direct gateway ACK scratch must fit the mesh payload limit");
+BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP >=
+                 MESH_ACK_SINGLE_PAYLOAD_LEN,
+             "direct gateway ACK scratch must fit exact semantic identity");
 BUILD_ASSERT(MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX <= UWB_MESH_MAX_PAYLOAD_LEN,
              "event-control retry snapshot must fit the mesh payload limit");
+#if DEVICE_ROLE == ROLE_GATEWAY
+BUILD_ASSERT(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN == 192u,
+             "production gateway reliable-uplink expansion bound changed");
+#endif
 BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
              "exhausted route retry must be slower than one ACK timeout");
 #define MESH_CH9_DATA_RATE_BPS 850000u
@@ -164,7 +195,6 @@ BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
 #define MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS \
     (MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS + \
      MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS)
-#define MESH_CH9_BATCH_FLAG_FINAL 0x01u
 #define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 #define MESH_GATEWAY_CH5_CONTINUOUS_RX_MS 2000u
 #define MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS 20u
@@ -226,6 +256,12 @@ BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(MESH_RELAY_EVENT_TIMINGS >= MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
              "mesh route-test needs room for upstream and downstream channel-9 timings");
+BUILD_ASSERT(MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS <= 32u,
+             "event reciprocal-window ownership must fit its validity mask");
+BUILD_ASSERT(MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS +
+                 MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS <=
+             INT32_MAX,
+             "event replay and queue retention must be wrap-safe");
 BUILD_ASSERT(MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS <= UINT16_MAX,
              "mesh route-test route-reply ETA must fit in the uint16_t TLV");
 BUILD_ASSERT(MESH_ROUTE_TEST_CH9_TX_OFFSET_MS + MESH_CH9_TX_SLOT_TRAILER_MS <
@@ -285,9 +321,16 @@ BUILD_ASSERT(MESH_ROUTE_REPLY_LISTEN_WORST_CASE_MS <
              "worst-case route reply listen must fit inside the watchdog progress lease");
 BUILD_ASSERT(APP_MESH_CH9_ACK_BATCH_ENTRY_MAX >= MESH_CH9_TX_BATCH_MAX,
              "mesh route-test ACK batch must cover the largest TX batch");
+BUILD_ASSERT(GATEWAY_COMMAND_RESULT_VALIDATION_LEASE_CAP >=
+                 MESH_RX_QUEUE_DEPTH + 1u,
+             "result validation leases must cover the RX queue plus its consumer");
 #if DEVICE_ROLE == ROLE_ANCHOR
 BUILD_ASSERT(MESH_CH9_TX_BATCH_MAX <= REPORT_TX_QUEUE_DEPTH,
              "mesh route-test TX batch must fit in the report TX queue");
+#if !defined(CONFIG_IMEC_ML_ANCHOR)
+BUILD_ASSERT(REPORT_TX_QUEUE_DEPTH >= RANGE_REPORT_MAX_PACKET_FRAGMENTS,
+             "one maximum range report must fit in an empty report queue");
+#endif
 #endif
 #endif
 
@@ -296,11 +339,14 @@ struct mesh_rx_pending {
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
     uint16_t payload_len;
     uint64_t previous_hop_id;
+    uint64_t first_received_at_ms;
+    uint32_t received_at_ms;
+    uint32_t result_validation_token;
+    struct mesh_event_plan current_channel9_plan;
     uint8_t link_quality;
     uint8_t radio_channel;
-    uint32_t received_at_ms;
+    bool received_at_valid;
     bool current_channel9_plan_valid;
-    struct mesh_event_plan current_channel9_plan;
 };
 
 struct mesh_frame_parse_context {
@@ -339,7 +385,17 @@ struct mesh_event_accept_retry_context {
     struct app_mesh_event_retry_state retry;
     struct mesh_event_timing reservation_timing;
     uint64_t remote_boot_nonce;
+    uint32_t predecessor_owner_generation;
     bool replay_existing_response;
+    bool predecessor_owner_present;
+    bool predecessor_owner_active;
+    bool predecessor_owner_from_peer;
+    bool replace_local_owner_after_accept;
+};
+
+struct mesh_event_local_proposal_windows {
+    uint32_t expires_at_ms[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
+    uint32_t valid_mask;
 };
 
 struct mesh_event_accept_completed {
@@ -349,7 +405,7 @@ struct mesh_event_accept_completed {
     uint16_t retry_round;
 };
 
-BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 192u,
+BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 216u,
              "event ACCEPT completion layout changed; re-audit gateway RAM");
 
 /*
@@ -366,7 +422,7 @@ struct mesh_event_accept_rx_cache {
     bool timing_installed;
 };
 
-BUILD_ASSERT(sizeof(struct mesh_event_accept_rx_cache) == 40u,
+BUILD_ASSERT(sizeof(struct mesh_event_accept_rx_cache) == 64u,
              "event ACCEPT RX cache layout changed; re-audit gateway RAM");
 
 static bool mesh_packet_prefers_channel9(const struct proto_packet *packet);
@@ -379,6 +435,31 @@ static void report_tx_schedule_backoff(uint32_t delay_ms, const char *reason);
 K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH, 4);
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
+
+struct anchor_range_report_batch_reservation {
+    struct anchor_range_journal_control journal;
+    uint64_t clicker_id;
+    uint32_t event_seq;
+    uint32_t queue_count_before_batch;
+    uint8_t attempt_index;
+    uint8_t queued_fragment_count;
+    int persistence_error;
+    bool final_fragment_staged;
+    bool fragment_pending;
+    bool persistence_fail_closed;
+    bool active;
+};
+
+static struct anchor_range_report_batch_reservation
+    anchor_range_report_batch_reservation;
+struct anchor_range_report_journal_runtime {
+    struct anchor_range_journal_control control;
+    uint16_t acknowledged_mask;
+    bool active;
+};
+
+static struct anchor_range_report_journal_runtime
+    anchor_range_report_journal_runtime;
 #endif
 static struct mesh_outbound mesh_route_waiting_tx;
 static bool mesh_route_waiting_tx_valid;
@@ -386,11 +467,23 @@ static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_uwb_rx_work;
 static struct k_work mesh_uwb_rx_rearm_work;
 static struct k_work_delayable mesh_persistence_retry_work;
+static struct k_work_delayable mesh_node_comm_cancel_work;
 static bool mesh_outbox_persistence_dirty;
 /* A deferred NVS copy is a live custody owner even while the relay is idle. */
 static bool mesh_deferred_outbox_pending;
 static bool mesh_child_custody_persistence_dirty;
 static uint8_t mesh_persistence_retry_round;
+struct mesh_node_comm_cancel_request {
+    struct proto_packet packet;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint32_t delivery_handle;
+    uint32_t request_token;
+    int result;
+    bool pending;
+    bool complete;
+};
+static struct mesh_node_comm_cancel_request mesh_node_comm_cancel_request;
+static struct k_spinlock mesh_node_comm_cancel_lock;
 static struct mesh_delivery_health mesh_delivery_health;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable mesh_route_waiting_work;
@@ -411,6 +504,7 @@ static struct app_mesh_rf_retry_state mesh_deferred_gateway_ack_rf_retry;
 static struct app_mesh_rf_retry_state mesh_route_wait_delivery_rf_retry;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static uint32_t report_tx_backoff_until_ms;
+static bool report_tx_backoff_active;
 static uint32_t report_tx_retry_delay_override_ms;
 static bool report_tx_retry_delay_override_valid;
 static struct app_mesh_rf_retry_state
@@ -424,6 +518,30 @@ static atomic_t mesh_rx_response_active_state;
 static atomic_t mesh_rx_handler_active_state;
 static atomic_t mesh_transport_paused_state;
 static atomic_t mesh_route_ready_generation;
+/*
+ * Bridges a transient failure between a successful semantic mutation and the
+ * durable PREPARED->COMMITTED marker update. A retry may take the no-mutation
+ * shortcut only for this exact immutable semantic identity. Relay-local TTL
+ * and message age are deliberately absent.
+ */
+struct gateway_semantic_commit_owner {
+    uint64_t src_id;
+    uint64_t dst_id;
+    uint32_t session_id;
+    uint16_t seq;
+    uint16_t payload_len;
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t msg_type;
+    uint8_t flags;
+    bool active;
+};
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+BUILD_ASSERT(sizeof(struct gateway_semantic_commit_owner) == 64u,
+             "semantic commit owner layout changed; re-audit gateway RAM");
+static struct gateway_semantic_commit_owner gateway_semantic_commit_owner;
+static struct k_spinlock gateway_semantic_commit_owner_lock;
+#endif
 #if DEVICE_ROLE == ROLE_ANCHOR
 static struct app_mesh_c5_control_route_history
     mesh_c5_control_route_history;
@@ -469,7 +587,27 @@ struct mesh_ch9_tx_pending_batch {
 };
 
 #if DEVICE_ROLE == ROLE_ANCHOR
-static struct mesh_ch9_tx_pending_batch mesh_ch9_tx_pending;
+/*
+ * The candidate batch and the gateway-ACK pending batch cannot be live at
+ * the same time:
+ *
+ * - batch collection starts only after mesh_ch9_tx_pending_can_start();
+ * - gateway-ACK-required packets are forced through the tracked-single path
+ *   before candidate collection; and
+ * - packets without FLAG_GATEWAY_ACK_REQUIRED never enter pending ACK
+ *   custody.
+ *
+ * Keep both protocol capacities while overlaying their mutually exclusive
+ * storage.  If direct gateway batching is enabled in the future, its owner
+ * transition must be redesigned before this invariant can change.
+ */
+static union {
+    struct mesh_ch9_tx_pending_batch pending;
+    struct mesh_outbound candidates[MESH_CH9_TX_BATCH_MAX];
+} mesh_ch9_tx_batch_storage;
+#define mesh_ch9_tx_pending mesh_ch9_tx_batch_storage.pending
+#define report_tx_batch_candidates mesh_ch9_tx_batch_storage.candidates
+#define MESH_DIRECT_GATEWAY_BATCHING_ENABLED 0
 static struct mesh_anchor_downlink_store mesh_anchor_downlink_store;
 BUILD_ASSERT(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
              "report queue ownership has exactly one recovery reserve");
@@ -478,12 +616,16 @@ BUILD_ASSERT(sizeof(mesh_anchor_downlink_store) == 1648u,
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4184u,
              "connected anchor pending batch RAM contract changed");
+BUILD_ASSERT(sizeof(mesh_ch9_tx_batch_storage) == 4184u,
+             "candidate/pending batch overlay RAM contract changed");
+BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
+             "direct batching needs independent durable pending ownership");
 #endif
 #elif DEVICE_ROLE == ROLE_GATEWAY
 static struct mesh_gateway_ack_store mesh_gateway_ack_store;
 static bool mesh_gateway_ack_store_initialized;
 static bool mesh_gateway_ack_store_attached;
-BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 4000u,
+BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 9432u,
              "gateway ACK store RAM contract changed");
 #endif
 
@@ -545,28 +687,24 @@ int app_mesh_report_attach_anchor_downlink_store(void)
 #endif
 }
 
-struct mesh_ch9_batch_metadata {
-    uint32_t batch_id;
-    uint8_t flags;
-    bool present;
-    bool final_packet;
-};
-
-#if DEVICE_ROLE == ROLE_ANCHOR
-static K_MUTEX_DEFINE(mesh_ch9_batch_payload_lock);
-#endif
 static K_MUTEX_DEFINE(mesh_send_scratch_lock);
-static struct mesh_outbound mesh_send_scratch_tx;
-static uint8_t mesh_send_scratch_frame[UWB_MESH_MAX_FRAME_LEN];
 #if DEVICE_ROLE == ROLE_ANCHOR
-static uint8_t mesh_ch9_batch_payload_scratch[UWB_MESH_MAX_PAYLOAD_LEN];
+/*
+ * Anchor queue commit/remove helpers need a complete mutable envelope while
+ * holding mesh_send_scratch_lock. Gateway and clicker TX only borrow their
+ * synchronous caller's immutable payload, so they must not pay this 1 KiB
+ * BSS cost.
+ */
+static struct mesh_outbound mesh_send_scratch_tx;
 #endif
+static uint8_t mesh_send_scratch_frame[UWB_MESH_MAX_FRAME_LEN];
 #if DEVICE_ROLE == ROLE_ANCHOR
 static uint32_t mesh_ch9_batch_next_id;
 
 struct mesh_ch9_slot_tx_context {
     int64_t uwb_window_start_ms;
     bool active;
+    bool functional_tx_completed;
 };
 #endif
 
@@ -577,7 +715,6 @@ enum mesh_radio_release_policy {
 
 #if DEVICE_ROLE == ROLE_ANCHOR
 static struct mesh_outbound report_tx_worker_scratch;
-static struct mesh_outbound report_tx_batch_candidates[MESH_CH9_TX_BATCH_MAX];
 static struct mesh_outbound report_tx_queue_overflow_dropped;
 static struct mesh_outbound report_tx_queue_rotation_scratch;
 static bool report_tx_queue_recovery_valid;
@@ -601,7 +738,6 @@ static uint8_t mesh_route_wake_suffix_scratch[MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_L
 static uint8_t mesh_route_wake_frame_scratch[MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN];
 static K_MUTEX_DEFINE(mesh_route_wait_scratch_lock);
 static struct mesh_outbound mesh_route_waiting_tx_scratch;
-static struct mesh_outbound mesh_deferred_gateway_ack_scratch;
 static struct app_mesh_paused_delivery_state mesh_paused_delivery;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static K_MUTEX_DEFINE(report_tx_queue_overflow_lock);
@@ -619,11 +755,8 @@ static uint64_t mesh_route_request_action_previous_hop_id;
 static uint32_t mesh_route_request_action_reply_deadline_ms;
 static bool mesh_route_request_action_pending;
 #endif
-static struct mesh_outbound mesh_result_action_tx;
 static K_MUTEX_DEFINE(mesh_route_discovery_lock);
-static uint64_t mesh_route_discovery_target_id;
-static const char *mesh_route_discovery_reason;
-static bool mesh_route_discovery_pending;
+static struct app_mesh_async_route_request mesh_route_discovery_request;
 static uint64_t mesh_route_ready_event_peer_id;
 static struct mesh_event_control_record mesh_event_propose_record;
 static struct app_mesh_event_retry_state mesh_event_propose_retry;
@@ -634,10 +767,21 @@ static uint8_t mesh_event_accept_completed_cursor;
 static struct mesh_event_accept_rx_cache mesh_event_accept_rx_cache;
 static struct mesh_event_owner
     mesh_event_owners[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
+static struct mesh_event_origin_tombstone
+    mesh_event_origin_tombstones[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
+static const struct mesh_event_owner_registry mesh_event_owner_registry = {
+    .owners = mesh_event_owners,
+    .owner_capacity = ARRAY_SIZE(mesh_event_owners),
+    .tombstones = mesh_event_origin_tombstones,
+    .tombstone_capacity = ARRAY_SIZE(mesh_event_origin_tombstones),
+};
+static struct mesh_event_local_proposal_windows
+    mesh_event_local_proposal_windows;
 static uint32_t mesh_event_operation_session_next;
 static K_MUTEX_DEFINE(mesh_event_control_retry_scratch_lock);
 static struct mesh_outbound mesh_event_control_retry_scratch;
 static uint32_t mesh_direct_gateway_bulk_suppressed_until_ms;
+static bool mesh_direct_gateway_bulk_suppressed;
 static uint64_t mesh_gateway_route_preempt_peer_id;
 static uint32_t mesh_gateway_route_preempt_deadline_ms;
 static struct c5_contact_context mesh_c5_contact;
@@ -648,8 +792,9 @@ static uint32_t mesh_ch9_event_end_ms;
 static struct mesh_route_embedded_rx_state mesh_route_embedded_rx;
 static uint64_t mesh_route_embedded_reply_peer_id;
 static uint32_t mesh_route_embedded_reply_hold_until_ms;
-static struct {
+struct mesh_c5_flood_deferred_entry {
     bool valid;
+    uint32_t generation;
     struct mesh_outbound outbound;
     uint8_t purpose;
     const char *reason;
@@ -657,17 +802,28 @@ static struct {
     uint8_t retry_count;
     struct app_mesh_rf_retry_state rf_retry;
     uint32_t queued_at_ms;
-} mesh_c5_flood_deferred;
+};
+
+static struct mesh_c5_flood_deferred_entry mesh_c5_flood_deferred;
+/*
+ * A committed route-advertisement watermark cannot be rolled back merely
+ * because the general response-priority slot is occupied. Keep one separate,
+ * replaceable owner for the newest committed advertisement; later sequences
+ * supersede older unsent route advertisements without weakening freshness.
+ */
+static struct mesh_c5_flood_deferred_entry mesh_route_adv_deferred;
+static K_MUTEX_DEFINE(mesh_c5_flood_deferred_lock);
 
 #define MESH_C5_DEFERRED_MAX_RETRIES 8u
 
 struct mesh_c5_flood_tx_context {
     bool *rf_started_out;
+    struct app_mesh_tx_observation *observation;
+    uint64_t absolute_deadline_ms;
     bool response_priority;
 };
 
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
-static int mesh_submit_work(struct k_work *work);
 static int mesh_gateway_control_send_flood(
     void *ctx,
     const struct app_mesh_command_orchestrator *orchestrator,
@@ -681,10 +837,15 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                             bool store_route_wait,
                                             bool *send_attempted,
                                             bool *rf_sent,
-                                            bool *policy_deferred);
+                                            bool *policy_deferred,
+                                            uint64_t absolute_deadline_ms,
+                                            struct app_mesh_tx_observation *observation);
 static int mesh_schedule_tx_timeout(void);
 static void mesh_route_discovery_work_handler(struct k_work *work);
 static void mesh_event_negotiation_retry_work_handler(struct k_work *work);
+static int mesh_event_negotiation_schedule_next(void);
+static int mesh_radio_idle_with_bounded_recovery(const char *reason);
+static int mesh_radio_standby_with_bounded_recovery(const char *reason);
 int mesh_schedule_route_request(uint64_t target_id, const char *reason);
 static bool mesh_defer_active_collection_result(const char *reason);
 static bool mesh_channel9_next_required_activity(
@@ -748,6 +909,18 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   const struct app_mesh_command_orchestrator *command_orchestrator,
                                   struct app_mesh_flood_result *result,
                                   bool *rf_started_out);
+static int mesh_send_c5_flood_now_until(
+    const struct mesh_outbound *out,
+    uint8_t purpose,
+    const char *reason,
+    bool send_wake_train,
+    bool response_priority,
+    bool single_opportunity,
+    const struct app_mesh_command_orchestrator *command_orchestrator,
+    struct app_mesh_flood_result *result,
+    bool *rf_started_out,
+    uint64_t absolute_deadline_ms,
+    struct app_mesh_tx_observation *observation);
 static void mesh_c5_flood_work_handler(struct k_work *work);
 struct mesh_route_capture_identity {
     uint32_t session_id;
@@ -807,26 +980,37 @@ static bool mesh_ch9_tx_fits_plan(const struct mesh_outbound *out,
                                   uint32_t *required_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_ch9_slot_tx_begin(struct mesh_ch9_slot_tx_context *ctx);
-static void mesh_ch9_slot_tx_end(struct mesh_ch9_slot_tx_context *ctx);
+static int mesh_ch9_slot_tx_end(struct mesh_ch9_slot_tx_context *ctx);
 #endif
 static int mesh_send_outbound_preconfigured_ch9_locked(const struct mesh_outbound *out,
                                                        const char *reason,
                                                        size_t *frame_len_out);
+static int mesh_send_outbound_preconfigured_ch9_locked_until(
+    const struct mesh_outbound *out,
+    const char *reason,
+    size_t *frame_len_out,
+    uint64_t absolute_deadline_ms,
+    struct app_mesh_tx_observation *observation);
 static void mesh_wait_until_ms(uint32_t target_ms);
 static int mesh_prepare_event_timing(struct mesh_event_timing *timing, uint32_t now_ms);
 static uint32_t mesh_route_test_first_event_time_ms(uint32_t now_ms);
 static int mesh_reschedule_delayable(struct k_work_delayable *work, uint32_t delay_ms);
 static int mesh_cancel_delayable(struct k_work_delayable *work);
-static int mesh_submit_work(struct k_work *work);
+static int mesh_reschedule_owned_work(struct k_work_delayable *work,
+                                      uint32_t delay_ms,
+                                      const char *owner);
+static int mesh_submit_owned_work(struct k_work *work, const char *owner);
 static bool mesh_transport_paused(void);
 static int mesh_transport_radio_start(const char *owner);
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
 static void mesh_persistence_retry_work_handler(struct k_work *work);
+static void mesh_node_comm_cancel_work_handler(struct k_work *work);
 static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                      size_t frame_len,
                                      uint8_t link_quality,
                                      uint8_t radio_channel,
                                      uint32_t received_at_ms,
+                                     uint32_t protocol_validation_token,
                                      const struct mesh_event_plan *current_channel9_plan,
                                      uint64_t current_channel9_peer_id,
                                      bool *valid_mesh_frame,
@@ -837,11 +1021,13 @@ static bool mesh_queue_from_frame_at_internal(
     uint8_t link_quality,
     uint8_t radio_channel,
     uint32_t received_at_ms,
+    uint32_t protocol_validation_token,
     const struct mesh_event_plan *current_channel9_plan,
     uint64_t current_channel9_peer_id,
     bool submit_work,
     bool *valid_mesh_frame,
     uint64_t *previous_hop_id);
+static uint64_t mesh_expand_uptime32(uint32_t timestamp_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
 static bool mesh_outbound_is_local_origin_priority(
     const struct mesh_outbound *out);

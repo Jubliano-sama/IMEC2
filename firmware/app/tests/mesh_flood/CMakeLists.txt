@@ -11,4 +11,6 @@ target_include_directories(app PRIVATE
 target_sources(app PRIVATE
     src/main.c
     ../../src/app_mesh_flood.c
+    ../../../src/mesh_relay.c
+    ../../../src/protocol.c
 )

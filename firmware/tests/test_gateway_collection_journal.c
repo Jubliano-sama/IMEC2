@@ -168,7 +168,9 @@ static void add_direct_result(struct gateway_collection_state *collection,
     entry->id.node_boot_counter = (uint32_t)(100u + slot);
     entry->id.result_seq = (uint16_t)(slot + 1u);
     entry->previous_hop_id = entry->id.node_id;
-    entry->payload_crc = (uint16_t)(0x4000u + slot);
+    memset(entry->payload_digest,
+           (int)(0x40u + (uint8_t)slot),
+           sizeof(entry->payload_digest));
     entry->payload_len = (uint16_t)(60u + slot);
     entry->valid = true;
     collection->received_count++;
@@ -196,6 +198,51 @@ static void make_result_payload(uint8_t *payload,
                                       CMD_GET_STATUS,
                                       COMMAND_OK,
                                       0u) == PROTO_OK);
+}
+
+static void make_crc16_colliding_result_payloads(
+    uint8_t *first,
+    size_t first_cap,
+    size_t *first_len,
+    uint8_t *second,
+    size_t second_cap,
+    size_t *second_len,
+    const struct command_result_id *id,
+    uint32_t collection_epoch_id)
+{
+    make_result_payload(first,
+                        first_cap,
+                        first_len,
+                        id,
+                        collection_epoch_id);
+    assert(tlv_append_u16(first,
+                          first_cap,
+                          first_len,
+                          TLV_FW_VERSION,
+                          UINT16_C(0x3037)) == PROTO_OK);
+
+    *second_len = 0u;
+    assert(gateway_command_append_collection_result_identity(
+               second,
+               second_cap,
+               second_len,
+               id,
+               collection_epoch_id) == PROTO_OK);
+    assert(mesh_append_command_result(second,
+                                      second_cap,
+                                      second_len,
+                                      CMD_GET_STATUS,
+                                      COMMAND_OK,
+                                      1u) == PROTO_OK);
+    assert(tlv_append_u16(second,
+                          second_cap,
+                          second_len,
+                          TLV_FW_VERSION,
+                          0u) == PROTO_OK);
+    assert(*first_len == *second_len);
+    assert(memcmp(first, second, *first_len) != 0);
+    assert(proto_crc16_ccitt_false(first, *first_len) ==
+           proto_crc16_ccitt_false(second, *second_len));
 }
 
 static struct proto_packet make_result_packet(const struct command_result_id *id,
@@ -540,7 +587,9 @@ static void test_new_generation_corruption_preserves_old_results(void)
                                            &new_collection,
                                            NULL) == PROTO_OK);
     add_direct_result(&new_collection, 0u);
-    new_collection.results[0].payload_crc = 0x5A5Au;
+    memset(new_collection.results[0].payload_digest,
+           0x5Au,
+           sizeof(new_collection.results[0].payload_digest));
     assert(gateway_collection_journal_save(&fake_io,
                                            &cursor,
                                            &new_collection,
@@ -558,8 +607,102 @@ static void test_new_generation_corruption_preserves_old_results(void)
     assert(restored.command_seq == old_collection.command_seq);
     assert(restored.collection_epoch_id == old_collection.collection_epoch_id);
     assert(restored.received_count == 1u);
-    assert(restored.results[0].payload_crc ==
-           old_collection.results[0].payload_crc);
+    assert(semantic_digest_equal(restored.results[0].payload_digest,
+                                 old_collection.results[0].payload_digest,
+                                 sizeof(restored.results[0].payload_digest)));
+}
+
+static void test_only_committed_base_corruption_fails_closed(void)
+{
+    struct gateway_collection_journal_cursor cursor = {.loaded = true};
+    struct gateway_collection_journal_cursor reboot_cursor = {0};
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    uint8_t active_bank;
+
+    memset(&store, 0, sizeof(store));
+    start_collection(&collection, 12u, 2131u, 4131u);
+    add_direct_result(&collection, 0u);
+    assert(gateway_collection_journal_save(&fake_io,
+                                           &cursor,
+                                           &collection,
+                                           NULL) == PROTO_OK);
+    active_bank = (uint8_t)(cursor.generation & 1u);
+    assert(store.bases[active_bank].present);
+    assert(store.bases[active_bank].len ==
+           GATEWAY_COLLECTION_JOURNAL_BASE_RECORD_SIZE);
+    store.bases[active_bank].data[0] ^= 0x80u;
+
+    memset(&restored, 0xA5, sizeof(restored));
+    assert(gateway_collection_journal_restore(&fake_io,
+                                              &reboot_cursor,
+                                              &restored,
+                                              NULL) == PROTO_ERR_MALFORMED);
+    assert(!reboot_cursor.loaded);
+    assert(!reboot_cursor.active);
+    assert(restored.gateway_id == 0u);
+}
+
+static void test_only_committed_child_corruption_fails_closed(void)
+{
+    struct gateway_collection_journal_cursor cursor = {.loaded = true};
+    struct gateway_collection_journal_cursor reboot_cursor = {0};
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    uint8_t active_bank;
+
+    memset(&store, 0, sizeof(store));
+    start_collection(&collection, 12u, 2132u, 4132u);
+    add_direct_result(&collection, 0u);
+    assert(gateway_collection_journal_save(&fake_io,
+                                           &cursor,
+                                           &collection,
+                                           NULL) == PROTO_OK);
+    active_bank = (uint8_t)(cursor.generation & 1u);
+    assert(store.controls[active_bank].present);
+    store.controls[active_bank].data[0] ^= 0x80u;
+
+    memset(&restored, 0xA5, sizeof(restored));
+    assert(gateway_collection_journal_restore(&fake_io,
+                                              &reboot_cursor,
+                                              &restored,
+                                              NULL) == PROTO_ERR_MALFORMED);
+    assert(!reboot_cursor.loaded);
+    assert(!reboot_cursor.active);
+    assert(restored.gateway_id == 0u);
+}
+
+static void test_short_uncommitted_initial_base_is_ignored(void)
+{
+    struct gateway_collection_journal_cursor cursor = {.loaded = true};
+    struct gateway_collection_journal_cursor reboot_cursor = {0};
+    struct gateway_collection_state collection;
+    struct gateway_collection_state restored;
+    uint32_t roster_chunks;
+
+    memset(&store, 0, sizeof(store));
+    start_collection(&collection, 12u, 2133u, 4133u);
+    roster_chunks =
+        (collection.expected_node_id_count +
+         GATEWAY_COLLECTION_JOURNAL_ROSTER_CHUNK_CAP - 1u) /
+        GATEWAY_COLLECTION_JOURNAL_ROSTER_CHUNK_CAP;
+    store.tear_write_call = roster_chunks + 2u;
+    assert(gateway_collection_journal_save(&fake_io,
+                                           &cursor,
+                                           &collection,
+                                           NULL) == -EIO);
+    assert(store.bases[1].present);
+    assert(store.bases[1].len <
+           GATEWAY_COLLECTION_JOURNAL_BASE_RECORD_SIZE);
+
+    assert(gateway_collection_journal_restore(&fake_io,
+                                              &reboot_cursor,
+                                              &restored,
+                                              NULL) == PROTO_OK);
+    assert(reboot_cursor.loaded);
+    assert(!reboot_cursor.active);
+    assert(reboot_cursor.generation == 0u);
+    assert(restored.gateway_id == 0u);
 }
 
 static void test_clear_tombstone_is_atomic(void)
@@ -651,11 +794,20 @@ static void test_replay_preserves_exact_duplicate_semantics(void)
 
     memset(&store, 0, sizeof(store));
     start_collection(&collection, 12u, id.command_seq, 4201u);
-    make_result_payload(payload,
-                        sizeof(payload),
-                        &payload_len,
-                        &id,
-                        collection.collection_epoch_id);
+    {
+        size_t conflicting_len = 0u;
+
+        make_crc16_colliding_result_payloads(
+            payload,
+            sizeof(payload),
+            &payload_len,
+            conflicting,
+            sizeof(conflicting),
+            &conflicting_len,
+            &id,
+            collection.collection_epoch_id);
+        assert(conflicting_len == payload_len);
+    }
     packet = make_result_packet(&id, payload_len);
     assert(gateway_collection_record_result_from_hop(&collection,
                                                      &packet,
@@ -683,8 +835,6 @@ static void test_replay_preserves_exact_duplicate_semantics(void)
     assert(duplicate);
     assert(restored.received_count == 1u);
 
-    memcpy(conflicting, payload, payload_len);
-    conflicting[payload_len - 1u] ^= 0x01u;
     duplicate = false;
     assert(gateway_collection_record_result_from_hop(&restored,
                                                      &packet,
@@ -725,6 +875,9 @@ int main(void)
     test_transient_restore_failure_requires_reload();
     test_new_generation_power_cut_keeps_old_collection();
     test_new_generation_corruption_preserves_old_results();
+    test_only_committed_base_corruption_fails_closed();
+    test_only_committed_child_corruption_fails_closed();
+    test_short_uncommitted_initial_base_is_ignored();
     test_clear_tombstone_is_atomic();
     test_replay_preserves_exact_duplicate_semantics();
     test_in_ram_rollback_removes_uncommitted_results();

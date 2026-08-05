@@ -18,6 +18,7 @@
 #define TEST_BLE_PRESSURE_PAYLOAD_LEN 8u
 #define TEST_BLE_PRESSURE_RECORD_COUNT \
     (GATEWAY_BLE_STREAM_QUEUE_DEPTH + 1u)
+#define TEST_BLE_NOTIFY_FAILURE_RESET_THRESHOLD 4u
 
 static struct gateway_ble_stream_state test_stream;
 static struct gateway_ble_link test_link;
@@ -329,6 +330,10 @@ static void run_ble_pressure_recovery_scenario(void)
               i,
               (unsigned long long)event_us);
         if (i == 1u) {
+            struct proto_packet retained_head = {0};
+            const uint8_t *retained_record = NULL;
+            size_t retained_record_len = 0u;
+
             CHECK(completed == 0u && test_link.available_credits == 0u,
                   "stalled central unexpectedly completed record: completed=%u credits=%u",
                   completed,
@@ -336,7 +341,44 @@ static void run_ble_pressure_recovery_scenario(void)
             CHECK(gateway_ble_link_try_notify(&test_link, 1u) ==
                       GATEWAY_BLE_LINK_ERR_NO_CREDIT,
                   "stalled central did not refuse a retryable notify");
-            gateway_ble_link_set_stalled(&test_link, false);
+
+            /*
+             * A real transport must bound this state.  Model its deadline
+             * owner by resetting the link, rejecting the cursor completion,
+             * and cancelling the stream view.  Durable custody must remain
+             * at the exact queue head and restart at byte zero.
+             */
+            CHECK(gateway_ble_link_disconnect(&test_link) == 1u,
+                  "stalled-link deadline did not reject its notification");
+            CHECK(gateway_ble_tx_cursor_complete(&cursor, false) == PROTO_OK &&
+                      cursor.offset == 0u && !cursor.in_flight,
+                  "stalled-link reset advanced the cursor: offset=%zu",
+                  cursor.offset);
+            gateway_ble_stream_cancel_send(&test_stream);
+            CHECK(gateway_ble_stream_head_packet(&test_stream,
+                                                 &retained_head) == 0 &&
+                      retained_head.seq == packets[i].seq &&
+                      retained_head.src_id == packets[i].src_id,
+                  "stalled-link reset changed the durable queue head");
+            CHECK(gateway_ble_stream_begin_send_view(&test_stream,
+                                                     &retained_record,
+                                                     &retained_record_len) == 0 &&
+                      retained_record_len == record_len &&
+                      memcmp(retained_record, record, record_len) == 0,
+                  "stalled-link reset changed the retained record bytes");
+            CHECK(gateway_ble_link_connect(&test_link,
+                                           event_us,
+                                           TEST_BLE_MTU,
+                                           true) == GATEWAY_BLE_LINK_OK,
+                  "stalled-link reconnect failed");
+            CHECK(gateway_ble_tx_cursor_begin(&cursor,
+                                              &retry_chunk,
+                                              &retry_len) == PROTO_OK &&
+                      retry_chunk == chunk && retry_len == chunk_len,
+                  "stalled-link retry did not restart the first chunk");
+            CHECK(gateway_ble_link_try_notify(&test_link, retry_len) ==
+                      GATEWAY_BLE_LINK_OK,
+                  "stalled-link retry notify failed");
             CHECK(gateway_ble_link_run_connection_event(&test_link,
                                                         test_link.next_event_us,
                                                         &completed) ==
@@ -366,11 +408,14 @@ static void run_ble_pressure_recovery_scenario(void)
                                        (uint32_t)(test_link.next_event_us / 1000u),
                                        &diagnostics);
     CHECK(gateway_ble_stream_depth(&test_stream) == 0u &&
-              test_stream.pool_used == 0u && !test_stream.head_send_active,
+              test_stream.pool_used == 0u &&
+                  test_stream.head_send_phase ==
+                      GATEWAY_BLE_STREAM_HEAD_IDLE,
           "pressure stream did not drain: depth=%u pool=%u active=%u",
           gateway_ble_stream_depth(&test_stream),
           test_stream.pool_used,
-          test_stream.head_send_active ? 1u : 0u);
+          test_stream.head_send_phase != GATEWAY_BLE_STREAM_HEAD_IDLE ? 1u :
+                                                                         0u);
     CHECK(diagnostics.enqueue_attempts ==
               GATEWAY_BLE_STREAM_QUEUE_DEPTH + 2u &&
               diagnostics.packets_sent == GATEWAY_BLE_STREAM_QUEUE_DEPTH &&
@@ -393,9 +438,9 @@ static void run_ble_pressure_recovery_scenario(void)
           diagnostics.drops_not_ready,
           diagnostics.max_queue_depth_observed,
           (int)diagnostics.last_drop_reason);
-    CHECK(test_link.notifications_dropped_disconnect == 1u &&
+    CHECK(test_link.notifications_dropped_disconnect == 2u &&
               test_link.notifications_submitted ==
-                  GATEWAY_BLE_STREAM_QUEUE_DEPTH + 1u &&
+                  GATEWAY_BLE_STREAM_QUEUE_DEPTH + 2u &&
               test_link.notifications_completed ==
                   GATEWAY_BLE_STREAM_QUEUE_DEPTH &&
               test_link.connected && test_link.notify_enabled &&
@@ -409,9 +454,145 @@ static void run_ble_pressure_recovery_scenario(void)
           test_link.notify_enabled ? 1u : 0u,
           test_link.available_credits,
           test_link.in_flight);
-    CHECK(test_link.connection_generation == 4u,
-          "pressure BLE generation mismatch: actual=%u expected=4",
+    CHECK(test_link.connection_generation == 5u,
+          "pressure BLE generation mismatch: actual=%u expected=5",
           test_link.connection_generation);
+}
+
+static void run_ble_repeated_submit_failure_reset_scenario(void)
+{
+    struct gateway_ble_stream_state stream;
+    struct gateway_ble_link link;
+    struct gateway_ble_tx_cursor cursor;
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = TEST_GATEWAY_ID,
+        .dst_id = TEST_CLICKER_ID,
+        .session_id = TEST_EVENT_SEQ,
+        .seq = UINT16_C(0x4567),
+        .ttl = 4u,
+        .payload_len = TEST_BLE_PRESSURE_PAYLOAD_LEN,
+    };
+    const uint8_t payload[TEST_BLE_PRESSURE_PAYLOAD_LEN] = {
+        0x01u, 0x23u, 0x45u, 0x67u,
+        0x89u, 0xabu, 0xcdu, 0xefu,
+    };
+    const uint8_t *record = NULL;
+    const uint8_t *chunk = NULL;
+    const uint8_t *retry_record = NULL;
+    const uint8_t *retry_chunk = NULL;
+    size_t record_len = 0u;
+    size_t chunk_len = 0u;
+    size_t retry_record_len = 0u;
+    size_t retry_chunk_len = 0u;
+    uint8_t completed = 0u;
+    int ret;
+
+    test_phase = "ble-submit-failure-reset";
+    gateway_ble_stream_init(&stream);
+    gateway_ble_link_init(&link,
+                          GATEWAY_BLE_DEFAULT_CONNECTION_INTERVAL_US,
+                          1u);
+    CHECK(gateway_ble_link_connect(&link, 0u, TEST_BLE_MTU, true) ==
+              GATEWAY_BLE_LINK_OK,
+          "submit-failure link connect failed");
+    CHECK(gateway_ble_stream_enqueue_retained_packet(&stream,
+                                                     &packet,
+                                                     payload,
+                                                     sizeof(payload),
+                                                     10u,
+                                                     20u,
+                                                     true) == 1,
+          "submit-failure retained enqueue failed");
+    CHECK(gateway_ble_stream_begin_send_view(&stream,
+                                             &record,
+                                             &record_len) == 0,
+          "submit-failure stream begin failed");
+    gateway_ble_tx_cursor_init(&cursor,
+                               record,
+                               record_len,
+                               link.negotiated_mtu);
+
+    /*
+     * A synchronous controller refusal leaves no callback owner.  Each
+     * refusal must reject rather than advance the immutable cursor, and a
+     * finite failure threshold must reset the link instead of retrying one
+     * connection forever.
+     */
+    link.available_credits = 0u;
+    for (uint8_t failure = 0u;
+         failure < TEST_BLE_NOTIFY_FAILURE_RESET_THRESHOLD;
+         failure++) {
+        CHECK(gateway_ble_tx_cursor_begin(&cursor,
+                                          &chunk,
+                                          &chunk_len) == PROTO_OK,
+              "submit-failure cursor begin failed: failure=%u",
+              failure);
+        CHECK(gateway_ble_link_try_notify(&link, chunk_len) ==
+                  GATEWAY_BLE_LINK_ERR_NO_CREDIT,
+              "submit-failure controller refusal missing: failure=%u",
+              failure);
+        CHECK(gateway_ble_tx_cursor_complete(&cursor, false) == PROTO_OK &&
+                  cursor.offset == 0u && !cursor.in_flight,
+              "submit-failure advanced retained cursor: failure=%u offset=%zu",
+              failure,
+              cursor.offset);
+    }
+
+    CHECK(gateway_ble_link_disconnect(&link) == 0u,
+          "submit-failure reset invented an in-flight notification");
+    gateway_ble_stream_cancel_send(&stream);
+    CHECK(gateway_ble_stream_depth(&stream) == 1u &&
+              stream.pool_used == record_len &&
+                  stream.head_send_phase == GATEWAY_BLE_STREAM_HEAD_IDLE,
+          "submit-failure reset released durable custody: depth=%u pool=%u active=%u",
+          gateway_ble_stream_depth(&stream),
+          stream.pool_used,
+          stream.head_send_phase != GATEWAY_BLE_STREAM_HEAD_IDLE ? 1u : 0u);
+    CHECK(gateway_ble_link_connect(&link, 1000u, TEST_BLE_MTU, true) ==
+              GATEWAY_BLE_LINK_OK,
+          "submit-failure reconnect failed");
+    CHECK(gateway_ble_stream_begin_send_view(&stream,
+                                             &retry_record,
+                                             &retry_record_len) == 0 &&
+              retry_record_len == record_len &&
+              memcmp(retry_record, record, record_len) == 0,
+          "submit-failure reconnect changed retained bytes");
+    gateway_ble_tx_cursor_init(&cursor,
+                               retry_record,
+                               retry_record_len,
+                               link.negotiated_mtu);
+    CHECK(gateway_ble_tx_cursor_begin(&cursor,
+                                      &retry_chunk,
+                                      &retry_chunk_len) == PROTO_OK &&
+              retry_chunk_len == chunk_len &&
+              memcmp(retry_chunk, chunk, chunk_len) == 0,
+          "submit-failure reconnect did not restart at byte zero");
+    CHECK(gateway_ble_link_try_notify(&link, retry_chunk_len) ==
+              GATEWAY_BLE_LINK_OK,
+          "submit-failure retry notify failed");
+    CHECK(gateway_ble_link_run_connection_event(&link,
+                                                link.next_event_us,
+                                                &completed) ==
+                  GATEWAY_BLE_LINK_OK &&
+              completed == 1u,
+          "submit-failure retry did not complete");
+    CHECK(gateway_ble_tx_cursor_complete(&cursor, true) == PROTO_OK &&
+              gateway_ble_tx_cursor_done(&cursor),
+          "submit-failure retry cursor did not complete");
+    gateway_ble_stream_mark_sent(&stream,
+                                 (uint32_t)(link.next_event_us / 1000u));
+    CHECK(gateway_ble_stream_depth(&stream) == 0u &&
+              stream.pool_used == 0u &&
+              link.notifications_submitted == 1u &&
+              link.notifications_completed == 1u &&
+              link.connection_generation == 2u,
+          "submit-failure recovery accounting mismatch: depth=%u pool=%u submitted=%u completed=%u generation=%u",
+          gateway_ble_stream_depth(&stream),
+          stream.pool_used,
+          link.notifications_submitted,
+          link.notifications_completed,
+          link.connection_generation);
 }
 
 
@@ -419,6 +600,7 @@ int main(void)
 {
     run_ble_durable_priority_guard();
     run_ble_pressure_recovery_scenario();
+    run_ble_repeated_submit_failure_reset_scenario();
     puts("PASS gateway_ble_pressure_recovery");
     return EXIT_SUCCESS;
 }

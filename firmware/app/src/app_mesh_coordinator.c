@@ -288,11 +288,11 @@ void app_mesh_paused_delivery_note_sent(
         return;
     }
 
-    if (tlv_find(sent->payload,
-                 sent->payload_len,
-                 TLV_MESH_LOST_PACKET_COUNT,
-                 &value,
-                 &len) == PROTO_OK &&
+    if (tlv_find_unique(sent->payload,
+                        sent->payload_len,
+                        TLV_MESH_LOST_PACKET_COUNT,
+                        &value,
+                        &len) == PROTO_OK &&
         len == 4u) {
         state->lost_count = 0u;
     }

@@ -347,8 +347,10 @@ static size_t encode_result(uint8_t *buffer,
     put_u64(buffer, 24u, entry->previous_hop_id);
     put_u32(buffer, 32u, entry->id.node_boot_counter);
     put_u16(buffer, 36u, entry->id.result_seq);
-    put_u16(buffer, 38u, entry->payload_crc);
-    put_u16(buffer, 40u, entry->payload_len);
+    memcpy(&buffer[38u],
+           entry->payload_digest,
+           sizeof(entry->payload_digest));
+    put_u16(buffer, 70u, entry->payload_len);
     finish_record(buffer, GATEWAY_COLLECTION_JOURNAL_RESULT_RECORD_SIZE);
     return GATEWAY_COLLECTION_JOURNAL_RESULT_RECORD_SIZE;
 }
@@ -374,8 +376,10 @@ static int decode_result(const uint8_t *buffer,
     entry->previous_hop_id = get_u64(buffer, 24u);
     entry->id.node_boot_counter = get_u32(buffer, 32u);
     entry->id.result_seq = get_u16(buffer, 36u);
-    entry->payload_crc = get_u16(buffer, 38u);
-    entry->payload_len = get_u16(buffer, 40u);
+    memcpy(entry->payload_digest,
+           &buffer[38u],
+           sizeof(entry->payload_digest));
+    entry->payload_len = get_u16(buffer, 70u);
     entry->valid = true;
     return entry->id.node_id == 0u || entry->payload_len == 0u ?
            PROTO_ERR_MALFORMED : PROTO_OK;
@@ -496,6 +500,7 @@ static bool control_matches_cursor(
 static int read_base_bank(const struct gateway_collection_journal_io *io,
                           uint8_t bank,
                           struct journal_base *base,
+                          bool *corrupt_commit,
                           struct gateway_collection_journal_stats *stats)
 {
     uint8_t buffer[GATEWAY_COLLECTION_JOURNAL_BASE_RECORD_SIZE];
@@ -509,6 +514,9 @@ static int read_base_bank(const struct gateway_collection_journal_io *io,
                            sizeof(buffer),
                            &stored_len);
 
+    if (corrupt_commit != NULL) {
+        *corrupt_commit = false;
+    }
     if (ret == -ENOENT) {
         return ret;
     }
@@ -516,6 +524,17 @@ static int read_base_bank(const struct gateway_collection_journal_io *io,
         return ret;
     }
     ret = decode_base(buffer, stored_len, base);
+    if (ret == PROTO_ERR_MALFORMED && corrupt_commit != NULL &&
+        stored_len == GATEWAY_COLLECTION_JOURNAL_BASE_RECORD_SIZE) {
+        /*
+         * A base is the generation's commit marker and is written last.
+         * Exact-size invalid bytes therefore represent a corrupt committed
+         * record, not a safely ignorable pre-commit child or torn short write.
+         * Longer bank-zero records can still be the retired monolithic schema
+         * handled by the Zephyr wrapper.
+         */
+        *corrupt_commit = true;
+    }
     if (ret != PROTO_OK && stats != NULL) {
         stats->records_ignored++;
     }
@@ -821,6 +840,8 @@ int gateway_collection_journal_restore(
 {
     struct journal_base bases[GATEWAY_COLLECTION_JOURNAL_BANK_COUNT];
     bool valid[GATEWAY_COLLECTION_JOURNAL_BANK_COUNT] = {false};
+    bool corrupt_commit_seen = false;
+    bool valid_active_seen = false;
     int first_error = 0;
 
     if (io == NULL || io->read == NULL || cursor == NULL || collection == NULL) {
@@ -830,18 +851,28 @@ int gateway_collection_journal_restore(
     gateway_collection_clear(collection);
 
     for (uint8_t bank = 0u; bank < GATEWAY_COLLECTION_JOURNAL_BANK_COUNT; bank++) {
-        int ret = read_base_bank(io, bank, &bases[bank], stats);
+        bool corrupt_commit = false;
+        int ret = read_base_bank(io,
+                                 bank,
+                                 &bases[bank],
+                                 &corrupt_commit,
+                                 stats);
 
         if (ret == PROTO_OK) {
             valid[bank] = true;
+            valid_active_seen = valid_active_seen || bases[bank].active;
         } else if (ret != -ENOENT && ret != PROTO_ERR_MALFORMED && first_error == 0) {
             first_error = ret;
         }
+        corrupt_commit_seen = corrupt_commit_seen || corrupt_commit;
     }
     if (first_error != 0) {
         return first_error;
     }
     if (!valid[0] && !valid[1]) {
+        if (corrupt_commit_seen) {
+            return PROTO_ERR_MALFORMED;
+        }
         cursor->loaded = true;
         return PROTO_OK;
     }
@@ -887,6 +918,15 @@ int gateway_collection_journal_restore(
 
     gateway_collection_clear(collection);
     memset(cursor, 0, sizeof(*cursor));
+    if (valid_active_seen) {
+        /*
+         * At least one durable active commit marker existed, but none of its
+         * dependent records formed a valid generation and no older tombstone
+         * proved an empty state. Treating that as empty would orphan accepted
+         * results and EACK custody.
+         */
+        return PROTO_ERR_MALFORMED;
+    }
     cursor->loaded = true;
     return PROTO_OK;
 }

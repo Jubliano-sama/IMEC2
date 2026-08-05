@@ -118,7 +118,7 @@ static int exact_air_hop(struct mesh_sim_world *world,
                 "air hop mismatch before=%zu after=%zu outcome=%d status=%d\n",
                 before, world->reception_count,
                 before < world->reception_count ?
-                    world->receptions[before].outcome : -1,
+                    (int)world->receptions[before].outcome : -1,
                 before < world->reception_count ?
                     world->receptions[before].protocol_status : -1);
         return MESH_SIM_ERR_PROTOCOL;
@@ -1027,6 +1027,7 @@ static bool test_click_path(void)
     struct mesh_sim_invariant_report invariant;
     bool pressure_released = false;
     bool settled = false;
+    uint8_t host_outputs = 0u;
     uint8_t report_nodes[UWB_NORMAL_CLICK_MIN_ANCHORS];
     int ret;
 
@@ -1192,7 +1193,7 @@ static bool test_click_path(void)
                       admission.commits ==
                           fixture.world.roles[fixture.gateway].delivery_count &&
                       gateway_ble_stream_depth(&admission.stream) ==
-                          fixture.world.roles[fixture.gateway].delivery_count,
+                          1u,
                   "gateway did not atomically commit click to BLE stream: "
                   "delivered=%zu commits=%" PRIu32 " stream=%u",
                   fixture.world.roles[fixture.gateway].delivery_count,
@@ -1210,8 +1211,42 @@ static bool test_click_path(void)
             if (ret == MESH_SIM_OK) {
                 ret = mesh_sim_run_until(&fixture.world, ack_end);
             }
-            CHECK(ret == MESH_SIM_OK, "direct gateway ACK failed ret=%d now=%" PRIu64,
-                  ret, fixture.world.now_us);
+            CHECK(ret == MESH_SIM_OK,
+                  "direct gateway ACK failed ret=%d now=%" PRIu64
+                  " delivered=%zu rejected=%" PRIu32
+                  " duplicate=%" PRIu32 " gateway_queue=%zu"
+                  " ble_depth=%u ble_pool=%u ble_reserved=%u"
+                  " relay_state=%u relay_src=0x%016" PRIx64
+                  " relay_session=%" PRIu32 " relay_seq=%u",
+                  ret,
+                  fixture.world.now_us,
+                  fixture.world.roles[fixture.gateway].delivery_count,
+                  fixture.world.roles[fixture.gateway].
+                      gateway_semantic_rejection_count,
+                  fixture.world.roles[fixture.gateway].
+                      gateway_semantic_duplicate_redelivery_count,
+                  fixture.world.roles[fixture.gateway].tx_queue_count,
+                  gateway_ble_stream_depth(&admission.stream),
+                  admission.stream.pool_used,
+                  admission.stream.reservation_active ? 1u : 0u,
+                  (unsigned int)fixture.world.roles[fixture.relay2].relay.
+                      pending.state,
+                  fixture.world.roles[fixture.relay2].relay.pending.packet.src_id,
+                  fixture.world.roles[fixture.relay2].relay.pending.packet.session_id,
+                  fixture.world.roles[fixture.relay2].relay.pending.packet.seq);
+            /*
+             * The production journal has one durable owner.  Once this
+             * record has reached the host, retiring it permits the next
+             * source-retained report to be admitted; acknowledging all three
+             * into volatile RAM at once would make reset lose accepted data.
+             */
+            gateway_ble_stream_mark_sent(
+                &admission.stream,
+                (uint32_t)(fixture.world.now_us / 1000u));
+            host_outputs++;
+            CHECK(gateway_ble_stream_depth(&admission.stream) == 0u &&
+                      !admission.stream.journal_payload_digest_valid,
+                  "completed host journal owner was not retired");
         } else {
             struct mesh_sim_connection_action action;
             uint16_t selected = UINT16_MAX;
@@ -1314,12 +1349,29 @@ static bool test_click_path(void)
         }
     }
     CHECK(pressure_released && admission.attempts >= 4u &&
-              admission.commits == UWB_NORMAL_CLICK_MIN_ANCHORS,
+              admission.commits == UWB_NORMAL_CLICK_MIN_ANCHORS &&
+              host_outputs == UWB_NORMAL_CLICK_MIN_ANCHORS,
           "BLE pressure retry was not exercised attempts=%" PRIu32
-          " commits=%" PRIu32,
-          admission.attempts, admission.commits);
-    return test_ble_credit_refusal_and_drain(
-        &admission.stream, UWB_NORMAL_CLICK_MIN_ANCHORS);
+          " commits=%" PRIu32 " host_outputs=%u",
+          admission.attempts, admission.commits, host_outputs);
+    {
+        struct gateway_ble_stream_state pressure_stream;
+
+        gateway_ble_stream_init(&pressure_stream);
+        for (size_t i = 0u; i < UWB_NORMAL_CLICK_MIN_ANCHORS; i++) {
+            CHECK(gateway_ble_stream_enqueue_packet(
+                      &pressure_stream,
+                      &report_packets[i],
+                      report_payloads[i],
+                      report_payload_lens[i],
+                      1u,
+                      1u,
+                      true) == 1,
+                  "BLE pressure fixture could not queue report=%zu", i);
+        }
+        return test_ble_credit_refusal_and_drain(
+            &pressure_stream, UWB_NORMAL_CLICK_MIN_ANCHORS);
+    }
 }
 
 int main(void)

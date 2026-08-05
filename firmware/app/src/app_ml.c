@@ -1,11 +1,15 @@
 #include "app_ml.h"
 
 #include "app_board.h"
+#include "app_click_event_sequence.h"
 #include "app_clicker.h"
 #include "app_config.h"
 #include "app_gateway_ble.h"
 #include "app_high_debug.h"
+#include "app_radio_recovery.h"
 #include "app_state.h"
+#include "app_watchdog.h"
+#include "app_wake_train_politeness.h"
 #include "dwm3000_driver.h"
 #include "gateway_command.h"
 #include "protocol.h"
@@ -88,11 +92,15 @@ struct ml_clicker_runtime {
     uint16_t attempted_ranges;
     uint16_t selected_anchors;
     uint16_t buffered_frames;
+    uint16_t buffered_frame_head;
     uint16_t buffered_samples;
+    uint16_t buffered_sample_head;
     uint16_t flushed_frames;
     uint16_t post_burst_diagnostics;
     uint16_t anchor_pair_results;
+    uint32_t ble_custody_retries;
     bool cached_discovery_used;
+    bool custody_failed;
     struct ml_clicker_buffered_frame buffered_frames_storage[ML_CLICKER_BUFFERED_FRAME_MAX];
     struct ml_clicker_buffered_sample buffered_samples_storage[ML_CLICKER_BUFFERED_SAMPLE_MAX];
     struct ml_clicker_post_burst_diagnostic
@@ -105,6 +113,7 @@ struct ml_clicker_runtime {
 
 #if defined(CONFIG_IMEC_ML_CLICKER)
 static struct k_work ml_clicker_collect_work;
+static struct k_work ml_clicker_release_work;
 static struct k_work_delayable ml_clicker_rainbow_led_work;
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
     .wake_adv_ms = WAKE_ADV_MS,
@@ -124,6 +133,12 @@ static const struct app_clicker_wake_train_config clicker_wake_train_config = {
 static atomic_t ml_clicker_busy;
 static atomic_t ml_clicker_live_heartbeat_ms;
 static atomic_t ml_clicker_live_stop_requested;
+static struct k_spinlock ml_clicker_live_control_lock;
+static struct {
+    uint64_t src_id;
+    uint32_t session_id;
+    bool active;
+} ml_clicker_live_control_owner;
 static struct ml_clicker_request ml_clicker_pending_request;
 static struct ml_clicker_runtime ml_clicker_runtime;
 static struct ml_clicker_anchor_cache_entry
@@ -140,6 +155,7 @@ static bool ml_anchor_battery_led_on;
 
 #if defined(CONFIG_IMEC_ML_CLICKER)
 static void ml_clicker_collect_work_handler(struct k_work *work);
+static void ml_clicker_release_work_handler(struct k_work *work);
 static void ml_clicker_rainbow_led_work_handler(struct k_work *work);
 void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len);
 uint8_t ml_clicker_discovery_slot_count_override(void);
@@ -163,10 +179,10 @@ void ml_clicker_run_post_burst_diagnostics(
     const struct uwb_range_schedule_frame *schedule,
     int64_t schedule_tx_ms,
     int64_t click_deadline_ms);
-static void ml_clicker_emit_stored_post_burst_diagnostics(
+static int ml_clicker_emit_stored_post_burst_diagnostics(
     const struct uwb_clicker_session *session,
     const struct uwb_range_schedule_frame *schedule);
-static void ml_clicker_emit_stored_anchor_pair_results(void);
+static int ml_clicker_emit_stored_anchor_pair_results(void);
 bool ml_clicker_continue_after_range_start_failure(void);
 bool ml_clicker_should_continue_ranging(void);
 void ml_clicker_enter_range_quiet(void);
@@ -512,9 +528,57 @@ bool ml_clicker_runtime_active(void)
 
 static bool ml_clicker_live_tracking_active(void)
 {
-    return ml_clicker_runtime.active &&
-           ml_clicker_runtime.request.live_tracking &&
-           atomic_get(&ml_clicker_busy) != 0;
+    k_spinlock_key_t key = k_spin_lock(&ml_clicker_live_control_lock);
+    bool active = ml_clicker_live_control_owner.active;
+
+    k_spin_unlock(&ml_clicker_live_control_lock, key);
+    return active && atomic_get(&ml_clicker_busy) != 0;
+}
+
+static void ml_clicker_live_control_publish(
+    const struct ml_clicker_request *request)
+{
+    k_spinlock_key_t key;
+
+    if (request == NULL) {
+        return;
+    }
+
+    key = k_spin_lock(&ml_clicker_live_control_lock);
+    ml_clicker_live_control_owner.src_id = request->command.src_id;
+    ml_clicker_live_control_owner.session_id = request->command.session_id;
+    ml_clicker_live_control_owner.active = true;
+    k_spin_unlock(&ml_clicker_live_control_lock, key);
+}
+
+static void ml_clicker_live_control_clear(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&ml_clicker_live_control_lock);
+
+    ml_clicker_live_control_owner.active = false;
+    ml_clicker_live_control_owner.src_id = 0u;
+    ml_clicker_live_control_owner.session_id = 0u;
+    k_spin_unlock(&ml_clicker_live_control_lock, key);
+}
+
+static bool ml_clicker_live_control_matches_active(
+    const struct ml_clicker_request *request)
+{
+    bool matches;
+    k_spinlock_key_t key;
+
+    if (request == NULL) {
+        return false;
+    }
+
+    key = k_spin_lock(&ml_clicker_live_control_lock);
+    matches = ml_clicker_live_control_owner.active &&
+              request->command.src_id ==
+                  ml_clicker_live_control_owner.src_id &&
+              request->command.session_id ==
+                  ml_clicker_live_control_owner.session_id;
+    k_spin_unlock(&ml_clicker_live_control_lock, key);
+    return matches;
 }
 
 static void ml_clicker_live_tracking_touch(void)
@@ -560,10 +624,9 @@ void ml_clicker_exit_range_quiet(void)
     }
 }
 
-static struct ml_clicker_anchor_cache_entry *ml_clicker_cache_entry_for(uint64_t anchor_id)
+static struct ml_clicker_anchor_cache_entry *ml_clicker_cache_find(
+    uint64_t anchor_id)
 {
-    struct ml_clicker_anchor_cache_entry *empty = NULL;
-
     if (anchor_id == 0u) {
         return NULL;
     }
@@ -574,12 +637,49 @@ static struct ml_clicker_anchor_cache_entry *ml_clicker_cache_entry_for(uint64_t
         if (entry->anchor_id == anchor_id) {
             return entry;
         }
-        if (empty == NULL && entry->anchor_id == 0u) {
-            empty = entry;
+    }
+
+    return NULL;
+}
+
+static struct ml_clicker_anchor_cache_entry *
+ml_clicker_cache_entry_for_discovery(uint64_t anchor_id)
+{
+    struct ml_clicker_anchor_cache_entry *empty = NULL;
+    struct ml_clicker_anchor_cache_entry *oldest = NULL;
+    int64_t oldest_activity_ms = 0;
+
+    if (anchor_id == 0u) {
+        return NULL;
+    }
+
+    for (uint8_t i = 0u; i < ARRAY_SIZE(ml_clicker_anchor_cache); i++) {
+        struct ml_clicker_anchor_cache_entry *entry = &ml_clicker_anchor_cache[i];
+        int64_t activity_ms;
+
+        if (entry->anchor_id == anchor_id) {
+            return entry;
+        }
+        if (entry->anchor_id == 0u) {
+            if (empty == NULL) {
+                empty = entry;
+            }
+            continue;
+        }
+        activity_ms = MAX(entry->last_found_ms, entry->last_ranged_ms);
+        if (oldest == NULL || activity_ms < oldest_activity_ms) {
+            oldest = entry;
+            oldest_activity_ms = activity_ms;
         }
     }
 
-    return empty;
+    if (empty != NULL) {
+        return empty;
+    }
+    if (oldest != NULL) {
+        memset(oldest, 0, sizeof(*oldest));
+    }
+    return oldest;
 }
 
 void ml_clicker_cache_note_discovery_reply(
@@ -595,7 +695,7 @@ void ml_clicker_cache_note_discovery_reply(
         return;
     }
 
-    entry = ml_clicker_cache_entry_for(reply->anchor_id);
+    entry = ml_clicker_cache_entry_for_discovery(reply->anchor_id);
     if (entry == NULL) {
         return;
     }
@@ -613,7 +713,7 @@ static void ml_clicker_cache_note_range_result(uint64_t anchor_id,
     if (status != RANGE_OK) {
         return;
     }
-    entry = ml_clicker_cache_entry_for(anchor_id);
+    entry = ml_clicker_cache_find(anchor_id);
     if (entry == NULL || entry->anchor_id == 0u) {
         return;
     }
@@ -743,16 +843,82 @@ static int ml_clicker_build_anchor_pair_schedule(
            -EINVAL : 0;
 }
 
+static uint16_t ml_clicker_anchor_pair_max_start_delay_ms(
+    const struct uwb_anchor_pair_schedule_frame *schedule);
+
+static uint32_t ml_clicker_anchor_pair_schedule_budget_ms(
+    const struct uwb_anchor_pair_schedule_frame *schedule)
+{
+    uint64_t budget_ms;
+
+    if (schedule == NULL) {
+        return UINT32_MAX;
+    }
+    budget_ms = UWB_CONTROL_TX_TIMEOUT_MS +
+                ml_clicker_anchor_pair_max_start_delay_ms(schedule) +
+                ((uint64_t)schedule->pair_count *
+                 schedule->pair_stride_ms) +
+                schedule->pair_window_ms + 1000u +
+                CLICK_REPORT_BUILD_GUARD_MS;
+    return budget_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)budget_ms;
+}
+
+static uint32_t ml_clicker_anchor_pair_attempt_budget_ms(
+    const struct uwb_clicker_session *session)
+{
+    struct uwb_anchor_pair_schedule_frame schedule = {0};
+    uint32_t wake_tail_ms =
+        app_clicker_wake_train_opportunity_tail_ms(
+            &clicker_wake_train_config);
+    uint32_t wake_prefix_ms;
+    uint32_t discovery_window_ms;
+    uint64_t budget_ms;
+
+    if (session == NULL ||
+        session->config.max_anchor_count <
+            UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) {
+        return UINT32_MAX;
+    }
+
+    schedule.anchor_count = MIN(session->config.max_anchor_count,
+                                UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS);
+    schedule.pair_count = uwb_anchor_pair_count(schedule.anchor_count);
+    schedule.pair_stride_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS;
+    schedule.pair_window_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS;
+    for (uint8_t i = 0u; i < schedule.anchor_count; i++) {
+        schedule.anchor_start_delay_ms[i] =
+            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS;
+    }
+
+    wake_prefix_ms =
+        wake_tail_ms > clicker_wake_train_config.post_wake_claimed_duration_ms ?
+        wake_tail_ms -
+            clicker_wake_train_config.post_wake_claimed_duration_ms : 0u;
+    discovery_window_ms = discovery_window_ms_for_slots(
+        ml_clicker_discovery_slot_override > 0u ?
+        ml_clicker_discovery_slot_override :
+        session->config.max_anchor_count);
+    discovery_window_ms = u32_saturating_add(
+        discovery_window_ms, UWB_DISCOVERY_RX_GUARD_MS);
+    budget_ms = (uint64_t)wake_prefix_ms +
+                UWB_CONTROL_TX_TIMEOUT_MS +
+                discovery_window_ms +
+                ml_clicker_anchor_pair_schedule_budget_ms(&schedule);
+    return budget_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)budget_ms;
+}
+
 static int ml_clicker_send_anchor_pair_schedule(
     const struct uwb_anchor_pair_schedule_frame *schedule,
-    int64_t *schedule_tx_ms)
+    int64_t *schedule_tx_ms,
+    int64_t click_deadline_ms)
 {
     uint8_t frame[UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN];
     size_t frame_len = 0u;
+    int cleanup_ret;
     int ret;
 
     if (schedule_tx_ms != NULL) {
-        *schedule_tx_ms = k_uptime_get();
+        *schedule_tx_ms = 0;
     }
 
     ret = uwb_encode_anchor_pair_schedule(schedule, frame, sizeof(frame), &frame_len);
@@ -766,10 +932,27 @@ static int ml_clicker_send_anchor_pair_schedule(
     }
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
-        ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
+        if (!app_wake_train_deadline_fits(
+                k_uptime_get(),
+                click_deadline_ms,
+                ml_clicker_anchor_pair_schedule_budget_ms(schedule))) {
+            ret = -ETIMEDOUT;
+        } else {
+            ret = dwm3000_driver_send_frame(frame,
+                                            frame_len,
+                                            UWB_CONTROL_TX_TIMEOUT_MS);
+        }
     }
-    (void)dwm3000_driver_idle();
+    cleanup_ret = app_radio_idle_with_bounded_recovery(
+        "ML anchor-pair schedule TX");
     radio_guard_uwb_stop();
+    if (cleanup_ret < 0) {
+        LOG_ERR("clicker anchor-pair schedule radio cleanup failed: survey=%u operation_ret=%d cleanup_ret=%d",
+                schedule->survey_id,
+                ret,
+                cleanup_ret);
+        return cleanup_ret;
+    }
     if (ret < 0) {
         LOG_WRN("clicker anchor-pair schedule TX failed: survey=%u ret=%d",
                 schedule->survey_id,
@@ -840,6 +1023,7 @@ static int ml_clicker_receive_anchor_pair_results(
     uint16_t received_count = 0u;
     int64_t schedule_end_ms;
     int64_t rx_deadline_ms;
+    int cleanup_ret;
     int ret;
 
     if (schedule == NULL || schedule->pair_count > UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS) {
@@ -862,8 +1046,11 @@ static int ml_clicker_receive_anchor_pair_results(
     }
     ret = dwm3000_driver_configure_range_mode();
     if (ret < 0) {
-        radio_guard_uwb_stop();
-        return ret;
+        goto cleanup;
+    }
+    if (k_uptime_get() >= rx_deadline_ms) {
+        ret = -ETIMEDOUT;
+        goto cleanup;
     }
 
     while (received_count < schedule->pair_count &&
@@ -915,9 +1102,20 @@ static int ml_clicker_receive_anchor_pair_results(
                 result.distance_mm);
     }
 
-    (void)dwm3000_driver_standby();
+    ret = received_count == schedule->pair_count ? 0 : -ETIMEDOUT;
+
+cleanup:
+    cleanup_ret = app_radio_standby_with_bounded_recovery(
+        "ML anchor-pair result RX");
     radio_guard_uwb_stop();
-    return received_count == schedule->pair_count ? 0 : -ETIMEDOUT;
+    if (cleanup_ret < 0) {
+        LOG_ERR("clicker anchor-pair result radio cleanup failed: survey=%u operation_ret=%d cleanup_ret=%d",
+                schedule->survey_id,
+                ret,
+                cleanup_ret);
+        return cleanup_ret;
+    }
+    return ret;
 }
 
 static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session,
@@ -931,15 +1129,24 @@ static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session
     if (session == NULL) {
         return -EINVAL;
     }
+    if (!app_wake_train_deadline_fits(
+            k_uptime_get(),
+            click_deadline_ms,
+            ml_clicker_anchor_pair_attempt_budget_ms(session))) {
+        return -ETIMEDOUT;
+    }
 
-    ret = app_clicker_send_wake_claim_train(session,
-                                            priority_id,
-                                            &clicker_wake_train_config);
+    ret = app_clicker_send_wake_claim_train_until(
+        session,
+        priority_id,
+        &clicker_wake_train_config,
+        click_deadline_ms);
     if (ret < 0) {
         return ret;
     }
 
-    ret = app_clicker_discover_uwb_anchors(session);
+    ret = app_clicker_discover_uwb_anchors_until(session,
+                                                 click_deadline_ms);
     if (ret < 0) {
         return ret;
     }
@@ -957,7 +1164,9 @@ static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session
     ml_clicker_runtime.selected_anchors = pair_schedule.anchor_count;
     ml_clicker_runtime.attempted_ranges = pair_schedule.pair_count;
 
-    ret = ml_clicker_send_anchor_pair_schedule(&pair_schedule, &schedule_tx_ms);
+    ret = ml_clicker_send_anchor_pair_schedule(&pair_schedule,
+                                               &schedule_tx_ms,
+                                               click_deadline_ms);
     if (ret < 0) {
         return ret;
     }
@@ -974,6 +1183,109 @@ static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session
     return ret;
 }
 
+#define ML_CLICKER_BLE_CUSTODY_RETRY_MS 5u
+
+static int ml_clicker_try_send_encoded_frame(const uint8_t *frame,
+                                             size_t frame_len,
+                                             void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    return gateway_ble_send_packet_frame(frame, frame_len);
+}
+
+static void ml_clicker_wait_for_ble_custody(void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    k_sleep(K_MSEC(ML_CLICKER_BLE_CUSTODY_RETRY_MS));
+}
+
+static void ml_clicker_note_custody_failure(const char *owner, int ret)
+{
+    ml_clicker_runtime.custody_failed = true;
+    LOG_ERR("ML BLE custody failed closed: owner=%s ret=%d",
+            owner == NULL ? "unknown" : owner,
+            ret);
+    app_watchdog_stop_feeding();
+}
+
+static void ml_clicker_add_custody_retries(uint32_t retries)
+{
+    if (UINT32_MAX - ml_clicker_runtime.ble_custody_retries < retries) {
+        ml_clicker_runtime.ble_custody_retries = UINT32_MAX;
+    } else {
+        ml_clicker_runtime.ble_custody_retries += retries;
+    }
+}
+
+static int ml_clicker_send_encoded_frame_retained(const uint8_t *frame,
+                                                  size_t frame_len)
+{
+    uint32_t retries = 0u;
+    int ret;
+
+    ret = gateway_ble_send_frame_retained(
+        frame,
+        frame_len,
+        ml_clicker_try_send_encoded_frame,
+        ml_clicker_wait_for_ble_custody,
+        NULL,
+        &retries);
+    ml_clicker_add_custody_retries(retries);
+    if (ret < 0) {
+        HIGH_DEBUG_COUNTER_INC(gateway_ble_notify_failures);
+        ml_clicker_note_custody_failure("frame", ret);
+    }
+    return ret;
+}
+
+static int ml_clicker_emit_host_packet_retained(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    struct ml_clicker_buffered_frame encoded = {0};
+    struct proto_packet frame_packet;
+    size_t frame_len = 0u;
+    int ret;
+
+    ret = gateway_encode_host_packet_frame(packet,
+                                           payload,
+                                           payload_len,
+                                           encoded.frame,
+                                           sizeof(encoded.frame),
+                                           &frame_len,
+                                           &frame_packet);
+    if (ret < 0 || frame_len > UINT16_MAX) {
+        ret = ret < 0 ? ret : -EMSGSIZE;
+        ml_clicker_note_custody_failure("encode", ret);
+        return ret;
+    }
+    encoded.len = (uint16_t)frame_len;
+    ret = ml_clicker_send_encoded_frame_retained(encoded.frame, encoded.len);
+    if (ret < 0) {
+        return ret;
+    }
+
+    LOG_INF("ML BLE COBS frame accepted: msg=0x%02x src=0x%016llx seq=%u payload_len=%u frame_len=%u",
+            frame_packet.msg_type,
+            (unsigned long long)frame_packet.src_id,
+            frame_packet.seq,
+            (unsigned int)payload_len,
+            (unsigned int)frame_len);
+    HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
+    high_debug_log_event("BLE_GATEWAY_PACKET_TX",
+                         "msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u frame_len=%u",
+                         frame_packet.msg_type,
+                         (unsigned long long)frame_packet.src_id,
+                         (unsigned long long)frame_packet.dst_id,
+                         frame_packet.seq,
+                         (unsigned int)payload_len,
+                         (unsigned int)frame_len);
+    return 0;
+}
+
 static int ml_clicker_emit_or_buffer_host_packet(const struct proto_packet *packet,
                                                  const uint8_t *payload,
                                                  size_t payload_len)
@@ -984,10 +1296,13 @@ static int ml_clicker_emit_or_buffer_host_packet(const struct proto_packet *pack
     int ret;
 
     if (!gateway_ble_uwb_quiet_active()) {
-        return gateway_emit_host_packet(packet, payload, payload_len);
+        return ml_clicker_emit_host_packet_retained(packet,
+                                                    payload,
+                                                    payload_len);
     }
 
     if (ml_clicker_runtime.buffered_frames >= ML_CLICKER_BUFFERED_FRAME_MAX) {
+        ml_clicker_note_custody_failure("quiet-buffer-capacity", -ENOSPC);
         return -ENOSPC;
     }
 
@@ -1000,9 +1315,11 @@ static int ml_clicker_emit_or_buffer_host_packet(const struct proto_packet *pack
                                            &frame_len,
                                            &frame_packet);
     if (ret < 0) {
+        ml_clicker_note_custody_failure("quiet-buffer-encode", ret);
         return ret;
     }
     if (frame_len > UINT16_MAX) {
+        ml_clicker_note_custody_failure("quiet-buffer-length", -EMSGSIZE);
         return -EMSGSIZE;
     }
 
@@ -1142,13 +1459,17 @@ static int ml_clicker_emit_range_sample_record(
     packet.ttl = 1u;
     packet.payload_len = (uint8_t)payload_len;
 
-    return gateway_emit_host_packet(&packet, payload, payload_len);
+    return ml_clicker_emit_host_packet_retained(&packet,
+                                                payload,
+                                                payload_len);
 }
 
-static void ml_clicker_flush_buffered_frames(
+static int ml_clicker_flush_buffered_frames(
     const struct uwb_range_schedule_frame *schedule)
 {
-    for (uint16_t i = 0u; i < ml_clicker_runtime.buffered_samples; i++) {
+    while (ml_clicker_runtime.buffered_sample_head <
+           ml_clicker_runtime.buffered_samples) {
+        uint16_t i = ml_clicker_runtime.buffered_sample_head;
         const struct ml_clicker_buffered_sample *sample =
             &ml_clicker_runtime.buffered_samples_storage[i];
         int ret;
@@ -1160,32 +1481,40 @@ static void ml_clicker_flush_buffered_frames(
                     (unsigned int)(i + 1u),
                     ml_clicker_runtime.buffered_samples,
                     ret);
-            continue;
+            return ret;
         }
 
+        ml_clicker_runtime.buffered_sample_head++;
         ml_clicker_runtime.flushed_frames++;
     }
     ml_clicker_runtime.buffered_samples = 0u;
+    ml_clicker_runtime.buffered_sample_head = 0u;
 
-    for (uint16_t i = 0u; i < ml_clicker_runtime.buffered_frames; i++) {
+    while (ml_clicker_runtime.buffered_frame_head <
+           ml_clicker_runtime.buffered_frames) {
+        uint16_t i = ml_clicker_runtime.buffered_frame_head;
         const struct ml_clicker_buffered_frame *buffered =
             &ml_clicker_runtime.buffered_frames_storage[i];
         int ret;
 
-        ret = gateway_ble_send_packet_frame(buffered->frame, buffered->len);
+        ret = ml_clicker_send_encoded_frame_retained(buffered->frame,
+                                                     buffered->len);
         if (ret < 0) {
             ml_clicker_runtime.notify_failures++;
             LOG_WRN("ML buffered range sample notify failed: index=%u/%u ret=%d",
                     (unsigned int)(i + 1u),
                     ml_clicker_runtime.buffered_frames,
                     ret);
-            continue;
+            return ret;
         }
 
+        ml_clicker_runtime.buffered_frame_head++;
         ml_clicker_runtime.flushed_frames++;
         HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
     }
     ml_clicker_runtime.buffered_frames = 0u;
+    ml_clicker_runtime.buffered_frame_head = 0u;
+    return 0;
 }
 
 static int ml_clicker_read_u8_tlv(const uint8_t *payload,
@@ -1205,7 +1534,11 @@ static int ml_clicker_read_u8_tlv(const uint8_t *payload,
     }
 
     *value = default_value;
-    ret = tlv_find(payload, payload_len, type, &tlv_value, &tlv_len);
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          type,
+                          &tlv_value,
+                          &tlv_len);
     if (ret == PROTO_ERR_NOT_FOUND) {
         return 0;
     }
@@ -1339,10 +1672,12 @@ static int ml_clicker_emit_anchor_pair_result_record(
     packet.seq = ml_clicker_next_packet_seq();
     packet.ttl = 1u;
     packet.payload_len = (uint8_t)payload_len;
-    return gateway_emit_host_packet(&packet, payload, payload_len);
+    return ml_clicker_emit_host_packet_retained(&packet,
+                                                payload,
+                                                payload_len);
 }
 
-static void ml_clicker_emit_stored_anchor_pair_results(void)
+static int ml_clicker_emit_stored_anchor_pair_results(void)
 {
     for (uint8_t i = 0u; i < UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS; i++) {
         const struct ml_clicker_anchor_pair_result *stored =
@@ -1358,16 +1693,19 @@ static void ml_clicker_emit_stored_anchor_pair_results(void)
             LOG_WRN("ML anchor-pair result notify failed: pair=%u ret=%d",
                     i,
                     ret);
-            continue;
+            return ret;
         }
         ml_clicker_runtime.flushed_frames++;
         ml_clicker_runtime.emitted_samples++;
     }
+    return 0;
 }
 
-static int ml_clicker_send_command_result(const struct ml_clicker_request *request,
-                                          enum command_status status,
-                                          uint8_t reason)
+static int ml_clicker_send_command_result_with_custody(
+    const struct ml_clicker_request *request,
+    enum command_status status,
+    uint8_t reason,
+    bool retain_until_custodied)
 {
     struct proto_packet result = {0};
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
@@ -1433,7 +1771,72 @@ static int ml_clicker_send_command_result(const struct ml_clicker_request *reque
     }
     result.ttl = 1u;
     result.payload_len = (uint8_t)payload_len;
-    return gateway_emit_host_packet(&result, payload, payload_len);
+    return retain_until_custodied ?
+           ml_clicker_emit_host_packet_retained(&result,
+                                                payload,
+                                                payload_len) :
+           gateway_emit_host_packet(&result, payload, payload_len);
+}
+
+static int ml_clicker_send_command_result(
+    const struct ml_clicker_request *request,
+    enum command_status status,
+    uint8_t reason)
+{
+    return ml_clicker_send_command_result_with_custody(request,
+                                                       status,
+                                                       reason,
+                                                       false);
+}
+
+static void ml_clicker_release_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    atomic_clear(&ml_clicker_busy);
+}
+
+static void ml_clicker_finish_request(const struct ml_clicker_request *request,
+                                      enum command_status status,
+                                      uint8_t reason)
+{
+    int ret;
+
+    if (ml_clicker_runtime.custody_failed ||
+        ml_clicker_runtime.buffered_sample_head !=
+            ml_clicker_runtime.buffered_samples ||
+        ml_clicker_runtime.buffered_frame_head !=
+            ml_clicker_runtime.buffered_frames) {
+        LOG_ERR("ML terminal result withheld: custody_failed=%u samples_pending=%u frames_pending=%u",
+                ml_clicker_runtime.custody_failed ? 1u : 0u,
+                (unsigned int)(ml_clicker_runtime.buffered_samples -
+                               ml_clicker_runtime.buffered_sample_head),
+                (unsigned int)(ml_clicker_runtime.buffered_frames -
+                               ml_clicker_runtime.buffered_frame_head));
+        app_watchdog_stop_feeding();
+        return;
+    }
+
+    ret = ml_clicker_send_command_result_with_custody(request,
+                                                      status,
+                                                      reason,
+                                                      true);
+    if (ret < 0) {
+        LOG_WRN("ML clicker terminal command result failed: %d", ret);
+        app_watchdog_stop_feeding();
+        return;
+    }
+
+    /*
+     * Keep ownership until this handler has returned. The release item runs
+     * behind the current collection item on the same private queue, so a BLE
+     * callback cannot resubmit ml_clicker_collect_work while it is running.
+     */
+    ret = app_clicker_submit_work(&ml_clicker_release_work);
+    if (ret < 0) {
+        LOG_ERR("ML clicker request-owner release failed closed: %d", ret);
+        k_panic();
+    }
 }
 
 int ml_clicker_emit_range_sample_if_active(
@@ -1478,6 +1881,7 @@ int ml_clicker_emit_range_sample_if_active(
     if (gateway_ble_uwb_quiet_active()) {
         if (ml_clicker_runtime.buffered_samples >= ML_CLICKER_BUFFERED_SAMPLE_MAX) {
             ret = -ENOSPC;
+            ml_clicker_note_custody_failure("sample-buffer-capacity", ret);
         } else {
             ml_clicker_runtime.buffered_samples_storage[ml_clicker_runtime.buffered_samples] =
                 sample;
@@ -1963,6 +2367,7 @@ void ml_clicker_run_post_burst_diagnostics(
 {
     size_t total_samples;
     bool quiet_owned = false;
+    bool radio_cleanup_failed = false;
 
     if (!ml_clicker_runtime.active || session == NULL || schedule == NULL) {
         return;
@@ -2027,8 +2432,27 @@ void ml_clicker_run_post_burst_diagnostics(
             int64_t attempt_target_us =
                 target_us + ((int64_t)diag_attempt * UWB_POST_BURST_DIAG_RETRY_DELAY_MS *
                              1000);
+            uint32_t diagnostic_deadline_budget_ms =
+                UWB_POST_BURST_DIAG_TIMEOUT_MS + CLICK_REPORT_BUILD_GUARD_MS;
             int64_t remaining_ms;
+            int cleanup_ret;
 
+            if (click_deadline_ms != INT64_MAX) {
+                int64_t latest_start_ms =
+                    click_deadline_ms - diagnostic_deadline_budget_ms;
+
+                if (latest_start_ms < 0 ||
+                    attempt_target_us > latest_start_ms * 1000) {
+                    LOG_WRN("ML post-burst diagnostic skipped: reason=scheduled_target_after_budget anchor=0x%016llx entry=%u attempt=%u target_us=%lld latest_start_ms=%lld exchange_budget_ms=%u",
+                            (unsigned long long)entry->anchor_id,
+                            entry_index,
+                            diag_attempt + 1u,
+                            (long long)attempt_target_us,
+                            (long long)latest_start_ms,
+                            diagnostic_deadline_budget_ms);
+                    break;
+                }
+            }
             sleep_until_us(attempt_target_us);
             remaining_ms = click_deadline_ms - k_uptime_get();
             if (remaining_ms <= CLICK_REPORT_BUILD_GUARD_MS) {
@@ -2039,9 +2463,6 @@ void ml_clicker_run_post_burst_diagnostics(
                         (long long)remaining_ms);
                 break;
             }
-            range_request.timeout_ms = MIN(UWB_POST_BURST_DIAG_TIMEOUT_MS,
-                                           (uint32_t)(remaining_ms -
-                                                      CLICK_REPORT_BUILD_GUARD_MS));
 
             memset(&range_result, 0, sizeof(range_result));
             range_result.status = RANGE_RX_TIMEOUT;
@@ -2056,6 +2477,30 @@ void ml_clicker_run_post_burst_diagnostics(
                         ret);
                 continue;
             }
+            remaining_ms = click_deadline_ms - k_uptime_get();
+            if (remaining_ms <= CLICK_REPORT_BUILD_GUARD_MS) {
+                cleanup_ret = app_radio_idle_with_bounded_recovery(
+                    "ML post-burst diagnostic budget exit");
+
+                radio_guard_uwb_stop();
+                if (cleanup_ret < 0) {
+                    LOG_ERR("ML post-burst diagnostic cleanup failed: anchor=0x%016llx entry=%u attempt=%u cleanup_ret=%d",
+                            (unsigned long long)entry->anchor_id,
+                            entry_index,
+                            diag_attempt + 1u,
+                            cleanup_ret);
+                    radio_cleanup_failed = true;
+                }
+                LOG_WRN("ML post-burst diagnostic skipped: reason=radio_guard_consumed_budget anchor=0x%016llx entry=%u attempt=%u remaining_ms=%lld",
+                        (unsigned long long)entry->anchor_id,
+                        entry_index,
+                        diag_attempt + 1u,
+                        (long long)remaining_ms);
+                break;
+            }
+            range_request.timeout_ms = MIN(UWB_POST_BURST_DIAG_TIMEOUT_MS,
+                                           (uint32_t)(remaining_ms -
+                                                      CLICK_REPORT_BUILD_GUARD_MS));
 
             LOG_INF("ML post-burst diagnostic start: anchor=0x%016llx entry=%u attempt=%u/%u seq=%u timeout_ms=%u",
                     (unsigned long long)entry->anchor_id,
@@ -2077,8 +2522,20 @@ void ml_clicker_run_post_burst_diagnostics(
                                  range_request.timeout_ms);
 
             ret = dwm3000_driver_range_initiator(&range_request, &range_result);
-            (void)dwm3000_driver_idle();
+            cleanup_ret = app_radio_idle_with_bounded_recovery(
+                "ML post-burst diagnostic range");
             radio_guard_uwb_stop();
+            if (cleanup_ret < 0) {
+                LOG_ERR("ML post-burst diagnostic cleanup failed: anchor=0x%016llx entry=%u attempt=%u operation_ret=%d cleanup_ret=%d",
+                        (unsigned long long)entry->anchor_id,
+                        entry_index,
+                        diag_attempt + 1u,
+                        ret,
+                        cleanup_ret);
+                ret = cleanup_ret;
+                radio_cleanup_failed = true;
+                break;
+            }
 
             if (range_result.exchange_started) {
                 LOG_INF("ML post-burst diagnostic complete: anchor=0x%016llx entry=%u attempt=%u seq=%u ret=%d status=%s(%u) rsl_present=%u cir_present=%u anchor_full_cir=%u clicker_diag=%u",
@@ -2134,6 +2591,9 @@ void ml_clicker_run_post_burst_diagnostics(
             }
         }
 
+        if (radio_cleanup_failed) {
+            break;
+        }
         if (stored->valid) {
             if (!diag_complete) {
                 LOG_WRN("ML post-burst diagnostic stored incomplete: anchor=0x%016llx entry=%u seq=%u status=%s(%u) anchor_full_cir=%u",
@@ -2153,12 +2613,12 @@ void ml_clicker_run_post_burst_diagnostics(
     }
 }
 
-static void ml_clicker_emit_stored_post_burst_diagnostics(
+static int ml_clicker_emit_stored_post_burst_diagnostics(
     const struct uwb_clicker_session *session,
     const struct uwb_range_schedule_frame *schedule)
 {
     if (!ml_clicker_runtime.active || session == NULL || schedule == NULL) {
-        return;
+        return -EINVAL;
     }
 
     for (uint16_t i = 0u; i < ml_clicker_runtime.post_burst_diagnostics; i++) {
@@ -2185,8 +2645,10 @@ static void ml_clicker_emit_stored_post_burst_diagnostics(
                     ml_clicker_runtime.post_burst_diagnostics,
                     (unsigned long long)entry->anchor_id,
                     ret);
+            return ret;
         }
     }
+    return 0;
 }
 
 static enum command_status ml_clicker_status_from_ret(int ret)
@@ -2225,6 +2687,7 @@ static enum command_status ml_clicker_run_live_tracking(
     ml_clicker_discovery_slot_override = request->discovery_slot_count;
     atomic_clear(&ml_clicker_live_stop_requested);
     ml_clicker_live_tracking_touch();
+    ml_clicker_live_control_publish(request);
 
     LOG_INF("ML live tracking start: command=0x%04x samples_per_anchor=%u max_anchors=%u discovery_slots=%u watchdog_ms=%u host=0x%016llx",
             (unsigned int)request->command_id,
@@ -2241,6 +2704,7 @@ static enum command_status ml_clicker_run_live_tracking(
         uint32_t event_seq;
         uint64_t priority_id;
         int64_t click_deadline_ms;
+        int64_t schedule_tx_ms = -1;
         uint8_t attempted_count = 0u;
         bool setup_quiet = false;
         int ret;
@@ -2260,7 +2724,14 @@ static enum command_status ml_clicker_run_live_tracking(
         memset(&schedule, 0, sizeof(schedule));
         memset(&config, 0, sizeof(config));
 
-        event_seq = next_click_event_seq();
+        ret = app_click_event_sequence_next(&event_seq);
+        if (ret < 0) {
+            LOG_ERR("ML live tracking identity allocation failed closed: %d",
+                    ret);
+            last_ret = ret;
+            status = COMMAND_INTERNAL_ERROR;
+            break;
+        }
         priority_id = clicker_priority_id(event_seq, 1u);
         click_deadline_ms = k_uptime_get() + ML_CLICKER_COLLECTION_DEADLINE_MS;
 
@@ -2284,11 +2755,14 @@ static enum command_status ml_clicker_run_live_tracking(
         if (ret == PROTO_OK) {
             gateway_ble_enter_uwb_quiet("ml-clicker-live-control");
             setup_quiet = true;
-            ret = app_clicker_collect_uwb_attempt_with_options(&session,
-                                                               priority_id,
-                                                               &schedule,
-                                                               true,
-                                                               false);
+            ret = app_clicker_collect_uwb_attempt_with_options_until(
+                &session,
+                priority_id,
+                &schedule,
+                true,
+                false,
+                click_deadline_ms,
+                &schedule_tx_ms);
         }
         if (setup_quiet && gateway_ble_uwb_quiet_active()) {
             gateway_ble_exit_uwb_quiet("ml-clicker-live-control");
@@ -2299,10 +2773,17 @@ static enum command_status ml_clicker_run_live_tracking(
             ml_clicker_runtime.selected_anchors = schedule.selected_count;
             ret = app_clicker_range_scheduled_anchors(&session,
                                                       &schedule,
+                                                      schedule_tx_ms,
                                                       click_deadline_ms,
                                                       &attempted_count);
             ml_clicker_runtime.attempted_ranges += attempted_count;
-            ml_clicker_flush_buffered_frames(&schedule);
+            {
+                int flush_ret = ml_clicker_flush_buffered_frames(&schedule);
+
+                if (ret == 0 && flush_ret < 0) {
+                    ret = flush_ret;
+                }
+            }
         }
 
         if (ret < 0) {
@@ -2323,13 +2804,14 @@ static enum command_status ml_clicker_run_live_tracking(
         laps++;
     }
 
+    ml_clicker_live_control_clear();
     ml_clicker_runtime.active = false;
     ml_clicker_discovery_slot_override = 0u;
     if (status == COMMAND_OK && ml_clicker_runtime.notify_failures > 0u) {
         status = COMMAND_INTERNAL_ERROR;
     }
 
-    LOG_INF("ML live tracking done: status=%s last_ret=%d laps=%u selected=%u attempted=%u emitted=%u buffered=%u flushed=%u notify_failures=%u",
+    LOG_INF("ML live tracking done: status=%s last_ret=%d laps=%u selected=%u attempted=%u emitted=%u buffered=%u flushed=%u notify_failures=%u ble_custody_retries=%u",
             command_status_name(status),
             last_ret,
             laps,
@@ -2338,7 +2820,8 @@ static enum command_status ml_clicker_run_live_tracking(
             ml_clicker_runtime.emitted_samples,
             ml_clicker_runtime.buffered_frames,
             ml_clicker_runtime.flushed_frames,
-            ml_clicker_runtime.notify_failures);
+            ml_clicker_runtime.notify_failures,
+            ml_clicker_runtime.ble_custody_retries);
     return status;
 }
 
@@ -2408,11 +2891,15 @@ void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
         enum command_status live_status = COMMAND_INVALID_STATE;
 
         if (ml_clicker_live_tracking_active()) {
-            ml_clicker_live_tracking_touch();
-            if (command_id == CMD_ML_STOP_LIVE_TRACKING) {
-                atomic_set(&ml_clicker_live_stop_requested, 1);
+            if (ml_clicker_live_control_matches_active(&request)) {
+                ml_clicker_live_tracking_touch();
+                if (command_id == CMD_ML_STOP_LIVE_TRACKING) {
+                    atomic_set(&ml_clicker_live_stop_requested, 1);
+                }
+                live_status = COMMAND_OK;
+            } else {
+                live_status = COMMAND_DENIED;
             }
-            live_status = COMMAND_OK;
         }
         (void)ml_clicker_send_command_result(&request, live_status, 0u);
         return;
@@ -2498,6 +2985,7 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
     struct uwb_clicker_config config;
     enum command_status status;
     int64_t click_deadline_ms;
+    int64_t schedule_tx_ms = -1;
     uint32_t event_seq;
     uint64_t priority_id;
     uint8_t attempted_count = 0u;
@@ -2512,12 +3000,16 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
 
     if (request.live_tracking) {
         status = ml_clicker_run_live_tracking(&request);
-        (void)ml_clicker_send_command_result(&request, status, 0u);
-        atomic_clear(&ml_clicker_busy);
+        ml_clicker_finish_request(&request, status, 0u);
         return;
     }
 
-    event_seq = next_click_event_seq();
+    ret = app_click_event_sequence_next(&event_seq);
+    if (ret < 0) {
+        LOG_ERR("ML collection identity allocation failed closed: %d", ret);
+        ml_clicker_finish_request(&request, COMMAND_INTERNAL_ERROR, 0u);
+        return;
+    }
     priority_id = clicker_priority_id(event_seq, 1u);
     click_deadline_ms = k_uptime_get() + ML_CLICKER_COLLECTION_DEADLINE_MS;
 
@@ -2571,26 +3063,46 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
                                                 priority_id,
                                                 click_deadline_ms);
     } else if (ret == 0) {
-        ret = app_clicker_collect_uwb_attempt_with_options(&session,
-                                                       priority_id,
-                                                       &schedule,
-                                                       request.allow_cached_discovery,
-                                                       !request.range_only);
+        ret = app_clicker_collect_uwb_attempt_with_options_until(
+            &session,
+            priority_id,
+            &schedule,
+            request.allow_cached_discovery,
+            !request.range_only,
+            click_deadline_ms,
+            &schedule_tx_ms);
     }
-    if (ret == 0) {
+    if (ret == 0 && !request.anchor_pair_survey) {
         ml_clicker_runtime.selected_anchors = schedule.selected_count;
         ret = app_clicker_range_scheduled_anchors(&session,
                                           &schedule,
+                                          schedule_tx_ms,
                                           click_deadline_ms,
                                           &attempted_count);
         ml_clicker_runtime.attempted_ranges = attempted_count;
     }
     gateway_ble_exit_uwb_quiet("ml-clicker-collection");
     if (request.anchor_pair_survey) {
-        ml_clicker_emit_stored_anchor_pair_results();
+        int emit_ret = ml_clicker_emit_stored_anchor_pair_results();
+
+        if (ret == 0 && emit_ret < 0) {
+            ret = emit_ret;
+        }
     } else {
-        ml_clicker_flush_buffered_frames(&schedule);
-        ml_clicker_emit_stored_post_burst_diagnostics(&session, &schedule);
+        int flush_ret = ml_clicker_flush_buffered_frames(&schedule);
+
+        if (ret == 0 && flush_ret < 0) {
+            ret = flush_ret;
+        }
+        if (flush_ret == 0) {
+            int diag_ret =
+                ml_clicker_emit_stored_post_burst_diagnostics(&session,
+                                                              &schedule);
+
+            if (ret == 0 && diag_ret < 0) {
+                ret = diag_ret;
+            }
+        }
     }
 
     ml_clicker_runtime.active = false;
@@ -2600,7 +3112,7 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
         status = COMMAND_INTERNAL_ERROR;
     }
 
-    LOG_INF("ML collection done: event_seq=%u ret=%d status=%s mode=%s cached_discovery=%u selected=%u attempted=%u emitted=%u buffered=%u flushed=%u notify_failures=%u ds_ok=%u ds_fail=%u",
+    LOG_INF("ML collection done: event_seq=%u ret=%d status=%s mode=%s cached_discovery=%u selected=%u attempted=%u emitted=%u buffered=%u flushed=%u notify_failures=%u ble_custody_retries=%u ds_ok=%u ds_fail=%u",
             event_seq,
             ret,
             command_status_name(status),
@@ -2612,10 +3124,10 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
             ml_clicker_runtime.buffered_frames,
             ml_clicker_runtime.flushed_frames,
             ml_clicker_runtime.notify_failures,
+            ml_clicker_runtime.ble_custody_retries,
             session.diagnostics.ds_twr_successes,
             session.diagnostics.ds_twr_failures);
-    (void)ml_clicker_send_command_result(&request, status, 0u);
-    atomic_clear(&ml_clicker_busy);
+    ml_clicker_finish_request(&request, status, 0u);
 }
 #endif
 
@@ -2626,15 +3138,21 @@ int app_ml_init(void)
     if (DEVICE_ROLE == ROLE_CLICKER) {
         int ret;
 
-        (void)app_clicker_start_work_queue();
+        ret = app_clicker_start_work_queue();
+        if (ret < 0) {
+            LOG_ERR("ML clicker action work queue unavailable: %d", ret);
+            return ret;
+        }
         k_work_init(&ml_clicker_collect_work, ml_clicker_collect_work_handler);
+        k_work_init(&ml_clicker_release_work, ml_clicker_release_work_handler);
         k_work_init_delayable(&ml_clicker_rainbow_led_work,
                               ml_clicker_rainbow_led_work_handler);
-        (void)k_work_schedule(&ml_clicker_rainbow_led_work, K_NO_WAIT);
         ret = gateway_ble_init();
         if (ret < 0) {
             LOG_ERR("ML clicker BLE PC link unavailable: %d", ret);
+            return ret;
         }
+        (void)k_work_schedule(&ml_clicker_rainbow_led_work, K_NO_WAIT);
         LOG_INF("ML clicker ready; BLE-triggered UWB collection enabled");
     }
 #endif

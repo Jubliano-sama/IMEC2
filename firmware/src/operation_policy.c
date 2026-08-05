@@ -1,5 +1,8 @@
 #include "operation_policy.h"
 
+#include "discovery_assignment.h"
+#include "survey.h"
+
 #include <string.h>
 
 static uint8_t operation_policy_value_len(enum operation_policy_family family)
@@ -75,6 +78,8 @@ void operation_policy_set_defaults(struct operation_policy_set *set)
 static int operation_policy_assignment_validate(
     const struct operation_policy_assignment *policy)
 {
+    uint32_t required_budget_ms;
+
     if (policy->expected_anchor_count >
             OPERATION_POLICY_EXPECTED_ANCHOR_COUNT_MAX ||
         policy->operation_budget_ms <
@@ -87,12 +92,18 @@ static int operation_policy_assignment_validate(
             OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
         return PROTO_ERR_MALFORMED;
     }
-    return PROTO_OK;
+    return operation_policy_assignment_required_budget_ms(
+               policy, &required_budget_ms) == PROTO_OK &&
+           policy->operation_budget_ms >= required_budget_ms ?
+           PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
 static int operation_policy_discovery_validate(
     const struct operation_policy_discovery *policy)
 {
+    const struct operation_policy_discovery_budget_terms base_terms = {0};
+    uint32_t required_budget_ms;
+
     if (policy->start_delay_ms <
             OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS ||
         policy->start_delay_ms >
@@ -113,7 +124,10 @@ static int operation_policy_discovery_validate(
             OPERATION_POLICY_COMMAND_BUDGET_MAX_MS) {
         return PROTO_ERR_MALFORMED;
     }
-    return PROTO_OK;
+    return operation_policy_discovery_required_budget_ms(
+               policy, &base_terms, &required_budget_ms) == PROTO_OK &&
+           policy->operation_budget_ms >= required_budget_ms ?
+           PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
 static int operation_policy_pair_validate(
@@ -339,5 +353,85 @@ int operation_policy_set_from_tlvs(const uint8_t *payload,
         cursor += len;
     }
     *set = parsed;
+    return PROTO_OK;
+}
+
+int operation_policy_assignment_required_budget_ms(
+    const struct operation_policy_assignment *policy,
+    uint32_t *required_budget_ms)
+{
+    uint64_t collection_ms;
+    uint64_t total_ms;
+
+    if (policy == NULL || required_budget_ms == NULL ||
+        policy->expected_anchor_count >
+            OPERATION_POLICY_EXPECTED_ANCHOR_COUNT_MAX ||
+        policy->response_spread_ms <
+            OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
+        policy->response_spread_ms >
+            OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
+        return PROTO_ERR_ARG;
+    }
+
+    collection_ms =
+        (uint64_t)discovery_assignment_response_custody_ms(
+            DISCOVERY_ASSIGNMENT_MAX_HOPS) +
+        DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+        policy->response_spread_ms - 1u;
+    total_ms =
+        (uint64_t)DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT *
+            DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS +
+        2u * collection_ms +
+        DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS +
+        DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
+        DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS +
+        DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS;
+    if (total_ms > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *required_budget_ms = (uint32_t)total_ms;
+    return PROTO_OK;
+}
+
+int operation_policy_discovery_required_budget_ms(
+    const struct operation_policy_discovery *policy,
+    const struct operation_policy_discovery_budget_terms *terms,
+    uint32_t *required_budget_ms)
+{
+    uint64_t discovery_ms;
+    uint64_t report_emission_ms;
+    uint64_t total_ms;
+
+    if (policy == NULL || terms == NULL || required_budget_ms == NULL ||
+        policy->start_delay_ms <
+            OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS ||
+        policy->start_delay_ms >
+            OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS ||
+        policy->slot_ms < OPERATION_POLICY_DISCOVERY_SLOT_MIN_MS ||
+        policy->slot_ms > OPERATION_POLICY_DISCOVERY_SLOT_MAX_MS ||
+        policy->slot_count < OPERATION_POLICY_DISCOVERY_SLOT_COUNT_MIN ||
+        policy->slot_count > OPERATION_POLICY_DISCOVERY_SLOT_COUNT_MAX ||
+        policy->round_count < OPERATION_POLICY_DISCOVERY_ROUND_COUNT_MIN ||
+        policy->round_count > OPERATION_POLICY_DISCOVERY_ROUND_COUNT_MAX ||
+        policy->report_grace_ms <
+            OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MIN_MS ||
+        policy->report_grace_ms >
+            OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MAX_MS) {
+        return PROTO_ERR_ARG;
+    }
+
+    discovery_ms = (uint64_t)policy->slot_ms * policy->slot_count *
+                   policy->round_count;
+    report_emission_ms =
+        (uint64_t)terms->report_slot_ms * policy->slot_count;
+    total_ms = policy->start_delay_ms + discovery_ms + report_emission_ms +
+               policy->report_grace_ms + terms->report_custody_ms +
+               terms->report_delivery_tail_ms +
+               terms->terminal_scheduling_guard_ms +
+               SURVEY_DISCOVERY_OPERATION_TERMINAL_GUARD_MS;
+    if (total_ms > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *required_budget_ms = (uint32_t)total_ms;
     return PROTO_OK;
 }

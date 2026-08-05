@@ -23,7 +23,8 @@ from .protocol import (
     Packet, MSG_CLICK_REPORT, TLV_ANCHOR_ID, TLV_CLICKER_ID, TLV_ATTEMPT_INDEX,
     TLV_DETECTION_SOURCE,
     TLV_DISTANCE_MM, TLV_EVENT_SEQ, TLV_RANGE_STATUS, TLV_SAMPLE_COUNT,
-    TLV_SAMPLE_INDEX, TLV_SURVEY_ID,
+    TLV_SAMPLE_INDEX, TLV_SURVEY_ID, TLV_SURVEY_OPERATION_GENERATION,
+    TLV_SURVEY_ROUND_COMMITMENT, TLV_SURVEY_ROUND_ID,
 )
 
 
@@ -84,10 +85,14 @@ class SurveyGeometryModel:
         self.positions_m: dict[str, tuple[float, float]] = {}
         self.generation = 0
         self._command_identity: tuple[int, int] | None = None
-        self._sample_counts: dict[tuple[str, str], int] = {}
-        self._sample_count_priorities: dict[tuple[str, str], int] = {}
+        self._operation_generation: int | None = None
+        self._round_commitments: dict[int, bytes] = {}
+        self._sample_counts: dict[tuple[tuple[str, str], int], int] = {}
+        self._sample_count_priorities: dict[
+            tuple[tuple[str, str], int], int
+        ] = {}
         self._sample_outcomes: dict[
-            tuple[str, str], dict[int, _SurveySampleOutcome]
+            tuple[tuple[str, str], int], dict[int, _SurveySampleOutcome]
         ] = {}
 
     @property
@@ -137,7 +142,9 @@ class SurveyGeometryModel:
             for pair in self.observed_opportunities
             for anchor_id in pair
         }
-        neighbors = {anchor_id: set() for anchor_id in anchor_ids}
+        neighbors: dict[str, set[str]] = {
+            anchor_id: set() for anchor_id in anchor_ids
+        }
         for left, right in self.pairs:
             neighbors[left].add(right)
             neighbors[right].add(left)
@@ -183,9 +190,39 @@ class SurveyGeometryModel:
         survey_id = packet.value(TLV_SURVEY_ID)
         initiator = packet.value(TLV_INITIATOR_ID)
         responder = packet.value(TLV_RESPONDER_ID)
-        if not all(isinstance(value, int) for value in (survey_id, initiator, responder)):
+        operation_generation = packet.value(TLV_SURVEY_OPERATION_GENERATION)
+        round_id = packet.value(TLV_SURVEY_ROUND_ID)
+        round_commitment = packet.value(TLV_SURVEY_ROUND_COMMITMENT)
+        if not all(
+            isinstance(value, int)
+            for value in (
+                survey_id,
+                initiator,
+                responder,
+                operation_generation,
+                round_id,
+            )
+        ):
             return None
-        assert isinstance(survey_id, int) and isinstance(initiator, int) and isinstance(responder, int)
+        assert (
+            isinstance(survey_id, int)
+            and isinstance(initiator, int)
+            and isinstance(responder, int)
+            and isinstance(operation_generation, int)
+            and isinstance(round_id, int)
+        )
+        if (
+            operation_generation == 0
+            or operation_generation & 0xFFFFFFFF == 0
+            or packet.session_id != (operation_generation & 0xFFFFFFFF)
+            or round_id == 0
+        ):
+            return None
+        if round_commitment is not None and (
+            not isinstance(round_commitment, bytes)
+            or len(round_commitment) != 32
+        ):
+            return None
         if initiator == 0 or responder == 0 or initiator == responder:
             return None
         if packet.src_id not in (initiator, responder):
@@ -194,6 +231,17 @@ class SurveyGeometryModel:
             self.reset(survey_id)
         elif self.survey_id != survey_id:
             return None
+        if self._operation_generation is None:
+            self._operation_generation = operation_generation
+        elif operation_generation < self._operation_generation:
+            return None
+        elif operation_generation > self._operation_generation:
+            self._replace_provisional_operation(operation_generation)
+        known_commitment = self._round_commitments.get(round_id)
+        if known_commitment is not None and round_commitment != known_commitment:
+            return None
+        if isinstance(round_commitment, bytes):
+            self._round_commitments[round_id] = round_commitment
         left, right = anchor_label(initiator), anchor_label(responder)
         pair = (left, right) if left < right else (right, left)
         before = (self.pairs.get(pair), pair in self.failures,
@@ -214,28 +262,26 @@ class SurveyGeometryModel:
         ):
             return None
         reporter_priority = 2 if packet.src_id == initiator else 1 if packet.src_id == responder else 0
-        known_sample_count = self._sample_counts.get(pair)
-        known_count_priority = self._sample_count_priorities.get(pair, -1)
+        round_key = (pair, round_id)
+        known_sample_count = self._sample_counts.get(round_key)
+        known_count_priority = self._sample_count_priorities.get(round_key, -1)
         if known_sample_count is None:
-            self._sample_counts[pair] = sample_count
-            self._sample_count_priorities[pair] = reporter_priority
+            self._sample_counts[round_key] = sample_count
+            self._sample_count_priorities[round_key] = reporter_priority
         elif known_sample_count != sample_count:
             if reporter_priority <= known_count_priority:
                 return None
-            self._sample_counts[pair] = sample_count
-            self._sample_count_priorities[pair] = reporter_priority
-            self._sample_outcomes.pop(pair, None)
-            self.pairs.pop(pair, None)
-            self.failures.discard(pair)
-            self.observed_opportunities.discard(pair)
+            self._sample_counts[round_key] = sample_count
+            self._sample_count_priorities[round_key] = reporter_priority
+            self._sample_outcomes.pop(round_key, None)
         elif reporter_priority > known_count_priority:
-            self._sample_count_priorities[pair] = reporter_priority
+            self._sample_count_priorities[round_key] = reporter_priority
         candidate = _SurveySampleOutcome(
             success,
             distance_mm if success and isinstance(distance_mm, int) else None,
             reporter_priority,
         )
-        samples = self._sample_outcomes.setdefault(pair, {})
+        samples = self._sample_outcomes.setdefault(round_key, {})
         previous = samples.get(sample_index)
         if (
             previous is None
@@ -247,27 +293,7 @@ class SurveyGeometryModel:
         ):
             samples[sample_index] = candidate
 
-        complete = all(index in samples for index in range(sample_count))
-        if complete:
-            self.observed_opportunities.add(pair)
-        all_successful = complete and all(
-            samples[index].successful for index in range(sample_count)
-        )
-        if all_successful:
-            mean_distance_mm = sum(
-                samples[index].distance_mm or 0 for index in range(sample_count)
-            ) / sample_count
-            self.pairs[pair] = AnchorPairDistance(
-                pair[0], pair[1], mean_distance_mm / 1000.0,
-                source=f"survey {survey_id}",
-            )
-            self.failures.discard(pair)
-        else:
-            self.pairs.pop(pair, None)
-            if any(not outcome.successful for outcome in samples.values()):
-                self.failures.add(pair)
-            else:
-                self.failures.discard(pair)
+        self._refresh_pair_aggregate(pair, survey_id)
         after = (self.pairs.get(pair), pair in self.failures,
                  pair in self.observed_opportunities)
         if after != before:
@@ -276,6 +302,64 @@ class SurveyGeometryModel:
             survey_id, pair[0], pair[1], distance_mm / 1000.0 if success else None,
             success, sample_index, sample_count,
         )
+
+    def _refresh_pair_aggregate(
+        self,
+        pair: tuple[str, str],
+        survey_id: int,
+    ) -> None:
+        """Publish one complete round without combining samples across rounds."""
+        round_states = [
+            (
+                round_id,
+                sample_count,
+                self._sample_outcomes.get((candidate_pair, round_id), {}),
+            )
+            for (candidate_pair, round_id), sample_count
+            in self._sample_counts.items()
+            if candidate_pair == pair
+        ]
+        if not round_states:
+            self.pairs.pop(pair, None)
+            self.observed_opportunities.discard(pair)
+            self.failures.discard(pair)
+            return
+
+        round_id, sample_count, samples = max(
+            round_states, key=lambda state: state[0]
+        )
+        if not all(index in samples for index in range(sample_count)):
+            self.pairs.pop(pair, None)
+            self.observed_opportunities.discard(pair)
+            if any(
+                not outcome.successful for outcome in samples.values()
+            ):
+                self.failures.add(pair)
+            else:
+                self.failures.discard(pair)
+            return
+
+        self.observed_opportunities.add(pair)
+        if not all(
+            samples[index].successful for index in range(sample_count)
+        ):
+            self.pairs.pop(pair, None)
+            self.failures.add(pair)
+            return
+
+        mean_distance_mm = sum(
+            samples[index].distance_mm or 0 for index in range(sample_count)
+        ) / sample_count
+        self.pairs[pair] = AnchorPairDistance(
+            pair[0],
+            pair[1],
+            mean_distance_mm / 1000.0,
+            source=(
+                f"survey {survey_id}, generation "
+                f"{self._operation_generation}, round {round_id}"
+            ),
+        )
+        self.failures.discard(pair)
 
     def begin_survey(
         self,
@@ -350,6 +434,8 @@ class SurveyGeometryModel:
         self.terminal_complete = False
         self.positions_m.clear()
         self._command_identity = None
+        self._operation_generation = None
+        self._round_commitments.clear()
         self._sample_counts.clear()
         self._sample_count_priorities.clear()
         self._sample_outcomes.clear()
@@ -358,6 +444,18 @@ class SurveyGeometryModel:
     def _invalidate_solution(self) -> None:
         self.positions_m.clear()
         self.generation += 1
+
+    def _replace_provisional_operation(self, operation_generation: int) -> None:
+        """Replace stale raw results when a newer durable operation arrives."""
+        self.pairs.clear()
+        self.failures.clear()
+        self.observed_opportunities.clear()
+        self._sample_counts.clear()
+        self._sample_count_priorities.clear()
+        self._sample_outcomes.clear()
+        self._round_commitments.clear()
+        self._operation_generation = operation_generation
+        self._invalidate_solution()
 
     def apply_solution(self, result: AnchorLayoutResult) -> None:
         self.positions_m = dict(result.positions_m)
@@ -437,7 +535,9 @@ def _is_three_vertex_connected(
     anchor_ids: set[str],
     pairs: dict[tuple[str, str], AnchorPairDistance],
 ) -> bool:
-    neighbors = {anchor_id: set() for anchor_id in anchor_ids}
+    neighbors: dict[str, set[str]] = {
+        anchor_id: set() for anchor_id in anchor_ids
+    }
     for left, right in pairs:
         neighbors[left].add(right)
         neighbors[right].add(left)
@@ -736,6 +836,12 @@ class TopologyComparison:
     eligibility_reason: str = ""
 
 
+def _u32_serial_newer(candidate: int, reference: int) -> bool:
+    """Compare wrapping event sequences using RFC 1982 half-range ordering."""
+    difference = (candidate - reference) & 0xFFFFFFFF
+    return 0 < difference < 0x80000000
+
+
 class TopologyBaselineModel:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -748,28 +854,79 @@ class TopologyBaselineModel:
         self.current_key: tuple[int, int, int, int] | None = None
         self.current_ids: set[int] = set()
         self.latest: TopologyComparison | None = None
+        self._latest_key: tuple[int, int, int, int] | None = None
+        self._newest_event_sequence: int | None = None
         self._anchors_by_key: dict[tuple[int, int, int, int], set[int]] = {}
         self._terminals: dict[tuple[int, int, int, int], GatewayCommandEvent] = {}
+        self._live_keys: set[tuple[int, int, int, int]] = set()
+        self._first_sequence_by_key: dict[
+            tuple[int, int, int, int], int
+        ] = {}
         self._first_loss_by_key: dict[tuple[int, int, int, int], int] = {}
 
     def observe(self, event: GatewayCommandEvent) -> TopologyComparison | None:
         if event.command_kind != 1:
             return None
         key = event.correlation_key
-        if key != self.current_key:
-            self.current_key = key
-            self.current_ids = self._anchors_by_key.setdefault(key, set())
-        self._first_loss_by_key.setdefault(key, event.lost_event_count)
+        anchor_ids = self._anchors_by_key.setdefault(key, set())
+        if not event.flags & 0x04:
+            self._live_keys.add(key)
+        first_sequence = self._first_sequence_by_key.get(key)
+        if (
+            first_sequence is None
+            or _u32_serial_newer(first_sequence, event.event_sequence)
+        ):
+            self._first_sequence_by_key[key] = event.event_sequence
+            self._first_loss_by_key[key] = event.lost_event_count
+        elif event.event_sequence == first_sequence:
+            self._first_loss_by_key[key] = min(
+                self._first_loss_by_key[key], event.lost_event_count
+            )
         if event.stage == 6 and event.anchor_id:
-            self.current_ids.add(event.anchor_id)
+            anchor_ids.add(event.anchor_id)
         if event.terminal:
-            self._terminals[key] = event
+            previous_terminal = self._terminals.get(key)
+            if (
+                previous_terminal is None
+                or _u32_serial_newer(
+                    event.event_sequence,
+                    previous_terminal.event_sequence,
+                )
+            ):
+                self._terminals[key] = event
+
+        if self.current_key is None:
+            self._select_current(key, event.event_sequence)
+        elif key == self.current_key:
+            if (
+                self._newest_event_sequence is None
+                or _u32_serial_newer(
+                    event.event_sequence, self._newest_event_sequence
+                )
+            ):
+                self._newest_event_sequence = event.event_sequence
+        elif (
+            self._newest_event_sequence is not None
+            and _u32_serial_newer(
+                event.event_sequence, self._newest_event_sequence
+            )
+        ):
+            self._select_current(key, event.event_sequence)
+
+        if key != self.current_key:
+            return None
+        self.current_ids = anchor_ids
         terminal = self._terminals.get(key)
         if terminal is None:
             return None
         actual = tuple(sorted(self.current_ids))
         telemetry_lost = terminal.lost_event_count > self._first_loss_by_key[key]
-        if terminal.command_status != 0 or terminal.reason != 0:
+        if key not in self._live_keys:
+            reason = (
+                "Incomplete: this enumeration is available only as replayed "
+                "history; run a new enumeration before accepting a baseline."
+            )
+        elif terminal.command_status != 0 or terminal.reason != 0:
             reason = f"Gateway ended the enumeration with status {terminal.command_status}, reason {terminal.reason}."
         elif terminal.total_count == 0:
             reason = "Completed, but no anchors replied."
@@ -802,10 +959,15 @@ class TopologyBaselineModel:
         else:
             status = "changed"
         self.latest = TopologyComparison(status, expected, actual, missing, added, complete, reason)
+        self._latest_key = key
         return self.latest
 
     def accept_latest(self) -> AnchorBaseline:
-        if self.latest is None or not self.latest.complete:
+        if (
+            self.latest is None
+            or not self.latest.complete
+            or self._latest_key != self.current_key
+        ):
             reason = self.latest.eligibility_reason if self.latest else "Run anchor enumeration and wait for its terminal result."
             raise ValueError(f"Baseline unavailable: {reason}")
         baseline = AnchorBaseline(self.latest.actual, datetime.now(timezone.utc).isoformat(timespec="seconds"), "user accepted Here-I-Am")
@@ -824,7 +986,19 @@ class TopologyBaselineModel:
         self.baseline = baseline
         self.latest = TopologyComparison("exact", baseline.anchor_ids, baseline.anchor_ids, (), (), True,
                                          f"Complete: {len(baseline.anchor_ids)} anchors accepted as the baseline.")
+        self._latest_key = self.current_key
         return baseline
+
+    def _select_current(
+        self,
+        key: tuple[int, int, int, int],
+        event_sequence: int,
+    ) -> None:
+        self.current_key = key
+        self.current_ids = self._anchors_by_key[key]
+        self._newest_event_sequence = event_sequence
+        self.latest = None
+        self._latest_key = None
 
     def _load(self) -> AnchorBaseline | None:
         if not self.path.exists():

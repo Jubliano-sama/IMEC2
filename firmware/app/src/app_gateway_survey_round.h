@@ -18,6 +18,7 @@ enum app_gateway_survey_round_phase {
     APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED,
     APP_GATEWAY_SURVEY_ROUND_OBSERVING,
     APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE,
+    APP_GATEWAY_SURVEY_ROUND_TERMINATING,
     APP_GATEWAY_SURVEY_ROUND_COMPLETE,
 };
 
@@ -37,6 +38,10 @@ struct app_gateway_survey_round_control {
 struct app_gateway_survey_round {
     struct survey_pair_round_runtime runtime;
     struct survey_pair_round_metadata metadata[SURVEY_GATEWAY_MAX_PAIRS];
+    struct survey_sample_observation_identity sample_identities
+        [SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES]
+        [2u]
+        [SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT];
     size_t planned_round_count;
     size_t dispatch_lane_index;
     enum survey_gateway_auto_stage dispatch_stage;
@@ -81,6 +86,17 @@ bool app_gateway_survey_round_go_terminal_retryable(
     enum node_comm_terminal_reason reason,
     uint8_t attempts_started);
 
+/*
+ * Purely classify one sample against the current batch. The caller selects
+ * ARMED while previewing the GO transition or OBSERVING after that transition.
+ */
+int app_gateway_survey_round_preflight_sample(
+    const struct app_gateway_survey_round *round,
+    enum survey_pair_round_lane_state admissible_lane_state,
+    uint64_t reporter_id,
+    const struct survey_sample *sample,
+    size_t *lane_index,
+    bool *duplicate);
 int app_gateway_survey_round_note_sample(
     struct app_gateway_survey_round *round,
     uint64_t reporter_id,
@@ -97,6 +113,29 @@ int app_gateway_survey_round_note_cleanup_complete(
     struct app_gateway_survey_round *round,
     size_t lane_index,
     uint8_t completed_mask);
+
+/*
+ * A terminal survey outcome must retain cleanup custody for every endpoint
+ * whose PREPARE was confirmed, plus the exact in-flight transaction mask
+ * whose PREPARE may have reached the radio. The current batch and its round
+ * commitment remain live until every returned cleanup mask is retired.
+ */
+int app_gateway_survey_round_begin_termination(
+    struct app_gateway_survey_round *round,
+    const struct survey_pair *active_pair,
+    uint8_t active_cleanup_mask,
+    size_t *active_lane_index);
+int app_gateway_survey_round_next_termination_cleanup(
+    const struct app_gateway_survey_round *round,
+    size_t *lane_index,
+    struct survey_pair *pair,
+    uint8_t *cleanup_mask);
+int app_gateway_survey_round_note_termination_cleanup_complete(
+    struct app_gateway_survey_round *round,
+    size_t lane_index,
+    uint8_t completed_mask);
+bool app_gateway_survey_round_terminating(
+    const struct app_gateway_survey_round *round);
 
 bool app_gateway_survey_round_batch_complete(
     const struct app_gateway_survey_round *round);

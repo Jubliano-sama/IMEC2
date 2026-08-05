@@ -137,15 +137,34 @@ int app_clicker_attempt_gate(struct uwb_clicker_session *session,
 int app_clicker_send_wake_claim_train(struct uwb_clicker_session *session,
                                       uint64_t priority_id,
                                       const struct app_clicker_wake_train_config *config);
+int app_clicker_send_wake_claim_train_until(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    const struct app_clicker_wake_train_config *config,
+    int64_t deadline_ms);
+uint32_t app_clicker_wake_train_opportunity_tail_ms(
+    const struct app_clicker_wake_train_config *config);
 int app_clicker_discover_uwb_anchors(struct uwb_clicker_session *session);
+int app_clicker_discover_uwb_anchors_until(
+    struct uwb_clicker_session *session,
+    int64_t deadline_ms);
 int app_clicker_collect_uwb_attempt_with_options(
     struct uwb_clicker_session *session,
     uint64_t priority_id,
     struct uwb_range_schedule_frame *schedule,
     bool allow_cached_discovery,
     bool post_burst_diagnostics);
+int app_clicker_collect_uwb_attempt_with_options_until(
+    struct uwb_clicker_session *session,
+    uint64_t priority_id,
+    struct uwb_range_schedule_frame *schedule,
+    bool allow_cached_discovery,
+    bool post_burst_diagnostics,
+    int64_t deadline_ms,
+    int64_t *schedule_tx_ms);
 int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                         const struct uwb_range_schedule_frame *schedule,
+                                        int64_t schedule_tx_ms,
                                         int64_t click_deadline_ms,
                                         uint8_t *attempted_count);
 int app_clicker_run_normal_click(void);

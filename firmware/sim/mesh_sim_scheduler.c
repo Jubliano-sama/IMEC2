@@ -350,6 +350,20 @@ int mesh_sim_scheduler_next(const struct mesh_sim_world *world,
     return best == SIZE_MAX ? -1 : (int)best;
 }
 
+bool mesh_sim_has_pending_finite_work(const struct mesh_sim_world *world)
+{
+    if (world == NULL) {
+        return false;
+    }
+    for (size_t i = 0u; i < world->event_count; i++) {
+        if (world->events[i].pending &&
+            world->events[i].type != SIM_EVENT_WATCHDOG_EXPIRE) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void mesh_sim_scheduler_pop(struct mesh_sim_world *world,
                             size_t event_index,
                             struct mesh_sim_event *event)

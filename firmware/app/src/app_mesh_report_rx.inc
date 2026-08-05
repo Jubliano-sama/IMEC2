@@ -37,7 +37,8 @@ static void mesh_rx_work_handler(struct k_work *work)
     }
     lock_ret = k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT);
     if (lock_ret != 0) {
-        submit_ret = mesh_submit_work(&mesh_rx_work);
+        submit_ret = mesh_submit_owned_work(&mesh_rx_work,
+                                            "rx-lock-retry");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_MESH_RX_WORK_LOCK_BUSY ret=%d q=%u owner=%s since=%u submit=%d\n",
                                 lock_ret,
@@ -78,7 +79,8 @@ bool mesh_process_queued_rx_now(const char *reason)
         return false;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && radio_guard_uwb_busy()) {
-        submit_ret = mesh_submit_work(&mesh_rx_work);
+        submit_ret = mesh_submit_owned_work(&mesh_rx_work,
+                                            "rx-radio-busy");
         status_debug_printf("DBG_MESH_RX_DIRECT_RF_BUSY submit=%d q=%u reason=%s\n",
                             submit_ret,
                             k_msgq_num_used_get(&mesh_rx_msgq),
@@ -88,7 +90,8 @@ bool mesh_process_queued_rx_now(const char *reason)
     mesh_coordinator_decide_now(reason == NULL ? "queued-rx" : reason,
                                 &coordinator_decision);
     if (!coordinator_decision.mesh_work_allowed) {
-        submit_ret = mesh_submit_work(&mesh_rx_work);
+        submit_ret = mesh_submit_owned_work(&mesh_rx_work,
+                                            "rx-coordinator-defer");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_MESH_RX_DIRECT_COORD_DEFER submit=%d q=%u state=%s reason=%s\n",
                                 submit_ret,
@@ -107,7 +110,8 @@ bool mesh_process_queued_rx_now(const char *reason)
     }
     lock_ret = k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT);
     if (lock_ret != 0) {
-        submit_ret = mesh_submit_work(&mesh_rx_work);
+        submit_ret = mesh_submit_owned_work(&mesh_rx_work,
+                                            "rx-direct-lock-retry");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_MESH_RX_DIRECT_BUSY lock=%d submit=%d q=%u owner=%s since=%u reason=%s\n",
                                 lock_ret,
@@ -140,7 +144,8 @@ bool mesh_process_queued_rx_now(const char *reason)
     k_mutex_unlock(&mesh_rx_handler_lock);
 
     if (k_msgq_num_used_get(&mesh_rx_msgq) > 0u) {
-        (void)mesh_submit_work(&mesh_rx_work);
+        (void)mesh_submit_owned_work(&mesh_rx_work,
+                                     "rx-drain-remainder");
     }
     return handled_count > 0u;
 }
@@ -382,10 +387,9 @@ static bool mesh_defer_due_retry_to_channel9_tx_slot(uint32_t now_ms)
             continue;
         }
 
-        delay_ms = uptime_ms_until_deadline(now_ms, prepare_ms);
-        if (delay_ms == 0u) {
-            delay_ms = 1u;
-        }
+        delay_ms = uptime_deadline_reached(now_ms, prepare_ms) ?
+                   1u :
+                   uptime_ms_until_deadline(now_ms, prepare_ms);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_CH9_RETRY_DEFER_RX_SLOT peer=0x%llx cnt=%u now=%u prepare=%u delay=%u\n",
                                 (unsigned long long)peer_id,
@@ -394,7 +398,9 @@ static bool mesh_defer_due_retry_to_channel9_tx_slot(uint32_t now_ms)
                                 prepare_ms,
                                 delay_ms);
         }
-        (void)mesh_reschedule_delayable(&mesh_tx_timeout_work, delay_ms);
+        (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
+                                         delay_ms,
+                                         "tx-timeout-channel9-slot");
         mesh_schedule_uwb_rx(0u);
         return true;
     }
@@ -412,8 +418,21 @@ static void mesh_tx_timeout_handler(struct k_work *work)
 
     ARG_UNUSED(work);
     if (mesh_transport_paused()) {
-        (void)mesh_reschedule_delayable(&mesh_tx_timeout_work,
-                                        REPORT_TX_RETRY_DELAY_MS);
+        (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
+                                         REPORT_TX_RETRY_DELAY_MS,
+                                         "paused-tx-timeout");
+        return;
+    }
+    if (mesh_outbox_persistence_dirty) {
+        /*
+         * A state transition (especially raw report -> ACK_CONFIRM) is not
+         * eligible for RF until the exact successor has passed NVS write and
+         * readback. An older already-queued timeout must not transmit the
+         * newer RAM owner while reset recovery still owns the predecessor.
+         */
+        (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
+                                         REPORT_TX_RETRY_DELAY_MS,
+                                         "outbox-persistence-fence");
         return;
     }
     now_ms = k_uptime_get_32();
@@ -426,11 +445,17 @@ static void mesh_tx_timeout_handler(struct k_work *work)
          */
         restore_ret =
             app_mesh_persistence_restore_outbox(&mesh_runtime, now_ms);
-        if (restore_ret < 0 && restore_ret != -ENOTSUP &&
-            mesh_relay_tx_active(&mesh_runtime)) {
-            LOG_WRN("mesh deferred outbox restore failed: %d", restore_ret);
-            (void)mesh_reschedule_delayable(&mesh_tx_timeout_work,
-                                            REPORT_TX_RETRY_DELAY_MS);
+        if (restore_ret < 0 && restore_ret != -ENOTSUP) {
+            /*
+             * A failed read leaves the active outbox's presence unknown. Do
+             * not consult the lower-priority deferred slot: doing so can
+             * reorder or overwrite the exact custody record whose read
+             * failed before it had a chance to populate mesh_runtime.
+             */
+            LOG_WRN("mesh active outbox restore failed: %d", restore_ret);
+            (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
+                                             REPORT_TX_RETRY_DELAY_MS,
+                                             "active-outbox-restore");
             return;
         }
         if (!mesh_relay_tx_active(&mesh_runtime)) {
@@ -444,8 +469,10 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                 mesh_deferred_outbox_pending = true;
                 LOG_WRN("mesh deferred transit restore failed: %d",
                         restore_ret);
-                (void)mesh_reschedule_delayable(&mesh_tx_timeout_work,
-                                                REPORT_TX_RETRY_DELAY_MS);
+                (void)mesh_reschedule_owned_work(
+                    &mesh_tx_timeout_work,
+                    REPORT_TX_RETRY_DELAY_MS,
+                    "deferred-outbox-restore");
                 return;
             }
         } else {
@@ -488,7 +515,9 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     }
 
     if (DEVICE_ROLE == ROLE_ANCHOR && mesh_report_anchor_survey_discovery_is_pending()) {
-        (void)mesh_reschedule_delayable(&mesh_tx_timeout_work, REPORT_TX_RETRY_DELAY_MS);
+        (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
+                                         REPORT_TX_RETRY_DELAY_MS,
+                                         "survey-discovery-tx-timeout");
         return;
     }
 
@@ -511,7 +540,13 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                                     result) != PROTO_OK) {
         return;
     }
-    mesh_handle_result_actions(result, UWB_CHANNEL_WAKE_CONTACT, NULL, NULL);
+    mesh_handle_result_actions(result,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               NULL,
+                               NULL,
+                               NULL,
+                               0u,
+                               NULL);
     if (mesh_relay_tx_active(&mesh_runtime) ||
         mesh_relay_result_bundle_pending(&mesh_runtime)) {
         mesh_schedule_tx_timeout();
@@ -537,12 +572,55 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     }
 }
 
+static uint64_t mesh_expand_uptime32(uint32_t timestamp_ms)
+{
+    uint64_t now_ms = (uint64_t)k_uptime_get();
+    int32_t offset_ms = (int32_t)(timestamp_ms - (uint32_t)now_ms);
+
+    return (uint64_t)((int64_t)now_ms + offset_ms);
+}
+
+static int mesh_gateway_protocol_validation_arm(uint32_t receive_timeout_ms,
+                                                uint32_t *token)
+{
+    if (token == NULL) {
+        return -EINVAL;
+    }
+    *token = 0u;
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return 0;
+    }
+    return gateway_protocol_validation_arm(receive_timeout_ms, token);
+}
+
+static int mesh_gateway_protocol_validation_complete(
+    uint32_t token,
+    uint32_t *received_at_ms)
+{
+    int ret;
+
+    if (received_at_ms == NULL) {
+        return -EINVAL;
+    }
+    if (DEVICE_ROLE != ROLE_GATEWAY || token == 0u) {
+        *received_at_ms = k_uptime_get_32();
+        return 0;
+    }
+    ret = dwm3000_driver_last_rx_host_uptime(received_at_ms);
+    if (ret < 0) {
+        return ret;
+    }
+    return gateway_protocol_validation_complete(
+        token, mesh_expand_uptime32(*received_at_ms));
+}
+
 static bool mesh_queue_from_frame_at_internal(
     const uint8_t *frame,
     size_t frame_len,
     uint8_t link_quality,
     uint8_t radio_channel,
     uint32_t received_at_ms,
+    uint32_t protocol_validation_token,
     const struct mesh_event_plan *current_channel9_plan,
     uint64_t current_channel9_peer_id,
     bool submit_work,
@@ -576,6 +654,43 @@ static bool mesh_queue_from_frame_at_internal(
         }
         return false;
     }
+    if (mesh_packet_rx_envelope_validate(
+            &context.packet,
+            context.payload,
+            context.payload_len,
+            context.previous_hop_id,
+            DEVICE_ID,
+            GATEWAY_ID,
+            radio_channel,
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) != PROTO_OK) {
+        if (mesh_gateway_route_test_role()) {
+            status_debug_printf(
+                "DBG_GATEWAY_RX_ENVELOPE_REJECT ch=%u msg=0x%02x src=0x%llx prev=0x%llx\n",
+                radio_channel,
+                context.packet.msg_type,
+                (unsigned long long)context.packet.src_id,
+                (unsigned long long)context.previous_hop_id);
+        }
+        return false;
+    }
+#if DEVICE_ROLE == ROLE_CLICKER
+    if (context.packet.dst_id != DEVICE_ID ||
+        (context.packet.msg_type != MSG_ROUTE_REPLY &&
+         context.packet.msg_type != MSG_GATEWAY_ACK &&
+         context.packet.msg_type != MSG_MESH_HOP_ACK &&
+         context.packet.msg_type != MSG_RELAY_BUSY &&
+         context.packet.msg_type != MSG_MESH_EVENT_PROPOSE &&
+         context.packet.msg_type != MSG_MESH_EVENT_ACCEPT &&
+         context.packet.msg_type != MSG_MESH_EVENT_UPDATE &&
+         context.packet.msg_type != MSG_MESH_EVENT_END)) {
+        /*
+         * A clicker is an uplink leaf. Reject broadcasts, transit traffic,
+         * commands, reports, and custody negotiation before they can consume
+         * the bounded RX queue or schedule application work.
+         */
+        return false;
+    }
+#endif
     if (valid_mesh_frame != NULL) {
         *valid_mesh_frame = true;
     }
@@ -622,7 +737,10 @@ static bool mesh_queue_from_frame_at_internal(
     pending.previous_hop_id = context.previous_hop_id;
     pending.link_quality = link_quality;
     pending.radio_channel = radio_channel;
+    pending.first_received_at_ms = mesh_expand_uptime32(received_at_ms);
     pending.received_at_ms = received_at_ms;
+    pending.received_at_valid = true;
+    pending.result_validation_token = protocol_validation_token;
     if (radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
         current_channel9_plan != NULL &&
         context.previous_hop_id == current_channel9_peer_id &&
@@ -643,14 +761,30 @@ static bool mesh_queue_from_frame_at_internal(
                                   pending.previous_hop_id,
                                   pending.link_quality,
                                   radio_channel);
-    mesh_note_c5_control_rx(&pending.packet,
-                            pending.previous_hop_id,
-                            radio_channel,
-                            "c5-control-rx");
     status_debug_uwb_rx_channel_pulse(radio_channel);
+
+    if (DEVICE_ROLE == ROLE_GATEWAY &&
+        pending.result_validation_token == 0u &&
+        pending.packet.msg_type == MSG_COMMAND_RESULT) {
+        ret = gateway_command_result_validation_reserve(
+            &pending.packet,
+            pending.first_received_at_ms,
+            &pending.result_validation_token);
+        if (ret < 0 && ret != -ENOENT) {
+            HIGH_DEBUG_COUNTER_INC(mesh_drop);
+            LOG_ERR("gateway result validation lease unavailable; dropped src=0x%016llx session=%u seq=%u ret=%d",
+                    (unsigned long long)pending.packet.src_id,
+                    pending.packet.session_id,
+                    pending.packet.seq,
+                    ret);
+            return false;
+        }
+    }
 
     ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
     if (ret < 0) {
+        gateway_command_result_validation_release_reserved(
+            pending.result_validation_token);
         HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("mesh UWB RX queue full; dropped msg=0x%02x src=0x%016llx dst=0x%016llx",
                 pending.packet.msg_type,
@@ -713,7 +847,8 @@ static bool mesh_queue_from_frame_at_internal(
             role_name());
 
     if (submit_work) {
-        (void)mesh_submit_work(&mesh_rx_work);
+        (void)mesh_submit_owned_work(&mesh_rx_work,
+                                     "rx-queue-admission");
     } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_MESH_RX_DEFERRED q=%u msg=0x%02x\n",
                             k_msgq_num_used_get(&mesh_rx_msgq),
@@ -727,6 +862,7 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                      uint8_t link_quality,
                                      uint8_t radio_channel,
                                      uint32_t received_at_ms,
+                                     uint32_t protocol_validation_token,
                                      const struct mesh_event_plan *current_channel9_plan,
                                      uint64_t current_channel9_peer_id,
                                      bool *valid_mesh_frame,
@@ -737,6 +873,7 @@ static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                              link_quality,
                                              radio_channel,
                                              received_at_ms,
+                                             protocol_validation_token,
                                              current_channel9_plan,
                                              current_channel9_peer_id,
                                              true,
@@ -756,6 +893,7 @@ bool mesh_queue_from_frame(const uint8_t *frame,
                                     link_quality,
                                     radio_channel,
                                     k_uptime_get_32(),
+                                    0u,
                                     NULL,
                                     0u,
                                     valid_mesh_frame,
@@ -774,6 +912,7 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                              link_quality,
                                              radio_channel,
                                              k_uptime_get_32(),
+                                             0u,
                                              NULL,
                                              0u,
                                              false,
@@ -783,7 +922,8 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
 
 void mesh_submit_queued_rx(void)
 {
-    int ret = mesh_submit_work(&mesh_rx_work);
+    int ret = mesh_submit_owned_work(&mesh_rx_work,
+                                     "queued-rx-submit");
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_MESH_RX_SUBMIT ret=%d q=%u routeq=1\n",
@@ -837,8 +977,14 @@ bool mesh_anchor_low_duty_scan_should_defer(uint32_t *retry_ms)
             !mesh_event_timing_usable(&timing, now_ms)) {
             continue;
         }
-        delay_ms = uptime_ms_until_deadline(now_ms,
-                                            mesh_channel9_prepare_start_ms(&timing));
+        {
+            uint32_t prepare_ms =
+                mesh_channel9_prepare_start_ms(&timing);
+
+            delay_ms = uptime_deadline_reached(now_ms, prepare_ms) ?
+                       0u :
+                       uptime_ms_until_deadline(now_ms, prepare_ms);
+        }
         if (!found || delay_ms < selected_delay_ms) {
             selected_delay_ms = delay_ms;
             found = true;
@@ -1142,6 +1288,7 @@ static bool mesh_process_received_frame(const uint8_t *frame,
                                         uint64_t channel9_peer_id,
                                         const struct mesh_event_plan *channel9_plan,
                                         uint32_t observed_packet_ms,
+                                        uint32_t protocol_validation_token,
                                         bool *channel9_peer_observed)
 {
     bool valid_mesh_frame = false;
@@ -1160,6 +1307,8 @@ static bool mesh_process_received_frame(const uint8_t *frame,
             (void)mesh_handoff_anchor_click_claim(&claim,
                                                   quality,
                                                   observed_packet_ms);
+            gateway_command_result_validation_release_reserved(
+                protocol_validation_token);
             return true;
         }
         if (mesh_handle_channel5_wake_claim(frame,
@@ -1169,6 +1318,8 @@ static bool mesh_process_received_frame(const uint8_t *frame,
                                             NULL)) {
             LOG_DBG("mesh UWB RX accepted channel-5 wake claim: len=%u",
                     (unsigned int)frame_len);
+            gateway_command_result_validation_release_reserved(
+                protocol_validation_token);
             return true;
         }
     }
@@ -1179,6 +1330,7 @@ static bool mesh_process_received_frame(const uint8_t *frame,
                                  channel9_event ? UWB_CHANNEL_MESH_PAYLOAD :
                                                   UWB_CHANNEL_WAKE_CONTACT,
                                  observed_packet_ms,
+                                 protocol_validation_token,
                                  channel9_event ? channel9_plan : NULL,
                                  channel9_peer_id,
                                  &valid_mesh_frame,
@@ -1224,6 +1376,8 @@ static bool mesh_process_received_frame(const uint8_t *frame,
                 quality);
     }
 
+    gateway_command_result_validation_release_reserved(
+        protocol_validation_token);
     return false;
 }
 
@@ -1236,6 +1390,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     struct mesh_event_plan channel9_plan = {0};
     uint32_t window_ms;
     uint32_t observed_packet_ms = 0u;
+    uint32_t protocol_validation_token = 0u;
     uint32_t channel9_rx_armed_ms = 0u;
     uint8_t channel9_timing_index = 0u;
     uint8_t channel9_frames_seen = 0u;
@@ -1248,11 +1403,14 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     bool frame_processed_inline = false;
     bool route_control_handoff = false;
     bool channel9_peer_observed = false;
+    bool functional_rx_outcome = false;
+    bool hard_rx_error = false;
     uint16_t gateway_ch9_recoverable_rx_errors = 0u;
     uint32_t channel5_gap_window_ms = 0u;
     uint32_t channel5_gap_deadline_ms = 0u;
     uint16_t channel5_gap_frames_seen = 0u;
     int channel5_gap_last_error = 0;
+    int radio_release_ret;
     uint32_t route_adv_wait_ms = 0u;
     struct app_mesh_coordinator_decision coordinator_decision;
     int ret;
@@ -1263,7 +1421,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         mesh_uwb_rx_active = false;
         return;
     }
-    app_watchdog_note_radio_progress();
 
     if (mesh_gateway_route_test_role()) {
         uint32_t now_ms = k_uptime_get_32();
@@ -1365,17 +1522,24 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         uint16_t recoverable_errors_in_slice = 0u;
 
         ret = -ETIMEDOUT;
-        while (!uptime_deadline_reached(k_uptime_get_32(),
-                                        gateway_rx_deadline_ms) &&
-               !uptime_deadline_reached(k_uptime_get_32(),
-                                        gateway_rx_slice_deadline_ms)) {
-            uint32_t remaining_ms =
-                uptime_ms_until_deadline(k_uptime_get_32(), gateway_rx_deadline_ms);
-            uint32_t slice_remaining_ms =
-                uptime_ms_until_deadline(k_uptime_get_32(),
-                                         gateway_rx_slice_deadline_ms);
+        while (true) {
+            uint32_t now_ms = k_uptime_get_32();
+            uint32_t remaining_ms;
+            uint32_t slice_remaining_ms;
             uint32_t ack_retry_wait_ms = 0u;
+            uint32_t protocol_validation_token = 0u;
+            bool functional_rx_outcome = false;
+            int release_ret;
 
+            if (uptime_deadline_reached(now_ms, gateway_rx_deadline_ms) ||
+                uptime_deadline_reached(now_ms,
+                                        gateway_rx_slice_deadline_ms)) {
+                break;
+            }
+            remaining_ms =
+                uptime_ms_until_deadline(now_ms, gateway_rx_deadline_ms);
+            slice_remaining_ms = uptime_ms_until_deadline(
+                now_ms, gateway_rx_slice_deadline_ms);
             remaining_ms = app_mesh_rx_policy_gateway_ch9_work_slice_ms(
                 MIN(remaining_ms, slice_remaining_ms));
             if (mesh_gateway_handoff_due_batch_acks(k_uptime_get_32())) {
@@ -1414,7 +1578,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 mesh_schedule_uwb_rx(0u);
                 return;
             }
-
             frame_len = 0u;
             quality = 0u;
             rx_failure = DWM3000_RX_FAILURE_NONE;
@@ -1427,26 +1590,44 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             ret = dwm3000_driver_configure_mesh_payload_mode();
             mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
             if (ret == 0) {
-                ret = dwm3000_driver_receive_frame_continuous(remaining_ms,
-                                                              frame,
-                                                              UWB_MESH_MAX_FRAME_LEN,
-                                                              &frame_len,
-                                                              &quality,
-                                                              NULL,
-                                                              &rx_failure);
+                ret = mesh_gateway_protocol_validation_arm(
+                    remaining_ms, &protocol_validation_token);
+            }
+            if (ret == 0) {
+                int rx_ret;
+
+                rx_ret = dwm3000_driver_receive_frame_continuous(
+                    remaining_ms,
+                    frame,
+                    UWB_MESH_MAX_FRAME_LEN,
+                    &frame_len,
+                    &quality,
+                    NULL,
+                    &rx_failure);
+                functional_rx_outcome =
+                    rx_ret == 0 || rx_ret == -ETIMEDOUT ||
+                    rx_ret == -ECANCELED ||
+                    app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                        rx_ret, rx_failure);
+                ret = rx_ret;
             }
 
             if (ret == 0) {
-                observed_packet_ms = k_uptime_get_32();
+                ret = mesh_gateway_protocol_validation_complete(
+                    protocol_validation_token, &observed_packet_ms);
+            }
+            if (ret == 0) {
                 channel9_frames_seen++;
                 status_debug_note("DBG_GATEWAY_CH9_RX_CONT_FRAME\n");
                 status_debug_gateway_uwb_rx_channel_pulse(UWB_CHANNEL_MESH_PAYLOAD);
-                (void)dwm3000_driver_idle();
+                release_ret = mesh_radio_idle_with_bounded_recovery(
+                    "gateway-ch9-frame");
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_note("DBG_GATEWAY_CH9_RX_RELEASE_IDLE\n");
                 }
             } else if (ret == -ECANCELED) {
-                (void)dwm3000_driver_idle();
+                release_ret = mesh_radio_idle_with_bounded_recovery(
+                    "gateway-ch9-command-preempt");
                 status_debug_printf("DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=%u rem=%u frames=%u\n",
                                     k_uptime_get_32(),
                                     remaining_ms,
@@ -1460,15 +1641,27 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     recoverable_errors_in_slice++;
                 }
                 /* The driver already forces RX off and clears terminal status. */
-                (void)dwm3000_driver_idle();
+                release_ret = mesh_radio_idle_with_bounded_recovery(
+                    "gateway-ch9-recoverable-rx");
             } else {
-                (void)dwm3000_driver_standby();
+                release_ret = mesh_radio_standby_with_bounded_recovery(
+                    "gateway-ch9-hard-rx");
             }
             mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
             mesh_rx_radio_stop();
-            app_watchdog_note_radio_progress();
+            if (release_ret < 0) {
+                status_debug_printf(
+                    "DBG_GATEWAY_CH9_RX_CONT_RELEASE_FAIL ret=%d rx_ret=%d\n",
+                    release_ret,
+                    ret);
+                ret = release_ret;
+            } else if (functional_rx_outcome) {
+                app_watchdog_note_radio_progress();
+            }
 
             if (ret != 0) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
                 if (ret == -ECANCELED) {
                     int priority_ret =
                         app_node_comm_gateway_delivery_safe_boundary();
@@ -1510,13 +1703,25 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 
             if (dwm3000_driver_receive_abort_pending()) {
                 bool valid_mesh_frame = false;
+                bool queued;
 
-                (void)mesh_queue_from_frame_deferred(frame,
-                                                     frame_len,
-                                                     quality,
-                                                     UWB_CHANNEL_MESH_PAYLOAD,
-                                                     &valid_mesh_frame,
-                                                     NULL);
+                queued = mesh_queue_from_frame_at_internal(
+                    frame,
+                    frame_len,
+                    quality,
+                    UWB_CHANNEL_MESH_PAYLOAD,
+                    observed_packet_ms,
+                    protocol_validation_token,
+                    NULL,
+                    0u,
+                    false,
+                    &valid_mesh_frame,
+                    NULL);
+                if (!queued) {
+                    gateway_command_result_validation_release_reserved(
+                        protocol_validation_token);
+                }
+                protocol_validation_token = 0u;
                 status_debug_printf("DBG_GATEWAY_CH9_RX_FRAME_DEFER_COMMAND now=%u valid=%u frames=%u\n",
                                     k_uptime_get_32(),
                                     valid_mesh_frame ? 1u : 0u,
@@ -1541,7 +1746,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                                             0u,
                                                             NULL,
                                                             observed_packet_ms,
+                                                            protocol_validation_token,
                                                             NULL);
+                protocol_validation_token = 0u;
                 bool processed = mesh_process_queued_rx_now(
                     "gateway-ch9-continuous-rx");
 
@@ -1604,6 +1811,16 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                                    &channel9_plan,
                                                    &channel9_peer_id,
                                                    &channel9_timing_index);
+    if (DEVICE_ROLE == ROLE_CLICKER && !channel9_event) {
+        /*
+         * A clicker is a scheduled leaf, not a passive receiver. Keep the
+         * worker alive for its next negotiated TX/RX turn without opening a
+         * channel-5 gap scan between events.
+         */
+        mesh_schedule_uwb_rx(
+            mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
+        return;
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) &&
         !channel9_event) {
         uint32_t next_delay_ms =
@@ -1668,7 +1885,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                              0u : mesh_next_channel9_rx_delay_ms(k_uptime_get_32()));
         return;
     }
-
     window_ms = channel9_event ? channel9_plan.window_ms :
                 (gateway_route_preempt && !channel5_gap_scan) ?
                     mesh_gateway_route_test_preempt_window_ms(k_uptime_get_32()) :
@@ -1741,36 +1957,62 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                             channel9_plan.start_ms,
                             channel9_plan.end_ms,
                             deadline_ms);
-        while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms)) {
+        while (true) {
             struct dwm3000_rx_frame_timing rx_timing = {0};
             bool peer_observed_this_frame = false;
-            uint32_t remaining_ms = uptime_ms_until_deadline(k_uptime_get_32(), deadline_ms);
+            uint32_t now_ms = k_uptime_get_32();
+            uint32_t remaining_ms;
 
-            if (remaining_ms == 0u) {
+            if (uptime_deadline_reached(now_ms, deadline_ms)) {
                 break;
             }
+            remaining_ms = uptime_ms_until_deadline(now_ms, deadline_ms);
             frame_len = 0u;
             quality = 0u;
             rx_failure = DWM3000_RX_FAILURE_NONE;
-            ret = dwm3000_driver_receive_frame_continuous_timed(remaining_ms,
-                                                                frame,
-                                                                UWB_MESH_MAX_FRAME_LEN,
-                                                                &frame_len,
-                                                                &quality,
-                                                                NULL,
-                                                                &rx_failure,
-                                                                &rx_timing);
+            ret = mesh_gateway_protocol_validation_arm(
+                remaining_ms, &protocol_validation_token);
+            if (ret == 0) {
+                int rx_ret = dwm3000_driver_receive_frame_continuous_timed(
+                    remaining_ms,
+                    frame,
+                    UWB_MESH_MAX_FRAME_LEN,
+                    &frame_len,
+                    &quality,
+                    NULL,
+                    &rx_failure,
+                    &rx_timing);
+                functional_rx_outcome =
+                    functional_rx_outcome || rx_ret == 0 ||
+                    rx_ret == -ETIMEDOUT || rx_ret == -ECANCELED ||
+                    app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                        rx_ret, rx_failure);
+                ret = rx_ret;
+            }
             if (ret == -ETIMEDOUT) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
+                protocol_validation_token = 0u;
                 break;
             }
             if (ret != 0) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
+                protocol_validation_token = 0u;
                 break;
             }
 
+            ret = mesh_gateway_protocol_validation_complete(
+                protocol_validation_token, &observed_packet_ms);
+            if (ret < 0) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
+                protocol_validation_token = 0u;
+                break;
+            }
             channel9_frames_seen++;
             status_debug_note("DBG_CH9_RX_FRAME\n");
             status_debug_gateway_uwb_rx_channel_pulse(UWB_CHANNEL_MESH_PAYLOAD);
-            observed_packet_ms = k_uptime_get_32();
             if (rx_timing.valid) {
                 int32_t host_delta_ms = (int32_t)(observed_packet_ms - channel9_plan.start_ms);
                 int32_t arm_delta_ms = (int32_t)(channel9_rx_armed_ms - channel9_plan.start_ms);
@@ -1796,46 +2038,79 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                               channel9_peer_id,
                                               &channel9_plan,
                                               observed_packet_ms,
+                                              protocol_validation_token,
                                               &peer_observed_this_frame);
+            protocol_validation_token = 0u;
             channel9_peer_observed = channel9_peer_observed || peer_observed_this_frame;
         }
     } else if (ret == 0 && channel9_event) {
-        ret = dwm3000_driver_receive_frame(window_ms,
-                                           frame,
-                                           UWB_MESH_MAX_FRAME_LEN,
-                                           &frame_len,
-                                           &quality,
-                                           NULL);
-    } else if (ret == 0 && channel5_gap_scan) {
-        frame_processed_inline = true;
-        ret = -ETIMEDOUT;
-        while (!uptime_deadline_reached(k_uptime_get_32(),
-                                        channel5_gap_deadline_ms)) {
-            struct uwb_wake_claim_frame claim;
-            enum app_mesh_c5_connected_gap_rx_action action;
-            uint32_t remaining_ms = uptime_ms_until_deadline(
-                k_uptime_get_32(), channel5_gap_deadline_ms);
-            bool click_claim;
-            bool route_control_claim = false;
-
-            if (remaining_ms == 0u) {
-                break;
-            }
-            frame_len = 0u;
-            quality = 0u;
-            rx_failure = DWM3000_RX_FAILURE_NONE;
-            ret = dwm3000_driver_receive_frame_continuous(
-                remaining_ms,
+        ret = mesh_gateway_protocol_validation_arm(
+            window_ms, &protocol_validation_token);
+        if (ret == 0) {
+            int rx_ret = dwm3000_driver_receive_frame(
+                window_ms,
                 frame,
                 UWB_MESH_MAX_FRAME_LEN,
                 &frame_len,
                 &quality,
-                NULL,
-                &rx_failure);
+                NULL);
+
+            functional_rx_outcome =
+                rx_ret == 0 || rx_ret == -ETIMEDOUT;
+            ret = rx_ret;
+        }
+        if (ret == 0) {
+            ret = mesh_gateway_protocol_validation_complete(
+                protocol_validation_token, &observed_packet_ms);
+        }
+    } else if (ret == 0 && channel5_gap_scan) {
+        frame_processed_inline = true;
+        ret = -ETIMEDOUT;
+        while (true) {
+            struct uwb_wake_claim_frame claim;
+            enum app_mesh_c5_connected_gap_rx_action action;
+            uint32_t now_ms = k_uptime_get_32();
+            uint32_t remaining_ms;
+            bool click_claim;
+            bool route_control_claim = false;
+
+            if (uptime_deadline_reached(now_ms,
+                                        channel5_gap_deadline_ms)) {
+                break;
+            }
+            remaining_ms = uptime_ms_until_deadline(
+                now_ms, channel5_gap_deadline_ms);
+            frame_len = 0u;
+            quality = 0u;
+            rx_failure = DWM3000_RX_FAILURE_NONE;
+            ret = mesh_gateway_protocol_validation_arm(
+                remaining_ms, &protocol_validation_token);
+            if (ret == 0) {
+                int rx_ret = dwm3000_driver_receive_frame_continuous(
+                    remaining_ms,
+                    frame,
+                    UWB_MESH_MAX_FRAME_LEN,
+                    &frame_len,
+                    &quality,
+                    NULL,
+                    &rx_failure);
+                functional_rx_outcome =
+                    functional_rx_outcome || rx_ret == 0 ||
+                    rx_ret == -ETIMEDOUT || rx_ret == -ECANCELED ||
+                    app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                        rx_ret, rx_failure);
+                ret = rx_ret;
+            }
             if (ret == -ETIMEDOUT) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
+                protocol_validation_token = 0u;
                 break;
             }
             if (ret < 0) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
+                protocol_validation_token = 0u;
                 channel5_gap_last_error = ret;
                 if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_printf("DBG_CH5_GAP_REARM_ERROR ret=%d fail=%u rem=%u\n",
@@ -1843,10 +2118,23 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                         (unsigned int)rx_failure,
                                         remaining_ms);
                 }
-                continue;
+                if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                        ret, rx_failure)) {
+                    continue;
+                }
+                hard_rx_error = true;
+                break;
             }
 
-            observed_packet_ms = k_uptime_get_32();
+            ret = mesh_gateway_protocol_validation_complete(
+                protocol_validation_token, &observed_packet_ms);
+            if (ret < 0) {
+                gateway_command_result_validation_release_reserved(
+                    protocol_validation_token);
+                protocol_validation_token = 0u;
+                channel5_gap_last_error = ret;
+                continue;
+            }
             status_debug_gateway_uwb_rx_channel_pulse(UWB_CHANNEL_WAKE_CONTACT);
             click_claim = mesh_frame_requires_anchor_click_handoff(frame,
                                                                    frame_len,
@@ -1892,12 +2180,14 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                               0u,
                                               NULL,
                                               observed_packet_ms,
+                                              protocol_validation_token,
                                               NULL);
+            protocol_validation_token = 0u;
             if (action == APP_MESH_C5_CONNECTED_GAP_RX_COMPLETE) {
                 break;
             }
         }
-        if (frame_processed_inline) {
+        if (frame_processed_inline && !hard_rx_error) {
             ret = -ETIMEDOUT;
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -1910,28 +2200,52 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         }
 
     } else if (ret == 0) {
-        ret = dwm3000_driver_receive_frame_continuous(window_ms,
-                                                      frame,
-                                                      UWB_MESH_MAX_FRAME_LEN,
-                                                      &frame_len,
-                                                      &quality,
-                                                      NULL,
-                                                      &rx_failure);
+        ret = mesh_gateway_protocol_validation_arm(
+            window_ms, &protocol_validation_token);
+        if (ret == 0) {
+            int rx_ret = dwm3000_driver_receive_frame_continuous(
+                window_ms,
+                frame,
+                UWB_MESH_MAX_FRAME_LEN,
+                &frame_len,
+                &quality,
+                NULL,
+                &rx_failure);
+            functional_rx_outcome =
+                rx_ret == 0 || rx_ret == -ETIMEDOUT ||
+                rx_ret == -ECANCELED ||
+                app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                    rx_ret, rx_failure);
+            ret = rx_ret;
+        }
+        if (ret == 0) {
+            ret = mesh_gateway_protocol_validation_complete(
+                protocol_validation_token, &observed_packet_ms);
+        }
     }
     if (ret == 0 && !frame_processed_inline) {
         status_debug_gateway_uwb_rx_channel_pulse(channel9_event ? UWB_CHANNEL_MESH_PAYLOAD :
                                                                   UWB_CHANNEL_WAKE_CONTACT);
-        observed_packet_ms = k_uptime_get_32();
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         DEVICE_ROLE == ROLE_GATEWAY && !channel9_event) {
-        (void)dwm3000_driver_idle();
+        radio_release_ret = mesh_radio_idle_with_bounded_recovery(
+            "gateway-channel5-rx");
     } else {
-        mesh_release_radio_after_mesh_turn(channel9_event,
-                                           channel9_event ? "ch9-rx" : "mesh-rx");
+        radio_release_ret = mesh_release_radio_after_mesh_turn(
+            channel9_event,
+            channel9_event ? "ch9-rx" : "mesh-rx");
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
     mesh_rx_radio_stop();
+    if (radio_release_ret < 0) {
+        status_debug_printf("DBG_MESH_RX_RELEASE_FAIL ret=%d rx_ret=%d\n",
+                            radio_release_ret,
+                            ret);
+        ret = radio_release_ret;
+    } else if (functional_rx_outcome) {
+        app_watchdog_note_radio_progress();
+    }
 
     if (route_control_handoff) {
         frame_processed_inline =
@@ -1968,7 +2282,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                           channel9_peer_id,
                                           &channel9_plan,
                                           observed_packet_ms,
+                                          protocol_validation_token,
                                           &channel9_peer_observed);
+        protocol_validation_token = 0u;
     } else if (ret != -ETIMEDOUT) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && channel9_event) {
             status_debug_note("DBG_CH9_RX_FAIL\n");
@@ -2017,6 +2333,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                "rx-slot");
         }
     }
+    gateway_command_result_validation_release_reserved(
+        protocol_validation_token);
 
     if (channel5_gap_scan) {
         uint32_t next_delay_ms = mesh_next_channel9_rx_delay_ms(k_uptime_get_32());
@@ -2187,7 +2505,18 @@ static int mesh_route_refresh_schedule(void *ctx,
                                        uint32_t delay_ms)
 {
     ARG_UNUSED(ctx);
-    return mesh_reschedule_delayable(work, delay_ms);
+    return mesh_reschedule_owned_work(work,
+                                      delay_ms,
+                                      "gateway-route-refresh");
+}
+
+static int mesh_route_refresh_reserve_sequences(void *ctx,
+                                                uint32_t count,
+                                                uint32_t *first_sequence)
+{
+    ARG_UNUSED(ctx);
+    return app_mesh_persistence_reserve_gateway_command_sequences(
+        count, first_sequence);
 }
 
 static bool mesh_route_refresh_defer(void *ctx)
@@ -2242,10 +2571,37 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
             .restart_role_scan = mesh_route_refresh_restart_scan,
             .clear_response_priority = mesh_route_refresh_clear_response,
             .schedule = mesh_route_refresh_schedule,
+            .reserve_sequences = mesh_route_refresh_reserve_sequences,
             .observe = mesh_route_refresh_observe,
         };
 
     mesh_report_callbacks = callbacks;
+#if DEVICE_ROLE == ROLE_CLICKER
+    /*
+     * Clickers normally originate ranging rather than mesh traffic, but
+     * physical self-test and future diagnostics still use the reliable
+     * uplink path. Give that leaf path its own routing identity without
+     * enabling anchor relay, capacity, command, or custody behavior.
+     */
+    mesh_relay_init(&mesh_runtime,
+                    MESH_RELAY_ROLE_CLICKER,
+                    DEVICE_ID,
+                    GATEWAY_ID,
+                    1u);
+    {
+        int restore_ret = app_mesh_route_state_restore(&mesh_runtime);
+
+        if (restore_ret < 0) {
+            LOG_ERR("clicker route state restore failed closed: %d",
+                    restore_ret);
+            return restore_ret;
+        }
+        if (restore_ret == 1) {
+            LOG_INF("clicker route state restored: epoch=%u",
+                    mesh_runtime.upstream.current_epoch);
+        }
+    }
+#endif
     app_mesh_report_encode_init(&report_encode_config);
     atomic_set(&mesh_transport_paused_state, 0);
     app_mesh_rx_handoff_reset(&mesh_rx_handoff);
@@ -2266,16 +2622,27 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     k_work_init(&mesh_uwb_rx_rearm_work, mesh_uwb_rx_rearm_work_handler);
     k_work_init_delayable(&mesh_persistence_retry_work,
                           mesh_persistence_retry_work_handler);
+    k_work_init_delayable(&mesh_node_comm_cancel_work,
+                          mesh_node_comm_cancel_work_handler);
     mesh_outbox_persistence_dirty = false;
     mesh_deferred_outbox_pending = false;
     mesh_child_custody_persistence_dirty = false;
     mesh_persistence_retry_round = 0u;
+    {
+        k_spinlock_key_t cancel_key =
+            k_spin_lock(&mesh_node_comm_cancel_lock);
+
+        memset(&mesh_node_comm_cancel_request, 0,
+               sizeof(mesh_node_comm_cancel_request));
+        k_spin_unlock(&mesh_node_comm_cancel_lock, cancel_key);
+    }
     memset(&mesh_delivery_health, 0, sizeof(mesh_delivery_health));
     app_mesh_ch9_ack_table_init(&mesh_ch9_ack_table);
 #if DEVICE_ROLE == ROLE_GATEWAY
     mesh_gateway_ack_store_init(&mesh_gateway_ack_store);
     mesh_gateway_ack_store_initialized = true;
     mesh_gateway_ack_store_attached = false;
+    mesh_gateway_semantic_commit_owner_clear();
 #endif
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&mesh_route_waiting_work,
@@ -2283,21 +2650,42 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
 #if DEVICE_ROLE == ROLE_ANCHOR
     app_mesh_queue_head_owner_init(&report_tx_queue_head_owner);
     report_tx_queue_recovery_valid = false;
+    report_tx_backoff_until_ms = 0u;
+    report_tx_backoff_active = false;
     k_work_init_delayable(&report_tx_work, report_tx_work_handler);
 #endif
     k_work_init_delayable(&mesh_c5_flood_work, mesh_c5_flood_work_handler);
     k_work_init_delayable(&mesh_route_discovery_work, mesh_route_discovery_work_handler);
+    app_mesh_async_route_request_init(&mesh_route_discovery_request);
     k_work_init_delayable(&mesh_event_negotiation_retry_work,
                           mesh_event_negotiation_retry_work_handler);
     mesh_event_propose_clear();
     memset(&mesh_event_accept_retry, 0, sizeof(mesh_event_accept_retry));
     mesh_event_accept_rx_clear();
-    memset(mesh_event_owners, 0, sizeof(mesh_event_owners));
+    mesh_event_owner_registry_reset(&mesh_event_owner_registry);
+    memset(&mesh_event_local_proposal_windows, 0,
+           sizeof(mesh_event_local_proposal_windows));
     mesh_event_operation_session_next = 0u;
 #if DEVICE_ROLE == ROLE_ANCHOR
     k_work_init_delayable(&mesh_route_request_action_work,
                           mesh_route_request_action_work_handler);
     mesh_route_request_action_pending = false;
+#endif
+#if DEVICE_ROLE == ROLE_CLICKER
+    {
+        int restore_ret = app_mesh_persistence_restore_outbox(
+            &mesh_runtime, k_uptime_get_32());
+
+        if (restore_ret < 0) {
+            return restore_ret;
+        }
+        if (mesh_relay_tx_active(&mesh_runtime)) {
+            restore_ret = mesh_schedule_tx_timeout();
+            if (restore_ret < 0) {
+                return restore_ret;
+            }
+        }
+    }
 #endif
     return 0;
 }

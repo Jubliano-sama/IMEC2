@@ -101,14 +101,22 @@ def pair_packet(
     sequence: int,
     *,
     survey_id: int = SURVEY_ID,
+    operation_generation: int | None = None,
+    round_id: int = 1,
 ):
     def tlv(type_id: int, value: bytes) -> bytes:
         return bytes((type_id, len(value))) + value
 
+    if operation_generation is None:
+        operation_generation = (1 << 32) | survey_id
+    round_commitment = round_id.to_bytes(2, "little") + bytes(30)
     payload = b"".join((
         tlv(0x15, survey_id.to_bytes(4, "little")),
+        tlv(0xB6, operation_generation.to_bytes(8, "little")),
         tlv(0x1F, initiator_id.to_bytes(8, "little")),
         tlv(0x20, responder_id.to_bytes(8, "little")),
+        tlv(0xAF, round_id.to_bytes(2, "little")),
+        tlv(0xB7, round_commitment),
         tlv(0x0F, (1).to_bytes(2, "little")),
         tlv(0x0E, (0).to_bytes(2, "little")),
         tlv(0x0C, distance_mm.to_bytes(4, "little", signed=True)),
@@ -228,7 +236,11 @@ def successful_assignment_events(
     for index in range(anchor_count):
         anchor_id = 0x1000 + index
         hop_count = 1 if index < direct_count else 2 + (index % 3)
-        previous_hop = anchor_id if hop_count == 1 else 0x2000 + (index % 5)
+        previous_hop = (
+            anchor_id
+            if hop_count == 1
+            else 0x1000 + (index % max(1, direct_count))
+        )
         events.append(
             command_event(
                 6,
@@ -393,12 +405,22 @@ class CommandBudgetContractTests(unittest.TestCase):
         self.assertEqual(
             int(maximum.group(1)), provision.GATEWAY_COMMAND_BUDGET_MAX_MS
         )
-        self.assertEqual(600000, provision.GATEWAY_COMMAND_BUDGET_MAX_MS)
+        self.assertEqual(900000, provision.GATEWAY_COMMAND_BUDGET_MAX_MS)
         self.assertRegex(
             anchor_source,
             r"BUILD_ASSERT\s*\(\s*"
             r"DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS\s*<=\s*"
             r"GATEWAY_COMMAND_BUDGET_MAX_MS",
+        )
+
+    def test_qualification_timeout_covers_firmware_budget_and_delivery_guard(self) -> None:
+        self.assertEqual(
+            125.0,
+            provision._qualification_timeout_s(30.0, 120000),
+        )
+        self.assertEqual(
+            300.0,
+            provision._qualification_timeout_s(300.0, 120000),
         )
 
 
@@ -443,6 +465,23 @@ class RouteRefreshQualificationTests(unittest.TestCase):
         qualification.observe(events[-1])
         with self.assertRaisesRegex(RuntimeError, "lost events"):
             qualification.validate()
+
+    def test_preexisting_cumulative_loss_is_baselined_but_new_loss_fails(self) -> None:
+        events = successful_route_events(retries=0)
+        stable = provision.RouteRefreshQualification(
+            0x12345, 0x2345, 0x12345
+        )
+        for event in events:
+            stable.observe(dataclasses.replace(event, lost_event_count=17))
+        stable.validate()
+
+        changed = provision.RouteRefreshQualification(
+            0x12345, 0x2345, 0x12345
+        )
+        changed.observe(dataclasses.replace(events[0], lost_event_count=17))
+        changed.observe(dataclasses.replace(events[-1], lost_event_count=18))
+        with self.assertRaisesRegex(RuntimeError, "lost events counter changed"):
+            changed.validate()
 
 
 class AssignmentQualificationTests(unittest.TestCase):
@@ -585,6 +624,39 @@ class AssignmentQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "lost events"):
             lost.validate()
 
+    def test_contradictory_or_changed_hop_evidence_cannot_qualify(self) -> None:
+        events = successful_assignment_events(3, direct_count=1)
+        contradictory = provision.AssignmentQualification(
+            0x12345, 0x2345, 0x12345, 3, require_hop_evidence=True
+        )
+        for index, event in enumerate(events):
+            if index == 1:
+                event = dataclasses.replace(event, previous_hop_id=0x1001)
+            contradictory.observe(event)
+        with self.assertRaisesRegex(RuntimeError, "contradictory previous-hop"):
+            contradictory.validate()
+
+        changed = provision.AssignmentQualification(
+            0x12345, 0x2345, 0x12345, 3
+        )
+        for event in events:
+            changed.observe(event)
+            if (
+                event.stage == 6
+                and event.anchor_id == 0x1001
+                and event.hop_count != 0
+            ):
+                changed.observe(
+                    dataclasses.replace(
+                        event,
+                        event_sequence=4000,
+                        hop_count=4,
+                        previous_hop_id=0x1000,
+                    )
+                )
+        with self.assertRaisesRegex(RuntimeError, "changed hop evidence"):
+            changed.validate()
+
 
 class FakeCharacteristic:
     max_write_without_response_size = 244
@@ -655,7 +727,7 @@ class FakeBleakClient:
     async def write_gatt_char(
         self, _characteristic: object, data: bytes, *, response: bool
     ) -> None:
-        assert not response
+        assert response
         self.operations.append(("write", (bytes(data), self.notify_enabled)))
         if self.notify_enabled and self.write_notification_counts:
             count = self.write_notification_counts.pop(0)
@@ -680,7 +752,7 @@ def args(**overrides: object) -> argparse.Namespace:
         "connect_timeout": 12.0,
         "repeat": 1,
         "interval": 0.05,
-        "survey_id": 0x778899AA,
+        "survey_id": 0,
         "survey_duration_ms": 1000,
         "discovery_slots": 6,
         "samples": 3,
@@ -708,12 +780,15 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         FakeBleakClient.write_notification_counts = []
 
     async def test_qualification_writes_then_holds_then_enables_and_drains(self) -> None:
-        events = successful_events()
+        events = [
+            dataclasses.replace(event, gateway_sequence=0x12345)
+            for event in successful_events()
+        ]
         FakeDecoder.events = events
         FakeDecoder.packets = [
-            pair_packet(0x10, 0x20, 1000, 1),
-            pair_packet(0x10, 0x30, 1200, 2),
-            pair_packet(0x20, 0x30, 1500, 3),
+            pair_packet(0x10, 0x20, 1000, 1, survey_id=0x12345),
+            pair_packet(0x10, 0x30, 1200, 2, survey_id=0x12345),
+            pair_packet(0x20, 0x30, 1500, 3, survey_id=0x12345),
         ] + [
             types.SimpleNamespace(
                 msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
@@ -769,8 +844,8 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(qualification)
         assert qualification is not None
         self.assertEqual(0x12345, qualification.correlation_id)
-        self.assertEqual(0x778899AA, qualification.survey_id)
-        self.assertEqual(0x778899AA, command_args["survey_id"])
+        self.assertEqual(0x12345, qualification.survey_id)
+        self.assertEqual(0x12345, command_args["survey_id"])
         self.assertEqual(0x12345, command_args["session_id"])
         self.assertEqual(3, command_args["expected_anchor_count"])
         self.assertEqual(3, len(qualification.pair_successes))
@@ -819,6 +894,11 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(provision, "BleakClient", FakeBleakClient),
             mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
             mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch.object(
+                provision,
+                "_qualification_timeout_s",
+                side_effect=lambda requested, _budget: requested,
+            ),
             mock.patch("builtins.print"),
         ):
             with self.assertRaisesRegex(RuntimeError, "timed out"):
@@ -891,6 +971,37 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                         notification_hold_s=0.0,
                     )
                 )
+
+    async def test_non_strict_monitor_disconnect_is_also_fatal(self) -> None:
+        class DisconnectingClient(FakeBleakClient):
+            async def start_notify(self, uuid: object, callback: object) -> None:
+                await super().start_notify(uuid, callback)
+                assert self.disconnected_callback is not None
+                self.disconnected_callback(self)
+
+        with (
+            mock.patch.object(provision, "BleakClient", DisconnectingClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "disconnected"):
+                await provision.run(
+                    args(
+                        command="monitor",
+                        require_survey_success=False,
+                        notification_hold_s=0.0,
+                    )
+                )
+
+    async def test_strict_survey_rejects_reusable_manual_survey_identity(self) -> None:
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "auto-generated survey ID"):
+                await provision.run(args(survey_id=0x778899AA))
 
 
 if __name__ == "__main__":

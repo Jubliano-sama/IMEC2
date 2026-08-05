@@ -67,6 +67,7 @@ static int test_prepare_channel9(struct mesh_outbound *out,
            index < (int)(sizeof(test->prepare_returns) / sizeof(test->prepare_returns[0])));
     assert(out->radio_channel == MESH_EVENT_CHANNEL);
     out->earliest_tx_ms = plan->start_ms + 3u;
+    out->earliest_tx_valid = true;
     test->prepare_count++;
     if (test->prepare_returns[index] != 0 && test->mutate_failed_prepare) {
         out->packet.session_id = 0xdeadbeefu;
@@ -75,7 +76,9 @@ static int test_prepare_channel9(struct mesh_outbound *out,
         out->payload[1] = 0xddu;
         out->payload_len = 2u;
         out->queued_at_ms = 0x12345678u;
+        out->queued_at_valid = true;
         out->earliest_tx_ms = 0x87654321u;
+        out->earliest_tx_valid = true;
     }
     return test->prepare_returns[index];
 }

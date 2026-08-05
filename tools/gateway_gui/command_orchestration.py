@@ -132,8 +132,17 @@ class GatewayCommandOrchestrator:
         return first
 
     def observe_event(
-        self, event: GatewayCommandEvent, *, now: float | None = None
+        self,
+        event: GatewayCommandEvent,
+        *,
+        now: float | None = None,
+        received_at: float | None = None,
     ) -> GatewayCommandTransition:
+        boundary_time = received_at if received_at is not None else now
+        if boundary_time is not None:
+            expired = self.expire(now=boundary_time)
+            if expired.matched:
+                return expired
         current = self.current
         if current is None or not event.terminal:
             return GatewayCommandTransition()
@@ -157,7 +166,13 @@ class GatewayCommandOrchestrator:
         host_sequence: int,
         command_status: int,
         now: float | None = None,
+        received_at: float | None = None,
     ) -> GatewayCommandTransition:
+        boundary_time = received_at if received_at is not None else now
+        if boundary_time is not None:
+            expired = self.expire(now=boundary_time)
+            if expired.matched:
+                return expired
         current = self.current
         # Successful command results can precede the typed lifecycle terminal,
         # so only a negative result may terminate an operation here.

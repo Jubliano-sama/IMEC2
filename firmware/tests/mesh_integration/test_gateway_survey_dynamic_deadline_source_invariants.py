@@ -82,6 +82,75 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             "an expected-count mismatch must fail explicitly, never truncate",
         )
 
+    def test_collection_safety_deadline_is_frozen_at_command_origin(self) -> None:
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+        wait = function_body(
+            CONTROL, "gateway_survey_wait_for_discovery_collection"
+        )
+
+        self.assertIn(
+            "gateway_survey_operation_deadline_ms = "
+            "command_origin_ms + command_budget_ms",
+            " ".join(route.split()),
+        )
+        self.assertIn(
+            "gateway_survey_collection_deadline_ms = "
+            "command_origin_ms + collection_delay_ms",
+            " ".join(route.split()),
+        )
+        self.assertIn(
+            ".terminal_scheduling_guard_ms = "
+            "GATEWAY_SURVEY_OPERATION_TERMINAL_SCHEDULING_GUARD_MS",
+            " ".join(route.split()),
+        )
+        self.assertIn(
+            "gateway_survey_collection_window_armed = true", wait
+        )
+        self.assertNotIn(
+            "k_uptime_get_32() + gateway_survey_collection_duration_ms",
+            wait,
+        )
+
+    def test_post_rf_terminal_keeps_delayed_report_horizon_alive(self) -> None:
+        wait = function_body(
+            CONTROL, "gateway_survey_wait_for_discovery_collection"
+        )
+        survival = re.search(
+            r"survey_gateway_discovery_collection_survives_terminal\s*\("
+            r"\s*event\.reason\s*==\s*NODE_COMM_TERMINAL_DELIVERED\s*,"
+            r"\s*event\.attempts_started\s*\)",
+            wait,
+        )
+
+        self.assertIsNotNone(survival)
+        self.assertLess(
+            survival.start(),
+            wait.index("gateway_survey_auto_finish_status(", survival.start()),
+        )
+        self.assertIn(
+            "gateway_survey_collection_window_armed = true",
+            wait[survival.start() :],
+        )
+
+    def test_pair_plan_control_floor_is_checked_before_remote_state(self) -> None:
+        worker = function_body(CONTROL, "gateway_survey_work_handler")
+        plan = worker.index("survey_gateway_plan_pairs(")
+        remaining = worker.index("uptime_ms_until_deadline(", plan)
+        budget = worker.index(
+            "survey_gateway_transaction_pair_plan_fits_minimum_budget(",
+            remaining,
+        )
+        terminal = worker.index("gateway_survey_auto_finish_status(", budget)
+        telemetry = worker.index("gateway_survey_emit_collection_telemetry()")
+        next_action = worker.index("survey_gateway_auto_next_action(")
+
+        self.assertLess(plan, remaining)
+        self.assertLess(remaining, budget)
+        self.assertLess(budget, terminal)
+        self.assertLess(terminal, telemetry)
+        self.assertLess(telemetry, next_action)
+        self.assertIn("SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS", worker[budget:])
+
 
 if __name__ == "__main__":
     unittest.main()

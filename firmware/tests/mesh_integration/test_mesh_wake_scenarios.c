@@ -988,7 +988,7 @@ static bool run_route_listener_click_case(uint32_t seed,
 static void test_route_listener_phase_sweep(void)
 {
     const uint32_t seed = UINT32_C(0x72000001);
-    const uint32_t wake_airtime_us = dwm3000_timing_airtime_us_ceil(
+    const uint64_t wake_airtime_us = dwm3000_timing_airtime_us_ceil(
         DWM3000_TIMING_PHY_CH5_WAKE,
         UWB_WAKE_CLAIM_LEN);
     const uint64_t standard_start_us = UINT64_C(100000) +
@@ -1000,10 +1000,10 @@ static void test_route_listener_phase_sweep(void)
         { "first_frame_at_extended_close", 100000u },
         { "first_frame_in_retune_gap", 129999u },
         { "first_frame_at_probe_open", 130000u },
-        { "probe_deadline_minus_one_frame", (int64_t)(standard_end_us - wake_airtime_us - 1u) },
-        { "probe_deadline_exact", (int64_t)(standard_end_us - wake_airtime_us) },
-        { "probe_deadline_tail_only", (int64_t)(standard_end_us - wake_airtime_us + 1u) },
-        { "after_probe_deadline", (int64_t)(standard_end_us + 1u) },
+        { "probe_deadline_minus_one_frame", standard_end_us - wake_airtime_us - 1u },
+        { "probe_deadline_exact", standard_end_us - wake_airtime_us },
+        { "probe_deadline_tail_only", standard_end_us - wake_airtime_us + 1u },
+        { "after_probe_deadline", standard_end_us + 1u },
     };
     const bool expected_claim[] = {
         true, true, true, true, true, true, false, false,
@@ -1011,9 +1011,9 @@ static void test_route_listener_phase_sweep(void)
     unsigned int failures_before = failure_count;
 
     for (size_t i = 0u; i < ARRAY_SIZE(phases); i++) {
-        if (phases[i].offset_us < 0 ||
+        if (phases[i].offset_us > (uint64_t)INT64_MAX ||
             !run_route_listener_click_case(seed + (uint32_t)i,
-                                           phases[i].offset_us,
+                                           (int64_t)phases[i].offset_us,
                                            false,
                                            expected_claim[i])) {
             return;

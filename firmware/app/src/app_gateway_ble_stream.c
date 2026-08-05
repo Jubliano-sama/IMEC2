@@ -1,5 +1,6 @@
 #include "app_gateway_ble_stream.h"
 #include "app_gateway_command_observability.h"
+#include "gateway_command.h"
 
 #include <errno.h>
 #include <string.h>
@@ -19,8 +20,139 @@ _Static_assert(GATEWAY_BLE_STREAM_RECORD_POOL_BYTES >=
                "gateway BLE stream pool must retain its verified burst margin");
 _Static_assert(GATEWAY_BLE_STREAM_QUEUE_DEPTH > 0u,
                "gateway BLE stream reservation requires a queue slot");
+_Static_assert(GATEWAY_BLE_STREAM_QUEUE_DEPTH <= UINT8_MAX,
+               "gateway BLE stream item indexes must fit uint8_t");
+_Static_assert(GATEWAY_BLE_STREAM_RECORD_POOL_BYTES <= UINT16_MAX,
+               "gateway BLE stream pool offsets must fit uint16_t");
 
 #define STREAM_FLAG_TRUNCATED 0x01u
+
+void gateway_ble_direct_queue_init(
+    struct gateway_ble_direct_queue_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+static bool direct_queue_state_valid(
+    const struct gateway_ble_direct_queue_state *state,
+    uint8_t capacity)
+{
+    return state != NULL && capacity > 0u &&
+           state->head < capacity && state->count <= capacity &&
+           (!state->head_active || state->count > 0u);
+}
+
+int gateway_ble_direct_queue_enqueue(
+    struct gateway_ble_direct_queue_state *state,
+    uint8_t capacity,
+    uint8_t *slot)
+{
+    if (slot == NULL || !direct_queue_state_valid(state, capacity)) {
+        return -EINVAL;
+    }
+    if (state->count == capacity) {
+        return -ENOSPC;
+    }
+
+    *slot = (uint8_t)((state->head + state->count) % capacity);
+    state->count++;
+    return 0;
+}
+
+int gateway_ble_direct_queue_begin(
+    struct gateway_ble_direct_queue_state *state,
+    uint8_t capacity,
+    uint8_t *slot)
+{
+    if (slot == NULL || !direct_queue_state_valid(state, capacity)) {
+        return -EINVAL;
+    }
+    if (state->head_active) {
+        return -EBUSY;
+    }
+    if (state->count == 0u) {
+        return -ENOENT;
+    }
+
+    state->head_active = true;
+    *slot = state->head;
+    return 0;
+}
+
+void gateway_ble_direct_queue_cancel(
+    struct gateway_ble_direct_queue_state *state)
+{
+    if (state != NULL) {
+        state->head_active = false;
+    }
+}
+
+int gateway_ble_direct_queue_complete(
+    struct gateway_ble_direct_queue_state *state,
+    uint8_t capacity)
+{
+    if (!direct_queue_state_valid(state, capacity)) {
+        return -EINVAL;
+    }
+    if (!state->head_active || state->count == 0u) {
+        return -ENOENT;
+    }
+
+    state->head = (uint8_t)((state->head + 1u) % capacity);
+    state->count--;
+    state->head_active = false;
+    return 0;
+}
+
+bool gateway_ble_custody_error_retryable(int error)
+{
+    return error == -ENOSPC || error == -ENOTCONN ||
+           error == -EACCES || error == -EAGAIN || error == -EBUSY;
+}
+
+bool gateway_ble_work_handoff_requires_reset(int schedule_result)
+{
+    return schedule_result < 0;
+}
+
+int gateway_ble_send_frame_retained(
+    const uint8_t *frame,
+    size_t frame_len,
+    gateway_ble_custody_send_fn send_fn,
+    gateway_ble_custody_wait_fn wait_fn,
+    void *ctx,
+    uint32_t *retry_count)
+{
+    uint32_t retries = 0u;
+
+    if (frame == NULL || frame_len == 0u ||
+        send_fn == NULL || wait_fn == NULL) {
+        return -EINVAL;
+    }
+
+    for (;;) {
+        int ret = send_fn(frame, frame_len, ctx);
+
+        if (ret == 0) {
+            if (retry_count != NULL) {
+                *retry_count = retries;
+            }
+            return 0;
+        }
+        if (!gateway_ble_custody_error_retryable(ret)) {
+            if (retry_count != NULL) {
+                *retry_count = retries;
+            }
+            return ret;
+        }
+        if (retries < UINT32_MAX) {
+            retries++;
+        }
+        wait_fn(ctx);
+    }
+}
 
 uint32_t gateway_ble_recovery_backoff_ms(uint8_t retry_round,
                                          uint32_t random_value)
@@ -154,19 +286,35 @@ void gateway_ble_stream_init(struct gateway_ble_stream_state *state)
     }
 }
 
-static void remove_item(struct gateway_ble_stream_state *state, uint8_t index)
+static bool remove_item(struct gateway_ble_stream_state *state, uint8_t index)
 {
     uint16_t removed_offset;
     uint16_t removed_len;
+    size_t tail_len;
+    bool removed_journal_owner;
 
     if (state == NULL || index >= state->count) {
-        return;
+        return false;
     }
     removed_offset = state->items[index].offset;
     removed_len = state->items[index].len;
+    /*
+     * Every mutation path appends complete records inside pool_used and
+     * adjusts later offsets when compacting. Guard that invariant here before
+     * subtraction so corrupted metadata can never turn into a huge memmove.
+     */
+    if ((size_t)removed_offset > (size_t)state->pool_used ||
+        (size_t)removed_len >
+            (size_t)state->pool_used - (size_t)removed_offset) {
+        return false;
+    }
+    tail_len = (size_t)state->pool_used -
+               (size_t)removed_offset -
+               (size_t)removed_len;
+    removed_journal_owner = state->items[index].journal_owner;
     memmove(&state->record_pool[removed_offset],
             &state->record_pool[removed_offset + removed_len],
-            state->pool_used - removed_offset - removed_len);
+            tail_len);
     state->pool_used -= removed_len;
     for (uint8_t i = 0u; i < state->count; i++) {
         if (i != index && state->items[i].offset > removed_offset) {
@@ -177,6 +325,13 @@ static void remove_item(struct gateway_ble_stream_state *state, uint8_t index)
         state->items[i] = state->items[i + 1u];
     }
     state->count--;
+    if (removed_journal_owner) {
+        memset(state->journal_payload_digest,
+               0,
+               sizeof(state->journal_payload_digest));
+        state->journal_payload_digest_valid = false;
+    }
+    return true;
 }
 
 static void note_drop(struct gateway_ble_stream_state *state,
@@ -213,7 +368,8 @@ static bool drop_one_lower_priority(struct gateway_ble_stream_state *state,
 {
     uint8_t best_offset = UINT8_MAX;
     uint8_t best_priority = incoming_priority;
-    uint8_t first_offset = state->head_send_active ? 1u : 0u;
+    uint8_t first_offset =
+        state->head_send_phase != GATEWAY_BLE_STREAM_HEAD_IDLE ? 1u : 0u;
 
     for (uint8_t i = first_offset; i < state->count; i++) {
         uint8_t queued_priority = state->items[i].priority;
@@ -239,10 +395,15 @@ static bool drop_one_lower_priority(struct gateway_ble_stream_state *state,
         return false;
     }
 
+    uint8_t dropped_packet_type =
+        state->items[best_offset].packet_type;
+
+    if (!remove_item(state, best_offset)) {
+        return false;
+    }
     note_drop(state,
-              state->items[best_offset].packet_type,
+              dropped_packet_type,
               GATEWAY_BLE_STREAM_DROP_PRIORITY);
-    remove_item(state, best_offset);
     return true;
 }
 
@@ -263,9 +424,10 @@ static bool queue_capacity_available(
     uint16_t record_len)
 {
     size_t occupied_pool;
-    uint8_t occupied_slots;
+    size_t occupied_slots;
 
-    occupied_slots = state->count + (state->reservation_active ? 1u : 0u);
+    occupied_slots = (size_t)state->count +
+                     (state->reservation_active ? 1u : 0u);
     occupied_pool = state->pool_used;
     if (state->reservation_active) {
         occupied_pool += reservation_item_const(state)->len;
@@ -288,6 +450,32 @@ static bool packet_identity_matches(const struct proto_packet *left,
            left->message_age_ms == right->message_age_ms;
 }
 
+static bool command_event_packet_valid(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_command_event *event)
+{
+    struct gateway_command_event decoded;
+
+    if (packet == NULL || payload == NULL ||
+        packet->msg_type != MSG_GATEWAY_COMMAND_EVENT ||
+        packet->flags != 0u ||
+        packet->src_id == 0u ||
+        packet->src_id != packet->dst_id ||
+        packet->payload_len != payload_len ||
+        gateway_command_event_decode(payload, payload_len, &decoded) < 0 ||
+        decoded.event_seq == 0u ||
+        packet->session_id != decoded.event_seq ||
+        packet->seq != (uint16_t)decoded.event_seq) {
+        return false;
+    }
+    if (event != NULL) {
+        *event = decoded;
+    }
+    return true;
+}
+
 static int build_record(const struct proto_packet *packet,
                         const uint8_t *payload,
                         size_t payload_len,
@@ -298,6 +486,7 @@ static int build_record(const struct proto_packet *packet,
                         size_t record_cap,
                         struct gateway_ble_stream_item *item)
 {
+    struct gateway_command_event command_event = {0};
     size_t offset = 0u;
     uint8_t record_flags = 0u;
     uint8_t priority;
@@ -307,6 +496,17 @@ static int build_record(const struct proto_packet *packet,
         (record == NULL && record_cap != 0u) ||
         (payload == NULL && payload_len != 0u)) {
         return -EINVAL;
+    }
+    if ((packet->msg_type == MSG_GATEWAY_COMMAND_EVENT) !=
+        (packet_class == GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT)) {
+        return -EINVAL;
+    }
+    if (packet->msg_type == MSG_GATEWAY_COMMAND_EVENT &&
+        !command_event_packet_valid(packet,
+                                    payload,
+                                    payload_len,
+                                    &command_event)) {
+        return -EBADMSG;
     }
     if (payload_len > GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN) {
         if (!class_can_truncate(packet_class)) {
@@ -322,10 +522,7 @@ static int build_record(const struct proto_packet *packet,
 
     priority = priority_for_class(packet_class);
     if (packet_class == GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT &&
-        payload_len == GATEWAY_COMMAND_EVENT_WIRE_LEN &&
-        payload[0] == GATEWAY_COMMAND_EVENT_SCHEMA_VERSION &&
-        payload[1] == GATEWAY_COMMAND_EVENT_WIRE_LEN &&
-        (payload[4] & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u) {
+        (command_event.flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u) {
         priority = 0u;
     }
 
@@ -363,13 +560,14 @@ static int build_record(const struct proto_packet *packet,
     return 0;
 }
 
-int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
-                                      const struct proto_packet *packet,
-                                      const uint8_t *payload,
-                                      size_t payload_len,
-                                      uint32_t received_at_ms,
-                                      uint32_t now_ms,
-                                      bool ble_ready)
+static int enqueue_packet(struct gateway_ble_stream_state *state,
+                          const struct proto_packet *packet,
+                          const uint8_t *payload,
+                          size_t payload_len,
+                          uint32_t received_at_ms,
+                          uint32_t now_ms,
+                          bool ble_ready,
+                          bool retain_until_sent)
 {
     enum gateway_ble_stream_class packet_class;
     struct gateway_ble_stream_item item;
@@ -431,6 +629,7 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
     if (ret < 0) {
         return ret;
     }
+    item.retain_until_sent = retain_until_sent;
     item.offset = state->pool_used;
     state->pool_used += item.len;
     state->items[state->count] = item;
@@ -441,13 +640,51 @@ int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
     return 1;
 }
 
-int gateway_ble_stream_enqueue_staged_packet(
+int gateway_ble_stream_enqueue_packet(struct gateway_ble_stream_state *state,
+                                      const struct proto_packet *packet,
+                                      const uint8_t *payload,
+                                      size_t payload_len,
+                                      uint32_t received_at_ms,
+                                      uint32_t now_ms,
+                                      bool ble_ready)
+{
+    return enqueue_packet(state,
+                          packet,
+                          payload,
+                          payload_len,
+                          received_at_ms,
+                          now_ms,
+                          ble_ready,
+                          false);
+}
+
+int gateway_ble_stream_enqueue_retained_packet(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t received_at_ms,
+    uint32_t now_ms,
+    bool ble_ready)
+{
+    return enqueue_packet(state,
+                          packet,
+                          payload,
+                          payload_len,
+                          received_at_ms,
+                          now_ms,
+                          ble_ready,
+                          true);
+}
+
+static int enqueue_staged_packet_with_journal_digest(
     struct gateway_ble_stream_state *state,
     const struct proto_packet *packet,
     size_t payload_len,
     uint32_t received_at_ms,
     uint32_t now_ms,
-    bool ble_ready)
+    bool ble_ready,
+    const uint8_t journal_payload_digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
     enum gateway_ble_stream_class packet_class;
     struct gateway_ble_stream_item item;
@@ -457,8 +694,12 @@ int gateway_ble_stream_enqueue_staged_packet(
     int ret;
 
     if (state == NULL || packet == NULL ||
+        journal_payload_digest == NULL ||
         !state->restore_staging_active) {
         return -EINVAL;
+    }
+    if (state->journal_payload_digest_valid) {
+        return -EBUSY;
     }
     if (payload_len > GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN) {
         note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
@@ -535,13 +776,104 @@ int gateway_ble_stream_enqueue_staged_packet(
         return ret;
     }
     item.offset = (uint16_t)destination_offset;
+    item.retain_until_sent = true;
+    item.journal_owner = true;
     state->pool_used += item.len;
     state->items[state->count] = item;
     state->count++;
+    memcpy(state->journal_payload_digest,
+           journal_payload_digest,
+           sizeof(state->journal_payload_digest));
+    state->journal_payload_digest_valid = true;
     if (state->count > state->diagnostics.max_queue_depth_observed) {
         state->diagnostics.max_queue_depth_observed = state->count;
     }
     return 1;
+}
+
+int gateway_ble_stream_enqueue_staged_packet(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    size_t payload_len,
+    uint32_t received_at_ms,
+    uint32_t now_ms,
+    bool ble_ready)
+{
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    size_t staging_offset;
+
+    if (state == NULL || !state->restore_staging_active) {
+        return -EINVAL;
+    }
+    staging_offset = state->restore_staging_offset;
+    if (staging_offset > sizeof(state->record_pool) ||
+        payload_len > sizeof(state->record_pool) - staging_offset ||
+        !semantic_digest_sha256(&state->record_pool[staging_offset],
+                                payload_len,
+                                payload_digest)) {
+        return -EINVAL;
+    }
+    return enqueue_staged_packet_with_journal_digest(
+        state,
+        packet,
+        payload_len,
+        received_at_ms,
+        now_ms,
+        ble_ready,
+        payload_digest);
+}
+
+int gateway_ble_stream_enqueue_staged_bundle_projection(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    size_t raw_payload_len,
+    uint8_t accepted_record_mask,
+    uint32_t received_at_ms,
+    uint32_t now_ms,
+    bool ble_ready)
+{
+    uint8_t raw_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    size_t projected_payload_len = 0u;
+    size_t staging_offset;
+    int ret;
+
+    if (state == NULL || packet == NULL ||
+        !state->restore_staging_active ||
+        packet->msg_type != MSG_RESULT_BUNDLE ||
+        accepted_record_mask == 0u) {
+        return -EINVAL;
+    }
+    staging_offset = state->restore_staging_offset;
+    if (staging_offset > sizeof(state->record_pool) ||
+        raw_payload_len > sizeof(state->record_pool) - staging_offset) {
+        return -EINVAL;
+    }
+    if (state->journal_payload_digest_valid) {
+        return -EBUSY;
+    }
+    if (!semantic_digest_sha256(&state->record_pool[staging_offset],
+                                raw_payload_len,
+                                raw_payload_digest)) {
+        return -EINVAL;
+    }
+    ret = gateway_collection_project_bundle_payload(
+        &state->record_pool[staging_offset],
+        raw_payload_len,
+        accepted_record_mask,
+        &state->record_pool[staging_offset],
+        sizeof(state->record_pool) - staging_offset,
+        &projected_payload_len);
+    if (ret != PROTO_OK) {
+        return ret == PROTO_ERR_NO_SPACE ? -EMSGSIZE : -EBADMSG;
+    }
+    return enqueue_staged_packet_with_journal_digest(
+        state,
+        packet,
+        projected_payload_len,
+        received_at_ms,
+        now_ms,
+        ble_ready,
+        raw_payload_digest);
 }
 
 int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
@@ -609,8 +941,16 @@ int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
 
     *reservation_item(state) = item;
     state->reservation_payload_len = (uint16_t)payload_len;
-    state->reservation_payload_crc =
-        proto_crc16_ccitt_false(payload, payload_len);
+    if (!semantic_digest_sha256(
+            payload,
+            payload_len,
+            state->reservation_payload_digest)) {
+        memset(reservation_item(state),
+               0,
+               sizeof(*reservation_item(state)));
+        state->reservation_payload_len = 0u;
+        return -EINVAL;
+    }
     state->reservation_active = true;
     return 1;
 }
@@ -624,6 +964,7 @@ int gateway_ble_stream_commit_reservation(
     const struct gateway_ble_stream_item *reserved;
     enum gateway_ble_stream_class packet_class;
     struct gateway_ble_stream_item item;
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t insert_index;
     int ret;
 
@@ -637,11 +978,18 @@ int gateway_ble_stream_commit_reservation(
     if (!state->reservation_active) {
         return -ENOENT;
     }
+    if (state->journal_payload_digest_valid) {
+        return -EBUSY;
+    }
     reserved = reservation_item_const(state);
     if (payload_len != state->reservation_payload_len ||
         !packet_identity_matches(packet, &reserved->packet) ||
-        proto_crc16_ccitt_false(payload, payload_len) !=
-            state->reservation_payload_crc) {
+        !semantic_digest_sha256(payload,
+                                payload_len,
+                                payload_digest) ||
+        !semantic_digest_equal(payload_digest,
+                               state->reservation_payload_digest,
+                               sizeof(payload_digest))) {
         return -ESTALE;
     }
 
@@ -682,12 +1030,125 @@ int gateway_ble_stream_commit_reservation(
 
     insert_index = state->count;
     item.offset = state->pool_used;
+    item.retain_until_sent = true;
+    item.journal_owner = true;
     state->pool_used += item.len;
     state->items[insert_index] = item;
     state->count++;
+    memcpy(state->journal_payload_digest,
+           state->reservation_payload_digest,
+           sizeof(state->journal_payload_digest));
+    state->journal_payload_digest_valid = true;
     state->reservation_active = false;
     state->reservation_payload_len = 0u;
-    state->reservation_payload_crc = 0u;
+    memset(state->reservation_payload_digest,
+           0,
+           sizeof(state->reservation_payload_digest));
+    if (insert_index != GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u) {
+        memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
+    }
+    if (state->count > state->diagnostics.max_queue_depth_observed) {
+        state->diagnostics.max_queue_depth_observed = state->count;
+    }
+    return 1;
+}
+
+int gateway_ble_stream_commit_bundle_projection_reservation(
+    struct gateway_ble_stream_state *state,
+    const struct proto_packet *packet,
+    const uint8_t *raw_payload,
+    size_t raw_payload_len,
+    uint8_t accepted_record_mask)
+{
+    const struct gateway_ble_stream_item *reserved;
+    enum gateway_ble_stream_class packet_class;
+    struct gateway_ble_stream_item item;
+    uint8_t raw_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    size_t destination_offset;
+    size_t projected_payload_len = 0u;
+    uint8_t *destination_payload;
+    uint8_t insert_index;
+    int ret;
+
+    if (state == NULL || packet == NULL || raw_payload == NULL ||
+        packet->msg_type != MSG_RESULT_BUNDLE ||
+        accepted_record_mask == 0u) {
+        return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
+    }
+    if (!state->reservation_active) {
+        return -ENOENT;
+    }
+    if (state->journal_payload_digest_valid) {
+        return -EBUSY;
+    }
+    reserved = reservation_item_const(state);
+    if (raw_payload_len != state->reservation_payload_len ||
+        !packet_identity_matches(packet, &reserved->packet) ||
+        !semantic_digest_sha256(raw_payload,
+                                raw_payload_len,
+                                raw_payload_digest) ||
+        !semantic_digest_equal(raw_payload_digest,
+                               state->reservation_payload_digest,
+                               sizeof(raw_payload_digest))) {
+        return -ESTALE;
+    }
+    if (state->count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
+        state->pool_used + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN >
+            sizeof(state->record_pool)) {
+        return -ENOSPC;
+    }
+
+    destination_offset = state->pool_used;
+    destination_payload = &state->record_pool[
+        destination_offset + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN];
+    ret = gateway_collection_project_bundle_payload(
+        raw_payload,
+        raw_payload_len,
+        accepted_record_mask,
+        destination_payload,
+        sizeof(state->record_pool) - destination_offset -
+            GATEWAY_BLE_STREAM_RECORD_HEADER_LEN,
+        &projected_payload_len);
+    if (ret != PROTO_OK) {
+        return ret == PROTO_ERR_NO_SPACE ? -EMSGSIZE : -EBADMSG;
+    }
+
+    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
+                                                      packet->flags);
+    ret = build_record(packet,
+                       destination_payload,
+                       projected_payload_len,
+                       packet_class,
+                       reserved->received_at_ms,
+                       reserved->queued_at_ms,
+                       &state->record_pool[destination_offset],
+                       sizeof(state->record_pool) - destination_offset,
+                       &item);
+    if (ret < 0 || item.len > reserved->len ||
+        item.packet_type != reserved->packet_type ||
+        item.priority != reserved->priority) {
+        return ret < 0 ? ret : -ESTALE;
+    }
+
+    insert_index = state->count;
+    item.offset = (uint16_t)destination_offset;
+    item.retain_until_sent = true;
+    item.journal_owner = true;
+    state->pool_used += item.len;
+    state->items[insert_index] = item;
+    state->count++;
+    memcpy(state->journal_payload_digest,
+           state->reservation_payload_digest,
+           sizeof(state->journal_payload_digest));
+    state->journal_payload_digest_valid = true;
+    state->reservation_active = false;
+    state->reservation_payload_len = 0u;
+    memset(state->reservation_payload_digest,
+           0,
+           sizeof(state->reservation_payload_digest));
     if (insert_index != GATEWAY_BLE_STREAM_QUEUE_DEPTH - 1u) {
         memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
     }
@@ -705,7 +1166,9 @@ void gateway_ble_stream_cancel_reservation(
     }
     memset(reservation_item(state), 0, sizeof(*reservation_item(state)));
     state->reservation_payload_len = 0u;
-    state->reservation_payload_crc = 0u;
+    memset(state->reservation_payload_digest,
+           0,
+           sizeof(state->reservation_payload_digest));
     state->reservation_active = false;
 }
 
@@ -734,14 +1197,17 @@ unsigned int gateway_ble_stream_drain(struct gateway_ble_stream_state *state,
 
     while (state->count > 0u && sent < max_records) {
         struct gateway_ble_stream_item *item = &state->items[0];
+        uint16_t sent_len = item->len;
         int ret = send_fn(&state->record_pool[item->offset], item->len, send_ctx);
 
         if (ret < 0) {
             break;
         }
+        if (!remove_item(state, 0u)) {
+            break;
+        }
         state->diagnostics.packets_sent++;
-        state->diagnostics.bytes_sent += item->len;
-        remove_item(state, 0u);
+        state->diagnostics.bytes_sent += sent_len;
         sent++;
     }
     state->diagnostics.oldest_queued_age_ms =
@@ -785,7 +1251,7 @@ int gateway_ble_stream_begin_send(struct gateway_ble_stream_state *state,
         return ret;
     }
     if (item_len > record_cap) {
-        state->head_send_active = false;
+        state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_IDLE;
         return -EMSGSIZE;
     }
     memcpy(record, item_record, item_len);
@@ -808,21 +1274,22 @@ int gateway_ble_stream_begin_send_view(struct gateway_ble_stream_state *state,
     if (state->count == 0u) {
         return -ENOENT;
     }
-    if (state->head_send_active) {
+    if (state->head_send_phase != GATEWAY_BLE_STREAM_HEAD_IDLE) {
         return -EBUSY;
     }
 
     item = &state->items[0];
     *record = &state->record_pool[item->offset];
     *record_len = item->len;
-    state->head_send_active = true;
+    state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_SENDING;
     return 0;
 }
 
 void gateway_ble_stream_cancel_send(struct gateway_ble_stream_state *state)
 {
-    if (state != NULL) {
-        state->head_send_active = false;
+    if (state != NULL &&
+        state->head_send_phase == GATEWAY_BLE_STREAM_HEAD_SENDING) {
+        state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_IDLE;
     }
 }
 
@@ -837,10 +1304,14 @@ void gateway_ble_stream_mark_sent(struct gateway_ble_stream_state *state,
     }
 
     item = &state->items[0];
+    uint16_t sent_len = item->len;
+
+    if (!remove_item(state, 0u)) {
+        return;
+    }
     state->diagnostics.packets_sent++;
-    state->diagnostics.bytes_sent += item->len;
-    remove_item(state, 0u);
-    state->head_send_active = false;
+    state->diagnostics.bytes_sent += sent_len;
+    state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_IDLE;
     state->diagnostics.oldest_queued_age_ms =
         state->count == 0u ? 0u : now_ms - state->items[0].queued_at_ms;
 }
@@ -876,5 +1347,29 @@ int gateway_ble_stream_head_packet(const struct gateway_ble_stream_state *state,
         return -ENOENT;
     }
     *packet = state->items[0].packet;
+    return 0;
+}
+
+int gateway_ble_stream_head_journal_identity(
+    const struct gateway_ble_stream_state *state,
+    struct proto_packet *packet,
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    if (state == NULL || packet == NULL || payload_digest == NULL) {
+        return -EINVAL;
+    }
+    if (state->restore_staging_active) {
+        return -EAGAIN;
+    }
+    if (state->count == 0u || !state->items[0].journal_owner) {
+        return -ENOENT;
+    }
+    if (!state->journal_payload_digest_valid) {
+        return -EBADMSG;
+    }
+    *packet = state->items[0].packet;
+    memcpy(payload_digest,
+           state->journal_payload_digest,
+           SEMANTIC_DIGEST_SHA256_LEN);
     return 0;
 }

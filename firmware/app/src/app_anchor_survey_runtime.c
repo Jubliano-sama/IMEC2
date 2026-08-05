@@ -1,11 +1,14 @@
 #include "app_anchor_survey_runtime.h"
 
 #include "app_anchor_survey_discovery.h"
+#include "app_anchor_survey_result_delivery.h"
+#include "app_mesh_persistence.h"
 #include "app_board.h"
 #include "app_config.h"
 #include "app_node_comm.h"
 #include "app_operation_policy.h"
 #include "app_state.h"
+#include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "status.h"
 #include "survey_pair_lease.h"
@@ -22,6 +25,8 @@ LOG_MODULE_DECLARE(app_anchor, LOG_LEVEL_DBG);
 
 static struct app_anchor_survey_runtime_ops runtime_ops;
 static bool runtime_initialized;
+static bool runtime_started;
+static bool runtime_work_queue_ready;
 static uint16_t survey_sequence;
 static struct k_spinlock survey_lock;
 static struct survey_pair_lease pair_lease;
@@ -29,6 +34,7 @@ static struct survey_discovery_config discovery_config;
 static uint32_t discovery_start_ms;
 static bool pair_start_pending;
 static uint32_t pair_start_delivery_handle;
+static uint32_t pair_start_failed_abandon_handle;
 static bool survey_running;
 static bool discovery_pending;
 static bool discovery_generation_active;
@@ -36,8 +42,17 @@ static bool discovery_report_stage_pending;
 static atomic_t abort_requested;
 static struct k_work_delayable survey_work;
 static struct k_work_delayable pair_lease_work;
+static struct k_work_delayable pair_start_kick_work;
+static struct survey_pair_control_id pair_start_kick_id;
+static uint32_t pair_start_kick_delivery_handle;
+static bool pair_start_kick_active;
+static uint64_t survey_generation_high_watermark;
+static uint64_t survey_generation_active;
+static bool survey_generation_restored;
+K_MUTEX_DEFINE(survey_generation_admission_mutex);
 
 #define SURVEY_START_DELIVERY_POLL_MS 5u
+#define SURVEY_START_BIND_RETRY_MS 10u
 #define SURVEY_NON_RF_SERVICE_POLL_MS REPORT_TX_RETRY_DELAY_MS
 
 struct survey_rf_retry_state {
@@ -50,6 +65,8 @@ struct survey_rf_retry_state {
 static struct survey_rf_retry_state discovery_rf_retry;
 static struct survey_rf_retry_state pair_rf_retry;
 
+static void pair_start_kick_clear_locked(void);
+
 static bool pair_queueable(const struct survey_pair *pair)
 {
     return pair != NULL &&
@@ -57,17 +74,86 @@ static bool pair_queueable(const struct survey_pair *pair)
            pair->sample_count <= REPORT_TX_QUEUE_DEPTH;
 }
 
-static void schedule(k_timeout_t delay)
+static bool discovery_config_matches_locked(
+    const struct survey_discovery_config *config)
+{
+    return config != NULL &&
+           discovery_generation_active &&
+           discovery_config.operation_generation ==
+               config->operation_generation &&
+           discovery_config.survey_id == config->survey_id;
+}
+
+static int schedule(k_timeout_t delay)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
-    if (runtime_ops.work_queue != NULL) {
-        (void)k_work_reschedule_for_queue(runtime_ops.work_queue,
-                                          &survey_work,
-                                          delay);
+    if (runtime_work_queue_ready && runtime_ops.work_queue != NULL) {
+        return k_work_reschedule_for_queue(runtime_ops.work_queue,
+                                           &survey_work,
+                                           delay);
     }
+    return -ENODEV;
 #else
     ARG_UNUSED(delay);
+    return -ENOTSUP;
 #endif
+}
+
+static int schedule_result_checked(int ret, const char *owner)
+{
+    if (ret < 0) {
+        LOG_ERR("anchor survey work scheduling failed: owner=%s ret=%d",
+                owner == NULL ? "unknown" : owner,
+                ret);
+        /*
+         * The caller has already published protocol or persistent custody.
+         * A rejected sole work owner must not be hidden by unrelated healthy
+         * system-workqueue watchdog progress.
+         */
+        app_watchdog_stop_feeding();
+    }
+    return ret;
+}
+
+static int schedule_owned(k_timeout_t delay, const char *owner)
+{
+    return schedule_result_checked(schedule(delay), owner);
+}
+
+static int schedule_pair_unless_discovery_pending(k_timeout_t delay,
+                                                  const char *owner)
+{
+    k_spinlock_key_t key = k_spin_lock(&survey_lock);
+    int ret;
+
+    if (discovery_pending) {
+        k_spin_unlock(&survey_lock, key);
+        return -ECANCELED;
+    }
+    /*
+     * Keep the ownership check and reschedule ordered against queue_discovery:
+     * whichever side publishes last also owns the delayable-work deadline.
+     */
+    ret = schedule(delay);
+    k_spin_unlock(&survey_lock, key);
+    return schedule_result_checked(ret, owner);
+}
+
+static int schedule_discovery_if_current(
+    const struct survey_discovery_config *config,
+    k_timeout_t delay,
+    const char *owner)
+{
+    k_spinlock_key_t key = k_spin_lock(&survey_lock);
+    int ret;
+
+    if (!discovery_config_matches_locked(config)) {
+        k_spin_unlock(&survey_lock, key);
+        return -ECANCELED;
+    }
+    ret = schedule(delay);
+    k_spin_unlock(&survey_lock, key);
+    return schedule_result_checked(ret, owner);
 }
 
 static void survey_rf_retry_reset(struct survey_rf_retry_state *state)
@@ -153,6 +239,8 @@ static bool schedule_pair_rf_retry(
     const char *reason)
 {
     uint32_t retry_delay_ms = 0u;
+    uint32_t delivery_handle = 0u;
+    bool cancel_start_kick = false;
     bool still_current;
     k_spinlock_key_t key;
     int ret;
@@ -164,8 +252,10 @@ static bool schedule_pair_rf_retry(
         absolute_deadline_ms,
         &retry_delay_ms);
     if (ret == 0) {
-        schedule(K_MSEC(retry_delay_ms));
-        return true;
+        ret = schedule_pair_unless_discovery_pending(
+            K_MSEC(retry_delay_ms),
+            reason == NULL ? "pair-rf-retry" : reason);
+        return ret >= 0;
     }
 
     key = k_spin_lock(&survey_lock);
@@ -173,13 +263,21 @@ static bool schedule_pair_rf_retry(
         pair_lease.start_id.session_id == control_id->session_id &&
         pair_lease.start_id.command_seq == control_id->command_seq;
     if (still_current) {
+        delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         (void)survey_pair_lease_abort(&pair_lease);
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
     k_spin_unlock(&survey_lock, key);
     if (still_current) {
+        if (cancel_start_kick) {
+            (void)k_work_cancel_delayable(&pair_start_kick_work);
+        }
         (void)k_work_cancel_delayable(&pair_lease_work);
+        (void)app_anchor_survey_runtime_abandon_pair_start_delivery(
+            delivery_handle, "pair-rf-retry-expired");
     }
     survey_rf_retry_reset(&pair_rf_retry);
     LOG_ERR("survey pair RF retry terminated: survey=%u seq=%u ret=%d reason=%s",
@@ -190,13 +288,16 @@ static bool schedule_pair_rf_retry(
     return false;
 }
 
-static void abandon_pair_start_delivery(uint32_t delivery_handle,
-                                        const char *reason)
+int app_anchor_survey_runtime_abandon_pair_start_delivery(
+    uint32_t delivery_handle,
+    const char *reason)
 {
+    uint32_t retained_handle;
+    k_spinlock_key_t key;
     int ret;
 
     if (delivery_handle == 0u) {
-        return;
+        return 0;
     }
     ret = app_node_comm_abandon_delivery(delivery_handle);
     status_debug_printf(
@@ -205,16 +306,145 @@ static void abandon_pair_start_delivery(uint32_t delivery_handle,
         ret,
         reason == NULL ? "pair-state-release" : reason);
     if (ret < 0 && ret != -ENOENT && ret != -EALREADY) {
-        LOG_WRN("survey pair start delivery abandon failed: handle=%u ret=%d reason=%s",
+        /*
+         * The caller may already have detached this handle while replacing its
+         * lease identity. Retain exact orphan custody and reject further
+         * survey-generation work until watchdog recovery; otherwise the live
+         * COMMAND_OK delivery could outlast all state that can identify it.
+         */
+        key = k_spin_lock(&survey_lock);
+        if (pair_start_failed_abandon_handle == 0u ||
+            pair_start_failed_abandon_handle == delivery_handle) {
+            pair_start_failed_abandon_handle = delivery_handle;
+        }
+        retained_handle = pair_start_failed_abandon_handle;
+        k_spin_unlock(&survey_lock, key);
+        LOG_ERR("survey pair start delivery abandon failed: handle=%u ret=%d reason=%s retained=%u",
                 delivery_handle,
                 ret,
-                reason == NULL ? "pair-state-release" : reason);
+                reason == NULL ? "pair-state-release" : reason,
+                retained_handle);
+        app_watchdog_stop_feeding();
+        return ret;
+    }
+    key = k_spin_lock(&survey_lock);
+    if (pair_start_failed_abandon_handle == delivery_handle) {
+        pair_start_failed_abandon_handle = 0u;
+    }
+    k_spin_unlock(&survey_lock, key);
+    return 0;
+}
+
+/* Caller holds survey_lock. */
+static bool pair_start_kick_matches_locked(
+    const struct survey_pair_control_id *control_id,
+    uint32_t delivery_handle)
+{
+    return control_id != NULL && pair_start_kick_active &&
+           pair_start_kick_delivery_handle == delivery_handle &&
+           pair_start_kick_id.session_id == control_id->session_id &&
+           pair_start_kick_id.command_seq == control_id->command_seq &&
+           pair_start_pending &&
+           pair_start_delivery_handle == delivery_handle &&
+           pair_lease.phase == SURVEY_PAIR_LEASE_START_PENDING &&
+           pair_lease.start_id_valid &&
+           pair_lease.start_id.session_id == control_id->session_id &&
+           pair_lease.start_id.command_seq == control_id->command_seq;
+}
+
+/* Caller holds survey_lock. */
+static void pair_start_kick_clear_locked(void)
+{
+    pair_start_kick_active = false;
+    pair_start_kick_delivery_handle = 0u;
+    pair_start_kick_id = (struct survey_pair_control_id) {0};
+}
+
+static void pair_start_kick_work_handler(struct k_work *work)
+{
+    struct survey_pair_control_id control_id = {0};
+    uint32_t delivery_handle = 0u;
+    uint32_t deadline_ms = 0u;
+    uint32_t retry_delay_ms;
+    bool expired = false;
+    bool current = false;
+    k_spinlock_key_t key;
+    int ret;
+
+    ARG_UNUSED(work);
+
+    key = k_spin_lock(&survey_lock);
+    if (pair_start_kick_active) {
+        control_id = pair_start_kick_id;
+        delivery_handle = pair_start_kick_delivery_handle;
+        current = pair_start_kick_matches_locked(&control_id,
+                                                 delivery_handle);
+        if (current) {
+            deadline_ms = pair_lease.prepared_deadline_ms;
+            expired = uptime_deadline_reached(k_uptime_get_32(),
+                                              deadline_ms);
+            if (expired) {
+                (void)survey_pair_lease_abort(&pair_lease);
+                pair_start_pending = false;
+                pair_start_delivery_handle = 0u;
+            }
+        }
+        if (!current || expired) {
+            pair_start_kick_clear_locked();
+        }
+    }
+    k_spin_unlock(&survey_lock, key);
+
+    if (!current) {
+        return;
+    }
+    if (expired) {
+        app_anchor_survey_runtime_abandon_pair_start_delivery(
+            delivery_handle, "pair-start-bind-deadline");
+        LOG_ERR("survey pair START bind recovery expired: session=%u seq=%u handle=%u",
+                control_id.session_id,
+                control_id.command_seq,
+                delivery_handle);
+        return;
+    }
+
+    ret = schedule(K_NO_WAIT);
+    if (ret >= 0) {
+        key = k_spin_lock(&survey_lock);
+        if (pair_start_kick_active &&
+            pair_start_kick_delivery_handle == delivery_handle &&
+            pair_start_kick_id.session_id == control_id.session_id &&
+            pair_start_kick_id.command_seq == control_id.command_seq) {
+            pair_start_kick_clear_locked();
+        }
+        k_spin_unlock(&survey_lock, key);
+        status_debug_printf(
+            "DBG_SURVEY_PAIR_START_BIND_RECOVERED session=%u seq=%u handle=%u\n",
+            control_id.session_id,
+            control_id.command_seq,
+            delivery_handle);
+        return;
+    }
+
+    retry_delay_ms = uptime_ms_until_deadline(k_uptime_get_32(), deadline_ms);
+    if (retry_delay_ms > SURVEY_START_BIND_RETRY_MS) {
+        retry_delay_ms = SURVEY_START_BIND_RETRY_MS;
+    }
+    ret = k_work_reschedule(&pair_start_kick_work,
+                            K_MSEC(retry_delay_ms));
+    if (ret < 0) {
+        LOG_ERR("survey pair START bind recovery owner lost: session=%u seq=%u handle=%u ret=%d",
+                control_id.session_id,
+                control_id.command_seq,
+                delivery_handle,
+                ret);
+        app_watchdog_stop_feeding();
     }
 }
 
-void app_anchor_survey_runtime_schedule_ms(uint32_t delay_ms)
+int app_anchor_survey_runtime_schedule_ms(uint32_t delay_ms)
 {
-    schedule(K_MSEC(delay_ms));
+    return schedule_owned(K_MSEC(delay_ms), "discovery-delivery");
 }
 
 uint16_t app_anchor_survey_runtime_next_sequence(void)
@@ -263,51 +493,253 @@ bool app_anchor_survey_runtime_abort_requested(void)
     return atomic_get(&abort_requested) != 0;
 }
 
+bool app_anchor_survey_runtime_operation_generation_active(
+    uint64_t operation_generation)
+{
+    bool active = false;
+
+    if (operation_generation == 0u || k_is_in_isr() ||
+        k_mutex_lock(&survey_generation_admission_mutex, K_FOREVER) < 0) {
+        return false;
+    }
+    active = survey_generation_restored &&
+             survey_generation_active == operation_generation;
+    k_mutex_unlock(&survey_generation_admission_mutex);
+    return active;
+}
+
+/*
+ * Caller holds survey_generation_admission_mutex.  Keeping persistence,
+ * supersession, and the active-generation cursor under one mutex lets the
+ * discovery admission path install its successor config before another
+ * generation can interleave.
+ */
+static int survey_generation_admit_locked(uint64_t generation, bool *advanced)
+{
+    uint32_t superseded_delivery_handle = 0u;
+    bool cancel_lease_work = false;
+    bool cancel_start_kick = false;
+    int custody_status;
+    int ret;
+
+    if (generation == 0u || (uint32_t)generation == 0u ||
+        advanced == NULL || !survey_generation_restored) {
+        return -EINVAL;
+    }
+    {
+        k_spinlock_key_t key = k_spin_lock(&survey_lock);
+        bool abandon_failed = pair_start_failed_abandon_handle != 0u;
+
+        k_spin_unlock(&survey_lock, key);
+        if (abandon_failed) {
+            return -EIO;
+        }
+    }
+    *advanced = false;
+    custody_status =
+        app_anchor_survey_discovery_report_custody_status(generation);
+    if (custody_status < 0 && custody_status != -EALREADY) {
+        return custody_status;
+    }
+    if (generation < survey_generation_high_watermark ||
+        (generation == survey_generation_high_watermark &&
+         survey_generation_active != generation)) {
+        return -ESTALE;
+    }
+    if (generation == survey_generation_active) {
+        return 0;
+    }
+    ret = app_mesh_persistence_advance_anchor_survey_generation(
+        DEVICE_ID, GATEWAY_ID, generation);
+    if (ret < 0) {
+        return ret;
+    }
+    if (survey_generation_active != 0u &&
+        survey_generation_active != generation) {
+        k_spinlock_key_t key = k_spin_lock(&survey_lock);
+
+        atomic_set(&abort_requested, 1);
+        if (pair_lease.phase != SURVEY_PAIR_LEASE_IDLE) {
+            cancel_lease_work =
+                pair_lease.phase != SURVEY_PAIR_LEASE_RUNNING &&
+                pair_lease.phase != SURVEY_PAIR_LEASE_ABORTING;
+            (void)survey_pair_lease_abort(&pair_lease);
+        }
+        superseded_delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
+        pair_start_pending = false;
+        pair_start_delivery_handle = 0u;
+        discovery_pending = false;
+        discovery_generation_active = false;
+        discovery_report_stage_pending = false;
+        k_spin_unlock(&survey_lock, key);
+
+        if (cancel_start_kick) {
+            (void)k_work_cancel_delayable(&pair_start_kick_work);
+        }
+        if (cancel_lease_work) {
+            (void)k_work_cancel_delayable(&pair_lease_work);
+        }
+        ret = app_anchor_survey_runtime_abandon_pair_start_delivery(
+            superseded_delivery_handle,
+            "survey-generation-superseded");
+        if (ret < 0) {
+            return ret;
+        }
+        survey_rf_retry_reset(&pair_rf_retry);
+        survey_rf_retry_reset(&discovery_rf_retry);
+    }
+    survey_generation_high_watermark = generation;
+    survey_generation_active = generation;
+    *advanced = true;
+    return 0;
+}
+
 enum app_anchor_survey_discovery_admission
-app_anchor_survey_runtime_admit_discovery(uint32_t survey_id)
+app_anchor_survey_runtime_admit_discovery(
+    const struct survey_discovery_config *config)
 {
     enum app_anchor_survey_discovery_admission admission;
+    bool advanced = false;
+    int custody_status;
     k_spinlock_key_t key;
+    int ret;
 
-    if (DEVICE_ROLE != ROLE_ANCHOR || survey_id == 0u) {
+    if (DEVICE_ROLE != ROLE_ANCHOR || config == NULL ||
+        config->survey_id == 0u ||
+        survey_operation_session_id(config->operation_generation) == 0u ||
+        !survey_generation_restored || k_is_in_isr()) {
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    /*
+     * Pair-result records belong to the preceding operation until the
+     * gateway ACKs their exact identities. Advancing the survey generation
+     * while any such owner remains would let a new discovery consume the
+     * protocol reserve or overwrite the only post-reset evidence of a
+     * partially delivered pair.
+     */
+    if (app_anchor_survey_result_delivery_occupied_count() > 0u) {
+        (void)app_anchor_survey_result_delivery_service();
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    ret = k_mutex_lock(&survey_generation_admission_mutex, K_FOREVER);
+    if (ret < 0) {
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    custody_status =
+        app_anchor_survey_discovery_report_custody_status(
+            config->operation_generation);
+    if (custody_status == -EALREADY) {
+        k_mutex_unlock(&survey_generation_admission_mutex);
+        return APP_ANCHOR_SURVEY_DISCOVERY_DUPLICATE;
+    }
+    if (custody_status < 0) {
+        k_mutex_unlock(&survey_generation_admission_mutex);
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    ret = survey_generation_admit_locked(
+        config->operation_generation, &advanced);
+    if (ret < 0) {
+        k_mutex_unlock(&survey_generation_admission_mutex);
         return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
     }
 
     key = k_spin_lock(&survey_lock);
-    if (!discovery_generation_active) {
+    if (advanced || (!survey_running && !discovery_generation_active)) {
         discovery_generation_active = true;
         discovery_config = (struct survey_discovery_config) {
-            .survey_id = survey_id,
+            .operation_generation = config->operation_generation,
+            .survey_id = config->survey_id,
         };
         admission = APP_ANCHOR_SURVEY_DISCOVERY_ACCEPTED;
-    } else if (discovery_config.survey_id == survey_id) {
+    } else if (discovery_config.operation_generation ==
+                   config->operation_generation &&
+               discovery_config.survey_id == config->survey_id) {
         admission = APP_ANCHOR_SURVEY_DISCOVERY_DUPLICATE;
     } else {
         admission = APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
     }
     k_spin_unlock(&survey_lock, key);
+    k_mutex_unlock(&survey_generation_admission_mutex);
     return admission;
 }
 
-void app_anchor_survey_runtime_queue_discovery(
+int app_anchor_survey_runtime_queue_discovery(
     const struct survey_discovery_config *config,
-    uint32_t start_ms)
+    uint32_t start_ms,
+    uint32_t delay_ms)
 {
+    bool committed = false;
+    bool rolled_back = false;
+    uint32_t survey_id;
     k_spinlock_key_t key;
+    int restart_ret;
+    int ret;
 
-    if (config == NULL || config->survey_id == 0u) {
-        return;
+    if (config == NULL || config->survey_id == 0u ||
+        !runtime_initialized) {
+        return -EINVAL;
     }
+    survey_id = config->survey_id;
 
     key = k_spin_lock(&survey_lock);
     if (discovery_generation_active &&
-        discovery_config.survey_id == config->survey_id) {
+        discovery_config.operation_generation ==
+            config->operation_generation &&
+        discovery_config.survey_id == survey_id) {
         discovery_config = *config;
         discovery_start_ms = start_ms;
         discovery_pending = true;
-        atomic_set(&abort_requested, 0);
+        committed = true;
     }
     k_spin_unlock(&survey_lock, key);
+    if (!committed) {
+        return -ESTALE;
+    }
+
+    ret = schedule(K_MSEC(delay_ms));
+    if (ret >= 0) {
+        return 0;
+    }
+
+    /*
+     * Admission and pending-state publication are useful only when a work
+     * owner exists.  If the queue rejects that owner, roll back the exact
+     * generation under the same lock.  A concurrent worker that already took
+     * pending ownership wins instead, so its generation is left intact.
+     */
+    key = k_spin_lock(&survey_lock);
+    if (discovery_generation_active && discovery_pending &&
+        discovery_config.operation_generation ==
+            config->operation_generation &&
+        discovery_config.survey_id == survey_id) {
+        discovery_config = (struct survey_discovery_config) {0};
+        discovery_start_ms = 0u;
+        discovery_pending = false;
+        discovery_generation_active = false;
+        rolled_back = true;
+    }
+    k_spin_unlock(&survey_lock, key);
+    if (!rolled_back) {
+        return 0;
+    }
+
+    survey_rf_retry_reset(&discovery_rf_retry);
+    app_node_comm_restart_role_scan();
+    restart_ret = runtime_ops.start_uwb_scan();
+    status_debug_printf(
+        "DBG_SURVEY_DISCOVERY_SCHEDULE_REJECT survey=%u ret=%d scan_ret=%d\n",
+        survey_id,
+        ret,
+        restart_ret);
+    if (restart_ret < 0) {
+        LOG_WRN("survey discovery scheduling rollback scan restart failed: survey=%u schedule_ret=%d scan_ret=%d",
+                survey_id,
+                ret,
+                restart_ret);
+    }
+    return ret;
 }
 
 void app_anchor_survey_runtime_handle_pair_prepare(
@@ -315,24 +747,38 @@ void app_anchor_survey_runtime_handle_pair_prepare(
     const uint8_t *payload,
     size_t payload_len)
 {
+    struct app_operation_policy_candidate policy_candidate;
     struct survey_pair pair = {0};
     struct survey_pair_control_id control_id;
+    struct survey_pair_lease preflight_lease;
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     enum survey_pair_lease_decision decision;
+    enum survey_pair_lease_decision preflight_decision;
     enum command_status status = COMMAND_OK;
     uint32_t lease_remaining_ms = 0u;
+    uint32_t prepare_now_ms = 0u;
     uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
     uint8_t reason = 0u;
+    bool lease_invariant_ok = true;
+    bool lease_rolled_back = false;
+    bool generation_advanced = false;
+    int schedule_ret = 0;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR ||
         packet == NULL ||
         packet->msg_type != MSG_SURVEY_PAIR_PREPARE ||
+        packet->flags != FLAG_DIAGNOSTIC ||
         packet->dst_id != DEVICE_ID ||
         packet->src_id != GATEWAY_ID) {
         return;
     }
 
-    ret = app_operation_policy_apply_payload(payload, payload_len, 0u, NULL);
+    ret = app_operation_policy_prepare_payload(payload,
+                                               payload_len,
+                                               0u,
+                                               APP_OPERATION_POLICY_PAIR_MASK,
+                                               &policy_candidate);
     if (ret < 0) {
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = EBADMSG;
@@ -343,7 +789,14 @@ void app_anchor_survey_runtime_handle_pair_prepare(
     if (ret == PROTO_OK) {
         ret = survey_round_id_extract_tlv(payload, payload_len, &round_id);
     }
-    if (ret != PROTO_OK || packet->session_id != pair.survey_id) {
+    if (ret == PROTO_OK) {
+        ret = survey_round_commitment_extract_tlv(
+            payload, payload_len, round_commitment);
+    }
+    if (ret != PROTO_OK || pair.operation_generation == 0u ||
+        round_id == SURVEY_LEGACY_ROUND_ID ||
+        packet->session_id !=
+            survey_operation_session_id(pair.operation_generation)) {
         status = COMMAND_MALFORMED_PAYLOAD;
         reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
     } else if (pair.initiator_id != DEVICE_ID && pair.responder_id != DEVICE_ID) {
@@ -353,38 +806,114 @@ void app_anchor_survey_runtime_handle_pair_prepare(
         status = COMMAND_DENIED;
         reason = 4u;
     } else {
-        k_spinlock_key_t key = k_spin_lock(&survey_lock);
-
         control_id = (struct survey_pair_control_id) {
             .session_id = packet->session_id,
             .command_seq = packet->seq,
         };
-        decision = survey_pair_lease_prepare_round(
-            &pair_lease,
-            &pair,
-            round_id,
-            &control_id,
-            k_uptime_get_32(),
-            SURVEY_PAIR_PREPARED_LEASE_MS);
-        if (decision == SURVEY_PAIR_LEASE_BUSY) {
-            status = COMMAND_BUSY;
-            reason = 3u;
-        } else if (decision == SURVEY_PAIR_LEASE_ACCEPTED ||
-                   decision == SURVEY_PAIR_LEASE_DUPLICATE ||
-                   decision == SURVEY_PAIR_LEASE_SUPERSEDED) {
-            lease_remaining_ms = survey_pair_lease_remaining_ms(
-                &pair_lease, k_uptime_get_32());
-            atomic_set(&abort_requested, 0);
+        prepare_now_ms = k_uptime_get_32();
+        ret = k_mutex_lock(&survey_generation_admission_mutex, K_FOREVER);
+        if (ret < 0) {
+            status = COMMAND_INTERNAL_ERROR;
+            reason = (uint8_t)(-ret);
         } else {
-            status = COMMAND_INVALID_STATE;
-            reason = decision == SURVEY_PAIR_LEASE_EXPIRED ? 5u : 4u;
+            k_spinlock_key_t key = k_spin_lock(&survey_lock);
+
+            preflight_lease = pair_lease;
+            lease_invariant_ok = survey_pair_lease_invariant(
+                &preflight_lease);
+            k_spin_unlock(&survey_lock, key);
+            preflight_decision = survey_pair_lease_prepare_round_bound(
+                &preflight_lease,
+                &pair,
+                round_id,
+                round_commitment,
+                &control_id,
+                prepare_now_ms,
+                SURVEY_PAIR_PREPARED_LEASE_MS);
+            if (!lease_invariant_ok) {
+                status = COMMAND_INTERNAL_ERROR;
+                reason = EINVAL;
+                app_watchdog_stop_feeding();
+            } else if (
+                preflight_decision ==
+                SURVEY_PAIR_LEASE_INVALID_ARGUMENT) {
+                /*
+                 * Validate the complete decoded lease transition before a
+                 * newer generation can become durable or abort live RF work.
+                 * The full-round digest is opaque at one endpoint, but its
+                 * exact value remains bound across PREPARE, START, and GO.
+                 */
+                status = COMMAND_MALFORMED_PAYLOAD;
+                reason = EINVAL;
+            } else if (survey_generation_admit_locked(
+                           pair.operation_generation,
+                           &generation_advanced) < 0) {
+                status = COMMAND_INVALID_STATE;
+                reason = 6u;
+            } else {
+                key = k_spin_lock(&survey_lock);
+                decision = survey_pair_lease_prepare_round_bound(
+                    &pair_lease,
+                    &pair,
+                    round_id,
+                    round_commitment,
+                    &control_id,
+                    prepare_now_ms,
+                    SURVEY_PAIR_PREPARED_LEASE_MS);
+                if (decision == SURVEY_PAIR_LEASE_BUSY) {
+                    status = COMMAND_BUSY;
+                    reason = 3u;
+                } else if (
+                    decision == SURVEY_PAIR_LEASE_ACCEPTED ||
+                    decision == SURVEY_PAIR_LEASE_DUPLICATE ||
+                    decision == SURVEY_PAIR_LEASE_SUPERSEDED) {
+                    lease_remaining_ms =
+                        survey_pair_lease_remaining_ms(
+                            &pair_lease, k_uptime_get_32());
+                } else {
+                    status = COMMAND_INVALID_STATE;
+                    reason = decision == SURVEY_PAIR_LEASE_EXPIRED ?
+                             5u : 4u;
+                }
+                k_spin_unlock(&survey_lock, key);
+            }
+
+            if (lease_remaining_ms > 0u) {
+                schedule_ret = k_work_reschedule(
+                    &pair_lease_work, K_MSEC(lease_remaining_ms));
+                if (schedule_ret < 0) {
+                    key = k_spin_lock(&survey_lock);
+
+                    if (pair_lease.phase ==
+                            SURVEY_PAIR_LEASE_PREPARED &&
+                        pair_lease.prepare_id_valid &&
+                        pair_lease.prepare_id.session_id ==
+                            control_id.session_id &&
+                        pair_lease.prepare_id.command_seq ==
+                            control_id.command_seq) {
+                        lease_rolled_back =
+                            survey_pair_lease_abort(&pair_lease);
+                    }
+                    k_spin_unlock(&survey_lock, key);
+                    status = COMMAND_INTERNAL_ERROR;
+                    reason = (uint8_t)(-schedule_ret);
+                    LOG_ERR("survey pair lease scheduling failed: survey=%u round=%u seq=%u ret=%d rollback=%u",
+                            packet->session_id,
+                            round_id,
+                            packet->seq,
+                            schedule_ret,
+                            lease_rolled_back ? 1u : 0u);
+                    if (!lease_rolled_back) {
+                        app_watchdog_stop_feeding();
+                    }
+                }
+            }
+            k_mutex_unlock(&survey_generation_admission_mutex);
         }
-        k_spin_unlock(&survey_lock, key);
     }
 
-    if (lease_remaining_ms > 0u) {
-        (void)k_work_reschedule(&pair_lease_work,
-                                K_MSEC(lease_remaining_ms));
+    if (status == COMMAND_OK) {
+        app_operation_policy_commit_prepared(&policy_candidate);
     }
 
     ret = runtime_ops.send_command_result(packet,
@@ -420,10 +949,35 @@ void app_anchor_survey_runtime_handle_pair_prepare(
             reason);
 }
 
-static int run_pair_initiator(const struct survey_pair *pair,
-                              uint16_t round_id)
+static bool survey_range_outcome_is_functional(
+    int ret,
+    enum range_status status)
 {
+    if (ret == 0 || ret == -ETIMEDOUT) {
+        return true;
+    }
+
+    return status == RANGE_BAD_FRAME ||
+           status == RANGE_WRONG_TARGET ||
+           status == RANGE_STS_QUALITY_FAIL ||
+           status == RANGE_TIMING_INVALID;
+}
+
+static int run_pair_initiator(const struct survey_pair *pair,
+                              uint16_t round_id,
+                              uint32_t *delivery_reservation_tokens,
+                              size_t delivery_reservation_count,
+                              bool *functional_radio_outcome)
+{
+    const uint32_t operation_session_id =
+        survey_operation_session_id(pair->operation_generation);
     int last_ret = 0;
+
+    if (operation_session_id == 0u ||
+        delivery_reservation_tokens == NULL ||
+        delivery_reservation_count < pair->sample_count) {
+        return -EINVAL;
+    }
 
     for (uint16_t sample_index = 0u;
          sample_index < pair->sample_count &&
@@ -439,7 +993,7 @@ static int run_pair_initiator(const struct survey_pair *pair,
         request.session_nonce = survey_sample_nonce(pair, sample_index);
         request.responder_short_addr =
             uwb_session_short_addr_from_id(pair->responder_id);
-        request.session_id = pair->survey_id;
+        request.session_id = operation_session_id;
         request.seq = survey_sample_seq(sample_index);
         request.flags = FLAG_DIAGNOSTIC;
         request.timeout_ms = SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
@@ -458,13 +1012,17 @@ static int run_pair_initiator(const struct survey_pair *pair,
                 pair->sample_count,
                 request.seq);
         ret = dwm3000_driver_range_initiator(&request, &result);
+        if (functional_radio_outcome != NULL &&
+            survey_range_outcome_is_functional(ret, result.status)) {
+            *functional_radio_outcome = true;
+        }
         if (result.initiator_id == 0u) {
             result.initiator_id = pair->initiator_id;
         }
         if (result.responder_id == 0u) {
             result.responder_id = pair->responder_id;
         }
-        result.session_id = pair->survey_id;
+        result.session_id = operation_session_id;
         result.seq = request.seq;
         result.flags = FLAG_DIAGNOSTIC;
         if (result.status == RANGE_OK && ret < 0) {
@@ -501,14 +1059,15 @@ static int run_pair_initiator(const struct survey_pair *pair,
                                               round_id,
                                               sample_index,
                                               DEVICE_ID,
+                                              delivery_reservation_tokens[
+                                                  sample_index],
                                               &result);
         if (ret < 0) {
-            LOG_WRN("survey sample result queue failed: survey=%u sample=%u ret=%d",
-                    pair->survey_id,
-                    sample_index,
-                    ret);
-            last_ret = ret;
+            LOG_ERR("survey sample result custody failed; stopping pair: survey=%u sample=%u ret=%d",
+                    pair->survey_id, sample_index, ret);
+            return ret;
         }
+        delivery_reservation_tokens[sample_index] = 0u;
         if (sample_index + 1u < pair->sample_count) {
             k_msleep(SURVEY_PAIR_SAMPLE_GAP_MS);
         }
@@ -518,9 +1077,20 @@ static int run_pair_initiator(const struct survey_pair *pair,
 }
 
 static int run_pair_responder(const struct survey_pair *pair,
-                              uint16_t round_id)
+                              uint16_t round_id,
+                              uint32_t *delivery_reservation_tokens,
+                              size_t delivery_reservation_count,
+                              bool *functional_radio_outcome)
 {
+    const uint32_t operation_session_id =
+        survey_operation_session_id(pair->operation_generation);
     int last_ret = 0;
+
+    if (operation_session_id == 0u ||
+        delivery_reservation_tokens == NULL ||
+        delivery_reservation_count < pair->sample_count) {
+        return -EINVAL;
+    }
 
     for (uint16_t sample_index = 0u;
          sample_index < pair->sample_count &&
@@ -536,7 +1106,7 @@ static int run_pair_responder(const struct survey_pair *pair,
         expected.network_id = NETWORK_ID;
         expected.session_nonce = survey_sample_nonce(pair, sample_index);
         expected.responder_short_addr = local_uwb_short_addr();
-        expected.session_id = pair->survey_id;
+        expected.session_id = operation_session_id;
         expected.seq = survey_sample_seq(sample_index);
         expected.flags = FLAG_DIAGNOSTIC;
         expected.capture_rsl = sample_index == 0u;
@@ -562,6 +1132,10 @@ static int run_pair_responder(const struct survey_pair *pair,
                 continue;
             }
             break;
+        }
+        if (functional_radio_outcome != NULL &&
+            survey_range_outcome_is_functional(ret, result.status)) {
+            *functional_radio_outcome = true;
         }
 
         if (ret == 0 && result.status == RANGE_OK) {
@@ -598,14 +1172,15 @@ static int run_pair_responder(const struct survey_pair *pair,
                                               round_id,
                                               sample_index,
                                               DEVICE_ID,
+                                              delivery_reservation_tokens[
+                                                  sample_index],
                                               &result);
         if (ret < 0) {
-            LOG_WRN("survey responder sample result queue failed: survey=%u sample=%u ret=%d",
-                    pair->survey_id,
-                    sample_index,
-                    ret);
-            last_ret = ret;
+            LOG_ERR("survey responder sample result custody failed; stopping pair: survey=%u sample=%u ret=%d",
+                    pair->survey_id, sample_index, ret);
+            return ret;
         }
+        delivery_reservation_tokens[sample_index] = 0u;
     }
 
     return last_ret;
@@ -640,7 +1215,8 @@ static bool pair_start_delivery_ready(void)
         return false;
     }
     if (!app_node_comm_take_delivery_event_for(delivery_handle, &event)) {
-        schedule(K_MSEC(SURVEY_START_DELIVERY_POLL_MS));
+        (void)schedule_owned(K_MSEC(SURVEY_START_DELIVERY_POLL_MS),
+                             "pair-start-delivery-poll");
         return false;
     }
 
@@ -690,8 +1266,36 @@ static void finish_discovery_without_radio(
     int run_ret,
     const char *reason)
 {
+    bool current;
+    bool successor_pending;
     k_spinlock_key_t key;
     int report_ret;
+
+    key = k_spin_lock(&survey_lock);
+    current = discovery_config_matches_locked(config) &&
+              !app_anchor_survey_runtime_abort_requested();
+    if (!current) {
+        survey_running = false;
+        if (discovery_config_matches_locked(config)) {
+            discovery_report_stage_pending = false;
+            discovery_generation_active = false;
+        }
+        successor_pending = discovery_pending;
+        k_spin_unlock(&survey_lock, key);
+        survey_rf_retry_reset(&discovery_rf_retry);
+        if (!successor_pending) {
+            app_node_comm_restart_role_scan();
+            (void)runtime_ops.start_uwb_scan();
+        }
+        status_debug_printf(
+            "DBG_SURVEY_DISCOVERY_NO_RADIO_RETIRED survey=%u run_ret=%d reason=%s successor=%u\n",
+            config->survey_id,
+            run_ret,
+            reason == NULL ? "superseded" : reason,
+            successor_pending ? 1u : 0u);
+        return;
+    }
+    k_spin_unlock(&survey_lock, key);
 
     report_ret = app_anchor_survey_discovery_stage_empty_report(config,
                                                                  start_ms);
@@ -705,11 +1309,22 @@ static void finish_discovery_without_radio(
     survey_rf_retry_reset(&discovery_rf_retry);
     key = k_spin_lock(&survey_lock);
     survey_running = false;
-    discovery_report_stage_pending = report_ret < 0;
-    discovery_generation_active = report_ret < 0;
+    current = discovery_config_matches_locked(config);
+    if (current) {
+        discovery_report_stage_pending = report_ret < 0;
+        discovery_generation_active = report_ret < 0;
+    }
+    successor_pending = discovery_pending;
     k_spin_unlock(&survey_lock, key);
-    if (report_ret < 0) {
-        schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+    if (!successor_pending) {
+        app_node_comm_restart_role_scan();
+        (void)runtime_ops.start_uwb_scan();
+    }
+    if (current && report_ret < 0) {
+        (void)schedule_discovery_if_current(
+            config,
+            K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS),
+            "discovery-report-stage");
     }
 }
 
@@ -720,11 +1335,19 @@ static void survey_work_handler(struct k_work *work)
     struct survey_discovery_config pending_discovery = {0};
     uint32_t pending_discovery_start_ms = 0u;
     uint32_t pair_deadline_ms = 0u;
+    uint32_t expired_pair_delivery_handle = 0u;
     uint16_t pair_round_id = SURVEY_LEGACY_ROUND_ID;
+    uint32_t delivery_reservation_tokens[
+        SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT] = {0};
     bool as_responder;
+    bool discovery_take_pending = false;
+    bool functional_radio_outcome = false;
     bool report_durable = false;
     bool run_discovery = false;
     bool retry_report_stage = false;
+    bool successor_pending = false;
+    bool cancel_pair_start_kick = false;
+    bool pair_lease_expired = false;
     int64_t uwb_window_start_ms;
     k_spinlock_key_t key;
     int low_power_ret;
@@ -735,6 +1358,11 @@ static void survey_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
+    ret = app_anchor_survey_result_delivery_service();
+    if (ret < 0 && ret != -EAGAIN && ret != -ENOSPC &&
+        ret != -ETIMEDOUT) {
+        LOG_ERR("survey pair result delivery service failed: %d", ret);
+    }
     (void)app_anchor_survey_discovery_retry_report();
     key = k_spin_lock(&survey_lock);
     if (discovery_report_stage_pending) {
@@ -744,18 +1372,19 @@ static void survey_work_handler(struct k_work *work)
     if (discovery_pending) {
         pending_discovery = discovery_config;
         pending_discovery_start_ms = discovery_start_ms;
-        discovery_pending = false;
-        survey_running = true;
-        run_discovery = true;
+        discovery_take_pending = true;
     }
     k_spin_unlock(&survey_lock, key);
 
     if (retry_report_stage) {
         (void)app_anchor_survey_discovery_retry_report();
         if (app_anchor_survey_discovery_report_staged(
-                pending_discovery.survey_id)) {
+                survey_operation_session_id(
+                    pending_discovery.operation_generation))) {
             key = k_spin_lock(&survey_lock);
             if (discovery_report_stage_pending &&
+                discovery_config.operation_generation ==
+                    pending_discovery.operation_generation &&
                 discovery_config.survey_id == pending_discovery.survey_id) {
                 discovery_report_stage_pending = false;
                 discovery_generation_active = false;
@@ -763,9 +1392,94 @@ static void survey_work_handler(struct k_work *work)
             k_spin_unlock(&survey_lock, key);
             runtime_ops.report_schedule(0u);
         } else {
-            schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+            key = k_spin_lock(&survey_lock);
+            retry_report_stage =
+                discovery_report_stage_pending &&
+                discovery_config.operation_generation ==
+                    pending_discovery.operation_generation &&
+                discovery_config.survey_id == pending_discovery.survey_id;
+            k_spin_unlock(&survey_lock, key);
+            if (retry_report_stage) {
+                (void)schedule_discovery_if_current(
+                    &pending_discovery,
+                    K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS),
+                    "discovery-report-stage-retry");
+            }
         }
         return;
+    }
+
+    if (discovery_take_pending) {
+        ret = app_anchor_survey_discovery_report_custody_status(
+            pending_discovery.operation_generation);
+        if (ret == -EALREADY) {
+            bool retired = false;
+
+            key = k_spin_lock(&survey_lock);
+            if (discovery_pending &&
+                discovery_config.operation_generation ==
+                    pending_discovery.operation_generation &&
+                discovery_config.survey_id ==
+                    pending_discovery.survey_id) {
+                discovery_pending = false;
+                discovery_report_stage_pending = false;
+                discovery_generation_active = false;
+                retired = true;
+            }
+            k_spin_unlock(&survey_lock, key);
+            if (retired) {
+                runtime_ops.report_schedule(0u);
+                app_node_comm_restart_role_scan();
+                (void)runtime_ops.start_uwb_scan();
+                status_debug_printf(
+                    "DBG_SURVEY_DISCOVERY_ALREADY_DURABLE survey=%u generation=%llu\n",
+                    pending_discovery.survey_id,
+                    (unsigned long long)
+                        pending_discovery.operation_generation);
+            }
+            return;
+        }
+        if (ret < 0) {
+            bool retired = false;
+
+            key = k_spin_lock(&survey_lock);
+            if (discovery_pending &&
+                discovery_config.operation_generation ==
+                    pending_discovery.operation_generation &&
+                discovery_config.survey_id == pending_discovery.survey_id) {
+                discovery_pending = false;
+                discovery_report_stage_pending = false;
+                discovery_generation_active = false;
+                retired = true;
+            }
+            k_spin_unlock(&survey_lock, key);
+            if (retired) {
+                runtime_ops.report_schedule(0u);
+                app_node_comm_restart_role_scan();
+                (void)runtime_ops.start_uwb_scan();
+                status_debug_printf(
+                    "DBG_SURVEY_DISCOVERY_REPORT_CUSTODY_BLOCKED survey=%u generation=%llu ret=%d\n",
+                    pending_discovery.survey_id,
+                    (unsigned long long)
+                        pending_discovery.operation_generation,
+                    ret);
+            }
+            return;
+        }
+        key = k_spin_lock(&survey_lock);
+        if (discovery_pending &&
+            discovery_config.operation_generation ==
+                pending_discovery.operation_generation &&
+            discovery_config.survey_id == pending_discovery.survey_id) {
+            discovery_pending = false;
+            survey_running = true;
+            atomic_set(&abort_requested, 0);
+            run_discovery = true;
+        }
+        k_spin_unlock(&survey_lock, key);
+        if (!run_discovery) {
+            return;
+        }
     }
 
     if (run_discovery) {
@@ -784,9 +1498,10 @@ static void survey_work_handler(struct k_work *work)
         app_node_comm_stop_role_scan();
         ret = radio_guard_uwb_start("survey discovery");
         if (ret < 0) {
+            bool retry_current = false;
             int retry_ret;
 
-            app_node_comm_restart_role_scan();
+            successor_pending = false;
             retry_ret = survey_rf_retry_delay_ms(
                 &discovery_rf_retry,
                 pending_discovery.survey_id,
@@ -805,16 +1520,38 @@ static void survey_work_handler(struct k_work *work)
                     survey_rf_retry_reset(&discovery_rf_retry);
                     key = k_spin_lock(&survey_lock);
                     survey_running = false;
-                    discovery_generation_active = false;
+                    if (discovery_config_matches_locked(
+                            &pending_discovery)) {
+                        discovery_report_stage_pending = false;
+                        discovery_generation_active = false;
+                    }
+                    successor_pending = discovery_pending;
                     k_spin_unlock(&survey_lock, key);
+                    if (!successor_pending) {
+                        app_node_comm_restart_role_scan();
+                        (void)runtime_ops.start_uwb_scan();
+                    }
                 }
                 return;
             }
             key = k_spin_lock(&survey_lock);
-            discovery_pending = true;
             survey_running = false;
+            if (discovery_config_matches_locked(&pending_discovery) &&
+                !app_anchor_survey_runtime_abort_requested()) {
+                discovery_pending = true;
+                retry_current = true;
+            }
+            successor_pending = discovery_pending && !retry_current;
             k_spin_unlock(&survey_lock, key);
-            schedule(K_MSEC(retry_delay_ms));
+            if (!successor_pending) {
+                app_node_comm_restart_role_scan();
+            }
+            if (retry_current) {
+                (void)schedule_discovery_if_current(
+                    &pending_discovery,
+                    K_MSEC(retry_delay_ms),
+                    "discovery-rf-retry");
+            }
             return;
         }
         survey_rf_retry_reset(&discovery_rf_retry);
@@ -822,7 +1559,8 @@ static void survey_work_handler(struct k_work *work)
         runtime_ops.set_uwb_busy(true);
         uwb_window_start_ms = k_uptime_get();
         ret = app_anchor_survey_discovery_run(&pending_discovery,
-                                              pending_discovery_start_ms);
+                                              pending_discovery_start_ms,
+                                              &functional_radio_outcome);
         report_durable = ret >= 0;
         if (ret < 0 &&
             !app_anchor_survey_runtime_abort_requested()) {
@@ -831,7 +1569,8 @@ static void survey_work_handler(struct k_work *work)
 
             report_durable = report_ret == 0 ||
                 app_anchor_survey_discovery_report_staged(
-                    pending_discovery.survey_id);
+                    survey_operation_session_id(
+                        pending_discovery.operation_generation));
             status_debug_printf(
                 "DBG_SURVEY_DISCOVERY_FAILSAFE_REPORT survey=%u run_ret=%d report_ret=%d\n",
                 pending_discovery.survey_id, ret, report_ret);
@@ -846,18 +1585,36 @@ static void survey_work_handler(struct k_work *work)
         runtime_ops.note_uwb_awake_since(uwb_window_start_ms, 0u);
         runtime_ops.set_uwb_busy(false);
         radio_guard_uwb_stop();
-        app_node_comm_restart_role_scan();
-        (void)runtime_ops.start_uwb_scan();
-        (void)app_anchor_survey_discovery_retry_report();
-        runtime_ops.report_schedule(0u);
+        if (functional_radio_outcome &&
+            ret >= 0 &&
+            low_power_ret >= 0) {
+            app_watchdog_note_radio_progress();
+        }
         survey_rf_retry_reset(&discovery_rf_retry);
         key = k_spin_lock(&survey_lock);
         survey_running = false;
-        discovery_report_stage_pending = ret < 0 && !report_durable;
-        discovery_generation_active = discovery_report_stage_pending;
+        discovery_take_pending =
+            discovery_config_matches_locked(&pending_discovery);
+        if (discovery_take_pending) {
+            discovery_report_stage_pending = ret < 0 && !report_durable;
+            discovery_generation_active = discovery_report_stage_pending;
+        }
+        successor_pending = discovery_pending;
         k_spin_unlock(&survey_lock, key);
-        if (discovery_report_stage_pending) {
-            schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+        if (!successor_pending) {
+            app_node_comm_restart_role_scan();
+            (void)runtime_ops.start_uwb_scan();
+        }
+        if (discovery_take_pending) {
+            (void)app_anchor_survey_discovery_retry_report();
+        }
+        runtime_ops.report_schedule(0u);
+        if (discovery_take_pending &&
+            ret < 0 && !report_durable) {
+            (void)schedule_discovery_if_current(
+                &pending_discovery,
+                K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS),
+                "discovery-failsafe-report-stage");
         }
         LOG_INF("survey discovery run finished: survey=%u ret=%d",
                 pending_discovery.survey_id,
@@ -871,23 +1628,46 @@ static void survey_work_handler(struct k_work *work)
 
     key = k_spin_lock(&survey_lock);
     if (survey_pair_lease_expire(&pair_lease, k_uptime_get_32())) {
+        pair_lease_expired = true;
+        expired_pair_delivery_handle = pair_start_delivery_handle;
+        cancel_pair_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
     if (!pair_start_pending || !pair_lease.start_id_valid ||
         !survey_pair_lease_ready_snapshot(&pair_lease, &pair)) {
-        pair_start_pending = false;
-        pair_start_delivery_handle = 0u;
+        if (pair_lease.phase != SURVEY_PAIR_LEASE_START_PENDING ||
+            !pair_lease.start_id_valid) {
+            pair_start_pending = false;
+            pair_start_delivery_handle = 0u;
+        }
         k_spin_unlock(&survey_lock, key);
+        if (pair_lease_expired) {
+            if (cancel_pair_start_kick) {
+                (void)k_work_cancel_delayable(&pair_start_kick_work);
+            }
+            (void)app_anchor_survey_runtime_abandon_pair_start_delivery(
+                expired_pair_delivery_handle,
+                "pair-worker-lease-expired");
+        }
         survey_rf_retry_reset(&pair_rf_retry);
         return;
     }
     pair_control_id = pair_lease.start_id;
     pair_deadline_ms = pair_lease.prepared_deadline_ms;
+    /*
+     * The private UWB worker serializes RF runs. Clear a predecessor's abort
+     * latch only after this exact successor pair owns the worker; ingress-side
+     * PREPARE/START must leave cancellation asserted while old RF is exiting.
+     */
+    atomic_set(&abort_requested, 0);
     k_spin_unlock(&survey_lock, key);
 
+    if (app_anchor_survey_runtime_discovery_is_pending()) {
+        return;
+    }
     if (anchor_uwb_window_active() ||
-        app_anchor_survey_runtime_discovery_is_pending() ||
         runtime_ops.relay_tx_active()) {
         (void)schedule_pair_rf_retry(&pair_control_id,
                                      pair_deadline_ms,
@@ -895,10 +1675,23 @@ static void survey_work_handler(struct k_work *work)
         return;
     }
 
-    if (runtime_ops.report_queue_used() + pair.sample_count >
-        REPORT_TX_QUEUE_DEPTH) {
-        runtime_ops.report_schedule(0u);
-        schedule(K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS));
+    if (app_anchor_survey_result_delivery_occupied_count() > 0u) {
+        (void)app_anchor_survey_result_delivery_service();
+        (void)schedule_pair_unless_discovery_pending(
+            K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS),
+            "pair-result-custody");
+        return;
+    }
+
+    ret = app_node_comm_reserve_durable_reliable_uplinks(
+        pair.sample_count,
+        delivery_reservation_tokens,
+        ARRAY_SIZE(delivery_reservation_tokens));
+    if (ret < 0) {
+        (void)app_anchor_survey_result_delivery_service();
+        (void)schedule_pair_unless_discovery_pending(
+            K_MSEC(SURVEY_NON_RF_SERVICE_POLL_MS),
+            "pair-result-admission");
         return;
     }
 
@@ -906,14 +1699,24 @@ static void survey_work_handler(struct k_work *work)
     ret = radio_guard_uwb_start("survey pair DS-TWR");
     if (ret < 0) {
         bool reschedule;
+        bool successor_pending;
+        int cancel_ret;
 
-        app_node_comm_restart_role_scan();
         key = k_spin_lock(&survey_lock);
         reschedule = pair_start_pending &&
                      !app_anchor_survey_runtime_abort_requested() &&
                      survey_pair_lease_ready_snapshot(&pair_lease, NULL);
+        successor_pending = discovery_pending;
         k_spin_unlock(&survey_lock, key);
-        if (reschedule) {
+        if (!successor_pending) {
+            app_node_comm_restart_role_scan();
+        }
+        cancel_ret =
+            app_anchor_survey_result_delivery_cancel_reservations(
+                delivery_reservation_tokens,
+                ARRAY_SIZE(delivery_reservation_tokens),
+                "radio-guard");
+        if (reschedule && cancel_ret == 0) {
             (void)schedule_pair_rf_retry(&pair_control_id,
                                          pair_deadline_ms,
                                          "radio-guard-busy");
@@ -922,20 +1725,46 @@ static void survey_work_handler(struct k_work *work)
     }
     survey_rf_retry_reset(&pair_rf_retry);
 
+    expired_pair_delivery_handle = 0u;
+    cancel_pair_start_kick = false;
+    pair_lease_expired = false;
     key = k_spin_lock(&survey_lock);
     if (survey_pair_lease_expire(&pair_lease, k_uptime_get_32())) {
+        pair_lease_expired = true;
+        expired_pair_delivery_handle = pair_start_delivery_handle;
+        cancel_pair_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
     if (!pair_start_pending ||
-        !survey_pair_lease_mark_running(&pair_lease,
-                                        &pair,
-                                        &pair_round_id)) {
-        pair_start_pending = false;
-        pair_start_delivery_handle = 0u;
+        !survey_pair_lease_mark_running_at(&pair_lease,
+                                           k_uptime_get_32(),
+                                           &pair,
+                                           &pair_round_id)) {
+        if (pair_lease.phase != SURVEY_PAIR_LEASE_START_PENDING ||
+            !pair_lease.start_id_valid) {
+            pair_start_pending = false;
+            pair_start_delivery_handle = 0u;
+        }
+        successor_pending = discovery_pending;
         k_spin_unlock(&survey_lock, key);
+        if (pair_lease_expired) {
+            if (cancel_pair_start_kick) {
+                (void)k_work_cancel_delayable(&pair_start_kick_work);
+            }
+            (void)app_anchor_survey_runtime_abandon_pair_start_delivery(
+                expired_pair_delivery_handle,
+                "pair-worker-admission-lease-expired");
+        }
         radio_guard_uwb_stop();
-        app_node_comm_restart_role_scan();
+        if (!successor_pending) {
+            app_node_comm_restart_role_scan();
+        }
+        (void)app_anchor_survey_result_delivery_cancel_reservations(
+            delivery_reservation_tokens,
+            ARRAY_SIZE(delivery_reservation_tokens),
+            "lease-race");
         return;
     }
     pair_start_pending = false;
@@ -948,9 +1777,28 @@ static void survey_work_handler(struct k_work *work)
     runtime_ops.set_uwb_busy(true);
     uwb_window_start_ms = k_uptime_get();
     if (as_responder) {
-        ret = run_pair_responder(&pair, pair_round_id);
+        ret = run_pair_responder(&pair,
+                                 pair_round_id,
+                                 delivery_reservation_tokens,
+                                 ARRAY_SIZE(delivery_reservation_tokens),
+                                 &functional_radio_outcome);
     } else {
-        ret = run_pair_initiator(&pair, pair_round_id);
+        ret = run_pair_initiator(&pair,
+                                 pair_round_id,
+                                 delivery_reservation_tokens,
+                                 ARRAY_SIZE(delivery_reservation_tokens),
+                                 &functional_radio_outcome);
+    }
+    {
+        int cancel_ret =
+            app_anchor_survey_result_delivery_cancel_reservations(
+                delivery_reservation_tokens,
+                ARRAY_SIZE(delivery_reservation_tokens),
+                "pair-exit");
+
+        if (ret >= 0 && cancel_ret < 0) {
+            ret = cancel_ret;
+        }
     }
     low_power_ret = runtime_ops.enter_low_power(
         app_radio_low_power_mode_for_connection(
@@ -962,12 +1810,18 @@ static void survey_work_handler(struct k_work *work)
     runtime_ops.note_uwb_awake_since(uwb_window_start_ms, 0u);
     runtime_ops.set_uwb_busy(false);
     radio_guard_uwb_stop();
-    app_node_comm_restart_role_scan();
+    if (functional_radio_outcome && low_power_ret >= 0) {
+        app_watchdog_note_radio_progress();
+    }
     runtime_ops.report_schedule(0u);
     key = k_spin_lock(&survey_lock);
     survey_running = false;
     (void)survey_pair_lease_finish(&pair_lease);
+    successor_pending = discovery_pending;
     k_spin_unlock(&survey_lock, key);
+    if (!successor_pending) {
+        app_node_comm_restart_role_scan();
+    }
 
     LOG_INF("survey pair run finished: survey=%u role=%s ret=%d aborted=%u",
             pair.survey_id,
@@ -983,27 +1837,43 @@ int app_anchor_survey_runtime_start_pair_from_command(
     enum command_status *status,
     uint8_t *reason)
 {
+    struct app_operation_policy_candidate policy_candidate;
     struct survey_pair pair = {0};
     struct survey_pair_control_id control_id;
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     enum survey_pair_lease_decision decision;
     bool as_responder;
+    bool cancel_start_kick = false;
     uint32_t superseded_delivery_handle = 0u;
     uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
     k_spinlock_key_t key;
     int ret;
 
-    if (status == NULL || reason == NULL) {
+    if (packet == NULL || payload == NULL || status == NULL || reason == NULL ||
+        packet->msg_type != MSG_COMMAND || packet->src_id != GATEWAY_ID ||
+        packet->dst_id != DEVICE_ID) {
         return -EINVAL;
     }
 
-    ret = app_operation_policy_apply_payload(payload, payload_len, 0u, NULL);
+    ret = app_operation_policy_prepare_payload(payload,
+                                               payload_len,
+                                               0u,
+                                               APP_OPERATION_POLICY_PAIR_MASK,
+                                               &policy_candidate);
     if (ret == 0) {
         ret = survey_extract_pair_tlvs(payload, payload_len, &pair);
     }
     if (ret == PROTO_OK) {
         ret = survey_round_id_extract_tlv(payload, payload_len, &round_id);
     }
-    if (ret != PROTO_OK || packet == NULL) {
+    if (ret == PROTO_OK) {
+        ret = survey_round_commitment_extract_tlv(
+            payload, payload_len, round_commitment);
+    }
+    if (ret != PROTO_OK || pair.operation_generation == 0u ||
+        round_id == SURVEY_LEGACY_ROUND_ID ||
+        packet->session_id !=
+            survey_operation_session_id(pair.operation_generation)) {
         *status = COMMAND_MALFORMED_PAYLOAD;
         *reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
         return -EINVAL;
@@ -1028,11 +1898,13 @@ int app_anchor_survey_runtime_start_pair_from_command(
         .session_id = packet->session_id,
         .command_seq = packet->seq,
     };
-    decision = survey_pair_lease_start_round(&pair_lease,
-                                             &pair,
-                                             round_id,
-                                             &control_id,
-                                             k_uptime_get_32());
+    decision = survey_pair_lease_start_round_bound(
+        &pair_lease,
+        &pair,
+        round_id,
+        round_commitment,
+        &control_id,
+        k_uptime_get_32());
     if (decision == SURVEY_PAIR_LEASE_BUSY) {
         *status = COMMAND_BUSY;
         *reason = 3u;
@@ -1057,15 +1929,36 @@ int app_anchor_survey_runtime_start_pair_from_command(
          * section so its terminal event cannot be mistaken for the new START.
          */
         superseded_delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         pair_start_pending = true;
         pair_start_delivery_handle = 0u;
-        atomic_set(&abort_requested, 0);
     }
     k_spin_unlock(&survey_lock, key);
-    abandon_pair_start_delivery(
+    if (cancel_start_kick) {
+        (void)k_work_cancel_delayable(&pair_start_kick_work);
+    }
+    ret = app_anchor_survey_runtime_abandon_pair_start_delivery(
         superseded_delivery_handle,
         decision == SURVEY_PAIR_LEASE_SUPERSEDED ?
             "superseded-start" : "accepted-new-start");
+    if (ret < 0) {
+        key = k_spin_lock(&survey_lock);
+        if (pair_start_pending &&
+            pair_lease.phase == SURVEY_PAIR_LEASE_START_PENDING &&
+            pair_lease.start_id_valid &&
+            pair_lease.start_id.session_id == control_id.session_id &&
+            pair_lease.start_id.command_seq == control_id.command_seq) {
+            (void)survey_pair_lease_abort(&pair_lease);
+            pair_start_pending = false;
+            pair_start_delivery_handle = 0u;
+        }
+        k_spin_unlock(&survey_lock, key);
+        *status = COMMAND_INTERNAL_ERROR;
+        *reason = (uint8_t)(-ret);
+        return ret;
+    }
+    app_operation_policy_commit_prepared(&policy_candidate);
     *status = COMMAND_OK;
     *reason = 0u;
     LOG_INF("survey pair start %s: survey=%u round=%u initiator=0x%016llx responder=0x%016llx samples=%u local_role=%s",
@@ -1085,13 +1978,16 @@ int app_anchor_survey_runtime_go_round_from_command(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint32_t execution_deadline_ms,
     enum command_status *status,
     uint8_t *reason)
 {
     struct survey_round_go go = {0};
     enum survey_pair_lease_decision decision;
     bool ready;
+    uint32_t now_ms;
     k_spinlock_key_t key;
+    int schedule_ret = 0;
     int ret;
 
     if (packet == NULL || payload == NULL || status == NULL || reason == NULL ||
@@ -1100,17 +1996,28 @@ int app_anchor_survey_runtime_go_round_from_command(
         return -EINVAL;
     }
     ret = survey_round_go_from_tlvs(payload, payload_len, &go);
-    if (ret != PROTO_OK || packet->session_id != go.survey_id) {
+    if (ret != PROTO_OK ||
+        packet->session_id !=
+            survey_operation_session_id(go.operation_generation)) {
         *status = COMMAND_MALFORMED_PAYLOAD;
         *reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
         return -EINVAL;
     }
 
     key = k_spin_lock(&survey_lock);
-    decision = survey_pair_lease_go(&pair_lease,
-                                    go.survey_id,
-                                    go.round_id,
-                                    k_uptime_get_32());
+    now_ms = k_uptime_get_32();
+    if (uptime_deadline_reached(now_ms, execution_deadline_ms)) {
+        decision = SURVEY_PAIR_LEASE_EXPIRED;
+    } else {
+        decision = survey_pair_lease_go_until_bound(
+            &pair_lease,
+            go.operation_generation,
+            go.survey_id,
+            go.round_id,
+            go.round_commitment,
+            now_ms,
+            execution_deadline_ms);
+    }
     ready = pair_start_pending &&
             survey_pair_lease_ready_snapshot(&pair_lease, NULL);
     k_spin_unlock(&survey_lock, key);
@@ -1125,7 +2032,29 @@ int app_anchor_survey_runtime_go_round_from_command(
     *status = COMMAND_OK;
     *reason = 0u;
     if (ready) {
-        schedule(K_NO_WAIT);
+        schedule_ret = schedule(K_NO_WAIT);
+        if (schedule_ret < 0) {
+            bool recovered = false;
+
+            if (decision == SURVEY_PAIR_LEASE_ACCEPTED) {
+                key = k_spin_lock(&survey_lock);
+                recovered = survey_pair_lease_revoke_go_bound(
+                    &pair_lease,
+                    go.operation_generation,
+                    go.survey_id,
+                    go.round_id,
+                    go.round_commitment);
+                k_spin_unlock(&survey_lock, key);
+            }
+            if (!recovered) {
+                app_watchdog_stop_feeding();
+            }
+            *status = COMMAND_INTERNAL_ERROR;
+            *reason = (uint8_t)(-schedule_ret);
+            LOG_WRN("survey round GO work admission failed: survey=%u round=%u ret=%d",
+                    go.survey_id, go.round_id, schedule_ret);
+            return schedule_ret;
+        }
     }
     LOG_INF("survey round GO %s: survey=%u round=%u ready=%u",
             decision == SURVEY_PAIR_LEASE_ACCEPTED ? "accepted" : "duplicate",
@@ -1139,8 +2068,13 @@ int app_anchor_survey_runtime_bind_pair_start_delivery(
     const struct proto_packet *command,
     uint32_t delivery_handle)
 {
+    struct survey_pair_control_id control_id = {0};
     bool bound = false;
+    bool fallback_bound = false;
+    bool rolled_back = false;
     k_spinlock_key_t key;
+    int fallback_ret;
+    int ret;
 
     if (command == NULL || command->session_id == 0u ||
         command->seq == 0u || delivery_handle == 0u) {
@@ -1164,14 +2098,74 @@ int app_anchor_survey_runtime_bind_pair_start_delivery(
     if (!bound) {
         return -ESTALE;
     }
-    schedule(K_NO_WAIT);
-    return 0;
+    ret = schedule(K_NO_WAIT);
+    if (ret >= 0) {
+        return 0;
+    }
+
+    /*
+     * Keep the system workqueue owner tiny: it republishes the exact
+     * generation onto the private UWB queue and never executes radio work.
+     * This closes the gap where a COMMAND_OK delivery was live while its only
+     * private-queue wake edge had been rejected.
+     */
+    control_id = (struct survey_pair_control_id) {
+        .session_id = command->session_id,
+        .command_seq = command->seq,
+    };
+    key = k_spin_lock(&survey_lock);
+    if (pair_start_pending &&
+        pair_start_delivery_handle == delivery_handle &&
+        pair_lease.phase == SURVEY_PAIR_LEASE_START_PENDING &&
+        pair_lease.start_id_valid &&
+        pair_lease.start_id.session_id == control_id.session_id &&
+        pair_lease.start_id.command_seq == control_id.command_seq) {
+        pair_start_kick_id = control_id;
+        pair_start_kick_delivery_handle = delivery_handle;
+        pair_start_kick_active = true;
+        fallback_bound = true;
+    }
+    k_spin_unlock(&survey_lock, key);
+    if (!fallback_bound) {
+        return -ESTALE;
+    }
+
+    fallback_ret = k_work_reschedule(&pair_start_kick_work, K_NO_WAIT);
+    if (fallback_ret >= 0) {
+        LOG_WRN("survey pair START bind using bounded system-workqueue recovery: session=%u seq=%u handle=%u private_ret=%d",
+                control_id.session_id,
+                control_id.command_seq,
+                delivery_handle,
+                ret);
+        return 0;
+    }
+
+    key = k_spin_lock(&survey_lock);
+    if (pair_start_kick_matches_locked(&control_id, delivery_handle)) {
+        rolled_back = survey_pair_lease_abort(&pair_lease);
+        pair_start_pending = false;
+        pair_start_delivery_handle = 0u;
+        pair_start_kick_clear_locked();
+    }
+    k_spin_unlock(&survey_lock, key);
+    if (!rolled_back) {
+        app_watchdog_stop_feeding();
+    }
+    LOG_ERR("survey pair START bind has no live work owner: session=%u seq=%u handle=%u private_ret=%d fallback_ret=%d rollback=%u",
+            control_id.session_id,
+            control_id.command_seq,
+            delivery_handle,
+            ret,
+            fallback_ret,
+            rolled_back ? 1u : 0u);
+    return fallback_ret;
 }
 
 bool app_anchor_survey_runtime_cancel_pair_start(
     const struct proto_packet *command)
 {
     bool cancelled = false;
+    bool cancel_start_kick = false;
     uint32_t delivery_handle = 0u;
     k_spinlock_key_t key;
 
@@ -1186,13 +2180,19 @@ bool app_anchor_survey_runtime_cancel_pair_start(
         pair_lease.start_id.command_seq == command->seq) {
         cancelled = survey_pair_lease_abort(&pair_lease);
         delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
     k_spin_unlock(&survey_lock, key);
     if (cancelled) {
+        if (cancel_start_kick) {
+            (void)k_work_cancel_delayable(&pair_start_kick_work);
+        }
         (void)k_work_cancel_delayable(&pair_lease_work);
-        abandon_pair_start_delivery(delivery_handle, "cancel-pair-start");
+        app_anchor_survey_runtime_abandon_pair_start_delivery(
+            delivery_handle, "cancel-pair-start");
     }
     return cancelled;
 }
@@ -1203,6 +2203,7 @@ static void pair_lease_work_handler(struct k_work *work)
     enum survey_pair_lease_phase expired_phase = SURVEY_PAIR_LEASE_IDLE;
     uint32_t delivery_handle = 0u;
     bool expired;
+    bool cancel_start_kick = false;
     k_spinlock_key_t key;
 
     ARG_UNUSED(work);
@@ -1216,13 +2217,19 @@ static void pair_lease_work_handler(struct k_work *work)
     expired = survey_pair_lease_expire(&pair_lease, k_uptime_get_32());
     if (expired) {
         delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
     k_spin_unlock(&survey_lock, key);
 
     if (expired) {
-        abandon_pair_start_delivery(delivery_handle, "pair-lease-expired");
+        if (cancel_start_kick) {
+            (void)k_work_cancel_delayable(&pair_start_kick_work);
+        }
+        app_anchor_survey_runtime_abandon_pair_start_delivery(
+            delivery_handle, "pair-lease-expired");
         LOG_WRN("survey pair lease expired: phase=%u survey=%u initiator=0x%016llx responder=0x%016llx",
                 (unsigned int)expired_phase,
                 expired_pair.survey_id,
@@ -1234,6 +2241,7 @@ static void pair_lease_work_handler(struct k_work *work)
 void app_anchor_survey_runtime_abort_pair(void)
 {
     bool pair_active;
+    bool cancel_start_kick;
     uint32_t delivery_handle;
     k_spinlock_key_t key;
 
@@ -1244,11 +2252,17 @@ void app_anchor_survey_runtime_abort_pair(void)
         (void)survey_pair_lease_abort(&pair_lease);
     }
     delivery_handle = pair_start_delivery_handle;
+    cancel_start_kick = pair_start_kick_active;
+    pair_start_kick_clear_locked();
     pair_start_pending = false;
     pair_start_delivery_handle = 0u;
     k_spin_unlock(&survey_lock, key);
+    if (cancel_start_kick) {
+        (void)k_work_cancel_delayable(&pair_start_kick_work);
+    }
     (void)k_work_cancel_delayable(&pair_lease_work);
-    abandon_pair_start_delivery(delivery_handle, "abort-pair");
+    app_anchor_survey_runtime_abandon_pair_start_delivery(
+        delivery_handle, "abort-pair");
     LOG_INF("survey pair state abort requested: active=%u",
             pair_active ? 1u : 0u);
 }
@@ -1258,6 +2272,7 @@ bool app_anchor_survey_runtime_abort_pair_matching(
     uint32_t session_id)
 {
     bool matched;
+    bool cancel_start_kick = false;
     uint32_t delivery_handle = 0u;
     k_spinlock_key_t key;
 
@@ -1271,13 +2286,19 @@ bool app_anchor_survey_runtime_abort_pair_matching(
     if (matched) {
         atomic_set(&abort_requested, 1);
         delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
     k_spin_unlock(&survey_lock, key);
     if (matched) {
+        if (cancel_start_kick) {
+            (void)k_work_cancel_delayable(&pair_start_kick_work);
+        }
         (void)k_work_cancel_delayable(&pair_lease_work);
-        abandon_pair_start_delivery(delivery_handle, "targeted-abort");
+        app_anchor_survey_runtime_abandon_pair_start_delivery(
+            delivery_handle, "targeted-abort");
     }
     LOG_INF("survey pair targeted abort: matched=%u survey=%u initiator=0x%016llx responder=0x%016llx",
             matched ? 1u : 0u,
@@ -1287,16 +2308,74 @@ bool app_anchor_survey_runtime_abort_pair_matching(
     return matched;
 }
 
+bool app_anchor_survey_runtime_abort_pair_matching_round(
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    bool matched;
+    bool cancel_start_kick = false;
+    uint32_t delivery_handle = 0u;
+    k_spinlock_key_t key;
+
+    if (pair == NULL || pair->operation_generation == 0u ||
+        round_commitment == NULL) {
+        return false;
+    }
+    key = k_spin_lock(&survey_lock);
+    matched = survey_pair_lease_abort_matching_round_bound(
+        &pair_lease,
+        pair,
+        session_id,
+        round_id,
+        round_commitment);
+    if (matched) {
+        atomic_set(&abort_requested, 1);
+        delivery_handle = pair_start_delivery_handle;
+        cancel_start_kick = pair_start_kick_active;
+        pair_start_kick_clear_locked();
+        pair_start_pending = false;
+        pair_start_delivery_handle = 0u;
+    }
+    k_spin_unlock(&survey_lock, key);
+    if (matched) {
+        if (cancel_start_kick) {
+            (void)k_work_cancel_delayable(&pair_start_kick_work);
+        }
+        (void)k_work_cancel_delayable(&pair_lease_work);
+        app_anchor_survey_runtime_abandon_pair_start_delivery(
+            delivery_handle, "round-targeted-abort");
+    }
+    LOG_INF("survey pair round-targeted abort: matched=%u survey=%u round=%u initiator=0x%016llx responder=0x%016llx",
+            matched ? 1u : 0u,
+            pair->survey_id,
+            round_id,
+            (unsigned long long)pair->initiator_id,
+            (unsigned long long)pair->responder_id);
+    return matched;
+}
+
 int app_anchor_survey_runtime_init(
     const struct app_anchor_survey_runtime_ops *ops)
 {
+    const struct app_anchor_survey_result_delivery_ops result_ops = {
+        .schedule_work_ms = app_anchor_survey_runtime_schedule_ms,
+        .active_owner_matches_outbound =
+            ops->active_owner_matches_outbound,
+        .resume_restored_outbox = ops->resume_restored_outbox,
+    };
+    int ret;
+
     if (ops == NULL || ops->send_command_result == NULL ||
         ops->enter_low_power == NULL || ops->set_uwb_busy == NULL ||
         ops->note_uwb_awake_since == NULL || ops->start_uwb_scan == NULL ||
         ops->queue_sample_result == NULL ||
         ops->report_queue_used == NULL || ops->report_schedule == NULL ||
         ops->relay_tx_active == NULL ||
-        ops->connected_radio_active == NULL) {
+        ops->connected_radio_active == NULL ||
+        ops->active_owner_matches_outbound == NULL ||
+        ops->resume_restored_outbox == NULL) {
         return -EINVAL;
     }
 #if DEVICE_ROLE == ROLE_ANCHOR && \
@@ -1307,25 +2386,92 @@ int app_anchor_survey_runtime_init(
 #endif
 
     runtime_ops = *ops;
+    runtime_started = false;
+    runtime_work_queue_ready = false;
+    ret = app_anchor_survey_result_delivery_init(&result_ops);
+    if (ret < 0) {
+        return ret;
+    }
     runtime_initialized = true;
     return 0;
 }
 
 int app_anchor_survey_runtime_start(void)
 {
+    bool result_delivery_restored = false;
+    uint64_t restored_generation = 0u;
+    int ret;
+
     if (!runtime_initialized) {
         return -EINVAL;
     }
+#if DEVICE_ROLE == ROLE_ANCHOR
+    ret = app_anchor_survey_result_delivery_restore(
+        &result_delivery_restored);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = app_mesh_persistence_restore_anchor_survey_generation(
+        DEVICE_ID, GATEWAY_ID, &restored_generation);
+    if (ret < 0) {
+        survey_generation_restored = false;
+        return ret;
+    }
+#else
+    ARG_UNUSED(ret);
+#endif
+    survey_generation_high_watermark = restored_generation;
+    /*
+     * A restored high watermark is intentionally not an active operation.
+     * Traffic from the operation that preceded reset is stale; only a newer
+     * durably reserved gateway generation may reactivate survey work.
+     */
+    survey_generation_active = 0u;
+    survey_generation_restored = true;
 
     k_work_init_delayable(&survey_work, survey_work_handler);
     survey_pair_lease_reset(&pair_lease);
     pair_start_pending = false;
     pair_start_delivery_handle = 0u;
+    pair_start_kick_active = false;
+    pair_start_kick_delivery_handle = 0u;
+    pair_start_kick_id = (struct survey_pair_control_id) {0};
     discovery_pending = false;
     discovery_generation_active = false;
     discovery_report_stage_pending = false;
     survey_rf_retry_reset(&discovery_rf_retry);
     survey_rf_retry_reset(&pair_rf_retry);
     k_work_init_delayable(&pair_lease_work, pair_lease_work_handler);
+    k_work_init_delayable(&pair_start_kick_work,
+                          pair_start_kick_work_handler);
+    runtime_started = true;
+    if (result_delivery_restored) {
+        status_debug_printf(
+            "DBG_SURVEY_PAIR_RESULT_RESTORED count=%u\n",
+            (unsigned int)
+                app_anchor_survey_result_delivery_occupied_count());
+    }
     return 0;
+}
+
+int app_anchor_survey_runtime_post_work_queue_start(void)
+{
+    if (!runtime_initialized || !runtime_started) {
+        return -EACCES;
+    }
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+    if (runtime_ops.work_queue == NULL) {
+        return -ENODEV;
+    }
+    /*
+     * app_anchor_start_anchor_role() calls this only after
+     * k_work_queue_start() has returned. Publish the single queue-ready
+     * boundary before kicking any restored result owner.
+     */
+    runtime_work_queue_ready = true;
+    return app_anchor_survey_result_delivery_start();
+#else
+    return 0;
+#endif
 }

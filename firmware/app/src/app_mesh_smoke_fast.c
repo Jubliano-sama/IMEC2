@@ -11,7 +11,7 @@ static int tlv_read_u8(const uint8_t *payload,
 {
     const uint8_t *value;
     uint8_t len;
-    int ret = tlv_find(payload, payload_len, type, &value, &len);
+    int ret = tlv_find_unique(payload, payload_len, type, &value, &len);
 
     if (ret != PROTO_OK) {
         return ret;
@@ -30,7 +30,7 @@ static int tlv_read_u16(const uint8_t *payload,
 {
     const uint8_t *value;
     uint8_t len;
-    int ret = tlv_find(payload, payload_len, type, &value, &len);
+    int ret = tlv_find_unique(payload, payload_len, type, &value, &len);
 
     if (ret != PROTO_OK) {
         return ret;
@@ -49,7 +49,7 @@ static int tlv_read_u32(const uint8_t *payload,
 {
     const uint8_t *value;
     uint8_t len;
-    int ret = tlv_find(payload, payload_len, type, &value, &len);
+    int ret = tlv_find_unique(payload, payload_len, type, &value, &len);
 
     if (ret != PROTO_OK) {
         return ret;
@@ -68,7 +68,7 @@ static int tlv_read_u64(const uint8_t *payload,
 {
     const uint8_t *value;
     uint8_t len;
-    int ret = tlv_find(payload, payload_len, type, &value, &len);
+    int ret = tlv_find_unique(payload, payload_len, type, &value, &len);
 
     if (ret != PROTO_OK) {
         return ret;
@@ -85,6 +85,7 @@ static int find_crc_tlv_offset(const uint8_t *payload,
                                size_t *crc_offset)
 {
     size_t offset = 0u;
+    bool found = false;
 
     if (payload == NULL || crc_offset == NULL) {
         return PROTO_ERR_ARG;
@@ -102,15 +103,16 @@ static int find_crc_tlv_offset(const uint8_t *payload,
             return PROTO_ERR_MALFORMED;
         }
         if (type == TLV_MESH_TEST_PAYLOAD_CRC) {
-            if (len != 2u) {
+            if (found || len != sizeof(uint16_t) ||
+                offset + PROTO_TLV_HEADER_LEN + len != payload_len) {
                 return PROTO_ERR_MALFORMED;
             }
             *crc_offset = offset;
-            return PROTO_OK;
+            found = true;
         }
         offset += 2u + len;
     }
-    return PROTO_ERR_NOT_FOUND;
+    return found ? PROTO_OK : PROTO_ERR_NOT_FOUND;
 }
 
 static void latency_insert(struct mesh_smoke_fast_state *state, uint32_t latency_ms)

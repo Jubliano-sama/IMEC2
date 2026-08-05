@@ -12,6 +12,34 @@ static bool range_status_valid(enum range_status status)
            status != RANGE_STS_QUALITY_FAIL;
 }
 
+int report_range_transport_seq(uint8_t attempt_index,
+                               uint16_t fragment_index,
+                               uint16_t *packet_seq)
+{
+    uint32_t sequence;
+
+    if (packet_seq == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (attempt_index == 0u ||
+        fragment_index >= RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    /*
+     * Relay duplicate identity includes the packet header sequence but not the
+     * burst TLVs. Reserve a complete fragment namespace for every ranging
+     * attempt so a later retry cannot conflict with an earlier attempt for the
+     * same click event.
+     */
+    sequence =
+        (((uint32_t)attempt_index - 1u) *
+         RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS) +
+        fragment_index + 1u;
+    *packet_seq = (uint16_t)sequence;
+    return PROTO_OK;
+}
+
 enum click_payload_field {
     CLICK_PAYLOAD_CLICKER_ID = UINT32_C(1) << 0,
     CLICK_PAYLOAD_ANCHOR_ID = UINT32_C(1) << 1,
@@ -79,7 +107,10 @@ int report_validate_click_payload(const struct proto_packet *packet,
         return PROTO_ERR_ARG;
     }
     mode_flags = packet->flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC);
-    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+    if ((packet->flags &
+         ~(FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK |
+           FLAG_DIAGNOSTIC)) != 0u ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
         mode_flags == 0u ||
         mode_flags == (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) {
         return PROTO_ERR_MALFORMED;

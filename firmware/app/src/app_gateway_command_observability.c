@@ -88,6 +88,9 @@ bool gateway_command_survey_sample_admission(
 
 void gateway_command_survey_terminal_outcome(
     size_t report_count,
+    size_t pair_count,
+    bool pairs_planned,
+    bool topology_complete,
     uint16_t failure_count,
     enum gateway_command_event_reason failure_reason,
     enum command_status *status,
@@ -107,6 +110,12 @@ void gateway_command_survey_terminal_outcome(
         *reason = survey_failure_reason_priority(failure_reason) > 0u ?
                       failure_reason :
                       GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED;
+    } else if (!pairs_planned) {
+        *status = COMMAND_INTERNAL_ERROR;
+        *reason = GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
+    } else if (pair_count == 0u || !topology_complete) {
+        *status = COMMAND_INTERNAL_ERROR;
+        *reason = GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE;
     }
 }
 
@@ -284,26 +293,24 @@ int gateway_command_event_decode(const uint8_t *data,
     return offset == data_len && event_valid(event) ? 0 : -EINVAL;
 }
 
-int gateway_command_observability_prepare(
+int gateway_command_observability_prepare_with_sequence(
     struct gateway_command_observability_state *state,
     struct gateway_command_event *event,
-    bool terminal)
+    bool terminal,
+    uint32_t event_seq)
 {
     struct gateway_command_event_snapshot *snapshot;
 
     if (state == NULL || event == NULL || !kind_valid(event->kind) ||
         !stage_valid(event->stage) || !status_valid(event->status) ||
-        !reason_valid(event->reason)) {
+        !reason_valid(event->reason) || event_seq == 0u) {
         return -EINVAL;
     }
 
-    state->next_event_seq++;
-    if (state->next_event_seq == 0u) {
-        state->next_event_seq = 1u;
-    }
+    state->next_event_seq = event_seq;
     event->schema_version = GATEWAY_COMMAND_EVENT_SCHEMA_VERSION;
     event->record_len = GATEWAY_COMMAND_EVENT_WIRE_LEN;
-    event->event_seq = state->next_event_seq;
+    event->event_seq = event_seq;
     event->lost_event_count = state->lost_event_count;
     event->flags &= (uint8_t)~GATEWAY_COMMAND_EVENT_FLAG_TERMINAL;
     if (terminal) {
@@ -312,6 +319,9 @@ int gateway_command_observability_prepare(
     }
 
     snapshot = snapshot_for_kind(state, event->kind);
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
     if (!terminal) {
         snapshot->event = *event;
         snapshot->valid = true;
@@ -319,11 +329,12 @@ int gateway_command_observability_prepare(
         return 0;
     }
 
-    snapshot->valid = false;
     for (size_t i = 0u; i < GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH; i++) {
         if (!state->terminals[i].valid) {
             state->terminals[i].event = *event;
             state->terminals[i].valid = true;
+            state->terminals[i].enqueue_pending = true;
+            snapshot->valid = false;
             return 0;
         }
     }
@@ -331,6 +342,24 @@ int gateway_command_observability_prepare(
         state->lost_event_count++;
     }
     return -ENOSPC;
+}
+
+int gateway_command_observability_prepare(
+    struct gateway_command_observability_state *state,
+    struct gateway_command_event *event,
+    bool terminal)
+{
+    uint32_t event_seq;
+
+    if (state == NULL) {
+        return -EINVAL;
+    }
+    event_seq = state->next_event_seq + 1u;
+    if (event_seq == 0u) {
+        event_seq = 1u;
+    }
+    return gateway_command_observability_prepare_with_sequence(
+        state, event, terminal, event_seq);
 }
 
 void gateway_command_observability_note_enqueue(
@@ -348,11 +377,14 @@ void gateway_command_observability_note_enqueue(
         if (!terminal->valid || terminal->event.event_seq != event_seq) {
             continue;
         }
-        if (enqueue_result >= 0) {
-            terminal->valid = false;
-            return;
-        }
-        /* A transient transport refusal leaves terminal custody here. */
+        /*
+         * Queue admission transfers the bytes to the BLE stream, but the
+         * observability owner must keep the terminal slot until the complete
+         * record's asynchronous send callback confirms delivery.  Otherwise
+         * a disconnect or later queue pressure can erase the only terminal
+         * result after the host command was already accepted.
+         */
+        terminal->enqueue_pending = enqueue_result < 0;
         return;
     }
     for (size_t i = 0u; i < GATEWAY_COMMAND_EVENT_MAX_TRACKED; i++) {
@@ -376,7 +408,7 @@ bool gateway_command_observability_pending_terminal(
     for (size_t i = 0u; i < GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH; i++) {
         struct gateway_command_event_terminal *terminal = &state->terminals[i];
 
-        if (terminal->valid) {
+        if (terminal->valid && terminal->enqueue_pending) {
             *event = terminal->event;
             event->flags |= GATEWAY_COMMAND_EVENT_FLAG_REPLAY |
                             GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT;
@@ -436,10 +468,12 @@ void gateway_command_observability_mark_sent(
     for (size_t i = 0u; i < GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH; i++) {
         struct gateway_command_event_terminal *terminal = &state->terminals[i];
 
-        if (!terminal->valid || terminal->event.event_seq != event_seq) {
+        if (!terminal->valid || terminal->enqueue_pending ||
+            terminal->event.event_seq != event_seq) {
             continue;
         }
         terminal->valid = false;
+        terminal->enqueue_pending = false;
         return;
     }
 }

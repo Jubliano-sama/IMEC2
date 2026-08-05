@@ -16,12 +16,21 @@ static struct k_spinlock publisher_lock;
 #define PUBLISHER_UNLOCK(key) ((void)(key))
 #endif
 
+struct app_gateway_assignment_publisher_identity {
+    uint32_t correlation_id;
+    uint32_t gateway_sequence;
+    uint32_t host_session_id;
+    uint16_t gateway_epoch;
+    uint16_t host_seq;
+};
+
 struct app_gateway_assignment_publisher_state {
-    struct gateway_command_event base_event;
+    struct app_gateway_assignment_publisher_identity identity;
     struct app_gateway_assignment_publisher_ops ops;
     uint64_t anchor_ids[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
-    uint8_t slots[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
+    uint64_t acknowledged_mask;
     uint32_t inflight_event_seq;
+    uint32_t pending_event_seq;
     uint16_t duplicate_count;
     uint16_t entry_count;
     uint16_t cursor;
@@ -38,8 +47,10 @@ struct app_gateway_assignment_publisher_state {
     uint16_t terminal_duplicate_count;
     uint8_t terminal_attempt;
     bool active;
+    bool prepared;
     bool table_ready;
     bool terminal_pending;
+    bool completion_pending;
     bool skip_table_event;
     bool emit_attempt_active;
 };
@@ -52,40 +63,61 @@ _Static_assert(APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES == 50u,
 
 static struct app_gateway_assignment_publisher_state publisher;
 
-static bool same_identity(const struct gateway_command_event *left,
-                          const struct gateway_command_event *right)
+static bool valid_base_event(const struct gateway_command_event *event)
 {
-    return left->kind == right->kind &&
-           left->command_id == right->command_id &&
-           left->correlation_id == right->correlation_id &&
-           left->gateway_sequence == right->gateway_sequence &&
-           left->host_session_id == right->host_session_id &&
-           left->host_seq == right->host_seq;
+    return event != NULL &&
+           event->kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION &&
+           event->command_id == CMD_ASSIGN_DISCOVERY_SLOTS;
 }
 
-static bool same_batch(const struct discovery_assignment_entry *entries,
-                       size_t entry_count)
+static bool same_identity(const struct gateway_command_event *event)
 {
-    if (entry_count != publisher.entry_count) {
-        return false;
-    }
-    for (size_t i = 0u; i < entry_count; i++) {
-        if (publisher.anchor_ids[i] != entries[i].anchor_id ||
-            publisher.slots[i] != entries[i].slot) {
-            return false;
-        }
-    }
-    return true;
+    return valid_base_event(event) &&
+           publisher.identity.correlation_id == event->correlation_id &&
+           publisher.identity.gateway_sequence == event->gateway_sequence &&
+           publisher.identity.host_session_id == event->host_session_id &&
+           publisher.identity.gateway_epoch == event->gateway_epoch &&
+           publisher.identity.host_seq == event->host_seq;
 }
 
-static bool same_sorted_ids(const uint64_t *anchor_ids, size_t anchor_count)
+static void store_identity(const struct gateway_command_event *event)
 {
-    if (anchor_count != publisher.entry_count) {
+    publisher.identity =
+        (struct app_gateway_assignment_publisher_identity) {
+            .correlation_id = event->correlation_id,
+            .gateway_sequence = event->gateway_sequence,
+            .host_session_id = event->host_session_id,
+            .gateway_epoch = event->gateway_epoch,
+            .host_seq = event->host_seq,
+        };
+}
+
+static void build_base_event(struct gateway_command_event *event)
+{
+    memset(event, 0, sizeof(*event));
+    event->schema_version = GATEWAY_COMMAND_EVENT_SCHEMA_VERSION;
+    event->record_len = GATEWAY_COMMAND_EVENT_WIRE_LEN;
+    event->kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION;
+    event->command_id = CMD_ASSIGN_DISCOVERY_SLOTS;
+    event->gateway_epoch = publisher.identity.gateway_epoch;
+    event->correlation_id = publisher.identity.correlation_id;
+    event->gateway_sequence = publisher.identity.gateway_sequence;
+    event->host_session_id = publisher.identity.host_session_id;
+    event->host_seq = publisher.identity.host_seq;
+    event->slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE;
+}
+
+static bool same_table(const uint64_t *anchor_ids,
+                       const uint8_t *slots,
+                       size_t anchor_count,
+                       uint64_t acknowledged_mask)
+{
+    if (anchor_count != publisher.entry_count ||
+        acknowledged_mask != publisher.acknowledged_mask) {
         return false;
     }
     for (size_t i = 0u; i < anchor_count; i++) {
-        if (publisher.anchor_ids[i] != anchor_ids[i] ||
-            publisher.slots[i] != i) {
+        if (publisher.anchor_ids[slots[i]] != anchor_ids[i]) {
             return false;
         }
     }
@@ -112,31 +144,73 @@ static void reset_event_progress(struct gateway_command_event *event)
     event->slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE;
 }
 
+static uint8_t mapping_slot_for_ordinal(uint16_t ordinal)
+{
+    uint16_t seen = 0u;
+
+    for (uint8_t slot = 0u;
+         slot < APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES;
+         slot++) {
+        if (publisher.anchor_ids[slot] == 0u) {
+            continue;
+        }
+        if (seen == ordinal) {
+            return slot;
+        }
+        seen++;
+    }
+    return GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE;
+}
+
 static bool build_next_event(struct gateway_command_event *event,
                              bool *terminal)
 {
     uint16_t table_cursor = (uint16_t)(publisher.entry_count + 1u);
     uint16_t terminal_cursor = (uint16_t)(publisher.entry_count + 2u);
 
-    if (!publisher.active || publisher.inflight_event_seq != 0u ||
+    if (!publisher.active || publisher.prepared ||
+        publisher.inflight_event_seq != 0u ||
         publisher.emit_attempt_active) {
         return false;
     }
     if (publisher.cursor < publisher.entry_count) {
-        *event = publisher.base_event;
+        uint8_t slot = mapping_slot_for_ordinal(publisher.cursor);
+        bool acknowledged;
+
+        if (slot == GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE) {
+            return false;
+        }
+        acknowledged =
+            (publisher.acknowledged_mask &
+             (UINT64_C(1) << slot)) != 0u;
+        build_base_event(event);
         reset_event_progress(event);
         event->stage = GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED;
-        event->anchor_id = publisher.anchor_ids[publisher.cursor];
-        event->slot = publisher.slots[publisher.cursor];
+        event->anchor_id = publisher.anchor_ids[slot];
+        event->slot = slot;
         event->progress_count = (uint16_t)(publisher.cursor + 1u);
+        event->success_count =
+            acknowledged ? (uint16_t)1u : (uint16_t)0u;
+        event->failure_count =
+            acknowledged ? (uint16_t)0u : (uint16_t)1u;
+        event->status = acknowledged ? COMMAND_OK : COMMAND_TIMEOUT;
+        event->reason = acknowledged ?
+                            GATEWAY_COMMAND_EVENT_REASON_NONE :
+                            GATEWAY_COMMAND_EVENT_REASON_TIMEOUT;
+        event->event_seq = publisher.pending_event_seq;
         *terminal = false;
         return true;
     }
     if (publisher.cursor == publisher.entry_count) {
-        *event = publisher.base_event;
+        build_base_event(event);
         reset_event_progress(event);
         event->stage = GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE;
         event->progress_count = publisher.entry_count;
+        event->success_count =
+            (uint16_t)__builtin_popcountll(publisher.acknowledged_mask);
+        event->failure_count =
+            (uint16_t)(publisher.entry_count - event->success_count);
+        event->event_seq = publisher.pending_event_seq;
         *terminal = false;
         return true;
     }
@@ -144,13 +218,14 @@ static bool build_next_event(struct gateway_command_event *event,
         if (publisher.skip_table_event) {
             publisher.cursor++;
         } else if (publisher.table_ready) {
-            *event = publisher.base_event;
+            build_base_event(event);
             reset_event_progress(event);
             event->stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
             event->attempt = publisher.table_attempt;
             event->status = publisher.table_status;
             event->reason = publisher.table_reason;
             event->progress_count = publisher.entry_count;
+            event->event_seq = publisher.pending_event_seq;
             *terminal = false;
             return true;
         } else {
@@ -158,7 +233,7 @@ static bool build_next_event(struct gateway_command_event *event,
         }
     }
     if (publisher.cursor == terminal_cursor && publisher.terminal_pending) {
-        *event = publisher.base_event;
+        build_base_event(event);
         reset_event_progress(event);
         event->stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE;
         event->attempt = publisher.terminal_attempt;
@@ -169,6 +244,7 @@ static bool build_next_event(struct gateway_command_event *event,
         event->success_count = publisher.terminal_success_count;
         event->failure_count = publisher.terminal_failure_count;
         event->duplicate_count = publisher.terminal_duplicate_count;
+        event->event_seq = publisher.pending_event_seq;
         *terminal = true;
         return true;
     }
@@ -186,23 +262,60 @@ int app_gateway_assignment_publisher_init(
     return 0;
 }
 
-int app_gateway_assignment_publisher_stage_batch(
+int app_gateway_assignment_publisher_prepare_table(
     const struct gateway_command_event *base_event,
-    const struct discovery_assignment_entry *entries,
-    size_t entry_count,
+    const uint64_t *anchor_ids,
+    const uint8_t *slots,
+    size_t anchor_count,
+    uint64_t acknowledged_mask,
     uint16_t duplicate_count)
 {
     PUBLISHER_LOCK_KEY key;
 
-    if (base_event == NULL || entries == NULL || entry_count == 0u ||
-        entry_count > APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES ||
-        base_event->kind != GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION) {
+    if (!valid_base_event(base_event) || anchor_ids == NULL || slots == NULL ||
+        anchor_count == 0u ||
+        anchor_count > APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES) {
         return -EINVAL;
+    }
+    if (acknowledged_mask == 0u ||
+        (acknowledged_mask &
+         ~((UINT64_C(1) << APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES) -
+           1u)) != 0u) {
+        return -EINVAL;
+    }
+    for (size_t i = 0u; i < anchor_count; i++) {
+        if (anchor_ids[i] == 0u ||
+            slots[i] >= APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES) {
+            return -EINVAL;
+        }
+        for (size_t prior = 0u; prior < i; prior++) {
+            if (anchor_ids[prior] == anchor_ids[i] ||
+                slots[prior] == slots[i]) {
+                return -EINVAL;
+            }
+        }
+    }
+    for (uint8_t bit = 0u;
+         bit < APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES;
+         bit++) {
+        if ((acknowledged_mask & (UINT64_C(1) << bit)) != 0u) {
+            bool occupied = false;
+
+            for (size_t i = 0u; i < anchor_count; i++) {
+                if (slots[i] == bit) {
+                    occupied = true;
+                    break;
+                }
+            }
+            if (!occupied) {
+                return -EINVAL;
+            }
+        }
     }
     key = PUBLISHER_LOCK();
     if (publisher.active) {
-        if (same_identity(&publisher.base_event, base_event) &&
-            same_batch(entries, entry_count)) {
+        if (same_identity(base_event) &&
+            same_table(anchor_ids, slots, anchor_count, acknowledged_mask)) {
             if (publisher.duplicate_batches < UINT16_MAX) {
                 publisher.duplicate_batches++;
             }
@@ -213,23 +326,90 @@ int app_gateway_assignment_publisher_stage_batch(
         return -EBUSY;
     }
 
-    publisher.base_event = *base_event;
-    publisher.entry_count = (uint16_t)entry_count;
+    store_identity(base_event);
+    publisher.entry_count = (uint16_t)anchor_count;
     publisher.duplicate_count = duplicate_count;
-    for (size_t i = 0u; i < entry_count; i++) {
-        publisher.anchor_ids[i] = entries[i].anchor_id;
-        publisher.slots[i] = entries[i].slot;
+    publisher.acknowledged_mask = acknowledged_mask;
+    memset(publisher.anchor_ids, 0, sizeof(publisher.anchor_ids));
+    for (size_t i = 0u; i < anchor_count; i++) {
+        publisher.anchor_ids[slots[i]] = anchor_ids[i];
     }
     publisher.cursor = 0u;
     publisher.inflight_event_seq = 0u;
+    publisher.pending_event_seq = 0u;
     publisher.table_ready = false;
     publisher.terminal_pending = false;
     publisher.skip_table_event = false;
     publisher.emit_attempt_active = false;
     publisher.active = true;
+    publisher.prepared = true;
+    PUBLISHER_UNLOCK(key);
+    return 0;
+}
+
+int app_gateway_assignment_publisher_commit_prepared_batch(
+    const struct gateway_command_event *base_event)
+{
+    PUBLISHER_LOCK_KEY key;
+
+    if (base_event == NULL) {
+        return -EINVAL;
+    }
+    key = PUBLISHER_LOCK();
+    if (!publisher.active || !publisher.prepared ||
+        !same_identity(base_event)) {
+        PUBLISHER_UNLOCK(key);
+        return -ESTALE;
+    }
+    publisher.prepared = false;
     PUBLISHER_UNLOCK(key);
     app_gateway_assignment_publisher_pump();
     return 0;
+}
+
+bool app_gateway_assignment_publisher_abort_prepared_batch(
+    const struct gateway_command_event *base_event)
+{
+    struct app_gateway_assignment_publisher_ops ops;
+    PUBLISHER_LOCK_KEY key;
+
+    if (base_event == NULL) {
+        return false;
+    }
+    key = PUBLISHER_LOCK();
+    if (!publisher.active || !publisher.prepared ||
+        !same_identity(base_event)) {
+        PUBLISHER_UNLOCK(key);
+        return false;
+    }
+    ops = publisher.ops;
+    memset(&publisher, 0, sizeof(publisher));
+    publisher.ops = ops;
+    PUBLISHER_UNLOCK(key);
+    return true;
+}
+
+int app_gateway_assignment_publisher_stage_table(
+    const struct gateway_command_event *base_event,
+    const uint64_t *anchor_ids,
+    const uint8_t *slots,
+    size_t anchor_count,
+    uint64_t acknowledged_mask,
+    uint16_t duplicate_count)
+{
+    int ret = app_gateway_assignment_publisher_prepare_table(
+        base_event,
+        anchor_ids,
+        slots,
+        anchor_count,
+        acknowledged_mask,
+        duplicate_count);
+
+    if (ret != 0) {
+        return ret;
+    }
+    ret = app_gateway_assignment_publisher_commit_prepared_batch(base_event);
+    return ret < 0 ? ret : 0;
 }
 
 int app_gateway_assignment_publisher_stage_sorted_ids(
@@ -238,7 +418,8 @@ int app_gateway_assignment_publisher_stage_sorted_ids(
     size_t anchor_count,
     uint16_t duplicate_count)
 {
-    PUBLISHER_LOCK_KEY key;
+    uint8_t slots[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
+    uint64_t all_committed;
 
     if (base_event == NULL || anchor_ids == NULL || anchor_count == 0u ||
         anchor_count > APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES ||
@@ -255,38 +436,18 @@ int app_gateway_assignment_publisher_stage_sorted_ids(
                anchor_ids[i - 1u] >= anchor_ids[i])))) {
             return -EINVAL;
         }
+        slots[i] = (uint8_t)i;
     }
-    key = PUBLISHER_LOCK();
-    if (publisher.active) {
-        if (same_identity(&publisher.base_event, base_event) &&
-            same_sorted_ids(anchor_ids, anchor_count)) {
-            if (publisher.duplicate_batches < UINT16_MAX) {
-                publisher.duplicate_batches++;
-            }
-            PUBLISHER_UNLOCK(key);
-            return 1;
-        }
-        PUBLISHER_UNLOCK(key);
-        return -EBUSY;
-    }
-
-    publisher.base_event = *base_event;
-    publisher.entry_count = (uint16_t)anchor_count;
-    publisher.duplicate_count = duplicate_count;
-    for (size_t i = 0u; i < anchor_count; i++) {
-        publisher.anchor_ids[i] = anchor_ids[i];
-        publisher.slots[i] = (uint8_t)i;
-    }
-    publisher.cursor = 0u;
-    publisher.inflight_event_seq = 0u;
-    publisher.table_ready = false;
-    publisher.terminal_pending = false;
-    publisher.skip_table_event = false;
-    publisher.emit_attempt_active = false;
-    publisher.active = true;
-    PUBLISHER_UNLOCK(key);
-    app_gateway_assignment_publisher_pump();
-    return 0;
+    all_committed = anchor_count >= 64u ?
+                    UINT64_MAX :
+                    (UINT64_C(1) << anchor_count) - 1u;
+    return app_gateway_assignment_publisher_stage_table(
+        base_event,
+        anchor_ids,
+        slots,
+        anchor_count,
+        all_committed,
+        duplicate_count);
 }
 
 void app_gateway_assignment_publisher_stage_table_ready(
@@ -298,7 +459,7 @@ void app_gateway_assignment_publisher_stage_table_ready(
         return;
     }
     key = PUBLISHER_LOCK();
-    if (publisher.active && same_identity(&publisher.base_event, event) &&
+    if (publisher.active && same_identity(event) &&
         !publisher.table_ready) {
         publisher.table_attempt = event->attempt;
         publisher.table_status = event->status;
@@ -319,7 +480,7 @@ bool app_gateway_assignment_publisher_capture_terminal(
         return false;
     }
     key = PUBLISHER_LOCK();
-    if (publisher.active && same_identity(&publisher.base_event, event)) {
+    if (publisher.active && same_identity(event)) {
         if (!publisher.terminal_pending) {
             publisher.terminal_attempt = event->attempt;
             publisher.terminal_status = event->status;
@@ -352,6 +513,15 @@ void app_gateway_assignment_publisher_pump(void)
     PUBLISHER_LOCK_KEY key = PUBLISHER_LOCK();
     int ret;
 
+    /*
+     * The terminal host notification publishes an immutable durable-completion
+     * debt. Transport callbacks may still call pump while reconnecting, but
+     * only the owning persistence workqueue may execute that debt.
+     */
+    if (publisher.active && publisher.completion_pending) {
+        PUBLISHER_UNLOCK(key);
+        return;
+    }
     if (!build_next_event(&event, &terminal)) {
         PUBLISHER_UNLOCK(key);
         return;
@@ -367,17 +537,30 @@ void app_gateway_assignment_publisher_pump(void)
     publisher.emit_attempt_active = false;
     if (ret == 0 && event.event_seq != 0u) {
         publisher.inflight_event_seq = event.event_seq;
+        publisher.pending_event_seq = 0u;
+    } else if (ret != 0 && event.event_seq != 0u &&
+               publisher.active && same_identity(&event) &&
+               publisher.inflight_event_seq == 0u &&
+               (publisher.pending_event_seq == 0u ||
+                publisher.pending_event_seq == event.event_seq)) {
+        /*
+         * The transport may reserve a durable event identity before its
+         * final queue-capacity recheck. Retain that identity across
+         * backpressure so retry cannot consume another ID or mutate the
+         * packet identity of this semantic event.
+         */
+        publisher.pending_event_seq = event.event_seq;
     }
     PUBLISHER_UNLOCK(key);
 }
 
-void app_gateway_assignment_publisher_note_sent(uint32_t event_seq)
+bool app_gateway_assignment_publisher_note_sent(uint32_t event_seq)
 {
     PUBLISHER_LOCK_KEY key;
-    bool pump = false;
+    bool advanced = false;
 
     if (event_seq == 0u) {
-        return;
+        return false;
     }
     key = PUBLISHER_LOCK();
     if (publisher.active && publisher.inflight_event_seq == event_seq) {
@@ -385,18 +568,71 @@ void app_gateway_assignment_publisher_note_sent(uint32_t event_seq)
         publisher.cursor++;
         if (publisher.terminal_pending &&
             publisher.cursor > (uint16_t)(publisher.entry_count + 2u)) {
-            struct app_gateway_assignment_publisher_ops ops = publisher.ops;
-
-            memset(&publisher, 0, sizeof(publisher));
-            publisher.ops = ops;
-        } else {
-            pump = true;
+            publisher.completion_pending = true;
         }
+        advanced = true;
     }
     PUBLISHER_UNLOCK(key);
-    if (pump) {
-        app_gateway_assignment_publisher_pump();
+    return advanced;
+}
+
+bool app_gateway_assignment_publisher_work_pending(void)
+{
+    PUBLISHER_LOCK_KEY key = PUBLISHER_LOCK();
+    bool pending = publisher.active &&
+                   !publisher.prepared &&
+                   publisher.inflight_event_seq == 0u &&
+                   !publisher.emit_attempt_active;
+
+    PUBLISHER_UNLOCK(key);
+    return pending;
+}
+
+int app_gateway_assignment_publisher_complete_pending(void)
+{
+    struct app_gateway_assignment_publisher_ops ops;
+    struct gateway_command_event event;
+    app_gateway_assignment_publisher_complete_fn complete;
+    void *ctx;
+    bool matching_debt;
+    PUBLISHER_LOCK_KEY key = PUBLISHER_LOCK();
+    int ret;
+
+    if (!publisher.active || !publisher.completion_pending) {
+        PUBLISHER_UNLOCK(key);
+        return 0;
     }
+    if (publisher.emit_attempt_active) {
+        PUBLISHER_UNLOCK(key);
+        return -EBUSY;
+    }
+
+    build_base_event(&event);
+    publisher.emit_attempt_active = true;
+    complete = publisher.ops.batch_completed;
+    ctx = publisher.ops.ctx;
+    PUBLISHER_UNLOCK(key);
+
+    ret = complete == NULL ? 0 : complete(&event, ctx);
+
+    key = PUBLISHER_LOCK();
+    matching_debt = publisher.active &&
+                    publisher.completion_pending &&
+                    same_identity(&event);
+    if (matching_debt) {
+        publisher.emit_attempt_active = false;
+    }
+    if (ret == 0 && matching_debt) {
+        ops = publisher.ops;
+        memset(&publisher, 0, sizeof(publisher));
+        publisher.ops = ops;
+    }
+    PUBLISHER_UNLOCK(key);
+
+    if (ret < 0) {
+        return ret;
+    }
+    return matching_debt ? 1 : -ESTALE;
 }
 
 void app_gateway_assignment_publisher_get_diagnostics(

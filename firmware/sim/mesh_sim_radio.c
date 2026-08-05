@@ -85,11 +85,15 @@ uint32_t mesh_sim_frame_duration_us(enum mesh_sim_phy phy, size_t frame_len)
     return total > UINT32_MAX ? UINT32_MAX : (uint32_t)total;
 }
 
-static int radio_operation_conflicts(const struct mesh_sim_world *world,
-                                     uint8_t node_index,
-                                     uint64_t start_us,
-                                     uint64_t end_us)
+int mesh_sim_radio_operation_conflicts(const struct mesh_sim_world *world,
+                                       uint8_t node_index,
+                                       uint64_t start_us,
+                                       uint64_t end_us)
 {
+    if (!mesh_sim_node_index_valid(world, node_index) ||
+        end_us <= start_us) {
+        return MESH_SIM_ERR_ARG;
+    }
     for (size_t i = 0u; i < world->rx_window_count; i++) {
         const struct mesh_sim_rx_window *window = &world->rx_windows[i];
 
@@ -126,7 +130,10 @@ int mesh_sim_schedule_rx(struct mesh_sim_world *world,
         start_us < world->now_us || mesh_sim_phy_profile(phy) == NULL) {
         return MESH_SIM_ERR_ARG;
     }
-    ret = radio_operation_conflicts(world, node_index, start_us, end_us);
+    ret = mesh_sim_radio_operation_conflicts(world,
+                                             node_index,
+                                             start_us,
+                                             end_us);
     if (ret != MESH_SIM_OK) {
         return mesh_sim_fail(world, ret);
     }
@@ -254,37 +261,38 @@ int mesh_sim_runtime_set_action_duration(
     return MESH_SIM_OK;
 }
 
-static enum mesh_runtime_radio_owner runtime_action_owner(
-    enum mesh_runtime_action_kind action)
+static bool runtime_action_radio_work(
+    enum mesh_runtime_action_kind action,
+    enum mesh_runtime_radio_owner *owner,
+    enum mesh_runtime_work_kind *work_kind)
 {
-    switch (action) {
-    case MESH_RUNTIME_ACTION_RUN_GATEWAY_COMMAND:
-        return MESH_RUNTIME_RADIO_GATEWAY_COMMAND;
-    case MESH_RUNTIME_ACTION_START_LOCAL_CLICK:
-        return MESH_RUNTIME_RADIO_DS_TWR;
-    case MESH_RUNTIME_ACTION_RUN_TRANSIT:
-        return MESH_RUNTIME_RADIO_TRANSIT;
-    case MESH_RUNTIME_ACTION_REPAIR_SELECTED_EVENT:
-        return MESH_RUNTIME_RADIO_LOW_DUTY_SCAN;
-    default:
-        return MESH_RUNTIME_RADIO_NONE;
+    if (owner == NULL || work_kind == NULL) {
+        return false;
     }
-}
 
-static enum mesh_runtime_work_kind runtime_action_work_kind(
-    enum mesh_runtime_action_kind action)
-{
     switch (action) {
     case MESH_RUNTIME_ACTION_RUN_GATEWAY_COMMAND:
-        return MESH_RUNTIME_WORK_GATEWAY_COMMAND;
+        *owner = MESH_RUNTIME_RADIO_GATEWAY_COMMAND;
+        *work_kind = MESH_RUNTIME_WORK_GATEWAY_COMMAND;
+        break;
     case MESH_RUNTIME_ACTION_START_LOCAL_CLICK:
-        return MESH_RUNTIME_WORK_LOCAL_CLICK;
-    case MESH_RUNTIME_ACTION_REPAIR_SELECTED_EVENT:
-        return MESH_RUNTIME_WORK_EVENT_REPAIR;
+        *owner = MESH_RUNTIME_RADIO_DS_TWR;
+        *work_kind = MESH_RUNTIME_WORK_LOCAL_CLICK;
+        break;
     case MESH_RUNTIME_ACTION_RUN_TRANSIT:
+        *owner = MESH_RUNTIME_RADIO_TRANSIT;
+        *work_kind = MESH_RUNTIME_WORK_TRANSIT;
+        break;
+    case MESH_RUNTIME_ACTION_REPAIR_SELECTED_EVENT:
+        *owner = MESH_RUNTIME_RADIO_LOW_DUTY_SCAN;
+        *work_kind = MESH_RUNTIME_WORK_EVENT_REPAIR;
+        break;
+    case MESH_RUNTIME_ACTION_NONE:
+    case MESH_RUNTIME_ACTION_WAIT_SAFE_BOUNDARY:
     default:
-        return MESH_RUNTIME_WORK_TRANSIT;
+        return false;
     }
+    return true;
 }
 
 int mesh_sim_radio_process_runtime_boundary(struct mesh_sim_world *world,
@@ -292,6 +300,8 @@ int mesh_sim_radio_process_runtime_boundary(struct mesh_sim_world *world,
 {
     struct mesh_sim_role_instance *node = &world->roles[node_index];
     struct mesh_runtime_action action;
+    enum mesh_runtime_radio_owner owner;
+    enum mesh_runtime_work_kind work_kind;
     uint32_t duration_us;
     int ret;
 
@@ -308,8 +318,10 @@ int mesh_sim_radio_process_runtime_boundary(struct mesh_sim_world *world,
     if (action.kind == MESH_RUNTIME_ACTION_NONE) {
         return MESH_SIM_OK;
     }
-    duration_us = node->runtime_action_duration_us[
-        runtime_action_work_kind(action.kind)];
+    if (!runtime_action_radio_work(action.kind, &owner, &work_kind)) {
+        return mesh_sim_fail(world, MESH_SIM_ERR_UNSUPPORTED_ACTION);
+    }
+    duration_us = node->runtime_action_duration_us[work_kind];
     if (duration_us == 0u) {
         return mesh_sim_scheduler_schedule(world,
                               SIM_EVENT_RUNTIME_BOUNDARY,
@@ -317,7 +329,7 @@ int mesh_sim_radio_process_runtime_boundary(struct mesh_sim_world *world,
                               node_index);
     }
     ret = mesh_runtime_claim_radio(&node->runtime,
-                                   runtime_action_owner(action.kind),
+                                   owner,
                                    world->now_us,
                                    world->now_us + duration_us);
     if (ret != MESH_RUNTIME_OK) {
@@ -532,10 +544,10 @@ int mesh_sim_schedule_raw_tx(struct mesh_sim_world *world,
     if (duration_us == 0u) {
         return MESH_SIM_ERR_ARG;
     }
-    ret = radio_operation_conflicts(world,
-                                    node_index,
-                                    start_us,
-                                    start_us + duration_us);
+    ret = mesh_sim_radio_operation_conflicts(world,
+                                             node_index,
+                                             start_us,
+                                             start_us + duration_us);
     if (ret != MESH_SIM_OK) {
         return mesh_sim_fail(world, ret);
     }

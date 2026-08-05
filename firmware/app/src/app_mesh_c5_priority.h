@@ -91,6 +91,14 @@ bool app_mesh_c5_flood_should_defer(
 bool app_mesh_c5_gateway_rx_should_yield_to_response(
     const struct app_mesh_c5_flood_priority_state *state);
 bool app_mesh_c5_gateway_route_adv_allowed(bool mesh_route_test_enabled);
+bool app_mesh_c5_contact_expired(
+    const struct c5_contact_context *contact,
+    uint32_t now_ms);
+bool app_mesh_c5_contact_accepted(
+    const struct c5_contact_context *contact,
+    uint64_t peer_id,
+    uint8_t purpose,
+    uint32_t now_ms);
 bool app_mesh_c5_route_capture_relevant(
     const struct app_mesh_c5_route_capture_state *state);
 bool app_mesh_c5_route_capture_completes_discovery(uint8_t msg_type);

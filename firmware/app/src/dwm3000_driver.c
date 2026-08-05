@@ -32,7 +32,7 @@
 
 LOG_MODULE_REGISTER(dwm3000_driver, DWM3000_DRIVER_LOG_LEVEL);
 
-static atomic_t receive_abort_requested;
+static atomic_t receive_abort_owners;
 static atomic_t receive_abort_enabled;
 
 #define ROLE_CLICKER 1
@@ -139,12 +139,20 @@ static bool focused_anchor_rx_logs_enabled(void)
 #define DS_TWR_RX_DEFAULT_TIMEOUT_UUS \
     (DS_TWR_RX_DEFAULT_GUARD_BEFORE_UUS + DWM3000_DS_TWR_RX_GUARD_AFTER_UUS)
 
+#define DWM3000_RX_ERROR_STATUS_MASK \
+    (SYS_STATUS_ALL_RX_ERR | SYS_STATUS_RXOVRR_BIT_MASK)
+#define DWM3000_SYS_STATUS_HI_FATAL_MASK \
+    (SYS_STATUS_HI_SPIERR_BIT_MASK | SYS_STATUS_HI_SPI_UNF_BIT_MASK | \
+     SYS_STATUS_HI_SPI_OVF_BIT_MASK | SYS_STATUS_HI_CMD_ERR_BIT_MASK)
 #define RX_TERMINAL_STATUS_MASK \
-    (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)
+    (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | \
+     DWM3000_RX_ERROR_STATUS_MASK)
 #define RX_ACTIVITY_STATUS_MASK \
     (SYS_STATUS_RXPRD_BIT_MASK | SYS_STATUS_RXSFDD_BIT_MASK | \
      SYS_STATUS_RXPHD_BIT_MASK | SYS_STATUS_RXFR_BIT_MASK)
 #define RX_CLEAR_STATUS_MASK (RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK)
+#define DWM3000_DEADLINE_TX_LEAD_UUS 1000u
+#define DWM3000_STANDARD_FRAME_MAX_LEN 127u
 
 #ifndef DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS
 #define DWM3000_POLL_TX_TO_RESP_RX_DLY_UUS DS_TWR_RX_DEFAULT_AFTER_TX_DLY_UUS
@@ -391,6 +399,13 @@ BUILD_ASSERT(REPORT_RX_TIMEOUT_MS >= DS_TWR_UUS_TO_MS_CEIL(REPORT_RX_TIMEOUT_UUS
              "initiator report wait timeout must cover report RX timeout");
 BUILD_ASSERT((UWB_MESH_MAX_FRAME_LEN + UWB_PHY_FCS_LEN) <= UWB_PHY_EXTENDED_FRAME_MAX_LEN,
              "channel-9 mesh frames must fit the DW3000 extended PHR frame limit");
+BUILD_ASSERT(DWM3000_STANDARD_FRAME_MAX_LEN <= TX_FCTRL_TXFLEN_BIT_MASK,
+             "standard PHR frame limit must fit the DW3000 TX length field");
+BUILD_ASSERT((((uint64_t)DWM3000_DEADLINE_TX_LEAD_UUS *
+               DWM3000_UUS_TO_DWT_TIME) >> 8) > 0u &&
+             (((uint64_t)DWM3000_DEADLINE_TX_LEAD_UUS *
+               DWM3000_UUS_TO_DWT_TIME) >> 8) <= UINT32_MAX,
+             "deadline-bound delayed-TX lead must fit the DW3000 time register");
 
 static dwt_config_t default_config = {
     DWM3000_PHY_CHANNEL,
@@ -479,9 +494,12 @@ enum dwm3000_phy_mode {
 static bool radio_configured;
 static bool radio_awake;
 static bool radio_restored_from_sleep;
+static bool radio_state_unknown = true;
 static enum dwm3000_phy_mode active_phy_mode;
 static struct dwm3000_rx_debug_snapshot last_rx_debug;
 static uint32_t last_rx_finfo_register;
+static uint32_t last_rx_host_uptime_ms;
+static bool last_rx_host_uptime_valid;
 static struct dwm3000_driver_stats driver_stats;
 
 

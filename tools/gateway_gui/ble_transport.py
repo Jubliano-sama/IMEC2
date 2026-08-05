@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import threading
+import time
 from typing import Any, Callable, Coroutine
 
 from .protocol import (
@@ -52,8 +53,9 @@ class BleTransport:
         self._thread = threading.Thread(target=self._run_loop, name="gateway-ble", daemon=True)
         self._thread.start()
         self._client: Any = None
+        self._connecting_client: Any = None
+        self._connection_generation = 0
         self._decoder = GatewayReceiveBuffer()
-        self._intentional_disconnect = False
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -66,7 +68,11 @@ class BleTransport:
         self._loop.close()
 
     def _emit(self, kind: str, **fields: Any) -> None:
-        self._event_sink({"kind": kind, **fields})
+        # Capture arrival on the BLE worker before Tk scheduling can delay
+        # consumption across a command deadline.
+        self._event_sink(
+            {"kind": kind, **fields, "received_at": time.monotonic()}
+        )
 
     def _submit(self, coroutine: Coroutine[Any, Any, Any], operation: str) -> None:
         if not self._thread.is_alive():
@@ -147,14 +153,28 @@ class BleTransport:
             raise RuntimeError(f"Bleak is unavailable: {BLEAK_IMPORT_ERROR}")
         if not target:
             raise ValueError("device address is empty")
+        if self._connecting_client is not None:
+            raise RuntimeError("a gateway connection attempt is already in progress")
         if self._client is not None and self._client.is_connected:
             raise RuntimeError("a gateway is already connected")
 
+        self._connection_generation += 1
+        generation = self._connection_generation
+        decoder = GatewayReceiveBuffer()
         self._emit("connection_state", state="connecting", target=target)
-        self._intentional_disconnect = False
-        client = BleakClient(target, timeout=timeout_s, disconnected_callback=self._on_disconnected)
+        client = BleakClient(
+            target,
+            timeout=timeout_s,
+            disconnected_callback=lambda disconnected: self._on_disconnected(
+                disconnected, generation
+            ),
+        )
+        self._connecting_client = client
         try:
             await client.connect()
+            if not self._connection_is_current(client, generation):
+                await self._disconnect_client_quietly(client)
+                return
             services = client.services
             required = (SERVICE_UUID, PACKET_TX_UUID, PACKET_RX_UUID, GATEWAY_IDENTITY_UUID)
             missing = [uuid for uuid in required if services.get_characteristic(uuid) is None and uuid != SERVICE_UUID]
@@ -164,50 +184,102 @@ class BleTransport:
                 raise RuntimeError("connected device lacks required IMEC GATT UUIDs: " + ", ".join(missing))
 
             gateway_id = decode_gateway_identity(bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID)))
+            if not self._connection_is_current(client, generation):
+                await self._disconnect_client_quietly(client)
+                return
             self._emit("gateway_identity", target=target, gateway_id=gateway_id)
 
-            self._decoder.reset()
-            await client.start_notify(PACKET_TX_UUID, self._on_packet_notification)
+            def packet_notification(sender: Any, data: bytearray) -> None:
+                self._on_packet_notification(
+                    client, generation, decoder, sender, data
+                )
+
+            await client.start_notify(PACKET_TX_UUID, packet_notification)
+            if not self._connection_is_current(client, generation):
+                await self._disconnect_client_quietly(client)
+                return
             self._client = client
+            self._connecting_client = None
+            self._decoder = decoder
             self._emit("connection_state", state="connected", target=target, gateway_id=gateway_id)
         except Exception:
-            if client.is_connected:
-                await client.disconnect()
-            self._client = None
+            if not self._connection_is_current(client, generation):
+                await self._disconnect_client_quietly(client)
+                return
+            self._connecting_client = None
+            self._connection_generation += 1
+            await self._disconnect_client_quietly(client)
             self._emit("connection_state", state="disconnected", target=target)
             raise
 
-    def _on_packet_notification(self, _sender: Any, data: bytearray) -> None:
-        result = self._decoder.feed(bytes(data))
+    def _connection_is_current(self, client: Any, generation: int) -> bool:
+        return (
+            generation == self._connection_generation
+            and (
+                self._client is client
+                or self._connecting_client is client
+            )
+        )
+
+    @staticmethod
+    async def _disconnect_client_quietly(client: Any) -> None:
+        try:
+            if client.is_connected:
+                await client.disconnect()
+        except Exception:
+            pass
+
+    def _on_packet_notification(
+        self,
+        client: Any,
+        generation: int,
+        decoder: GatewayReceiveBuffer,
+        _sender: Any,
+        data: bytearray,
+    ) -> None:
+        if (
+            generation != self._connection_generation
+            or self._client is not client
+        ):
+            return
+        result = decoder.feed(bytes(data))
         for error in result.errors:
             self._emit("transport_error", message=error)
         for packet in result.packets:
             self._emit("packet", packet=packet)
 
-    def _on_disconnected(self, _client: Any) -> None:
-        if self._client is not None and self._client is not _client:
+    def _on_disconnected(self, client: Any, generation: int) -> None:
+        if not self._connection_is_current(client, generation):
             return
         self._client = None
-        reason = "Disconnected" if self._intentional_disconnect else "Gateway disconnected unexpectedly"
+        self._connecting_client = None
+        self._connection_generation += 1
+        self._decoder = GatewayReceiveBuffer()
         self._emit("connection_state", state="disconnected", target="")
-        if not self._intentional_disconnect:
-            self._emit("transport_error", message=reason)
+        self._emit(
+            "transport_error", message="Gateway disconnected unexpectedly"
+        )
 
     def disconnect(self) -> None:
         self._submit(self._disconnect(), "BLE disconnect")
 
     async def _disconnect(self) -> None:
-        self._intentional_disconnect = True
-        client = self._client
+        client = (
+            self._client
+            if self._client is not None
+            else self._connecting_client
+        )
+        self._connection_generation += 1
+        self._client = None
+        self._connecting_client = None
+        self._decoder = GatewayReceiveBuffer()
         if client is None:
             self._emit("connection_state", state="disconnected", target="")
             return
         self._emit("connection_state", state="disconnecting", target="")
         try:
-            if client.is_connected:
-                await client.disconnect()
+            await self._disconnect_client_quietly(client)
         finally:
-            self._client = None
             self._emit("connection_state", state="disconnected", target="")
 
     def send_frame(self, frame: bytes, label: str) -> None:

@@ -33,6 +33,10 @@ static void assert_internal_invariants(const struct node_comm *comm)
             leased++;
             assert(slot->lease_generation != 0u);
         }
+        if (slot->backend_guard_active) {
+            assert(slot->state == NODE_COMM_SLOT_LEASED);
+            assert(slot->backend_guard_expires_at_ms != 0u);
+        }
         if (slot->state == NODE_COMM_SLOT_TERMINAL) {
             assert(slot->terminal.handle == slot->handle);
             assert(slot->terminal.reason <= NODE_COMM_TERMINAL_CANCELLED);
@@ -241,6 +245,7 @@ static void test_retry_backoff_and_attempt_exhaustion(void)
         4u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 0u);
     struct node_comm_terminal_event event;
     struct node_comm_lease lease;
+    uint64_t due_ms = 0u;
     uint32_t handle;
 
     init_running(&comm, 0u);
@@ -655,7 +660,98 @@ static void test_deadline_invalidates_active_lease(void)
                                     NODE_COMM_DELIVERY_SUCCEEDED, 50u) == -ESTALE);
     event = take_terminal(&comm);
     assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.terminal_at_ms == 50u);
     assert(event.attempts_started == 1u);
+}
+
+static void test_backend_guard_publishes_causal_completion_at_deadline_edges(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        151u, NODE_COMM_PROFILE_BEST_EFFORT, 50u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint64_t due_ms = 0u;
+
+    init_running(&comm, 0u);
+    (void)submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 10u, &lease) == 0);
+    assert(node_comm_lease_backend_guard_begin(
+               &comm, &lease, 100u, 10u) == 0);
+    assert(node_comm_service(&comm, 50u) == 0u);
+    assert(node_comm_next_service_due_ms(&comm, 50u, &due_ms));
+    assert(due_ms == 100u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 49u) == 0);
+    assert(node_comm_lease_complete(
+               &comm, &lease, NODE_COMM_DELIVERY_SUCCEEDED, 49u) == 0);
+    event = take_terminal(&comm);
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.terminal_at_ms == 49u);
+
+    request.client_token++;
+    (void)submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 10u, &lease) == 0);
+    assert(node_comm_lease_backend_guard_begin(
+               &comm, &lease, 100u, 10u) == 0);
+    assert(node_comm_service(&comm, 50u) == 0u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 50u) == -ESTALE);
+    event = take_terminal(&comm);
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.terminal_at_ms == 50u);
+
+    request.client_token++;
+    (void)submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 10u, &lease) == 0);
+    assert(node_comm_lease_backend_guard_begin(
+               &comm, &lease, 100u, 10u) == 0);
+    assert(node_comm_service(&comm, 50u) == 0u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 51u) == -ESTALE);
+    event = take_terminal(&comm);
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.terminal_at_ms == 51u);
+}
+
+static void test_backend_guard_is_bounded_and_request_local(void)
+{
+    struct node_comm comm;
+    struct node_comm_request guarded = request_with(
+        154u, NODE_COMM_PROFILE_BEST_EFFORT, 50u);
+    struct node_comm_request unrelated = request_with(
+        155u, NODE_COMM_PROFILE_BEST_EFFORT, 60u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint64_t due_ms = 0u;
+    uint32_t guarded_handle;
+    uint32_t unrelated_handle;
+
+    init_running(&comm, 0u);
+    guarded_handle = submit_request(&comm, &guarded, 0u);
+    assert(node_comm_acquire(&comm, 10u, &lease) == 0);
+    assert(lease.handle == guarded_handle);
+    assert(node_comm_lease_backend_guard_begin(
+               &comm, &lease, 100u, 10u) == 0);
+    unrelated_handle = submit_request(&comm, &unrelated, 10u);
+
+    assert(node_comm_next_service_due_ms(&comm, 50u, &due_ms));
+    assert(due_ms == 60u);
+    assert(node_comm_service(&comm, 60u) == 1u);
+    assert(node_comm_take_terminal_event_for(
+               &comm, unrelated_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.terminal_at_ms == 60u);
+    assert(!node_comm_take_terminal_event_for(
+               &comm, guarded_handle, &event));
+    assert(node_comm_next_service_due_ms(&comm, 60u, &due_ms));
+    assert(due_ms == 100u);
+
+    assert(node_comm_service(&comm, 99u) == 0u);
+    assert(node_comm_service(&comm, 100u) == 1u);
+    assert(node_comm_take_terminal_event_for(
+               &comm, guarded_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED);
+    assert(event.terminal_at_ms == 100u);
+    assert(node_comm_lease_complete(
+               &comm, &lease, NODE_COMM_DELIVERY_SUCCEEDED, 49u) == -ESTALE);
 }
 
 static void test_capacity_includes_unconsumed_terminal_events(void)
@@ -1277,6 +1373,8 @@ int main(void)
     test_bounded_control_flood_runs_four_successful_rf_opportunities();
     test_twenty_independent_nodes_diversify_destructive_collisions();
     test_deadline_invalidates_active_lease();
+    test_backend_guard_publishes_causal_completion_at_deadline_edges();
+    test_backend_guard_is_bounded_and_request_local();
     test_capacity_includes_unconsumed_terminal_events();
     test_invalid_requests_and_retry_without_rf_fail_closed();
     test_pause_lease_owner_generation_and_expiry();

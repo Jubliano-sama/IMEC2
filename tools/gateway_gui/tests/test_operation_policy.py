@@ -7,7 +7,9 @@ from tools.gateway_gui.operation_policy import (
     DiscoveryOperationPolicy,
     OperationPolicyProfile,
     PairOperationPolicy,
+    assignment_required_budget_ms,
     decode_operation_policy_value,
+    discovery_required_budget_ms,
 )
 
 
@@ -58,15 +60,25 @@ class OperationPolicyTests(unittest.TestCase):
         invalid_constructors = (
             lambda: AssignmentOperationPolicy(51, 235_209, 1_000),
             lambda: AssignmentOperationPolicy(0, 999, 1_000),
+            lambda: AssignmentOperationPolicy(0, 235_208, 1_000),
             lambda: DiscoveryOperationPolicy(5_999, 40, 6, 4, 250, 600_000),
             lambda: DiscoveryOperationPolicy(6_000, 29, 6, 4, 250, 600_000),
             lambda: DiscoveryOperationPolicy(6_000, 40, 6, 5, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(6_000, 40, 6, 4, 250, 100_889),
             lambda: PairOperationPolicy(3, 1),
             lambda: PairOperationPolicy(2, 26),
         )
         for constructor in invalid_constructors:
             with self.subTest(constructor=constructor), self.assertRaises(ValueError):
                 constructor()
+
+        self.assertEqual(233_249, assignment_required_budget_ms(20))
+        self.assertEqual(235_209, assignment_required_budget_ms(1_000))
+        self.assertEqual(253_209, assignment_required_budget_ms(10_000))
+        self.assertEqual(
+            100_993,
+            discovery_required_budget_ms(6_000, 40, 6, 4, 250),
+        )
 
         for value in (b"\x01\x01", b"\x02\x01\x00" + b"\x00" * 8,
                       b"\x01\x01\x01" + b"\x00" * 8,

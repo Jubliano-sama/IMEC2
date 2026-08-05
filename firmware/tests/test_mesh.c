@@ -1,14 +1,119 @@
 #include "mesh.h"
+#include "survey.h"
 
 #include <assert.h>
+#include <string.h>
+
+static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
+{
+    static const uint8_t channel5_only[] = {
+        MSG_ROUTE_REQ,
+        MSG_ROUTE_REPLY,
+        MSG_ROUTE_REPLY_ACK,
+        MSG_GATEWAY_ROUTE_ADV,
+        MSG_MESH_EVENT_PROPOSE,
+        MSG_MESH_EVENT_ACCEPT,
+        MSG_MESH_EVENT_UPDATE,
+        MSG_MESH_EVENT_END,
+        MSG_RELAY_BUSY,
+        MSG_RESULT_BUSY,
+        MSG_RESULT_OFFER,
+        MSG_RESULT_GRANT,
+        MSG_COMMAND,
+        MSG_SURVEY_PAIR_PREPARE,
+        MSG_SURVEY_DISCOVERY_START,
+    };
+    static const uint8_t channel9_only[] = {
+        MSG_CLICK_REPORT,
+        MSG_SELF_TEST_REPORT,
+        MSG_ANCHOR_HEARTBEAT,
+        MSG_MESH_HOP_ACK,
+        MSG_GATEWAY_ACK,
+        MSG_GATEWAY_ROUTE_REQ,
+        MSG_COMMAND_RESULT,
+        MSG_RESULT_BUNDLE,
+        MSG_SURVEY_PAIR_RESULT,
+        MSG_SURVEY_DISCOVERY_REPORT,
+    };
+    static const uint8_t rejected[] = {
+        MSG_SURVEY_REACH_REQ,
+        MSG_SURVEY_REACH_REPORT,
+        MSG_GATEWAY_COMMAND_EVENT,
+        MSG_ERROR,
+    };
+
+    for (size_t i = 0u; i < sizeof(channel5_only); i++) {
+        assert(mesh_packet_rf_channel_allowed(
+            channel5_only[i], UWB_CHANNEL_WAKE_CONTACT, false));
+        assert(!mesh_packet_rf_channel_allowed(
+            channel5_only[i], UWB_CHANNEL_MESH_PAYLOAD, false));
+    }
+    for (size_t i = 0u; i < sizeof(channel9_only); i++) {
+        assert(!mesh_packet_rf_channel_allowed(
+            channel9_only[i], UWB_CHANNEL_WAKE_CONTACT, false));
+        assert(mesh_packet_rf_channel_allowed(
+            channel9_only[i], UWB_CHANNEL_MESH_PAYLOAD, false));
+    }
+    for (size_t i = 0u; i < sizeof(rejected); i++) {
+        assert(!mesh_packet_rf_channel_allowed(
+            rejected[i], UWB_CHANNEL_WAKE_CONTACT, true));
+        assert(!mesh_packet_rf_channel_allowed(
+            rejected[i], UWB_CHANNEL_MESH_PAYLOAD, true));
+    }
+
+    assert(mesh_packet_rf_channel_allowed(
+        MSG_GATEWAY_COLLECTION_EACK, UWB_CHANNEL_WAKE_CONTACT, false));
+    assert(mesh_packet_rf_channel_allowed(
+        MSG_GATEWAY_COLLECTION_EACK, UWB_CHANNEL_MESH_PAYLOAD, false));
+    assert(!mesh_packet_rf_channel_allowed(
+        MSG_MESH_DATA, UWB_CHANNEL_MESH_PAYLOAD, false));
+    assert(mesh_packet_rf_channel_allowed(
+        MSG_MESH_DATA, UWB_CHANNEL_MESH_PAYLOAD, true));
+    assert(!mesh_packet_rf_channel_allowed(
+        MSG_MESH_DATA, UWB_CHANNEL_WAKE_CONTACT, true));
+    assert(!mesh_packet_rf_channel_allowed(MSG_COMMAND, 7u, false));
+    assert(!mesh_packet_rf_channel_allowed(0xFFu,
+                                           UWB_CHANNEL_MESH_PAYLOAD,
+                                           true));
+}
+
+static void test_non_rf_types_fail_semantic_ingress(void)
+{
+    static const uint8_t rejected[] = {
+        MSG_SURVEY_REACH_REQ,
+        MSG_SURVEY_REACH_REPORT,
+        MSG_GATEWAY_COMMAND_EVENT,
+        MSG_ERROR,
+    };
+    const uint64_t source_id = UINT64_C(0x1000000000000001);
+    const uint64_t local_id = UINT64_C(0x2000000000000002);
+    const uint64_t gateway_id = UINT64_C(0x3000000000000003);
+
+    for (size_t i = 0u; i < sizeof(rejected); i++) {
+        struct proto_packet packet = {
+            .msg_type = rejected[i],
+            .src_id = source_id,
+            .dst_id = local_id,
+            .session_id = 1u,
+            .seq = 1u,
+            .ttl = 1u,
+        };
+
+        assert(mesh_packet_rx_semantics_validate(&packet,
+                                                 NULL,
+                                                 0u,
+                                                 source_id,
+                                                 local_id,
+                                                 gateway_id) ==
+               PROTO_ERR_MALFORMED);
+    }
+}
 
 static void test_gateway_ack_is_end_to_end(void)
 {
     uint8_t payload[16];
     size_t payload_len = 0u;
     struct proto_packet packet = {0};
-    struct mesh_event_timing parsed = {0};
-
     assert(mesh_append_requested_seq(payload, sizeof(payload), &payload_len, 101u) == PROTO_OK);
     assert(mesh_init_gateway_ack(&packet,
                                       0x9999888877776666ull,
@@ -171,6 +276,196 @@ static void test_channel9_timing_requires_channel5_contact(void)
                                    0u) == PROTO_ERR_MALFORMED);
 }
 
+static void test_channel9_timing_rejects_duplicate_singletons_without_mutation(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_timing parsed = {
+        .mesh_channel = 7u,
+        .event_interval_ms = 0xA5A5u,
+        .event_counter = 0x12345678u,
+        .route_fresh = true,
+    };
+    struct mesh_event_timing before = parsed;
+    struct mesh_event_params params = event_params();
+    uint8_t payload[128];
+    size_t payload_len = 0u;
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    timing.event_counter = 9u;
+    assert(mesh_append_event_timing_tlvs(payload,
+                                         sizeof(payload),
+                                         &payload_len,
+                                         &timing) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MESH_EVENT_INTERVAL_MS,
+                          timing.event_interval_ms + 1u) == PROTO_OK);
+    assert(mesh_event_timing_from_tlvs(&parsed,
+                                       payload,
+                                       payload_len,
+                                       true) == PROTO_ERR_MALFORMED);
+    assert(memcmp(&parsed, &before, sizeof(parsed)) == 0);
+
+    payload_len = 0u;
+    assert(mesh_append_event_timing_tlvs(payload,
+                                         sizeof(payload),
+                                         &payload_len,
+                                         &timing) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_MESH_EVENT_COUNTER,
+                          timing.event_counter + 1u) == PROTO_OK);
+    assert(mesh_event_timing_from_tlvs(&parsed,
+                                       payload,
+                                       payload_len,
+                                       true) == PROTO_ERR_MALFORMED);
+    assert(memcmp(&parsed, &before, sizeof(parsed)) == 0);
+}
+
+static void test_event_update_requires_explicit_sender_parity(void)
+{
+    const uint64_t local_id = UINT64_C(0x1111111111111111);
+    const uint64_t peer_id = UINT64_C(0x2222222222222222);
+    struct mesh_event_params params = event_params();
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_timing parsed = {0};
+    struct proto_packet packet = {0};
+    uint8_t payload[96];
+    size_t payload_len;
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    timing.event_counter = UINT32_C(0x12345678);
+    for (uint8_t parity = 0u; parity <= 1u; parity++) {
+        payload_len = 0u;
+        timing.local_tx_on_even_events = parity != 0u;
+        assert(mesh_append_event_update_tlvs_at(payload,
+                                                sizeof(payload),
+                                                &payload_len,
+                                                &timing,
+                                                900u) == PROTO_OK);
+        assert(mesh_init_event_control(&packet,
+                                       MSG_MESH_EVENT_UPDATE,
+                                       peer_id,
+                                       local_id,
+                                       UINT32_C(0x80000001),
+                                       (uint16_t)(20u + parity),
+                                       (uint8_t)payload_len) == PROTO_OK);
+        assert(mesh_packet_rx_envelope_validate(
+                   &packet, payload, payload_len, peer_id, local_id, local_id,
+                   UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_OK);
+        memset(&parsed, 0, sizeof(parsed));
+        assert(mesh_event_timing_from_tlvs_at(&parsed,
+                                              payload,
+                                              payload_len,
+                                              900u,
+                                              true) == PROTO_OK);
+        assert(parsed.local_tx_on_even_events == (parity != 0u));
+        /* The receiver installs the complement of this decoded sender phase. */
+        parsed.local_tx_on_even_events = !parsed.local_tx_on_even_events;
+        assert(parsed.local_tx_on_even_events == (parity == 0u));
+    }
+
+    payload_len = 0u;
+    assert(mesh_append_event_timing_tlvs_at(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &timing,
+                                            900u) == PROTO_OK);
+    assert(mesh_init_event_control(&packet,
+                                   MSG_MESH_EVENT_UPDATE,
+                                   peer_id,
+                                   local_id,
+                                   UINT32_C(0x80000001),
+                                   30u,
+                                   (uint8_t)payload_len) == PROTO_OK);
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, peer_id, local_id, local_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_MESH_EVENT_TX_ON_EVEN,
+                         2u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, peer_id, local_id, local_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    timing.local_tx_on_even_events = true;
+    assert(mesh_append_event_update_tlvs_at(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &timing,
+                                            900u) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_MESH_EVENT_TX_ON_EVEN,
+                         1u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, peer_id, local_id, local_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(mesh_append_event_update_tlvs_at(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &timing,
+                                            900u) == PROTO_OK);
+    assert(mesh_init_event_control(&packet,
+                                   MSG_MESH_EVENT_ACCEPT,
+                                   peer_id,
+                                   local_id,
+                                   timing.event_counter,
+                                   31u,
+                                   (uint8_t)payload_len) == PROTO_OK);
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, peer_id, local_id, local_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+}
+
+static void test_event_accept_wire_allows_legacy_header_identity(void)
+{
+    const uint64_t local_id = UINT64_C(0x1111111111111111);
+    const uint64_t peer_id = UINT64_C(0x2222222222222222);
+    const uint32_t proposal_session = UINT32_C(0x2468ace0);
+    struct mesh_event_params params = event_params();
+    struct mesh_event_timing timing = {0};
+    struct proto_packet packet = {0};
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_timing_bind_proposal_session(&timing, proposal_session));
+    assert(mesh_append_event_timing_tlvs_at(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &timing,
+                                            900u) == PROTO_OK);
+
+    assert(mesh_init_event_control(&packet,
+                                   MSG_MESH_EVENT_ACCEPT,
+                                   peer_id,
+                                   local_id,
+                                   proposal_session,
+                                   40u,
+                                   (uint8_t)payload_len) == PROTO_OK);
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, peer_id, local_id, local_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_OK);
+
+    packet.session_id = UINT32_C(0x87654321);
+    packet.seq = 77u;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, peer_id, local_id, local_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_OK);
+}
+
 static void test_channel9_first_slot_direction_follows_initiator(void)
 {
     struct mesh_event_timing initiator = {0};
@@ -194,6 +489,35 @@ static void test_channel9_first_slot_direction_follows_initiator(void)
 
     assert(mesh_event_timing_local_rx_slot(&initiator));
     assert(mesh_event_timing_local_tx_slot(&downstream));
+}
+
+static void test_channel9_first_slot_direction_honors_counter_parity(void)
+{
+    struct mesh_event_timing timing = {0};
+
+    timing.event_counter = UINT32_C(0x2468ace0);
+    mesh_event_timing_set_local_first_slot_tx(&timing, true);
+    assert(mesh_event_timing_local_tx_slot(&timing));
+    timing.event_counter++;
+    assert(mesh_event_timing_local_rx_slot(&timing));
+
+    timing.event_counter = UINT32_C(0x13579bdf);
+    mesh_event_timing_set_local_first_slot_tx(&timing, true);
+    assert(mesh_event_timing_local_tx_slot(&timing));
+    timing.event_counter++;
+    assert(mesh_event_timing_local_rx_slot(&timing));
+
+    timing.event_counter = UINT32_C(0x2468ace0);
+    mesh_event_timing_set_local_first_slot_tx(&timing, false);
+    assert(mesh_event_timing_local_rx_slot(&timing));
+    timing.event_counter++;
+    assert(mesh_event_timing_local_tx_slot(&timing));
+
+    timing.event_counter = UINT32_C(0x13579bdf);
+    mesh_event_timing_set_local_first_slot_tx(&timing, false);
+    assert(mesh_event_timing_local_rx_slot(&timing));
+    timing.event_counter++;
+    assert(mesh_event_timing_local_tx_slot(&timing));
 }
 
 static void test_channel9_timing_crosses_uptime_domains_as_relative_delay(void)
@@ -223,6 +547,46 @@ static void test_channel9_timing_crosses_uptime_domains_as_relative_delay(void)
     assert(parsed.next_event_time_ms == 4010u);
     assert(parsed.event_interval_ms == timing.event_interval_ms);
     assert(parsed.event_window_ms == timing.event_window_ms);
+}
+
+static void test_channel9_event_start_zero_survives_uptime_wrap(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_timing parsed = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    const struct mesh_channel5_requirements requirements = {
+        .retune_guard_ms = 5u,
+    };
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    params.first_event_time_ms = 0u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_guard_start_ms(&timing) == UINT32_MAX - 3u);
+    assert(mesh_event_plan_channel9(&timing,
+                                    &requirements,
+                                    UINT32_MAX - 10u,
+                                    &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_WAIT);
+    assert(mesh_event_plan_channel9(&timing,
+                                    &requirements,
+                                    UINT32_MAX - 4u,
+                                    &plan) == PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_START);
+    assert(plan.start_ms == 0u);
+
+    assert(mesh_append_event_timing_tlvs_at(payload,
+                                            sizeof(payload),
+                                            &payload_len,
+                                            &timing,
+                                            UINT32_MAX) == PROTO_OK);
+    assert(mesh_event_timing_from_tlvs_at(&parsed,
+                                         payload,
+                                         payload_len,
+                                         UINT32_MAX,
+                                         true) == PROTO_OK);
+    assert(parsed.next_event_time_ms == 0u);
 }
 
 static void test_channel9_accept_reanchors_after_wake_train_delay(void)
@@ -352,6 +716,7 @@ static void test_channel9_event_planner_reserves_channel5_scan(void)
     struct mesh_event_diagnostics diagnostics = {0};
     struct mesh_channel5_requirements requirements = {
         .next_required_scan_start_ms = 1015u,
+        .next_required_scan_start_valid = true,
         .retune_guard_ms = 5u,
     };
 
@@ -416,6 +781,32 @@ static void test_channel9_observed_rx_keeps_negotiated_cadence(void)
     assert(mesh_event_timing_usable(&timing, 1118u));
 }
 
+static void test_channel9_observed_rx_duplicate_is_inert_across_counter_wrap(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    const uint32_t event_start_ms = params.first_event_time_ms;
+
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    timing.event_counter = UINT32_MAX;
+
+    mesh_event_note_observed_packet(&timing,
+                                    event_start_ms,
+                                    event_start_ms + 1u);
+    assert(timing.event_counter == 0u);
+    assert(timing.last_successful_ch9_event_ms == event_start_ms);
+    assert(timing.next_event_time_ms ==
+           event_start_ms + timing.event_interval_ms);
+
+    mesh_event_note_observed_packet(&timing,
+                                    event_start_ms,
+                                    event_start_ms + 2u);
+    assert(timing.event_counter == 0u);
+    assert(timing.last_successful_ch9_event_ms == event_start_ms);
+    assert(timing.next_event_time_ms ==
+           event_start_ms + timing.event_interval_ms);
+}
+
 static void test_channel5_activity_preempts_channel9_mesh(void)
 {
     struct mesh_event_timing timing = {0};
@@ -425,6 +816,8 @@ static void test_channel5_activity_preempts_channel9_mesh(void)
     const struct mesh_channel5_requirements click_requirements = {
         .next_required_scan_start_ms = 1100u,
         .active_until_ms = 1030u,
+        .next_required_scan_start_valid = true,
+        .active_until_valid = true,
         .retune_guard_ms = 5u,
         .click_epoch_active = true,
     };
@@ -471,6 +864,47 @@ static void test_channel5_active_until_zero_is_idle_across_uptime_wrap(void)
     assert(mesh_event_plan_channel9(&timing, &requirements, 0xfffffff0u, &plan) ==
            PROTO_OK);
     assert(plan.action == MESH_EVENT_PLAN_START);
+}
+
+static void test_channel5_active_deadline_zero_preempts_across_uptime_wrap(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    const struct mesh_channel5_requirements requirements = {
+        .active_until_ms = 0u,
+        .active_until_valid = true,
+        .retune_guard_ms = 5u,
+    };
+
+    params.first_event_time_ms = UINT32_MAX - 16u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_plan_channel9(
+               &timing, &requirements, params.first_event_time_ms, &plan) ==
+           PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_DEFER_CH5_ACTIVE);
+}
+
+static void test_channel5_scan_deadline_zero_clips_across_uptime_wrap(void)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_params params = event_params();
+    struct mesh_event_plan plan = {0};
+    const struct mesh_channel5_requirements requirements = {
+        .next_required_scan_start_ms = 0u,
+        .next_required_scan_start_valid = true,
+        .retune_guard_ms = 5u,
+    };
+
+    params.first_event_time_ms = UINT32_MAX - 20u;
+    assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
+    assert(mesh_event_plan_channel9(
+               &timing, &requirements, params.first_event_time_ms, &plan) ==
+           PROTO_OK);
+    assert(plan.action == MESH_EVENT_PLAN_CLIP);
+    assert(plan.start_ms == params.first_event_time_ms);
+    assert(plan.end_ms == UINT32_MAX - 4u);
+    assert(plan.window_ms == 16u);
 }
 
 static void test_channel9_missed_events_refresh_contact_at_configured_limit(void)
@@ -578,27 +1012,609 @@ static void test_channel9_local_tx_does_not_refresh_supervision_timeout(void)
     assert(!mesh_event_timing_usable(&timing, 1500u));
 }
 
+static void test_channel9_batch_metadata_requires_exact_pair(void)
+{
+    struct mesh_ch9_batch_metadata metadata;
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+
+    assert(mesh_ch9_batch_metadata_parse(NULL, 0u, &metadata) == PROTO_OK);
+    assert(!metadata.present);
+    assert(mesh_ch9_batch_metadata_parse(payload, 1u, NULL) == PROTO_ERR_ARG);
+    assert(mesh_ch9_batch_metadata_parse(NULL, 1u, &metadata) == PROTO_ERR_ARG);
+
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID,
+                          UINT32_C(0x12345678)) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS,
+                         MESH_CH9_BATCH_FLAG_FINAL) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID,
+                          UINT32_C(0x12345678)) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS,
+                         MESH_CH9_BATCH_FLAG_FINAL) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_OK);
+    assert(metadata.present);
+    assert(metadata.batch_id == UINT32_C(0x12345678));
+    assert(metadata.flags == MESH_CH9_BATCH_FLAG_FINAL);
+    assert(metadata.final_packet);
+
+    payload_len = 0u;
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS, 0u) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 1u) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_OK);
+    assert(metadata.present);
+    assert(!metadata.final_packet);
+}
+
+static void test_channel9_batch_metadata_rejects_ambiguous_values(void)
+{
+    struct mesh_ch9_batch_metadata metadata;
+    uint8_t payload[32];
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 0u) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS, 0u) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 1u) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 2u) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS, 0u) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 1u) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS, 0x02u) == PROTO_OK);
+    assert(mesh_ch9_batch_metadata_parse(payload, payload_len, &metadata) ==
+           PROTO_ERR_MALFORMED);
+
+    payload[0] = TLV_MESH_CH9_BATCH_ID;
+    payload[1] = 4u;
+    payload[2] = 1u;
+    assert(mesh_ch9_batch_metadata_parse(payload, 3u, &metadata) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_ack_payload_requires_one_consistent_encoding(void)
+{
+    struct proto_packet ack = {
+        .msg_type = MSG_GATEWAY_ACK,
+        .session_id = 100u,
+    };
+    uint8_t payload[64];
+    uint8_t seqs[2u * sizeof(uint16_t)];
+    uint8_t sessions[2u * sizeof(uint32_t)];
+    uint8_t packet_ids[sizeof(uint32_t)];
+    size_t payload_len = 0u;
+    bool contains = false;
+
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     7u) == PROTO_OK);
+    assert(mesh_ack_payload_contains(&ack,
+                                     payload,
+                                     payload_len,
+                                     100u,
+                                     7u,
+                                     &contains) == PROTO_OK);
+    assert(contains);
+
+    payload_len = 0u;
+    proto_put_u16_le(&seqs[0], 9u);
+    proto_put_u16_le(&seqs[sizeof(uint16_t)], 9u);
+    proto_put_u32_le(&sessions[0], 101u);
+    proto_put_u32_le(&sessions[sizeof(uint32_t)], 102u);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SESSION_LIST,
+                            sessions,
+                            sizeof(sessions)) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SEQ_LIST,
+                            seqs,
+                            sizeof(seqs)) == PROTO_OK);
+    assert(mesh_ack_payload_contains(&ack,
+                                     payload,
+                                     payload_len,
+                                     102u,
+                                     9u,
+                                     &contains) == PROTO_OK);
+    assert(contains);
+    assert(mesh_ack_payload_contains(&ack,
+                                     payload,
+                                     payload_len,
+                                     103u,
+                                     9u,
+                                     &contains) == PROTO_OK);
+    assert(!contains);
+
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     10u) == PROTO_OK);
+    assert(mesh_ack_payload_contains(&ack,
+                                     payload,
+                                     payload_len,
+                                     102u,
+                                     9u,
+                                     &contains) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SESSION_LIST,
+                            sessions,
+                            sizeof(uint32_t)) == PROTO_OK);
+    assert(mesh_ack_payload_contains(&ack,
+                                     payload,
+                                     payload_len,
+                                     101u,
+                                     9u,
+                                     &contains) == PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SEQ_LIST,
+                            seqs,
+                            sizeof(seqs)) == PROTO_OK);
+    proto_put_u32_le(packet_ids, 1u);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_PACKET_ID_LIST,
+                            packet_ids,
+                            sizeof(packet_ids)) == PROTO_OK);
+    assert(mesh_ack_payload_contains(&ack,
+                                     payload,
+                                     payload_len,
+                                     101u,
+                                     9u,
+                                     &contains) == PROTO_ERR_MALFORMED);
+}
+
+static void test_ack_payload_requires_exact_semantic_identity(void)
+{
+    struct proto_packet first = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = UINT64_C(0x1111222233334444),
+        .dst_id = UINT64_C(0x9999888877776666),
+        .session_id = UINT32_C(0x12345678),
+        .seq = UINT16_C(0x2345),
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = 1u,
+        .message_age_ms = 10u,
+    };
+    struct proto_packet second = first;
+    struct proto_packet retry = first;
+    struct proto_packet ack = {
+        .msg_type = MSG_GATEWAY_ACK,
+        .flags = FLAG_GATEWAY_ACK,
+        .src_id = UINT64_C(0x9999888877776666),
+        .dst_id = UINT64_C(0x1111222233334444),
+        .session_id = first.session_id,
+        .seq = UINT16_C(0x9001),
+        .ttl = MESH_GATEWAY_ACK_TTL,
+    };
+    const uint8_t first_payload[1] = {0x41u};
+    const uint8_t conflicting_payload[1] = {0x42u};
+    const uint8_t second_payload[1] = {0x43u};
+    uint8_t payload[192];
+    uint8_t seq_list[2u * sizeof(uint16_t)];
+    uint8_t session_list[2u * sizeof(uint32_t)];
+    size_t payload_len = 0u;
+    bool contains = false;
+
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     first.seq) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             sizeof(payload),
+                                             &payload_len,
+                                             &first,
+                                             first_payload,
+                                             sizeof(first_payload)) ==
+           PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    assert(payload_len == MESH_ACK_SINGLE_PAYLOAD_LEN);
+    assert(mesh_ack_payload_contains_packet(&ack,
+                                            payload,
+                                            payload_len,
+                                            &first,
+                                            first_payload,
+                                            sizeof(first_payload),
+                                            &contains) == PROTO_OK);
+    assert(contains);
+
+    retry.ttl--;
+    retry.message_age_ms += 500u;
+    assert(mesh_ack_payload_contains_packet(&ack,
+                                            payload,
+                                            payload_len,
+                                            &retry,
+                                            first_payload,
+                                            sizeof(first_payload),
+                                            &contains) == PROTO_OK);
+    assert(contains);
+    assert(mesh_ack_payload_contains_packet(&ack,
+                                            payload,
+                                            payload_len,
+                                            &first,
+                                            conflicting_payload,
+                                            sizeof(conflicting_payload),
+                                            &contains) == PROTO_OK);
+    assert(!contains);
+
+    payload_len = 0u;
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     first.seq) == PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    assert(mesh_ack_payload_contains_packet(&ack,
+                                            payload,
+                                            payload_len,
+                                            &first,
+                                            first_payload,
+                                            sizeof(first_payload),
+                                            &contains) ==
+           PROTO_ERR_MALFORMED);
+
+    second.session_id++;
+    second.seq++;
+    proto_put_u32_le(&session_list[0], first.session_id);
+    proto_put_u32_le(&session_list[sizeof(uint32_t)], second.session_id);
+    proto_put_u16_le(&seq_list[0], first.seq);
+    proto_put_u16_le(&seq_list[sizeof(uint16_t)], second.seq);
+    payload_len = 0u;
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     first.seq) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SESSION_LIST,
+                            session_list,
+                            sizeof(session_list)) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SEQ_LIST,
+                            seq_list,
+                            sizeof(seq_list)) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             sizeof(payload),
+                                             &payload_len,
+                                             &first,
+                                             first_payload,
+                                             sizeof(first_payload)) ==
+           PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             sizeof(payload),
+                                             &payload_len,
+                                             &second,
+                                             second_payload,
+                                             sizeof(second_payload)) ==
+           PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    assert(mesh_ack_payload_contains_packet(&ack,
+                                            payload,
+                                            payload_len,
+                                            &second,
+                                            second_payload,
+                                            sizeof(second_payload),
+                                            &contains) == PROTO_OK);
+    assert(contains);
+
+    proto_put_u16_le(&seq_list[sizeof(uint16_t)], first.seq);
+    payload_len = 0u;
+    assert(mesh_append_requested_seq(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     first.seq) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SESSION_LIST,
+                            session_list,
+                            sizeof(session_list)) == PROTO_OK);
+    assert(tlv_append_bytes(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            TLV_MESH_ACK_SEQ_LIST,
+                            seq_list,
+                            sizeof(seq_list)) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             sizeof(payload),
+                                             &payload_len,
+                                             &first,
+                                             first_payload,
+                                             sizeof(first_payload)) ==
+           PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(payload,
+                                             sizeof(payload),
+                                             &payload_len,
+                                             &second,
+                                             second_payload,
+                                             sizeof(second_payload)) ==
+           PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    assert(mesh_ack_payload_contains_packet(&ack,
+                                            payload,
+                                            payload_len,
+                                            &second,
+                                            second_payload,
+                                            sizeof(second_payload),
+                                            &contains) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_rx_envelope_rejects_noncanonical_gateway_route_and_event(void)
+{
+    const uint64_t gateway_id = UINT64_C(0x1000000000000001);
+    const uint64_t anchor_id = UINT64_C(0x2000000000000002);
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_ROUTE_REQ,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = anchor_id,
+        .dst_id = gateway_id,
+        .session_id = 11u,
+        .seq = 12u,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = 0u,
+    };
+
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
+               UWB_CHANNEL_MESH_PAYLOAD, false) == PROTO_OK);
+    packet.ttl--;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, gateway_id, gateway_id,
+               UWB_CHANNEL_MESH_PAYLOAD, false) == PROTO_ERR_MALFORMED);
+    packet.ttl = MESH_DEFAULT_TTL;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, UINT64_C(0x3000000000000003),
+               gateway_id, gateway_id, UWB_CHANNEL_MESH_PAYLOAD, false) ==
+           PROTO_ERR_MALFORMED);
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, NULL, 0u, anchor_id, anchor_id, gateway_id,
+               UWB_CHANNEL_MESH_PAYLOAD, false) == PROTO_ERR_MALFORMED);
+
+    {
+        struct mesh_event_timing timing = {
+            .mesh_channel = MESH_EVENT_CHANNEL,
+            .event_interval_ms = 100u,
+            .event_window_ms = 20u,
+            .next_event_time_ms = 300u,
+            .event_counter = 55u,
+            .guard_ms = 5u,
+            .peer_clock_skew_estimate_ppm = 0,
+            .max_missed_events = 3u,
+            .supervision_timeout_ms = 1200u,
+        };
+        uint8_t payload[96];
+        size_t payload_len = 0u;
+
+        assert(mesh_append_event_timing_tlvs_at(payload,
+                                                sizeof(payload),
+                                                &payload_len,
+                                                &timing,
+                                                100u) == PROTO_OK);
+        assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                              TLV_MESH_EVENT_BOOT_NONCE,
+                              UINT64_C(0x123456789abcdef0)) == PROTO_OK);
+        assert(mesh_init_event_control(&packet,
+                                       MSG_MESH_EVENT_PROPOSE,
+                                       anchor_id,
+                                       gateway_id,
+                                       timing.event_counter,
+                                       13u,
+                                       (uint8_t)payload_len) == PROTO_OK);
+        assert(mesh_packet_rx_envelope_validate(
+                   &packet, payload, payload_len, anchor_id, gateway_id,
+                   gateway_id, UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_OK);
+        assert(mesh_packet_rx_envelope_validate(
+                   &packet, payload, payload_len, anchor_id, gateway_id,
+                   gateway_id, UWB_CHANNEL_MESH_PAYLOAD, false) ==
+               PROTO_ERR_MALFORMED);
+        packet.flags = FLAG_CONTROL_FOLLOWUP;
+        assert(mesh_packet_rx_envelope_validate(
+                   &packet, payload, payload_len, anchor_id, gateway_id,
+                   gateway_id, UWB_CHANNEL_WAKE_CONTACT, false) ==
+               PROTO_ERR_MALFORMED);
+        packet.flags = 0u;
+        assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                             TLV_REASON, 1u) == PROTO_OK);
+        packet.payload_len = (uint16_t)payload_len;
+        assert(mesh_packet_rx_envelope_validate(
+                   &packet, payload, payload_len, anchor_id, gateway_id,
+                   gateway_id, UWB_CHANNEL_WAKE_CONTACT, false) ==
+               PROTO_ERR_MALFORMED);
+    }
+}
+
+static void test_rx_envelope_rejects_result_control_schema_and_addressing(void)
+{
+    const uint64_t gateway_id = UINT64_C(0x1000000000000001);
+    const uint64_t child_id = UINT64_C(0x2000000000000002);
+    const uint64_t parent_id = UINT64_C(0x3000000000000003);
+    const struct result_offer offer = {
+        .result_id = {
+            .gateway_id = gateway_id,
+            .gateway_epoch = 4u,
+            .command_seq = 5u,
+            .node_id = child_id,
+            .node_boot_counter = 6u,
+            .result_seq = 7u,
+        },
+        .result_len = 100u,
+        .result_crc = 0x1234u,
+        .result_digest = {0x9au},
+        .priority = 1u,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_RESULT_OFFER,
+        .src_id = child_id,
+        .dst_id = parent_id,
+        .session_id = 5u,
+        .seq = 7u,
+        .ttl = 1u,
+    };
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(result_offer_append_tlvs(payload, sizeof(payload), &payload_len,
+                                    &offer) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, child_id, parent_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_OK);
+    packet.dst_id = gateway_id;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, child_id, parent_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+    packet.dst_id = parent_id;
+    packet.ttl = 2u;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, child_id, parent_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+    packet.ttl = 1u;
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_REASON, 0u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_envelope_validate(
+               &packet, payload, payload_len, child_id, parent_id, gateway_id,
+               UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
+}
+
+static void test_survey_pair_result_rejects_reserved_range_status(void)
+{
+    const uint64_t gateway_id = UINT64_C(0x1000000000000001);
+    const uint64_t initiator_id = UINT64_C(0x2000000000000002);
+    struct survey_sample sample = {
+        .pair = {
+            .operation_generation = UINT64_C(0x1122334400001234),
+            .survey_id = UINT32_C(0x55667788),
+            .initiator_id = initiator_id,
+            .responder_id = UINT64_C(0x3000000000000003),
+            .sample_count = 3u,
+        },
+        .sample_index = 0u,
+        .distance_mm = 1234,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+    };
+    struct proto_packet packet;
+    const uint8_t *range_status_raw = NULL;
+    uint8_t range_status_len = 0u;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(survey_append_sample_tlvs(payload,
+                                     sizeof(payload),
+                                     &payload_len,
+                                     &sample) == PROTO_OK);
+    assert(survey_init_result_packet_from_reporter(
+               &packet,
+               &sample,
+               initiator_id,
+               gateway_id,
+               1u,
+               (uint8_t)payload_len) == PROTO_OK);
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             initiator_id,
+                                             gateway_id,
+                                             gateway_id) == PROTO_OK);
+    assert(tlv_find_unique(payload,
+                           payload_len,
+                           TLV_RANGE_STATUS,
+                           &range_status_raw,
+                           &range_status_len) == PROTO_OK);
+    assert(range_status_len == sizeof(uint8_t));
+    payload[(size_t)(range_status_raw - payload)] =
+        (uint8_t)RANGE_STS_QUALITY_FAIL;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             initiator_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+}
+
 int main(void)
 {
+    test_rf_channel_admission_is_exhaustive_and_fail_closed();
+    test_non_rf_types_fail_semantic_ingress();
     test_gateway_ack_is_end_to_end();
     test_command_and_result_are_acknowledged_not_clicks();
     test_rejects_invalid_ids();
     test_rejects_zero_sequence_numbers();
     test_channel9_timing_requires_channel5_contact();
+    test_channel9_timing_rejects_duplicate_singletons_without_mutation();
+    test_event_update_requires_explicit_sender_parity();
+    test_event_accept_wire_allows_legacy_header_identity();
     test_channel9_first_slot_direction_follows_initiator();
+    test_channel9_first_slot_direction_honors_counter_parity();
     test_channel9_timing_crosses_uptime_domains_as_relative_delay();
+    test_channel9_event_start_zero_survives_uptime_wrap();
     test_channel9_accept_reanchors_after_wake_train_delay();
     test_channel9_sender_reanchors_to_control_tx_completion();
     test_channel9_exact_accept_replay_realigns_both_peers();
     test_channel9_event_planner_reserves_channel5_scan();
     test_channel9_event_planner_keeps_negotiated_window_when_late();
     test_channel9_observed_rx_keeps_negotiated_cadence();
+    test_channel9_observed_rx_duplicate_is_inert_across_counter_wrap();
     test_channel5_activity_preempts_channel9_mesh();
     test_channel9_policy_deferral_classification();
     test_channel5_active_until_zero_is_idle_across_uptime_wrap();
+    test_channel5_active_deadline_zero_preempts_across_uptime_wrap();
+    test_channel5_scan_deadline_zero_clips_across_uptime_wrap();
     test_channel9_missed_events_refresh_contact_at_configured_limit();
     test_channel9_skip_elapsed_advances_to_next_live_slot();
     test_channel9_traffic_refreshes_supervision_timeout();
     test_channel9_local_tx_does_not_refresh_supervision_timeout();
+    test_channel9_batch_metadata_requires_exact_pair();
+    test_channel9_batch_metadata_rejects_ambiguous_values();
+    test_ack_payload_requires_one_consistent_encoding();
+    test_ack_payload_requires_exact_semantic_identity();
+    test_rx_envelope_rejects_noncanonical_gateway_route_and_event();
+    test_rx_envelope_rejects_result_control_schema_and_addressing();
+    test_survey_pair_result_rejects_reserved_range_status();
     return 0;
 }

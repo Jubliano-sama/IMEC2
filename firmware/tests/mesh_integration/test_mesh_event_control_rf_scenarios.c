@@ -102,12 +102,14 @@ static int run_scheduled_connection_exchange(struct mesh_sim_world *world,
     return mesh_sim_run_until(world, action.end_us);
 }
 
-static int append_update_payload(const struct mesh_sim_world *world,
-                                 const struct mesh_event_timing *base,
-                                 uint32_t event_counter,
-                                 uint8_t *payload,
-                                 size_t payload_cap,
-                                 size_t *payload_len)
+static int append_control_timing_payload(
+    const struct mesh_sim_world *world,
+    const struct mesh_event_timing *base,
+    uint32_t event_counter,
+    bool include_update_phase,
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *payload_len)
 {
     struct mesh_event_timing timing = *base;
     uint32_t now_ms = (uint32_t)(world->now_us / 1000u);
@@ -120,8 +122,27 @@ static int append_update_payload(const struct mesh_sim_world *world,
     timing.timing_fresh = true;
     timing.fallback_required = false;
     *payload_len = 0u;
-    return mesh_append_event_timing_tlvs_at(payload, payload_cap, payload_len,
-                                            &timing, now_ms);
+    return include_update_phase ?
+        mesh_append_event_update_tlvs_at(payload, payload_cap, payload_len,
+                                         &timing, now_ms) :
+        mesh_append_event_timing_tlvs_at(payload, payload_cap, payload_len,
+                                         &timing, now_ms);
+}
+
+static int append_update_payload(const struct mesh_sim_world *world,
+                                 const struct mesh_event_timing *base,
+                                 uint32_t event_counter,
+                                 uint8_t *payload,
+                                 size_t payload_cap,
+                                 size_t *payload_len)
+{
+    return append_control_timing_payload(world,
+                                         base,
+                                         event_counter,
+                                         true,
+                                         payload,
+                                         payload_cap,
+                                         payload_len);
 }
 
 static int send_control_over_radio(struct mesh_sim_world *world,
@@ -288,6 +309,647 @@ static bool connection_owners_inactive(const struct mesh_sim_connection *connect
     return !connection->owner_a.active && !connection->owner_b.active;
 }
 
+struct reciprocal_endpoint {
+    struct mesh_event_owner owner;
+    struct mesh_event_timing proposal_timing;
+    struct mesh_event_timing installed_timing;
+    struct proto_packet proposal;
+    uint8_t proposal_payload[CONTROL_PAYLOAD_CAPACITY];
+    size_t proposal_payload_len;
+    uint64_t id;
+    uint64_t peer_id;
+    uint64_t boot_nonce;
+    uint32_t predecessor_generation;
+    bool proposal_pending;
+    bool accept_pending;
+    bool installed;
+    bool reciprocal_window_open;
+};
+
+static int reciprocal_endpoint_init(struct reciprocal_endpoint *endpoint,
+                                    uint64_t id,
+                                    uint64_t peer_id,
+                                    uint64_t boot_nonce,
+                                    uint32_t session_id,
+                                    uint16_t sequence,
+                                    uint32_t first_event_ms,
+                                    bool installed)
+{
+    struct mesh_event_params params = connection_params(first_event_ms);
+    size_t payload_len = 0u;
+    int ret;
+
+    memset(endpoint, 0, sizeof(*endpoint));
+    endpoint->id = id;
+    endpoint->peer_id = peer_id;
+    endpoint->boot_nonce = boot_nonce;
+    endpoint->installed = installed;
+    endpoint->proposal_pending = !installed;
+    endpoint->reciprocal_window_open = installed;
+    ret = mesh_event_timing_negotiate(&endpoint->proposal_timing,
+                                      &params,
+                                      true);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!mesh_event_timing_bind_proposal_session(
+            &endpoint->proposal_timing, session_id)) {
+        return PROTO_ERR_ARG;
+    }
+    ret = mesh_append_event_timing_tlvs_at(
+        endpoint->proposal_payload,
+        sizeof(endpoint->proposal_payload),
+        &payload_len,
+        &endpoint->proposal_timing,
+        0u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u64(endpoint->proposal_payload,
+                         sizeof(endpoint->proposal_payload),
+                         &payload_len,
+                         TLV_MESH_EVENT_BOOT_NONCE,
+                         boot_nonce);
+    if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+        return ret == PROTO_OK ? PROTO_ERR_NO_SPACE : ret;
+    }
+    ret = mesh_init_event_control(&endpoint->proposal,
+                                  MSG_MESH_EVENT_PROPOSE,
+                                  id,
+                                  peer_id,
+                                  session_id,
+                                  sequence,
+                                  (uint8_t)payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    endpoint->proposal_payload_len = payload_len;
+    if (!installed) {
+        return PROTO_OK;
+    }
+    endpoint->installed_timing = endpoint->proposal_timing;
+    ret = mesh_event_owner_begin(&endpoint->owner,
+                                 peer_id,
+                                 session_id,
+                                 sequence,
+                                 false);
+    return ret;
+}
+
+static int reciprocal_receive_proposal(
+    struct reciprocal_endpoint *receiver,
+    const struct reciprocal_endpoint *sender)
+{
+    const struct mesh_event_owner *owner =
+        receiver->owner.generation == 0u ? NULL : &receiver->owner;
+    const struct mesh_event_owner *arbitration_owner =
+        receiver->reciprocal_window_open ? owner : NULL;
+    bool reciprocal_local_proposal_proven =
+        receiver->proposal_pending || receiver->reciprocal_window_open;
+    enum mesh_event_proposal_arbitration arbitration =
+        mesh_event_owner_arbitrate_reciprocal_proposal(
+            receiver->id,
+            sender->id,
+            receiver->proposal_pending,
+            receiver->peer_id,
+            arbitration_owner);
+    enum mesh_event_owner_decision decision;
+
+    if (arbitration == MESH_EVENT_PROPOSAL_KEEP_LOCAL) {
+        return MESH_SIM_OK;
+    }
+    if (arbitration == MESH_EVENT_PROPOSAL_ACCEPT_REMOTE &&
+        reciprocal_local_proposal_proven) {
+        decision = mesh_event_owner_classify_reciprocal_proposal(
+            owner,
+            receiver->id,
+            sender->id,
+            &sender->proposal,
+            sender->proposal_payload,
+            sender->proposal_payload_len);
+    } else {
+        decision = mesh_event_owner_classify_proposal(
+            owner,
+            receiver->id,
+            sender->id,
+            &sender->proposal,
+            sender->proposal_payload,
+            sender->proposal_payload_len);
+    }
+    if (decision != MESH_EVENT_OWNER_APPLY) {
+        return MESH_SIM_OK;
+    }
+
+    receiver->predecessor_generation = receiver->owner.generation;
+    receiver->accept_pending = true;
+    receiver->proposal_pending = false;
+    return MESH_SIM_OK;
+}
+
+static int reciprocal_complete_accept(
+    struct mesh_sim_world *world,
+    uint16_t connection,
+    uint8_t responder_index,
+    struct reciprocal_endpoint *responder,
+    struct reciprocal_endpoint *proposer)
+{
+    struct mesh_event_timing responder_timing = proposer->proposal_timing;
+    uint8_t payload[CONTROL_PAYLOAD_CAPACITY];
+    size_t payload_len = 0u;
+    int ret;
+
+    if (!responder->accept_pending || responder->proposal_pending) {
+        return MESH_SIM_ERR_EVENT_ORDER;
+    }
+    if (responder->installed &&
+        (!responder->owner.active ||
+         responder->owner.generation != responder->predecessor_generation ||
+         responder->owner.proposal_from_peer)) {
+        return MESH_SIM_ERR_EVENT_ORDER;
+    }
+    mesh_event_timing_set_local_first_slot_tx(&responder_timing, false);
+    ret = mesh_append_event_timing_tlvs_at(
+        payload, sizeof(payload), &payload_len, &responder_timing,
+        (uint32_t)(world->now_us / 1000u));
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = send_control_over_radio(world,
+                                  connection,
+                                  responder_index,
+                                  MSG_MESH_EVENT_ACCEPT,
+                                  proposer->proposal.session_id,
+                                  proposer->proposal.seq,
+                                  payload,
+                                  payload_len);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+
+    /*
+     * This is the sender-side TX-completion boundary used by the firmware:
+     * failed or not-yet-started ACCEPT work leaves the predecessor untouched.
+     */
+    if (responder->installed) {
+        if (!responder->owner.active ||
+            responder->owner.generation != responder->predecessor_generation ||
+            responder->owner.proposal_from_peer) {
+            return MESH_SIM_ERR_EVENT_ORDER;
+        }
+        mesh_event_owner_abandon(&responder->owner);
+    }
+    ret = mesh_event_owner_begin_with_boot_nonce(
+        &responder->owner,
+        proposer->id,
+        proposer->proposal.session_id,
+        proposer->proposal.seq,
+        true,
+        proposer->boot_nonce);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    responder->installed_timing = responder_timing;
+    responder->installed = true;
+    responder->accept_pending = false;
+    responder->reciprocal_window_open = false;
+
+    if (!proposer->installed) {
+        ret = mesh_event_owner_begin(
+            &proposer->owner,
+            responder->id,
+            proposer->proposal.session_id,
+            proposer->proposal.seq,
+            false);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    proposer->installed_timing = proposer->proposal_timing;
+    proposer->installed = true;
+    proposer->proposal_pending = false;
+    return MESH_SIM_OK;
+}
+
+static size_t reciprocal_message_count(const struct mesh_sim_world *world,
+                                       uint8_t message_type)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->transmission_count; i++) {
+        if (world->transmissions[i].protocol_msg_type == message_type) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int run_reciprocal_proposal_case(bool higher_first,
+                                        bool preinstalled_local_timing)
+{
+    static struct mesh_sim_world world;
+    struct reciprocal_endpoint lower;
+    struct reciprocal_endpoint higher;
+    struct mesh_event_timing higher_timing_before_accept;
+    struct mesh_event_owner higher_owner_before_accept;
+    struct mesh_event_timing lower_final;
+    struct mesh_event_timing higher_final;
+    struct mesh_event_owner lower_owner_final;
+    struct mesh_event_owner higher_owner_final;
+    struct mesh_event_params params = connection_params(5000u);
+    uint8_t lower_index;
+    uint8_t higher_index;
+    uint16_t connection;
+    int ret;
+
+    mesh_sim_init(&world,
+                  higher_first ? UINT32_C(0x17170001) :
+                                 UINT32_C(0x17170002));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, LEAF_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &lower_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, RELAY_A_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &higher_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, lower_index, higher_index, 100u, 4u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_connection(&world, lower_index, higher_index, &params,
+                                  true, &connection) == MESH_SIM_OK);
+    CHECK(reciprocal_endpoint_init(
+              &lower, LEAF_ID, RELAY_A_ID,
+              UINT64_C(0x1717000000000001), UINT32_C(0x17170001), 11u,
+              6000u, preinstalled_local_timing) == PROTO_OK);
+    CHECK(reciprocal_endpoint_init(
+              &higher, RELAY_A_ID, LEAF_ID,
+              UINT64_C(0x1717000000000002), UINT32_C(0x17170002), 12u,
+              7000u, preinstalled_local_timing) == PROTO_OK);
+
+    if (higher_first) {
+        CHECK(send_control_over_radio(
+                  &world, connection, higher_index, MSG_MESH_EVENT_PROPOSE,
+                  higher.proposal.session_id, higher.proposal.seq,
+                  higher.proposal_payload, higher.proposal_payload_len) ==
+              MESH_SIM_OK);
+        CHECK(reciprocal_receive_proposal(&lower, &higher) == MESH_SIM_OK);
+        CHECK(!lower.accept_pending);
+        CHECK(send_control_over_radio(
+                  &world, connection, lower_index, MSG_MESH_EVENT_PROPOSE,
+                  lower.proposal.session_id, lower.proposal.seq,
+                  lower.proposal_payload, lower.proposal_payload_len) ==
+              MESH_SIM_OK);
+        CHECK(reciprocal_receive_proposal(&higher, &lower) == MESH_SIM_OK);
+    } else {
+        CHECK(send_control_over_radio(
+                  &world, connection, lower_index, MSG_MESH_EVENT_PROPOSE,
+                  lower.proposal.session_id, lower.proposal.seq,
+                  lower.proposal_payload, lower.proposal_payload_len) ==
+              MESH_SIM_OK);
+        CHECK(reciprocal_receive_proposal(&higher, &lower) == MESH_SIM_OK);
+        CHECK(send_control_over_radio(
+                  &world, connection, higher_index, MSG_MESH_EVENT_PROPOSE,
+                  higher.proposal.session_id, higher.proposal.seq,
+                  higher.proposal_payload, higher.proposal_payload_len) ==
+              MESH_SIM_OK);
+        CHECK(reciprocal_receive_proposal(&lower, &higher) == MESH_SIM_OK);
+        CHECK(!lower.accept_pending);
+    }
+
+    CHECK(higher.accept_pending);
+    CHECK(!higher.proposal_pending);
+    CHECK(lower.proposal_pending || preinstalled_local_timing);
+    CHECK(reciprocal_message_count(&world, MSG_MESH_EVENT_PROPOSE) == 2u);
+    CHECK(reciprocal_message_count(&world, MSG_MESH_EVENT_ACCEPT) == 0u);
+
+    higher_timing_before_accept = higher.installed_timing;
+    higher_owner_before_accept = higher.owner;
+    if (preinstalled_local_timing) {
+        /* Reservation and failed/pre-RF retry handling are state preserving. */
+        CHECK(timing_equal(&higher.installed_timing,
+                           &higher_timing_before_accept));
+        CHECK(memcmp(&higher.owner, &higher_owner_before_accept,
+                     sizeof(higher.owner)) == 0);
+    }
+    ret = reciprocal_complete_accept(&world,
+                                     connection,
+                                     higher_index,
+                                     &higher,
+                                     &lower);
+    CHECK(ret == MESH_SIM_OK);
+    CHECK(reciprocal_message_count(&world, MSG_MESH_EVENT_ACCEPT) == 1u);
+    CHECK(!lower.proposal_pending);
+    CHECK(!higher.proposal_pending);
+    CHECK(!lower.accept_pending);
+    CHECK(!higher.accept_pending);
+    CHECK(lower.owner.active && higher.owner.active);
+    CHECK(!lower.owner.proposal_from_peer);
+    CHECK(higher.owner.proposal_from_peer);
+    CHECK(lower.owner.session_id == lower.proposal.session_id);
+    CHECK(higher.owner.session_id == lower.proposal.session_id);
+    CHECK(lower.installed_timing.local_tx_on_even_events !=
+          higher.installed_timing.local_tx_on_even_events);
+    CHECK(lower.installed_timing.next_event_time_ms ==
+          higher.installed_timing.next_event_time_ms);
+
+    lower_final = lower.installed_timing;
+    higher_final = higher.installed_timing;
+    lower_owner_final = lower.owner;
+    higher_owner_final = higher.owner;
+    CHECK(reciprocal_receive_proposal(&lower, &higher) == MESH_SIM_OK);
+    CHECK(timing_equal(&lower.installed_timing, &lower_final));
+    CHECK(timing_equal(&higher.installed_timing, &higher_final));
+    CHECK(memcmp(&lower.owner, &lower_owner_final, sizeof(lower.owner)) == 0);
+    CHECK(memcmp(&higher.owner, &higher_owner_final,
+                 sizeof(higher.owner)) == 0);
+    CHECK(reciprocal_message_count(&world, MSG_MESH_EVENT_ACCEPT) == 1u);
+    return 0;
+}
+
+static int run_expired_installed_proposal_replay_case(void)
+{
+    static struct mesh_sim_world world;
+    struct reciprocal_endpoint lower;
+    struct reciprocal_endpoint higher;
+    struct mesh_event_timing higher_timing_before;
+    struct mesh_event_owner higher_owner_before;
+    struct mesh_event_params params = connection_params(5000u);
+    uint8_t lower_index;
+    uint8_t higher_index;
+    uint16_t connection;
+
+    mesh_sim_init(&world, UINT32_C(0x17170003));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, LEAF_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &lower_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, RELAY_A_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &higher_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, lower_index, higher_index, 100u, 4u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_connection(&world, lower_index, higher_index, &params,
+                                  true, &connection) == MESH_SIM_OK);
+    CHECK(reciprocal_endpoint_init(
+              &lower, LEAF_ID, RELAY_A_ID,
+              UINT64_C(0x1717000000000001), UINT32_C(0x17170001), 11u,
+              6000u, false) == PROTO_OK);
+    CHECK(reciprocal_endpoint_init(
+              &higher, RELAY_A_ID, LEAF_ID,
+              UINT64_C(0x1717000000000002), UINT32_C(0x17170002), 12u,
+              7000u, true) == PROTO_OK);
+    higher.reciprocal_window_open = false;
+    higher_timing_before = higher.installed_timing;
+    higher_owner_before = higher.owner;
+
+    CHECK(send_control_over_radio(
+              &world, connection, lower_index, MSG_MESH_EVENT_PROPOSE,
+              lower.proposal.session_id, lower.proposal.seq,
+              lower.proposal_payload, lower.proposal_payload_len) ==
+          MESH_SIM_OK);
+    CHECK(reciprocal_receive_proposal(&higher, &lower) == MESH_SIM_OK);
+    CHECK(!higher.accept_pending);
+    CHECK(timing_equal(&higher.installed_timing, &higher_timing_before));
+    CHECK(memcmp(&higher.owner, &higher_owner_before,
+                 sizeof(higher.owner)) == 0);
+    CHECK(reciprocal_message_count(&world, MSG_MESH_EVENT_PROPOSE) == 1u);
+    CHECK(reciprocal_message_count(&world, MSG_MESH_EVENT_ACCEPT) == 0u);
+    return 0;
+}
+
+static int run_lost_accept_exact_proposal_retry_case(void)
+{
+    static struct mesh_sim_world world;
+    struct reciprocal_endpoint proposer;
+    struct mesh_event_owner responder_owner = {0};
+    struct mesh_event_owner owner_after_first_accept;
+    struct mesh_event_timing accepted_timing;
+    struct mesh_event_timing timing_after_first_accept;
+    struct mesh_relay_result relay_result;
+    struct mesh_event_params params = connection_params(5000u);
+    uint8_t accept_payload[CONTROL_PAYLOAD_CAPACITY];
+    size_t accept_payload_len = 0u;
+    size_t first_accept_tx = SIZE_MAX;
+    size_t second_accept_tx = SIZE_MAX;
+    size_t first_accept_rx = SIZE_MAX;
+    size_t second_accept_rx = SIZE_MAX;
+    uint64_t first_propose_tx_us = 0u;
+    uint64_t retry_propose_tx_us = 0u;
+    uint64_t proposer_boot_nonce;
+    uint8_t proposer_index;
+    uint8_t responder_index;
+    uint16_t connection;
+    uint16_t accept_sequence;
+
+    phase = "lost_accept_exact_proposal_retry";
+    mesh_sim_init(&world, UINT32_C(0x17170004));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, LEAF_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &proposer_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, RELAY_A_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &responder_index) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, proposer_index, responder_index, 100u, 4u) ==
+          MESH_SIM_OK);
+    CHECK(mesh_sim_add_connection(&world, proposer_index, responder_index,
+                                  &params, true, &connection) == MESH_SIM_OK);
+    CHECK(reciprocal_endpoint_init(
+              &proposer, LEAF_ID, RELAY_A_ID,
+              UINT64_C(0x1717000000000004), UINT32_C(0x17170004), 13u,
+              6000u, false) == PROTO_OK);
+    CHECK(mesh_event_owner_proposal_boot_nonce(
+              proposer.proposal_payload,
+              proposer.proposal_payload_len,
+              &proposer_boot_nonce) == PROTO_OK);
+
+    CHECK(send_control_over_radio(
+              &world, connection, proposer_index, MSG_MESH_EVENT_PROPOSE,
+              proposer.proposal.session_id, proposer.proposal.seq,
+              proposer.proposal_payload, proposer.proposal_payload_len) ==
+          MESH_SIM_OK);
+    for (size_t i = 0u; i < world.transmission_count; i++) {
+        if (world.transmissions[i].protocol_msg_type ==
+            MSG_MESH_EVENT_PROPOSE) {
+            first_propose_tx_us = world.transmissions[i].start_us;
+            break;
+        }
+    }
+    CHECK(first_propose_tx_us != 0u);
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[responder_index].relay,
+              &proposer.proposal,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len,
+              LEAF_ID,
+              100u,
+              (uint32_t)(world.now_us / 1000u),
+              0u,
+              &relay_result) == PROTO_OK);
+    CHECK(relay_result.status == PROTO_OK);
+    CHECK((relay_result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u);
+    CHECK((relay_result.actions & MESH_RELAY_ACTION_DROP) == 0u);
+    CHECK(mesh_event_owner_classify_proposal(
+              NULL,
+              RELAY_A_ID,
+              LEAF_ID,
+              &proposer.proposal,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len) == MESH_EVENT_OWNER_APPLY);
+    CHECK(mesh_event_timing_from_tlvs_at(
+              &accepted_timing,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len,
+              (uint32_t)(world.now_us / 1000u),
+              true) == PROTO_OK);
+    mesh_event_timing_set_local_first_slot_tx(&accepted_timing, false);
+    CHECK(mesh_append_event_timing_tlvs_at(
+              accept_payload,
+              sizeof(accept_payload),
+              &accept_payload_len,
+              &accepted_timing,
+              (uint32_t)(world.now_us / 1000u)) == PROTO_OK);
+    accept_sequence = proposer.proposal.seq;
+
+    CHECK(mesh_sim_set_directed_rx_failures(
+              &world,
+              responder_index,
+              proposer_index,
+              1u,
+              MESH_SIM_RX_FRAME_TIMEOUT) == MESH_SIM_OK);
+    CHECK(send_control_over_radio(
+              &world, connection, responder_index, MSG_MESH_EVENT_ACCEPT,
+              proposer.proposal.session_id, accept_sequence,
+              accept_payload, accept_payload_len) == MESH_SIM_OK);
+    CHECK(mesh_event_owner_begin_with_boot_nonce(
+              &responder_owner,
+              LEAF_ID,
+              proposer.proposal.session_id,
+              proposer.proposal.seq,
+              true,
+              proposer_boot_nonce) == PROTO_OK);
+    {
+        uint8_t proposal_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+        CHECK(semantic_digest_sha256(proposer.proposal_payload,
+                                    proposer.proposal_payload_len,
+                                    proposal_digest));
+        CHECK(mesh_event_owner_bind_remote_proposal_digest(
+                  &responder_owner,
+                  proposer.proposal.session_id,
+                  proposer.proposal.seq,
+                  proposal_digest) == PROTO_OK);
+    }
+    owner_after_first_accept = responder_owner;
+    timing_after_first_accept = accepted_timing;
+
+    CHECK(mesh_sim_run_until(&world, world.now_us + UINT64_C(1000000)) ==
+          MESH_SIM_OK);
+    CHECK(send_control_over_radio(
+              &world, connection, proposer_index, MSG_MESH_EVENT_PROPOSE,
+              proposer.proposal.session_id, proposer.proposal.seq,
+              proposer.proposal_payload, proposer.proposal_payload_len) ==
+          MESH_SIM_OK);
+    for (size_t i = 0u; i < world.transmission_count; i++) {
+        if (world.transmissions[i].protocol_msg_type !=
+            MSG_MESH_EVENT_PROPOSE ||
+            world.transmissions[i].start_us == first_propose_tx_us) {
+            continue;
+        }
+        retry_propose_tx_us = world.transmissions[i].start_us;
+        break;
+    }
+    CHECK(retry_propose_tx_us > first_propose_tx_us);
+    CHECK(retry_propose_tx_us - first_propose_tx_us <= UINT64_C(6000000));
+    CHECK(mesh_relay_handle_rx_with_random(
+              &world.roles[responder_index].relay,
+              &proposer.proposal,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len,
+              LEAF_ID,
+              100u,
+              (uint32_t)(world.now_us / 1000u),
+              0u,
+              &relay_result) == PROTO_OK);
+    CHECK(relay_result.status == PROTO_OK);
+    CHECK((relay_result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u);
+    CHECK((relay_result.actions & MESH_RELAY_ACTION_DROP) == 0u);
+    CHECK(mesh_event_owner_classify_proposal(
+              &responder_owner,
+              RELAY_A_ID,
+              LEAF_ID,
+              &proposer.proposal,
+              proposer.proposal_payload,
+              proposer.proposal_payload_len) ==
+          MESH_EVENT_OWNER_DUPLICATE);
+    CHECK(memcmp(&responder_owner,
+                 &owner_after_first_accept,
+                 sizeof(responder_owner)) == 0);
+    CHECK(timing_equal(&accepted_timing, &timing_after_first_accept));
+    CHECK(send_control_over_radio(
+              &world, connection, responder_index, MSG_MESH_EVENT_ACCEPT,
+              proposer.proposal.session_id, accept_sequence,
+              accept_payload, accept_payload_len) == MESH_SIM_OK);
+
+    for (size_t i = 0u; i < world.transmission_count; i++) {
+        if (world.transmissions[i].protocol_msg_type !=
+            MSG_MESH_EVENT_ACCEPT) {
+            continue;
+        }
+        if (first_accept_tx == SIZE_MAX) {
+            first_accept_tx = i;
+        } else {
+            second_accept_tx = i;
+        }
+    }
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        if (world.receptions[i].source_id != RELAY_A_ID ||
+            world.receptions[i].receiver_id != LEAF_ID) {
+            continue;
+        }
+        if (first_accept_rx == SIZE_MAX) {
+            first_accept_rx = i;
+        } else {
+            second_accept_rx = i;
+        }
+    }
+    CHECK(first_accept_tx != SIZE_MAX && second_accept_tx != SIZE_MAX);
+    CHECK(first_accept_rx != SIZE_MAX && second_accept_rx != SIZE_MAX);
+    CHECK(world.receptions[first_accept_rx].outcome ==
+          MESH_SIM_RX_FRAME_TIMEOUT);
+    CHECK(world.receptions[second_accept_rx].outcome == MESH_SIM_RX_DECODED);
+    CHECK(world.transmissions[first_accept_tx].outbound.packet.msg_type ==
+          world.transmissions[second_accept_tx].outbound.packet.msg_type);
+    CHECK(world.transmissions[first_accept_tx].outbound.packet.src_id ==
+          world.transmissions[second_accept_tx].outbound.packet.src_id);
+    CHECK(world.transmissions[first_accept_tx].outbound.packet.dst_id ==
+          world.transmissions[second_accept_tx].outbound.packet.dst_id);
+    CHECK(world.transmissions[first_accept_tx].outbound.packet.session_id ==
+          world.transmissions[second_accept_tx].outbound.packet.session_id);
+    CHECK(world.transmissions[first_accept_tx].outbound.packet.seq ==
+          world.transmissions[second_accept_tx].outbound.packet.seq);
+    CHECK(world.transmissions[first_accept_tx].outbound.payload_len ==
+          world.transmissions[second_accept_tx].outbound.payload_len);
+    CHECK(memcmp(world.transmissions[first_accept_tx].outbound.payload,
+                 world.transmissions[second_accept_tx].outbound.payload,
+                 accept_payload_len) == 0);
+    CHECK(memcmp(&responder_owner,
+                 &owner_after_first_accept,
+                 sizeof(responder_owner)) == 0);
+    CHECK(timing_equal(&accepted_timing, &timing_after_first_accept));
+    return 0;
+}
+
+static int run_reciprocal_proposal_arbitration_scenario(void)
+{
+    phase = "reciprocal_pending_higher_arrives_first";
+    CHECK(run_reciprocal_proposal_case(true, false) == 0);
+    phase = "reciprocal_pending_lower_arrives_first";
+    CHECK(run_reciprocal_proposal_case(false, false) == 0);
+    phase = "reciprocal_installed_higher_arrives_first";
+    CHECK(run_reciprocal_proposal_case(true, true) == 0);
+    phase = "reciprocal_installed_lower_arrives_first";
+    CHECK(run_reciprocal_proposal_case(false, true) == 0);
+    phase = "expired_installed_proposal_replay";
+    CHECK(run_expired_installed_proposal_replay_case() == 0);
+    return run_lost_accept_exact_proposal_retry_case();
+}
+
 static int run_event_control_scenario(void)
 {
     static struct mesh_sim_world world;
@@ -368,8 +1030,9 @@ static int run_event_control_scenario(void)
     malformed_proposal_session =
         world.connections[connection_ab].repair_session_id;
     malformed_proposal_seq = world.connections[connection_ab].repair_seq;
-    CHECK(append_update_payload(
-              &world, &world.connections[connection_ab].timing_a, 1u,
+    CHECK(append_control_timing_payload(
+              &world, &world.connections[connection_ab].timing_a,
+              malformed_proposal_session, false,
               valid_payload, sizeof(valid_payload),
               &proposal_timing_payload_len) ==
           PROTO_OK);
@@ -404,6 +1067,14 @@ static int run_event_control_scenario(void)
 
     CHECK(run_scheduled_connection_exchange(&world, connection_ab) ==
           MESH_SIM_OK);
+    CHECK(world.connections[connection_ab].repair_requester_timing.event_counter ==
+          world.connections[connection_ab].repair_session_id);
+    CHECK(world.connections[connection_ab].repair_peer_timing.event_counter ==
+          world.connections[connection_ab].repair_session_id);
+    CHECK(mesh_event_timing_local_tx_slot(
+              &world.connections[connection_ab].repair_requester_timing));
+    CHECK(mesh_event_timing_local_rx_slot(
+              &world.connections[connection_ab].repair_peer_timing));
     leaf_proposal_seq = world.connections[connection_ab].repair_seq;
     CHECK(leaf_proposal_seq != 0u);
     CHECK(world.roles[leaf].event_control_seq == leaf_proposal_seq);
@@ -775,6 +1446,9 @@ static int run_reset_stale_peer_recovery_bound(void)
     uint32_t peer_session;
     uint64_t boot_nonce_before_reset;
     uint64_t boot_nonce_after_reset;
+    uint64_t expiry_us;
+    uint8_t expired_endpoints = 0u;
+    struct mesh_event_timing peer_timing_before_reset;
     int ret;
 
     phase = "reset_stale_peer_setup";
@@ -794,6 +1468,7 @@ static int run_reset_stale_peer_recovery_bound(void)
           MESH_SIM_OK);
     peer_session = world.connections[connection].owner_b.session_id;
     boot_nonce_before_reset = world.roles[leaf].event_boot_nonce;
+    peer_timing_before_reset = world.connections[connection].timing_b;
 
     phase = "reset_stale_peer_preserves_peer_owner";
     CHECK(mesh_sim_reset_role(&world, leaf) == MESH_SIM_OK);
@@ -810,12 +1485,33 @@ static int run_reset_stale_peer_recovery_bound(void)
     CHECK(mesh_sim_schedule_next_connection_event(&world, connection, false) ==
           MESH_SIM_OK);
 
-    /* The reset endpoint starts its control sequence at one.  Its fresh boot
-     * nonce makes that sequence a new owner while the peer still rejects any
-     * delayed proposal from the retired incarnation. */
-    phase = "reset_recovery_accepts_fresh_incarnation";
+    /*
+     * The peer cannot order random boot nonces, so the first repair remains
+     * inert while its pre-reset owner is live. This prevents an old replay
+     * from using the same replacement path.
+     */
+    phase = "reset_recovery_rejects_fresh_incarnation_while_old_owner_live";
     ret = mesh_sim_run_until(&world, action.end_us);
     CHECK(ret == MESH_SIM_OK);
+    CHECK(!world.connections[connection].owner_a.active);
+    CHECK(world.connections[connection].owner_b.active);
+    CHECK(world.connections[connection].owner_b.session_id == peer_session);
+
+    phase = "reset_recovery_accepts_fresh_incarnation_after_supervision";
+    expiry_us =
+        ((uint64_t)peer_timing_before_reset.last_successful_ch9_event_ms +
+         peer_timing_before_reset.supervision_timeout_ms + 1u) * 1000u;
+    if (expiry_us > world.now_us) {
+        CHECK(mesh_sim_run_until(&world, expiry_us) == MESH_SIM_OK);
+    }
+    CHECK(mesh_sim_expire_connection_ownership(
+              &world, connection, &expired_endpoints) == MESH_SIM_OK);
+    CHECK(expired_endpoints == 1u);
+    CHECK(connection_owners_inactive(&world.connections[connection]));
+    CHECK(mesh_sim_renegotiate_connection_over_radio(
+              &world, connection, leaf) == MESH_SIM_OK);
+    CHECK(run_scheduled_connection_exchange(&world, connection) ==
+          MESH_SIM_OK);
     CHECK(connection_owners_active(&world.connections[connection]));
     CHECK(world.connections[connection].owner_a.session_id != peer_session);
     CHECK(world.connections[connection].owner_b.active);
@@ -827,8 +1523,12 @@ static int run_reset_stale_peer_recovery_bound(void)
 
 int main(void)
 {
-    int ret = run_event_control_scenario();
+    int ret = run_reciprocal_proposal_arbitration_scenario();
 
+    if (ret != 0) {
+        return ret;
+    }
+    ret = run_event_control_scenario();
     if (ret != 0) {
         return ret;
     }

@@ -23,7 +23,6 @@
  * first behavior-preserving split.
  */
 
-extern uint32_t next_event_seq;
 extern bool uwb_rf_active;
 extern struct k_spinlock uwb_rf_lock;
 extern struct k_spinlock anchor_uwb_lock;
@@ -35,7 +34,6 @@ extern struct mesh_relay mesh_runtime;
 extern struct mesh_event_diagnostics mesh_event_stats;
 extern struct uwb_anchor_session anchor_uwb_session;
 extern uint32_t anchor_uwb_scan_interval_ms;
-extern uint16_t mesh_event_control_seq;
 
 const char *role_name(void);
 const char *command_status_name(enum command_status status);
@@ -56,7 +54,6 @@ bool anchor_click_window_active(void);
 void anchor_click_window_set_active(bool active);
 void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms);
 bool mesh_outbound_ready_for_tx(const struct mesh_outbound *out, uint32_t now_ms);
-uint32_t next_click_event_seq(void);
 void packet_age_add_elapsed(struct proto_packet *packet, uint32_t elapsed_ms);
 bool uptime_deadline_reached(uint32_t now_ms, uint32_t deadline_ms);
 uint32_t uptime_ms_until_deadline(uint32_t now_ms, uint32_t deadline_ms);
@@ -69,26 +66,46 @@ uint32_t discovery_window_ms_for_slots(uint8_t slot_count);
 int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot);
 int local_anchor_restore_discovery_assignment(uint32_t epoch,
                                               uint32_t table_seq,
-                                              uint32_t table_fingerprint,
+                                              const struct discovery_assignment_table_commitment *table_commitment,
                                               uint8_t anchor_slot,
                                               uint8_t slot_count,
-                                              bool provisioned);
+                                              bool provisioned,
+                                              bool ordered_epoch_valid,
+                                              const uint32_t *retired_epochs,
+                                              uint8_t retired_epoch_count,
+                                              uint32_t pending_epoch,
+                                              uint32_t pending_table_seq,
+                                              const struct discovery_assignment_table_commitment *pending_table_commitment,
+                                              bool pending_valid);
 int local_anchor_commit_discovery_assignment(uint32_t epoch,
                                              uint32_t table_seq,
-                                             uint32_t table_fingerprint,
+                                             const struct discovery_assignment_table_commitment *table_commitment,
                                              uint8_t anchor_slot,
                                              uint8_t slot_count);
 void local_anchor_reset_discovery_assignment(void);
 int local_anchor_mark_discovery_assignment_unprovisioned(
     uint32_t epoch,
     uint32_t table_seq,
-    uint32_t table_fingerprint);
+    const struct discovery_assignment_table_commitment *table_commitment);
+bool local_anchor_discovery_assignment_project_pending_commit(
+    uint32_t next_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    uint32_t *retired_epochs,
+    uint8_t *retired_epoch_count);
+bool local_anchor_discovery_assignment_export_retired_epochs(
+    uint32_t *retired_epochs,
+    uint8_t *retired_epoch_count);
 enum app_discovery_assignment_claim_decision
 local_anchor_discovery_assignment_note_claim(uint32_t epoch);
 enum app_discovery_assignment_table_decision
 local_anchor_discovery_assignment_note_table(uint32_t epoch,
                                              uint32_t table_seq,
-                                             uint32_t table_fingerprint);
+                                             const struct discovery_assignment_table_commitment *table_commitment);
+enum app_discovery_assignment_table_decision
+local_anchor_discovery_assignment_preview_table(uint32_t epoch,
+                                                uint32_t table_seq,
+                                                const struct discovery_assignment_table_commitment *table_commitment);
 enum app_discovery_assignment_provisioning_state
 local_anchor_discovery_assignment_provisioning_state(void);
 bool local_anchor_discovery_assignment_get(uint32_t *epoch,

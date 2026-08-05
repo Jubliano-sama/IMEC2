@@ -295,7 +295,7 @@ static int build_report(size_t anchor_count,
         return ret;
     }
     return survey_init_discovery_report_packet(
-        packet, ANCHOR_ID_BASE + anchor_index, GATEWAY_ID, SURVEY_ID, seq,
+        packet, ANCHOR_ID_BASE + anchor_index, GATEWAY_ID, SURVEY_ID, 0u, seq,
         (uint8_t)*payload_len);
 }
 
@@ -798,38 +798,36 @@ static int test_gateway_collection_duplicate_redelivers_for_eack_rearm(void)
     REQUIRE(ack_index >= 0);
     discard_gateway_ack(gateway, (size_t)ack_index);
 
-    REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
-    REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
-    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
-    window_end_us = air_start_us + UINT64_C(50000);
-    REQUIRE(mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
-                                           window_end_us) == MESH_SIM_OK);
-    REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
-                &world, anchor, air_start_us, window_end_us, NULL) ==
-            MESH_SIM_OK);
-    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
-    REQUIRE(world.roles[gateway].delivery_count == 1u);
-    REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 1u);
-    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_redelivery_count ==
-            1u);
-    REQUIRE(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
-    REQUIRE(gateway_ack_queue_index(gateway, ANCHOR_ID_BASE) >= 0);
-
-    if (world.roles[gateway].dwm3000.cpu_busy_until_us > world.now_us) {
-        REQUIRE(mesh_sim_run_until(
-                    &world, world.roles[gateway].dwm3000.cpu_busy_until_us) ==
+    for (uint32_t duplicate_attempt = 1u;
+         duplicate_attempt <= 3u;
+         duplicate_attempt++) {
+        REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
+        REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
+        air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+        window_end_us = air_start_us + UINT64_C(50000);
+        REQUIRE(mesh_sim_direct_gateway_arm_rx(&world,
+                                               gateway,
+                                               air_start_us,
+                                               window_end_us) == MESH_SIM_OK);
+        REQUIRE(mesh_sim_direct_gateway_start_queued_tx(
+                    &world, anchor, air_start_us, window_end_us, NULL) ==
                 MESH_SIM_OK);
+        REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+        REQUIRE(world.roles[gateway].delivery_count == 1u);
+        REQUIRE(world.roles[gateway].gateway_semantic_commit_count == 1u);
+        REQUIRE(
+            world.roles[gateway]
+                .gateway_semantic_duplicate_redelivery_count ==
+            duplicate_attempt);
+        REQUIRE(
+            world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
+        ack_index = gateway_ack_queue_index(gateway, ANCHOR_ID_BASE);
+        REQUIRE(ack_index >= 0);
+        discard_gateway_ack(gateway, (size_t)ack_index);
+        REQUIRE(world.roles[anchor].relay.outbox_record.delivery_state ==
+                MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
     }
-    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
-    window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
-    REQUIRE(mesh_sim_direct_gateway_schedule_ack(
-                &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
-            MESH_SIM_OK);
-    REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
-    REQUIRE(world.roles[anchor].relay.pending.state ==
-            MESH_RELAY_TX_WAIT_GATEWAY_ACK);
-    REQUIRE(world.roles[anchor].relay.outbox_record.delivery_state ==
-            MESH_RELAY_DELIVERY_WAIT_COLLECTION_EACK);
+
     REQUIRE(mesh_sim_count_transitions(&world,
                                        MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                        ANCHOR_ID_BASE) == 0u);
@@ -1252,7 +1250,6 @@ static int test_gateway_reset_reinstalls_fifty_accepted_reverse_hints(void)
 {
     struct survey_gateway_context context;
     struct mesh_relay gateway;
-    const uint64_t relay_base = UINT64_C(0xa003000000010000);
     size_t resident_routes = 0u;
 
     /* A gateway reset starts the new survey with an empty downlink table. */
@@ -1268,7 +1265,8 @@ static int test_gateway_reset_reinstalls_fifty_accepted_reverse_hints(void)
         const struct survey_gateway_reverse_hint hint = {
             .target_id = target_id,
             .next_hop_id = i < DIRECT_ANCHORS ?
-                           target_id : relay_base + (i % 6u),
+                           target_id :
+                           ANCHOR_ID_BASE + (i % DIRECT_ANCHORS),
             .quality = (uint8_t)(100u - i),
             .valid = true,
         };
@@ -1387,6 +1385,76 @@ static int test_survey_ttl_exhaustion_fails_explicitly(void)
     return 0;
 }
 
+static int test_partial_directed_components_plan_deterministically(void)
+{
+    const uint64_t anchor_a = ANCHOR_ID_BASE;
+    const uint64_t anchor_b = ANCHOR_ID_BASE + 1u;
+    const uint64_t anchor_c = ANCHOR_ID_BASE + 2u;
+    const uint64_t anchor_d = ANCHOR_ID_BASE + 3u;
+    const uint64_t isolated = ANCHOR_ID_BASE + 4u;
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = anchor_b, .rssi_dbm = -60, .quality = 90u},
+    };
+    const struct survey_reachability_entry c_entries[] = {
+        {.peer_id = anchor_d, .rssi_dbm = -65, .quality = 85u},
+    };
+    struct survey_pair first_plan[2];
+    struct survey_pair_round_metadata metadata[2];
+    size_t round_count = 0u;
+
+    REQUIRE(survey_gateway_begin(&survey_context, SURVEY_ID, 2u) == PROTO_OK);
+    REQUIRE(survey_gateway_note_reach_report(
+                &survey_context, SURVEY_ID, anchor_a,
+                a_entries, 1u) == PROTO_OK);
+    REQUIRE(survey_gateway_note_reach_report(
+                &survey_context, SURVEY_ID, anchor_c,
+                c_entries, 1u) == PROTO_OK);
+    REQUIRE(survey_gateway_note_reach_report(
+                &survey_context, SURVEY_ID, isolated,
+                NULL, 0u) == PROTO_OK);
+    REQUIRE(survey_gateway_plan_pairs(&survey_context) == PROTO_OK);
+    REQUIRE(survey_context.pair_count == 2u);
+    REQUIRE(survey_gateway_pair_at(
+                &survey_context, 0u, &first_plan[0]) == PROTO_OK);
+    REQUIRE(survey_gateway_pair_at(
+                &survey_context, 1u, &first_plan[1]) == PROTO_OK);
+    REQUIRE(first_plan[0].initiator_id == anchor_a);
+    REQUIRE(first_plan[0].responder_id == anchor_b);
+    REQUIRE(first_plan[1].initiator_id == anchor_c);
+    REQUIRE(first_plan[1].responder_id == anchor_d);
+    REQUIRE(survey_gateway_plan_pair_rounds(
+                &survey_context, metadata,
+                sizeof(metadata) / sizeof(metadata[0]),
+                &round_count) == PROTO_OK);
+    REQUIRE(round_count == 2u);
+
+    REQUIRE(survey_gateway_begin(&survey_context, SURVEY_ID, 2u) == PROTO_OK);
+    REQUIRE(survey_gateway_note_reach_report(
+                &survey_context, SURVEY_ID, isolated,
+                NULL, 0u) == PROTO_OK);
+    REQUIRE(survey_gateway_note_reach_report(
+                &survey_context, SURVEY_ID, anchor_c,
+                c_entries, 1u) == PROTO_OK);
+    REQUIRE(survey_gateway_note_reach_report(
+                &survey_context, SURVEY_ID, anchor_a,
+                a_entries, 1u) == PROTO_OK);
+    REQUIRE(survey_gateway_plan_pairs(&survey_context) == PROTO_OK);
+    REQUIRE(survey_context.pair_count == 2u);
+    for (size_t i = 0u; i < 2u; i++) {
+        struct survey_pair repeated_pair;
+
+        REQUIRE(survey_gateway_pair_at(
+                    &survey_context, i, &repeated_pair) == PROTO_OK);
+        REQUIRE(first_plan[i].operation_generation ==
+                    repeated_pair.operation_generation &&
+                first_plan[i].survey_id == repeated_pair.survey_id &&
+                first_plan[i].initiator_id == repeated_pair.initiator_id &&
+                first_plan[i].responder_id == repeated_pair.responder_id &&
+                first_plan[i].sample_count == repeated_pair.sample_count);
+    }
+    return 0;
+}
+
 int main(void)
 {
     static const size_t anchor_counts[] = {2u, 6u, 16u, 32u, 50u};
@@ -1403,6 +1471,7 @@ int main(void)
         test_gateway_semantic_rejection_retry_and_sticky_ack() != 0 ||
         test_gateway_collection_duplicate_redelivers_for_eack_rearm() != 0 ||
         test_direct_short_rx_and_mismatched_ack_retry() != 0 ||
+        test_partial_directed_components_plan_deterministically() != 0 ||
         test_twenty_direct_reports_retry_to_exactly_once() != 0 ||
         test_multihop_route_loss_recovers_exactly_once() != 0 ||
         test_gateway_reset_reinstalls_fifty_accepted_reverse_hints() != 0 ||

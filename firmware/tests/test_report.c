@@ -18,6 +18,40 @@ static void fill_sample_metadata(uint8_t *round_indices,
     }
 }
 
+static void test_range_transport_sequence_is_unique_across_retry_attempts(void)
+{
+    bool seen[UINT16_MAX + 1u] = {false};
+    uint16_t previous_attempt_last = 0u;
+    uint16_t packet_seq = 0u;
+
+    assert(RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS ==
+           RANGE_REPORT_MAX_PACKET_FRAGMENTS +
+           RANGE_REPORT_MAX_CIR_FRAGMENTS);
+    for (uint16_t attempt = 1u; attempt <= UINT8_MAX; attempt++) {
+        for (uint16_t fragment = 0u;
+             fragment < RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS;
+             fragment++) {
+            assert(report_range_transport_seq((uint8_t)attempt,
+                                              fragment,
+                                              &packet_seq) == PROTO_OK);
+            assert(packet_seq != 0u);
+            assert(!seen[packet_seq]);
+            seen[packet_seq] = true;
+            if (fragment == 0u && attempt > 1u) {
+                assert(packet_seq == previous_attempt_last + 1u);
+            }
+        }
+        previous_attempt_last = packet_seq;
+    }
+
+    assert(report_range_transport_seq(0u, 0u, &packet_seq) ==
+           PROTO_ERR_MALFORMED);
+    assert(report_range_transport_seq(1u,
+                                      RANGE_REPORT_MAX_TRANSPORT_FRAGMENTS,
+                                      &packet_seq) == PROTO_ERR_MALFORMED);
+    assert(report_range_transport_seq(1u, 0u, NULL) == PROTO_ERR_ARG);
+}
+
 static void test_click_report_packet_counts_as_click(void)
 {
     const int32_t distance_samples[] = {4550, 4567, 4580};
@@ -1028,6 +1062,11 @@ static void test_click_payload_semantic_validation(void)
     assert(report_validate_click_payload(&packet, payload, payload_len) ==
            PROTO_OK);
 
+    packet.flags |= FLAG_ROUTE_SETUP;
+    assert(report_validate_click_payload(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+    packet.flags &= (uint8_t)~FLAG_ROUTE_SETUP;
+
     memcpy(mutated, payload, payload_len);
     assert(tlv_find(mutated, payload_len, TLV_ANCHOR_ID,
                     &value, &value_len) == PROTO_OK);
@@ -1125,6 +1164,7 @@ static void test_click_payload_semantic_validation_accepts_cir_fragment(void)
 
 int main(void)
 {
+    test_range_transport_sequence_is_unique_across_retry_attempts();
     test_click_report_packet_counts_as_click();
     test_diagnostic_range_packet_is_not_click();
     test_timing_invalid_range_report_is_preserved();

@@ -20,6 +20,7 @@ int app_mesh_command_orchestrator_activate(
     }
     orchestrator->admitted = *item;
     orchestrator->command_admitted = true;
+    orchestrator->safe_boundary_observed = false;
     return 0;
 }
 
@@ -31,28 +32,35 @@ void app_mesh_command_orchestrator_clear_safe_boundary(
     }
 }
 
+void app_mesh_command_orchestrator_mark_safe_boundary(
+    struct app_mesh_command_orchestrator *orchestrator)
+{
+    if (orchestrator != NULL) {
+        orchestrator->safe_boundary_observed = true;
+    }
+}
+
 int app_mesh_command_orchestrator_gateway_ingress(
-    struct app_mesh_command_orchestrator *orchestrator,
     const struct app_gateway_command_ingress_ops *ops,
     const uint8_t *frame,
     size_t frame_len,
+    struct app_gateway_command_ingress_item *decoded,
     bool *command_handled)
 {
-    int ret;
-
-    if (orchestrator == NULL || command_handled == NULL) {
+    if (decoded == NULL || command_handled == NULL) {
         return -EINVAL;
     }
-    ret = app_gateway_command_ingress_handle_frame(ops,
-                                                    frame,
-                                                    frame_len,
-                                                    &orchestrator->admitted,
-                                                    command_handled);
-    if (ret == 0 && *command_handled) {
-        ret = app_mesh_command_orchestrator_activate(orchestrator,
-                                                     &orchestrator->admitted);
-    }
-    return ret;
+    /*
+     * BLE RX is a higher-priority system-workqueue producer. Decode only into
+     * caller-owned scratch; the ingress callbacks copy accepted commands into
+     * the route-owned queue. It must never mutate the active route dispatch.
+     */
+    memset(decoded, 0, sizeof(*decoded));
+    return app_gateway_command_ingress_handle_frame(ops,
+                                                     frame,
+                                                     frame_len,
+                                                     decoded,
+                                                     command_handled);
 }
 
 int app_mesh_command_orchestrator_decide(
@@ -136,6 +144,7 @@ int app_mesh_command_orchestrator_anchor_receive(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    uint64_t gateway_id,
     uint32_t now_ms,
     enum command_id *command_id,
     struct gateway_command_options *options,
@@ -153,19 +162,28 @@ int app_mesh_command_orchestrator_anchor_receive(
         packet,
         payload,
         payload_len,
+        gateway_id,
         now_ms,
         command_id,
         options,
         broadcast,
         expired,
         duplicate);
-    if (ret == 0 && !*duplicate) {
+    return ret;
+}
+
+void app_mesh_command_orchestrator_anchor_commit(
+    struct app_mesh_command_orchestrator *orchestrator,
+    const struct proto_packet *packet,
+    const struct gateway_command_options *options,
+    uint32_t now_ms)
+{
+    if (orchestrator != NULL) {
         app_mesh_gateway_command_flow_anchor_remember(&orchestrator->anchor,
                                                        packet,
                                                        options,
                                                        now_ms);
     }
-    return ret;
 }
 
 int app_mesh_command_orchestrator_anchor_result(

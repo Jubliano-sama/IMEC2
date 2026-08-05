@@ -7,13 +7,22 @@
  * limits so simulations can exercise capacity failures explicitly.
  */
 #define MESH_CONNECTED_MAX_ANCHORS 50u
+/*
+ * The product requirement includes a fleet of at least eighteen clickers.
+ * Gateway source-custody structures must cover that complete fleet at the
+ * same time as the maximum anchor installation; anchor-only cardinalities
+ * are insufficient for gateway-bound reports.
+ */
+#define MESH_CONNECTED_REQUIRED_CLICKERS 18u
+#define MESH_CONNECTED_REQUIRED_SOURCES \
+    (MESH_CONNECTED_MAX_ANCHORS + MESH_CONNECTED_REQUIRED_CLICKERS)
 
 /*
  * The Zephyr report queue owns the nominal entries.  While its immutable head
  * is owned by a sender, one additional report can be held in the explicit
  * custody-recovery reserve without mutating that head.
  */
-#define MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 4u
+#define MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 9u
 #define MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY 1u
 #define MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY \
     (MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH + \

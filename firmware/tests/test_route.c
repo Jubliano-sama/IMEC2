@@ -98,6 +98,48 @@ static void test_epoch_change_invalidates_old_routes(void)
     assert(selected->route_epoch == 2u);
 }
 
+static void test_epoch_serial_order_accepts_wrap_and_rejects_ambiguity(void)
+{
+    struct route_table table;
+    struct route_candidate before_wrap =
+        candidate(0x02u, UINT32_MAX, 1u, 90u, 1000u);
+    struct route_candidate after_wrap =
+        candidate(0x03u, 1u, 1u, 90u, 1001u);
+    struct route_candidate ambiguous =
+        candidate(0x04u, UINT32_C(0x80000001), 1u, 90u, 1002u);
+    struct route_candidate zero_wire_epoch =
+        candidate(0x05u, UINT32_C(0x00010000), 1u, 90u, 1003u);
+
+    route_table_init(&table, UINT32_MAX);
+    assert(route_upsert_candidate(&table, &before_wrap) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &after_wrap) == PROTO_OK);
+    assert(table.current_epoch == 1u);
+    assert(valid_candidate_count(&table) == 1u);
+    assert(route_upsert_candidate(&table, &before_wrap) == PROTO_ERR_STALE);
+    assert(route_upsert_candidate(&table, &ambiguous) == PROTO_ERR_STALE);
+    assert(route_upsert_candidate(&table, &zero_wire_epoch) == PROTO_ERR_ARG);
+}
+
+static void test_last_success_tie_break_survives_uptime_wrap(void)
+{
+    struct route_table table;
+    struct route_candidate before_wrap =
+        candidate(0x02u, 1u, 1u, 90u, UINT32_MAX - 4u);
+    struct route_candidate after_wrap =
+        candidate(0x03u, 1u, 1u, 90u, 3u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &before_wrap) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &after_wrap) == PROTO_OK);
+    table.candidates[0].last_success_ms = UINT32_MAX - 4u;
+    table.candidates[1].last_success_ms = 3u;
+    assert(route_select_best_at(&table, 3u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == after_wrap.next_hop_id);
+}
+
 static void test_age_alone_keeps_selected_route(void)
 {
     struct route_table table;
@@ -267,6 +309,7 @@ static void test_candidate_success_clears_hold_down(void)
     assert(selected->next_hop_id == route.next_hop_id);
     assert(selected->failure_count == 0u);
     assert(selected->hold_down_until_ms == 0u);
+    assert(!selected->hold_down_valid);
     assert(selected->last_success_ms == 2400u);
 }
 
@@ -296,6 +339,7 @@ static void test_rediscovered_candidate_clears_hold_down(void)
     assert(selected->next_hop_id == route.next_hop_id);
     assert(selected->failure_count == 0u);
     assert(selected->hold_down_until_ms == 0u);
+    assert(!selected->hold_down_valid);
     assert(selected->last_seen_ms == 2400u);
     assert(selected->link_quality == 95u);
 }
@@ -331,9 +375,11 @@ static void test_capacity_breaks_equal_cost_tie(void)
     green.relay_capacity_state = RELAY_CAP_GREEN;
     green.capacity_observed_at_ms = 1000u;
     green.capacity_valid_until_ms = 2000u;
+    green.capacity_hint_valid = true;
     yellow.relay_capacity_state = RELAY_CAP_YELLOW;
     yellow.capacity_observed_at_ms = 1000u;
     yellow.capacity_valid_until_ms = 2000u;
+    yellow.capacity_hint_valid = true;
 
     route_table_init(&table, 1u);
     assert(route_upsert_candidate(&table, &yellow) == PROTO_OK);
@@ -354,6 +400,7 @@ static void test_expired_capacity_hint_does_not_invalidate_route(void)
     expired_green.relay_capacity_state = RELAY_CAP_GREEN;
     expired_green.capacity_observed_at_ms = 1000u;
     expired_green.capacity_valid_until_ms = 1500u;
+    expired_green.capacity_hint_valid = true;
     expired_green.channel9_timing_valid = true;
     unknown.relay_capacity_state = RELAY_CAP_UNKNOWN;
     unknown.channel9_timing_valid = true;
@@ -399,6 +446,7 @@ static void test_expired_capacity_update_only_clears_capacity_hint(void)
                                RELAY_CAP_GREEN,
                                4u,
                                1u,
+                               true,
                                2000u,
                                2500u,
                                2501u);
@@ -411,6 +459,7 @@ static void test_expired_capacity_update_only_clears_capacity_hint(void)
     assert(selected->channel9_busy_hint == 0u);
     assert(selected->capacity_observed_at_ms == 0u);
     assert(selected->capacity_valid_until_ms == 0u);
+    assert(!selected->capacity_hint_valid);
     assert(selected->valid);
     assert(selected->channel9_timing_valid);
     assert(selected->failure_count == 0u);
@@ -422,6 +471,83 @@ static void test_expired_capacity_update_only_clears_capacity_hint(void)
     assert(selected->valid);
     assert(selected->channel9_timing_valid);
     assert(selected->failure_count == 0u);
+    assert(selected->hold_down_until_ms == 0u);
+}
+
+static void test_capacity_hint_deadline_zero_is_valid_then_expires(void)
+{
+    const uint32_t observed_at_ms = UINT32_MAX - 9u;
+    struct route_table table;
+    struct route_candidate green =
+        candidate(0x03u, 1u, 1u, 80u, observed_at_ms);
+    struct route_candidate unknown =
+        candidate(0x02u, 1u, 1u, 80u, observed_at_ms);
+    const struct route_candidate *selected;
+
+    green.relay_capacity_state = RELAY_CAP_GREEN;
+    green.capacity_observed_at_ms = observed_at_ms;
+    green.capacity_valid_until_ms = 0u;
+    green.capacity_hint_valid = true;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &unknown) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &green) == PROTO_OK);
+
+    assert(route_select_best_at(&table, 0u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == green.next_hop_id);
+    assert(selected->capacity_hint_valid);
+    assert(selected->capacity_valid_until_ms == 0u);
+
+    assert(route_select_best_at(&table, 1u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == unknown.next_hop_id);
+}
+
+static void test_parent_hold_down_deadline_zero_survives_uptime_wrap(void)
+{
+    const uint32_t fourth_failure_ms =
+        UINT32_MAX - ROUTE_PARENT_HOLDDOWN_MS + 1u;
+    struct route_table table;
+    struct route_candidate route =
+        candidate(0x02u, 1u, 1u, 90u, fourth_failure_ms - 3u);
+    const struct route_candidate *held;
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &route) == PROTO_OK);
+
+    assert(route_record_failure_at(&table,
+                                   ROUTE_FAILURE_GATEWAY_ACK,
+                                   fourth_failure_ms - 3u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table,
+                                   ROUTE_FAILURE_GATEWAY_ACK,
+                                   fourth_failure_ms - 2u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table,
+                                   ROUTE_FAILURE_GATEWAY_ACK,
+                                   fourth_failure_ms - 1u) ==
+           ROUTE_DELIVERY_RETRY_CURRENT);
+    assert(route_record_failure_at(&table,
+                                   ROUTE_FAILURE_GATEWAY_ACK,
+                                   fourth_failure_ms) ==
+           ROUTE_DELIVERY_DISCOVER);
+
+    held = &table.candidates[0];
+    assert(held->hold_down_valid);
+    assert(held->hold_down_until_ms == 0u);
+    assert(route_selected(&table) == NULL);
+    assert(route_select_best_at(&table, UINT32_MAX) == PROTO_ERR_NOT_FOUND);
+    assert(held->hold_down_valid);
+
+    assert(route_select_best_at(&table, 0u) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == route.next_hop_id);
+    assert(!selected->hold_down_valid);
     assert(selected->hold_down_until_ms == 0u);
 }
 
@@ -439,6 +565,8 @@ int main(void)
     test_weighted_cost_avoids_unusable_direct_route();
     test_same_hop_uses_link_quality();
     test_epoch_change_invalidates_old_routes();
+    test_epoch_serial_order_accepts_wrap_and_rejects_ambiguity();
+    test_last_success_tie_break_survives_uptime_wrap();
     test_age_alone_keeps_selected_route();
     test_age_alone_keeps_all_routes_selectable();
     test_success_refreshes_selected_route_age();
@@ -451,6 +579,8 @@ int main(void)
     test_capacity_breaks_equal_cost_tie();
     test_expired_capacity_hint_does_not_invalidate_route();
     test_expired_capacity_update_only_clears_capacity_hint();
+    test_capacity_hint_deadline_zero_is_valid_then_expires();
+    test_parent_hold_down_deadline_zero_survives_uptime_wrap();
     test_retry_backoff_values();
     return 0;
 }

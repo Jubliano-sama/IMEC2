@@ -129,13 +129,13 @@ class SurveyParameterPartitionProperties(unittest.TestCase):
             "survey ID": ("survey_id", (0, 0x1_0000_0000)),
             "duration": ("duration_ms", (0, 0x1_0000_0000)),
             "discovery slot count": ("discovery_slot_count", (0, 51)),
-            "sample count": ("sample_count", (0, 1001)),
+            "sample count": ("sample_count", (0, 5)),
         }
         for phrase, (field, invalid_values) in partitions.items():
             for value in invalid_values:
                 with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, phrase):
                     build_anchor_discovery_command(**(base | {field: value}))
-        for slots, samples in itertools.product((1, 6, 50), (1, 2, 1000)):
+        for slots, samples in itertools.product((1, 6, 50), (1, 2, 4)):
             command = build_anchor_discovery_command(**(base | {
                 "discovery_slot_count": slots, "sample_count": samples}))
             self.assertGreater(len(command.packet.payload), 0)

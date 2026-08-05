@@ -23,6 +23,9 @@ LOG_MODULE_REGISTER(app_watchdog, LOG_LEVEL_INF);
 BUILD_ASSERT(APP_WATCHDOG_PROGRESS_LEASE_MS + APP_WATCHDOG_CHECK_MS <
              APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
              "watchdog lease must expire before the hardware timeout");
+BUILD_ASSERT(APP_WATCHDOG_INIT_RETRY_DELAY_MS <
+             APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
+             "watchdog initialization retry must remain bounded");
 
 static const struct device *const watchdog_device =
     DEVICE_DT_GET_OR_NULL(DT_NODELABEL(wdt0));
@@ -30,6 +33,10 @@ static struct k_timer watchdog_timer;
 static struct k_work_delayable system_progress_work;
 static atomic_t system_progress_ms;
 static atomic_t radio_progress_ms;
+static atomic_t clicker_action_generation_counter;
+static atomic_t clicker_action_active_generation;
+static atomic_t clicker_action_progress_generation;
+static atomic_t clicker_action_progress_ms;
 static atomic_t feeding_stopped;
 static uint32_t startup_grace_until_ms;
 static bool stale_reported;
@@ -108,8 +115,14 @@ static void watchdog_timer_handler(struct k_timer *timer)
     uint32_t now_ms = k_uptime_get_32();
     uint32_t system_age_ms;
     uint32_t radio_age_ms;
+    uint32_t clicker_action_age_ms;
+    uint32_t clicker_action_generation_before;
+    uint32_t clicker_action_generation_after;
+    uint32_t clicker_action_progress_generation_value;
+    uint32_t clicker_action_progress_ms_value;
     bool system_stale;
     bool radio_stale;
+    bool clicker_action_stale;
 
     ARG_UNUSED(timer);
 
@@ -120,20 +133,41 @@ static void watchdog_timer_handler(struct k_timer *timer)
     }
     system_age_ms = lease_age_ms(now_ms, &system_progress_ms);
     radio_age_ms = lease_age_ms(now_ms, &radio_progress_ms);
+    clicker_action_generation_before =
+        (uint32_t)atomic_get(&clicker_action_active_generation);
+    clicker_action_progress_generation_value =
+        (uint32_t)atomic_get(&clicker_action_progress_generation);
+    clicker_action_progress_ms_value =
+        (uint32_t)atomic_get(&clicker_action_progress_ms);
+    clicker_action_generation_after =
+        (uint32_t)atomic_get(&clicker_action_active_generation);
+    clicker_action_age_ms =
+        (uint32_t)(now_ms - clicker_action_progress_ms_value);
     system_stale = system_age_ms > APP_WATCHDOG_PROGRESS_LEASE_MS;
     radio_stale = radio_lease_required() &&
                   radio_age_ms > APP_WATCHDOG_PROGRESS_LEASE_MS;
+    clicker_action_stale = app_watchdog_action_lease_stale(
+        clicker_action_generation_before,
+        clicker_action_generation_after,
+        clicker_action_progress_generation_value,
+        now_ms,
+        clicker_action_progress_ms_value,
+        APP_WATCHDOG_PROGRESS_LEASE_MS);
     if ((int32_t)(now_ms - startup_grace_until_ms) < 0) {
         system_stale = false;
         radio_stale = false;
+        clicker_action_stale = false;
     }
-    if (system_stale || radio_stale) {
+    if (system_stale || radio_stale || clicker_action_stale) {
         if (!stale_reported) {
-            LOG_ERR("watchdog progress stale: system_age_ms=%u radio_age_ms=%u system_stale=%u radio_stale=%u lease_ms=%u",
+            LOG_ERR("watchdog progress stale: system_age_ms=%u radio_age_ms=%u clicker_action_age_ms=%u clicker_action_generation=%u system_stale=%u radio_stale=%u clicker_action_stale=%u lease_ms=%u",
                     system_age_ms,
                     radio_age_ms,
+                    clicker_action_age_ms,
+                    clicker_action_generation_before,
                     system_stale ? 1u : 0u,
                     radio_stale ? 1u : 0u,
+                    clicker_action_stale ? 1u : 0u,
                     APP_WATCHDOG_PROGRESS_LEASE_MS);
             stale_reported = true;
         }
@@ -143,12 +177,17 @@ static void watchdog_timer_handler(struct k_timer *timer)
         if (radio_stale && watchdog_health.stale_radio_leases < UINT32_MAX) {
             watchdog_health.stale_radio_leases++;
         }
+        if (clicker_action_stale &&
+            watchdog_health.stale_clicker_action_leases < UINT32_MAX) {
+            watchdog_health.stale_clicker_action_leases++;
+        }
         return;
     }
     if (stale_reported) {
-        LOG_INF("watchdog progress recovered: system_age_ms=%u radio_age_ms=%u",
+        LOG_INF("watchdog progress recovered: system_age_ms=%u radio_age_ms=%u clicker_action_age_ms=%u",
                 system_age_ms,
-                radio_age_ms);
+                radio_age_ms,
+                clicker_action_age_ms);
         stale_reported = false;
     }
     if (inherited_reload_request_mask != 0u) {
@@ -185,6 +224,10 @@ int app_watchdog_init(void)
     (void)hwinfo_clear_reset_cause();
     atomic_set(&system_progress_ms, (atomic_val_t)now_ms);
     atomic_set(&radio_progress_ms, (atomic_val_t)now_ms);
+    atomic_clear(&clicker_action_generation_counter);
+    atomic_clear(&clicker_action_active_generation);
+    atomic_clear(&clicker_action_progress_generation);
+    atomic_set(&clicker_action_progress_ms, (atomic_val_t)now_ms);
     atomic_clear(&feeding_stopped);
     stale_reported = false;
     startup_grace_until_ms = now_ms + APP_WATCHDOG_STARTUP_GRACE_MS;
@@ -265,6 +308,57 @@ int app_watchdog_init(void)
 void app_watchdog_note_radio_progress(void)
 {
     atomic_set(&radio_progress_ms, (atomic_val_t)k_uptime_get_32());
+}
+
+uint32_t app_watchdog_clicker_action_begin(void)
+{
+    uint32_t generation;
+    uint32_t now_ms;
+
+    if (atomic_get(&clicker_action_active_generation) != 0) {
+        return 0u;
+    }
+    do {
+        generation =
+            (uint32_t)atomic_inc(&clicker_action_generation_counter) + 1u;
+    } while (generation == 0u);
+
+    now_ms = k_uptime_get_32();
+    atomic_set(&clicker_action_progress_ms, (atomic_val_t)now_ms);
+    atomic_set(&clicker_action_progress_generation,
+               (atomic_val_t)generation);
+    if (!atomic_cas(&clicker_action_active_generation,
+                    0,
+                    (atomic_val_t)generation)) {
+        return 0u;
+    }
+    return generation;
+}
+
+bool app_watchdog_note_clicker_action_progress(uint32_t generation)
+{
+    if (generation == 0u ||
+        (uint32_t)atomic_get(&clicker_action_active_generation) !=
+            generation) {
+        return false;
+    }
+
+    atomic_set(&clicker_action_progress_ms,
+               (atomic_val_t)k_uptime_get_32());
+    atomic_set(&clicker_action_progress_generation,
+               (atomic_val_t)generation);
+    return (uint32_t)atomic_get(&clicker_action_active_generation) ==
+           generation;
+}
+
+bool app_watchdog_clicker_action_end(uint32_t generation)
+{
+    if (generation == 0u) {
+        return false;
+    }
+    return atomic_cas(&clicker_action_active_generation,
+                      (atomic_val_t)generation,
+                      0);
 }
 
 void app_watchdog_stop_feeding(void)

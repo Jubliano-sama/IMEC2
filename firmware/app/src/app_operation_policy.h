@@ -18,15 +18,24 @@ extern "C" {
      APP_OPERATION_POLICY_DISCOVERY_MASK | \
      APP_OPERATION_POLICY_PAIR_MASK)
 
+struct app_operation_policy_candidate {
+    struct operation_policy_set updates;
+    struct operation_policy_set resolved;
+};
+
 /*
  * The active profile is RAM-only. A gateway Here-I-Am replaces the complete
  * profile, while operation packets may refresh only the family they use.
  */
 void app_operation_policy_reset_defaults(void);
-int app_operation_policy_apply_payload(const uint8_t *payload,
-                                       size_t payload_len,
-                                       uint8_t required_mask,
-                                       struct operation_policy_set *accepted);
+int app_operation_policy_prepare_payload(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint8_t required_mask,
+    uint8_t allowed_mask,
+    struct app_operation_policy_candidate *candidate);
+void app_operation_policy_commit_prepared(
+    const struct app_operation_policy_candidate *candidate);
 int app_operation_policy_install(const struct operation_policy_set *set,
                                  uint8_t required_mask);
 void app_operation_policy_snapshot(struct operation_policy_set *set);

@@ -812,11 +812,12 @@ static int validate_survey_discovery_probe(const struct uwb_survey_discovery_pro
     }
     if (frame->network_id == 0u ||
         frame->survey_id == 0u ||
+        frame->operation_generation == 0u ||
         frame->anchor_id == 0u ||
         frame->slot_count == 0u ||
         frame->slot_count > UWB_DISCOVERY_SLOT_COUNT ||
         frame->anchor_slot >= frame->slot_count ||
-        !flags_valid(frame->flags)) {
+        frame->flags != FLAG_DIAGNOSTIC) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
@@ -1282,10 +1283,11 @@ int uwb_encode_survey_discovery_probe(const struct uwb_survey_discovery_probe_fr
     put_sync_prefix(out, MSG_UWB_SURVEY_DISCOVERY_PROBE);
     proto_put_u32_le(&out[3], frame->network_id);
     proto_put_u32_le(&out[7], frame->survey_id);
-    proto_put_u64_le(&out[11], frame->anchor_id);
-    out[19] = frame->anchor_slot;
-    out[20] = frame->slot_count;
-    out[21] = frame->flags;
+    proto_put_u64_le(&out[11], frame->operation_generation);
+    proto_put_u64_le(&out[19], frame->anchor_id);
+    out[27] = frame->anchor_slot;
+    out[28] = frame->slot_count;
+    out[29] = frame->flags;
     append_crc(out, UWB_SURVEY_DISCOVERY_PROBE_LEN - UWB_FRAME_CRC_LEN);
     *written = UWB_SURVEY_DISCOVERY_PROBE_LEN;
     return PROTO_OK;
@@ -1315,10 +1317,11 @@ int uwb_decode_survey_discovery_probe(const uint8_t *data,
 
     frame->network_id = proto_get_u32_le(&data[3]);
     frame->survey_id = proto_get_u32_le(&data[7]);
-    frame->anchor_id = proto_get_u64_le(&data[11]);
-    frame->anchor_slot = data[19];
-    frame->slot_count = data[20];
-    frame->flags = data[21];
+    frame->operation_generation = proto_get_u64_le(&data[11]);
+    frame->anchor_id = proto_get_u64_le(&data[19]);
+    frame->anchor_slot = data[27];
+    frame->slot_count = data[28];
+    frame->flags = data[29];
     return validate_survey_discovery_probe(frame);
 }
 
@@ -1801,6 +1804,9 @@ int uwb_mesh_frame_encode(uint32_t network_id,
         (packet->dst_id == UWB_MESH_BROADCAST_ID)) {
         return PROTO_ERR_MALFORMED;
     }
+    if (!proto_packet_msg_type_allowed_over_uwb(packet->msg_type)) {
+        return PROTO_ERR_MALFORMED;
+    }
     if (out_cap < UWB_MESH_FRAME_HEADER_LEN + UWB_FRAME_CRC_LEN) {
         return PROTO_ERR_NO_SPACE;
     }
@@ -1826,6 +1832,81 @@ int uwb_mesh_frame_encode(uint32_t network_id,
     proto_put_u16_le(&out[23], (uint16_t)packet_len);
     append_crc(out, total_len - UWB_FRAME_CRC_LEN);
     *written = total_len;
+    return PROTO_OK;
+}
+
+int uwb_mesh_frame_sync_flood_packet_age(uint8_t *frame, size_t frame_len)
+{
+    struct proto_packet packet;
+    const uint8_t *payload = NULL;
+    const uint8_t *flood_age_raw = NULL;
+    uint8_t flood_age_len = 0u;
+    uint8_t *encoded_packet;
+    uint16_t packet_len;
+    size_t payload_len = 0u;
+    uint64_t previous_hop_id;
+    uint64_t next_hop_id;
+    int ret;
+
+    if (frame == NULL ||
+        frame_len < UWB_MESH_FRAME_HEADER_LEN + PACKET_HEADER_LEN +
+                    PACKET_CRC_LEN + UWB_FRAME_CRC_LEN ||
+        frame_len > UWB_MESH_MAX_FRAME_LEN) {
+        return PROTO_ERR_ARG;
+    }
+
+    ret = validate_sync_prefix(frame, frame_len, frame_len, MSG_UWB_MESH);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = verify_crc(frame, frame_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    previous_hop_id = proto_get_u64_le(&frame[7]);
+    next_hop_id = proto_get_u64_le(&frame[15]);
+    packet_len = proto_get_u16_le(&frame[23]);
+    if (previous_hop_id == 0u ||
+        previous_hop_id == next_hop_id ||
+        packet_len !=
+            frame_len - UWB_MESH_FRAME_HEADER_LEN - UWB_FRAME_CRC_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    encoded_packet = &frame[UWB_MESH_FRAME_HEADER_LEN];
+    ret = proto_packet_decode(encoded_packet,
+                              packet_len,
+                              &packet,
+                              &payload,
+                              &payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if ((next_hop_id == UWB_MESH_BROADCAST_ID) !=
+        (packet.dst_id == UWB_MESH_BROADCAST_ID)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_FLOOD_PACKET_AGE_MS,
+                          &flood_age_raw,
+                          &flood_age_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (flood_age_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    /*
+     * All structural and CRC checks complete before the first write, so a
+     * malformed frame is returned byte-for-byte unchanged.
+     */
+    proto_put_u32_le((uint8_t *)flood_age_raw, packet.message_age_ms);
+    append_crc(encoded_packet, packet_len - PACKET_CRC_LEN);
+    append_crc(frame, frame_len - UWB_FRAME_CRC_LEN);
     return PROTO_OK;
 }
 
@@ -1890,6 +1971,9 @@ int uwb_mesh_frame_decode(const uint8_t *data,
         (packet->dst_id == UWB_MESH_BROADCAST_ID)) {
         return PROTO_ERR_MALFORMED;
     }
+    if (!proto_packet_msg_type_allowed_over_uwb(packet->msg_type)) {
+        return PROTO_ERR_MALFORMED;
+    }
     if (decoded_payload_len > payload_cap) {
         return PROTO_ERR_NO_SPACE;
     }
@@ -1926,6 +2010,18 @@ static void epoch_set_from_claim(struct uwb_anchor_epoch *epoch,
     epoch->priority_id = claim->priority_id;
     epoch->nonce = claim->nonce;
     epoch->epoch_ends_at_ms = now_ms + claim->claimed_duration_ms;
+    epoch->wake_train_ends_at_ms =
+        now_ms + claim->wake_train_ends_in_ms;
+    epoch->post_wake_claimed_duration_ms =
+        (uint16_t)(claim->claimed_duration_ms -
+                   claim->wake_train_ends_in_ms);
+    epoch->discovery_after_wake_ms =
+        (uint16_t)(claim->discovery_starts_in_ms -
+                   claim->wake_train_ends_in_ms);
+    epoch->wake_channel = claim->wake_channel;
+    epoch->ranging_channel = claim->ranging_channel;
+    epoch->min_anchor_count = claim->min_anchor_count;
+    epoch->max_anchor_count = claim->max_anchor_count;
     epoch->flags = claim->flags;
 }
 
@@ -1939,6 +2035,42 @@ static bool claim_is_same_epoch(const struct uwb_anchor_epoch *epoch,
            epoch->priority_id == claim->priority_id &&
            epoch->nonce == claim->nonce &&
            epoch->flags == claim->flags;
+}
+
+static bool deadline_within_retransmit_skew(uint32_t expected_ms,
+                                           uint32_t candidate_ms)
+{
+    int32_t delta_ms = (int32_t)(candidate_ms - expected_ms);
+
+    return delta_ms >= -(int32_t)UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS &&
+           delta_ms <= (int32_t)UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS;
+}
+
+static bool claim_retransmission_matches_epoch(
+    const struct uwb_anchor_epoch *epoch,
+    const struct uwb_wake_claim_frame *claim,
+    uint32_t now_ms)
+{
+    uint16_t post_wake_claimed_duration_ms =
+        (uint16_t)(claim->claimed_duration_ms -
+                   claim->wake_train_ends_in_ms);
+    uint16_t discovery_after_wake_ms =
+        (uint16_t)(claim->discovery_starts_in_ms -
+                   claim->wake_train_ends_in_ms);
+
+    return claim->wake_channel == epoch->wake_channel &&
+           claim->ranging_channel == epoch->ranging_channel &&
+           claim->min_anchor_count == epoch->min_anchor_count &&
+           claim->max_anchor_count == epoch->max_anchor_count &&
+           post_wake_claimed_duration_ms ==
+               epoch->post_wake_claimed_duration_ms &&
+           discovery_after_wake_ms == epoch->discovery_after_wake_ms &&
+           deadline_within_retransmit_skew(
+               epoch->wake_train_ends_at_ms,
+               now_ms + claim->wake_train_ends_in_ms) &&
+           deadline_within_retransmit_skew(
+               epoch->epoch_ends_at_ms,
+               now_ms + claim->claimed_duration_ms);
 }
 
 static bool claim_is_same_click_event(const struct uwb_anchor_epoch *epoch,
@@ -2004,7 +2136,12 @@ int uwb_anchor_epoch_consider_claim(struct uwb_anchor_epoch *epoch,
     }
 
     if (claim_is_same_epoch(epoch, claim)) {
-        epoch->epoch_ends_at_ms = now_ms + claim->claimed_duration_ms;
+        if (!claim_retransmission_matches_epoch(epoch, claim, now_ms)) {
+            if (decision != NULL) {
+                *decision = UWB_ANCHOR_CLAIM_REJECTED_MALFORMED;
+            }
+            return PROTO_ERR_MALFORMED;
+        }
         if (decision != NULL) {
             *decision = UWB_ANCHOR_CLAIM_ACCEPTED;
         }

@@ -1,5 +1,6 @@
 #include "app_gateway_command_observability.h"
 #include "app_gateway_survey_observability.h"
+#include "survey.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -197,6 +198,9 @@ static void test_pair_success_failure_and_terminal_counts(void)
         GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
     gateway_command_survey_terminal_outcome(
         scenario.enumerated,
+        2u,
+        true,
+        true,
         scenario.failures,
         GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE,
         &terminal.status,
@@ -208,7 +212,7 @@ static void test_pair_success_failure_and_terminal_counts(void)
     assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 }
 
-static void test_mixed_survey_failures_and_zero_pair_success(void)
+static void test_mixed_survey_failures_and_zero_pair_failure(void)
 {
     struct scenario mixed = {
         .correlation_id = 41u,
@@ -239,6 +243,9 @@ static void test_mixed_survey_failures_and_zero_pair_success(void)
                          GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
     gateway_command_survey_terminal_outcome(
         mixed.enumerated,
+        2u,
+        true,
+        true,
         mixed.failures,
         failure_reason,
         &terminal.status,
@@ -260,13 +267,16 @@ static void test_mixed_survey_failures_and_zero_pair_success(void)
     gateway_command_survey_terminal_outcome(
         one_anchor.enumerated,
         0u,
+        true,
+        true,
+        0u,
         GATEWAY_COMMAND_EVENT_REASON_NONE,
         &terminal.status,
         &terminal.reason);
     terminal.total_count = 0u;
     emit(&one_anchor, &terminal, true, 0);
-    assert(terminal.status == COMMAND_OK);
-    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
+    assert(terminal.status == COMMAND_INTERNAL_ERROR);
+    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 }
 
 static void test_ble_disconnect_backpressure_and_reconnect_snapshot(void)
@@ -452,11 +462,7 @@ static void test_survey_progress_reconstructs_50_reports_and_gates_boundaries(vo
         .emit_if_available = survey_emit,
         .ctx = &fixture,
     };
-    struct survey_gateway_context survey = {
-        .survey_id = 77u,
-        .report_count = SURVEY_GATEWAY_MAX_REPORTS,
-        .pair_count = SURVEY_GATEWAY_MAX_PAIRS,
-    };
+    struct survey_gateway_context survey;
     struct gateway_command_event base = {
         .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
         .command_id = CMD_SURVEY_REACHABILITY,
@@ -464,11 +470,26 @@ static void test_survey_progress_reconstructs_50_reports_and_gates_boundaries(vo
     };
     struct gateway_command_event pair = base;
 
-    for (size_t i = 0u; i < survey.report_count; i++) {
-        survey.reports[i].valid = true;
-        survey.reports[i].anchor_id = UINT64_C(0x8000) + i;
-        survey.reports[i].reverse_next_hop_id = UINT64_C(0x9000) + i;
+    assert(survey_gateway_begin(&survey, 77u, 1u) == PROTO_OK);
+    for (size_t i = 0u; i < SURVEY_GATEWAY_MAX_REPORTS; i++) {
+        const uint64_t anchor_id = UINT64_C(0x8000) + i;
+        const struct survey_gateway_reverse_hint reverse_hint = {
+            .target_id = anchor_id,
+            .next_hop_id = anchor_id,
+            .quality = 100u,
+            .hop_count = 1u,
+            .valid = true,
+        };
+
+        assert(survey_gateway_note_reach_report_with_reverse_hint(
+                   &survey,
+                   survey.survey_id,
+                   anchor_id,
+                   NULL,
+                   0u,
+                   &reverse_hint) == PROTO_OK);
     }
+    survey.pair_count = SURVEY_GATEWAY_MAX_PAIRS;
     app_gateway_survey_observability_reset(&state);
     fixture.blocked = true;
     assert(app_gateway_survey_observability_emit_collection_next(
@@ -559,18 +580,94 @@ static void test_backpressured_pair_start_precedes_pair_success(void)
            fixture.events[1].pair_responder_id);
 }
 
+static void test_topology_completeness_is_independent_terminal_gate(void)
+{
+    const uint64_t anchor_a = UINT64_C(0xa700000000000001);
+    const uint64_t anchor_b = UINT64_C(0xa700000000000002);
+    const uint64_t anchor_c = UINT64_C(0xa700000000000003);
+    const uint64_t anchor_d = UINT64_C(0xa700000000000004);
+    const uint64_t isolated = UINT64_C(0xa700000000000005);
+    const struct survey_reachability_entry a_entries[] = {
+        {.peer_id = anchor_b, .rssi_dbm = -60, .quality = 90u},
+    };
+    const struct survey_reachability_entry c_entries[] = {
+        {.peer_id = anchor_d, .rssi_dbm = -65, .quality = 85u},
+    };
+    const struct {
+        uint64_t anchor_id;
+        const struct survey_reachability_entry *entries;
+        size_t entry_count;
+    } reports[] = {
+        {anchor_a, a_entries, 1u},
+        {anchor_c, c_entries, 1u},
+        {isolated, NULL, 0u},
+    };
+    struct survey_gateway_context context;
+    enum command_status status;
+    enum gateway_command_event_reason reason;
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 2u) == PROTO_OK);
+    for (size_t i = 0u; i < sizeof(reports) / sizeof(reports[0]); i++) {
+        assert(survey_gateway_note_reach_report(
+                   &context,
+                   context.survey_id,
+                   reports[i].anchor_id,
+                   reports[i].entries,
+                   reports[i].entry_count) == PROTO_OK);
+    }
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(context.pair_count == 2u);
+    assert(!context.topology_complete);
+
+    gateway_command_survey_terminal_outcome(
+        context.report_count,
+        context.pair_count,
+        context.pairs_planned,
+        context.topology_complete,
+        0u,
+        GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status,
+        &reason);
+    assert(status == COMMAND_INTERNAL_ERROR);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
+
+    assert(survey_gateway_begin(&context, 0xAABBCCDEu, 2u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report(
+               &context,
+               context.survey_id,
+               anchor_a,
+               a_entries,
+               1u) == PROTO_OK);
+    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
+    assert(context.pair_count == 1u);
+    assert(context.topology_complete);
+
+    gateway_command_survey_terminal_outcome(
+        context.report_count,
+        context.pair_count,
+        context.pairs_planned,
+        context.topology_complete,
+        0u,
+        GATEWAY_COMMAND_EVENT_REASON_NONE,
+        &status,
+        &reason);
+    assert(status == COMMAND_OK);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
+}
+
 int main(void)
 {
     test_enumeration_success_and_duplicate_deduplication();
     test_no_anchor_and_partial_enumeration_terminals();
     test_retry_backoff_and_timeout_are_correlated();
     test_pair_success_failure_and_terminal_counts();
-    test_mixed_survey_failures_and_zero_pair_success();
+    test_mixed_survey_failures_and_zero_pair_failure();
     test_ble_disconnect_backpressure_and_reconnect_snapshot();
     test_progress_backpressure_coalesces_without_irreversible_loss();
     test_50_anchor_1225_pair_flow_control_sweep();
     test_survey_progress_reconstructs_50_reports_and_gates_boundaries();
     test_backpressured_pair_start_precedes_pair_success();
+    test_topology_completeness_is_independent_terminal_gate();
     puts("gateway command observability integration scenarios passed");
     return 0;
 }

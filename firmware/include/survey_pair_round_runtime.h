@@ -48,6 +48,7 @@ enum survey_pair_round_cleanup_outcome {
 struct survey_pair_round_lane {
     struct survey_pair pair;
     uint16_t usable_result_mask;
+    uint16_t responder_usable_mask;
     uint16_t initiator_unusable_mask;
     uint16_t responder_unusable_mask;
     uint8_t plan_pair_index;
@@ -125,8 +126,9 @@ bool survey_pair_round_lane_armed(
 
 /*
  * Demultiplexes one validated sample by the exact survey, ordered endpoints,
- * sample count, and reporter identity. A duplicate returns PROTO_OK with
- * accepted_new set false and cannot mutate another lane.
+ * sample count, and reporter identity. A lower- or equal-priority duplicate
+ * returns PROTO_OK with accepted_new false; a usable responder may return true
+ * when it upgrades an initiator-only sample and cannot mutate another lane.
  */
 int survey_pair_round_runtime_note_sample(
     struct survey_pair_round_runtime *runtime,
@@ -136,6 +138,8 @@ int survey_pair_round_runtime_note_sample(
     bool *accepted_new);
 
 bool survey_pair_round_lane_results_complete(
+    const struct survey_pair_round_lane *lane);
+bool survey_pair_round_lane_preferred_results_complete(
     const struct survey_pair_round_lane *lane);
 bool survey_pair_round_lane_missing_samples_all_unusable(
     const struct survey_pair_round_lane *lane);

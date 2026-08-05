@@ -7,7 +7,12 @@ This workspace is a Zephyr/west firmware tree for the IMEC clicker, anchor, and 
 - `firmware/app/`: Zephyr application, board overlay, DWM3000 port, role-specific runtime.
 - `firmware/tests/`: native C tests.
 - `Documentation/`: architecture, protocols, implementation task list.
-- `archive/old-dw1000-impl/`: historical reference implementation (old DW1000-era code); do not modify.
+
+I like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
+
+Channel both "measure twice, cut once" and "yagni". Fight scope creep. Try to honor the dev's intent in both a minimal and realistic fashion.
+
+The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
 
 ## Build, Test, and Development Commands
 
@@ -66,9 +71,9 @@ Hardware RTT and flash commands must run with direct USB device access. A sandbo
 
 ## Preventing bugs
 
-**Mandatory pre-step**: Before starting any new work, adding code, refactoring, performing file operations, structural changes, or build modifications, read the entire `AGENT_KNOWN_ISSUES_SUMMARY.md`; it is the recommended first pass and intentionally weights contemporary problems more heavily. It is strictly a bug log: its entries are historical evidence, not requirements, design rules, or permission gates. Search or review the full append-only `AGENT_KNOWN_ISSUES.md` for similar subsystem-specific history when relevant. Add every new annoying tool behavior, escaped bug, or corrected root cause as a one-line entry to the full file, never to the summary; update the summary only as a deliberate curation task. Historical entries do not prove that a bug is still present, so verify current code and tests before relying on them.
+**Mandatory pre-step**: Before starting any new work, adding code, refactoring, performing file operations, structural changes, or build modifications, read the entire `AGENT_KNOWN_ISSUES_SUMMARY.md`; it is the recommended first pass and intentionally weights contemporary problems more heavily. It is strictly a bug log: its entries are historical evidence, not requirements. Search or review the full append-only `AGENT_KNOWN_ISSUES.md` for similar subsystem-specific history when relevant. Add every new annoying tool behavior, escaped bug, or corrected root cause as a one-line entry to the full file, never to the summary; update the summary only as a deliberate curation task. Historical entries do not prove that a bug is still present, so verify current code and tests before relying on them.
 
-**Project context for agents**: This is a research experience-sampling system for correlating subjective user clicks with environmental sensors in a real office testbed. A major new capability is automated anchor self-setup (solving network geometry from anchor-to-anchor distances). The single most important property is **robustness** — the system must not stall, lose data, or return incorrect results under any circumstances, including multi-month operation. See the Documentation folder for core requirements and the narrative behind them. You should not edit the files in this folder unless asked. You are allowed to deviate from the requirements in small ways as long as user permission is aquired for each change. Read the narrative and requirements before starting any core work beyond small patches.
+**Project context for agents**: This is a research experience-sampling system for correlating subjective user clicks with environmental sensors in a real office testbed. A major new capability is automated anchor self-setup (solving network geometry from anchor-to-anchor distances), the solving part is not part of the firmware, but a separate well-working project with known and tested input requirements. The single most important property is **robustness** — the system must not stall, lose data, or return incorrect results under any circumstances, including multi-month operation. See the Documentation folder for core requirements and the narrative behind them. You should not edit the files in this folder unless asked. You are allowed to deviate from the requirements in small ways as long as user permission is aquired for each change. Read the narrative and requirements before starting any core work beyond small patches. You are not responsible for every single requirement. For example, 20cm location inaccuracy is inherent to the design, and is not something you should worry about; those tradeoffs have already been made. The same goes for anonymity and showing the question.
 
 ## Long Term Stable Development
 

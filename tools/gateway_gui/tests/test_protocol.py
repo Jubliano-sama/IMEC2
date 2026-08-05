@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from tools.gateway_gui.operation_policy import (
     AssignmentOperationPolicy,
@@ -406,6 +407,11 @@ class ProtocolTests(unittest.TestCase):
         for label, packet_flags, mutation in (
             ("missing ACK", FLAG_COUNT_AS_CLICK, payload),
             (
+                "unrelated route flag",
+                FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK | 0x02,
+                payload,
+            ),
+            (
                 "both modes",
                 FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC,
                 payload,
@@ -625,7 +631,7 @@ class ProtocolTests(unittest.TestCase):
             )
 
     def test_gateway_command_budget_is_optional_and_shared_by_all_workflows(self) -> None:
-        common = {
+        common: dict[str, Any] = {
             "host_id": DEFAULT_HOST_ID,
             "gateway_id": 0xAABBCCDDEEFF0011,
             "session_id": 1,
@@ -669,15 +675,15 @@ class ProtocolTests(unittest.TestCase):
             15000,
         )
 
-        maximum = {**common, "command_budget_ms": 600000}
+        maximum = {**common, "command_budget_ms": 900000}
         self.assertEqual(
             build_assign_discovery_slots_command(**maximum).packet.value(
                 TLV_COMMAND_BUDGET_MS
             ),
-            600000,
+            900000,
         )
 
-        for invalid in (999, 600001):
+        for invalid in (999, 900001):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(ValueError, "command budget"):
                     build_here_i_am_command(**{**common, "command_budget_ms": invalid})
@@ -690,7 +696,7 @@ class ProtocolTests(unittest.TestCase):
             ),
             pair=PairOperationPolicy(1, 8),
         )
-        common = {
+        common: dict[str, Any] = {
             "host_id": DEFAULT_HOST_ID,
             "gateway_id": 0xAABBCCDDEEFF0011,
             "operation_policy": profile,
@@ -842,6 +848,48 @@ class ProtocolTests(unittest.TestCase):
 
         malformed = parse_tlvs(tlv(TLV_DISCOVERY_ASSIGNMENT_TABLE, b"\x00" * 16))[0]
         self.assertIn("non-empty multiple of 17 bytes", malformed.decode_error or "")
+
+    def test_protocol_identity_tlvs_decode_only_exact_wire_shapes(self) -> None:
+        wire_shapes = (
+            (0xB1, "DISCOVERY_ASSIGNMENT_SCHEME_VERSION", b"\x02"),
+            (
+                0xB2,
+                "DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT",
+                bytes(range(32)),
+            ),
+            (
+                0xB6,
+                "SURVEY_OPERATION_GENERATION",
+                (0x1122334455667788).to_bytes(8, "little"),
+            ),
+            (
+                0xB7,
+                "SURVEY_ROUND_COMMITMENT",
+                bytes(reversed(range(32))),
+            ),
+            (
+                0xB8,
+                "MESH_ACK_SEMANTIC_IDENTITY",
+                (
+                    (0xAABBCCDD).to_bytes(4, "little")
+                    + (0x1234).to_bytes(2, "little")
+                    + bytes(range(32))
+                ),
+            ),
+        )
+
+        for type_id, expected_name, raw in wire_shapes:
+            with self.subTest(type_id=f"0x{type_id:02x}"):
+                decoded = parse_tlvs(tlv(type_id, raw))[0]
+                self.assertTrue(decoded.known)
+                self.assertEqual(decoded.name, expected_name)
+                self.assertIsNone(decoded.decode_error)
+
+                for malformed_raw in (raw[:-1], raw + b"\x00"):
+                    malformed = parse_tlvs(tlv(type_id, malformed_raw))[0]
+                    self.assertTrue(malformed.known)
+                    self.assertEqual(malformed.name, expected_name)
+                    self.assertIsNotNone(malformed.decode_error)
 
     def test_cir_is_one_complex_sample_not_a_trace(self) -> None:
         decoded = decode_cir_sample(b"\x01\x00\x00\xfe\xff\xff")

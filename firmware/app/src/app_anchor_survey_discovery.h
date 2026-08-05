@@ -19,10 +19,11 @@ struct app_anchor_survey_discovery_ops {
     void (*abort_pair)(void);
     void (*preempt_radio)(uint32_t survey_id);
     enum app_anchor_survey_discovery_admission (*admit_start)(
-        uint32_t survey_id);
-    void (*queue_start)(const struct survey_discovery_config *config,
-                        uint32_t start_ms);
-    void (*schedule_work_ms)(uint32_t delay_ms);
+        const struct survey_discovery_config *config);
+    int (*queue_start)(const struct survey_discovery_config *config,
+                       uint32_t start_ms,
+                       uint32_t delay_ms);
+    int (*schedule_work_ms)(uint32_t delay_ms);
     uint16_t (*next_sequence)(void);
     void (*seed_sequence)(uint16_t observed_sequence);
 };
@@ -36,16 +37,21 @@ void app_anchor_survey_discovery_handle_start(
     size_t payload_len);
 int app_anchor_survey_discovery_run(
     const struct survey_discovery_config *config,
-    uint32_t start_ms);
+    uint32_t start_ms,
+    bool *functional_radio_outcome);
 int app_anchor_survey_discovery_stage_empty_report(
     const struct survey_discovery_config *config,
     uint32_t start_ms);
 int app_anchor_survey_discovery_retry_report(void);
-bool app_anchor_survey_discovery_report_staged(uint32_t survey_id);
-void app_anchor_survey_delivery_gateway_confirmed(
-    const struct proto_packet *packet);
-void app_anchor_survey_delivery_transport_released(
+int app_anchor_survey_discovery_report_custody_status(
+    uint64_t operation_generation);
+bool app_anchor_survey_discovery_report_staged(uint32_t operation_session_id);
+int app_anchor_survey_delivery_gateway_confirmed(
     const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+int app_anchor_survey_delivery_transport_released(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
     bool preempted);
 
 #endif

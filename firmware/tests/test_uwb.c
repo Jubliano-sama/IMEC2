@@ -566,6 +566,7 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     const struct uwb_survey_discovery_probe_frame survey_probe = {
         .network_id = claim.network_id,
         .survey_id = 0xAABBCCDDu,
+        .operation_generation = UINT64_C(0x00000001AABBCCDD),
         .anchor_id = UINT64_C(0xAA00000000000004),
         .anchor_slot = 8u,
         .slot_count = UWB_DISCOVERY_SLOT_COUNT,
@@ -765,6 +766,8 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(uwb_decode_survey_discovery_probe(buf, written, &decoded_survey_probe) == PROTO_OK);
     assert(decoded_survey_probe.network_id == survey_probe.network_id);
     assert(decoded_survey_probe.survey_id == survey_probe.survey_id);
+    assert(decoded_survey_probe.operation_generation ==
+           survey_probe.operation_generation);
     assert(decoded_survey_probe.anchor_id == survey_probe.anchor_id);
     assert(decoded_survey_probe.anchor_slot == survey_probe.anchor_slot);
     assert(decoded_survey_probe.slot_count == survey_probe.slot_count);
@@ -1037,6 +1040,7 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
     const struct uwb_survey_discovery_probe_frame survey_probe = {
         .network_id = claim.network_id,
         .survey_id = 0xAABBCCDDu,
+        .operation_generation = UINT64_C(0x00000001AABBCCDD),
         .anchor_id = UINT64_C(0xAA00000000000004),
         .anchor_slot = 8u,
         .slot_count = UWB_DISCOVERY_SLOT_COUNT,
@@ -1097,7 +1101,7 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
 
     assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
            PROTO_OK);
-    buf[19] = UWB_DISCOVERY_SLOT_COUNT;
+    memset(&buf[11], 0, sizeof(uint64_t));
     refresh_frame_crc(buf, written);
     assert(uwb_decode_survey_discovery_probe(buf,
                                              written,
@@ -1106,7 +1110,25 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
 
     assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
            PROTO_OK);
-    buf[20] = 0u;
+    buf[29] = FLAG_GATEWAY_ACK_REQUIRED;
+    refresh_frame_crc(buf, written);
+    assert(uwb_decode_survey_discovery_probe(buf,
+                                             written,
+                                             &(struct uwb_survey_discovery_probe_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
+           PROTO_OK);
+    buf[27] = UWB_DISCOVERY_SLOT_COUNT;
+    refresh_frame_crc(buf, written);
+    assert(uwb_decode_survey_discovery_probe(buf,
+                                             written,
+                                             &(struct uwb_survey_discovery_probe_frame){0}) ==
+           PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
+           PROTO_OK);
+    buf[28] = 0u;
     refresh_frame_crc(buf, written);
     assert(uwb_decode_survey_discovery_probe(buf,
                                              written,
@@ -1481,6 +1503,67 @@ static void test_anchor_epoch_refreshes_repeated_same_attempt_claim(void)
     assert(epoch.epoch_ends_at_ms == 2365u);
 }
 
+static void test_anchor_epoch_rejects_conflicting_same_attempt_claim(void)
+{
+    struct uwb_anchor_epoch epoch = {0};
+    struct uwb_wake_claim_frame first = wake_claim();
+    struct uwb_wake_claim_frame conflicting;
+    enum uwb_anchor_claim_decision decision;
+    uint32_t original_end_ms;
+
+    first.wake_train_ends_in_ms = 430u;
+    first.discovery_starts_in_ms = 430u;
+    first.claimed_duration_ms = 1365u;
+    assert(uwb_anchor_epoch_consider_claim(&epoch, &first, 1000u, &decision) ==
+           PROTO_OK);
+    original_end_ms = epoch.epoch_ends_at_ms;
+
+    conflicting = first;
+    conflicting.max_anchor_count--;
+    assert(uwb_anchor_epoch_consider_claim(&epoch,
+                                           &conflicting,
+                                           1001u,
+                                           &decision) ==
+           PROTO_ERR_MALFORMED);
+    assert(decision == UWB_ANCHOR_CLAIM_REJECTED_MALFORMED);
+    assert(epoch.epoch_ends_at_ms == original_end_ms);
+
+    conflicting = first;
+    conflicting.claimed_duration_ms++;
+    assert(uwb_anchor_epoch_consider_claim(&epoch,
+                                           &conflicting,
+                                           1001u,
+                                           &decision) ==
+           PROTO_ERR_MALFORMED);
+    assert(decision == UWB_ANCHOR_CLAIM_REJECTED_MALFORMED);
+    assert(epoch.epoch_ends_at_ms == original_end_ms);
+
+    conflicting = first;
+    conflicting.discovery_starts_in_ms++;
+    assert(uwb_anchor_epoch_consider_claim(&epoch,
+                                           &conflicting,
+                                           1001u,
+                                           &decision) ==
+           PROTO_ERR_MALFORMED);
+    assert(decision == UWB_ANCHOR_CLAIM_REJECTED_MALFORMED);
+    assert(epoch.epoch_ends_at_ms == original_end_ms);
+
+    conflicting = first;
+    conflicting.wake_train_ends_in_ms +=
+        UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS + 1u;
+    conflicting.discovery_starts_in_ms +=
+        UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS + 1u;
+    conflicting.claimed_duration_ms +=
+        UWB_WAKE_CLAIM_RETRANSMIT_SKEW_MS + 1u;
+    assert(uwb_anchor_epoch_consider_claim(&epoch,
+                                           &conflicting,
+                                           1000u,
+                                           &decision) ==
+           PROTO_ERR_MALFORMED);
+    assert(decision == UWB_ANCHOR_CLAIM_REJECTED_MALFORMED);
+    assert(epoch.epoch_ends_at_ms == original_end_ms);
+}
+
 static void test_anchor_epoch_rejects_same_event_wrong_session_identity(void)
 {
     struct uwb_anchor_epoch epoch = {0};
@@ -1675,7 +1758,55 @@ static void test_uwb_mesh_frame_round_trip_and_filters(void)
                                  frame,
                                  sizeof(frame),
                                  &written) == PROTO_OK);
-    frame[UWB_MESH_FRAME_HEADER_LEN + 2u] = 0x33u;
+    frame[UWB_MESH_FRAME_HEADER_LEN + 2u] = 0x34u;
+    refresh_uwb_mesh_inner_and_outer_crc(frame, written);
+    assert(uwb_mesh_frame_decode(frame,
+                                 written,
+                                 0xAA55u,
+                                 0x20u,
+                                 &previous_hop_id,
+                                 &decoded_packet,
+                                 decoded_payload,
+                                 sizeof(decoded_payload),
+                                 &payload_len) == PROTO_ERR_MALFORMED);
+
+    assert(uwb_mesh_frame_encode(
+               0xAA55u,
+               0x10u,
+               0x20u,
+               &(struct proto_packet) {
+                   .msg_type = MSG_GATEWAY_COMMAND_EVENT,
+                   .src_id = 0x10u,
+                   .dst_id = 0x20u,
+                   .session_id = 1u,
+                   .seq = 1u,
+                   .ttl = 1u,
+                   .payload_len = sizeof(payload),
+               },
+               payload,
+               frame,
+               sizeof(frame),
+               &written) == PROTO_ERR_MALFORMED);
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 0x10u,
+                                 0x20u,
+                                 &packet,
+                                 payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    frame[UWB_MESH_FRAME_HEADER_LEN + 2u] = MSG_GATEWAY_COMMAND_EVENT;
+    refresh_uwb_mesh_inner_and_outer_crc(frame, written);
+    assert(uwb_mesh_frame_decode(frame,
+                                 written,
+                                 0xAA55u,
+                                 0x20u,
+                                 &previous_hop_id,
+                                 &decoded_packet,
+                                 decoded_payload,
+                                 sizeof(decoded_payload),
+                                 &payload_len) == PROTO_ERR_MALFORMED);
+    frame[UWB_MESH_FRAME_HEADER_LEN + 2u] = MSG_ERROR;
     refresh_uwb_mesh_inner_and_outer_crc(frame, written);
     assert(uwb_mesh_frame_decode(frame,
                                  written,
@@ -1724,6 +1855,190 @@ static void test_uwb_mesh_frame_round_trip_and_filters(void)
     assert(previous_hop_id == 0x10u);
     assert(decoded_packet.msg_type == broadcast_packet.msg_type);
     assert(decoded_packet.dst_id == 0u);
+}
+
+static void assert_uwb_mesh_flood_age_sync_round_trip(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t message_age_ms)
+{
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_ROUTE_ADV,
+        .src_id = UINT64_C(0x1010101010101010),
+        .dst_id = UINT64_C(0x2020202020202020),
+        .session_id = 0x30303030u,
+        .seq = 0x4040u,
+        .ttl = 3u,
+        .payload_len = (uint16_t)payload_len,
+        .message_age_ms = message_age_ms,
+    };
+    struct proto_packet decoded_packet = {0};
+    uint8_t source_snapshot[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t decoded_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    const uint8_t *flood_age_raw = NULL;
+    uint8_t flood_age_len = 0u;
+    uint64_t previous_hop_id = 0u;
+    size_t decoded_payload_len = 0u;
+    size_t written = 0u;
+
+    assert(payload != NULL);
+    assert(payload_len <= sizeof(source_snapshot));
+    memcpy(source_snapshot, payload, payload_len);
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 packet.src_id,
+                                 packet.dst_id,
+                                 &packet,
+                                 payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    assert(uwb_mesh_frame_sync_flood_packet_age(frame, written) == PROTO_OK);
+    assert(memcmp(source_snapshot, payload, payload_len) == 0);
+    assert(uwb_mesh_frame_decode(frame,
+                                 written,
+                                 0xAA55u,
+                                 packet.dst_id,
+                                 &previous_hop_id,
+                                 &decoded_packet,
+                                 decoded_payload,
+                                 sizeof(decoded_payload),
+                                 &decoded_payload_len) == PROTO_OK);
+    assert(previous_hop_id == packet.src_id);
+    assert(decoded_packet.message_age_ms == message_age_ms);
+    assert(decoded_payload_len == payload_len);
+    assert(tlv_find_unique(decoded_payload,
+                           decoded_payload_len,
+                           TLV_FLOOD_PACKET_AGE_MS,
+                           &flood_age_raw,
+                           &flood_age_len) == PROTO_OK);
+    assert(flood_age_len == sizeof(uint32_t));
+    assert(proto_get_u32_le(flood_age_raw) == message_age_ms);
+}
+
+static void assert_uwb_mesh_flood_age_sync_rejects_unchanged(
+    uint8_t *frame,
+    size_t frame_len,
+    int expected_ret)
+{
+    uint8_t before[UWB_MESH_MAX_FRAME_LEN];
+
+    assert(frame != NULL);
+    assert(frame_len <= sizeof(before));
+    memcpy(before, frame, frame_len);
+    assert(uwb_mesh_frame_sync_flood_packet_age(frame, frame_len) ==
+           expected_ret);
+    assert(memcmp(before, frame, frame_len) == 0);
+}
+
+static void test_uwb_mesh_frame_syncs_flood_age_and_repairs_crcs(void)
+{
+    uint8_t short_payload[PROTO_TLV_HEADER_LEN + sizeof(uint32_t)];
+    uint8_t extended_payload[PACKET_EXT_LENGTH_SENTINEL + 3u];
+    uint8_t malformed_payload[
+        2u * (PROTO_TLV_HEADER_LEN + sizeof(uint32_t))];
+    uint8_t no_age_payload[] = {0xFEu, 1u, 0xA5u};
+    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_ROUTE_ADV,
+        .src_id = UINT64_C(0x1010101010101010),
+        .dst_id = UINT64_C(0x2020202020202020),
+        .session_id = 0x30303030u,
+        .seq = 0x4040u,
+        .ttl = 3u,
+        .message_age_ms = 0x55667788u,
+    };
+    size_t offset = 0u;
+    size_t written = 0u;
+
+    assert(tlv_append_u32(short_payload,
+                          sizeof(short_payload),
+                          &offset,
+                          TLV_FLOOD_PACKET_AGE_MS,
+                          1u) == PROTO_OK);
+    assert(offset == sizeof(short_payload));
+    assert_uwb_mesh_flood_age_sync_round_trip(
+        short_payload, sizeof(short_payload), 0x11223344u);
+
+    /*
+     * A 250-byte unknown TLV followed by the age TLV crosses the protocol's
+     * extended-length sentinel and exercises its two-byte payload length.
+     */
+    extended_payload[0] = 0xFEu;
+    extended_payload[1] = 250u;
+    memset(&extended_payload[PROTO_TLV_HEADER_LEN], 0xA5, 250u);
+    offset = PROTO_TLV_HEADER_LEN + 250u;
+    assert(tlv_append_u32(extended_payload,
+                          sizeof(extended_payload),
+                          &offset,
+                          TLV_FLOOD_PACKET_AGE_MS,
+                          2u) == PROTO_OK);
+    assert(offset == sizeof(extended_payload));
+    assert(offset >= PACKET_EXT_LENGTH_SENTINEL);
+    assert_uwb_mesh_flood_age_sync_round_trip(
+        extended_payload, sizeof(extended_payload), 0x99AABBCCu);
+
+    offset = 0u;
+    assert(tlv_append_u32(malformed_payload,
+                          sizeof(malformed_payload),
+                          &offset,
+                          TLV_FLOOD_PACKET_AGE_MS,
+                          3u) == PROTO_OK);
+    assert(tlv_append_u32(malformed_payload,
+                          sizeof(malformed_payload),
+                          &offset,
+                          TLV_FLOOD_PACKET_AGE_MS,
+                          4u) == PROTO_OK);
+    packet.payload_len = (uint16_t)offset;
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 packet.src_id,
+                                 packet.dst_id,
+                                 &packet,
+                                 malformed_payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    assert_uwb_mesh_flood_age_sync_rejects_unchanged(
+        frame, written, PROTO_ERR_MALFORMED);
+
+    packet.payload_len = sizeof(no_age_payload);
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 packet.src_id,
+                                 packet.dst_id,
+                                 &packet,
+                                 no_age_payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    assert_uwb_mesh_flood_age_sync_rejects_unchanged(
+        frame, written, PROTO_ERR_NOT_FOUND);
+
+    packet.payload_len = sizeof(short_payload);
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 packet.src_id,
+                                 packet.dst_id,
+                                 &packet,
+                                 short_payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    frame[written - 1u] ^= 0x01u;
+    assert_uwb_mesh_flood_age_sync_rejects_unchanged(
+        frame, written, PROTO_ERR_BAD_CRC);
+
+    assert(uwb_mesh_frame_encode(0xAA55u,
+                                 packet.src_id,
+                                 packet.dst_id,
+                                 &packet,
+                                 short_payload,
+                                 frame,
+                                 sizeof(frame),
+                                 &written) == PROTO_OK);
+    proto_put_u16_le(&frame[23],
+                     (uint16_t)(proto_get_u16_le(&frame[23]) - 1u));
+    refresh_frame_crc(frame, written);
+    assert_uwb_mesh_flood_age_sync_rejects_unchanged(
+        frame, written, PROTO_ERR_MALFORMED);
 }
 
 static void test_uwb_mesh_frame_max_extended_packet(void)
@@ -1907,9 +2222,11 @@ int main(void)
     test_schedule_samples_stop_at_exchange_capacity();
     test_anchor_epoch_arbitrates_and_locks();
     test_anchor_epoch_refreshes_repeated_same_attempt_claim();
+    test_anchor_epoch_rejects_conflicting_same_attempt_claim();
     test_anchor_epoch_rejects_same_event_wrong_session_identity();
     test_claim_precedence_compare_uses_canonical_tuple();
     test_uwb_mesh_frame_round_trip_and_filters();
+    test_uwb_mesh_frame_syncs_flood_age_and_repairs_crcs();
     test_uwb_mesh_frame_max_extended_packet();
     test_anchor_pair_schedule_and_result_round_trip();
     return 0;

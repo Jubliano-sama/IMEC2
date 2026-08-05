@@ -86,6 +86,9 @@ int app_gateway_survey_round_begin(
     }
 
     memset(round, 0, sizeof(*round));
+    memset(round->sample_identities,
+           SURVEY_SAMPLE_OBSERVATION_IDENTITY_INVALID,
+           sizeof(round->sample_identities));
     ret = survey_gateway_plan_pair_rounds(planned_context,
                                           round->metadata,
                                           SURVEY_GATEWAY_MAX_PAIRS,
@@ -253,8 +256,14 @@ int app_gateway_survey_round_note_control_success(
     if (ret != PROTO_OK) {
         return ret;
     }
+    const uint32_t operation_session_id =
+        lane->pair.operation_generation == 0u ?
+            lane->pair.survey_id :
+            survey_operation_session_id(
+                lane->pair.operation_generation);
+
     if (command_id != expected_command || target_id != expected_target ||
-        survey_id != lane->pair.survey_id) {
+        survey_id != operation_session_id) {
         return PROTO_ERR_NOT_FOUND;
     }
 
@@ -316,8 +325,14 @@ int app_gateway_survey_round_note_control_failure(
     if (ret != PROTO_OK) {
         return ret;
     }
+    const uint32_t operation_session_id =
+        control.pair.operation_generation == 0u ?
+            control.pair.survey_id :
+            survey_operation_session_id(
+                control.pair.operation_generation);
+
     if (control.command_id != command_id || control.target_id != target_id ||
-        control.pair.survey_id != survey_id) {
+        operation_session_id != survey_id) {
         return PROTO_ERR_NOT_FOUND;
     }
     ret = survey_pair_round_runtime_require_cleanup(&round->runtime,
@@ -371,6 +386,92 @@ int app_gateway_survey_round_mark_observing_after_go(
     return PROTO_OK;
 }
 
+static bool app_gateway_survey_round_pair_equal(
+    const struct survey_pair *left,
+    const struct survey_pair *right)
+{
+    return left != NULL && right != NULL &&
+           left->operation_generation == right->operation_generation &&
+           left->survey_id == right->survey_id &&
+           left->initiator_id == right->initiator_id &&
+           left->responder_id == right->responder_id &&
+           left->sample_count == right->sample_count;
+}
+
+int app_gateway_survey_round_preflight_sample(
+    const struct app_gateway_survey_round *round,
+    enum survey_pair_round_lane_state admissible_lane_state,
+    uint64_t reporter_id,
+    const struct survey_sample *sample,
+    size_t *lane_index,
+    bool *duplicate)
+{
+    const struct survey_pair_round_lane *matched = NULL;
+    struct survey_sample_observation_identity identity;
+    const struct survey_sample_observation_identity *existing_identity;
+    size_t matched_index = SIZE_MAX;
+    size_t reporter_index;
+    int ret;
+
+    if (round == NULL || sample == NULL || duplicate == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if ((admissible_lane_state != SURVEY_PAIR_ROUND_LANE_ARMED &&
+         admissible_lane_state != SURVEY_PAIR_ROUND_LANE_OBSERVING) ||
+        !round->runtime.active ||
+        sample->round_id != round->runtime.batch_sequence) {
+        return PROTO_ERR_STALE;
+    }
+    if (survey_sample_validate(sample) != PROTO_OK ||
+        sample->pair.sample_count >
+            SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT ||
+        sample->sample_index >=
+            SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT ||
+        (reporter_id != sample->pair.initiator_id &&
+         reporter_id != sample->pair.responder_id)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (uint8_t i = 0u; i < round->runtime.lane_count; i++) {
+        const struct survey_pair_round_lane *candidate =
+            &round->runtime.lanes[i];
+
+        if (candidate->state != admissible_lane_state ||
+            !app_gateway_survey_round_pair_equal(
+                &candidate->pair, &sample->pair)) {
+            continue;
+        }
+        if (matched != NULL) {
+            return PROTO_ERR_MALFORMED;
+        }
+        matched = candidate;
+        matched_index = i;
+    }
+    if (matched == NULL) {
+        return PROTO_ERR_STALE;
+    }
+
+    reporter_index =
+        reporter_id == sample->pair.responder_id ? 1u : 0u;
+    ret = survey_sample_observation_identity_capture(sample, &identity);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    existing_identity =
+        &round->sample_identities[matched_index][reporter_index]
+                                 [sample->sample_index];
+    if (survey_sample_observation_identity_valid(existing_identity) &&
+        !survey_sample_observation_identity_equal(
+            existing_identity, &identity)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (lane_index != NULL) {
+        *lane_index = matched_index;
+    }
+    *duplicate =
+        survey_sample_observation_identity_valid(existing_identity);
+    return PROTO_OK;
+}
+
 int app_gateway_survey_round_note_sample(
     struct app_gateway_survey_round *round,
     uint64_t reporter_id,
@@ -378,17 +479,58 @@ int app_gateway_survey_round_note_sample(
     size_t *lane_index,
     bool *accepted_new)
 {
+    bool duplicate = false;
+    struct survey_sample_observation_identity identity;
+    size_t matched_index = SIZE_MAX;
+    size_t reporter_index;
+    int ret;
+
     if (round == NULL || sample == NULL) {
         return PROTO_ERR_ARG;
     }
     if (round->phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
         return PROTO_ERR_STALE;
     }
-    return survey_pair_round_runtime_note_sample(&round->runtime,
-                                                  reporter_id,
-                                                  sample,
-                                                  lane_index,
-                                                  accepted_new);
+    ret = app_gateway_survey_round_preflight_sample(
+        round,
+        SURVEY_PAIR_ROUND_LANE_OBSERVING,
+        reporter_id,
+        sample,
+        &matched_index,
+        &duplicate);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (lane_index != NULL) {
+        *lane_index = matched_index;
+    }
+    if (duplicate) {
+        if (accepted_new != NULL) {
+            *accepted_new = false;
+        }
+        return PROTO_OK;
+    }
+
+    ret = survey_pair_round_runtime_note_sample(&round->runtime,
+                                                 reporter_id,
+                                                 sample,
+                                                 NULL,
+                                                 NULL);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    reporter_index =
+        reporter_id == sample->pair.responder_id ? 1u : 0u;
+    ret = survey_sample_observation_identity_capture(sample, &identity);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    round->sample_identities[matched_index][reporter_index]
+                            [sample->sample_index] = identity;
+    if (accepted_new != NULL) {
+        *accepted_new = true;
+    }
+    return PROTO_OK;
 }
 
 static void app_gateway_survey_round_update_batch_phase(
@@ -450,6 +592,144 @@ int app_gateway_survey_round_note_cleanup_complete(
     return ret;
 }
 
+int app_gateway_survey_round_begin_termination(
+    struct app_gateway_survey_round *round,
+    const struct survey_pair *active_pair,
+    uint8_t active_cleanup_mask,
+    size_t *active_lane_index)
+{
+    size_t matched_index = SIZE_MAX;
+
+    if (round == NULL ||
+        (active_cleanup_mask &
+         (uint8_t)~SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK) != 0u ||
+        ((active_cleanup_mask == 0u) != (active_pair == NULL))) {
+        return PROTO_ERR_ARG;
+    }
+    if (round->phase == APP_GATEWAY_SURVEY_ROUND_INACTIVE ||
+        round->phase == APP_GATEWAY_SURVEY_ROUND_COMPLETE ||
+        round->phase == APP_GATEWAY_SURVEY_ROUND_TERMINATING ||
+        !round->runtime.active) {
+        return PROTO_ERR_STALE;
+    }
+    if (active_pair != NULL) {
+        for (size_t i = 0u; i < round->runtime.lane_count; i++) {
+            if (!app_gateway_survey_round_pair_equal(
+                    &round->runtime.lanes[i].pair, active_pair)) {
+                continue;
+            }
+            if (matched_index != SIZE_MAX) {
+                return PROTO_ERR_MALFORMED;
+            }
+            matched_index = i;
+        }
+        if (matched_index == SIZE_MAX) {
+            return PROTO_ERR_NOT_FOUND;
+        }
+    }
+
+    /*
+     * Validation above is mutation-free. Once TERMINATING is visible, every
+     * possible remote lease has exact lane custody and normal dispatch can no
+     * longer expose another PREPARE, START, or GO.
+     */
+    round->runtime.pending_rerun_count = 0u;
+    for (size_t i = 0u; i < round->runtime.lane_count; i++) {
+        struct survey_pair_round_lane *lane = &round->runtime.lanes[i];
+        uint8_t cleanup_mask =
+            (uint8_t)(lane->prepared_mask | lane->started_mask);
+
+        if (lane->state == SURVEY_PAIR_ROUND_LANE_CLEANUP) {
+            cleanup_mask |= lane->cleanup_mask;
+        }
+        if (i == matched_index) {
+            cleanup_mask |= active_cleanup_mask;
+        }
+        if (cleanup_mask != 0u) {
+            lane->cleanup_mask = cleanup_mask;
+            lane->cleanup_outcome = SURVEY_PAIR_ROUND_CLEANUP_FAIL;
+            lane->state = SURVEY_PAIR_ROUND_LANE_CLEANUP;
+        } else if (!app_gateway_survey_round_lane_attempt_terminal(lane)) {
+            lane->cleanup_mask = 0u;
+            lane->cleanup_outcome = SURVEY_PAIR_ROUND_CLEANUP_FAIL;
+            lane->state = SURVEY_PAIR_ROUND_LANE_FAILED;
+        }
+    }
+    round->dispatch_lane_index = 0u;
+    round->dispatch_stage = SURVEY_GATEWAY_AUTO_IDLE;
+    round->phase = APP_GATEWAY_SURVEY_ROUND_TERMINATING;
+    if (active_lane_index != NULL) {
+        *active_lane_index = matched_index;
+    }
+    return PROTO_OK;
+}
+
+int app_gateway_survey_round_next_termination_cleanup(
+    const struct app_gateway_survey_round *round,
+    size_t *lane_index,
+    struct survey_pair *pair,
+    uint8_t *cleanup_mask)
+{
+    if (round == NULL || lane_index == NULL ||
+        pair == NULL || cleanup_mask == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (round->phase != APP_GATEWAY_SURVEY_ROUND_TERMINATING ||
+        !round->runtime.active) {
+        return PROTO_ERR_STALE;
+    }
+    for (size_t i = 0u; i < round->runtime.lane_count; i++) {
+        const struct survey_pair_round_lane *lane =
+            &round->runtime.lanes[i];
+
+        if (lane->state != SURVEY_PAIR_ROUND_LANE_CLEANUP ||
+            lane->cleanup_mask == 0u) {
+            continue;
+        }
+        *lane_index = i;
+        *pair = lane->pair;
+        *cleanup_mask = lane->cleanup_mask;
+        return PROTO_OK;
+    }
+    return PROTO_ERR_NOT_FOUND;
+}
+
+int app_gateway_survey_round_note_termination_cleanup_complete(
+    struct app_gateway_survey_round *round,
+    size_t lane_index,
+    uint8_t completed_mask)
+{
+    struct survey_pair_round_lane *lane;
+
+    if (round == NULL || completed_mask == 0u ||
+        (completed_mask &
+         (uint8_t)~SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK) != 0u) {
+        return PROTO_ERR_ARG;
+    }
+    if (round->phase != APP_GATEWAY_SURVEY_ROUND_TERMINATING ||
+        !round->runtime.active ||
+        lane_index >= round->runtime.lane_count) {
+        return PROTO_ERR_STALE;
+    }
+    lane = &round->runtime.lanes[lane_index];
+    if (lane->state != SURVEY_PAIR_ROUND_LANE_CLEANUP ||
+        (completed_mask & (uint8_t)~lane->cleanup_mask) != 0u) {
+        return PROTO_ERR_STALE;
+    }
+    lane->cleanup_mask &= (uint8_t)~completed_mask;
+    if (lane->cleanup_mask == 0u) {
+        lane->state = SURVEY_PAIR_ROUND_LANE_FAILED;
+    }
+    return PROTO_OK;
+}
+
+bool app_gateway_survey_round_terminating(
+    const struct app_gateway_survey_round *round)
+{
+    return round != NULL &&
+           round->phase == APP_GATEWAY_SURVEY_ROUND_TERMINATING;
+}
+
 bool app_gateway_survey_round_batch_complete(
     const struct app_gateway_survey_round *round)
 {
@@ -482,6 +762,9 @@ int app_gateway_survey_round_advance_batch(
     if (ret != PROTO_OK) {
         return ret;
     }
+    memset(round->sample_identities,
+           SURVEY_SAMPLE_OBSERVATION_IDENTITY_INVALID,
+           sizeof(round->sample_identities));
     app_gateway_survey_round_start_dispatch(round);
     if (complete != NULL) {
         *complete = false;

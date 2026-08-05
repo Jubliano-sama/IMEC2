@@ -12,12 +12,17 @@ target_include_directories(app PRIVATE
 
 target_sources(app PRIVATE
     src/main.c
+    ../../src/app_nvs_storage.c
+    ../../src/app_gateway_collection_receipts.c
+    ../../src/app_gateway_terminal_receipts.c
+    ../../src/app_mesh_gateway_command_flow.c
     ../../src/app_mesh_persistence.c
     ../../src/app_mesh_local_delivery.c
     ../../src/app_mesh_preemption.c
     ../../src/app_mesh_result_handoff.c
     ../../../src/debug_log.c
     ../../../src/discovery_assignment.c
+    ../../../src/dwm3000_timing.c
     ../../../src/protocol.c
     ../../../src/gateway_command.c
     ../../../src/gateway_collection_journal.c
@@ -29,4 +34,7 @@ target_sources(app PRIVATE
     ../../../src/mesh_route_path.c
     ../../../src/operation_policy.c
     ../../../src/route.c
+    ../../../src/semantic_digest.c
+    ../../../src/survey.c
+    ../../../src/survey_round_control.c
 )

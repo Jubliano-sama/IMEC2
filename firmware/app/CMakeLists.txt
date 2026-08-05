@@ -86,7 +86,7 @@ set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile")
 set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test")
 set(IMEC_GATEWAY_BLE_RANGE_SCANNER OFF CACHE BOOL "Build the gateway BLE connectivity test as a passive range scanner")
 set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant")
-set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant")
+set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the connected-routing mesh runtime")
 set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker")
 set(IMEC_STACK_DIAGNOSTICS_BUILD OFF CACHE BOOL "Enable exact-preset RTT stack diagnostics")
 set(IMEC_STACK_STRESS_BUILD OFF CACHE BOOL
@@ -109,7 +109,7 @@ if(IMEC_BUILD_PRESET)
     set(IMEC_HIGH_DEBUG ON CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
     set(IMEC_GATEWAY_BLE_CONNECTIVITY_TEST OFF CACHE BOOL "Build only the gateway BLE connectivity test" FORCE)
     set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
-    set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the isolated mesh-routing test firmware variant" FORCE)
+    set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the connected-routing mesh runtime" FORCE)
     set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous synthetic mesh-route TX worker" FORCE)
     set(IMEC_PRESET_ROLE_CONF "")
     if(IMEC_BUILD_PRESET STREQUAL "tag_stage0_highdebug")
@@ -167,6 +167,10 @@ if(IMEC_BUILD_PRESET)
         set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_HIGH_DEBUG OFF CACHE BOOL "Enable high-debug staged bring-up profile" FORCE)
         set(IMEC_PRESET_EXTRA_CONF "mesh-clicker.conf")
+        set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
+            "Build the connected-routing mesh runtime" FORCE)
+        set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Clicker" CACHE STRING
+            "Diagnostic name for connected-routing builds" FORCE)
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
         set(IMEC_DEPLOYABLE_MESH_PRESET ON)
     elseif(IMEC_BUILD_PRESET MATCHES "^ml_anchor_([1-8])$")
@@ -188,7 +192,7 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_BENCH_STAGE 3)
         set(IMEC_PRESET_ROLE_CONF "role-gateway.conf")
         set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
-            "Build the isolated mesh-routing test firmware variant" FORCE)
+            "Build the connected-routing mesh runtime" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Test Gateway" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
@@ -202,7 +206,7 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_BENCH_STAGE 3)
         set(IMEC_PRESET_ROLE_CONF "role-anchor.conf")
         set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
-            "Build the isolated mesh-routing test firmware variant" FORCE)
+            "Build the connected-routing mesh runtime" FORCE)
         set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD ON CACHE BOOL
             "Enable continuous synthetic mesh-route TX worker" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Tx" CACHE STRING
@@ -219,7 +223,7 @@ if(IMEC_BUILD_PRESET)
         set(IMEC_BENCH_STAGE 3)
         set(IMEC_PRESET_ROLE_CONF "role-anchor.conf")
         set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
-            "Build the isolated mesh-routing test firmware variant" FORCE)
+            "Build the connected-routing mesh runtime" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Anchor" CACHE STRING
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_DEVICE_ID "" CACHE STRING
@@ -332,10 +336,17 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_BT_CTLR_DATA_LENGTH_MAX=251\n"
             "CONFIG_BT_LOG_LEVEL_WRN=y\n"
             "CONFIG_IMEC_GATEWAY_BLE=y\n"
+            # The gateway is the flash-constrained production role. Typed RTT
+            # records retain protocol/stack evidence; compile ordinary Zephyr
+            # logs above errors out of this exact preset so safety validators
+            # do not compete with executable flash.
+            "CONFIG_LOG_DEFAULT_LEVEL=1\n"
+            "CONFIG_LOG_MAX_LEVEL=1\n"
             # Typed qualification records use their dedicated RTT channel;
             # keep the lossy deferred application log ring compact enough to
-            # preserve the gateway's required static RAM reserve.
-            "CONFIG_LOG_BUFFER_SIZE=2048\n"
+            # preserve the gateway's required static RAM reserve, including
+            # the full broadcast-command replay commitment.
+            "CONFIG_LOG_BUFFER_SIZE=1536\n"
             # The exact compiler chain for gateway assignment-result encoding
             # is 3152 bytes; retain the required 1024-byte runtime margin plus
             # one alignment step without weakening the global RAM-headroom gate.
@@ -381,14 +392,10 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
-# Production roles freeze at most four concurrent deliveries.  The synthetic
-# transmitter owns four ordinary stress datagrams plus the protocol reserve.
+# Four immutable survey samples (or transmitter stress datagrams) may be
+# admitted together while one protocol-response slot remains available.
 # Keep the pure/native scheduler's wider capacity out of constrained images.
-if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
-    target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=5)
-else()
-    target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=4)
-endif()
+target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=5)
 
 if(FIRMWARE_ROLE STREQUAL "clicker")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=1)
@@ -403,11 +410,15 @@ else()
 endif()
 
 set(IMEC_APP_LOCAL_SOURCES
+    src/app_nvs_storage.c
+    src/app_mesh_route_state_persistence.c
+    src/app_click_event_sequence.c
     src/app_state.c
     src/app_device_identity.c
     src/app_board.c
     src/app_gateway_ble.c
     src/app_gateway_ble_stream.c
+    src/app_gateway_command_result.c
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
     src/app_gateway_survey_observability.c
@@ -416,6 +427,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_eack_retry.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
+    src/app_radio_recovery.c
     src/app_ml.c
     src/app_mesh_test.c
     src/app_mesh_smoke_fast.c
@@ -445,6 +457,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_route_reply_ack.c
     src/app_mesh_route_ready_handoff.c
     src/app_mesh_event_retry.c
+    src/app_mesh_async_route_request.c
     src/app_mesh_route_request_policy.c
     src/app_mesh_route_wait_tx.c
     src/app_mesh_rf_retry.c
@@ -461,15 +474,25 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_anchor_command_completion.c
     src/app_anchor_ranging.c
     src/app_anchor_survey_discovery.c
+    src/app_anchor_survey_result_delivery.c
     src/app_anchor_survey_runtime.c
     src/app_high_debug.c
     src/app_watchdog.c
     src/dwm3000_driver_handler_contract.c
 )
 
+if(FIRMWARE_ROLE STREQUAL "gateway")
+    list(APPEND IMEC_APP_LOCAL_SOURCES
+        src/app_gateway_collection_receipts.c
+        src/app_gateway_terminal_receipts.c)
+endif()
+
 target_sources(app PRIVATE
+    ../src/anchor_range_fragment_policy.c
+    ../src/anchor_range_journal.c
     ../src/node_comm.c
     ../src/node_transaction.c
+    ../src/semantic_digest.c
     ../src/stack_diag_transport.c
     ../src/watchdog_adoption.c
 )
@@ -506,6 +529,7 @@ else()
         ../src/uwb_session.c
         ../src/mesh.c
         ../src/mesh_event_owner.c
+        ../src/mesh_event_owner_registry.c
         ../src/mesh_preemption.c
         ../src/mesh_relay.c
         ../src/mesh_relay_channel9.c

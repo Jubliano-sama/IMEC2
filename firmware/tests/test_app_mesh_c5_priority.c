@@ -782,6 +782,46 @@ static void test_connected_gap_reschedules_immediate_c5_until_ch9_is_close(void)
     assert(app_mesh_c5_connected_gap_reschedule_ms(0u, 20u, 30u) == 0u);
 }
 
+static void test_contact_expiry_uses_state_across_uptime_wrap(void)
+{
+    struct c5_contact_context contact = {
+        .peer_id = 0x1111222233334444ull,
+        .purpose = C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+        .accepted = true,
+        .expires_at_ms = 0u,
+        .state = C5_CONTACT_EXCHANGE_ACTIVE,
+    };
+
+    assert(!app_mesh_c5_contact_expired(&contact, UINT32_MAX));
+    assert(app_mesh_c5_contact_accepted(
+        &contact,
+        contact.peer_id,
+        C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+        UINT32_MAX));
+    assert(!app_mesh_c5_contact_accepted(
+        &contact,
+        contact.peer_id,
+        C5_CONTACT_PURPOSE_ROUTE_REPLY,
+        UINT32_MAX));
+
+    assert(app_mesh_c5_contact_expired(&contact, 0u));
+    assert(!app_mesh_c5_contact_accepted(
+        &contact,
+        contact.peer_id,
+        C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+        0u));
+
+    contact.state = C5_CONTACT_NONE;
+    assert(!app_mesh_c5_contact_expired(&contact, 0u));
+    contact.state = C5_CONTACT_AWAKE_ACCEPTED;
+    contact.accepted = false;
+    assert(!app_mesh_c5_contact_accepted(
+        &contact,
+        contact.peer_id,
+        C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT,
+        UINT32_MAX));
+}
+
 int main(void)
 {
     test_passive_gateway_preempt_defers_background_flood();
@@ -813,5 +853,6 @@ int main(void)
     test_route_reply_window_covers_direct_probe_and_reply_exchange();
     test_connected_gap_window_uses_channel5_until_retune_guard();
     test_connected_gap_reschedules_immediate_c5_until_ch9_is_close();
+    test_contact_expiry_uses_state_across_uptime_wrap();
     return 0;
 }

@@ -1,6 +1,8 @@
 #include "app_mesh_local_delivery.h"
 
+#include "mesh.h"
 #include "protocol.h"
+#include "survey.h"
 
 #include <errno.h>
 #include <stddef.h>
@@ -25,14 +27,147 @@ static uint32_t delivery_checksum(
     return hash;
 }
 
+static bool delivery_source_envelope_matches(
+    const struct proto_packet *packet,
+    const struct proto_packet *expected)
+{
+    return packet != NULL && expected != NULL &&
+           packet->msg_type == expected->msg_type &&
+           packet->flags == expected->flags &&
+           packet->src_id == expected->src_id &&
+           packet->dst_id == expected->dst_id &&
+           packet->session_id == expected->session_id &&
+           packet->seq == expected->seq &&
+           packet->ttl == expected->ttl &&
+           packet->payload_len == expected->payload_len &&
+           packet->message_age_ms == 0u;
+}
+
+static bool delivery_pair_result_valid(const struct mesh_outbound *outbound)
+{
+    struct proto_packet expected = {0};
+    struct survey_sample sample = {0};
+    uint8_t canonical[SURVEY_SAMPLE_TLV_MAX_LEN];
+    size_t canonical_len = 0u;
+
+    if (survey_extract_sample_tlvs(outbound->payload,
+                                   outbound->payload_len,
+                                   &sample) != PROTO_OK ||
+        sample.pair.operation_generation == 0u ||
+        survey_append_sample_tlvs(canonical,
+                                  sizeof(canonical),
+                                  &canonical_len,
+                                  &sample) != PROTO_OK ||
+        canonical_len != outbound->payload_len ||
+        memcmp(canonical, outbound->payload, canonical_len) != 0 ||
+        survey_init_result_packet_from_reporter(
+            &expected,
+            &sample,
+            outbound->packet.src_id,
+            outbound->packet.dst_id,
+            outbound->packet.seq,
+            (uint8_t)canonical_len) != PROTO_OK) {
+        return false;
+    }
+    return delivery_source_envelope_matches(&outbound->packet, &expected);
+}
+
+static bool delivery_discovery_report_valid(
+    const struct mesh_outbound *outbound)
+{
+    struct survey_reachability_entry
+        entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    struct proto_packet expected = {0};
+    const uint8_t *status_raw = NULL;
+    uint8_t canonical[SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN];
+    uint64_t operation_generation = 0u;
+    uint64_t anchor_id = 0u;
+    uint32_t survey_id = 0u;
+    size_t canonical_len = 0u;
+    size_t entry_count = 0u;
+    uint8_t status_len = 0u;
+    uint16_t status;
+
+    if (survey_extract_reach_report_tlvs(
+            outbound->payload,
+            outbound->payload_len,
+            &survey_id,
+            &anchor_id,
+            entries,
+            sizeof(entries) / sizeof(entries[0]),
+            &entry_count) != PROTO_OK ||
+        survey_operation_generation_extract_tlv(
+            outbound->payload,
+            outbound->payload_len,
+            &operation_generation) != PROTO_OK ||
+        operation_generation == 0u ||
+        tlv_find_unique(outbound->payload,
+                        outbound->payload_len,
+                        TLV_COMMAND_STATUS,
+                        &status_raw,
+                        &status_len) != PROTO_OK ||
+        status_len != sizeof(uint16_t)) {
+        return false;
+    }
+    status = proto_get_u16_le(status_raw);
+    if (status > COMMAND_INTERNAL_ERROR ||
+        survey_reachability_report_endpoints_validate(
+            anchor_id,
+            outbound->packet.dst_id,
+            entries,
+            entry_count) != PROTO_OK ||
+        survey_append_reach_report_tlvs(canonical,
+                                        sizeof(canonical),
+                                        &canonical_len,
+                                        survey_id,
+                                        anchor_id,
+                                        entries,
+                                        entry_count) != PROTO_OK ||
+        survey_operation_generation_append_tlv(
+            canonical,
+            sizeof(canonical),
+            &canonical_len,
+            operation_generation) != PROTO_OK ||
+        tlv_append_u16(canonical,
+                       sizeof(canonical),
+                       &canonical_len,
+                       TLV_COMMAND_STATUS,
+                       status) != PROTO_OK ||
+        canonical_len != outbound->payload_len ||
+        memcmp(canonical, outbound->payload, canonical_len) != 0 ||
+        survey_init_discovery_report_packet(
+            &expected,
+            anchor_id,
+            outbound->packet.dst_id,
+            survey_id,
+            operation_generation,
+            outbound->packet.seq,
+            (uint8_t)canonical_len) != PROTO_OK) {
+        return false;
+    }
+    return delivery_source_envelope_matches(&outbound->packet, &expected);
+}
+
 static bool delivery_packet_valid(const struct mesh_outbound *outbound)
 {
-    return outbound != NULL &&
-           outbound->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT &&
-           outbound->packet.src_id != 0u && outbound->packet.dst_id != 0u &&
-           outbound->packet.session_id != 0u && outbound->packet.seq != 0u &&
-           outbound->payload_len == outbound->packet.payload_len &&
-           outbound->payload_len <= sizeof(outbound->payload);
+    bool payload_valid;
+
+    if (outbound == NULL) {
+        return false;
+    }
+    if (outbound->payload_len != outbound->packet.payload_len ||
+        outbound->payload_len == 0u ||
+        outbound->payload_len > sizeof(outbound->payload)) {
+        return false;
+    }
+    if (outbound->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT) {
+        payload_valid = delivery_discovery_report_valid(outbound);
+    } else if (outbound->packet.msg_type == MSG_SURVEY_PAIR_RESULT) {
+        payload_valid = delivery_pair_result_valid(outbound);
+    } else {
+        return false;
+    }
+    return payload_valid;
 }
 
 static int delivery_commit(struct app_mesh_local_delivery *delivery,
@@ -76,7 +211,14 @@ void app_mesh_local_delivery_identity_from_outbound(
         identity->dst_id = outbound->packet.dst_id;
         identity->session_id = outbound->packet.session_id;
         identity->seq = outbound->packet.seq;
+        identity->payload_len = outbound->packet.payload_len;
         identity->msg_type = outbound->packet.msg_type;
+        identity->flags = outbound->packet.flags;
+        identity->semantic_digest_valid = mesh_packet_semantic_digest(
+            &outbound->packet,
+            outbound->payload,
+            outbound->payload_len,
+            identity->semantic_digest);
     }
 }
 
@@ -89,7 +231,56 @@ bool app_mesh_local_delivery_identity_matches(
            identity->dst_id == packet->dst_id &&
            identity->session_id == packet->session_id &&
            identity->seq == packet->seq &&
-           identity->msg_type == packet->msg_type;
+           identity->payload_len == packet->payload_len &&
+           identity->msg_type == packet->msg_type &&
+           identity->flags == packet->flags;
+}
+
+bool app_mesh_local_delivery_identity_matches_semantic(
+    const struct app_mesh_local_delivery_identity *identity,
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    return app_mesh_local_delivery_identity_matches(identity, packet) &&
+           semantic_digest != NULL &&
+           identity->semantic_digest_valid &&
+           semantic_digest_equal(identity->semantic_digest,
+                                 semantic_digest,
+                                 sizeof(identity->semantic_digest));
+}
+
+bool app_mesh_local_delivery_identity_matches_outbound(
+    const struct app_mesh_local_delivery_identity *identity,
+    const struct mesh_outbound *outbound)
+{
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    return identity != NULL && outbound != NULL &&
+           mesh_packet_semantic_digest(&outbound->packet,
+                                       outbound->payload,
+                                       outbound->payload_len,
+                                       semantic_digest) &&
+           app_mesh_local_delivery_identity_matches_semantic(
+               identity, &outbound->packet, semantic_digest);
+}
+
+bool app_mesh_local_delivery_identity_equal(
+    const struct app_mesh_local_delivery_identity *left,
+    const struct app_mesh_local_delivery_identity *right)
+{
+    return left != NULL && right != NULL &&
+           left->src_id == right->src_id &&
+           left->dst_id == right->dst_id &&
+           left->session_id == right->session_id &&
+           left->seq == right->seq &&
+           left->payload_len == right->payload_len &&
+           left->msg_type == right->msg_type &&
+           left->flags == right->flags &&
+           left->semantic_digest_valid &&
+           right->semantic_digest_valid &&
+           semantic_digest_equal(left->semantic_digest,
+                                 right->semantic_digest,
+                                 sizeof(left->semantic_digest));
 }
 
 bool app_mesh_local_delivery_snapshot_valid(
@@ -122,7 +313,7 @@ int app_mesh_local_delivery_stage(struct app_mesh_local_delivery *delivery,
     if (delivery == NULL || !delivery_packet_valid(outbound) || generation == 0u) {
         return -EINVAL;
     }
-    if (app_mesh_local_delivery_active(delivery)) {
+    if (app_mesh_local_delivery_occupied(delivery)) {
         return -EBUSY;
     }
     candidate.version = APP_MESH_LOCAL_DELIVERY_SNAPSHOT_VERSION;
@@ -143,13 +334,8 @@ int app_mesh_local_delivery_restore(
         return -EINVAL;
     }
     if (snapshot->state == APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED) {
-        int ret = delivery->ops.clear == NULL ? -ENOTSUP :
-                  delivery->ops.clear(delivery->ops.ctx);
-
-        if (ret == 0) {
-            memset(&delivery->snapshot, 0, sizeof(delivery->snapshot));
-        }
-        return ret;
+        delivery->snapshot = *snapshot;
+        return app_mesh_local_delivery_cleanup_ack(delivery);
     }
     delivery->snapshot = *snapshot;
     return 0;
@@ -166,14 +352,47 @@ int app_mesh_local_delivery_rebase_after_boot(
         return -ENOENT;
     }
     candidate = delivery->snapshot;
+    /*
+     * Both supported survey result types have durable, non-expiring source
+     * custody. Time spent in NVS or behind another reliable owner is not mesh
+     * transit age, and the stored uptime domain ended at reset. Clear both
+     * timestamps so the transport stamps a fresh queue origin only when this
+     * exact packet is next admitted.
+     */
+    (void)now_ms;
     candidate.outbound.queued_at_ms = 0u;
-    candidate.outbound.earliest_tx_ms = now_ms;
+    candidate.outbound.queued_at_valid = false;
+    candidate.outbound.earliest_tx_ms = 0u;
+    candidate.outbound.earliest_tx_valid = false;
     candidate.checksum = delivery_checksum(&candidate);
     ret = delivery->ops.save == NULL ? -ENOTSUP :
           delivery->ops.save(delivery->ops.ctx, &candidate);
     /* Boot-relative timing is never valid after reset, even if NVS is busy. */
     delivery->snapshot = candidate;
     return ret;
+}
+
+int app_mesh_local_delivery_retire_elapsed_not_before(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t now_ms)
+{
+    struct app_mesh_local_delivery_snapshot candidate;
+
+    if (!app_mesh_local_delivery_active(delivery)) {
+        return -ENOENT;
+    }
+    if (!delivery->snapshot.outbound.earliest_tx_valid) {
+        return 0;
+    }
+    if ((int32_t)(now_ms -
+                  delivery->snapshot.outbound.earliest_tx_ms) < 0) {
+        return -EAGAIN;
+    }
+
+    candidate = delivery->snapshot;
+    candidate.outbound.earliest_tx_ms = 0u;
+    candidate.outbound.earliest_tx_valid = false;
+    return delivery_commit(delivery, &candidate);
 }
 
 int app_mesh_local_delivery_recover(
@@ -201,6 +420,17 @@ int app_mesh_local_delivery_recover(
         ret = app_mesh_local_delivery_restore(delivery, snapshot);
         if (ret == 0) {
             recovery->restored = app_mesh_local_delivery_active(delivery);
+            return 0;
+        }
+        if (app_mesh_local_delivery_ack_committed(delivery)) {
+            /*
+             * Gateway acceptance was already durably committed.  A failed
+             * tombstone is cleanup debt, not a reason to quarantine or replay
+             * the report.  Keep the exact ACK_COMMITTED owner in RAM and ask
+             * the runtime to retry only the delete.
+             */
+            recovery->source_error = ret;
+            recovery->retry_required = true;
             return 0;
         }
         recovery->source_error = ret;
@@ -405,30 +635,49 @@ uint16_t app_mesh_local_delivery_attempts_available(
     return available;
 }
 
-int app_mesh_local_delivery_note_ack(
+int app_mesh_local_delivery_commit_ack(
     struct app_mesh_local_delivery *delivery,
-    const struct proto_packet *packet)
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
     struct app_mesh_local_delivery_identity identity;
     struct app_mesh_local_delivery_snapshot candidate;
     int ret;
 
+    if (app_mesh_local_delivery_ack_committed(delivery)) {
+        app_mesh_local_delivery_identity_from_outbound(
+            &delivery->snapshot.outbound, &identity);
+        return packet != NULL && semantic_digest != NULL &&
+               app_mesh_local_delivery_identity_matches_semantic(
+                   &identity, packet, semantic_digest) ?
+               0 : (packet == NULL || semantic_digest == NULL ?
+                    -EINVAL : -EKEYREJECTED);
+    }
     if (!app_mesh_local_delivery_active(delivery)) {
         return -ENOENT;
     }
-    if (packet == NULL) {
+    if (packet == NULL || semantic_digest == NULL) {
         return -EINVAL;
     }
     app_mesh_local_delivery_identity_from_outbound(&delivery->snapshot.outbound,
                                                    &identity);
-    if (!app_mesh_local_delivery_identity_matches(&identity, packet)) {
+    if (!app_mesh_local_delivery_identity_matches_semantic(
+            &identity, packet, semantic_digest)) {
         return -EKEYREJECTED;
     }
     candidate = delivery->snapshot;
     candidate.state = APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED;
     ret = delivery_commit(delivery, &candidate);
-    if (ret < 0) {
-        return ret;
+    return ret;
+}
+
+int app_mesh_local_delivery_cleanup_ack(
+    struct app_mesh_local_delivery *delivery)
+{
+    int ret;
+
+    if (!app_mesh_local_delivery_ack_committed(delivery)) {
+        return -EINVAL;
     }
     if (delivery->ops.clear == NULL) {
         return -ENOTSUP;
@@ -440,11 +689,44 @@ int app_mesh_local_delivery_note_ack(
     return ret;
 }
 
+int app_mesh_local_delivery_note_ack(
+    struct app_mesh_local_delivery *delivery,
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    int ret = app_mesh_local_delivery_commit_ack(
+        delivery, packet, semantic_digest);
+
+    return ret < 0 ? ret : app_mesh_local_delivery_cleanup_ack(delivery);
+}
+
 int app_mesh_local_delivery_note_failed(
     struct app_mesh_local_delivery *delivery)
 {
     return app_mesh_local_delivery_note_state(delivery,
                                               APP_MESH_LOCAL_DELIVERY_FAILED);
+}
+
+int app_mesh_local_delivery_rearm_attempts(
+    struct app_mesh_local_delivery *delivery)
+{
+    struct app_mesh_local_delivery_snapshot candidate;
+
+    if (!app_mesh_local_delivery_active(delivery) ||
+        delivery->snapshot.state ==
+            APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED ||
+        delivery->snapshot.state ==
+            APP_MESH_LOCAL_DELIVERY_RECOVERY_WAIT ||
+        delivery->snapshot.state ==
+            APP_MESH_LOCAL_DELIVERY_BLOCKED_LIVE ||
+        delivery->snapshot.attempts_remaining != 0u) {
+        return -EINVAL;
+    }
+    candidate = delivery->snapshot;
+    candidate.attempts_remaining =
+        APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS;
+    candidate.state = APP_MESH_LOCAL_DELIVERY_RETRY;
+    return delivery_commit(delivery, &candidate);
 }
 
 int app_mesh_local_delivery_discard_failed(
@@ -476,6 +758,23 @@ bool app_mesh_local_delivery_active(const struct app_mesh_local_delivery *delive
             delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_RECOVERY_WAIT ||
             delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_BLOCKED_LIVE) &&
            delivery->snapshot.state != APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED;
+}
+
+bool app_mesh_local_delivery_occupied(
+    const struct app_mesh_local_delivery *delivery)
+{
+    return app_mesh_local_delivery_active(delivery) ||
+           app_mesh_local_delivery_ack_committed(delivery);
+}
+
+bool app_mesh_local_delivery_ack_committed(
+    const struct app_mesh_local_delivery *delivery)
+{
+    return delivery != NULL &&
+           delivery->snapshot.version ==
+               APP_MESH_LOCAL_DELIVERY_SNAPSHOT_VERSION &&
+           delivery->snapshot.state ==
+               APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED;
 }
 
 const struct mesh_outbound *app_mesh_local_delivery_outbound(

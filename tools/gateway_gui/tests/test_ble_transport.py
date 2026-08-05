@@ -49,6 +49,7 @@ class FakeBleakClient:
         self.is_connected = False
         self.read_uuids: list[str] = []
         self.notify_uuids: list[str] = []
+        self.notify_callback: Any = None
         self.__class__.instances.append(self)
 
     async def connect(self) -> None:
@@ -61,16 +62,28 @@ class FakeBleakClient:
         self.read_uuids.append(uuid)
         return self.identity
 
-    async def start_notify(self, uuid: str, _callback: Any) -> None:
+    async def start_notify(self, uuid: str, callback: Any) -> None:
         self.notify_uuids.append(uuid)
+        self.notify_callback = callback
+
+
+class BlockingBleakClient(FakeBleakClient):
+    connect_started: asyncio.Event
+    connect_release: asyncio.Event
+
+    async def connect(self) -> None:
+        self.connect_started.set()
+        await self.connect_release.wait()
+        self.is_connected = True
 
 
 def transport_model(events: list[dict[str, Any]]) -> BleTransport:
     transport = BleTransport.__new__(BleTransport)
     transport._event_sink = events.append
     transport._client = None
+    transport._connecting_client = None
+    transport._connection_generation = 0
     transport._decoder = GatewayReceiveBuffer()
-    transport._intentional_disconnect = False
     return transport
 
 
@@ -119,11 +132,77 @@ class BleTransportIdentityTests(unittest.TestCase):
         old_client = object()
         current_client = object()
         transport._client = current_client
+        transport._connection_generation = 2
 
-        transport._on_disconnected(old_client)
+        transport._on_disconnected(old_client, 1)
 
         self.assertIs(transport._client, current_client)
         self.assertEqual(events, [])
+
+    def test_concurrent_connect_is_rejected_before_second_client_starts(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        async def exercise() -> None:
+            BlockingBleakClient.connect_started = asyncio.Event()
+            BlockingBleakClient.connect_release = asyncio.Event()
+            first = asyncio.create_task(transport._connect("first", 12.0))
+            await BlockingBleakClient.connect_started.wait()
+            with self.assertRaisesRegex(RuntimeError, "already in progress"):
+                await transport._connect("second", 12.0)
+            BlockingBleakClient.connect_release.set()
+            await first
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(ble_transport, "BleakClient", BlockingBleakClient),
+        ):
+            asyncio.run(exercise())
+
+        self.assertEqual(len(BlockingBleakClient.instances), 1)
+        self.assertEqual(transport._client.target, "first")
+        self.assertEqual(
+            [
+                event["state"]
+                for event in events
+                if event["kind"] == "connection_state"
+            ],
+            ["connecting", "connected"],
+        )
+
+    def test_stale_notification_is_ignored_after_reconnect(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        async def exercise() -> tuple[Any, Any]:
+            await transport._connect("first", 12.0)
+            first = FakeBleakClient.instances[-1]
+            await transport._disconnect()
+            await transport._connect("second", 12.0)
+            second = FakeBleakClient.instances[-1]
+            return first.notify_callback, second.notify_callback
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(ble_transport, "BleakClient", FakeBleakClient),
+        ):
+            stale_callback, current_callback = asyncio.run(exercise())
+
+        events.clear()
+        stale_callback(None, bytearray(b"\x00"))
+        self.assertEqual(events, [])
+
+        current_callback(None, bytearray(b"\x00"))
+        self.assertEqual([event["kind"] for event in events], ["transport_error"])
+
+    def test_worker_events_capture_immutable_receive_time(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        with patch.object(ble_transport.time, "monotonic", return_value=12.5):
+            transport._emit("packet", packet=object())
+
+        self.assertEqual(events[0]["received_at"], 12.5)
 
 
 if __name__ == "__main__":

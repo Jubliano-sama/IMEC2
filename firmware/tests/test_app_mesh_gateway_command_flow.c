@@ -7,7 +7,9 @@
 #define GATEWAY_ID UINT64_C(0x9000)
 #define ANCHOR_ID UINT64_C(0xa100)
 
-static size_t broadcast_command_payload(uint8_t *payload, size_t payload_cap)
+static size_t broadcast_command_payload(uint8_t *payload,
+                                        size_t payload_cap,
+                                        enum command_scope scope)
 {
     size_t payload_len = 0u;
 
@@ -19,7 +21,7 @@ static size_t broadcast_command_payload(uint8_t *payload, size_t payload_cap)
                          payload_cap,
                          &payload_len,
                          TLV_COMMAND_SCOPE,
-                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+                         scope) == PROTO_OK);
     assert(tlv_append_u8(payload,
                          payload_cap,
                          &payload_len,
@@ -47,6 +49,7 @@ static void test_prepare_anchor_receive_and_result_identity(void)
         .session_id = 17u,
         .seq = 61u,
     };
+    struct proto_packet wrong_source;
     struct app_mesh_gateway_command_flow flow;
     struct app_mesh_gateway_command_anchor_state anchor_state = {0};
     struct gateway_command_options options;
@@ -58,7 +61,9 @@ static void test_prepare_anchor_receive_and_result_identity(void)
     bool expired;
     bool duplicate;
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    size_t payload_len = broadcast_command_payload(payload, sizeof(payload));
+    size_t payload_len = broadcast_command_payload(payload,
+                                                   sizeof(payload),
+                                                   CMD_SCOPE_ALL_HEARD);
 
     command.payload_len = (uint16_t)payload_len;
     assert(app_mesh_gateway_command_flow_prepare(&command,
@@ -72,11 +77,26 @@ static void test_prepare_anchor_receive_and_result_identity(void)
     assert(flow.outbound.packet.dst_id == MESH_BROADCAST_ID);
     assert(flow.outbound.next_hop_id == MESH_BROADCAST_ID);
 
+    wrong_source = flow.outbound.packet;
+    wrong_source.src_id = ANCHOR_ID;
+    assert(app_mesh_gateway_command_flow_anchor_receive(
+               &anchor_state,
+               &wrong_source,
+               flow.outbound.payload,
+               flow.outbound.payload_len,
+               GATEWAY_ID,
+               100u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_ERR_STALE);
     assert(app_mesh_gateway_command_flow_anchor_receive(
                &anchor_state,
                &flow.outbound.packet,
                flow.outbound.payload,
                flow.outbound.payload_len,
+               GATEWAY_ID,
                101u,
                &command_id,
                &options,
@@ -96,6 +116,7 @@ static void test_prepare_anchor_receive_and_result_identity(void)
                &flow.outbound.packet,
                flow.outbound.payload,
                flow.outbound.payload_len,
+               GATEWAY_ID,
                102u,
                &command_id,
                &options,
@@ -128,6 +149,102 @@ static void test_prepare_anchor_receive_and_result_identity(void)
     assert(reason == 0u);
 }
 
+static void test_anchor_receive_rejects_unsupported_group_scope(void)
+{
+    struct app_mesh_gateway_command_anchor_state anchor_state = {0};
+    struct gateway_command_options options;
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 17u,
+        .seq = 61u,
+    };
+    enum command_id command_id = CMD_VENDOR_BASE;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = broadcast_command_payload(payload,
+                                                   sizeof(payload),
+                                                   CMD_SCOPE_GROUP);
+    bool broadcast = false;
+    bool expired = false;
+    bool duplicate = false;
+
+    command.payload_len = (uint16_t)payload_len;
+    assert(app_mesh_gateway_command_flow_anchor_receive(
+               &anchor_state,
+               &command,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               101u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_ERR_MALFORMED);
+}
+
+static void test_result_decoder_rejects_conflicting_singletons(void)
+{
+    static const uint8_t singleton_types[] = {
+        TLV_COMMAND_ID,
+        TLV_COMMAND_STATUS,
+        TLV_REASON,
+    };
+    enum command_status status;
+    uint8_t payload[48];
+    uint8_t reason;
+    size_t payload_len;
+
+    for (size_t i = 0u;
+         i < sizeof(singleton_types) / sizeof(singleton_types[0]);
+         i++) {
+        payload_len = 0u;
+        assert(mesh_append_command_result(
+                   payload,
+                   sizeof(payload),
+                   &payload_len,
+                   CMD_SURVEY_PREPARE_PAIR,
+                   COMMAND_OK,
+                   0u) == PROTO_OK);
+        switch (singleton_types[i]) {
+        case TLV_COMMAND_ID:
+            assert(tlv_append_u16(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  TLV_COMMAND_ID,
+                                  CMD_SURVEY_START_PAIR) == PROTO_OK);
+            break;
+        case TLV_COMMAND_STATUS:
+            assert(tlv_append_u16(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  TLV_COMMAND_STATUS,
+                                  COMMAND_TIMEOUT) == PROTO_OK);
+            break;
+        case TLV_REASON:
+            assert(tlv_append_u8(payload,
+                                 sizeof(payload),
+                                 &payload_len,
+                                 TLV_REASON,
+                                 1u) == PROTO_OK);
+            break;
+        default:
+            assert(false);
+        }
+        status = COMMAND_OK;
+        reason = 0u;
+        assert(app_mesh_gateway_command_flow_decode_result(
+                   CMD_SURVEY_PREPARE_PAIR,
+                   payload,
+                   payload_len,
+                   &status,
+                   &reason) == PROTO_ERR_MALFORMED);
+        assert(status == COMMAND_INTERNAL_ERROR);
+        assert(reason == (uint8_t)(-PROTO_ERR_MALFORMED));
+    }
+}
+
 static void test_malformed_then_valid_survey_result_preserves_transaction(void)
 {
     const struct survey_pair pair = {
@@ -149,14 +266,18 @@ static void test_malformed_then_valid_survey_result_preserves_transaction(void)
     enum command_status status = COMMAND_OK;
     uint8_t reason = 0u;
     uint8_t payload[32];
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t zero_digest[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     size_t payload_len = 0u;
-    uint32_t result_fingerprint;
 
     survey_gateway_transaction_init(&transaction);
     assert(survey_gateway_transaction_load_pair(&transaction, &pair) == 0);
+    assert(node_transaction_digest_bytes(
+        (const uint8_t *)"request", 7u, request_digest));
     assert(survey_gateway_transaction_begin(
                &transaction, &key, CMD_SURVEY_PREPARE_PAIR,
-               610u, 710u, 810u, 5000u, 10u) == 0);
+               request_digest, 710u, 810u, 5000u, 10u) == 0);
 
     assert(mesh_append_command_id(payload, sizeof(payload), &payload_len,
                                   CMD_SURVEY_PREPARE_PAIR) == PROTO_OK);
@@ -164,7 +285,9 @@ static void test_malformed_then_valid_survey_result_preserves_transaction(void)
                CMD_SURVEY_PREPARE_PAIR, payload, payload_len,
                &status, &reason) != PROTO_OK);
     assert(transaction.active.state == NODE_TRANSACTION_ACTIVE);
-    assert(transaction.active.accepted_result_fingerprint == 0u);
+    assert(semantic_digest_equal(transaction.active.accepted_result_digest,
+                                 zero_digest,
+                                 sizeof(zero_digest)));
     assert(transaction.active.result_token == 0u);
     assert(transaction.prepared_mask == 0u);
     assert(transaction.recent_next == 0u);
@@ -176,15 +299,15 @@ static void test_malformed_then_valid_survey_result_preserves_transaction(void)
     assert(app_mesh_gateway_command_flow_decode_result(
                CMD_SURVEY_PREPARE_PAIR, payload, payload_len,
                &status, &reason) == PROTO_OK);
-    result_fingerprint = node_transaction_fingerprint_bytes(
-        0u, payload, payload_len);
+    assert(node_transaction_digest_bytes(payload, payload_len, result_digest));
     assert(survey_gateway_transaction_reconcile_result(
-               &transaction, &key, 610u, result_fingerprint,
-               result_fingerprint, status, 11u, &result, &action) == 0);
+               &transaction, &key, request_digest, result_digest,
+               key.transaction_id, status, 11u, &result, &action) == 0);
     assert(result == SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
     assert(transaction.active.state == NODE_TRANSACTION_SUCCEEDED);
-    assert(transaction.active.accepted_result_fingerprint ==
-           result_fingerprint);
+    assert(semantic_digest_equal(transaction.active.accepted_result_digest,
+                                 result_digest,
+                                 sizeof(result_digest)));
     assert(transaction.prepared_mask ==
            SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
 }
@@ -192,6 +315,8 @@ static void test_malformed_then_valid_survey_result_preserves_transaction(void)
 int main(void)
 {
     test_prepare_anchor_receive_and_result_identity();
+    test_anchor_receive_rejects_unsupported_group_scope();
+    test_result_decoder_rejects_conflicting_singletons();
     test_malformed_then_valid_survey_result_preserves_transaction();
     return 0;
 }

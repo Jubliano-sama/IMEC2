@@ -8,9 +8,11 @@
 #include "app_gateway_command_ingress.h"
 #include "app_mesh_gateway_command_priority.h"
 #include "app_mesh_preemption.h"
+#include "dwm3000_driver.h"
 #include "mesh_preemption.h"
 #include "route.h"
 #include "serial_frame.h"
+#include "survey_round_control.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -53,25 +55,59 @@ struct ingress_scenario_fixture {
     uint8_t admission_count;
     uint8_t cancel_count;
     uint8_t error_count;
-    uint8_t flood_count;
-    uint8_t anchor_receive_count;
-    uint8_t gatt_result_count;
+    uint32_t flood_count;
+    uint32_t anchor_receive_count;
+    uint32_t gatt_result_count;
     uint32_t now_ms;
     bool ranging_active;
     bool queued_valid;
 };
 
+struct priority_failure_fixture {
+    uint32_t generation;
+    uint32_t admission_cutoff;
+    uint8_t count;
+    int error;
+};
+
 static uint8_t receive_abort_requests;
 static uint8_t receive_abort_clears;
+static struct k_work_delayable *shim_priority_target_work;
+static int shim_retry_work_reschedule_result;
 
-void dwm3000_driver_request_receive_abort(void)
+void zephyr_shim_note_work_reschedule(struct k_work_delayable *work,
+                                      int timeout)
 {
+    (void)timeout;
+    if (shim_priority_target_work != NULL &&
+        work != shim_priority_target_work) {
+        work->reschedule_result = shim_retry_work_reschedule_result;
+    }
+}
+
+void dwm3000_driver_request_receive_abort(uint32_t owner_mask)
+{
+    assert(owner_mask == DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     receive_abort_requests++;
 }
 
-void dwm3000_driver_clear_receive_abort(void)
+void dwm3000_driver_clear_receive_abort(uint32_t owner_mask)
 {
+    assert(owner_mask == DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     receive_abort_clears++;
+}
+
+static void gateway_priority_schedule_failed(void *ctx,
+                                             int error,
+                                             uint32_t generation,
+                                             uint32_t admission_cutoff)
+{
+    struct priority_failure_fixture *fixture = ctx;
+
+    fixture->count++;
+    fixture->error = error;
+    fixture->generation = generation;
+    fixture->admission_cutoff = admission_cutoff;
 }
 
 static struct route_candidate direct_gateway_route(void)
@@ -135,9 +171,18 @@ static void start_gateway_bound_tx(struct mesh_relay *relay,
     relay->pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
 }
 
-static struct mesh_outbound pending_hop_ack(void)
+static struct mesh_outbound pending_hop_ack(uint16_t acknowledged_seq)
 {
-    return (struct mesh_outbound) {
+    const struct proto_packet acknowledged = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = TRANSIT_ID,
+        .dst_id = GATEWAY_ID,
+        .session_id = ROUTE_EPOCH,
+        .seq = acknowledged_seq,
+        .ttl = MESH_GATEWAY_ACK_TTL,
+    };
+    struct mesh_outbound ack = {
         .packet = {
             .msg_type = MSG_MESH_HOP_ACK,
             .src_id = ANCHOR_ID,
@@ -149,6 +194,21 @@ static struct mesh_outbound pending_hop_ack(void)
         .next_hop_id = TRANSIT_ID,
         .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
     };
+    size_t payload_len = 0u;
+
+    assert(mesh_append_requested_seq(ack.payload,
+                                     sizeof(ack.payload),
+                                     &payload_len,
+                                     acknowledged.seq) == PROTO_OK);
+    assert(mesh_append_ack_semantic_identity(ack.payload,
+                                             sizeof(ack.payload),
+                                             &payload_len,
+                                             &acknowledged,
+                                             NULL,
+                                             0u) == PROTO_OK);
+    ack.payload_len = (uint16_t)payload_len;
+    ack.packet.payload_len = (uint16_t)payload_len;
+    return ack;
 }
 
 static int save_outbox(void *ctx)
@@ -252,16 +312,29 @@ static int ingress_admit(void *ctx, struct app_gateway_command_ingress_item *ite
     return 0;
 }
 
-static int ingress_submit_priority(void *ctx)
+static int ingress_submit_priority(void *ctx, uint32_t admission_cutoff)
 {
     struct ingress_scenario_fixture *fixture = ctx;
     const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
         .gateway_role = true,
         .priority_work_queue = &fixture->priority_work_queue,
     };
+    int ret;
 
-    return app_mesh_arbitration_zephyr_gateway_command_submit(&ops,
-                                                               &fixture->work);
+    ret = app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+        &fixture->work, admission_cutoff);
+    if (ret < 0) {
+        return ret;
+    }
+    return app_mesh_arbitration_zephyr_gateway_command_submit(
+        &ops, &fixture->work);
+}
+
+static int ingress_submit_noop(void *ctx, uint32_t admission_cutoff)
+{
+    (void)ctx;
+    (void)admission_cutoff;
+    return 0;
 }
 
 static int ingress_cancel(void *ctx,
@@ -336,6 +409,7 @@ static int dwm_c5_transmit_boundary(const struct mesh_outbound *out, void *ctx)
                &out->packet,
                out->payload,
                out->payload_len,
+               GATEWAY_ID,
                fixture->now_ms,
                &command_id,
                &options,
@@ -359,6 +433,10 @@ static int dwm_c5_transmit_boundary(const struct mesh_outbound *out, void *ctx)
                                                         GATEWAY_ID,
                                                         false,
                                                         &fixture->anchor_result) == PROTO_OK);
+    app_mesh_command_orchestrator_anchor_commit(&fixture->orchestrator,
+                                                 &out->packet,
+                                                 &options,
+                                                 fixture->now_ms);
     return 0;
 }
 
@@ -400,11 +478,16 @@ static void run_scheduled_gateway_command(struct ingress_scenario_fixture *fixtu
 
     assert(fixture->work.reschedule_calls == 1u);
     assert(fixture->queued_valid);
+    assert(app_mesh_command_orchestrator_activate(&fixture->orchestrator,
+                                                  &fixture->queued) == 0);
+    app_mesh_command_orchestrator_mark_safe_boundary(
+        &fixture->orchestrator);
     assert(app_mesh_command_orchestrator_prepare_flood(
                &fixture->orchestrator,
                GATEWAY_ID,
                fixture->now_ms,
                fixture->queued.packet.seq) == PROTO_OK);
+    assert(!fixture->orchestrator.anchor.duplicate_cache.initialized);
     assert(app_mesh_command_orchestrator_send_flood(&fixture->orchestrator,
                                                     &flood_ops,
                                                     &flood_result) == 0);
@@ -463,7 +546,7 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
         .seq = 7u,
         .has_packet_id = true,
     };
-    struct mesh_outbound ack = pending_hop_ack();
+    struct mesh_outbound ack = pending_hop_ack(ack_entry.seq);
     struct k_work_delayable command_work = {0};
     struct k_work_q priority_work_queue = {0};
     const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
@@ -515,6 +598,102 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
     assert(receive_abort_clears == 0u);
 }
 
+static void test_gateway_priority_contention_retires_only_frozen_generation(void)
+{
+    struct k_work_delayable command_work = {
+        .reschedule_result = -EBUSY,
+    };
+    struct k_work_q priority_work_queue = {0};
+    const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
+        .gateway_role = true,
+        .priority_work_queue = &priority_work_queue,
+    };
+    struct priority_failure_fixture failure = {0};
+
+    receive_abort_requests = 0u;
+    receive_abort_clears = 0u;
+    app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
+        gateway_priority_schedule_failed, &failure);
+    assert(app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+               &command_work, 123u) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &command_work) == 0);
+    assert(receive_abort_requests == 1u);
+
+    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() ==
+           -EBUSY);
+    assert(failure.count == 0u);
+    /*
+     * Admission 124 arrives after the first rejected scheduling attempt. It
+     * stays queued behind the frozen cutoff and must not be named by this
+     * generation's eventual terminal callback.
+     */
+    assert(app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+               &command_work, 124u) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &command_work) == 0);
+    for (uint8_t attempt = 1u;
+         attempt < APP_MESH_GATEWAY_COMMAND_PRIORITY_MAX_SCHEDULE_ATTEMPTS;
+         attempt++) {
+        assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() ==
+               -EBUSY);
+    }
+    assert(failure.count == 1u);
+    assert(failure.error == -EBUSY);
+    assert(failure.generation != 0u);
+    assert(failure.admission_cutoff == 123u);
+    assert(receive_abort_clears == 1u);
+
+    command_work.reschedule_result = 0;
+    assert(app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+               &command_work, 124u) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &command_work) == 0);
+    assert(receive_abort_requests == 2u);
+    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() == 0);
+    assert(failure.count == 1u);
+    app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
+        NULL, NULL);
+}
+
+static void test_gateway_priority_retry_owner_rejection_cannot_orphan_generation(void)
+{
+    struct k_work_delayable command_work = {
+        .reschedule_result = -EBUSY,
+    };
+    struct k_work_q priority_work_queue = {0};
+    const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
+        .gateway_role = true,
+        .priority_work_queue = &priority_work_queue,
+    };
+    struct priority_failure_fixture failure = {0};
+
+    receive_abort_requests = 0u;
+    receive_abort_clears = 0u;
+    shim_priority_target_work = &command_work;
+    shim_retry_work_reschedule_result = -ENOSPC;
+    app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
+        gateway_priority_schedule_failed, &failure);
+    assert(app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
+               &command_work, 201u) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &command_work) == 0);
+    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() ==
+           -EBUSY);
+    assert(command_work.reschedule_calls ==
+           APP_MESH_GATEWAY_COMMAND_PRIORITY_MAX_SCHEDULE_ATTEMPTS);
+    assert(failure.count == 1u);
+    assert(failure.error == -EBUSY);
+    assert(failure.admission_cutoff == 201u);
+    assert(receive_abort_requests == 1u);
+    assert(receive_abort_clears == 1u);
+
+    app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
+        NULL, NULL);
+    shim_priority_target_work = NULL;
+    shim_retry_work_reschedule_result = 0;
+}
+
 static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_result_identity(void)
 {
     struct proto_packet command = {
@@ -538,6 +717,7 @@ static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_resu
         .next_hop_id = GATEWAY_ID,
     };
     bool command_handled;
+    struct app_gateway_command_ingress_item decoded;
     uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
     uint8_t frame[SERIAL_FRAME_MAX_LEN];
     size_t payload_len = 0u;
@@ -575,10 +755,10 @@ static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_resu
     command.payload_len = (uint16_t)payload_len;
     assert(serial_frame_encode_packet(&command, payload, frame, sizeof(frame),
                                       &frame_len) == PROTO_OK);
-    assert(app_mesh_command_orchestrator_gateway_ingress(&fixture.orchestrator,
-                                                         &ingress_ops,
+    assert(app_mesh_command_orchestrator_gateway_ingress(&ingress_ops,
                                                          frame,
                                                          frame_len,
+                                                         &decoded,
                                                          &command_handled) == 0);
     assert(command_handled);
     assert(fixture.admission_count == 1u);
@@ -602,6 +782,7 @@ static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_resu
 
     run_scheduled_gateway_command(&fixture);
     assert(fixture.flood_count >= 1u);
+    assert(fixture.anchor_receive_count > 0u);
     assert(fixture.anchor_receive_count == 1u);
     assert(fixture.anchor_result.packet.msg_type == MSG_COMMAND_RESULT);
     assert(fixture.anchor_result.packet.dst_id == GATEWAY_ID);
@@ -616,8 +797,8 @@ static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_resu
 
 static void test_gateway_ingress_preserves_a_valid_non_command_frame(void)
 {
-    struct app_mesh_command_orchestrator orchestrator = {0};
     struct ingress_scenario_fixture fixture = {0};
+    struct app_gateway_command_ingress_item decoded;
     const struct app_gateway_command_ingress_ops ingress_ops = {
         .gateway_role = true,
         .admit = ingress_admit,
@@ -641,17 +822,153 @@ static void test_gateway_ingress_preserves_a_valid_non_command_frame(void)
 
     assert(serial_frame_encode_packet(&packet, payload, frame, sizeof(frame),
                                       &frame_len) == PROTO_OK);
-    assert(app_mesh_command_orchestrator_gateway_ingress(&orchestrator,
-                                                         &ingress_ops,
+    assert(app_mesh_command_orchestrator_gateway_ingress(&ingress_ops,
                                                          frame,
                                                          frame_len,
+                                                         &decoded,
                                                          &command_handled) == 0);
     assert(!command_handled);
     assert(fixture.admission_count == 0u);
-    assert(orchestrator.admitted.packet.msg_type == MSG_MESH_DATA);
-    assert(orchestrator.admitted.packet.seq == packet.seq);
-    assert(orchestrator.admitted.payload_len == sizeof(payload));
-    assert(memcmp(orchestrator.admitted.payload, payload, sizeof(payload)) == 0);
+    assert(decoded.packet.msg_type == MSG_MESH_DATA);
+    assert(decoded.packet.seq == packet.seq);
+    assert(decoded.payload_len == sizeof(payload));
+    assert(memcmp(decoded.payload, payload, sizeof(payload)) == 0);
+}
+
+static void test_concurrent_ingress_cannot_mutate_active_dispatch(void)
+{
+    struct ingress_scenario_fixture fixture = {0};
+    struct app_mesh_command_orchestrator active_before;
+    struct app_gateway_command_ingress_item decoded;
+    struct app_gateway_command_ingress_ops ingress_ops = {
+        .gateway_role = true,
+        .admit = ingress_admit,
+        .submit_priority = ingress_submit_noop,
+        .cancel_admitted = ingress_cancel,
+        .emit_result = ingress_emit_error,
+        .ctx = &fixture,
+    };
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = UINT64_C(0x1234),
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = ROUTE_EPOCH,
+        .seq = 71u,
+    };
+    struct proto_packet diagnostic = {
+        .msg_type = MSG_MESH_DATA,
+        .src_id = UINT64_C(0x5678),
+        .dst_id = GATEWAY_ID,
+        .session_id = ROUTE_EPOCH,
+        .seq = 91u,
+    };
+    const struct app_mesh_flood_ops flood_ops = {
+        .now_ms = command_flow_now,
+        .sleep_until_ms = command_flow_sleep_until,
+        .defer_active = command_flow_not_deferred,
+        .c5_quiet = command_flow_c5_quiet,
+        .random_u32 = command_flow_random,
+        .send = dwm_c5_transmit_boundary,
+        .ctx = &fixture,
+    };
+    struct app_mesh_flood_result flood_result;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    uint8_t frame[SERIAL_FRAME_MAX_LEN];
+    size_t payload_len = 0u;
+    size_t frame_len = 0u;
+    bool command_handled = false;
+
+    assert(mesh_append_command_id(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  CMD_GET_STATUS) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          71u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          ROUTE_EPOCH) == PROTO_OK);
+    command.payload_len = (uint16_t)payload_len;
+    assert(serial_frame_encode_packet(&command,
+                                      payload,
+                                      frame,
+                                      sizeof(frame),
+                                      &frame_len) == PROTO_OK);
+    assert(app_mesh_command_orchestrator_gateway_ingress(&ingress_ops,
+                                                         frame,
+                                                         frame_len,
+                                                         &decoded,
+                                                         &command_handled) == 0);
+    assert(command_handled && fixture.queued_valid);
+    assert(app_mesh_command_orchestrator_activate(&fixture.orchestrator,
+                                                  &fixture.queued) == 0);
+    app_mesh_command_orchestrator_mark_safe_boundary(&fixture.orchestrator);
+    fixture.now_ms = 100u;
+    assert(app_mesh_command_orchestrator_prepare_flood(&fixture.orchestrator,
+                                                       GATEWAY_ID,
+                                                       fixture.now_ms,
+                                                       command.seq) ==
+           PROTO_OK);
+    active_before = fixture.orchestrator;
+
+    /* Higher-priority BLE RX admits B while route-owned A is mid-dispatch. */
+    fixture.queued_valid = false;
+    command.seq = 72u;
+    assert(gateway_command_rebind_broadcast_sequence(payload,
+                                                     payload_len,
+                                                     72u) == PROTO_OK);
+    assert(serial_frame_encode_packet(&command,
+                                      payload,
+                                      frame,
+                                      sizeof(frame),
+                                      &frame_len) == PROTO_OK);
+    assert(app_mesh_command_orchestrator_gateway_ingress(&ingress_ops,
+                                                         frame,
+                                                         frame_len,
+                                                         &decoded,
+                                                         &command_handled) == 0);
+    assert(command_handled && fixture.queued.packet.seq == 72u);
+    assert(memcmp(&fixture.orchestrator,
+                  &active_before,
+                  sizeof(active_before)) == 0);
+
+    /* A non-command decode is also caller-owned scratch. */
+    diagnostic.payload_len = 1u;
+    payload[0] = 0xa5u;
+    assert(serial_frame_encode_packet(&diagnostic,
+                                      payload,
+                                      frame,
+                                      sizeof(frame),
+                                      &frame_len) == PROTO_OK);
+    assert(app_mesh_command_orchestrator_gateway_ingress(&ingress_ops,
+                                                         frame,
+                                                         frame_len,
+                                                         &decoded,
+                                                         &command_handled) == 0);
+    assert(!command_handled);
+    assert(memcmp(&fixture.orchestrator,
+                  &active_before,
+                  sizeof(active_before)) == 0);
+
+    assert(app_mesh_command_orchestrator_send_flood(&fixture.orchestrator,
+                                                    &flood_ops,
+                                                    &flood_result) == 0);
+    assert(flood_result.sent_count > 0u);
+    assert(fixture.orchestrator.gateway_flow.outbound.packet.seq == 71u);
 }
 
 static void test_click_claim_requeues_one_local_report_without_corruption(void)
@@ -830,7 +1147,7 @@ static void test_ch9_ack_wait_and_send_keep_receive_open(void)
         .session_id = ROUTE_EPOCH,
         .seq = 12u,
     };
-    struct mesh_outbound ack = pending_hop_ack();
+    struct mesh_outbound ack = pending_hop_ack(ack_entry.seq);
     struct app_mesh_coordinator_runtime_capture capture = {0};
     struct app_mesh_coordinator_runtime_state runtime_state;
     struct app_mesh_coordinator_decision decision;
@@ -965,15 +1282,277 @@ static void test_click_survey_and_transit_order_defers_command_during_ranging(vo
     assert(!app_mesh_c5_gateway_rx_should_yield_to_response(&flood_state));
 }
 
+static void test_survey_go_duplicate_identity_commits_after_admission(void)
+{
+    struct app_mesh_command_orchestrator orchestrator = {0};
+    struct gateway_command_options options;
+    struct survey_round_go go = {
+        .operation_generation = UINT64_C(0x000000010000004D),
+        .round_commitment = {0xA5u},
+        .survey_id = 77u,
+        .round_id = 9u,
+    };
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 77u,
+        .seq = 41u,
+        .ttl = MESH_DEFAULT_TTL,
+    };
+    enum command_id command_id;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    uint8_t schedules = 0u;
+    bool broadcast;
+    bool expired;
+    bool duplicate;
+
+    assert(survey_round_go_append_tlvs(payload,
+                                        sizeof(payload),
+                                        &payload_len,
+                                        &go) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          41u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          ROUTE_EPOCH) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_EXECUTE_DELAY_MS,
+                          1000u) == PROTO_OK);
+    command.payload_len = (uint16_t)payload_len;
+
+    assert(app_mesh_command_orchestrator_anchor_receive(
+               &orchestrator,
+               &command,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               100u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_OK);
+    assert(command_id == CMD_SURVEY_GO && broadcast && !expired &&
+           !duplicate);
+    /* The first local admission fails; its identity must remain replayable. */
+
+    assert(app_mesh_command_orchestrator_anchor_receive(
+               &orchestrator,
+               &command,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               101u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_OK);
+    assert(!duplicate);
+    schedules++;
+    app_mesh_command_orchestrator_anchor_commit(&orchestrator,
+                                                 &command,
+                                                 &options,
+                                                 101u);
+
+    assert(app_mesh_command_orchestrator_anchor_receive(
+               &orchestrator,
+               &command,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               102u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_OK);
+    if (!duplicate) {
+        schedules++;
+    }
+    assert(duplicate);
+    assert(schedules == 1u);
+}
+
+static void test_broadcast_transport_retry_requires_explicit_semantic_commit(void)
+{
+    struct app_mesh_command_orchestrator orchestrator = {0};
+    struct gateway_command_options options;
+    struct mesh_relay relay;
+    struct mesh_relay_result relay_result;
+    struct proto_packet command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY_ID,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = 81u,
+        .seq = 42u,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+    };
+    enum command_id command_id = CMD_VENDOR_BASE;
+    struct proto_packet retry;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    bool broadcast = false;
+    bool expired = false;
+    bool duplicate = false;
+
+    assert(mesh_append_command_id(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  CMD_GET_STATUS) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_SEQ,
+                          81u) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_FLOOD_EPOCH_ID,
+                          ROUTE_EPOCH) == PROTO_OK);
+    command.payload_len = (uint16_t)payload_len;
+
+    mesh_relay_init(&relay,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_ID,
+                    GATEWAY_ID,
+                    ROUTE_EPOCH);
+    assert(mesh_relay_handle_rx_with_random(&relay,
+                                            &command,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY_ID,
+                                            80u,
+                                            100u,
+                                            3u,
+                                            &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_OK);
+    assert((relay_result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u);
+    assert((relay_result.actions & MESH_RELAY_ACTION_FORWARD) != 0u);
+
+    assert(app_mesh_command_orchestrator_anchor_receive(
+               &orchestrator,
+               &command,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               100u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_OK);
+    assert(command_id == CMD_GET_STATUS && broadcast && !expired &&
+           !duplicate);
+
+    /*
+     * Parsing and policy classification cannot commit the duplicate
+     * identity. A caller that fails to gain execution or terminal-result
+     * custody must be able to receive the same command again.
+     */
+    retry = command;
+    assert(mesh_relay_handle_rx_with_random(&relay,
+                                            &retry,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY_ID,
+                                            80u,
+                                            101u,
+                                            4u,
+                                            &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_ERR_STALE);
+    assert((relay_result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u);
+    assert((relay_result.actions & MESH_RELAY_ACTION_FORWARD) == 0u);
+    assert((relay_result.actions & MESH_RELAY_ACTION_DROP) == 0u);
+    assert(app_mesh_command_orchestrator_anchor_receive(
+               &orchestrator,
+               &retry,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               101u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_OK);
+    assert(!duplicate);
+
+    app_mesh_command_orchestrator_anchor_commit(&orchestrator,
+                                                 &retry,
+                                                 &options,
+                                                 101u);
+    assert(mesh_relay_handle_rx_with_random(&relay,
+                                            &retry,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY_ID,
+                                            80u,
+                                            102u,
+                                            5u,
+                                            &relay_result) == PROTO_OK);
+    assert(relay_result.status == PROTO_ERR_STALE);
+    assert((relay_result.actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u);
+    assert((relay_result.actions & MESH_RELAY_ACTION_FORWARD) == 0u);
+    assert((relay_result.actions & MESH_RELAY_ACTION_DROP) == 0u);
+    assert(app_mesh_command_orchestrator_anchor_receive(
+               &orchestrator,
+               &retry,
+               payload,
+               payload_len,
+               GATEWAY_ID,
+               102u,
+               &command_id,
+               &options,
+               &broadcast,
+               &expired,
+               &duplicate) == PROTO_OK);
+    assert(duplicate);
+}
+
 int main(void)
 {
     test_gateway_command_aborts_receive_before_priority_scheduling();
+    test_gateway_priority_contention_retires_only_frozen_generation();
+    test_gateway_priority_retry_owner_rejection_cannot_orphan_generation();
     test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_result_identity();
     test_gateway_ingress_preserves_a_valid_non_command_frame();
+    test_concurrent_ingress_cannot_mutate_active_dispatch();
     test_click_claim_requeues_one_local_report_without_corruption();
     test_click_preemption_custody_failures_are_explicit();
     test_ch9_ack_wait_and_send_keep_receive_open();
     test_paused_delivery_attaches_one_loss_tlv_until_sent();
     test_click_survey_and_transit_order_defers_command_during_ranging();
+    test_survey_go_duplicate_identity_commits_after_admission();
+    test_broadcast_transport_retry_requires_explicit_semantic_commit();
     return 0;
 }

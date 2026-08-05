@@ -179,6 +179,7 @@ static void test_survey_packet_initializers_reset_message_age(void)
                                                             ANCHOR_ID,
                                                             GATEWAY_ID,
                                                             SESSION_ID,
+                                                            0u,
                                                             6u,
                                                             24u),
                         &packet);
@@ -187,6 +188,7 @@ static void test_survey_packet_initializers_reset_message_age(void)
     expect_fresh_packet(survey_init_pair_prepare_packet(&packet,
                                                         &pair,
                                                         GATEWAY_ID,
+                                                        pair.initiator_id,
                                                         7u,
                                                         24u),
                         &packet);

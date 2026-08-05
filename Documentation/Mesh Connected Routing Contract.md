@@ -3,16 +3,15 @@ The system combines four roles around two UWB radio lanes. The clicker starts an
 # Custom UWB Mesh Protocol
 A custom independent UWB Mesh Communication protocol is a core part of this project. The connection layer is treated as a known-reliable transport once a route and schedule exist: it retains custody, acknowledges accepted packets, retries within explicit bounds, and reports terminal failure instead of silently losing data. Known-reliable does not mean infinite retries or unconditional eventual delivery.
 ## **Route formation happens before connection scheduling**
-
 Where a node with gateway-bound traffic and no route needs to find a route, it first sends a short direct channel 9 gateway probe.
 
 Otherwise the node sends a typed route wake train and route request on channel 5. Discovery expands as:
 
 `Attempt 1: TTL 1 -> Attempt 2: TTL 2 -> Attempt 3: TTL 4 -> Attempt 4+: TTL 6`
 
-The retry base is `1000 ms -> 2000 ms -> 4000 ms -> 8000 ms -> double to a 60000 ms cap`, with fresh up to 10%, flatly distributed jitter every time. Idle anchors answer when they have a usable path. Otherwise they probe the gateway and may rebroadcast when TTL and capacity allow. Replies return through protected channel 5 windows with per-hop ACKs and exact ancestry.
+The retry base is `1000 ms -> 2000 ms -> 4000 ms -> 8000 keep doubling to a 60000 ms cap`, with fresh up to 10%, flatly distributed random jitter every time. Idle anchors answer when they have a usable path. Otherwise they probe the gateway and may rebroadcast when TTL and capacity allow. Replies return through protected channel 5 windows with per-hop ACKs and exact ancestry.
 
-An anchor-to-anchor route becomes connected only after PROPOSE/ACCEPT negotiates one exact channel 9 timing rhythm. The successful PROPOSE transmission defines the phase. ACCEPT confirms that phase and cannot move it because of queue delay, retries, or duplicates.
+An anchor-to-anchor route becomes connected only after PROPOSE/ACCEPT negotiates one exact channel 9 timing rhythm. The successful PROPOSE transmission defines the phase. ACCEPT confirms that phase.
 
 ## **A relay interleaves two Channel 9 connection rhythms**
 
@@ -22,15 +21,13 @@ The required production timing for one connection is:
 
 `30 ms retune/early-RX guard -> 120 ms event window -> 30 ms trailing reservation -> repeat every 460 ms`
 
-A transmission normally begins 15 ms after the event starts. A receiver arms during the leading guard and may remain armed for a 60 ms late tail beyond the nominal window. The first event is normally placed 500 ms after the successful PROPOSE transmission, and the accepting peer waits 80 ms before sending ACCEPT on channel 5.
-
-When an anchor already has one connection, a new proposal selects the other connection's phase 230 ms later, advancing by complete 460 ms periods until the first event is at least 500 ms away. The resulting interleave is:
+Because this rhythm is strict, it requires the node which already has a connection to propose the timing, which will always be the node further away from the gateway. Therefore, if a node already has a connection towards the gateway, it cannot accept a connection or reply to it at all, let the original transmitter retry, there's a good chance a slot will free up before it enter route repair.
 
 `Connection A: T, T + 460 ms, T + 920 ms, ...`
 
 `Connection B: T + 230 ms, T + 690 ms, T + 1150 ms, ...`
 
-The normal 30 ms guards reserve 180 ms around each 120 ms window, leaving 50 ms between the two reservations. A receive turn's extra 60 ms late tail still leaves 20 ms of channel 5 receive time before the other connection's leading guard. Admission fails rather than overlapping the schedules, taking a third peer, or taking a second peer in the same upstream or downstream direction. Empty transmit turns may be skipped, but receive turns remain peer-liveness opportunities. Sixteen consecutive missed receive turns make the timing stale, while 30 seconds without a successful peer receive is the independent supervision limit.
+The normal 30 ms guards reserve 180 ms around each 120 ms window, leaving 50 ms between the two reservations. A receive turn's extra 60 ms late tail still leaves 20 ms of channel 5 receive time before the other connection's leading guard. Empty transmit turns may be skipped, but receive turns remain peer-liveness opportunities. Eight consecutive missed receive turns make the timing stale.
 
 ## **The connected cadence must remain regular**
 
@@ -38,34 +35,35 @@ The steady schedule is:
 
 `Channel 9 TX/RX -> at least 20 ms Channel 5 RX -> Channel 9 TX/RX -> at least 20 ms Channel 5 RX -> Repeat`
 
-Each channel 5 window is 100 percent receive duty unless the node is itself originating a wake flood. An originating node may use the window for wake transmission, but it pauses the flood for every due channel 9 reservation and resumes it in the following channel 5 time. Unrelated, malformed, or route-class frames do not end a receive window, and channel 9 work is clipped or deferred around it. Between adjacent windows the DWM3000 stays idle or retune-ready rather than entering retained or deep sleep.
+Each channel 5 window during a connection is 100 percent receive duty unless the node is itself originating a wake flood. An node may use the window for wake transmission, therefore skipping a connection turn to make a new connection. Unrelated, malformed, or route-class frames do not end a receive window. Between adjacent windows the DWM3000 stays idle or retune-ready rather than entering retained or deep sleep.
 
-A route-request wake does not interrupt an active channel 9 rhythm. A valid click/ranging wake does. Once an anchor accepts a click claim, it stays on channel 5 continuously through the remaining wake train, discovery, reply, schedule reception, all inter-sample gaps, and all DS-TWR exchanges. It returns to the existing channel 9 rhythm only after the click sequence completes or fails explicitly. ACK deadlines and connection supervision must tolerate this interruption. Wake overlap is therefore checked against the worst-case channel 5-off gap of the complete two-connection schedule, including guards and late receive tails, rather than against one channel 9 window in isolation. That combined gap must remain shorter than a wake train, so every wake train reaches a channel 5 receive window before it ends.
-
-Every wake train uses:
-`20 ms quiet check -> wake train -> 20 ms quiet check`
+A route-request wake does not interrupt an active channel 9 rhythm. A valid click/ranging wake does. Once an anchor accepts a click claim, it stays on channel 5 continuously through the remaining wake train, discovery, reply, schedule reception, all inter-sample gaps, and all DS-TWR exchanges. It abandons the existing channel 9 rhythm. Wake overlap is therefore checked against the worst-case channel 5-off gap of the complete two-connection schedule, including guards and late receive tails. Every wake train reaches a channel 5 receive window before it ends.
 
 ## **A wake flood repeats complete Channel 5 claims**
 
-A wake flood is the wake train, not a continuous preamble. Its required production transmission budget is 400 ms and must not be shortened; the final packet may finish after that budget. Throughout it, the sender starts complete, independently decodable Channel 5 standard-PHR packets. Each packet uses the 4096-symbol wake preamble, 16-symbol SFD, and 850 kbps data rate, followed by a versioned wake claim with its own CRC and the radio FCS. A clicker sends successful copies back-to-back with radio turnaround and 0-400 us of random jitter. A connected origin pauses for due channel 9 reservations and resumes until the 400 ms wake-transmission budget is complete. A relay-originated flood may also insert short Channel 5 receive probes so a click wake can preempt it.
+A wake flood is the wake train. Its required production transmission budget is 400 ms. Throughout it, the sender starts complete, independently decodable Channel 5 standard-PHR packets. Each packet uses the 4096-symbol wake preamble, 16-symbol SFD, and 850 kbps data rate, followed by a versioned wake claim with its own CRC and the radio FCS. A clicker sends successful copies back-to-back.
 
 The on-air sequence is:
 
 `20 ms quiet check -> repeat [preamble + wake claim + optional typed suffix] for 400 ms of wake transmission -> 20 ms quiet check`
 
-The fixed 49-byte wake claim identifies the network, sender, event, attempt, priority, channels, required anchor count, and nonce. It also carries the remaining time until the flood ends, the follow-up begins, and the sender's Channel 5 ownership expires, plus typed flags that distinguish click/ranging, route setup, and a separate control follow-up. Those countdowns are refreshed in every copy so a receiver that joins the flood late can still recover the same absolute schedule.
-
-Bytes after the fixed claim are not a general command or data area. The only defined inline suffix is a separately versioned and CRC-protected compact route request: at most 55 bytes of route payload inside a suffix of at most 70 bytes, keeping the complete wake packet at or below 119 bytes within the 125-byte standard-PHR payload limit. The current route request includes mandatory ancestry and does not fit that compact form, so current wake floods send the plain 49-byte claim and carry route requests, Here-I-Am advertisements, enumeration or survey controls, and gateway commands in separate typed Channel 5 follow-up packets.
+The wake claim identifies the network, sender, event, attempt, priority, channels, required anchor count, and nonce. It also carries the remaining time until the flood ends, the follow-up begins, plus typed flags that distinguish click/ranging, route setup, and a separate control follow-up. Those countdowns are refreshed in every copy so a receiver that joins the flood late can still recover the same absolute schedule.
 
 ## **Delivery keeps one owner and one identity**
 
-One logical packet has one custody owner, immutable bytes, one identity, and one absolute deadline. The communication service owns routing, retries, ACKs, and terminal state. Pre-RF deferral consumes no attempt; an actual RF start does.
+One logical packet has one custody owner. The communication service owns routing, retries, ACKs, and terminal state. Pre-RF deferral consumes no attempt; an actual RF start does.
 
 Hop ACK transfers custody to the next anchor; gateway ACK proves final acceptance. Relay ACKs use the sender’s next channel 9 transmit window, with gateway ACK ahead of hop ACK. One slot may carry several packets and one multi-packet ACK.
 
 Direct-to-gateway traffic is batched. The sender reserves reply time, sends only what fits, marks the final packet, then switches to channel 9 receive. The gateway returns one batch ACK after the final marker. Missing entries retry in a later channel 9 window, without a new wake train while the connection remains alive.
 
-The first three real gateway-ACK failures retry the selected parent with bases of 1500 ms, 3000 ms, and 6000 ms. The fourth real failure invalidates the active path and places that parent in a 60-second hold-down. An alternate current route is tried before new discovery. A connection closes only through explicit close, route invalidation, or sustained inactivity across several channel 9 cycles; a temporary click never closes it by itself.
+The first three gateway-ACK failures retry the selected parent with bases of 1500 ms, 3000 ms, and 6000 ms. The fourth failure invalidates the active path and places that parent in a 60-second hold-down. An alternate current route is tried before new discovery. A connection can close  through explicit close, route invalidation, or sustained inactivity across several channel 9 cycles.
+
+## The Role of the Gateway 
+The Gateway does not use normal cadence connections in any way, connections to the gateway are therefore a special case, they do not follow a set cadence. A node can send to the gateway in batches, adding a flag to a packet when the batch has compeleted for that TX cycle, upon which the gateway will send a batch or single packet ACK ASAP. 
+
+Furthermore, the gateway sends commands to anchors via a ch5 wake train followed by a ch5 packet. This is because most anchors at any time will be in low duty ch5 scanning mode. The gateway typically does not expect such a flooded packet to be ACKed in any way, it assumes correctly that the delivery mechanism is robust, because gateway originated ch5 packets pre-empt everything else.
+
 # High Level Protocol Overview
 ## **The two radio lanes have separate jobs**
 
@@ -108,7 +106,7 @@ The survey discovery protocol creates an anchor-to-anchor distance graph. The se
 3. **Report the discovered graph.** When discovery ends, each anchor creates one peer report and retains ownership of that exact report until the gateway acknowledges it. One directed observation is enough to create a candidate edge, although observations in both directions provide better link information.
 4. **Select the ranging pairs.** The gateway combines the reports into a partial connectivity graph and selects useful anchor pairs. It prefers a bounded set of strong links that keeps the graph connected where possible. Pairs may range in parallel only when their endpoints and known neighbouring anchors do not overlap; all other pairs are serialized.
 5. **Arm each pair.** The gateway chooses an initiator and responder and prepares both anchors in the fixed order: `PREPARE initiator -> PREPARE responder -> START responder -> START initiator`    The gateway does not send a separate go-command. The original command already contains a future execution delay. Each relay preserves the packet’s age, allowing every receiving anchor to subtract the time already spent in transit and schedule the same logical execution instant. Guard time covers relay delay, clock skew, radio retuning, and the complete DS-TWR receive window.
-6. **Perform DS-TWR.** At the scheduled instant, each initiator and responder gather 5 DS-TWR samples.
+6. **Perform DS-TWR.** At the scheduled instant, each initiator and responder gather 5 DS-TWR samples, by taking the median of this we prevent outliers.
 7. **Return the result.** The responder’s sends its result. Large diagnostic data such as the CIR is not needed for the normal geometry survey. All data should fit withing 1kB.
 8. **Deliver and retry.** Each exact pair result is retained until gateway acknowledgement and uses the same reliable gateway-bound communication path as click reports and other protocol results. Missing or unusable samples cause the complete PREPARE+START, and ranging sequence to rerun, with at most two reruns per pair, preferably also including new anchors in the new prepare command, and excluding successful pairs.
 9. **Finish or report partial geometry.** The gateway publishes every successful distance. A disconnected or incomplete graph remains a valid partial result, but it cannot be reported as a complete survey.

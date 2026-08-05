@@ -85,17 +85,22 @@ void app_mesh_route_reply_ack_decide_backup(
     result->backup_next_hop_id = state->backup_next_hop_id;
 }
 
+bool app_mesh_route_reply_upstream_ack_allowed(
+    bool downstream_handoff_required,
+    bool downstream_handoff_acked)
+{
+    return !downstream_handoff_required || downstream_handoff_acked;
+}
+
 uint32_t app_mesh_route_reply_ack_deadline_after_preemption(
     uint32_t preempted_at_ms,
     uint32_t timeout_ms,
-    uint32_t latest_deadline_ms)
+    uint32_t latest_deadline_ms,
+    bool latest_deadline_valid)
 {
     uint32_t deadline_ms = preempted_at_ms + (timeout_ms == 0u ? 1u : timeout_ms);
 
-    if (deadline_ms == 0u) {
-        deadline_ms = 1u;
-    }
-    if (latest_deadline_ms != 0u &&
+    if (latest_deadline_valid &&
         deadline_after(deadline_ms, latest_deadline_ms)) {
         return latest_deadline_ms;
     }

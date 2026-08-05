@@ -384,6 +384,7 @@ static int test_no_alternate_fourth_failure(uint32_t seed, uint32_t start_ms)
     CHECK(primary != NULL);
     CHECK(primary->failure_count == 0u);
     CHECK(primary->hold_down_until_ms == now_ms + ROUTE_PARENT_HOLDDOWN_MS);
+    CHECK(primary->hold_down_valid);
     CHECK(!primary->channel9_timing_valid);
     CHECK(producer.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
     CHECK(producer.pending.retry_after_ms > now_ms);
@@ -434,6 +435,7 @@ static int test_alternate_parent_fourth_failure(uint32_t seed,
     primary = find_candidate(&producer, PRIMARY_PARENT_ID);
     CHECK(primary != NULL);
     CHECK(primary->hold_down_until_ms == now_ms + ROUTE_PARENT_HOLDDOWN_MS);
+    CHECK(primary->hold_down_valid);
     CHECK(producer.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
     CHECK(producer.pending.next_hop_id == ALTERNATE_PARENT_ID);
     CHECK(producer.pending.retry_after_ms == now_ms);
@@ -498,6 +500,56 @@ static int test_temporary_deferral_is_not_parent_failure(uint32_t seed,
     return 0;
 }
 
+static int test_parent_hold_down_survives_wrapped_zero_deadline(void)
+{
+    const uint32_t fourth_failure_ms =
+        UINT32_MAX - ROUTE_PARENT_HOLDDOWN_MS + 1u;
+    struct route_table table;
+    struct route_candidate route = route_candidate(
+        PRIMARY_PARENT_ID, 1u, 90u, fourth_failure_ms - 3u);
+    const struct route_candidate *candidate;
+
+    test_ctx = (struct test_context) {
+        .scenario = "hold_down_wrap",
+        .phase = "failure_boundary",
+        .seed = 0u,
+    };
+    route_table_init(&table, ROUTE_EPOCH);
+    CHECK(route_upsert_candidate(&table, &route) == PROTO_OK);
+    CHECK(route_record_failure_at(&table,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  fourth_failure_ms - 3u) ==
+          ROUTE_DELIVERY_RETRY_CURRENT);
+    CHECK(route_record_failure_at(&table,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  fourth_failure_ms - 2u) ==
+          ROUTE_DELIVERY_RETRY_CURRENT);
+    CHECK(route_record_failure_at(&table,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  fourth_failure_ms - 1u) ==
+          ROUTE_DELIVERY_RETRY_CURRENT);
+    CHECK(route_record_failure_at(&table,
+                                  ROUTE_FAILURE_GATEWAY_ACK,
+                                  fourth_failure_ms) ==
+          ROUTE_DELIVERY_DISCOVER);
+
+    candidate = &table.candidates[0];
+    CHECK(candidate->hold_down_valid);
+    CHECK(candidate->hold_down_until_ms == 0u);
+    CHECK(route_selected(&table) == NULL);
+    CHECK(route_select_best_at(&table, UINT32_MAX) == PROTO_ERR_NOT_FOUND);
+    CHECK(candidate->hold_down_valid);
+
+    test_ctx.phase = "deadline_boundary";
+    CHECK(route_select_best_at(&table, 0u) == PROTO_OK);
+    candidate = route_selected(&table);
+    CHECK(candidate != NULL);
+    CHECK(candidate->next_hop_id == PRIMARY_PARENT_ID);
+    CHECK(!candidate->hold_down_valid);
+    CHECK(candidate->hold_down_until_ms == 0u);
+    return 0;
+}
+
 static int run_seed_set(const char *selection)
 {
     static const uint32_t seeds[] = {
@@ -542,6 +594,10 @@ int main(int argc, char **argv)
         return 2;
     }
     if (run_seed_set(selection) != 0) {
+        return 1;
+    }
+    if (selection == NULL &&
+        test_parent_hold_down_survives_wrapped_zero_deadline() != 0) {
         return 1;
     }
     printf("mesh route recovery scenarios passed\n");

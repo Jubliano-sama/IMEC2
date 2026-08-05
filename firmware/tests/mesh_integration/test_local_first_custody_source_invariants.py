@@ -133,6 +133,35 @@ class LocalFirstCustodySourceInvariantTests(unittest.TestCase):
                     "mesh_reclaim_for_local_origin_priority", body, name
                 )
 
+    def test_direct_ack_miss_keeps_durable_core_custody(self):
+        body = function_body(REPORT, "mesh_handle_direct_gateway_retry_policy")
+
+        self.assert_contains(
+            "mesh_relay_tx_active(&mesh_runtime)",
+            body,
+            "direct gateway ACK miss",
+        )
+        self.assert_contains(
+            "mesh_schedule_tx_timeout()",
+            body,
+            "direct gateway ACK miss",
+        )
+        self.assert_absent(
+            "mesh_relay_cancel_tx",
+            body,
+            "direct gateway ACK miss",
+        )
+        self.assert_absent(
+            "app_mesh_persistence_clear_outbox",
+            body,
+            "direct gateway ACK miss",
+        )
+        self.assert_absent(
+            "mesh_store_route_waiting_tx",
+            body,
+            "direct gateway ACK miss",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

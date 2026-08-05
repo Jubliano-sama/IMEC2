@@ -1,5 +1,6 @@
 #include "mesh_relay.h"
 
+#include "gateway_command.h"
 #include "mesh.h"
 
 #include <assert.h>
@@ -97,6 +98,7 @@ static void test_shared_relay_routes_controls_to_fifty_descendants(void)
                                  UINT32_C(0xb7000000) + (uint32_t)i,
                                  (uint16_t)(i + 1u),
                                  (uint8_t)command_payload_len) == PROTO_OK);
+        command.ttl = gateway_command_origin_ttl(CMD_GET_STATUS);
         assert(mesh_relay_handle_rx(&relay,
                                     &command,
                                     command_payload,

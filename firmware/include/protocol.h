@@ -1,6 +1,8 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include "semantic_digest.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -24,8 +26,52 @@ extern "C" {
 #define PROTO_TLV_U16_ENCODED_LEN (PROTO_TLV_HEADER_LEN + 2u)
 #define PROTO_TLV_U32_ENCODED_LEN (PROTO_TLV_HEADER_LEN + 4u)
 #define PROTO_TLV_U64_ENCODED_LEN (PROTO_TLV_HEADER_LEN + 8u)
+#define COMMAND_RESULT_ID_TLV_BYTES \
+    ((2u * PROTO_TLV_U64_ENCODED_LEN) + \
+     (2u * PROTO_TLV_U32_ENCODED_LEN) + \
+     (2u * PROTO_TLV_U16_ENCODED_LEN))
+#define RESULT_OFFER_TLV_BYTES \
+    (COMMAND_RESULT_ID_TLV_BYTES + \
+     (2u * PROTO_TLV_U16_ENCODED_LEN) + \
+     PROTO_TLV_HEADER_LEN + SEMANTIC_DIGEST_SHA256_LEN + \
+     PROTO_TLV_U8_ENCODED_LEN)
+#define RESULT_GRANT_TLV_BYTES \
+    (COMMAND_RESULT_ID_TLV_BYTES + PROTO_TLV_U8_ENCODED_LEN + \
+     PROTO_TLV_U16_ENCODED_LEN + PROTO_TLV_U32_ENCODED_LEN)
+#define RESULT_BUSY_TLV_BYTES \
+    (COMMAND_RESULT_ID_TLV_BYTES + (2u * PROTO_TLV_U16_ENCODED_LEN) + \
+     PROTO_TLV_U8_ENCODED_LEN)
+#define RESULT_BUSY_WITH_ALTERNATE_TLV_BYTES \
+    (RESULT_BUSY_TLV_BYTES + PROTO_TLV_U64_ENCODED_LEN)
+#define RESULT_BUSY_CORRELATION_TLV_BYTES \
+    (PROTO_TLV_U32_ENCODED_LEN + PROTO_TLV_U16_ENCODED_LEN)
+#define RESULT_BUSY_CORRELATED_TLV_BYTES \
+    (RESULT_BUSY_CORRELATION_TLV_BYTES + RESULT_BUSY_TLV_BYTES)
+#define RESULT_BUSY_CORRELATED_WITH_ALTERNATE_TLV_BYTES \
+    (RESULT_BUSY_CORRELATION_TLV_BYTES + \
+     RESULT_BUSY_WITH_ALTERNATE_TLV_BYTES)
+#define RESULT_BUNDLE_HEADER_TLV_BYTES \
+    (PROTO_TLV_U64_ENCODED_LEN + \
+     (3u * PROTO_TLV_U16_ENCODED_LEN) + \
+     (2u * PROTO_TLV_U32_ENCODED_LEN) + \
+     PROTO_TLV_U8_ENCODED_LEN)
 #define RESULT_BUNDLE_RECORD_HEADER_LEN 32u
 #define RESULT_BUNDLE_RECORD_MAX_PAYLOAD_LEN (255u - RESULT_BUNDLE_RECORD_HEADER_LEN)
+#define PROTO_GATEWAY_COLLECTION_EACK_NODE_CAP 50u
+#define PROTO_GATEWAY_COLLECTION_EACK_FIXED_PAYLOAD_LEN \
+    (PROTO_TLV_U64_ENCODED_LEN + \
+     (5u * PROTO_TLV_U16_ENCODED_LEN) + \
+     (3u * PROTO_TLV_U32_ENCODED_LEN) + \
+     (3u * PROTO_TLV_U8_ENCODED_LEN))
+#define PROTO_GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN \
+    (PROTO_GATEWAY_COLLECTION_EACK_FIXED_PAYLOAD_LEN + \
+     (PROTO_GATEWAY_COLLECTION_EACK_NODE_CAP * PROTO_TLV_U64_ENCODED_LEN))
+#define PROTO_GATEWAY_COLLECTION_RECOVERY_EACK_PAYLOAD_LEN \
+    (PROTO_GATEWAY_COLLECTION_EACK_FIXED_PAYLOAD_LEN + \
+     PROTO_TLV_U64_ENCODED_LEN + \
+     PROTO_TLV_U32_ENCODED_LEN + \
+     (2u * PROTO_TLV_U16_ENCODED_LEN) + \
+     PROTO_TLV_HEADER_LEN + SEMANTIC_DIGEST_SHA256_LEN)
 #define UWB_CIR_SAMPLE_LEN 6u
 
 enum result {
@@ -70,7 +116,12 @@ enum msg_type {
     MSG_MESH_DATA = 0x30,
     MSG_MESH_HOP_ACK = 0x31,
     MSG_GATEWAY_ACK = 0x32,
-    /* 0x33 and 0x34 are reserved; legacy route beacons must not be emitted. */
+    /*
+     * End-to-end terminal proof for a gateway ACK.  The source retains this
+     * compact record durably until the ordinary MSG_GATEWAY_ACK path ACKs it.
+     */
+    MSG_GATEWAY_ACK_CONFIRM = 0x33,
+    /* 0x34 is reserved; legacy route beacons must not be emitted. */
     MSG_ROUTE_REQ = 0x35,
     MSG_ROUTE_REPLY = 0x36,
     MSG_MESH_EVENT_PROPOSE = 0x37,
@@ -290,6 +341,48 @@ enum tlv_type {
     TLV_SURVEY_ROUND_ID = 0xAF,
     /* Nonzero per-boot incarnation for channel-9 EVENT_PROPOSE recovery. */
     TLV_MESH_EVENT_BOOT_NONCE = 0xB0,
+    /* Required wire scheme for ordered discovery-assignment epochs. */
+    TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION = 0xB1,
+    TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT = 0xB2,
+    /*
+     * Fresh durable transport-attempt identity for a CLOSED collection EACK
+     * reconstructed from a terminal host receipt.  The semantic collection
+     * identity remains in the ordinary EACK fields.
+     */
+    TLV_COLLECTION_RECOVERY_ATTEMPT_ID = 0xB3,
+    /* Full commitment to the COMMAND_RESULT bytes advertised by RESULT_OFFER. */
+    TLV_RESULT_SHA256_COMMITMENT = 0xB4,
+    /*
+     * Full per-hop semantic commitment to a ROUTE_REPLY.  The matching
+     * ROUTE_REPLY_ACK echoes only this value; nonce and metric CRC remain
+     * reply diagnostics and are never ACK-completion authority.
+     */
+    TLV_ROUTE_REPLY_SHA256_COMMITMENT = 0xB5,
+    /*
+     * Gateway-reserved, durable, strictly increasing identity for one survey
+     * operation.  TLV_SURVEY_ID remains the host correlation value.
+     */
+    TLV_SURVEY_OPERATION_GENERATION = 0xB6,
+    /*
+     * Full SHA-256 commitment to one synchronized survey-round plan and its
+     * timing/command semantics.
+     */
+    TLV_SURVEY_ROUND_COMMITMENT = 0xB7,
+    /*
+     * Repeated gateway/hop ACK identity: acknowledged session, sequence, and
+     * full canonical packet SHA-256. Session/sequence lists are diagnostic.
+     */
+    TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8,
+    /*
+     * Exact host-record identity whose gateway ACK reached the source:
+     * original message type, session, sequence, and canonical SHA-256.
+     */
+    TLV_GATEWAY_ACK_CONFIRM_IDENTITY = 0xB9,
+    /*
+     * EVENT_UPDATE sender phase: 1 means the sender transmits on even event
+     * counters, 0 means it transmits on odd event counters.
+     */
+    TLV_MESH_EVENT_TX_ON_EVEN = 0xBA,
 };
 
 enum detection_source {
@@ -412,8 +505,12 @@ struct result_offer {
     struct command_result_id result_id;
     uint16_t result_len;
     uint16_t result_crc;
+    uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t priority;
 };
+
+_Static_assert(SEMANTIC_DIGEST_SHA256_LEN <= UINT8_MAX,
+               "semantic digest must fit one TLV");
 
 struct result_grant {
     struct command_result_id result_id;
@@ -463,10 +560,19 @@ struct gateway_collection_eack {
     bool collection_open;
 };
 
+struct gateway_collection_recovery_identity {
+    uint64_t packet_src_id;
+    uint32_t recovery_attempt_id;
+    uint16_t packet_seq;
+    uint16_t payload_len;
+    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
+};
+
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);
 uint16_t proto_crc16_ccitt_false_update(uint16_t crc,
                                         const uint8_t *data,
                                         size_t len);
+bool proto_packet_msg_type_allowed_over_uwb(uint8_t msg_type);
 
 size_t proto_packet_header_len(uint16_t payload_len);
 size_t proto_packet_encoded_len(uint16_t payload_len);
@@ -494,10 +600,15 @@ int tlv_append_u32(uint8_t *payload, size_t payload_cap, size_t *offset, uint8_t
 int tlv_append_i32(uint8_t *payload, size_t payload_cap, size_t *offset, uint8_t type, int32_t value);
 int tlv_append_u64(uint8_t *payload, size_t payload_cap, size_t *offset, uint8_t type, uint64_t value);
 int tlv_find(const uint8_t *payload,
-                  size_t payload_len,
-                  uint8_t type,
-                  const uint8_t **value,
-                  uint8_t *len);
+             size_t payload_len,
+             uint8_t type,
+             const uint8_t **value,
+             uint8_t *len);
+int tlv_find_unique(const uint8_t *payload,
+                    size_t payload_len,
+                    uint8_t type,
+                    const uint8_t **value,
+                    uint8_t *len);
 
 int command_result_id_append_tlvs(uint8_t *payload,
                                   size_t payload_cap,
@@ -527,6 +638,12 @@ int result_busy_append_tlvs(uint8_t *payload,
 int result_busy_from_tlvs(const uint8_t *payload,
                           size_t payload_len,
                           struct result_busy *busy);
+int proto_self_test_report_validate(const struct proto_packet *packet,
+                                    const uint8_t *payload,
+                                    size_t payload_len);
+int proto_anchor_heartbeat_validate(const struct proto_packet *packet,
+                                    const uint8_t *payload,
+                                    size_t payload_len);
 int result_bundle_header_append_tlvs(uint8_t *payload,
                                      size_t payload_cap,
                                      size_t *offset,
@@ -554,6 +671,16 @@ int gateway_collection_eack_packet_validate(
     const uint8_t *payload,
     size_t payload_len,
     struct gateway_collection_eack *eack);
+/* Returns PROTO_OK with a nonzero recovery attempt, or
+ * PROTO_ERR_NOT_FOUND for an ordinary collection EACK. */
+int gateway_collection_eack_recovery_attempt_id(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t *attempt_id);
+int gateway_collection_eack_recovery_identity(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_collection_recovery_identity *identity);
 int gateway_collection_eack_contains_node_id(const uint8_t *payload,
                                              size_t payload_len,
                                              uint64_t node_id,

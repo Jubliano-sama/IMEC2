@@ -1025,8 +1025,9 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         gateway = read_composed_source(
             REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
         )
-        ble = (REPO_ROOT / "firmware" / "app" / "src" /
-               "app_gateway_ble.c").read_text(encoding="utf-8")
+        ble = read_composed_source(
+            REPO_ROOT / "firmware" / "app" / "src" / "app_gateway_ble.c"
+        )
 
         self.assertIn("dwm3000_driver_range_initiator", clicker)
         self.assertIn("app_stack_workload_diag_click_activity_sample", clicker)

@@ -20,8 +20,8 @@
 #define LEAF_ID UINT64_C(0xb003000000000003)
 #define ROUTE_EPOCH UINT32_C(53)
 #define SURVEY_ID_N UINT32_C(0x53005001)
-#define SURVEY_ID_NEXT UINT32_C(0x53005002)
 #define SURVEY_ID_STALE UINT32_C(0x52004fff)
+#define OPERATION_GENERATION_N UINT64_C(0x0000000253005001)
 #define ROUND_ID_N UINT16_C(7)
 #define ROUND_ID_NEXT UINT16_C(8)
 #define C5_GUARD_US UINT64_C(500)
@@ -88,10 +88,19 @@ static bool has_action(const struct mesh_relay_result *result,
 static bool pair_equal(const struct survey_pair *left,
                        const struct survey_pair *right)
 {
-    return left->survey_id == right->survey_id &&
+    return left->operation_generation == right->operation_generation &&
+           left->survey_id == right->survey_id &&
            left->initiator_id == right->initiator_id &&
            left->responder_id == right->responder_id &&
            left->sample_count == right->sample_count;
+}
+
+static void round_commitment(uint16_t round_id,
+                             uint8_t commitment[
+                                 SEMANTIC_DIGEST_SHA256_LEN])
+{
+    memset(commitment, 0x5au, SEMANTIC_DIGEST_SHA256_LEN);
+    proto_put_u16_le(commitment, round_id);
 }
 
 /*
@@ -215,6 +224,21 @@ static int send_targeted_to_leaf(struct fixture *state,
     return ret;
 }
 
+static int commit_targeted_leaf_command(
+    struct fixture *state,
+    const struct decoded_control *control)
+{
+    if (state == NULL || control == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    return mesh_relay_commit_anchor_command_delivery(
+        &state->world.roles[state->leaf].relay,
+        &control->packet,
+        control->payload,
+        control->payload_len,
+        (uint32_t)(state->world.now_us / 1000u));
+}
+
 static int send_broadcast_to_leaf(struct fixture *state,
                                   const struct mesh_outbound *outbound,
                                   struct decoded_control *leaf_control,
@@ -335,6 +359,7 @@ static int build_discovery_start(uint32_t survey_id,
                                  struct mesh_outbound *outbound)
 {
     const struct survey_discovery_config config = {
+        .operation_generation = OPERATION_GENERATION_N,
         .survey_id = survey_id,
         .start_delay_ms = 100u,
         .slot_ms = 80u,
@@ -370,6 +395,7 @@ static int build_pair_control(const struct survey_pair *pair,
                               uint16_t seq,
                               struct mesh_outbound *outbound)
 {
+    uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN];
     size_t payload_len = 0u;
     int ret;
 
@@ -393,19 +419,28 @@ static int build_pair_control(const struct survey_pair *pair,
                                          sizeof(outbound->payload),
                                          &payload_len, round_id);
     }
+    if (ret == PROTO_OK) {
+        round_commitment(round_id, commitment);
+        ret = survey_round_commitment_append_tlv(
+            outbound->payload,
+            sizeof(outbound->payload),
+            &payload_len,
+            commitment);
+    }
     if (ret == PROTO_OK && command_id == CMD_SURVEY_PREPARE_PAIR) {
         ret = survey_init_pair_prepare_packet(&outbound->packet, pair,
-                                              GATEWAY_ID, seq,
+                                              GATEWAY_ID, LEAF_ID, seq,
                                               (uint8_t)payload_len);
     } else if (ret == PROTO_OK) {
         ret = mesh_init_command(&outbound->packet, GATEWAY_ID, LEAF_ID,
-                                pair->survey_id, seq,
+                                survey_operation_session_id(
+                                    pair->operation_generation),
+                                seq,
                                 (uint8_t)payload_len);
     }
     if (ret != PROTO_OK) {
         return ret;
     }
-    outbound->packet.dst_id = LEAF_ID;
     outbound->payload_len = (uint16_t)payload_len;
     outbound->next_hop_id = RELAY_ID;
     outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
@@ -418,9 +453,12 @@ static int build_round_go(uint32_t survey_id,
                           struct mesh_outbound *outbound)
 {
     const struct survey_round_go go = {
+        .operation_generation = OPERATION_GENERATION_N,
+        .round_commitment = {0},
         .survey_id = survey_id,
         .round_id = round_id,
     };
+    struct survey_round_go bound_go = go;
     size_t payload_len = 0u;
     int ret;
 
@@ -428,9 +466,10 @@ static int build_round_go(uint32_t survey_id,
         return PROTO_ERR_ARG;
     }
     memset(outbound, 0, sizeof(*outbound));
+    round_commitment(round_id, bound_go.round_commitment);
     ret = survey_round_go_append_tlvs(outbound->payload,
                                       sizeof(outbound->payload),
-                                      &payload_len, &go);
+                                      &payload_len, &bound_go);
     if (ret == PROTO_OK) {
         ret = tlv_append_u8(outbound->payload, sizeof(outbound->payload),
                             &payload_len, TLV_COMMAND_SCOPE,
@@ -458,7 +497,9 @@ static int build_round_go(uint32_t survey_id,
     }
     if (ret == PROTO_OK) {
         ret = survey_round_go_init_packet(&outbound->packet, GATEWAY_ID,
-                                          survey_id, seq,
+                                          survey_operation_session_id(
+                                              bound_go.operation_generation),
+                                          seq,
                                           (uint16_t)payload_len);
     }
     if (ret != PROTO_OK) {
@@ -502,7 +543,9 @@ static int parse_pair_control(const struct decoded_control *control,
         ret = survey_round_id_extract_tlv(control->payload,
                                           control->payload_len, round_id);
     }
-    if (ret != PROTO_OK || control->packet.session_id != pair->survey_id ||
+    if (ret != PROTO_OK ||
+        control->packet.session_id !=
+            survey_operation_session_id(pair->operation_generation) ||
         (pair->initiator_id != LEAF_ID && pair->responder_id != LEAF_ID)) {
         return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
     }
@@ -513,6 +556,7 @@ static int encode_probe(uint64_t anchor_id,
                         const struct survey_discovery_config *config,
                         uint8_t round,
                         uint32_t survey_id,
+                        uint64_t operation_generation,
                         bool corrupt,
                         uint8_t *frame,
                         size_t frame_cap,
@@ -521,6 +565,7 @@ static int encode_probe(uint64_t anchor_id,
     struct uwb_survey_discovery_probe_frame probe = {
         .network_id = UINT32_C(0x494d4543),
         .survey_id = survey_id,
+        .operation_generation = operation_generation,
         .anchor_id = anchor_id,
         .slot_count = config->slot_count,
         .flags = FLAG_DIAGNOSTIC,
@@ -612,7 +657,9 @@ static void note_probe_receptions(struct fixture *state,
             observation->malformed++;
             continue;
         }
-        if (decoded.survey_id != state->accepted_discovery.survey_id) {
+        if (decoded.survey_id != state->accepted_discovery.survey_id ||
+            decoded.operation_generation !=
+                state->accepted_discovery.operation_generation) {
             observation->stale++;
             continue;
         }
@@ -661,12 +708,9 @@ static bool run_discovery_announce_matrix(struct fixture *state)
     malformed.payload_len--;
     malformed.packet.payload_len = malformed.payload_len;
     CHECK(send_broadcast_to_leaf(state, &malformed, &leaf_control,
-                                 &delivered) == PROTO_OK && delivered &&
-          survey_extract_discovery_start_tlvs(
-              leaf_control.payload, leaf_control.payload_len,
-              &decoded_config) != PROTO_OK &&
+                                 &delivered) == PROTO_OK && !delivered &&
           state->accepted_discovery.survey_id == SURVEY_ID_N,
-          "malformed START changed the accepted discovery generation");
+          "malformed START was delivered or changed the accepted discovery generation");
 
     discovery_base_us = state->world.now_us +
         (uint64_t)state->accepted_discovery.start_delay_ms * 1000u;
@@ -697,10 +741,12 @@ static bool run_discovery_announce_matrix(struct fixture *state)
         CHECK(relay_schedule.tx_ms != leaf_schedule.tx_ms,
               "round %u fixture aliases both production slots", round);
         CHECK(encode_probe(RELAY_ID, &state->accepted_discovery, round,
-                           SURVEY_ID_N, round == 2u, relay_frame,
+                           SURVEY_ID_N, OPERATION_GENERATION_N,
+                           round == 2u, relay_frame,
                            sizeof(relay_frame), &relay_frame_len) == PROTO_OK &&
               encode_probe(LEAF_ID, &state->accepted_discovery, round,
-                           SURVEY_ID_N, false, leaf_frame,
+                           SURVEY_ID_N, OPERATION_GENERATION_N,
+                           false, leaf_frame,
                            sizeof(leaf_frame), &leaf_frame_len) == PROTO_OK,
               "round %u probe encoding failed", round);
         relay_tx_us = discovery_base_us +
@@ -744,7 +790,8 @@ static bool run_discovery_announce_matrix(struct fixture *state)
                       PROTO_ERR_BUSY,
                   "expired round-three slot was treated as a new opportunity");
             CHECK(encode_probe(RELAY_ID, &state->accepted_discovery, round,
-                               SURVEY_ID_STALE, false, stale_frame,
+                               SURVEY_ID_N, OPERATION_GENERATION_N - 1u,
+                               false, stale_frame,
                                sizeof(stale_frame), &stale_frame_len) ==
                       PROTO_OK &&
                   schedule_probe(
@@ -787,6 +834,7 @@ static bool run_discovery_announce_matrix(struct fixture *state)
 
 static int note_report_roundtrip(struct survey_gateway_context *context,
                                  uint32_t survey_id,
+                                 uint64_t operation_generation,
                                  uint64_t anchor_id,
                                  uint64_t peer_id,
                                  uint16_t seq)
@@ -807,15 +855,27 @@ static int note_report_roundtrip(struct survey_gateway_context *context,
     size_t decoded_payload_len = 0u;
     size_t decoded_count = 0u;
     uint32_t decoded_survey_id = 0u;
+    uint64_t decoded_operation_generation = 0u;
     uint64_t decoded_anchor_id = 0u;
+    const uint8_t *status_raw = NULL;
+    uint8_t status_len = 0u;
     int ret;
 
     ret = survey_append_reach_report_tlvs(
         payload, sizeof(payload), &payload_len, survey_id, anchor_id,
         &entry, 1u);
     if (ret == PROTO_OK) {
+        ret = survey_operation_generation_append_tlv(
+            payload, sizeof(payload), &payload_len, operation_generation);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u16(payload, sizeof(payload), &payload_len,
+                             TLV_COMMAND_STATUS, COMMAND_OK);
+    }
+    if (ret == PROTO_OK) {
         ret = survey_init_discovery_report_packet(
-            &packet, anchor_id, GATEWAY_ID, survey_id, seq,
+            &packet, anchor_id, GATEWAY_ID, survey_id,
+            operation_generation, seq,
             (uint8_t)payload_len);
     }
     if (ret == PROTO_OK) {
@@ -831,10 +891,31 @@ static int note_report_roundtrip(struct survey_gateway_context *context,
             decoded_payload, decoded_payload_len, &decoded_survey_id,
             &decoded_anchor_id, decoded_entries, 2u, &decoded_count);
     }
+    if (ret == PROTO_OK) {
+        ret = survey_operation_generation_extract_tlv(
+            decoded_payload,
+            decoded_payload_len,
+            &decoded_operation_generation);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_find_unique(decoded_payload,
+                              decoded_payload_len,
+                              TLV_COMMAND_STATUS,
+                              &status_raw,
+                              &status_len);
+    }
     if (ret != PROTO_OK || decoded_packet.msg_type !=
             MSG_SURVEY_DISCOVERY_REPORT ||
-        decoded_packet.src_id != decoded_anchor_id || decoded_count != 1u) {
+        decoded_packet.src_id != decoded_anchor_id ||
+        decoded_packet.session_id !=
+            survey_operation_session_id(decoded_operation_generation) ||
+        status_len != sizeof(uint16_t) ||
+        proto_get_u16_le(status_raw) != COMMAND_OK ||
+        decoded_count != 1u) {
         return ret == PROTO_OK ? PROTO_ERR_MALFORMED : ret;
+    }
+    if (decoded_operation_generation != context->operation_generation) {
+        return PROTO_ERR_STALE;
     }
     return survey_gateway_note_reach_report(
         context, decoded_survey_id, decoded_anchor_id,
@@ -844,33 +925,69 @@ static int note_report_roundtrip(struct survey_gateway_context *context,
 static bool run_report_idempotence_and_pair_plan(struct fixture *state,
                                                  struct survey_pair *pair)
 {
+    struct survey_gateway_context accepted;
     struct survey_reachability_entry invalid = {
         .peer_id = RELAY_ID,
         .rssi_dbm = -60,
         .quality = 90u,
     };
 
-    CHECK(survey_gateway_begin(&state->gateway_survey, SURVEY_ID_N, 1u) ==
-              PROTO_OK,
+    CHECK(survey_gateway_begin_operation(&state->gateway_survey,
+                                         SURVEY_ID_N,
+                                         OPERATION_GENERATION_N,
+                                         1u) == PROTO_OK,
           "gateway survey context did not start");
-    CHECK(note_report_roundtrip(&state->gateway_survey, SURVEY_ID_STALE,
-                                RELAY_ID, LEAF_ID, 201u) == PROTO_ERR_STALE &&
+    CHECK(note_report_roundtrip(&state->gateway_survey,
+                                SURVEY_ID_N,
+                                OPERATION_GENERATION_N - 1u,
+                                RELAY_ID,
+                                LEAF_ID,
+                                200u) == PROTO_ERR_STALE &&
+              state->gateway_survey.report_count == 0u,
+          "stale report generation changed the current survey");
+    CHECK(note_report_roundtrip(&state->gateway_survey,
+                                SURVEY_ID_STALE,
+                                OPERATION_GENERATION_N,
+                                RELAY_ID,
+                                LEAF_ID,
+                                201u) == PROTO_ERR_STALE &&
               state->gateway_survey.report_count == 0u,
           "stale report changed the current survey");
-    CHECK(note_report_roundtrip(&state->gateway_survey, SURVEY_ID_N,
-                                RELAY_ID, LEAF_ID, 202u) == PROTO_OK &&
-              note_report_roundtrip(&state->gateway_survey, SURVEY_ID_N,
-                                    LEAF_ID, RELAY_ID, 203u) == PROTO_OK &&
+    CHECK(note_report_roundtrip(&state->gateway_survey,
+                                SURVEY_ID_N,
+                                OPERATION_GENERATION_N,
+                                RELAY_ID,
+                                LEAF_ID,
+                                202u) == PROTO_OK &&
+              note_report_roundtrip(&state->gateway_survey,
+                                    SURVEY_ID_N,
+                                    OPERATION_GENERATION_N,
+                                    LEAF_ID,
+                                    RELAY_ID,
+                                    203u) == PROTO_OK &&
               state->gateway_survey.report_count == 2u,
           "valid directed observations were not committed");
 
-    /* First accepted state wins even if a later valid transport disagrees. */
-    CHECK(note_report_roundtrip(&state->gateway_survey, SURVEY_ID_N,
-                                RELAY_ID, GATEWAY_ID, 204u) == PROTO_OK &&
-              state->gateway_survey.report_count == 2u &&
-              state->gateway_survey.reports[0].entry_count == 1u &&
-              state->gateway_survey.reports[0].entries[0].peer_id == LEAF_ID,
-          "duplicate report replaced first-accepted peer ownership");
+    accepted = state->gateway_survey;
+    CHECK(note_report_roundtrip(&state->gateway_survey,
+                                SURVEY_ID_N,
+                                OPERATION_GENERATION_N,
+                                RELAY_ID,
+                                LEAF_ID,
+                                204u) == PROTO_OK &&
+              memcmp(&state->gateway_survey, &accepted,
+                     sizeof(state->gateway_survey)) == 0,
+          "exact duplicate discovery report changed gateway state");
+    CHECK(note_report_roundtrip(&state->gateway_survey,
+                                SURVEY_ID_N,
+                                OPERATION_GENERATION_N,
+                                RELAY_ID,
+                                GATEWAY_ID,
+                                205u) ==
+              PROTO_ERR_MALFORMED &&
+              memcmp(&state->gateway_survey, &accepted,
+                     sizeof(state->gateway_survey)) == 0,
+          "conflicting duplicate discovery report changed gateway state");
     CHECK(survey_gateway_note_reach_report(
               &state->gateway_survey, SURVEY_ID_N, RELAY_ID,
               &invalid, 1u) == PROTO_ERR_MALFORMED &&
@@ -880,6 +997,7 @@ static bool run_report_idempotence_and_pair_plan(struct fixture *state,
               state->gateway_survey.pair_count == 1u &&
               survey_gateway_pair_at(&state->gateway_survey, 0u, pair) ==
                   PROTO_OK &&
+              pair->operation_generation == OPERATION_GENERATION_N &&
               ((pair->initiator_id == RELAY_ID &&
                 pair->responder_id == LEAF_ID) ||
                (pair->initiator_id == LEAF_ID &&
@@ -901,18 +1019,25 @@ static enum survey_pair_lease_decision apply_prepare(
 {
     struct survey_pair pair;
     struct survey_pair_control_id id;
+    uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t round_id;
 
     if (parse_pair_control(control, CMD_SURVEY_PREPARE_PAIR,
                            &pair, &round_id) != PROTO_OK) {
         return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
     }
+    if (survey_round_commitment_extract_tlv(
+            control->payload,
+            control->payload_len,
+            commitment) != PROTO_OK) {
+        return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
+    }
     id = (struct survey_pair_control_id) {
         .session_id = control->packet.session_id,
         .command_seq = control->packet.seq,
     };
-    return survey_pair_lease_prepare_round(
-        &state->lease, &pair, round_id, &id,
+    return survey_pair_lease_prepare_round_bound(
+        &state->lease, &pair, round_id, commitment, &id,
         (uint32_t)(state->world.now_us / 1000u), lease_ms);
 }
 
@@ -922,18 +1047,25 @@ static enum survey_pair_lease_decision apply_start(
 {
     struct survey_pair pair;
     struct survey_pair_control_id id;
+    uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t round_id;
 
     if (parse_pair_control(control, CMD_SURVEY_START_PAIR,
                            &pair, &round_id) != PROTO_OK) {
         return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
     }
+    if (survey_round_commitment_extract_tlv(
+            control->payload,
+            control->payload_len,
+            commitment) != PROTO_OK) {
+        return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
+    }
     id = (struct survey_pair_control_id) {
         .session_id = control->packet.session_id,
         .command_seq = control->packet.seq,
     };
-    return survey_pair_lease_start_round(
-        &state->lease, &pair, round_id, &id,
+    return survey_pair_lease_start_round_bound(
+        &state->lease, &pair, round_id, commitment, &id,
         (uint32_t)(state->world.now_us / 1000u));
 }
 
@@ -941,37 +1073,80 @@ static enum survey_pair_lease_decision apply_go(
     struct fixture *state,
     const struct decoded_control *control)
 {
+    const uint8_t *execute_delay_value = NULL;
     struct survey_round_go go;
+    uint32_t execute_delay_ms;
+    uint32_t execution_deadline_ms;
+    uint32_t now_ms;
+    uint32_t remaining_delay_ms;
+    uint8_t execute_delay_len = 0u;
 
-    if (control == NULL ||
+    if (state == NULL || control == NULL ||
         survey_round_go_from_tlvs(control->payload, control->payload_len,
                                   &go) != PROTO_OK ||
-        control->packet.session_id != go.survey_id) {
+        control->packet.session_id != survey_operation_session_id(
+            go.operation_generation) ||
+        tlv_find_unique(control->payload, control->payload_len,
+                        TLV_EXECUTE_DELAY_MS, &execute_delay_value,
+                        &execute_delay_len) != PROTO_OK ||
+        execute_delay_len != sizeof(execute_delay_ms)) {
         return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
     }
-    return survey_pair_lease_go(&state->lease, go.survey_id, go.round_id,
-                                (uint32_t)(state->world.now_us / 1000u));
+    execute_delay_ms = proto_get_u32_le(execute_delay_value);
+    if (execute_delay_ms == 0u ||
+        control->packet.message_age_ms >= execute_delay_ms) {
+        return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
+    }
+
+    remaining_delay_ms =
+        execute_delay_ms - control->packet.message_age_ms;
+    if (remaining_delay_ms >
+        (uint32_t)INT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS) {
+        return SURVEY_PAIR_LEASE_INVALID_ARGUMENT;
+    }
+    now_ms = (uint32_t)(state->world.now_us / 1000u);
+    execution_deadline_ms =
+        now_ms + remaining_delay_ms + SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    return survey_pair_lease_go_until_bound(
+        &state->lease,
+        go.operation_generation,
+        go.survey_id,
+        go.round_id,
+        go.round_commitment,
+        now_ms,
+        execution_deadline_ms);
 }
 
 static bool apply_abort(struct fixture *state,
                         const struct decoded_control *control)
 {
     struct survey_pair pair;
+    uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t round_id;
 
     if (parse_pair_control(control, CMD_SURVEY_ABORT,
                            &pair, &round_id) != PROTO_OK) {
         return false;
     }
-    (void)round_id;
-    return survey_pair_lease_abort_matching(&state->lease, &pair,
-                                            control->packet.session_id);
+    if (survey_round_commitment_extract_tlv(
+            control->payload,
+            control->payload_len,
+            commitment) != PROTO_OK) {
+        return false;
+    }
+    return survey_pair_lease_abort_matching_round_bound(
+        &state->lease,
+        &pair,
+        control->packet.session_id,
+        round_id,
+        commitment);
 }
 
 static bool run_pair_control_and_reset_matrix(struct fixture *state,
                                               const struct survey_pair *planned)
 {
     struct survey_pair pair = {
+        .operation_generation = OPERATION_GENERATION_N,
         .initiator_id = LEAF_ID,
         .responder_id = RELAY_ID,
         .survey_id = SURVEY_ID_N,
@@ -984,14 +1159,13 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
     struct mesh_outbound go;
     struct mesh_outbound abort;
     struct decoded_control decoded;
-    struct survey_pair parsed_pair;
     struct survey_pair running_pair;
     struct survey_pair_control_id start_id;
     enum survey_pair_lease_decision decision;
     uint32_t original_deadline;
-    uint16_t parsed_round;
     bool delivered;
 
+    next_pair.operation_generation = OPERATION_GENERATION_N + 1u;
     survey_pair_lease_reset(&state->lease);
     CHECK(build_pair_control(&pair, ROUND_ID_N, CMD_SURVEY_PREPARE_PAIR,
                              210u, &prepare) == PROTO_OK,
@@ -1001,11 +1175,9 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
     malformed.payload_len--;
     malformed.packet.payload_len = malformed.payload_len;
     CHECK(send_targeted_to_leaf(state, &malformed, &decoded, &delivered) ==
-              PROTO_OK && delivered &&
-          parse_pair_control(&decoded, CMD_SURVEY_PREPARE_PAIR,
-                             &parsed_pair, &parsed_round) != PROTO_OK &&
+              PROTO_OK && !delivered &&
           state->lease.phase == SURVEY_PAIR_LEASE_IDLE,
-          "malformed PREPARE acquired pair ownership");
+          "malformed PREPARE was delivered or acquired pair ownership");
 
     CHECK(build_pair_control(&pair, ROUND_ID_N, CMD_SURVEY_START_PAIR,
                              212u, &start) == PROTO_OK &&
@@ -1014,6 +1186,8 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
           apply_start(state, &decoded) == SURVEY_PAIR_LEASE_INVALID_STATE &&
           state->lease.phase == SURVEY_PAIR_LEASE_IDLE,
           "reordered START acquired ownership before PREPARE");
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "reordered START result admission did not commit transport replay");
 
     CHECK(send_targeted_to_leaf(state, &prepare, &decoded, &delivered) ==
               PROTO_OK && delivered &&
@@ -1022,11 +1196,29 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
           "valid PREPARE did not acquire the leaf lease");
     state->semantic_prepare_count++;
     original_deadline = state->lease.prepared_deadline_ms;
+    CHECK(send_targeted_to_leaf(state, &prepare, &decoded, &delivered) ==
+              PROTO_OK && delivered &&
+          apply_prepare(state, &decoded, 60000u) ==
+              SURVEY_PAIR_LEASE_DUPLICATE &&
+          state->lease.prepared_deadline_ms == original_deadline &&
+          state->semantic_prepare_count == 1u,
+          "exact duplicate PREPARE refreshed or re-applied state");
+    fprintf(stderr,
+            "DEBUG prepare commit msg=%u src=%llx dst=%llx local=%llx gateway=%llx plen=%u/%zu\n",
+            decoded.packet.msg_type,
+            (unsigned long long)decoded.packet.src_id,
+            (unsigned long long)decoded.packet.dst_id,
+            (unsigned long long)state->world.roles[state->leaf].relay.local_id,
+            (unsigned long long)state->world.roles[state->leaf].relay.gateway_id,
+            decoded.packet.payload_len,
+            decoded.payload_len);
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "accepted PREPARE result admission did not commit transport replay");
     CHECK(send_targeted_to_leaf(state, &prepare, NULL, &delivered) ==
               PROTO_OK && !delivered &&
           state->lease.prepared_deadline_ms == original_deadline &&
           state->semantic_prepare_count == 1u,
-          "exact duplicate PREPARE refreshed or re-applied state");
+          "committed duplicate PREPARE reached semantic delivery");
 
     CHECK(build_pair_control(&pair, ROUND_ID_N, CMD_SURVEY_START_PAIR,
                              214u, &start) == PROTO_OK,
@@ -1040,6 +1232,8 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
         .session_id = decoded.packet.session_id,
         .command_seq = decoded.packet.seq,
     };
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "accepted START result admission did not commit transport replay");
 
     CHECK(build_round_go(SURVEY_ID_N, ROUND_ID_N, 213u, &go) == PROTO_OK &&
           send_broadcast_to_leaf(state, &go, &decoded, &delivered) ==
@@ -1086,6 +1280,8 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
           state->lease.phase == SURVEY_PAIR_LEASE_ABORTING,
           "matching ABORT did not own running cleanup");
     state->semantic_abort_count++;
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "accepted ABORT result admission did not commit transport replay");
     CHECK(send_targeted_to_leaf(state, &abort, NULL, &delivered) ==
               PROTO_OK && !delivered &&
           state->semantic_abort_count == 1u,
@@ -1097,6 +1293,8 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
           !survey_pair_lease_finish(&state->lease) &&
           state->lease.phase == SURVEY_PAIR_LEASE_IDLE,
           "ABORT cleanup did not terminalize exactly once");
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "duplicate-state ABORT result admission did not commit transport replay");
 
     /* Reset while N owns START+GO but before the result releases START. */
     CHECK(build_pair_control(&pair, ROUND_ID_N, CMD_SURVEY_PREPARE_PAIR,
@@ -1112,6 +1310,8 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
               PROTO_OK && delivered &&
           apply_start(state, &decoded) == SURVEY_PAIR_LEASE_ACCEPTED,
           "reset-boundary operation N START failed");
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "reset-boundary START result admission did not commit transport replay");
     CHECK(build_round_go(SURVEY_ID_N, ROUND_ID_N, 222u, &go) == PROTO_OK &&
           send_broadcast_to_leaf(state, &go, &decoded, &delivered) ==
               PROTO_OK && delivered,
@@ -1131,7 +1331,6 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
     CHECK(install_gateway_route_advertisement(state, 301u) == MESH_SIM_OK,
           "gateway route advertisement did not repair the reset leaf route");
 
-    next_pair.survey_id = SURVEY_ID_NEXT;
     CHECK(build_pair_control(&next_pair, ROUND_ID_NEXT,
                              CMD_SURVEY_PREPARE_PAIR, 310u, &prepare) ==
               PROTO_OK &&
@@ -1147,11 +1346,16 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
           send_targeted_to_leaf(state, &start, &decoded, &delivered) ==
               PROTO_OK && delivered &&
           apply_start(state, &decoded) ==
-              SURVEY_PAIR_LEASE_INVALID_STATE &&
+              SURVEY_PAIR_LEASE_STALE &&
           state->lease.phase == SURVEY_PAIR_LEASE_PREPARED &&
-          state->lease.pair.survey_id == SURVEY_ID_NEXT &&
+          state->lease.pair.survey_id == SURVEY_ID_N &&
+          state->lease.pair.operation_generation ==
+              OPERATION_GENERATION_N + 1u &&
+          state->lease.round_id == ROUND_ID_NEXT &&
           state->lease.prepared_deadline_ms == original_deadline,
           "delayed START from N mutated N+1");
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "stale START result admission did not commit transport replay");
     CHECK(build_round_go(SURVEY_ID_N, ROUND_ID_N, 312u, &go) == PROTO_OK &&
           send_broadcast_to_leaf(state, &go, &decoded, &delivered) ==
               PROTO_OK && delivered,
@@ -1159,7 +1363,10 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
     decision = apply_go(state, &decoded);
     CHECK(decision == SURVEY_PAIR_LEASE_STALE &&
               state->lease.phase == SURVEY_PAIR_LEASE_PREPARED &&
-              state->lease.pair.survey_id == SURVEY_ID_NEXT &&
+              state->lease.pair.survey_id == SURVEY_ID_N &&
+              state->lease.pair.operation_generation ==
+                  OPERATION_GENERATION_N + 1u &&
+              state->lease.round_id == ROUND_ID_NEXT &&
               state->lease.prepared_deadline_ms == original_deadline,
           "delayed GO from N mutated N+1 decision=%u delivered=%u",
           (unsigned int)decision, delivered ? 1u : 0u);
@@ -1167,8 +1374,13 @@ static bool run_pair_control_and_reset_matrix(struct fixture *state,
                              313u, &abort) == PROTO_OK &&
           send_targeted_to_leaf(state, &abort, &decoded, &delivered) ==
               PROTO_OK && delivered && !apply_abort(state, &decoded) &&
-          state->lease.pair.survey_id == SURVEY_ID_NEXT,
+          state->lease.pair.survey_id == SURVEY_ID_N &&
+          state->lease.pair.operation_generation ==
+              OPERATION_GENERATION_N + 1u &&
+          state->lease.round_id == ROUND_ID_NEXT,
           "delayed ABORT from N cancelled N+1");
+    CHECK(commit_targeted_leaf_command(state, &decoded) == PROTO_OK,
+          "stale ABORT result admission did not commit transport replay");
 
     CHECK(survey_pair_lease_expire(&state->lease, original_deadline) &&
           state->lease.phase == SURVEY_PAIR_LEASE_IDLE &&

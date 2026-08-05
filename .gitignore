@@ -17,4 +17,12 @@ zephyr/
 # Build outputs
 build/
 firmware/build/
+firmware/build-*
 firmware/app/build/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Flash artifacts
+flash.bin

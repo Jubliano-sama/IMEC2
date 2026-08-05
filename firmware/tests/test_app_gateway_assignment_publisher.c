@@ -12,10 +12,43 @@ struct mock_ble {
     size_t queue_count;
     size_t sent_count;
     size_t max_depth;
+    size_t completed_batches;
+    size_t completion_failures;
+    struct gateway_command_event completion_event;
+    bool completion_event_valid;
+    uint32_t durable_sequence_reservations;
     bool connected;
     bool credit;
     bool priority_pending;
 };
+
+static int mock_complete(const struct gateway_command_event *event, void *ctx)
+{
+    struct mock_ble *ble = ctx;
+
+    assert(event->kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION);
+    assert(event->command_id == CMD_ASSIGN_DISCOVERY_SLOTS);
+    if (ble->completion_event_valid) {
+        assert(event->correlation_id ==
+               ble->completion_event.correlation_id);
+        assert(event->gateway_sequence ==
+               ble->completion_event.gateway_sequence);
+        assert(event->gateway_epoch ==
+               ble->completion_event.gateway_epoch);
+        assert(event->host_session_id ==
+               ble->completion_event.host_session_id);
+        assert(event->host_seq == ble->completion_event.host_seq);
+    } else {
+        ble->completion_event = *event;
+        ble->completion_event_valid = true;
+    }
+    ble->completed_batches++;
+    if (ble->completion_failures > 0u) {
+        ble->completion_failures--;
+        return -EIO;
+    }
+    return 0;
+}
 
 static int mock_emit(struct gateway_command_event *event,
                      bool terminal,
@@ -24,13 +57,19 @@ static int mock_emit(struct gateway_command_event *event,
     struct mock_ble *ble = ctx;
     int ret;
 
+    if (event->event_seq == 0u) {
+        ble->durable_sequence_reservations++;
+        event->event_seq = ble->durable_sequence_reservations;
+    }
     if (!ble->connected || !ble->credit || ble->priority_pending ||
         ble->queue_count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH) {
         return -EAGAIN;
     }
-    ret = gateway_command_observability_prepare(&ble->observability,
-                                                event,
-                                                terminal);
+    ret = gateway_command_observability_prepare_with_sequence(
+        &ble->observability,
+        event,
+        terminal,
+        event->event_seq);
     assert(ret == 0);
     ble->queue[ble->queue_count++] = *event;
     if (ble->queue_count > ble->max_depth) {
@@ -47,24 +86,43 @@ static void remove_head(struct mock_ble *ble)
     ble->queue_count--;
 }
 
-static void send_head(struct mock_ble *ble, bool preempt_after_send)
+static bool send_head(struct mock_ble *ble, bool preempt_after_send)
 {
     struct gateway_command_event event;
+    size_t completed_batches;
+    size_t queued_after_remove;
+    bool advanced;
 
     assert(ble->connected);
     assert(ble->queue_count > 0u);
     event = ble->queue[0];
     remove_head(ble);
     if (event.event_seq == 0u) {
-        app_gateway_assignment_publisher_pump();
-        return;
+        return false;
     }
     assert(ble->sent_count < sizeof(ble->sent) / sizeof(ble->sent[0]));
     ble->sent[ble->sent_count++] = event;
     gateway_command_observability_mark_sent(&ble->observability,
                                             event.event_seq);
     ble->priority_pending = preempt_after_send;
-    app_gateway_assignment_publisher_note_sent(event.event_seq);
+    completed_batches = ble->completed_batches;
+    queued_after_remove = ble->queue_count;
+    assert(!app_gateway_assignment_publisher_note_sent(
+        event.event_seq ^ UINT32_C(0x80000000)));
+    advanced = app_gateway_assignment_publisher_note_sent(event.event_seq);
+    assert(ble->completed_batches == completed_batches);
+    assert(ble->queue_count == queued_after_remove);
+    return advanced;
+}
+
+static int route_owner_service(void)
+{
+    int ret = app_gateway_assignment_publisher_complete_pending();
+
+    if (ret == 0) {
+        app_gateway_assignment_publisher_pump();
+    }
+    return ret;
 }
 
 static struct gateway_command_event base_event(uint32_t epoch)
@@ -96,8 +154,11 @@ static void run_pressure_case(size_t count)
 
     memset(&ble, 0, sizeof(ble));
     gateway_command_observability_init(&ble.observability);
-    ops.emit_if_available = mock_emit;
-    ops.ctx = &ble;
+    ops = (struct app_gateway_assignment_publisher_ops) {
+        .emit_if_available = mock_emit,
+        .batch_completed = mock_complete,
+        .ctx = &ble,
+    };
     assert(app_gateway_assignment_publisher_init(&ops) == 0);
     for (size_t i = 0u; i < count; i++) {
         anchor_ids[i] = UINT64_C(0x1000000000000000) + i;
@@ -128,22 +189,29 @@ static void run_pressure_case(size_t count)
     assert(app_gateway_assignment_publisher_capture_terminal(&terminal));
     assert(ble.observability.next_event_seq == 0u);
     assert(ble.observability.lost_event_count == 0u);
+    assert(ble.durable_sequence_reservations == 1u);
 
     ble.credit = true;
     ble.priority_pending = true;
     app_gateway_assignment_publisher_pump();
     assert(ble.observability.next_event_seq == 0u);
+    assert(ble.durable_sequence_reservations == 1u);
     ble.priority_pending = false;
     ble.connected = false;
     app_gateway_assignment_publisher_pump();
     assert(ble.observability.next_event_seq == 0u);
+    assert(ble.durable_sequence_reservations == 1u);
     ble.connected = true;
 
     while (ble.queue_count > 0u && ble.queue[0].event_seq == 0u) {
-        send_head(&ble, false);
+        assert(!send_head(&ble, false));
+        if (app_gateway_assignment_publisher_work_pending()) {
+            assert(route_owner_service() == 0);
+        }
     }
     while (ble.sent_count < count + 3u) {
         bool click_preempt = ble.sent_count == 1u;
+        int service_ret;
 
         assert(ble.queue_count > 0u);
         if (!disconnected_once && ble.sent_count == 2u) {
@@ -153,19 +221,24 @@ static void run_pressure_case(size_t count)
             ble.connected = true;
             disconnected_once = true;
         }
-        send_head(&ble, click_preempt);
+        assert(send_head(&ble, click_preempt));
         if (click_preempt) {
             uint32_t next_seq = ble.observability.next_event_seq;
 
-            app_gateway_assignment_publisher_pump();
+            assert(route_owner_service() == 0);
             assert(ble.observability.next_event_seq == next_seq);
             ble.priority_pending = false;
-            app_gateway_assignment_publisher_pump();
+            service_ret = route_owner_service();
+        } else {
+            service_ret = route_owner_service();
         }
+        assert(service_ret ==
+               (ble.sent_count == count + 3u ? 1 : 0));
     }
 
     assert(ble.max_depth <= GATEWAY_BLE_STREAM_QUEUE_DEPTH);
     assert(ble.sent_count == count + 3u);
+    assert(ble.durable_sequence_reservations == count + 3u);
     assert(ble.observability.lost_event_count == 0u);
     for (size_t i = 0u; i < ble.sent_count; i++) {
         assert(ble.sent[i].event_seq == i + 1u);
@@ -188,16 +261,17 @@ static void run_pressure_case(size_t count)
             GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u);
     app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
     assert(!diagnostics.active);
+    assert(ble.completed_batches == 1u);
 }
 
 static void run_partial_publish_case(void)
 {
-    struct discovery_assignment_entry committed[2];
     uint64_t claimed_ids[3] = {
         UINT64_C(0x2100000000000001),
         UINT64_C(0x2100000000000002),
         UINT64_C(0x2100000000000003),
     };
+    const uint8_t claimed_slots[3] = {0u, 1u, 4u};
     struct app_gateway_assignment_publisher_ops ops;
     struct gateway_command_event base = base_event(77u);
     struct gateway_command_event table = base;
@@ -206,24 +280,22 @@ static void run_partial_publish_case(void)
 
     memset(&ble, 0, sizeof(ble));
     gateway_command_observability_init(&ble.observability);
-    ops.emit_if_available = mock_emit;
-    ops.ctx = &ble;
+    ops = (struct app_gateway_assignment_publisher_ops) {
+        .emit_if_available = mock_emit,
+        .batch_completed = mock_complete,
+        .ctx = &ble,
+    };
     assert(app_gateway_assignment_publisher_init(&ops) == 0);
     assert(discovery_assignment_sort_anchor_ids(
                claimed_ids, sizeof(claimed_ids) / sizeof(claimed_ids[0])) ==
            PROTO_OK);
 
-    committed[0].anchor_id = claimed_ids[0];
-    committed[0].hash = discovery_assignment_hash(claimed_ids[0]);
-    committed[0].slot = 0u;
-    committed[1].anchor_id = claimed_ids[2];
-    committed[1].hash = discovery_assignment_hash(claimed_ids[2]);
-    committed[1].slot = 2u;
-
     ble.connected = true;
     ble.credit = true;
-    assert(app_gateway_assignment_publisher_stage_batch(
-               &base, committed, 2u, 0u) == 0);
+    ble.completion_failures = 1u;
+    assert(app_gateway_assignment_publisher_stage_table(
+               &base, claimed_ids, claimed_slots, 3u,
+               UINT64_C(0x11), 0u) == 0);
     table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
     table.progress_count = 2u;
     table.total_count = 3u;
@@ -236,24 +308,113 @@ static void run_partial_publish_case(void)
     terminal.failure_count = 1u;
     assert(app_gateway_assignment_publisher_capture_terminal(&terminal));
 
-    while (ble.sent_count < 5u) {
+    while (ble.sent_count < 6u) {
         assert(ble.queue_count > 0u);
-        send_head(&ble, false);
+        assert(send_head(&ble, false));
+        if (ble.sent_count < 6u) {
+            assert(route_owner_service() == 0);
+        }
     }
 
     assert(ble.sent[0].stage ==
            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
-    assert(ble.sent[0].anchor_id == committed[0].anchor_id);
+    assert(ble.sent[0].anchor_id == claimed_ids[0]);
     assert(ble.sent[0].slot == 0u);
+    assert(ble.sent[0].status == COMMAND_OK);
     assert(ble.sent[1].stage ==
            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
-    assert(ble.sent[1].anchor_id == committed[1].anchor_id);
-    assert(ble.sent[1].slot == 2u);
-    assert(ble.sent[4].stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
-    assert(ble.sent[4].status == COMMAND_OK);
-    assert(ble.sent[4].total_count == 3u);
-    assert(ble.sent[4].success_count == 2u);
-    assert(ble.sent[4].failure_count == 1u);
+    assert(ble.sent[1].anchor_id == claimed_ids[1]);
+    assert(ble.sent[1].slot == 1u);
+    assert(ble.sent[1].status == COMMAND_TIMEOUT);
+    assert(ble.sent[1].failure_count == 1u);
+    assert(ble.sent[2].anchor_id == claimed_ids[2]);
+    assert(ble.sent[2].slot == 4u);
+    assert(ble.sent[2].status == COMMAND_OK);
+    assert(ble.sent[5].stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
+    assert(ble.sent[5].status == COMMAND_OK);
+    assert(ble.sent[5].total_count == 3u);
+    assert(ble.sent[5].success_count == 2u);
+    assert(ble.sent[5].failure_count == 1u);
+    assert(ble.completed_batches == 0u);
+    {
+        struct app_gateway_assignment_publisher_diagnostics diagnostics;
+        struct gateway_command_event other = base_event(78u);
+
+        app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+        assert(diagnostics.active);
+        assert(ble.queue_count == 0u);
+        /*
+         * Any transport-side pump remains storage-free once the terminal host
+         * notification has published its immutable completion debt.
+         */
+        app_gateway_assignment_publisher_pump();
+        assert(ble.completed_batches == 0u);
+        assert(app_gateway_assignment_publisher_complete_pending() == -EIO);
+        assert(ble.completed_batches == 1u);
+        app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+        assert(diagnostics.active);
+        assert(app_gateway_assignment_publisher_prepare_table(
+                   &other,
+                   claimed_ids,
+                   claimed_slots,
+                   3u,
+                   UINT64_C(0x11),
+                   0u) == -EBUSY);
+        assert(app_gateway_assignment_publisher_complete_pending() == 1);
+        app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+        assert(!diagnostics.active);
+        assert(ble.sent_count == 6u);
+        assert(ble.completed_batches == 2u);
+    }
+}
+
+static void run_prepare_commit_atomicity_case(void)
+{
+    uint64_t anchor_ids[2] = {
+        UINT64_C(0x3100000000000001),
+        UINT64_C(0x3100000000000002),
+    };
+    const uint8_t slots[2] = {0u, 1u};
+    struct app_gateway_assignment_publisher_diagnostics diagnostics;
+    struct app_gateway_assignment_publisher_ops ops;
+    struct gateway_command_event base = base_event(88u);
+    struct gateway_command_event other = base_event(89u);
+    struct mock_ble ble;
+
+    memset(&ble, 0, sizeof(ble));
+    gateway_command_observability_init(&ble.observability);
+    ble.connected = true;
+    ble.credit = true;
+    ops = (struct app_gateway_assignment_publisher_ops) {
+        .emit_if_available = mock_emit,
+        .batch_completed = mock_complete,
+        .ctx = &ble,
+    };
+    assert(app_gateway_assignment_publisher_init(&ops) == 0);
+
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == 0);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == 1);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &other, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == -EBUSY);
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    assert(diagnostics.active);
+    assert(ble.queue_count == 0u);
+    assert(ble.observability.next_event_seq == 0u);
+    assert(app_gateway_assignment_publisher_abort_prepared_batch(&base));
+    assert(!app_gateway_assignment_publisher_abort_prepared_batch(&base));
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    assert(!diagnostics.active);
+
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == 0);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&other) ==
+           -ESTALE);
+    assert(ble.queue_count == 0u);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
+    assert(ble.queue_count == 1u);
+    assert(!app_gateway_assignment_publisher_abort_prepared_batch(&base));
 }
 
 int main(void)
@@ -262,5 +423,6 @@ int main(void)
     run_pressure_case(20u);
     run_pressure_case(50u);
     run_partial_publish_case();
+    run_prepare_commit_atomicity_case();
     return 0;
 }

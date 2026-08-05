@@ -15,9 +15,13 @@ typedef int (*app_gateway_assignment_publisher_emit_fn)(
     struct gateway_command_event *event,
     bool terminal,
     void *ctx);
+typedef int (*app_gateway_assignment_publisher_complete_fn)(
+    const struct gateway_command_event *base_event,
+    void *ctx);
 
 struct app_gateway_assignment_publisher_ops {
     app_gateway_assignment_publisher_emit_fn emit_if_available;
+    app_gateway_assignment_publisher_complete_fn batch_completed;
     void *ctx;
 };
 
@@ -32,11 +36,29 @@ struct app_gateway_assignment_publisher_diagnostics {
 
 int app_gateway_assignment_publisher_init(
     const struct app_gateway_assignment_publisher_ops *ops);
-int app_gateway_assignment_publisher_stage_batch(
+int app_gateway_assignment_publisher_stage_table(
     const struct gateway_command_event *base_event,
-    const struct discovery_assignment_entry *entries,
-    size_t entry_count,
+    const uint64_t *anchor_ids,
+    const uint8_t *slots,
+    size_t anchor_count,
+    uint64_t acknowledged_mask,
     uint16_t duplicate_count);
+/*
+ * Reserve the complete mapping without making any part visible to the host.
+ * The caller may then perform its irreversible durable commit and either
+ * publish or abort this exact prepared batch.
+ */
+int app_gateway_assignment_publisher_prepare_table(
+    const struct gateway_command_event *base_event,
+    const uint64_t *anchor_ids,
+    const uint8_t *slots,
+    size_t anchor_count,
+    uint64_t acknowledged_mask,
+    uint16_t duplicate_count);
+int app_gateway_assignment_publisher_commit_prepared_batch(
+    const struct gateway_command_event *base_event);
+bool app_gateway_assignment_publisher_abort_prepared_batch(
+    const struct gateway_command_event *base_event);
 int app_gateway_assignment_publisher_stage_sorted_ids(
     const struct gateway_command_event *base_event,
     const uint64_t *anchor_ids,
@@ -47,7 +69,20 @@ void app_gateway_assignment_publisher_stage_table_ready(
 bool app_gateway_assignment_publisher_capture_terminal(
     const struct gateway_command_event *event);
 void app_gateway_assignment_publisher_pump(void);
-void app_gateway_assignment_publisher_note_sent(uint32_t event_seq);
+/*
+ * Record one host-notified event without running transport or persistence
+ * callbacks in the Bluetooth completion context. Returns true only when the
+ * event advanced the active publication.
+ */
+bool app_gateway_assignment_publisher_note_sent(uint32_t event_seq);
+/* True when owner work can emit or durably complete the active publication. */
+bool app_gateway_assignment_publisher_work_pending(void);
+/*
+ * Complete one durable terminal debt from its owning workqueue. Returns one
+ * after retiring the matching batch, zero when no completion is due, or a
+ * negative callback error while retaining the exact debt for retry.
+ */
+int app_gateway_assignment_publisher_complete_pending(void);
 void app_gateway_assignment_publisher_get_diagnostics(
     struct app_gateway_assignment_publisher_diagnostics *diagnostics);
 

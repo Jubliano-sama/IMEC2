@@ -7,6 +7,7 @@
 #include "node_transaction.h"
 #include "survey.h"
 #include "survey_gateway_transaction.h"
+#include "survey_round_control.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -24,6 +25,9 @@
 #define ASSIGNMENT_EPOCH_2 UINT32_C(0x31000102)
 #define SURVEY_ID_1 UINT32_C(0x31005001)
 #define SURVEY_ID_2 UINT32_C(0x31005002)
+#define SURVEY_OPERATION_GENERATION_1 UINT64_C(0x0000000131005001)
+#define SURVEY_OPERATION_GENERATION_2 UINT64_C(0x0000000131005002)
+#define SURVEY_ROUND_ID UINT16_C(1)
 #define MAX_DRIVE_STEPS 600u
 #define C5_GUARD_US UINT64_C(500)
 #define DIRECT_GATEWAY_TX_PREPARE_US UINT64_C(20000)
@@ -491,7 +495,7 @@ static int build_assignment_control(uint32_t epoch,
         .dst_id = LEAF_ID,
         .session_id = epoch,
         .seq = seq,
-        .ttl = MESH_DEFAULT_TTL,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
         .payload_len = (uint16_t)payload_len,
     };
     outbound->payload_len = (uint16_t)payload_len;
@@ -591,9 +595,9 @@ static bool apply_assignment_table(
     enum app_discovery_assignment_table_decision expected)
 {
     struct discovery_assignment_entry decoded[2];
+    struct discovery_assignment_table_commitment commitment;
     enum discovery_assignment_phase phase = 0;
     uint32_t epoch = 0u;
-    uint32_t fingerprint;
     uint8_t slot_count = 0u;
     size_t entry_count = 0u;
     enum app_discovery_assignment_table_decision decision;
@@ -605,16 +609,18 @@ static bool apply_assignment_table(
             &entry_count, &slot_count) != PROTO_OK) {
         return false;
     }
-    fingerprint = discovery_assignment_table_fingerprint(
-        decoded, entry_count, slot_count);
+    if (!discovery_assignment_table_commitment(
+            decoded, entry_count, slot_count, &commitment)) {
+        return false;
+    }
     decision = app_discovery_assignment_policy_note_table(
-        policy, epoch, control->packet.seq, fingerprint);
+        policy, epoch, control->packet.seq, &commitment);
     if (decision != expected) {
         return false;
     }
     return decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY ||
            app_discovery_assignment_policy_commit(
-               policy, epoch, control->packet.seq, fingerprint);
+               policy, epoch, control->packet.seq, &commitment);
 }
 
 static int build_reach_report(uint64_t source_id, uint64_t peer_id,
@@ -633,7 +639,7 @@ static int build_reach_report(uint64_t source_id, uint64_t peer_id,
         source_id, &entry, 1u);
     return ret == PROTO_OK ?
            survey_init_discovery_report_packet(packet, source_id, GATEWAY_ID,
-                                               survey_id, seq,
+                                               survey_id, 0u, seq,
                                                (uint8_t)*payload_len) : ret;
 }
 
@@ -660,6 +666,7 @@ static int note_reach_delivery(struct survey_gateway_context *context,
 static int build_pair_control(const struct survey_pair *pair, uint16_t seq,
                               struct mesh_outbound *outbound)
 {
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     size_t payload_len = 0u;
     int ret;
     memset(outbound, 0, sizeof(*outbound));
@@ -667,14 +674,24 @@ static int build_pair_control(const struct survey_pair *pair, uint16_t seq,
                                   sizeof(outbound->payload), &payload_len,
                                   pair);
     if (ret == PROTO_OK) {
+        ret = survey_round_id_append_tlv(
+            outbound->payload, sizeof(outbound->payload), &payload_len,
+            SURVEY_ROUND_ID);
+    }
+    if (ret == PROTO_OK) {
+        proto_put_u16_le(round_commitment, SURVEY_ROUND_ID);
+        ret = survey_round_commitment_append_tlv(
+            outbound->payload, sizeof(outbound->payload), &payload_len,
+            round_commitment);
+    }
+    if (ret == PROTO_OK) {
         ret = survey_init_pair_prepare_packet(&outbound->packet, pair,
-                                              GATEWAY_ID, seq,
+                                              GATEWAY_ID, LEAF_ID, seq,
                                               (uint8_t)payload_len);
     }
     if (ret != PROTO_OK) {
         return ret;
     }
-    outbound->packet.dst_id = LEAF_ID;
     outbound->payload_len = (uint16_t)payload_len;
     outbound->next_hop_id = RELAY_ID;
     outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
@@ -770,10 +787,10 @@ static bool run_assignment_phase(void)
     struct proto_packet packet;
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
     size_t payload_len = 0u;
-    uint32_t committed_fingerprint;
+    struct discovery_assignment_table_commitment committed_commitment;
     uint32_t committed_table_seq;
-    app_discovery_assignment_policy_init(assignment, false, false,
-                                         0u, 0u, 0u);
+    app_discovery_assignment_policy_init(assignment, false, false, false,
+                                         0u, 0u, NULL);
     claim.hash = discovery_assignment_hash(claim.anchor_id);
     CHECK(discovery_assignment_entries_from_claims(&claim, 1u, &entry, 1u) ==
               PROTO_OK,
@@ -843,7 +860,7 @@ static bool run_assignment_phase(void)
               assignment, ASSIGNMENT_EPOCH_2) ==
               APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND,
           "new assignment operation did not start");
-    committed_fingerprint = assignment->committed_table_fingerprint;
+    committed_commitment = assignment->committed_table_commitment;
     committed_table_seq = assignment->committed_table_seq;
 
     /* Operation N's delayed table arrives after N+1 owns the join state. */
@@ -860,7 +877,9 @@ static bool run_assignment_phase(void)
     CHECK(assignment->joining_epoch == ASSIGNMENT_EPOCH_2 &&
           assignment->committed_epoch == ASSIGNMENT_EPOCH_1 &&
           assignment->committed_table_seq == committed_table_seq &&
-          assignment->committed_table_fingerprint == committed_fingerprint,
+          discovery_assignment_table_commitment_equal(
+              &assignment->committed_table_commitment,
+              &committed_commitment),
           "operation-N table mutated operation N+1");
 
     CHECK(build_assignment_control(ASSIGNMENT_EPOCH_2,
@@ -896,7 +915,9 @@ static bool run_survey_discovery_phase(void)
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
     size_t payload_len = 0u;
 
-    CHECK(survey_gateway_begin(&lifecycle.survey, SURVEY_ID_1, 1u) == PROTO_OK,
+    CHECK(survey_gateway_begin_operation(
+              &lifecycle.survey, SURVEY_ID_1,
+              SURVEY_OPERATION_GENERATION_1, 1u) == PROTO_OK,
           "survey begin failed");
     payload_len = 0u;
     CHECK(build_reach_report(LEAF_ID, RELAY_ID, SURVEY_ID_1, 51u,
@@ -951,10 +972,11 @@ static bool run_survey_transaction_phase(void)
     struct node_transaction_key new_key;
     enum survey_gateway_transaction_result transaction_result;
     enum node_transaction_action transaction_action;
-    uint32_t old_request_fingerprint;
-    uint32_t old_result_fingerprint;
-    uint32_t new_request_fingerprint;
-    uint32_t new_result_fingerprint;
+    uint8_t old_request_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t old_result_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t new_request_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t new_result_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t zero_digest[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     uint8_t cleanup_mask;
     const uint32_t old_handle = 101u, old_token = 1001u;
     const uint32_t new_handle = 102u, new_token = 1002u;
@@ -965,11 +987,12 @@ static bool run_survey_transaction_phase(void)
     CHECK(build_pair_control(&lifecycle.pair, 61u, &control) == PROTO_OK,
           "survey prepare control build failed");
     old_key = transaction_key(SURVEY_ID_1, 61u);
-    old_request_fingerprint = node_transaction_fingerprint_bytes(
-        0u, control.payload, control.payload_len);
+    CHECK(node_transaction_digest_bytes(
+              control.payload, control.payload_len, old_request_digest),
+          "survey prepare digest failed");
     CHECK(survey_gateway_transaction_begin(
               transaction, &old_key, CMD_SURVEY_PREPARE_PAIR,
-              old_request_fingerprint, old_token, old_handle,
+              old_request_digest, old_token, old_handle,
               (fixture->world.now_us / 1000u) + 30000u,
               fixture->world.now_us / 1000u) == 0 &&
           deliver_targeted_control(fixture, &control, &leaf_result) ==
@@ -979,15 +1002,16 @@ static bool run_survey_transaction_phase(void)
     CHECK(build_control_result(SURVEY_ID_1, 61u, &packet,
                                payload, &payload_len) == PROTO_OK,
           "survey control result build failed");
-    old_result_fingerprint = node_transaction_fingerprint_bytes(
-        0u, payload, payload_len);
+    CHECK(node_transaction_digest_bytes(
+              payload, payload_len, old_result_digest),
+          "survey control result digest failed");
     lifecycle.deliveries++;
     CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
                           lifecycle.deliveries) == MESH_SIM_OK,
           "survey control result did not reach gateway");
     CHECK(survey_gateway_transaction_reconcile_result(
-              transaction, &old_key, old_request_fingerprint,
-              old_result_fingerprint, packet.seq, COMMAND_OK,
+              transaction, &old_key, old_request_digest,
+              old_result_digest, packet.seq, COMMAND_OK,
               fixture->world.now_us / 1000u, &transaction_result,
               &transaction_action) == 0 &&
           transaction_result ==
@@ -1019,15 +1043,17 @@ static bool run_survey_transaction_phase(void)
         transaction, true, (fixture->world.now_us / 1000u) + 30001u);
 
     pair2.survey_id = SURVEY_ID_2;
+    pair2.operation_generation = SURVEY_OPERATION_GENERATION_2;
     CHECK(survey_gateway_transaction_load_pair(transaction, &pair2) == 0 &&
           build_pair_control(&pair2, 62u, &control) == PROTO_OK,
           "new survey operation setup failed");
     new_key = transaction_key(SURVEY_ID_2, 62u);
-    new_request_fingerprint = node_transaction_fingerprint_bytes(
-        0u, control.payload, control.payload_len);
+    CHECK(node_transaction_digest_bytes(
+              control.payload, control.payload_len, new_request_digest),
+          "new survey control digest failed");
     CHECK(survey_gateway_transaction_begin(
               transaction, &new_key, CMD_SURVEY_PREPARE_PAIR,
-              new_request_fingerprint, new_token, new_handle,
+              new_request_digest, new_token, new_handle,
               (fixture->world.now_us / 1000u) + 30000u,
               fixture->world.now_us / 1000u) == 0 &&
           deliver_targeted_control(fixture, &control, &leaf_result) ==
@@ -1036,14 +1062,16 @@ static bool run_survey_transaction_phase(void)
 
     /* The delayed, byte-identical N result must be an inert duplicate. */
     CHECK(survey_gateway_transaction_reconcile_result(
-              transaction, &old_key, old_request_fingerprint,
-              old_result_fingerprint, 61u, COMMAND_OK,
+              transaction, &old_key, old_request_digest,
+              old_result_digest, 61u, COMMAND_OK,
               fixture->world.now_us / 1000u, &transaction_result,
               &transaction_action) == 0 &&
           transaction_result == SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE &&
           transaction->active.state == NODE_TRANSACTION_ACTIVE &&
           node_transaction_key_equal(&transaction->active.spec.key, &new_key) &&
-          transaction->active.accepted_result_fingerprint == 0u &&
+          semantic_digest_equal(transaction->active.accepted_result_digest,
+                                zero_digest,
+                                sizeof(zero_digest)) &&
           !transaction->abandoning && !transaction->conflict,
           "operation-N result mutated operation N+1");
 
@@ -1051,14 +1079,15 @@ static bool run_survey_transaction_phase(void)
     CHECK(build_control_result(SURVEY_ID_2, 62u, &packet,
                                payload, &payload_len) == PROTO_OK,
           "new survey result build failed");
-    new_result_fingerprint = node_transaction_fingerprint_bytes(
-        0u, payload, payload_len);
+    CHECK(node_transaction_digest_bytes(
+              payload, payload_len, new_result_digest),
+          "new survey result digest failed");
     lifecycle.deliveries++;
     CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
                           lifecycle.deliveries) == MESH_SIM_OK &&
           survey_gateway_transaction_reconcile_result(
-              transaction, &new_key, new_request_fingerprint,
-              new_result_fingerprint, packet.seq, COMMAND_OK,
+              transaction, &new_key, new_request_digest,
+              new_result_digest, packet.seq, COMMAND_OK,
               fixture->world.now_us / 1000u, &transaction_result,
               &transaction_action) == 0 &&
           transaction_result ==

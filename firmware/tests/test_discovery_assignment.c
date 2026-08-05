@@ -3,6 +3,79 @@
 #include <assert.h>
 #include <string.h>
 
+static struct discovery_assignment_table_commitment
+test_table_commitment(uint32_t value)
+{
+    struct discovery_assignment_table_commitment commitment = {0};
+
+    proto_put_u32_le(commitment.bytes, value);
+    return commitment;
+}
+
+static uint32_t legacy_assignment_fnv32(
+    const struct discovery_assignment_entry *entry,
+    uint8_t slot_count)
+{
+    uint8_t encoded[DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN];
+    uint32_t hash = UINT32_C(2166136261);
+
+    hash = (hash ^ slot_count) * UINT32_C(16777619);
+    hash = (hash ^ 1u) * UINT32_C(16777619);
+    proto_put_u64_le(encoded, entry->anchor_id);
+    proto_put_u64_le(&encoded[8], entry->hash);
+    encoded[16] = entry->slot;
+    for (size_t i = 0u; i < sizeof(encoded); i++) {
+        hash = (hash ^ encoded[i]) * UINT32_C(16777619);
+    }
+    return hash == 0u ? 1u : hash;
+}
+
+static void test_table_commitment_known_vector_and_legacy_collision(void)
+{
+    static const uint8_t known_digest[SEMANTIC_DIGEST_SHA256_LEN] = {
+        0x9eu, 0x9eu, 0xcfu, 0xa3u, 0x0du, 0xe3u, 0xa7u, 0x5eu,
+        0x25u, 0x89u, 0x17u, 0x06u, 0xc4u, 0x25u, 0x76u, 0xd6u,
+        0x52u, 0xe4u, 0x8du, 0x04u, 0x0du, 0xccu, 0xa2u, 0x0fu,
+        0x1eu, 0x36u, 0x28u, 0x86u, 0x2cu, 0x73u, 0x4du, 0x91u,
+    };
+    struct discovery_assignment_entry known = {
+        .anchor_id = UINT64_C(0x0102030405060708),
+        .slot = 7u,
+    };
+    struct discovery_assignment_entry colliding_legacy[2] = {
+        {.anchor_id = UINT64_C(0x000000000000d7b3), .slot = 0u},
+        {.anchor_id = UINT64_C(0x000000000000f105), .slot = 0u},
+    };
+    struct discovery_assignment_table_commitment known_commitment;
+    struct discovery_assignment_table_commitment commitments[2];
+
+    known.hash = discovery_assignment_hash(known.anchor_id);
+    assert(known.hash == UINT64_C(0xd1af0fbb4178c20e));
+    assert(discovery_assignment_table_commitment(
+        &known, 1u, UWB_DISCOVERY_SLOT_COUNT, &known_commitment));
+    assert(memcmp(known_commitment.bytes,
+                  known_digest,
+                  sizeof(known_digest)) == 0);
+
+    for (size_t i = 0u; i < 2u; i++) {
+        colliding_legacy[i].hash =
+            discovery_assignment_hash(colliding_legacy[i].anchor_id);
+        assert(discovery_assignment_table_commitment(
+            &colliding_legacy[i],
+            1u,
+            UWB_DISCOVERY_SLOT_COUNT,
+            &commitments[i]));
+    }
+    assert(legacy_assignment_fnv32(
+               &colliding_legacy[0], UWB_DISCOVERY_SLOT_COUNT) ==
+           UINT32_C(0x8e709b48));
+    assert(legacy_assignment_fnv32(
+               &colliding_legacy[1], UWB_DISCOVERY_SLOT_COUNT) ==
+           UINT32_C(0x8e709b48));
+    assert(!discovery_assignment_table_commitment_equal(
+        &commitments[0], &commitments[1]));
+}
+
 static void build_sorted_entries(struct discovery_assignment_entry *entries,
                                  size_t count)
 {
@@ -87,6 +160,92 @@ static void test_compact_anchor_id_path_matches_entry_wire_format(void)
            PROTO_ERR_MALFORMED);
 }
 
+static void test_roster_extension_preserves_prior_slots(void)
+{
+    uint64_t anchor_ids[] = {
+        UINT64_C(0xf000000000000011),
+        UINT64_C(0xe000000000000022),
+        UINT64_C(0x0000000000000003),
+        UINT64_C(0x0000000000000001),
+        UINT64_C(0x0000000000000002),
+    };
+    uint64_t expected_new[] = {
+        anchor_ids[2],
+        anchor_ids[3],
+        anchor_ids[4],
+    };
+    const uint64_t prior_0 = anchor_ids[0];
+    const uint64_t prior_1 = anchor_ids[1];
+    struct discovery_assignment_entry decoded[5];
+    uint8_t payload[256];
+    size_t payload_len = 0u;
+    size_t decoded_count = 0u;
+    uint8_t slot_count = 0u;
+    uint64_t lower_hash_id = 1u;
+
+    assert(discovery_assignment_sort_anchor_ids(
+               expected_new,
+               sizeof(expected_new) / sizeof(expected_new[0])) == PROTO_OK);
+    assert(discovery_assignment_order_roster_extension(
+               anchor_ids,
+               sizeof(anchor_ids) / sizeof(anchor_ids[0]),
+               2u) == PROTO_OK);
+    assert(anchor_ids[0] == prior_0);
+    assert(anchor_ids[1] == prior_1);
+    assert(memcmp(&anchor_ids[2], expected_new, sizeof(expected_new)) == 0);
+
+    while (lower_hash_id == prior_0 || lower_hash_id == prior_1 ||
+           discovery_assignment_hash(lower_hash_id) >=
+               discovery_assignment_hash(prior_1)) {
+        lower_hash_id++;
+    }
+    anchor_ids[2] = lower_hash_id;
+    anchor_ids[3] = UINT64_C(0x0000000000000001);
+    if (anchor_ids[3] == lower_hash_id) {
+        anchor_ids[3]++;
+    }
+    anchor_ids[4] = UINT64_C(0x0000000000000002);
+    while (anchor_ids[4] == lower_hash_id ||
+           anchor_ids[4] == anchor_ids[3]) {
+        anchor_ids[4]++;
+    }
+    assert(discovery_assignment_order_roster_extension(
+               anchor_ids,
+               sizeof(anchor_ids) / sizeof(anchor_ids[0]),
+               2u) == PROTO_OK);
+    assert(discovery_assignment_hash(anchor_ids[2]) <
+           discovery_assignment_hash(anchor_ids[1]));
+    assert(discovery_assignment_append_table_from_anchor_ids(
+               payload,
+               sizeof(payload),
+               &payload_len,
+               anchor_ids,
+               sizeof(anchor_ids) / sizeof(anchor_ids[0])) == PROTO_OK);
+    assert(discovery_assignment_parse_table_tlvs(
+               payload,
+               payload_len,
+               decoded,
+               sizeof(decoded) / sizeof(decoded[0]),
+               &decoded_count,
+               &slot_count) == PROTO_OK);
+    assert(decoded_count == sizeof(anchor_ids) / sizeof(anchor_ids[0]));
+    assert(slot_count == UWB_DISCOVERY_SLOT_COUNT);
+    for (size_t i = 0u; i < decoded_count; i++) {
+        assert(decoded[i].anchor_id == anchor_ids[i]);
+        assert(decoded[i].slot == i);
+    }
+
+    anchor_ids[4] = prior_0;
+    assert(discovery_assignment_order_roster_extension(
+               anchor_ids,
+               sizeof(anchor_ids) / sizeof(anchor_ids[0]),
+               2u) == PROTO_ERR_MALFORMED);
+    assert(discovery_assignment_order_roster_extension(NULL, 0u, 0u) ==
+           PROTO_OK);
+    assert(discovery_assignment_order_roster_extension(anchor_ids, 2u, 3u) ==
+           PROTO_ERR_ARG);
+}
+
 static void test_control_and_claim_hash_round_trip(void)
 {
     uint8_t payload[64];
@@ -132,24 +291,128 @@ static void test_control_and_claim_hash_round_trip(void)
     assert(epoch == 78u);
 }
 
+static void test_control_rejects_legacy_or_wrong_scheme(void)
+{
+    uint8_t payload[32];
+    enum discovery_assignment_phase phase = 0;
+    uint32_t epoch = 0u;
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_DISCOVERY_ASSIGNMENT_PHASE,
+                         DISCOVERY_ASSIGNMENT_PHASE_CLAIM) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                          77u) == PROTO_OK);
+    assert(discovery_assignment_extract_control_tlvs(
+               payload, payload_len, &phase, &epoch) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u8(
+               payload,
+               sizeof(payload),
+               &payload_len,
+               TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION,
+               DISCOVERY_ASSIGNMENT_SCHEME_VERSION + 1u) == PROTO_OK);
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         TLV_DISCOVERY_ASSIGNMENT_PHASE,
+                         DISCOVERY_ASSIGNMENT_PHASE_CLAIM) == PROTO_OK);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+                          77u) == PROTO_OK);
+    assert(discovery_assignment_extract_control_tlvs(
+               payload, payload_len, &phase, &epoch) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_ordered_epoch_helpers_wrap_and_reject_ambiguity(void)
+{
+    uint32_t resolved = UINT32_MAX;
+    bool repair = true;
+
+    assert(discovery_assignment_epoch_strictly_newer(1u, UINT32_MAX));
+    assert(!discovery_assignment_epoch_strictly_newer(UINT32_MAX, 1u));
+    assert(!discovery_assignment_epoch_strictly_newer(1u, 1u));
+    assert(!discovery_assignment_epoch_strictly_newer(0u, 1u));
+    assert(!discovery_assignment_epoch_strictly_newer(1u, 0u));
+    assert(!discovery_assignment_epoch_strictly_newer(
+        UINT32_C(0x80000001), 1u));
+    assert(discovery_assignment_next_epoch(0u) == 1u);
+    assert(discovery_assignment_next_epoch(UINT32_MAX) == 1u);
+    assert(discovery_assignment_next_epoch(77u) == 78u);
+
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               0u, 0u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 0u);
+    assert(!repair);
+
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               77u, 0u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 77u);
+    assert(!repair);
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               0u, 77u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 77u);
+    assert(repair);
+
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               77u, 77u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 77u);
+    assert(!repair);
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               77u, 78u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 78u);
+    assert(repair);
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               78u, 77u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 78u);
+    assert(!repair);
+
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               UINT32_MAX, 1u, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 1u);
+    assert(repair);
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               1u, UINT32_MAX, &resolved, &repair) == PROTO_OK);
+    assert(resolved == 1u);
+    assert(!repair);
+
+    resolved = UINT32_MAX;
+    repair = true;
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               1u, UINT32_C(0x80000001), &resolved, &repair) ==
+           PROTO_ERR_STALE);
+    assert(resolved == 0u);
+    assert(!repair);
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               1u, 2u, NULL, &repair) == PROTO_ERR_ARG);
+    assert(discovery_assignment_reconcile_epoch_baseline(
+               1u, 2u, &resolved, NULL) == PROTO_ERR_ARG);
+}
+
 static void test_response_custody_matches_logical_epoch_and_phase(void)
 {
     assert(discovery_assignment_response_custody_matches(
         true,
         77u,
         DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u,
         77u,
-        DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        999u));
+        DISCOVERY_ASSIGNMENT_PHASE_CLAIM));
     assert(discovery_assignment_response_custody_matches(
         true,
         77u,
         DISCOVERY_ASSIGNMENT_PHASE_ACK,
-        102u,
         77u,
-        DISCOVERY_ASSIGNMENT_PHASE_ACK,
-        102u));
+        DISCOVERY_ASSIGNMENT_PHASE_ACK));
 }
 
 static void test_response_custody_allows_only_valid_supersession_boundaries(void)
@@ -158,50 +421,38 @@ static void test_response_custody_allows_only_valid_supersession_boundaries(void
         false,
         77u,
         DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u,
         77u,
-        DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u));
+        DISCOVERY_ASSIGNMENT_PHASE_CLAIM));
     assert(!discovery_assignment_response_custody_matches(
         true,
         0u,
         DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u,
         0u,
-        DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u));
+        DISCOVERY_ASSIGNMENT_PHASE_CLAIM));
     assert(!discovery_assignment_response_custody_matches(
         true,
         77u,
         DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u,
         78u,
-        DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u));
+        DISCOVERY_ASSIGNMENT_PHASE_CLAIM));
     assert(!discovery_assignment_response_custody_matches(
         true,
         77u,
         DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
-        101u,
         77u,
-        DISCOVERY_ASSIGNMENT_PHASE_ACK,
-        101u));
+        DISCOVERY_ASSIGNMENT_PHASE_ACK));
     assert(!discovery_assignment_response_custody_matches(
         true,
         77u,
         (enum discovery_assignment_phase)0,
-        101u,
         77u,
-        (enum discovery_assignment_phase)0,
-        101u));
+        (enum discovery_assignment_phase)0));
     assert(!discovery_assignment_response_custody_matches(
         true,
         77u,
-        DISCOVERY_ASSIGNMENT_PHASE_ACK,
-        102u,
+        DISCOVERY_ASSIGNMENT_PHASE_TABLE,
         77u,
-        DISCOVERY_ASSIGNMENT_PHASE_ACK,
-        103u));
+        DISCOVERY_ASSIGNMENT_PHASE_TABLE));
 }
 
 static void test_response_delay_uses_equal_spread_and_bounded_backoff(void)
@@ -284,7 +535,7 @@ static void test_collection_window_covers_spread_and_hops(void)
                DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS ==
            10u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1000u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 233249u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 235209u);
     assert(DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS == 1u);
     assert(DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS == 1u);
@@ -360,9 +611,32 @@ static void test_claim_ack_settle_scales_and_duplicate_restarts_deadline(void)
            UINT64_MAX);
 }
 
+static void test_ack_quorum_settle_deadline_freezes_under_duplicate_retries(void)
+{
+    uint64_t settle_deadline_ms = 0u;
+    bool settle_armed = false;
+
+    assert(!discovery_assignment_ack_quorum_settle_should_arm(false, 1u));
+    for (uint64_t received_at_ms = 1000u;
+         received_at_ms < 10000u;
+         received_at_ms += 100u) {
+        if (discovery_assignment_ack_quorum_settle_should_arm(
+                settle_armed,
+                0u)) {
+            settle_deadline_ms =
+                discovery_assignment_response_ack_settle_deadline_ms(
+                    received_at_ms);
+            settle_armed = true;
+        }
+        assert(settle_armed);
+        assert(settle_deadline_ms ==
+               1000u + DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS);
+    }
+}
+
 static void test_expected_count_is_optional_and_bounded(void)
 {
-    uint8_t payload[8];
+    uint8_t payload[8] = {0};
     size_t payload_len = 0u;
     uint16_t expected_count = UINT16_MAX;
     bool present = true;
@@ -391,6 +665,211 @@ static void test_expected_count_is_optional_and_bounded(void)
     assert(discovery_assignment_extract_expected_count(
                payload, payload_len - 1u, &expected_count, &present) ==
            PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_EXPECTED_NODE_COUNT, 2u) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_EXPECTED_NODE_COUNT, 3u) == PROTO_OK);
+    assert(discovery_assignment_extract_expected_count(
+               payload, payload_len, &expected_count, &present) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void build_assignment_result(uint8_t *payload,
+                                    size_t payload_cap,
+                                    size_t *payload_len,
+                                    enum discovery_assignment_phase phase)
+{
+    const uint64_t anchor_id = UINT64_C(0x2222222222222301);
+
+    *payload_len = 0u;
+    assert(tlv_append_u16(payload, payload_cap, payload_len,
+                          TLV_COMMAND_ID,
+                          CMD_ASSIGN_DISCOVERY_SLOTS) == PROTO_OK);
+    assert(tlv_append_u16(payload, payload_cap, payload_len,
+                          TLV_COMMAND_STATUS, COMMAND_OK) == PROTO_OK);
+    assert(tlv_append_u8(payload, payload_cap, payload_len,
+                         TLV_REASON, 0u) == PROTO_OK);
+    assert(discovery_assignment_append_control_tlvs(
+               payload, payload_cap, payload_len, phase, 77u) == PROTO_OK);
+    assert(discovery_assignment_append_claim_hash(
+               payload,
+               payload_cap,
+               payload_len,
+               discovery_assignment_hash(anchor_id)) == PROTO_OK);
+    if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        struct discovery_assignment_table_commitment commitment =
+            test_table_commitment(UINT32_C(0x12345678));
+
+        assert(discovery_assignment_append_table_commitment(
+                   payload,
+                   payload_cap,
+                   payload_len,
+                   &commitment) == PROTO_OK);
+    }
+    assert(tlv_append_u8(payload, payload_cap, payload_len,
+                         TLV_HOP_COUNT, 2u) == PROTO_OK);
+}
+
+static void append_conflicting_assignment_singleton(uint8_t *payload,
+                                                    size_t payload_cap,
+                                                    size_t *payload_len,
+                                                    uint8_t type)
+{
+    switch (type) {
+    case TLV_COMMAND_ID:
+        assert(tlv_append_u16(payload, payload_cap, payload_len, type,
+                              CMD_SURVEY_ABORT) == PROTO_OK);
+        break;
+    case TLV_COMMAND_STATUS:
+        assert(tlv_append_u16(payload, payload_cap, payload_len, type,
+                              COMMAND_TIMEOUT) == PROTO_OK);
+        break;
+    case TLV_REASON:
+        assert(tlv_append_u8(payload, payload_cap, payload_len, type,
+                             1u) == PROTO_OK);
+        break;
+    case TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION:
+        assert(tlv_append_u8(
+                   payload, payload_cap, payload_len, type,
+                   DISCOVERY_ASSIGNMENT_SCHEME_VERSION + 1u) == PROTO_OK);
+        break;
+    case TLV_DISCOVERY_ASSIGNMENT_PHASE:
+        assert(tlv_append_u8(payload, payload_cap, payload_len, type,
+                             DISCOVERY_ASSIGNMENT_PHASE_CLAIM) == PROTO_OK);
+        break;
+    case TLV_DISCOVERY_ASSIGNMENT_EPOCH:
+        assert(tlv_append_u32(payload, payload_cap, payload_len, type,
+                              78u) == PROTO_OK);
+        break;
+    case TLV_DISCOVERY_ASSIGNMENT_HASH:
+        assert(tlv_append_u64(payload, payload_cap, payload_len, type,
+                              UINT64_C(0x0102030405060708)) == PROTO_OK);
+        break;
+    case TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT:
+    {
+        struct discovery_assignment_table_commitment commitment =
+            test_table_commitment(UINT32_C(0x87654321));
+
+        assert(discovery_assignment_append_table_commitment(
+                   payload,
+                   payload_cap,
+                   payload_len,
+                   &commitment) == PROTO_OK);
+        break;
+    }
+    case TLV_HOP_COUNT:
+        assert(tlv_append_u8(payload, payload_cap, payload_len, type,
+                             3u) == PROTO_OK);
+        break;
+    default:
+        assert(false);
+    }
+}
+
+static void test_result_parser_rejects_duplicate_authoritative_singletons(void)
+{
+    static const uint8_t singleton_types[] = {
+        TLV_COMMAND_ID,
+        TLV_COMMAND_STATUS,
+        TLV_REASON,
+        TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION,
+        TLV_DISCOVERY_ASSIGNMENT_PHASE,
+        TLV_DISCOVERY_ASSIGNMENT_EPOCH,
+        TLV_DISCOVERY_ASSIGNMENT_HASH,
+        TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT,
+        TLV_HOP_COUNT,
+    };
+    struct discovery_assignment_result parsed = {0};
+    struct discovery_assignment_table_commitment expected_commitment =
+        test_table_commitment(UINT32_C(0x12345678));
+    const struct discovery_assignment_table_commitment zero_commitment = {0};
+    uint8_t payload[192];
+    size_t payload_len = 0u;
+
+    build_assignment_result(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            DISCOVERY_ASSIGNMENT_PHASE_ACK);
+    assert(discovery_assignment_parse_result_tlvs(
+               payload, payload_len, &parsed) == PROTO_OK);
+    assert(parsed.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK);
+    assert(parsed.epoch == 77u);
+    assert(parsed.hash ==
+           discovery_assignment_hash(UINT64_C(0x2222222222222301)));
+    assert(discovery_assignment_table_commitment_equal(
+        &parsed.table_commitment, &expected_commitment));
+    assert(parsed.hop_count_present);
+    assert(parsed.hop_count == 2u);
+
+    for (size_t i = 0u;
+         i < sizeof(singleton_types) / sizeof(singleton_types[0]);
+         i++) {
+        const struct discovery_assignment_result unchanged = {
+            .phase = DISCOVERY_ASSIGNMENT_PHASE_TABLE,
+            .epoch = UINT32_C(0xa5a5a5a5),
+            .hash = UINT64_C(0x1122334455667788),
+            .table_commitment = {.bytes = {0x55u, 0x66u, 0x77u, 0x88u}},
+            .hop_count = 0x5au,
+            .hop_count_present = true,
+        };
+
+        build_assignment_result(payload,
+                                sizeof(payload),
+                                &payload_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK);
+        append_conflicting_assignment_singleton(
+            payload,
+            sizeof(payload),
+            &payload_len,
+            singleton_types[i]);
+        parsed = unchanged;
+        assert(discovery_assignment_parse_result_tlvs(
+                   payload, payload_len, &parsed) ==
+               PROTO_ERR_MALFORMED);
+        assert(memcmp(&parsed, &unchanged, sizeof(parsed)) == 0);
+    }
+
+    build_assignment_result(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            DISCOVERY_ASSIGNMENT_PHASE_CLAIM);
+    assert(discovery_assignment_parse_result_tlvs(
+               payload, payload_len, &parsed) == PROTO_OK);
+    assert(parsed.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM);
+    assert(memcmp(&parsed.table_commitment,
+                  &zero_commitment,
+                  sizeof(zero_commitment)) == 0);
+
+    payload[payload_len++] = 0xa5u;
+    assert(discovery_assignment_parse_result_tlvs(
+               payload, payload_len, &parsed) == PROTO_ERR_MALFORMED);
+}
+
+static void test_result_parser_rejects_ambiguous_batch_metadata(void)
+{
+    struct discovery_assignment_result parsed;
+    uint8_t payload[192];
+    size_t payload_len = 0u;
+
+    build_assignment_result(payload,
+                            sizeof(payload),
+                            &payload_len,
+                            DISCOVERY_ASSIGNMENT_PHASE_ACK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 9u) == PROTO_OK);
+    assert(discovery_assignment_parse_result_tlvs(
+               payload, payload_len, &parsed) == PROTO_ERR_MALFORMED);
+
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_MESH_CH9_BATCH_FLAGS, 0u) == PROTO_OK);
+    assert(discovery_assignment_parse_result_tlvs(
+               payload, payload_len, &parsed) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_MESH_CH9_BATCH_ID, 10u) == PROTO_OK);
+    assert(discovery_assignment_parse_result_tlvs(
+               payload, payload_len, &parsed) == PROTO_ERR_MALFORMED);
 }
 
 static void test_full_table_fits_one_extended_packet_and_round_trips(void)
@@ -431,6 +910,52 @@ static void test_full_table_fits_one_extended_packet_and_round_trips(void)
     }
 }
 
+static void test_sparse_explicit_slots_round_trip_without_compaction(void)
+{
+    struct discovery_assignment_entry entries[4];
+    struct discovery_assignment_entry decoded[4];
+    uint64_t ids[4] = {
+        UINT64_C(0x5000000000000001),
+        UINT64_C(0x5000000000000002),
+        UINT64_C(0x5000000000000003),
+        UINT64_C(0x5000000000000004),
+    };
+    const uint8_t slots[4] = {0u, 1u, 2u, 4u};
+    uint8_t payload[256];
+    struct discovery_assignment_table_commitment commitment;
+    size_t payload_len = 0u;
+    size_t decoded_count = 0u;
+    uint8_t slot_count = 0u;
+
+    for (size_t i = 0u; i < 4u; i++) {
+        entries[i] = (struct discovery_assignment_entry) {
+            .anchor_id = ids[i],
+            .hash = discovery_assignment_hash(ids[i]),
+            .slot = slots[i],
+        };
+    }
+    assert(discovery_assignment_append_table_tlvs(
+               payload, sizeof(payload), &payload_len, entries, 4u) ==
+           PROTO_OK);
+    assert(discovery_assignment_parse_table_tlvs(
+               payload, payload_len, decoded, 4u, &decoded_count,
+               &slot_count) == PROTO_OK);
+    assert(decoded_count == 4u);
+    assert(slot_count == UWB_DISCOVERY_SLOT_COUNT);
+    assert(discovery_assignment_table_commitment(
+        decoded, decoded_count, slot_count, &commitment));
+    for (size_t i = 0u; i < decoded_count; i++) {
+        assert(decoded[i].anchor_id == ids[i]);
+        assert(decoded[i].slot == slots[i]);
+    }
+
+    entries[3].slot = entries[2].slot;
+    payload_len = 0u;
+    assert(discovery_assignment_append_table_tlvs(
+               payload, sizeof(payload), &payload_len, entries, 4u) ==
+           PROTO_ERR_MALFORMED);
+}
+
 static void test_table_rejects_missing_and_corrupt_entries(void)
 {
     struct discovery_assignment_entry entries[2];
@@ -469,20 +994,62 @@ static void test_table_rejects_missing_and_corrupt_entries(void)
                                                  &decoded_count,
                                                  &slot_count) ==
            PROTO_ERR_MALFORMED);
+
+    build_sorted_entries(entries, 2u);
+    payload_len = 0u;
+    assert(discovery_assignment_append_table_tlvs(payload,
+                                                  sizeof(payload),
+                                                  &payload_len,
+                                                  entries,
+                                                  2u) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_DISCOVERY_SLOT_COUNT,
+                         UWB_DISCOVERY_SLOT_COUNT - 1u) == PROTO_OK);
+    assert(discovery_assignment_parse_table_tlvs(payload,
+                                                 payload_len,
+                                                 decoded,
+                                                 2u,
+                                                 &decoded_count,
+                                                 &slot_count) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = 0u;
+    assert(discovery_assignment_append_table_tlvs(payload,
+                                                  sizeof(payload),
+                                                  &payload_len,
+                                                  entries,
+                                                  2u) == PROTO_OK);
+    assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
+                          TLV_EXPECTED_NODE_COUNT, 1u) == PROTO_OK);
+    assert(discovery_assignment_parse_table_tlvs(payload,
+                                                 payload_len,
+                                                 decoded,
+                                                 2u,
+                                                 &decoded_count,
+                                                 &slot_count) ==
+           PROTO_ERR_MALFORMED);
 }
 
 int main(void)
 {
+    test_table_commitment_known_vector_and_legacy_collision();
     test_hash_order_is_deterministic_and_tied_by_id();
     test_compact_anchor_id_path_matches_entry_wire_format();
+    test_roster_extension_preserves_prior_slots();
     test_control_and_claim_hash_round_trip();
+    test_control_rejects_legacy_or_wrong_scheme();
+    test_ordered_epoch_helpers_wrap_and_reject_ambiguity();
     test_response_custody_matches_logical_epoch_and_phase();
     test_response_custody_allows_only_valid_supersession_boundaries();
     test_response_delay_uses_equal_spread_and_bounded_backoff();
     test_collection_window_covers_spread_and_hops();
     test_claim_ack_settle_scales_and_duplicate_restarts_deadline();
+    test_ack_quorum_settle_deadline_freezes_under_duplicate_retries();
     test_expected_count_is_optional_and_bounded();
+    test_result_parser_rejects_duplicate_authoritative_singletons();
+    test_result_parser_rejects_ambiguous_batch_metadata();
     test_full_table_fits_one_extended_packet_and_round_trips();
+    test_sparse_explicit_slots_round_trip_without_compaction();
     test_table_rejects_missing_and_corrupt_entries();
     return 0;
 }

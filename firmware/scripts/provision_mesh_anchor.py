@@ -26,6 +26,9 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     Packet,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
+    ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
+    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
@@ -59,6 +62,7 @@ CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_FORCE_REDISCOVERY = 0x000C
 DISCOVERY_SLOT_UNAVAILABLE = 0xFF
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
+QUALIFICATION_TIMEOUT_GUARD_S = 5.0
 
 
 def _same_event(left: GatewayCommandEvent, right: GatewayCommandEvent) -> bool:
@@ -100,6 +104,36 @@ def _accept_event_sequence(
     return False
 
 
+def _observe_lost_event_counter(
+    event: GatewayCommandEvent,
+    baseline: int | None,
+    errors: list[str],
+    label: str,
+) -> int:
+    """Require no cumulative observability loss during this qualification."""
+    if baseline is None:
+        return event.lost_event_count
+    if event.lost_event_count != baseline:
+        message = (
+            f"{label} lost events counter changed during qualification "
+            f"({baseline}->{event.lost_event_count})"
+        )
+        if message not in errors:
+            errors.append(message)
+    return baseline
+
+
+def _qualification_timeout_s(
+    requested_timeout_s: float,
+    effective_command_budget_ms: int,
+) -> float:
+    """Keep the host alive through the firmware deadline plus delivery guard."""
+    return max(
+        requested_timeout_s,
+        effective_command_budget_ms / 1000.0 + QUALIFICATION_TIMEOUT_GUARD_S,
+    )
+
+
 @dataclass
 class RouteRefreshQualification:
     host_session_id: int
@@ -110,6 +144,7 @@ class RouteRefreshQualification:
     terminal_event: GatewayCommandEvent | None = None
     seen_events: dict[int, GatewayCommandEvent] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    lost_event_baseline: int | None = None
 
     def _matches(self, event: GatewayCommandEvent) -> bool:
         return (
@@ -128,12 +163,14 @@ class RouteRefreshQualification:
             return False
         if not _accept_event_sequence(event, self.seen_events, self.errors):
             return self.terminal_event is not None
+        self.lost_event_baseline = _observe_lost_event_counter(
+            event,
+            self.lost_event_baseline,
+            self.errors,
+            "route-refresh",
+        )
         if event.command_id != CMD_FORCE_REDISCOVERY:
             self._error("route-refresh event has the wrong command")
-        if event.lost_event_count != 0:
-            self._error(
-                f"route-refresh event reports {event.lost_event_count} lost events"
-            )
         if (
             self.terminal_event is not None
             and event.stage != GATEWAY_COMMAND_STAGE_TERMINAL
@@ -172,7 +209,6 @@ class RouteRefreshQualification:
         elif (
             terminal.command_status != 0
             or terminal.reason != 0
-            or terminal.lost_event_count != 0
         ):
             self._error(
                 "route-refresh terminal is not a lossless local flood success "
@@ -204,6 +240,7 @@ class AssignmentQualification:
     retries: int = 0
     seen_events: dict[int, GatewayCommandEvent] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    lost_event_baseline: int | None = None
 
     def _matches(self, event: GatewayCommandEvent) -> bool:
         return (
@@ -222,10 +259,14 @@ class AssignmentQualification:
             return False
         if not _accept_event_sequence(event, self.seen_events, self.errors):
             return self.terminal_event is not None
+        self.lost_event_baseline = _observe_lost_event_counter(
+            event,
+            self.lost_event_baseline,
+            self.errors,
+            "assignment",
+        )
         if event.command_id != CMD_ASSIGN_DISCOVERY_SLOTS:
             self._error("assignment event has the wrong command")
-        if event.lost_event_count != 0:
-            self._error(f"assignment event reports {event.lost_event_count} lost events")
         if (
             self.terminal_event is not None
             and event.stage != GATEWAY_COMMAND_STAGE_TERMINAL
@@ -251,14 +292,40 @@ class AssignmentQualification:
                             f"anchor 0x{event.anchor_id:016x} changed assigned slot"
                         )
                     self.assigned_slots[event.anchor_id] = event.discovery_slot
-                if event.hop_count != 0:
+                if event.hop_count == 0:
+                    if event.previous_hop_id != 0:
+                        self._error(
+                            f"anchor 0x{event.anchor_id:016x} has previous hop "
+                            "without hop count"
+                        )
+                else:
+                    path = (event.hop_count, event.previous_hop_id)
+                    prior_path = self.hop_paths.get(event.anchor_id)
                     if event.previous_hop_id == 0:
                         self._error(
-                            f"anchor 0x{event.anchor_id:016x} has hop count without previous hop"
+                            f"anchor 0x{event.anchor_id:016x} has hop count "
+                            "without previous hop"
                         )
-                    self.hop_paths.setdefault(
-                        event.anchor_id, (event.hop_count, event.previous_hop_id)
-                    )
+                    elif event.hop_count == 1 and (
+                        event.previous_hop_id != event.anchor_id
+                    ):
+                        self._error(
+                            f"direct anchor 0x{event.anchor_id:016x} has "
+                            "contradictory previous-hop evidence"
+                        )
+                    elif event.hop_count > 1 and (
+                        event.previous_hop_id == event.anchor_id
+                    ):
+                        self._error(
+                            f"multihop anchor 0x{event.anchor_id:016x} "
+                            "claims itself as the previous hop"
+                        )
+                    if prior_path is not None and prior_path != path:
+                        self._error(
+                            f"anchor 0x{event.anchor_id:016x} changed hop evidence"
+                        )
+                    else:
+                        self.hop_paths[event.anchor_id] = path
         elif event.stage == GATEWAY_COMMAND_STAGE_ENUMERATION_COMPLETE:
             if event.command_status != 0 or event.reason != 0:
                 self._error("assignment collection-complete event is not successful")
@@ -312,6 +379,12 @@ class AssignmentQualification:
                 f"expected hop-path evidence for {self.expected_anchors} anchors, "
                 f"got {len(self.hop_paths)}"
             )
+        for anchor_id, (hop_count, previous_hop_id) in self.hop_paths.items():
+            if hop_count > 1 and previous_hop_id not in self.anchors:
+                self._error(
+                    f"anchor 0x{anchor_id:016x} has multihop predecessor "
+                    f"0x{previous_hop_id:016x} outside the qualified roster"
+                )
         direct_count = sum(1 for hop, _previous in self.hop_paths.values() if hop == 1)
         multihop_count = sum(1 for hop, _previous in self.hop_paths.values() if hop > 1)
         if (
@@ -338,7 +411,6 @@ class AssignmentQualification:
             or terminal.total_count != self.expected_anchors
             or terminal.success_count != self.expected_anchors
             or terminal.failure_count != 0
-            or terminal.lost_event_count != 0
         ):
             self._error(
                 "terminal assignment counters do not prove every table ACK completed "
@@ -379,6 +451,8 @@ class SurveyQualification:
     terminal_event: GatewayCommandEvent | None = None
     retries: int = 0
     errors: list[str] = field(default_factory=list)
+    seen_events: dict[int, GatewayCommandEvent] = field(default_factory=dict)
+    lost_event_baseline: int | None = None
     geometry_model: SurveyGeometryModel = field(init=False)
     geometry_rmse_m: float | None = field(default=None, init=False)
 
@@ -406,11 +480,15 @@ class SurveyQualification:
         """Record one correlated event and return true at terminal."""
         if not self._matches(event):
             return False
+        if not _accept_event_sequence(event, self.seen_events, self.errors):
+            return self.terminal_event is not None
         self.geometry_model.observe_command_event(event)
-        if event.lost_event_count != 0:
-            self._error(
-                f"event stage {event.stage} reports {event.lost_event_count} lost events"
-            )
+        self.lost_event_baseline = _observe_lost_event_counter(
+            event,
+            self.lost_event_baseline,
+            self.errors,
+            "survey",
+        )
         if event.stage == 5:
             self.retries += 1
         elif event.stage == GATEWAY_COMMAND_STAGE_ANCHOR_REPORT:
@@ -496,7 +574,6 @@ class SurveyQualification:
             or terminal.total_count != self.expected_pairs
             or terminal.success_count != self.expected_pairs
             or terminal.failure_count != 0
-            or terminal.lost_event_count != 0
         ):
             self._error(
                 "terminal survey counters are not an exact lossless success "
@@ -554,6 +631,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     disconnect_errors: list[str] = []
     qualification: Qualification | None = None
     qualification_done = asyncio.Event()
+    transport_failed = asyncio.Event()
 
     def on_notify(_sender: object, data: bytearray) -> None:
         nonlocal received, qualification
@@ -564,6 +642,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             print(f"BLE_DECODE_ERROR {error}", flush=True)
             decode_errors.append(str(error))
             qualification_done.set()
+            transport_failed.set()
         for packet in result.packets:
             received += 1
             print(
@@ -583,15 +662,31 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     print(f"BLE_DECODE_ERROR {exc}", flush=True)
                     decode_errors.append(str(exc))
                     qualification_done.set()
+                    transport_failed.set()
                     continue
                 print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
                 if qualification is not None and qualification.observe(event):
                     qualification_done.set()
 
     def on_disconnect(_client: object) -> None:
-        if qualification is not None:
-            disconnect_errors.append("gateway disconnected during qualification")
-            qualification_done.set()
+        disconnect_errors.append("gateway disconnected during active command or monitoring")
+        qualification_done.set()
+        transport_failed.set()
+
+    def raise_transport_errors(label: str) -> None:
+        if decode_errors:
+            raise RuntimeError(
+                f"{label} failed: BLE decode errors: " + "; ".join(decode_errors)
+            )
+        if disconnect_errors:
+            raise RuntimeError(f"{label} failed: " + "; ".join(disconnect_errors))
+
+    async def await_transport_duration(timeout_s: float, label: str) -> None:
+        try:
+            await asyncio.wait_for(transport_failed.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return
+        raise_transport_errors(label)
 
     async def await_qualification(
         current: Qualification,
@@ -604,15 +699,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             raise RuntimeError(
                 f"{label} qualification timed out after {timeout_s:.1f}s"
             ) from exc
-        if decode_errors:
-            raise RuntimeError(
-                f"{label} qualification failed: BLE decode errors: "
-                + "; ".join(decode_errors)
-            )
-        if disconnect_errors:
-            raise RuntimeError(
-                f"{label} qualification failed: " + "; ".join(disconnect_errors)
-            )
+        raise_transport_errors(f"{label} qualification")
         current.validate()
 
     async with BleakClient(
@@ -655,6 +742,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             await client.start_notify(PACKET_TX_UUID, on_notify)
             notifications_enabled = True
             defer_notifications = False
+            raise_transport_errors("BLE notification start")
             print("BLE_NOTIFICATIONS_ENABLED", flush=True)
 
         async def send_command(command_name: str, identity: int, command: object) -> None:
@@ -667,8 +755,9 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 await client.write_gatt_char(
                     characteristic,
                     command.frame[offset : offset + chunk_size],
-                    response=False,
+                    response=True,
                 )
+                raise_transport_errors(command_name)
 
         if args.command == "monitor":
             print(
@@ -697,7 +786,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             await enable_notifications()
             await await_qualification(
                 qualification,
-                args.route_refresh_timeout,
+                _qualification_timeout_s(
+                    args.route_refresh_timeout,
+                    command_budget_ms
+                    or ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
+                ),
                 "Here-I-Am local flood",
             )
             print(
@@ -734,7 +827,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             )
             await await_qualification(
                 qualification,
-                args.assignment_timeout,
+                _qualification_timeout_s(
+                    args.assignment_timeout,
+                    command_budget_ms
+                    or DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+                ),
                 "assignment reachability",
             )
             print(
@@ -775,6 +872,12 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             expected_multihop_anchors=args.expected_multihop_anchors,
                         )
                 else:
+                    if args.require_survey_success and args.survey_id:
+                        raise RuntimeError(
+                            "survey qualification requires an auto-generated "
+                            "survey ID so retained results from an earlier "
+                            "operation cannot satisfy the proof"
+                        )
                     survey_id = args.survey_id or identity
                     command = build_anchor_discovery_command(
                         **command_args,
@@ -802,10 +905,19 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     await enable_notifications()
                 if index + 1 < args.repeat:
                     await asyncio.sleep(args.interval)
+                    raise_transport_errors(args.command)
         if defer_notifications:
             await enable_notifications()
         if isinstance(qualification, SurveyQualification):
-            await await_qualification(qualification, args.duration, "survey")
+            await await_qualification(
+                qualification,
+                _qualification_timeout_s(
+                    args.duration,
+                    command_budget_ms
+                    or SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+                ),
+                "survey",
+            )
             print(
                 "SURVEY_QUALIFICATION_OK "
                 f"survey={qualification.survey_id} "
@@ -822,7 +934,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         ):
             await await_qualification(
                 qualification,
-                args.assignment_timeout,
+                _qualification_timeout_s(
+                    args.assignment_timeout,
+                    command_budget_ms
+                    or DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+                ),
                 "assignment",
             )
             print(
@@ -834,7 +950,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 flush=True,
             )
         elif args.command != "qualify-reachability":
-            await asyncio.sleep(args.duration)
+            await await_transport_duration(args.duration, args.command)
+        raise_transport_errors("BLE session")
         print(f"BLE_COMPLETE packets={received}", flush=True)
     return qualification
 
@@ -888,6 +1005,10 @@ def main() -> None:
         parser.error("--require-survey-success requires --command survey")
     if args.require_survey_success and args.repeat != 1:
         parser.error("survey qualification requires --repeat 1")
+    if args.require_survey_success and args.survey_id != 0:
+        parser.error(
+            "survey qualification requires --survey-id 0 (fresh automatic identity)"
+        )
     if args.require_survey_success and (
         args.expected_anchors < 2 or args.expected_pairs < 1
     ):
@@ -904,6 +1025,11 @@ def main() -> None:
         parser.error("assignment qualification requires 1..50 expected anchors")
     if args.route_refresh_timeout <= 0.0 or args.assignment_timeout <= 0.0:
         parser.error("qualification timeouts must be positive")
+    if not 1 <= args.samples <= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
+        parser.error(
+            "--samples must be in 1.."
+            f"{SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT}"
+        )
     if args.command_budget_ms is not None and not (
         GATEWAY_COMMAND_BUDGET_MIN_MS
         <= args.command_budget_ms

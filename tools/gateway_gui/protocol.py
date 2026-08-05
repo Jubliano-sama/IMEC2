@@ -40,8 +40,11 @@ GATEWAY_STREAM_FLAG_TRUNCATED = 0x01
 MESH_BROADCAST_ID = 0
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
-GATEWAY_COMMAND_BUDGET_MAX_MS = 600000
+GATEWAY_COMMAND_BUDGET_MAX_MS = 900000
 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 235209
+ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
+SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 600000
+SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 4
 
 MSG_CLICK_REPORT = 0x20
 MSG_MESH_DATA = 0x30
@@ -116,6 +119,11 @@ TLV_DETECTION_SOURCE = 0xAA
 TLV_COMMAND_BUDGET_MS = 0xAB
 TLV_OPERATION_POLICY = 0xAE
 TLV_SURVEY_ROUND_ID = 0xAF
+TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION = 0xB1
+TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT = 0xB2
+TLV_SURVEY_OPERATION_GENERATION = 0xB6
+TLV_SURVEY_ROUND_COMMITMENT = 0xB7
+TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -332,6 +340,29 @@ def _array(width: int, *, signed: bool = False) -> Decoder:
     return decode
 
 
+def _exact_bytes(width: int) -> Decoder:
+    def decode(raw: bytes) -> bytes:
+        if len(raw) != width:
+            raise DecodeError(f"expected {width} bytes, got {len(raw)}")
+        return raw
+
+    return decode
+
+
+def _mesh_ack_semantic_identity(raw: bytes) -> dict[str, Any]:
+    if len(raw) != 38:
+        raise DecodeError(f"expected 38 bytes, got {len(raw)}")
+    session_id = int.from_bytes(raw[:4], "little")
+    sequence = int.from_bytes(raw[4:6], "little")
+    if session_id == 0 or sequence == 0:
+        raise DecodeError("session and sequence must both be nonzero")
+    return {
+        "session_id": session_id,
+        "sequence": sequence,
+        "sha256": raw[6:],
+    }
+
+
 def _raw_timestamps(raw: bytes) -> dict[str, int]:
     names = (
         "poll_tx_ts_32",
@@ -470,6 +501,21 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_DETECTION_SOURCE: TlvSpec("DETECTION_SOURCE", _scalar(1)),
     TLV_OPERATION_POLICY: TlvSpec("OPERATION_POLICY", _operation_policy),
     TLV_SURVEY_ROUND_ID: TlvSpec("SURVEY_ROUND_ID", _scalar(2)),
+    TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION: TlvSpec(
+        "DISCOVERY_ASSIGNMENT_SCHEME_VERSION", _scalar(1)
+    ),
+    TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT: TlvSpec(
+        "DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT", _exact_bytes(32)
+    ),
+    TLV_SURVEY_OPERATION_GENERATION: TlvSpec(
+        "SURVEY_OPERATION_GENERATION", _scalar(8)
+    ),
+    TLV_SURVEY_ROUND_COMMITMENT: TlvSpec(
+        "SURVEY_ROUND_COMMITMENT", _exact_bytes(32)
+    ),
+    TLV_MESH_ACK_SEMANTIC_IDENTITY: TlvSpec(
+        "MESH_ACK_SEMANTIC_IDENTITY", _mesh_ack_semantic_identity
+    ),
 }
 
 # Keep every currently assigned protocol TLV named even where the GUI does not
@@ -910,6 +956,13 @@ def validate_click_payload(packet: Packet, payload: bytes | None = None) -> None
         raise DecodeError("malformed click report: payload contains a truncated TLV")
 
     mode_flags = packet.flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)
+    allowed_flags = (
+        FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC
+    )
+    if packet.flags & ~allowed_flags:
+        raise DecodeError(
+            "malformed click report: unrelated protocol flags are not allowed"
+        )
     if (packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0:
         raise DecodeError("malformed click report: gateway ACK is required")
     if mode_flags == 0:
@@ -1381,8 +1434,11 @@ def build_anchor_discovery_command(
         raise ValueError("duration must be in 1..0xffffffff ms")
     if not 1 <= discovery_slot_count <= 50:
         raise ValueError("discovery slot count must be in 1..50")
-    if not 1 <= sample_count <= 1000:
-        raise ValueError("sample count must be in 1..1000")
+    if not 1 <= sample_count <= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
+        raise ValueError(
+            "sample count must be in 1.."
+            f"{SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT}"
+        )
     if expected_anchor_count is not None and not (
         1 <= expected_anchor_count <= 50
     ):

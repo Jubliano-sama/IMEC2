@@ -15,6 +15,7 @@
 #define ARG_UNUSED(value) (void)(value)
 
 typedef atomic_int atomic_t;
+typedef int k_timeout_t;
 
 struct k_thread {
     struct {

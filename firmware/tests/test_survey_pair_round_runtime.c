@@ -10,15 +10,20 @@ static void plan_init(struct survey_gateway_context *plan,
                       uint16_t sample_count)
 {
     assert(pair_count <= SURVEY_GATEWAY_MAX_PAIRS);
-    memset(plan, 0, sizeof(*plan));
-    plan->survey_id = UINT32_C(0xA1B2C3D4);
-    plan->sample_count = sample_count;
-    plan->pair_count = pair_count;
-    plan->pairs_planned = true;
+    assert((2u * pair_count) <= SURVEY_GATEWAY_MAX_REPORTS);
+    assert(survey_gateway_begin(
+               plan, UINT32_C(0xA1B2C3D4), sample_count) == PROTO_OK);
     for (size_t i = 0u; i < pair_count; i++) {
+        const uint8_t initiator_index = plan->node_count++;
+        const uint8_t responder_index = plan->node_count++;
+
+        plan->node_ids[initiator_index] =
+            UINT64_C(0x1000) + (2u * i);
+        plan->node_ids[responder_index] =
+            UINT64_C(0x1001) + (2u * i);
         plan->pairs[i] = (struct survey_gateway_pair_entry) {
-            .initiator_id = UINT64_C(0x1000) + (2u * i),
-            .responder_id = UINT64_C(0x1001) + (2u * i),
+            .initiator_index = initiator_index,
+            .responder_index = responder_index,
         };
         metadata[i] = (struct survey_pair_round_metadata) {
             .round_index = 0u,
@@ -26,46 +31,71 @@ static void plan_init(struct survey_gateway_context *plan,
             .pair_count_in_round = (uint8_t)pair_count,
         };
     }
+    plan->pair_count = (uint8_t)pair_count;
+    plan->pairs_planned = true;
+}
+
+static uint8_t round_node_index(struct survey_gateway_context *context,
+                                uint64_t node_id,
+                                bool create)
+{
+    for (uint8_t i = 0u; i < context->node_count; i++) {
+        if (context->node_ids[i] == node_id) {
+            return i;
+        }
+    }
+    assert(create);
+    assert(context->node_count < SURVEY_GATEWAY_MAX_REPORTS);
+    context->node_ids[context->node_count] = node_id;
+    return context->node_count++;
 }
 
 static struct survey_gateway_report_slot *round_report(
     struct survey_gateway_context *context,
     uint64_t anchor_id)
 {
-    for (size_t i = 0u; i < context->report_count; i++) {
-        if (context->reports[i].anchor_id == anchor_id) {
-            return &context->reports[i];
-        }
+    const uint8_t existing_index =
+        round_node_index(context, anchor_id, true);
+    struct survey_gateway_reverse_hint reverse_hint = {
+        .target_id = anchor_id,
+        .next_hop_id = anchor_id,
+        .quality = 100u,
+        .hop_count = 1u,
+        .valid = true,
+    };
+
+    if (context->reports[existing_index].metadata == UINT8_MAX) {
+        assert(survey_gateway_note_reach_report_with_reverse_hint(
+                   context,
+                   context->survey_id,
+                   anchor_id,
+                   NULL,
+                   0u,
+                   &reverse_hint) == PROTO_OK);
     }
-    assert(context->report_count < SURVEY_GATEWAY_MAX_REPORTS);
-    context->reports[context->report_count] =
-        (struct survey_gateway_report_slot) {
-            .anchor_id = anchor_id,
-            .reverse_next_hop_id = anchor_id,
-            .reverse_hop_count = 1u,
-            .reverse_hint_valid = true,
-            .valid = true,
-        };
-    return &context->reports[context->report_count++];
+    return &context->reports[existing_index];
 }
 
 static void planner_context_init(struct survey_gateway_context *context)
 {
-    const struct survey_gateway_pair_entry pairs[] = {
+    const struct survey_pair pairs[] = {
         {.initiator_id = 0xA1u, .responder_id = 0xB1u},
         {.initiator_id = 0xC1u, .responder_id = 0xD1u},
     };
 
-    memset(context, 0, sizeof(*context));
-    context->survey_id = 1u;
-    context->sample_count = 2u;
-    memcpy(context->pairs, pairs, sizeof(pairs));
-    context->pair_count = 2u;
-    context->pairs_planned = true;
+    assert(survey_gateway_begin(context, 1u, 2u) == PROTO_OK);
     for (size_t i = 0u; i < 2u; i++) {
         (void)round_report(context, pairs[i].initiator_id);
         (void)round_report(context, pairs[i].responder_id);
+        context->pairs[i] = (struct survey_gateway_pair_entry) {
+            .initiator_index =
+                round_node_index(context, pairs[i].initiator_id, false),
+            .responder_index =
+                round_node_index(context, pairs[i].responder_id, false),
+        };
     }
+    context->pair_count = 2u;
+    context->pairs_planned = true;
 }
 
 static void test_planner_serializes_shared_reverse_next_hop(void)
@@ -75,8 +105,10 @@ static void test_planner_serializes_shared_reverse_next_hop(void)
     size_t round_count = 0u;
 
     planner_context_init(&context);
-    round_report(&context, 0xA1u)->reverse_next_hop_id = 0xEEu;
-    round_report(&context, 0xC1u)->reverse_next_hop_id = 0xEEu;
+    const uint8_t shared_index = round_node_index(&context, 0xEEu, true);
+
+    round_report(&context, 0xA1u)->reverse_next_hop_index = shared_index;
+    round_report(&context, 0xC1u)->reverse_next_hop_index = shared_index;
     assert(survey_gateway_plan_pair_rounds(&context,
                                            metadata,
                                            2u,
@@ -94,9 +126,9 @@ static void test_planner_serializes_endpoint_used_as_reverse_next_hop(void)
 
     planner_context_init(&context);
     first = round_report(&context, 0xA1u);
-    first->reverse_hint_valid = false;
-    first->reverse_next_hop_id = 0u;
-    round_report(&context, 0xC1u)->reverse_next_hop_id = 0xA1u;
+    first->reverse_next_hop_index = UINT8_MAX;
+    round_report(&context, 0xC1u)->reverse_next_hop_index =
+        round_node_index(&context, 0xA1u, false);
     assert(survey_gateway_plan_pair_rounds(&context,
                                            metadata,
                                            2u,
@@ -104,13 +136,17 @@ static void test_planner_serializes_endpoint_used_as_reverse_next_hop(void)
     assert(round_count == 2u);
 }
 
-static void test_planner_keeps_distinct_reverse_paths_parallel(void)
+static void test_planner_keeps_proven_separated_reverse_paths_parallel(void)
 {
     struct survey_gateway_context context;
     struct survey_pair_round_metadata metadata[2] = {0};
     size_t round_count = 0u;
 
     planner_context_init(&context);
+    round_report(&context, 0xA1u)->reverse_hop_count = 1u;
+    round_report(&context, 0xB1u)->reverse_hop_count = 1u;
+    round_report(&context, 0xC1u)->reverse_hop_count = 3u;
+    round_report(&context, 0xD1u)->reverse_hop_count = 3u;
     assert(survey_gateway_plan_pair_rounds(&context,
                                            metadata,
                                            2u,
@@ -286,6 +322,107 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                NULL) == PROTO_OK);
     assert(survey_pair_round_lane_results_complete(&runtime.lanes[1]));
     assert(survey_pair_round_lane_results_complete(&runtime.lanes[0]));
+}
+
+static void test_usable_responder_replaces_full_initiator_only_result_set(void)
+{
+    struct survey_gateway_context plan;
+    struct survey_pair_round_metadata metadata[1];
+    struct survey_pair_round_runtime forward;
+    struct survey_pair_round_runtime reverse;
+    struct survey_sample sample;
+    bool accepted_new;
+
+    plan_init(&plan, metadata, 1u, 3u);
+    assert(survey_pair_round_runtime_begin(&forward,
+                                           &plan,
+                                           metadata,
+                                           1u,
+                                           1u,
+                                           0u) == PROTO_OK);
+    assert(survey_pair_round_runtime_begin(&reverse,
+                                           &plan,
+                                           metadata,
+                                           1u,
+                                           1u,
+                                           0u) == PROTO_OK);
+    assert(survey_pair_round_runtime_load_next_batch(&forward) == PROTO_OK);
+    assert(survey_pair_round_runtime_load_next_batch(&reverse) == PROTO_OK);
+    arm_lane(&forward, 0u);
+    arm_lane(&reverse, 0u);
+    assert(survey_pair_round_runtime_mark_observing(&forward, 0u) ==
+           PROTO_OK);
+    assert(survey_pair_round_runtime_mark_observing(&reverse, 0u) ==
+           PROTO_OK);
+
+    for (uint16_t i = 0u; i < forward.lanes[0].pair.sample_count; i++) {
+        sample = lane_sample(&forward,
+                             &forward.lanes[0],
+                             i,
+                             1000,
+                             RANGE_OK);
+        assert(survey_pair_round_runtime_note_sample(
+                   &forward,
+                   sample.pair.initiator_id,
+                   &sample,
+                   NULL,
+                   &accepted_new) == PROTO_OK);
+        assert(accepted_new);
+    }
+    assert(survey_pair_round_lane_results_complete(&forward.lanes[0]));
+    assert(!survey_pair_round_lane_preferred_results_complete(
+        &forward.lanes[0]));
+
+    /* A later responder copy upgrades every full-count initiator slot. */
+    for (uint16_t i = 0u; i < forward.lanes[0].pair.sample_count; i++) {
+        sample = lane_sample(&forward,
+                             &forward.lanes[0],
+                             i,
+                             1000,
+                             RANGE_OK);
+        assert(survey_pair_round_runtime_note_sample(
+                   &forward,
+                   sample.pair.responder_id,
+                   &sample,
+                   NULL,
+                   &accepted_new) == PROTO_OK);
+        assert(accepted_new);
+    }
+    assert(survey_pair_round_lane_preferred_results_complete(
+        &forward.lanes[0]));
+
+    for (uint16_t i = 0u; i < reverse.lanes[0].pair.sample_count; i++) {
+        sample = lane_sample(&reverse,
+                             &reverse.lanes[0],
+                             i,
+                             1000,
+                             RANGE_OK);
+        assert(survey_pair_round_runtime_note_sample(
+                   &reverse,
+                   sample.pair.responder_id,
+                   &sample,
+                   NULL,
+                   &accepted_new) == PROTO_OK);
+        assert(accepted_new);
+        assert(survey_pair_round_runtime_note_sample(
+                   &reverse,
+                   sample.pair.initiator_id,
+                   &sample,
+                   NULL,
+                   &accepted_new) == PROTO_OK);
+        assert(!accepted_new);
+    }
+
+    assert(forward.lanes[0].usable_result_mask ==
+           reverse.lanes[0].usable_result_mask);
+    assert(forward.lanes[0].responder_usable_mask ==
+           reverse.lanes[0].responder_usable_mask);
+    assert(forward.lanes[0].initiator_unusable_mask ==
+           reverse.lanes[0].initiator_unusable_mask);
+    assert(forward.lanes[0].responder_unusable_mask ==
+           reverse.lanes[0].responder_unusable_mask);
+    assert(survey_pair_round_lane_preferred_results_complete(
+        &reverse.lanes[0]));
 }
 
 static void test_delayed_prior_batch_sample_cannot_complete_rerun(void)
@@ -536,16 +673,49 @@ static void test_maximum_runtime_cap_is_bounded(void)
                0u) == PROTO_ERR_MALFORMED);
 }
 
+static void test_compact_pair_indices_fail_before_runtime_mutation(void)
+{
+    struct survey_gateway_context plan;
+    struct survey_pair_round_metadata metadata[1];
+    struct survey_pair_round_runtime runtime;
+    struct survey_pair_round_runtime before;
+
+    plan_init(&plan, metadata, 1u, 1u);
+    memset(&runtime, 0xa5, sizeof(runtime));
+    before = runtime;
+    plan.pairs[0].responder_index = plan.node_count;
+    assert(survey_pair_round_runtime_begin(
+               &runtime, &plan, metadata, 1u, 1u, 0u) ==
+           PROTO_ERR_MALFORMED);
+    assert(memcmp(&runtime, &before, sizeof(runtime)) == 0);
+
+    plan_init(&plan, metadata, 1u, 1u);
+    plan.pairs[0].responder_index = plan.pairs[0].initiator_index;
+    assert(survey_pair_round_runtime_begin(
+               &runtime, &plan, metadata, 1u, 1u, 0u) ==
+           PROTO_ERR_MALFORMED);
+    assert(memcmp(&runtime, &before, sizeof(runtime)) == 0);
+
+    plan_init(&plan, metadata, 1u, 1u);
+    plan.node_ids[1] = plan.node_ids[0];
+    assert(survey_pair_round_runtime_begin(
+               &runtime, &plan, metadata, 1u, 1u, 0u) ==
+           PROTO_ERR_MALFORMED);
+    assert(memcmp(&runtime, &before, sizeof(runtime)) == 0);
+}
+
 int main(void)
 {
     test_planner_serializes_shared_reverse_next_hop();
     test_planner_serializes_endpoint_used_as_reverse_next_hop();
-    test_planner_keeps_distinct_reverse_paths_parallel();
+    test_planner_keeps_proven_separated_reverse_paths_parallel();
     test_exact_result_demux_and_usability_are_lane_local();
+    test_usable_responder_replaces_full_initiator_only_result_set();
     test_delayed_prior_batch_sample_cannot_complete_rerun();
     test_chunks_cleanup_and_reruns_remain_isolated();
     test_interleaved_round_metadata_loads_in_round_position_order();
     test_maximum_runtime_cap_is_bounded();
+    test_compact_pair_indices_fail_before_runtime_mutation();
     puts("survey pair round runtime tests passed");
     return 0;
 }

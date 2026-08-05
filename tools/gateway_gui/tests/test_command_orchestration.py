@@ -222,6 +222,32 @@ class GatewayCommandOrchestratorTests(unittest.TestCase):
         )
         self.assertFalse(self.orchestrator.active)
 
+    def test_receive_time_decides_deadline_but_target_starts_when_drained(
+        self,
+    ) -> None:
+        self.orchestrator.begin(self.plan, now=0.0)
+        transition = self.orchestrator.observe_event(
+            terminal(self.preflight),
+            received_at=9.999,
+            now=12.0,
+        )
+
+        self.assertEqual(transition.dispatch, self.target)
+        self.assertIsNotNone(self.tracker.pending)
+        assert self.tracker.pending is not None
+        self.assertEqual(self.tracker.pending.started_at, 12.0)
+
+        late = GatewayCommandOrchestrator(GatewayCommandRequestTracker())
+        late.begin(self.plan, now=0.0)
+        timeout = late.observe_event(
+            terminal(self.preflight),
+            received_at=10.0,
+            now=12.0,
+        )
+        self.assertEqual((timeout.outcome, timeout.phase), ("timeout", "preflight"))
+        self.assertIsNone(timeout.dispatch)
+        self.assertFalse(late.active)
+
 
 if __name__ == "__main__":
     unittest.main()

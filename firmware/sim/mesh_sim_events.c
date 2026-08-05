@@ -3,6 +3,13 @@
 #include <limits.h>
 #include <string.h>
 
+_Static_assert(MESH_SIM_MAX_ROLES <= UINT8_MAX,
+               "simulator role indices must fit radio/watchdog APIs");
+_Static_assert(MESH_SIM_MAX_ROLES <= UINT16_MAX,
+               "simulator role indices must fit scheduler events");
+_Static_assert(MESH_SIM_MAX_RX_WINDOWS <= UINT32_MAX,
+               "simulator RX-window indices must fit trace detail");
+
 static void watchdog_worker_started(struct mesh_sim_world *world,
                                     uint8_t node_index);
 
@@ -48,6 +55,8 @@ void mesh_sim_events_runtime_trace_cb(enum mesh_runtime_action_kind action,
     case MESH_RUNTIME_ACTION_RUN_TRANSIT:
         transition = MESH_SIM_TRANSITION_RUNTIME_TRANSIT;
         break;
+    case MESH_RUNTIME_ACTION_NONE:
+    case MESH_RUNTIME_ACTION_WAIT_SAFE_BOUNDARY:
     default:
         return;
     }
@@ -433,8 +442,13 @@ static int reset_role_state(struct mesh_sim_world *world, uint8_t node_index)
     memset(node->tx_queue, 0, sizeof(node->tx_queue));
     node->tx_queue_count = 0u;
     node->route_waiting_valid = false;
+    memset(&node->route_reply_upstream_ack,
+           0,
+           sizeof(node->route_reply_upstream_ack));
+    node->route_reply_upstream_ack_valid = false;
     node->resume_low_duty_after_ds_twr = false;
     node->event_control_seq = 0u;
+    node->event_operation_session_next = 0u;
     {
         uint64_t previous_boot_nonce = node->event_boot_nonce;
 
@@ -658,7 +672,7 @@ static int process_rx_end(struct mesh_sim_world *world, size_t window_index)
                                       0u,
                                       MESH_SIM_TRANSITION_RX_END,
                                       0u,
-                                      window_index);
+                                      (uint32_t)window_index);
         }
         ret = dwm3000_runtime_enter_retained_sleep(&node->dwm3000,
                                                    runtime_cursor,
@@ -673,7 +687,7 @@ static int process_rx_end(struct mesh_sim_world *world, size_t window_index)
                              0u,
                              MESH_SIM_TRANSITION_RX_END,
                              0u,
-                             window_index);
+                             (uint32_t)window_index);
     if (ret != MESH_SIM_OK || !window->periodic_low_duty) {
         if (ret == MESH_SIM_OK &&
             window->connection_event_index != UINT16_MAX) {
@@ -725,7 +739,7 @@ static int process_rx_start(struct mesh_sim_world *world, size_t window_index)
                               0u,
                               MESH_SIM_TRANSITION_RX_START,
                               0u,
-                              window_index);
+                              (uint32_t)window_index);
 }
 
 static int process_tx_start(struct mesh_sim_world *world, size_t tx_index)
@@ -802,7 +816,7 @@ static int process_runtime_radio_release(struct mesh_sim_world *world,
             SIM_EVENT_LOW_DUTY_START,
             sleep_interval.end_us +
                 (uint64_t)MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS * 1000u,
-            node_index);
+            (uint16_t)node_index);
         if (ret != MESH_SIM_OK) {
             return ret;
         }
@@ -817,14 +831,14 @@ static int process_runtime_radio_release(struct mesh_sim_world *world,
             return ret;
         }
     }
-    ret = watchdog_worker_completed(world, node_index, true);
+    ret = watchdog_worker_completed(world, (uint8_t)node_index, true);
     if (ret != MESH_SIM_OK) {
         return ret;
     }
     return mesh_sim_scheduler_schedule(world,
                                        SIM_EVENT_RUNTIME_BOUNDARY,
                                        world->now_us,
-                                       node_index);
+                                       (uint16_t)node_index);
 }
 
 int mesh_sim_process_event(struct mesh_sim_world *world,

@@ -1,6 +1,24 @@
 #line 487 __BASE_FILE__
 static void clear_all_events(void);
 
+static void invalidate_radio_state(void)
+{
+    radio_configured = false;
+    radio_awake = false;
+    radio_restored_from_sleep = false;
+    active_phy_mode = DWM3000_PHY_NONE;
+    radio_state_unknown = true;
+}
+
+static void mark_radio_awake_unconfigured(void)
+{
+    radio_configured = false;
+    radio_awake = true;
+    radio_restored_from_sleep = false;
+    active_phy_mode = DWM3000_PHY_NONE;
+    radio_state_unknown = false;
+}
+
 static int take_port_error(const char *operation)
 {
     int ret = dwm3000_port_take_error();
@@ -9,14 +27,40 @@ static int take_port_error(const char *operation)
         return 0;
     }
     driver_stats.spi_failures++;
-    radio_configured = false;
-    radio_awake = false;
-    radio_restored_from_sleep = false;
-    active_phy_mode = DWM3000_PHY_NONE;
+    invalidate_radio_state();
     LOG_ERR("DWM3000 port error: operation=%s ret=%d",
             operation == NULL ? "unknown" : operation,
             ret);
     return ret;
+}
+
+static int check_device_fatal_status(const char *operation)
+{
+    uint32_t status_hi;
+    uint32_t fatal_status;
+    int ret;
+
+    status_hi = dwt_read32bitreg(SYS_STATUS_HI_ID);
+    ret = take_port_error(operation);
+    if (ret < 0) {
+        return ret;
+    }
+
+    fatal_status = status_hi & DWM3000_SYS_STATUS_HI_FATAL_MASK;
+    if (fatal_status == 0u) {
+        return 0;
+    }
+
+    dwt_write32bitreg(SYS_STATUS_HI_ID, fatal_status);
+    ret = take_port_error("device-fatal-status-clear");
+    if (ret >= 0) {
+        driver_stats.spi_failures++;
+    }
+    invalidate_radio_state();
+    LOG_ERR("DWM3000 fatal command/SPI status: operation=%s status_hi=0x%08x",
+            operation == NULL ? "unknown" : operation,
+            status_hi);
+    return ret < 0 ? ret : -EIO;
 }
 
 static int validate_device_identity(const char *operation)
@@ -39,7 +83,7 @@ static int validate_device_identity(const char *operation)
                 dev_id);
         return -ENODEV;
     }
-    return 0;
+    return check_device_fatal_status(operation);
 }
 
 #if defined(CONFIG_IMEC_HIGH_DEBUG)
@@ -250,6 +294,7 @@ static int ensure_local_data(void)
 
 static int initialise_radio(bool idle_after_init)
 {
+    int initialise_ret;
     int ret;
     int mode = idle_after_init ? DWT_DW_IDLE : DWT_DW_INIT;
 
@@ -264,21 +309,33 @@ static int initialise_radio(bool idle_after_init)
     }
 
     dwm3000_port_clear_error();
-    (void)dwm3000_port_set_slow_spi();
-    if (dwt_initialise(mode) != DWT_SUCCESS) {
-        return -EIO;
+    ret = dwm3000_port_set_slow_spi();
+    if (ret < 0) {
+        return ret;
     }
+    initialise_ret = dwt_initialise(mode);
     ret = take_port_error("initialise");
     if (ret < 0) {
         return ret;
+    }
+    ret = check_device_fatal_status("initialise");
+    if (ret < 0) {
+        return ret;
+    }
+    if (initialise_ret != DWT_SUCCESS) {
+        return -EIO;
     }
     ret = validate_device_identity("initialise");
     if (ret < 0) {
         return ret;
     }
-    radio_awake = true;
-
-    return dwm3000_port_set_fast_spi();
+    ret = dwm3000_port_set_fast_spi();
+    if (ret < 0) {
+        invalidate_radio_state();
+        return ret;
+    }
+    mark_radio_awake_unconfigured();
+    return 0;
 }
 
 static dwt_txconfig_t *txconfig_for_phy(enum dwm3000_phy_mode phy_mode)
@@ -291,6 +348,9 @@ static dwt_txconfig_t *txconfig_for_phy(enum dwm3000_phy_mode phy_mode)
 static int apply_radio_config(const dwt_config_t *config,
                               enum dwm3000_phy_mode phy_mode)
 {
+    int configure_ret;
+    int ret;
+
     if (config == NULL) {
         return -EINVAL;
     }
@@ -303,7 +363,16 @@ static int apply_radio_config(const dwt_config_t *config,
         clear_all_events();
     }
 
-    if (dwt_configure((dwt_config_t *)config) != DWT_SUCCESS) {
+    configure_ret = dwt_configure((dwt_config_t *)config);
+    ret = take_port_error("configure");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = check_device_fatal_status("configure");
+    if (ret < 0) {
+        return ret;
+    }
+    if (configure_ret != DWT_SUCCESS) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
 
@@ -323,8 +392,12 @@ static int apply_radio_config(const dwt_config_t *config,
     clear_all_events();
 
     {
-        int ret = take_port_error("apply-config");
+        ret = take_port_error("apply-config");
 
+        if (ret < 0) {
+            return ret;
+        }
+        ret = check_device_fatal_status("apply-config");
         if (ret < 0) {
             return ret;
         }
@@ -334,16 +407,26 @@ static int apply_radio_config(const dwt_config_t *config,
     radio_awake = true;
     radio_restored_from_sleep = false;
     active_phy_mode = phy_mode;
+    radio_state_unknown = false;
     return 0;
 }
 
 static int restore_txrx_after_sleep(enum dwm3000_phy_mode phy_mode)
 {
+    int restore_ret;
     int ret;
 
     dwm3000_port_clear_error();
-    ret = dwt_restore_txrx(DWT_RESTORE_TXRX_MODE);
-    if (ret != DWT_SUCCESS) {
+    restore_ret = dwt_restore_txrx(DWT_RESTORE_TXRX_MODE);
+    ret = take_port_error("restore-txrx-command");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = check_device_fatal_status("restore-txrx-command");
+    if (ret < 0) {
+        return ret;
+    }
+    if (restore_ret != DWT_SUCCESS) {
         return -EIO;
     }
 
@@ -357,6 +440,10 @@ static int restore_txrx_after_sleep(enum dwm3000_phy_mode phy_mode)
     clear_all_events();
 
     ret = take_port_error("restore-txrx");
+    if (ret < 0) {
+        return ret;
+    }
+    ret = check_device_fatal_status("restore-txrx");
     if (ret < 0) {
         return ret;
     }
@@ -407,10 +494,7 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
     const dwt_config_t *config = config_for_phy(phy_mode);
     int ret;
 
-    radio_configured = false;
-    radio_awake = false;
-    radio_restored_from_sleep = false;
-    active_phy_mode = DWM3000_PHY_NONE;
+    invalidate_radio_state();
 
     ret = dwm3000_port_init();
     if (ret < 0) {
@@ -481,6 +565,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     ret = dwm3000_port_set_slow_spi();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        invalidate_radio_state();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_SLOW_SPI_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
@@ -490,6 +575,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     ret = dwm3000_port_wakeup();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        invalidate_radio_state();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_PIN_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
@@ -513,6 +599,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     }
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        invalidate_radio_state();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
 
@@ -542,12 +629,10 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
         }
         active_phy_mode = requested_phy;
     }
-    radio_awake = true;
-    radio_restored_from_sleep = !restore_txrx;
-
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
+        invalidate_radio_state();
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
@@ -559,6 +644,9 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
         driver_stats.sleep_wake_failures++;
         return ret;
     }
+    radio_awake = true;
+    radio_restored_from_sleep = !restore_txrx;
+    radio_state_unknown = false;
     wake_elapsed_us = k_cyc_to_us_floor32(k_cycle_get_32()) - wake_start_us;
     driver_stats.sleep_wake_total_us += wake_elapsed_us;
     if (wake_elapsed_us > driver_stats.sleep_wake_max_us) {
@@ -667,12 +755,9 @@ static int ensure_phy_mode(enum dwm3000_phy_mode phy_mode)
 
 static int ensure_current_phy_or_range(void)
 {
-    if (!radio_configured) {
-        return dwm3000_driver_configure_default();
-    }
-
-    return wake_configured_radio(active_phy_mode == DWM3000_PHY_NONE ?
-                                 DWM3000_PHY_RANGE : active_phy_mode);
+    return ensure_phy_mode(
+        !radio_configured || active_phy_mode == DWM3000_PHY_NONE ?
+        DWM3000_PHY_RANGE : active_phy_mode);
 }
 
 static void clear_status(uint32_t mask)
@@ -685,19 +770,36 @@ static void clear_all_events(void)
     clear_status(0xffffffffu);
 }
 
+static int clear_status_checked(uint32_t mask, const char *operation)
+{
+    int ret;
+
+    clear_status(mask);
+    ret = take_port_error(operation);
+    if (ret < 0) {
+        return ret;
+    }
+    return check_device_fatal_status(operation);
+}
+
 static int wait_status_internal(uint32_t mask,
                                 uint32_t timeout_ms,
                                 uint32_t *status,
-                                bool log_events)
+                                bool log_events,
+                                uint64_t *observed_at_ms)
 {
     int64_t deadline = k_uptime_get() + timeout_ms;
     uint32_t read_status;
     uint32_t start_cycles = k_cycle_get_32();
     uint32_t poll_loops = 0u;
     int64_t now_ms;
+    uint64_t sampled_at_ms = 0u;
 
+    if (observed_at_ms != NULL) {
+        *observed_at_ms = 0u;
+    }
     {
-        int ret = take_port_error("status-entry");
+        int ret = check_device_fatal_status("status-entry");
 
         if (ret < 0) {
             if (status != NULL) {
@@ -716,6 +818,7 @@ static int wait_status_internal(uint32_t mask,
     }
     do {
         read_status = dwt_read32bitreg(SYS_STATUS_ID);
+        sampled_at_ms = (uint64_t)k_uptime_get();
         poll_loops++;
         {
             int ret = take_port_error("status-read");
@@ -730,6 +833,14 @@ static int wait_status_internal(uint32_t mask,
         if ((read_status & mask) != 0u) {
             uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
                 (uint32_t)(k_cycle_get_32() - start_cycles));
+            int ret = check_device_fatal_status("status-match");
+
+            if (ret < 0) {
+                if (status != NULL) {
+                    *status = read_status;
+                }
+                return ret;
+            }
 
             driver_stats.sys_status_poll_loops += poll_loops;
             if (elapsed_us > driver_stats.sys_status_poll_max_duration_us) {
@@ -737,6 +848,9 @@ static int wait_status_internal(uint32_t mask,
             }
             if (status != NULL) {
                 *status = read_status;
+            }
+            if (observed_at_ms != NULL) {
+                *observed_at_ms = sampled_at_ms;
             }
             if (log_events) {
                 dwm3000_debug_event(false,
@@ -750,8 +864,24 @@ static int wait_status_internal(uint32_t mask,
             return 0;
         }
 
-        if (atomic_get(&receive_abort_enabled) != 0 &&
-            atomic_cas(&receive_abort_requested, 1, 0)) {
+        /*
+         * Edge owners need one receive boundary and are consumed together by
+         * that boundary.  Gateway priority is a level owner: it remains armed
+         * until the exact priority lifecycle clears it, preventing a scan
+         * rearm from stealing the safe boundary.  Separate owner bits ensure
+         * one lifecycle cannot erase another requester's pending abort.
+         */
+        if (atomic_get(&receive_abort_enabled) != 0) {
+            atomic_val_t pending = atomic_get(&receive_abort_owners);
+            atomic_val_t edge_owners =
+                pending & ~(atomic_val_t)DWM3000_RECEIVE_ABORT_LEVEL_MASK;
+
+            if (edge_owners != 0) {
+                (void)atomic_and(&receive_abort_owners, ~edge_owners);
+            }
+            if (pending == 0) {
+                goto receive_abort_not_requested;
+            }
             uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
                 (uint32_t)(k_cycle_get_32() - start_cycles));
 
@@ -774,6 +904,7 @@ static int wait_status_internal(uint32_t mask,
             return -ECANCELED;
         }
 
+receive_abort_not_requested:
         now_ms = k_uptime_get();
         if (now_ms >= deadline) {
             break;
@@ -781,13 +912,61 @@ static int wait_status_internal(uint32_t mask,
         k_busy_wait(DWM3000_STATUS_POLL_INTERVAL_US);
     } while (k_uptime_get() <= deadline);
 
-    if (status != NULL) {
-        *status = dwt_read32bitreg(SYS_STATUS_ID);
-        if (take_port_error("status-timeout-read") < 0) {
-            *status = 0u;
+    /*
+     * The deadline can expire between the loop's status read and its time
+     * check.  Sample once more so a completion at that boundary is not
+     * reported as a timeout, and preserve a final SPI failure as a hardware
+     * error instead of collapsing it into ordinary RF silence.
+    */
+    read_status = dwt_read32bitreg(SYS_STATUS_ID);
+    sampled_at_ms = (uint64_t)k_uptime_get();
+    poll_loops++;
+    {
+        int ret = take_port_error("status-timeout-read");
+
+        if (ret < 0) {
+            if (status != NULL) {
+                *status = 0u;
+            }
+            return ret;
         }
-    } else {
-        (void)take_port_error("status-timeout-read");
+    }
+    if (status != NULL) {
+        *status = read_status;
+    }
+    if ((read_status & mask) != 0u) {
+        uint32_t elapsed_us = (uint32_t)k_cyc_to_us_floor64(
+            (uint32_t)(k_cycle_get_32() - start_cycles));
+        int ret = check_device_fatal_status("status-boundary-match");
+
+        if (ret < 0) {
+            return ret;
+        }
+
+        driver_stats.sys_status_poll_loops += poll_loops;
+        if (elapsed_us > driver_stats.sys_status_poll_max_duration_us) {
+            driver_stats.sys_status_poll_max_duration_us = elapsed_us;
+        }
+        if (log_events) {
+            dwm3000_debug_event(false,
+                                "UWB_SYS_STATUS_POLL_DONE",
+                                "mask=0x%08x status=0x%08x loops=%u duration_us=%u boundary=1",
+                                mask,
+                                read_status,
+                                poll_loops,
+                                elapsed_us);
+        }
+        if (observed_at_ms != NULL) {
+            *observed_at_ms = sampled_at_ms;
+        }
+        return 0;
+    }
+    {
+        int ret = check_device_fatal_status("status-timeout");
+
+        if (ret < 0) {
+            return ret;
+        }
     }
     driver_stats.sys_status_poll_loops += poll_loops;
     driver_stats.sys_status_poll_timeouts++;
@@ -814,7 +993,7 @@ static int wait_status_internal(uint32_t mask,
 
 static int wait_status(uint32_t mask, uint32_t timeout_ms, uint32_t *status)
 {
-    return wait_status_internal(mask, timeout_ms, status, true);
+    return wait_status_internal(mask, timeout_ms, status, true, NULL);
 }
 
 static int capture_completed_tx_timestamp(uint32_t timeout_ms,
@@ -835,21 +1014,31 @@ static int capture_completed_tx_timestamp(uint32_t timeout_ms,
     ret = wait_status_internal(SYS_STATUS_TXFRS_BIT_MASK,
                                timeout_ms,
                                &status,
-                               false);
+                               false,
+                               NULL);
     if (ret < 0) {
         return ret;
     }
 
     *tx_timestamp = read_tx_timestamp_u64();
-    return take_port_error("tx-timestamp");
+    ret = take_port_error("tx-timestamp");
+    if (ret < 0) {
+        return ret;
+    }
+    return check_device_fatal_status("tx-timestamp");
 }
 
-static int wait_tx_complete(uint32_t timeout_ms)
+static int wait_tx_complete_observed(uint32_t timeout_ms,
+                                     uint64_t *completed_at_ms)
 {
     uint32_t status = 0u;
     int ret;
 
-    ret = wait_status(SYS_STATUS_TXFRS_BIT_MASK, timeout_ms, &status);
+    ret = wait_status_internal(SYS_STATUS_TXFRS_BIT_MASK,
+                               timeout_ms,
+                               &status,
+                               true,
+                               completed_at_ms);
     if (ret < 0) {
         driver_stats.tx_failures++;
         dwm3000_debug_event(true,
@@ -861,7 +1050,12 @@ static int wait_tx_complete(uint32_t timeout_ms)
         return ret;
     }
 
-    clear_status(SYS_STATUS_TXFRS_BIT_MASK);
+    ret = clear_status_checked(SYS_STATUS_TXFRS_BIT_MASK,
+                               "tx-complete-clear");
+    if (ret < 0) {
+        driver_stats.tx_failures++;
+        return ret;
+    }
     driver_stats.tx_dones++;
     dwm3000_debug_event(false,
                         "UWB_TX_DONE",
@@ -870,19 +1064,29 @@ static int wait_tx_complete(uint32_t timeout_ms)
     return 0;
 }
 
+static int wait_tx_complete(uint32_t timeout_ms)
+{
+    return wait_tx_complete_observed(timeout_ms, NULL);
+}
+
 static enum range_status status_to_range_status(uint32_t status)
 {
+    if ((status & DWM3000_RX_ERROR_STATUS_MASK) != 0u) {
+        return RANGE_RX_ERROR;
+    }
     if ((status & SYS_STATUS_ALL_RX_TO) != 0u) {
         return RANGE_RX_TIMEOUT;
-    }
-    if ((status & SYS_STATUS_ALL_RX_ERR) != 0u) {
-        return RANGE_RX_ERROR;
     }
     return RANGE_INTERNAL_ERROR;
 }
 
 static enum dwm3000_rx_failure status_to_rx_failure(uint32_t status)
 {
+    if ((status & (SYS_STATUS_ARFE_BIT_MASK |
+                   SYS_STATUS_CIAERR_BIT_MASK |
+                   SYS_STATUS_RXOVRR_BIT_MASK)) != 0u) {
+        return DWM3000_RX_FAILURE_CRC_OR_PHY;
+    }
     if ((status & SYS_STATUS_RXPTO_BIT_MASK) != 0u) {
         return DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
     }
@@ -892,9 +1096,7 @@ static enum dwm3000_rx_failure status_to_rx_failure(uint32_t status)
     if ((status & SYS_STATUS_RXFTO_BIT_MASK) != 0u) {
         return DWM3000_RX_FAILURE_FRAME_TIMEOUT;
     }
-    if ((status & (SYS_STATUS_RXFCE_BIT_MASK |
-                   SYS_STATUS_RXPHE_BIT_MASK |
-                   SYS_STATUS_RXFSL_BIT_MASK)) != 0u) {
+    if ((status & DWM3000_RX_ERROR_STATUS_MASK) != 0u) {
         return DWM3000_RX_FAILURE_CRC_OR_PHY;
     }
     return DWM3000_RX_FAILURE_NONE;
@@ -908,7 +1110,10 @@ static bool rx_status_has_activity(uint32_t status)
                       SYS_STATUS_RXFTO_BIT_MASK |
                       SYS_STATUS_RXFCE_BIT_MASK |
                       SYS_STATUS_RXPHE_BIT_MASK |
-                      SYS_STATUS_RXFSL_BIT_MASK)) != 0u;
+                      SYS_STATUS_RXFSL_BIT_MASK |
+                      SYS_STATUS_ARFE_BIT_MASK |
+                      SYS_STATUS_CIAERR_BIT_MASK |
+                      SYS_STATUS_RXOVRR_BIT_MASK)) != 0u;
 }
 
 static uint32_t remaining_timeout_ms(int64_t deadline_ms)
@@ -1007,10 +1212,25 @@ static int8_t estimate_ipatov_rsl_dbm(const dwt_rxdiag_t *diagnostics)
     return clamp_i8(rounded_dbm);
 }
 
+static bool ipatov_diagnostics_valid(const dwt_rxdiag_t *diagnostics,
+                                     bool require_power)
+{
+    uint16_t first_path_index;
+
+    if (diagnostics == NULL || diagnostics->ipatovAccumCount == 0u) {
+        return false;
+    }
+    first_path_index = diagnostics->ipatovFpIndex >> 6;
+    if (first_path_index >= DWM3000_CIR_ACCUM_SAMPLE_COUNT) {
+        return false;
+    }
+    return !require_power || diagnostics->ipatovPower != 0u;
+}
+
 static bool read_cir_sample(const dwt_rxdiag_t *diagnostics,
                             uint8_t cir_sample[UWB_CIR_SAMPLE_LEN])
 {
-    uint8_t accum[DWM3000_ACCUM_CIR_SAMPLE_READ_LEN];
+    uint8_t accum[DWM3000_ACCUM_CIR_SAMPLE_READ_LEN] = {0};
     uint16_t fp_int;
 
     if (diagnostics == NULL ||
@@ -1133,6 +1353,13 @@ static bool capture_rx_diag_raw(uint8_t raw[DWM3000_RX_DIAG_RAW_LEN],
 
     memset(&diagnostics, 0, sizeof(diagnostics));
     dwt_readdiagnostics(&diagnostics);
+    if (take_port_error("rx-diagnostics-raw") < 0 ||
+        check_device_fatal_status("rx-diagnostics-raw") < 0) {
+        return false;
+    }
+    if (!ipatov_diagnostics_valid(&diagnostics, false)) {
+        return false;
+    }
     pack_rx_diag_raw(&diagnostics, raw, raw_len);
     if (first_path_index != NULL) {
         *first_path_index = diagnostics.ipatovFpIndex >> 6;
@@ -1195,6 +1422,14 @@ static uint16_t read_cir_window(uint8_t *buffer,
         uint16_t chunk_len = chunk_samples * DWM3000_FULL_CIR_SAMPLE_BYTES;
 
         dwt_readaccdata(accum, chunk_len + 1u, sample_index);
+        if (take_port_error("rx-cir-window") < 0 ||
+            check_device_fatal_status("rx-cir-window") < 0) {
+            memset(buffer, 0, total_len);
+            if (start_index != NULL) {
+                *start_index = 0u;
+            }
+            return 0u;
+        }
         memcpy(&buffer[byte_offset], &accum[1], chunk_len);
         sample_index += chunk_samples;
         byte_offset += chunk_len;
@@ -1202,7 +1437,7 @@ static uint16_t read_cir_window(uint8_t *buffer,
     return byte_offset;
 }
 
-static void read_rx_diagnostics(int8_t *rsl_dbm,
+static bool read_rx_diagnostics(int8_t *rsl_dbm,
                                 uint8_t cir_sample[UWB_CIR_SAMPLE_LEN],
                                 bool *cir_sampled,
                                 int16_t *clock_offset_raw,
@@ -1214,13 +1449,25 @@ static void read_rx_diagnostics(int8_t *rsl_dbm,
 
     if (rsl_dbm == NULL && cir_sample == NULL &&
         clock_offset_raw == NULL && carrier_integrator == NULL) {
-        return;
+        return true;
+    }
+    if (rsl_dbm != NULL) {
+        *rsl_dbm = 0;
+    }
+    if (cir_sample != NULL) {
+        memset(cir_sample, 0, UWB_CIR_SAMPLE_LEN);
     }
     if (cir_sampled != NULL) {
         *cir_sampled = false;
     }
+    if (clock_offset_raw != NULL) {
+        *clock_offset_raw = 0;
+    }
     if (clock_offset_sampled != NULL) {
         *clock_offset_sampled = false;
+    }
+    if (carrier_integrator != NULL) {
+        *carrier_integrator = 0;
     }
     if (carrier_integrator_sampled != NULL) {
         *carrier_integrator_sampled = false;
@@ -1228,6 +1475,11 @@ static void read_rx_diagnostics(int8_t *rsl_dbm,
 
     memset(&diagnostics, 0, sizeof(diagnostics));
     dwt_readdiagnostics(&diagnostics);
+    if (take_port_error("rx-diagnostics-snapshot") < 0 ||
+        check_device_fatal_status("rx-diagnostics-snapshot") < 0 ||
+        !ipatov_diagnostics_valid(&diagnostics, rsl_dbm != NULL)) {
+        return false;
+    }
     if (rsl_dbm != NULL) {
         *rsl_dbm = estimate_ipatov_rsl_dbm(&diagnostics);
     }
@@ -1248,28 +1500,77 @@ static void read_rx_diagnostics(int8_t *rsl_dbm,
             *carrier_integrator_sampled = true;
         }
     }
+    if (take_port_error("rx-diagnostics") < 0 ||
+        check_device_fatal_status("rx-diagnostics") < 0) {
+        if (rsl_dbm != NULL) {
+            *rsl_dbm = 0;
+        }
+        if (cir_sample != NULL) {
+            memset(cir_sample, 0, UWB_CIR_SAMPLE_LEN);
+        }
+        if (cir_sampled != NULL) {
+            *cir_sampled = false;
+        }
+        if (clock_offset_raw != NULL) {
+            *clock_offset_raw = 0;
+        }
+        if (clock_offset_sampled != NULL) {
+            *clock_offset_sampled = false;
+        }
+        if (carrier_integrator != NULL) {
+            *carrier_integrator = 0;
+        }
+        if (carrier_integrator_sampled != NULL) {
+            *carrier_integrator_sampled = false;
+        }
+        return false;
+    }
+    return true;
 }
 
-static uint16_t read_rx_frame(uint8_t *buffer, size_t buffer_len)
+static int read_rx_frame(uint8_t *buffer,
+                         size_t buffer_len,
+                         size_t *frame_len_out)
 {
     uint32_t rx_finfo = dwt_read32bitreg(RX_FINFO_ID);
     uint32_t frame_len;
 
+    if (buffer == NULL || frame_len_out == NULL) {
+        return -EINVAL;
+    }
+    *frame_len_out = 0u;
     last_rx_finfo_register = rx_finfo;
     frame_len = rx_finfo & RX_FINFO_RXFLEN_BIT_MASK;
 
-    if (take_port_error("read-rx-frame-length") < 0) {
-        return 0u;
+    {
+        int ret = take_port_error("read-rx-frame-length");
+
+        if (ret < 0) {
+            return ret;
+        }
+        ret = check_device_fatal_status("read-rx-frame-length");
+        if (ret < 0) {
+            return ret;
+        }
     }
-    if (frame_len > buffer_len) {
-        return 0u;
+    if (frame_len == 0u || frame_len > buffer_len) {
+        return -EMSGSIZE;
     }
 
     dwt_readrxdata(buffer, (uint16_t)frame_len, 0);
-    if (take_port_error("read-rx-frame-data") < 0) {
-        return 0u;
+    {
+        int ret = take_port_error("read-rx-frame-data");
+
+        if (ret < 0) {
+            return ret;
+        }
+        ret = check_device_fatal_status("read-rx-frame-data");
+        if (ret < 0) {
+            return ret;
+        }
     }
-    return (uint16_t)frame_len;
+    *frame_len_out = frame_len;
+    return 0;
 }
 
 static size_t payload_len_without_fcs(size_t frame_len)
@@ -1384,16 +1685,28 @@ static int decode_anchor_diag_fragment_frame(
 
 static int write_tx_frame(const uint8_t *frame, size_t frame_len)
 {
-    if (frame == NULL || frame_len > UINT16_MAX) {
+    const dwt_config_t *config;
+    size_t max_frame_len;
+    int ret;
+
+    if (frame == NULL || frame_len == 0u) {
         return -EINVAL;
+    }
+    config = config_for_phy(active_phy_mode);
+    max_frame_len = config->phrMode == DWT_PHRMODE_EXT ?
+                    UWB_PHY_EXTENDED_FRAME_MAX_LEN :
+                    DWM3000_STANDARD_FRAME_MAX_LEN;
+    if (frame_len > max_frame_len - FCS_LEN) {
+        return -EMSGSIZE;
     }
 
     if (dwt_writetxdata((uint16_t)frame_len, (uint8_t *)frame, 0) != DWT_SUCCESS) {
-        return -EIO;
+        ret = take_port_error("tx-frame-data");
+        return ret < 0 ? ret : -EIO;
     }
 
     dwt_writetxfctrl((uint16_t)(frame_len + FCS_LEN), 0, 1);
-    return 0;
+    return take_port_error("tx-frame-control");
 }
 
 static int patch_tx_frame(const uint8_t *bytes,

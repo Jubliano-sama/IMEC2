@@ -14,14 +14,14 @@ bool app_mesh_rx_policy_should_drop(bool mesh_route_test_transmitter,
 
 bool app_mesh_rx_policy_role_uses_uwb_rx(bool focused_anchor_rx_logs,
                                          bool permanent_receiver_role,
-                                         bool mesh_route_test_transmitter,
+                                         bool scheduled_receiver_enabled,
                                          bool channel9_schedule_installed)
 {
     if (focused_anchor_rx_logs) {
         return false;
     }
     return permanent_receiver_role ||
-           (mesh_route_test_transmitter && channel9_schedule_installed);
+           (scheduled_receiver_enabled && channel9_schedule_installed);
 }
 
 bool app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
