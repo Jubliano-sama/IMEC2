@@ -1130,11 +1130,6 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                 &retry_decision);
             if (!install_direct_route) {
                 status_debug_note("DBG_DIRECT_GW_PROBE_CONTACT_ONLY\n");
-                high_debug_log_event("MESH_DIRECT_GATEWAY_PROBE",
-                                     "target=0x%016llx attempt=%u mode=contact-only reason=%s",
-                                     (unsigned long long)target_id,
-                                     (unsigned int)attempt,
-                                     reason == NULL ? "route" : reason);
                 last_ret = 0;
                 goto out_unlock;
             }
@@ -1148,11 +1143,6 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
             }
 
             status_debug_note("DBG_DIRECT_GW_ROUTE_READY\n");
-            high_debug_log_event("MESH_DIRECT_GATEWAY_ROUTE",
-                                 "target=0x%016llx attempt=%u reason=%s",
-                                 (unsigned long long)target_id,
-                                 (unsigned int)attempt,
-                                 reason == NULL ? "route" : reason);
             last_ret = 0;
             goto out_unlock;
         }
@@ -1475,11 +1465,6 @@ static int mesh_request_route_owned(
         bool route_reply_captured = false;
         int listen_ret;
 
-        high_debug_log_event("MESH_ROUTE_REQ_TX",
-                             "phase=embedded-listen target=0x%016llx attempt=%u reason=%s",
-                             (unsigned long long)target_id,
-                             mesh_runtime.route_discovery.attempts,
-                             reason == NULL ? "route" : reason);
         listen_ret = mesh_listen_for_route_reply(target_id,
                                                  "embedded-route-request",
                                                  route_reply_window_ms,
@@ -1487,11 +1472,6 @@ static int mesh_request_route_owned(
                                                  &route_reply_captured);
         if (route_reply_captured) {
             status_debug_note("DBG_EMBEDDED_ROUTE_REQ_SKIP_FALLBACK\n");
-            high_debug_log_event("MESH_ROUTE_REQ_TX",
-                                 "phase=embedded-reply target=0x%016llx attempt=%u reason=%s",
-                                 (unsigned long long)target_id,
-                                 mesh_runtime.route_discovery.attempts,
-                                 reason == NULL ? "route" : reason);
             mesh_route_reply_handoff_after_capture(target_id, reason);
             return 0;
         }
@@ -1503,30 +1483,14 @@ static int mesh_request_route_owned(
                     reason == NULL ? "route" : reason);
         }
         status_debug_note("DBG_EMBEDDED_ROUTE_REQ_FALLBACK\n");
-        high_debug_log_event("MESH_ROUTE_REQ_TX",
-                             "phase=embedded-fallback target=0x%016llx attempt=%u listen_ret=%d reason=%s",
-                             (unsigned long long)target_id,
-                             mesh_runtime.route_discovery.attempts,
-                             listen_ret,
-                             reason == NULL ? "route" : reason);
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        high_debug_log_event("MESH_ROUTE_REQ_TX",
-                             "phase=turnaround target=0x%016llx delay_ms=%u reason=%s",
-                             (unsigned long long)target_id,
-                             MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS,
-                             reason == NULL ? "route" : reason);
         LOG_INF("mesh route channel-5 turnaround delay: target=0x%016llx delay_ms=%u reason=%s",
                 (unsigned long long)target_id,
                 MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS,
                 reason == NULL ? "route" : reason);
         k_msleep(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS);
     }
-    high_debug_log_event("MESH_ROUTE_REQ_TX",
-                         "phase=start target=0x%016llx attempt=%u reason=%s",
-                         (unsigned long long)target_id,
-                         mesh_runtime.route_discovery.attempts,
-                         reason == NULL ? "route" : reason);
     mesh_c5_contact_exchange(target_id,
                              C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
                              k_uptime_get_32() + route_reply_window_ms,
@@ -1538,12 +1502,6 @@ static int mesh_request_route_owned(
                             route_req.packet.seq,
                             route_req.packet.ttl);
     }
-    high_debug_log_event("MESH_ROUTE_REQ_TX",
-                         "phase=done target=0x%016llx attempt=%u ret=%d reason=%s",
-                         (unsigned long long)target_id,
-                         mesh_runtime.route_discovery.attempts,
-                         ret,
-                         reason == NULL ? "route" : reason);
     LOG_INF("mesh route discovery request TX done: target=0x%016llx attempt=%u ret=%d reason=%s",
             (unsigned long long)target_id,
             mesh_runtime.route_discovery.attempts,

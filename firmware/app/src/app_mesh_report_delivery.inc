@@ -1436,11 +1436,6 @@ out:
         return ret;
     }
 
-    high_debug_log_event("ANCHOR_RANGE_REPORT_BATCH_QUEUE",
-                         "seq=%u final=%u queue_depth=%u",
-                         outbound->packet.seq,
-                         final_fragment ? 1u : 0u,
-                         queue_depth);
     if (final_fragment && !anchor_uwb_window_active()) {
         report_tx_schedule(0u);
     }
@@ -1917,7 +1912,6 @@ static void report_tx_work_handler(struct k_work *work)
                     report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
                     return;
                 }
-                HIGH_DEBUG_COUNTER_INC(mesh_drop);
                 status_debug_printf("DBG_TRANSIT_QUEUE_DROP_NO_UPSTREAM src=0x%llx seq=%u type=0x%02x select=%d q=%u\n",
                                     (unsigned long long)outbound->packet.src_id,
                                     outbound->packet.seq,
@@ -2075,7 +2069,6 @@ static void report_tx_work_handler(struct k_work *work)
     mesh_delivery_health.last_permanent_session_id = outbound->packet.session_id;
     mesh_delivery_health.last_permanent_seq = outbound->packet.seq;
     mesh_delivery_health.last_permanent_msg_type = outbound->packet.msg_type;
-    HIGH_DEBUG_COUNTER_INC(mesh_drop);
     if (report_tx_queue_used() > 0u) {
         report_tx_schedule(0u);
     }
@@ -2105,7 +2098,6 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
     if (ret != 0) {
         app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         return -ENOSPC;
     }
 
@@ -2186,7 +2178,6 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
 
     if (!admitted) {
         app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_REPORT_QUEUE_FULL lost=%u ret=%d owner=%u\n",
                                 drop_result.lost_count,
@@ -2207,13 +2198,6 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
         app_stack_workload_diag_click_sample(&queued.packet, click_queue_depth,
                                              click_queue_depth);
     }
-    high_debug_log_event("ANCHOR_REPORT_QUEUE",
-                         "msg=0x%02x dst=0x%016llx seq=%u earliest_tx_ms=%u queue_depth=%u",
-                         queued.packet.msg_type,
-                         (unsigned long long)queued.packet.dst_id,
-                         queued.packet.seq,
-                         queued.earliest_tx_ms,
-                         queue_depth);
     LOG_INF("anchor queued gateway-bound report: msg=0x%02x earliest_tx_ms=%u queue_depth=%u",
             queued.packet.msg_type,
             queued.earliest_tx_ms,
@@ -3006,12 +2990,6 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                             k_uptime_get_32());
                     mesh_note_channel9_local_tx(gateway_ack->next_hop_id,
                                                 k_uptime_get_32());
-                    high_debug_log_event(
-                        "GATEWAY_ACK_TX",
-                        "mode=current-channel9 dst=0x%016llx next=0x%016llx seq=%u",
-                        (unsigned long long)gateway_ack->packet.dst_id,
-                        (unsigned long long)gateway_ack->next_hop_id,
-                        gateway_ack->packet.seq);
                     goto after_gateway_ack;
                 }
             }
@@ -3075,11 +3053,6 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                     &retry_key);
                 mesh_relay_note_tx_sent(&mesh_runtime, gateway_ack, k_uptime_get_32());
                 mesh_note_channel9_local_tx(gateway_ack->next_hop_id, k_uptime_get_32());
-                high_debug_log_event("GATEWAY_ACK_TX",
-                                     "mode=current-channel9 dst=0x%016llx next=0x%016llx seq=%u",
-                                     (unsigned long long)gateway_ack->packet.dst_id,
-                                     (unsigned long long)gateway_ack->next_hop_id,
-                                     gateway_ack->packet.seq);
                 LOG_INF("gateway ACK sent on current channel-9 event: dst=0x%016llx next=0x%016llx seq=%u",
                         (unsigned long long)gateway_ack->packet.dst_id,
                         (unsigned long long)gateway_ack->next_hop_id,
@@ -3765,7 +3738,6 @@ after_gateway_ack:
             if (send_ret == 0) {
                 app_mesh_rf_retry_note_success(&mesh_retransmit_rf_retry,
                                                &retry_key);
-                HIGH_DEBUG_COUNTER_INC(mesh_retry);
                 mesh_relay_note_tx_sent(&mesh_runtime,
                                         retransmit,
                                         k_uptime_get_32());
@@ -3933,7 +3905,6 @@ after_gateway_ack:
                 mesh_schedule_tx_timeout();
                 goto gateway_confirmation_done;
             }
-            HIGH_DEBUG_COUNTER_INC(mesh_ack);
             LOG_INF("mesh pending TX gateway confirmation committed");
             mesh_schedule_tx_timeout();
             goto gateway_confirmation_done;
@@ -3952,7 +3923,6 @@ after_gateway_ack:
             mesh_schedule_tx_timeout();
             goto gateway_confirmation_done;
         }
-        HIGH_DEBUG_COUNTER_INC(mesh_ack);
         LOG_INF("mesh pending legacy TX gateway acknowledged");
         if (confirmed_packet != NULL && confirmed_digest != NULL) {
             int deferred_clear_ret =

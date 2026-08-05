@@ -23,8 +23,7 @@ static bool anchor_discovery_assignment_required(void)
 {
     return DEVICE_ROLE == ROLE_ANCHOR &&
            !IS_ENABLED(CONFIG_IMEC_ML_ANCHOR) &&
-           !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER) &&
-           IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED == 0;
+           !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER);
 }
 
 static int anchor_append_discovery_assignment_status(uint8_t *payload,
@@ -277,17 +276,10 @@ static int anchor_submit_command_result(
             client_token,
             delivery_handle_out == NULL ? NULL : &delivery_handle);
     if (ret == 0) {
-        HIGH_DEBUG_COUNTER_INC(command_result_tx);
         if (delivery_handle_out != NULL) {
             *delivery_handle_out = delivery_handle;
         }
     }
-    high_debug_log_event("COMMAND_RESULT_TX",
-                         "transport=uwb_mesh command=0x%04x status=%s reason=%u ret=%d",
-                         (unsigned int)command_id,
-                         command_status_name(status),
-                         reason,
-                         ret);
     return ret;
 }
 
@@ -459,7 +451,6 @@ static int anchor_send_discovery_response(
                         pending->attempt + 1u,
                         ret);
     if (ret == 0) {
-        HIGH_DEBUG_COUNTER_INC(command_result_tx);
     }
     return ret;
 }
@@ -2132,14 +2123,6 @@ static int anchor_schedule_collection_command_result(
             (unsigned int)command_id,
             due_ms,
             delay_ms);
-    high_debug_log_event("COMMAND_RESULT_TX",
-                         "transport=collection-scheduled command=0x%04x command_seq=%u result_seq=%u collection=%u due_ms=%u delay_ms=%u",
-                         (unsigned int)command_id,
-                         anchor_collection_result_pending.result_id.command_seq,
-                         anchor_collection_result_pending.result_id.result_seq,
-                         anchor_collection_result_pending.collection_epoch_id,
-                         due_ms,
-                         delay_ms);
     return ret;
 }
 

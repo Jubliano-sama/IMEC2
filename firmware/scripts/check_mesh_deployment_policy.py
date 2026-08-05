@@ -32,8 +32,7 @@ DIRECT_FLASH = re.compile(
 )
 ALLOWED_DIRECT_PRESETS = re.compile(
     r"\b(?:mesh[-_]transmitter(?:[-_]forcedhop)?|mesh[-_]anchor[-_]forcedhop|ml[-_](?:clicker|anchor[-_][1-8])|"
-    r"firmware[-_](?:clicker|anchor|gateway)|(?:tag|anchor|gateway)[-_]stage[0-3][-_]highdebug|"
-    r"gateway_ble_connectivity_test|power-clicker-sleep|legacy-or-bench-preset)\b",
+    r"firmware[-_](?:clicker|anchor|gateway)|power-clicker-sleep|legacy-or-bench-preset)\b",
     re.IGNORECASE,
 )
 

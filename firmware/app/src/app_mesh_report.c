@@ -9,7 +9,6 @@
 #if DEVICE_ROLE == ROLE_GATEWAY
 #include "app_gateway_terminal_receipts.h"
 #endif
-#include "app_high_debug.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_direct_probe_diag.h"
 #include "app_mesh_direct_gateway_retry.h"

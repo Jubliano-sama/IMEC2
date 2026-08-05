@@ -3,7 +3,6 @@
 This document is the detailed technical reference for the firmware implementation. For high-level project overview, navigation, and agent guidelines, start with:
 
 - [../README.md](../README.md) (root)
-- [../CODEMAP.md](../CODEMAP.md)
 - [../AGENTS.md](../AGENTS.md) (mandatory reading)
 
 All agents must also read [../AGENT_KNOWN_ISSUES.md](../AGENT_KNOWN_ISSUES.md) before making changes.
@@ -42,7 +41,7 @@ sanitizer commands, exact replays, and flash-once hardware workflow are in
 The Zephyr app lives in `firmware/app/`. It reuses the native core and adds:
 - Board support, devicetree overlay, and DWM3000 driver/port
 - Role-specific orchestration (`app_clicker.c`, `app_anchor.c`, etc.)
-- Radio coordination policy, BLE, power management, and high-debug features
+- Radio coordination policy, BLE, and power management
 
 **Important hardware assumptions** (status-polled DWM3000, no direct IRQ):
 - DWM3000 is on SPIM3 (32 MHz runtime SPI, 2 MHz for reset/init).
@@ -132,13 +131,11 @@ Clicker idle paths:
 
 Detailed power budget calculations, scan duty guards, and awake-time accounting are in `Documentation/UWB+BLE Architecture 0.6.6.md`.
 
-The app enforces build-time and runtime guards so that anchor scan duty stays inside the calibrated budget (currently 13,000 µs/s) unless an explicit debug override is enabled.
+The app enforces build-time and runtime guards so that anchor scan duty stays inside the calibrated budget (currently 13,000 µs/s).
 
 ---
 
 ## Hardware Bring-Up Smoke Checklist
-
-For staged high-debug work, see `Documentation/HARDWARE_BRINGUP_DEBUG.md`.
 
 Use this checklist with no DWM3000 IRQ routed directly to the MCU. Minimum useful topology: one gateway + one anchor + one clicker. Full acceptance requires three unique successful ranges.
 

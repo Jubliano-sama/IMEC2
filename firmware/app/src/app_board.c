@@ -129,7 +129,7 @@ static const struct stack_diag_transport_ops status_stack_diag_ops = {
 #define BATTERY_ADC_DISABLE_RETRY_COUNT 3u
 #define BATTERY_ADC_DISABLE_RETRY_DELAY_US 100u
 
-static int BLE_CONNECTIVITY_TEST_UNUSED configure_output(const struct gpio_dt_spec *gpio)
+static int configure_output(const struct gpio_dt_spec *gpio)
 {
     if (!gpio_is_ready_dt(gpio)) {
         return -ENODEV;
@@ -171,7 +171,7 @@ int battery_adc_divider_disable(void)
 #endif
 }
 
-static int BLE_CONNECTIVITY_TEST_UNUSED battery_adc_finish(int primary_ret)
+static int battery_adc_finish(int primary_ret)
 {
     int disable_ret = battery_adc_divider_disable();
 
@@ -186,7 +186,7 @@ static int BLE_CONNECTIVITY_TEST_UNUSED battery_adc_finish(int primary_ret)
     return primary_ret;
 }
 
-static int BLE_CONNECTIVITY_TEST_UNUSED battery_adc_divider_enable(void)
+static int battery_adc_divider_enable(void)
 {
 #if DT_NODE_HAS_STATUS(BATTERY_ADC_ENABLE_NODE, okay)
     int ret;
@@ -264,7 +264,7 @@ int battery_sample_lithium_mv(uint16_t *battery_mv)
 #endif
 }
 
-static void BLE_CONNECTIVITY_TEST_UNUSED set_output(const struct gpio_dt_spec *gpio, bool enabled)
+static void set_output(const struct gpio_dt_spec *gpio, bool enabled)
 {
     if (gpio_is_ready_dt(gpio)) {
         (void)gpio_pin_set_dt(gpio, enabled ? 1 : 0);
@@ -723,7 +723,7 @@ void status_debug_gateway_ack_tx_pulse(void)
     }
 }
 
-static void BLE_CONNECTIVITY_TEST_UNUSED disconnect_gpio(const struct gpio_dt_spec *gpio)
+static void disconnect_gpio(const struct gpio_dt_spec *gpio)
 {
     if (gpio_is_ready_dt(gpio)) {
         (void)gpio_pin_configure_dt(gpio, GPIO_DISCONNECTED);
@@ -843,22 +843,4 @@ int debug_serial_init(void)
 {
     /* Runtime diagnostics are BLE or RTT only on current hardware. */
     return 0;
-}
-
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-bool debug_serial_dtr_ready(void)
-{
-    return false;
-}
-
-int debug_serial_poll_in(unsigned char *byte)
-{
-    ARG_UNUSED(byte);
-    return -ENODEV;
-}
-#endif
-
-int app_board_init(void)
-{
-    return status_leds_init();
 }

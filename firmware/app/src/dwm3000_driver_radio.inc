@@ -86,65 +86,6 @@ static int validate_device_identity(const char *operation)
     return check_device_fatal_status(operation);
 }
 
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-static const char *dwm3000_debug_role_name(void)
-{
-    switch (DEVICE_ROLE) {
-    case ROLE_CLICKER:
-#if defined(CONFIG_IMEC_ROLE_TAG)
-        if (IS_ENABLED(CONFIG_IMEC_ROLE_TAG)) {
-            return "tag";
-        }
-#endif
-        return "clicker";
-    case ROLE_ANCHOR:
-        return "anchor";
-    case ROLE_GATEWAY:
-        return "gateway";
-    default:
-        return "unknown";
-    }
-}
-#endif
-
-static void dwm3000_debug_event(bool warning, const char *event, const char *fmt, ...)
-{
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    char prefix[96];
-    char message[160];
-    va_list args;
-    int ret;
-
-    ret = debug_log_format_prefix(prefix,
-                                  sizeof(prefix),
-                                  k_uptime_get_32(),
-                                  dwm3000_debug_role_name(),
-                                  DEVICE_ID,
-                                  CONFIG_IMEC_BENCH_STAGE,
-                                  event);
-    if (ret < 0) {
-        return;
-    }
-
-    va_start(args, fmt);
-    ret = vsnprintk(message, sizeof(message), fmt, args);
-    va_end(args);
-    if (ret < 0) {
-        return;
-    }
-
-    if (warning) {
-        LOG_WRN("%s %s", prefix, message);
-    } else {
-        LOG_DBG("%s %s", prefix, message);
-    }
-#else
-    ARG_UNUSED(warning);
-    ARG_UNUSED(event);
-    ARG_UNUSED(fmt);
-#endif
-}
-
 static void configure_first_path_sensitivity(void)
 {
     /*
@@ -810,11 +751,6 @@ static int wait_status_internal(uint32_t mask,
     }
     dwm3000_port_clear_error();
     if (log_events) {
-        dwm3000_debug_event(false,
-                            "UWB_SYS_STATUS_POLL_START",
-                            "mask=0x%08x timeout_ms=%u",
-                            mask,
-                            timeout_ms);
     }
     do {
         read_status = dwt_read32bitreg(SYS_STATUS_ID);
@@ -853,13 +789,6 @@ static int wait_status_internal(uint32_t mask,
                 *observed_at_ms = sampled_at_ms;
             }
             if (log_events) {
-                dwm3000_debug_event(false,
-                                    "UWB_SYS_STATUS_POLL_DONE",
-                                    "mask=0x%08x status=0x%08x loops=%u duration_us=%u",
-                                    mask,
-                                    read_status,
-                                    poll_loops,
-                                    elapsed_us);
             }
             return 0;
         }
@@ -893,13 +822,6 @@ static int wait_status_internal(uint32_t mask,
                 *status = read_status;
             }
             if (log_events) {
-                dwm3000_debug_event(false,
-                                    "UWB_SYS_STATUS_POLL_ABORT",
-                                    "mask=0x%08x status=0x%08x loops=%u duration_us=%u",
-                                    mask,
-                                    read_status,
-                                    poll_loops,
-                                    elapsed_us);
             }
             return -ECANCELED;
         }
@@ -948,13 +870,6 @@ receive_abort_not_requested:
             driver_stats.sys_status_poll_max_duration_us = elapsed_us;
         }
         if (log_events) {
-            dwm3000_debug_event(false,
-                                "UWB_SYS_STATUS_POLL_DONE",
-                                "mask=0x%08x status=0x%08x loops=%u duration_us=%u boundary=1",
-                                mask,
-                                read_status,
-                                poll_loops,
-                                elapsed_us);
         }
         if (observed_at_ms != NULL) {
             *observed_at_ms = sampled_at_ms;
@@ -978,14 +893,6 @@ receive_abort_not_requested:
             driver_stats.sys_status_poll_max_duration_us = elapsed_us;
         }
         if (log_events) {
-            dwm3000_debug_event(true,
-                                "UWB_SYS_STATUS_POLL_TIMEOUT",
-                                "mask=0x%08x status=0x%08x loops=%u duration_us=%u timeout_ms=%u",
-                                mask,
-                                status == NULL ? 0u : *status,
-                                poll_loops,
-                                elapsed_us,
-                                timeout_ms);
         }
     }
     return -ETIMEDOUT;
@@ -1041,12 +948,6 @@ static int wait_tx_complete_observed(uint32_t timeout_ms,
                                completed_at_ms);
     if (ret < 0) {
         driver_stats.tx_failures++;
-        dwm3000_debug_event(true,
-                            "UWB_TX_DONE",
-                            "status=timeout ret=%d sys_status=0x%08x timeout_ms=%u",
-                            ret,
-                            status,
-                            timeout_ms);
         return ret;
     }
 
@@ -1057,10 +958,6 @@ static int wait_tx_complete_observed(uint32_t timeout_ms,
         return ret;
     }
     driver_stats.tx_dones++;
-    dwm3000_debug_event(false,
-                        "UWB_TX_DONE",
-                        "status=ok sys_status=0x%08x",
-                        status);
     return 0;
 }
 
@@ -1129,7 +1026,7 @@ static uint32_t remaining_timeout_ms(int64_t deadline_ms)
     return (uint32_t)remaining_ms;
 }
 
-#if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_ANCHOR)
 static const char *rx_failure_debug_name(enum dwm3000_rx_failure failure)
 {
     switch (failure) {

@@ -358,11 +358,6 @@ add_test(NAME click_ble_custody_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_ble_custody_source_invariants.py)
 set_tests_properties(click_ble_custody_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway;click;ble;static_analysis")
-add_test(NAME stage1_click_spam_preset_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_stage1_click_spam_preset.py)
-set_tests_properties(stage1_click_spam_preset_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;click;static_analysis")
 add_test(NAME deferred_outbox_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_deferred_outbox_source_invariants.py)

@@ -995,7 +995,6 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
             driver_observation.tx_completed_at_ms;
     }
     if (ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("mesh UWB TX failed for %s: msg=0x%02x next=0x%016llx len=%u ret=%d",
                 reason,
                 tx_packet.msg_type,
@@ -1016,28 +1015,9 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
 
     status_debug_tx_mesh_frame_sent_pulse();
     status_debug_uwb_tx_channel_pulse(UWB_CHANNEL_MESH_PAYLOAD);
-    HIGH_DEBUG_COUNTER_INC(mesh_tx);
     if (tx_packet.msg_type == MSG_GATEWAY_ACK) {
         status_debug_gateway_ack_tx_pulse();
-        HIGH_DEBUG_COUNTER_INC(mesh_ack);
-        high_debug_log_event("GATEWAY_ACK_TX",
-                             "dst=0x%016llx next=0x%016llx seq=%u channel=%u",
-                             (unsigned long long)tx_packet.dst_id,
-                             (unsigned long long)out->next_hop_id,
-                             tx_packet.seq,
-                             UWB_CHANNEL_MESH_PAYLOAD);
     }
-    high_debug_log_event("MESH_TX",
-                         "reason=%s msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u age_ms=%u channel=%u frame_len=%u",
-                         reason,
-                         tx_packet.msg_type,
-                         (unsigned long long)tx_packet.src_id,
-                         (unsigned long long)tx_packet.dst_id,
-                         (unsigned long long)out->next_hop_id,
-                         tx_packet.seq,
-                         tx_packet.message_age_ms,
-                         UWB_CHANNEL_MESH_PAYLOAD,
-                         (unsigned int)frame_len);
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         LOG_INF("mesh UWB TX %s: msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u ttl=%u age_ms=%u channel=%u frame_len=%u",
                 reason,
@@ -1228,7 +1208,6 @@ static int mesh_send_outbound_with_release_on_channel_until(
     radio_guard_uwb_stop();
     mesh_restart_role_scan();
     if (ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("mesh UWB TX failed for %s: msg=0x%02x next=0x%016llx len=%u ret=%d",
                 reason,
                 tx_packet.msg_type,
@@ -1238,7 +1217,6 @@ static int mesh_send_outbound_with_release_on_channel_until(
         goto out_unlock;
     }
     if (release_ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_ERR("mesh UWB TX radio release failed for %s: msg=0x%02x next=0x%016llx ret=%d",
                 reason,
                 tx_packet.msg_type,
@@ -1259,30 +1237,9 @@ static int mesh_send_outbound_with_release_on_channel_until(
                             k_uptime_get_32(),
                             tx_packet.seq);
     }
-    HIGH_DEBUG_COUNTER_INC(mesh_tx);
     if (tx_packet.msg_type == MSG_GATEWAY_ACK) {
         status_debug_gateway_ack_tx_pulse();
-        HIGH_DEBUG_COUNTER_INC(mesh_ack);
-        high_debug_log_event("GATEWAY_ACK_TX",
-                             "dst=0x%016llx next=0x%016llx seq=%u channel=%u",
-                             (unsigned long long)tx_packet.dst_id,
-                             (unsigned long long)out->next_hop_id,
-                             tx_packet.seq,
-                             radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
-                             UWB_CHANNEL_MESH_PAYLOAD : UWB_CHANNEL_WAKE_CONTACT);
     }
-    high_debug_log_event("MESH_TX",
-                         "reason=%s msg=0x%02x src=0x%016llx dst=0x%016llx next=0x%016llx seq=%u age_ms=%u channel=%u frame_len=%u",
-                         reason,
-                         tx_packet.msg_type,
-                         (unsigned long long)tx_packet.src_id,
-                         (unsigned long long)tx_packet.dst_id,
-                         (unsigned long long)out->next_hop_id,
-                         tx_packet.seq,
-                         tx_packet.message_age_ms,
-                         radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?
-                         UWB_CHANNEL_MESH_PAYLOAD : UWB_CHANNEL_WAKE_CONTACT,
-                         (unsigned int)frame_len);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         tx_packet.msg_type == MSG_GATEWAY_ROUTE_REQ) {
         status_debug_printf("DBG_DIRECT_GW_PROBE_TX_RETURN now=%u seq=%u\n",

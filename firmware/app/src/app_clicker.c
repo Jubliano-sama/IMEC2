@@ -4,7 +4,6 @@
 #include "app_click_event_sequence.h"
 #include "app_radio_recovery.h"
 #include "app_config.h"
-#include "app_high_debug.h"
 #include "app_node_comm.h"
 #include "app_radio_low_power_policy.h"
 #include "app_stack_workload_diag.h"
@@ -55,7 +54,6 @@ LOG_MODULE_REGISTER(app_clicker, LOG_LEVEL_DBG);
 #define CLICKER_POLITENESS_UWB_RESTART 1
 #define BLE_COURTESY_STOP_RETRY_COUNT 3u
 #define BLE_COURTESY_STOP_RETRY_DELAY_MS 5u
-#define STAGE1_CLICK_SPAM_MAX_DELAY_MS 5000u
 #define CLICK_BUTTON_RECOVERY_MAX_FAILURES 8u
 #define CLICK_BUTTON_RECOVERY_RETRY_MS 20u
 #define CLICK_BUTTON_RECOVERY_REBOOT_DELAY_MS 1000u
@@ -92,12 +90,6 @@ BUILD_ASSERT(SELF_TEST_REPORT_DELIVERY_POLL_MS <
              "self-test report polling must fit its reliable-delivery bound");
 
 static struct app_clicker_callbacks clicker_callbacks;
-
-#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
-static struct k_work stage1_click_spam_work;
-static struct app_clicker_continuous_click_sessions_config stage1_click_spam_config;
-static void stage1_click_spam_work_handler(struct k_work *work);
-#endif
 
 int app_clicker_ble_courtesy_start(uint32_t event_seq,
                                    uint8_t attempt_index,
@@ -727,8 +719,6 @@ static int clicker_send_wake_claim_train_until(
             goto attempt_out;
         }
 
-        stage1_led_phase(STAGE1_LED_PHASE_WAKE);
-        stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
         status_debug_note("DBG_WAKE_TRAIN_CONFIG_BEGIN\n");
         ret = dwm3000_driver_configure_wake_mode();
@@ -746,12 +736,6 @@ static int clicker_send_wake_claim_train_until(
             goto attempt_out;
         }
 
-        high_debug_log_event("WAKE_CLAIM_TX",
-                             "phase=start event_seq=%u attempt=%u duration_ms=%u retry=%u",
-                             session->config.click_event_id,
-                             session->attempt_index,
-                             config->wake_adv_ms,
-                             polite_retry);
         close_ms = k_uptime_get() + config->wake_adv_ms;
         while (k_uptime_get() < close_ms) {
             struct uwb_wake_claim_frame claim;
@@ -809,7 +793,6 @@ static int clicker_send_wake_claim_train_until(
             }
             status_debug_tx_wake_claim_sent_pulse();
             sent_count++;
-            HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
             uwb_clicker_note_wake_claim_tx(session, 1u);
 
             if (k_uptime_get() < close_ms) {
@@ -865,14 +848,12 @@ attempt_out:
                                              deadline_ms,
                                              required_tail_ms);
             if (ret < 0) {
-                stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
                 return ret;
             }
             polite_retry++;
             continue;
         }
         if (ret < 0) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_WRN("clicker UWB WAKE_CLAIM train failed: sent=%u ret=%d retry=%u activity=%u phase=%s",
                     sent_count,
                     ret,
@@ -882,16 +863,6 @@ attempt_out:
             return ret;
         }
 
-        stage1_led_result(sent_count == 0u ?
-                          STAGE1_LED_RESULT_TIMEOUT :
-                          STAGE1_LED_RESULT_OK);
-        high_debug_log_event("WAKE_CLAIM_TX",
-                             "phase=done event_seq=%u attempt=%u sent=%u duration_ms=%u retry=%u",
-                             session->config.click_event_id,
-                             session->attempt_index,
-                             sent_count,
-                             config->wake_adv_ms,
-                             polite_retry);
         LOG_INF("clicker UWB WAKE_CLAIM train complete: sent=%u duration_ms=%u retry=%u",
                 sent_count,
                 config->wake_adv_ms,
@@ -1029,8 +1000,6 @@ static int clicker_send_range_schedule_until(
     if (ret < 0) {
         return ret;
     }
-    stage1_led_phase(STAGE1_LED_PHASE_SCHEDULE);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
         if (!app_wake_train_deadline_fits(
@@ -1068,41 +1037,17 @@ static int clicker_send_range_schedule_until(
     }
 
     if (ret < 0) {
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
         LOG_WRN("clicker UWB RANGE_SCHEDULE TX failed: ret=%d", ret);
         return ret;
     }
     if (schedule_tx_ms != NULL) {
         *schedule_tx_ms = tx_complete_ms;
     }
-    HIGH_DEBUG_COUNTER_INC(schedules_tx);
-    stage1_led_result(STAGE1_LED_RESULT_OK);
-    high_debug_log_event("RANGE_SCHEDULE_TX",
-                         "clicker=0x%016llx event_seq=%u attempt=%u selected=%u samples_per_anchor=%u reply_delay_uus=%u first_poll_ms=%u stride_us=%u burst_ms=%u BENCH_ONLY=%u",
-                         (unsigned long long)schedule->clicker_id,
-                         schedule->click_event_id,
-                         schedule->attempt_index,
-                         schedule->selected_count,
-                         schedule->samples_per_anchor,
-                         schedule->reply_delay_us,
-                         schedule->first_poll_delay_ms,
-                         schedule->exchange_stride_us,
-                         schedule->burst_window_ms,
-                         (IMEC_STAGE == 1 &&
-                          IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) ? 1u : 0u);
     LOG_INF("clicker UWB RANGE_SCHEDULE TX complete: selected=%u samples_per_anchor=%u",
             schedule->selected_count,
             schedule->samples_per_anchor);
     clicker_log_range_schedule_entries(schedule);
     return 0;
-}
-
-int app_clicker_send_range_schedule(
-    const struct uwb_range_schedule_frame *schedule,
-    const struct app_clicker_range_tx_config *config)
-{
-    return clicker_send_range_schedule_until(
-        schedule, config, INT64_MAX, NULL);
 }
 
 int app_clicker_send_range_release(struct uwb_clicker_session *session,
@@ -1156,178 +1101,7 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
     return 0;
 }
 
-void app_clicker_run_continuous_wake_claims(
-    const struct app_clicker_continuous_wake_claims_config *config)
-{
-    uint32_t train_count = 0u;
 
-    if (config == NULL) {
-        return;
-    }
-
-    while (true) {
-        uint32_t event_seq;
-        uint64_t priority_id;
-        struct uwb_clicker_session session;
-        struct uwb_clicker_config clicker_config;
-        int ret;
-
-        ret = app_click_event_sequence_next(&event_seq);
-        if (ret < 0) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            LOG_ERR("continuous WAKE_CLAIM identity allocation failed closed: %d",
-                    ret);
-            return;
-        }
-        priority_id = clicker_priority_id(event_seq, 1u);
-        clicker_config = (struct uwb_clicker_config) {
-            .network_id = NETWORK_ID,
-            .clicker_id = DEVICE_ID,
-            .click_event_id = event_seq,
-            .nonce = clicker_nonce(event_seq),
-            .min_anchor_count = config->min_anchor_count,
-            .max_anchor_count = config->max_anchor_count,
-            .max_attempts = config->max_attempts,
-            .samples_per_anchor = config->samples_per_anchor,
-            .wake_channel = config->wake_channel,
-            .ranging_channel = config->ranging_channel,
-            .flags = config->flags,
-        };
-
-        ret = uwb_clicker_session_start(&session, &clicker_config);
-        if (ret != PROTO_OK) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            LOG_WRN("continuous WAKE_CLAIM session start failed: event_seq=%u proto_ret=%d",
-                    event_seq,
-                    ret);
-            k_msleep(250u);
-            continue;
-        }
-
-        train_count++;
-        high_debug_log_event("WAKE_SPAM_START",
-                             "train=%u event_seq=%u priority=0x%016llx wake_ms=%u",
-                             train_count,
-                             event_seq,
-                             (unsigned long long)priority_id,
-                             config->wake_adv_ms);
-        LOG_INF("continuous WAKE_CLAIM train start: train=%u event_seq=%u",
-                train_count,
-                event_seq);
-
-        ret = app_clicker_send_wake_claim_train(&session,
-                                                priority_id,
-                                                &config->wake_train);
-        high_debug_log_event("WAKE_SPAM_DONE",
-                             "train=%u event_seq=%u ret=%d tx_count=%u",
-                             train_count,
-                             event_seq,
-                             ret,
-                             session.diagnostics.wake_claim_tx_count);
-        LOG_INF("continuous WAKE_CLAIM train done: train=%u event_seq=%u ret=%d tx_count=%u",
-                train_count,
-                event_seq,
-                ret,
-                session.diagnostics.wake_claim_tx_count);
-
-        k_msleep(ret < 0 ? 250u : 20u);
-    }
-}
-
-void app_clicker_run_continuous_click_sessions(
-    const struct app_clicker_continuous_click_sessions_config *config)
-{
-    uint32_t session_count = 0u;
-
-    if (config == NULL) {
-        return;
-    }
-
-    while (true) {
-        int ret;
-        uint32_t requested_delay_ms;
-        uint32_t delay_ms;
-
-        if (session_count < UINT32_MAX) {
-            session_count++;
-        }
-        stage1_click_trace_reset();
-        high_debug_log_event("STAGE1_CLICK_SPAM",
-                             "phase=session_start session=%u path=normal_click min_anchor_count=%u max_anchor_count=%u samples_per_anchor=%u flags=0x%02x",
-                             session_count,
-                             app_clicker_debug_min_anchor_count(),
-                             app_clicker_debug_max_anchor_count(),
-                             app_clicker_debug_samples_per_anchor(),
-                             app_clicker_debug_session_flags());
-        stage1_click_diag("click_spam session_start session=%u min=%u max=%u samples=%u flags=0x%02x",
-                          session_count,
-                          app_clicker_debug_min_anchor_count(),
-                          app_clicker_debug_max_anchor_count(),
-                          app_clicker_debug_samples_per_anchor(),
-                          app_clicker_debug_session_flags());
-        LOG_INF("Stage 1 click-session spam start: session=%u path=normal_click min=%u max=%u samples=%u flags=0x%02x",
-                session_count,
-                app_clicker_debug_min_anchor_count(),
-                app_clicker_debug_max_anchor_count(),
-                app_clicker_debug_samples_per_anchor(),
-                app_clicker_debug_session_flags());
-
-        ret = app_clicker_run_normal_click();
-        requested_delay_ms = ret == 0 ? config->success_delay_ms : config->failure_delay_ms;
-        delay_ms = MIN(requested_delay_ms, STAGE1_CLICK_SPAM_MAX_DELAY_MS);
-        if (delay_ms == 0u) {
-            delay_ms = 1u;
-        }
-        high_debug_log_event("STAGE1_CLICK_SPAM",
-                             "phase=session_done session=%u ret=%d next_delay_ms=%u",
-                             session_count,
-                             ret,
-                             delay_ms);
-        stage1_click_diag("click_spam session_done session=%u ret=%d next_delay_ms=%u",
-                          session_count,
-                          ret,
-                          delay_ms);
-        LOG_INF("Stage 1 click-session spam done: session=%u ret=%d next_delay_ms=%u",
-                session_count,
-                ret,
-                delay_ms);
-        k_msleep(delay_ms);
-    }
-}
-
-#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
-static void stage1_click_spam_work_handler(struct k_work *work)
-{
-    ARG_UNUSED(work);
-    app_clicker_run_continuous_click_sessions(&stage1_click_spam_config);
-}
-
-int app_clicker_start_continuous_click_sessions(
-    const struct app_clicker_continuous_click_sessions_config *config)
-{
-    int ret;
-
-    if (config == NULL) {
-        return -EINVAL;
-    }
-
-    stage1_click_spam_config = *config;
-    k_work_init(&stage1_click_spam_work, stage1_click_spam_work_handler);
-    ret = app_clicker_submit_work(&stage1_click_spam_work);
-    high_debug_log_event("STAGE1_CLICK_SPAM",
-                         "phase=worker_submit ret=%d stack_bytes=%u",
-                         ret,
-                         (unsigned int)CLICKER_ACTION_WORKQUEUE_STACK_SIZE);
-    return ret;
-}
-#else
-int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_start_continuous_click_sessions(
-    const struct app_clicker_continuous_click_sessions_config *config)
-{
-    ARG_UNUSED(config);
-    return -ENOTSUP;
-}
-#endif
 
 static int clicker_discover_uwb_anchors_until(
     struct uwb_clicker_session *session,
@@ -1376,8 +1150,6 @@ static int clicker_discover_uwb_anchors_until(
     if (ret < 0) {
         return ret;
     }
-    stage1_led_phase(STAGE1_LED_PHASE_DISCOVERY);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
     ret = dwm3000_driver_configure_wake_mode();
     if (ret < 0) {
         goto out;
@@ -1394,12 +1166,6 @@ static int clicker_discover_uwb_anchors_until(
     if (ret < 0) {
         goto out;
     }
-    HIGH_DEBUG_COUNTER_INC(discovery_tx);
-    high_debug_log_event("DISCOVER_TX",
-                         "event_seq=%u attempt=%u window_ms=%u",
-                         session->config.click_event_id,
-                         session->attempt_index,
-                         reply_window_ms);
 
     deadline_ms = k_uptime_get() + reply_window_ms;
     if (absolute_deadline_ms != INT64_MAX &&
@@ -1455,14 +1221,6 @@ static int clicker_discover_uwb_anchors_until(
                 clicker_callbacks.ml_cache_note_discovery_reply(&reply);
             }
 #endif
-            HIGH_DEBUG_COUNTER_INC(discovery_reply_rx);
-            stage1_led_result(STAGE1_LED_RESULT_OK);
-            high_debug_log_event("DISCOVERY_REPLY_RX",
-                                 "anchor=0x%016llx slot=%u quality=%u candidates=%u",
-                                 (unsigned long long)reply.anchor_id,
-                                 reply.anchor_slot,
-                                 reply.rx_quality,
-                                 session->candidate_count);
             LOG_INF("clicker UWB discovery reply: anchor=0x%016llx slot=%u quality=%u status=%u candidates=%u",
                     (unsigned long long)reply.anchor_id,
                     reply.anchor_slot,
@@ -1471,14 +1229,6 @@ static int clicker_discover_uwb_anchors_until(
                     session->candidate_count);
         } else {
             rejected_replies++;
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            high_debug_log_event("DISCOVERY_REPLY_RX",
-                                 "anchor=0x%016llx rejected_reason=proto_%d selected_clicker=0x%016llx event_seq=%u attempt=%u",
-                                 (unsigned long long)reply.anchor_id,
-                                 ret,
-                                 (unsigned long long)reply.selected_clicker_id,
-                                 reply.click_event_id,
-                                 reply.attempt_index);
             LOG_DBG("clicker rejected UWB discovery reply: ret=%d anchor=0x%016llx selected_clicker=0x%016llx event_seq=%u attempt=%u status=%u quality=%u",
                     ret,
                     (unsigned long long)reply.anchor_id,
@@ -1508,9 +1258,6 @@ out:
         ret = release_ret;
     }
     if (ret < 0) {
-        stage1_led_result(ret == -ETIMEDOUT ?
-                          STAGE1_LED_RESULT_TIMEOUT :
-                          STAGE1_LED_RESULT_ERROR);
     }
     return ret;
 }
@@ -1705,17 +1452,6 @@ static int clicker_collect_uwb_attempt_until(
                                                           schedule_tx_ms);
 }
 
-int app_clicker_collect_uwb_attempt(struct uwb_clicker_session *session,
-                                    uint64_t priority_id,
-                                    struct uwb_range_schedule_frame *schedule)
-{
-    return app_clicker_collect_uwb_attempt_with_options(session,
-                                                       priority_id,
-                                                       schedule,
-                                                       false,
-                                                       true);
-}
-
 static int clicker_idle_scheduled_range_radio(void)
 {
     int ret = app_radio_idle_with_bounded_recovery(
@@ -1799,7 +1535,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                                       &step,
                                                       RANGE_RX_TIMEOUT);
                 (void)uwb_clicker_abort_attempt(session);
-                stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
                 LOG_WRN("scheduled click DS-TWR not started: reason=scheduled_target_after_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u target_us=%lld latest_start_ms=%lld exchange_budget_ms=%u attempt=%u ds_fail=%u",
                         (unsigned long long)step.anchor_id,
                         step.anchor_index,
@@ -1817,14 +1552,11 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
             }
         }
         sleep_until_us(target_us);
-        stage1_led_phase(STAGE1_LED_PHASE_RANGE);
-        stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
         remaining_ms = click_deadline_ms - k_uptime_get();
         if (remaining_ms < slot_deadline_budget_ms) {
             (void)uwb_clicker_record_range_result(session, &step, RANGE_RX_TIMEOUT);
             (void)uwb_clicker_abort_attempt(session);
-            stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
             LOG_WRN("scheduled click DS-TWR not started: reason=click_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u remaining_ms=%lld exchange_budget_ms=%u attempt=%u ds_fail=%u",
                     (unsigned long long)step.anchor_id,
                     step.anchor_index,
@@ -1871,25 +1603,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                 step.round_index,
                 step.seq,
                 range_request.timeout_ms);
-        HIGH_DEBUG_COUNTER_INC(ds_twr_attempts);
-        high_debug_log_event("DS_TWR_POLL_TX",
-                             "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u schedule_base_ms=%lld target_us=%lld now_ms=%lld late_us=%lld first_poll_ms=%u stride_us=%u timeout_ms=%u",
-                             (unsigned long long)step.anchor_id,
-                             session->config.click_event_id,
-                             session->attempt_index,
-                             uwb_schedule_burst_id(session->config.click_event_id,
-                                                   session->attempt_index),
-                             (unsigned int)(step.sample_index + 1u),
-                             (unsigned int)total_samples,
-                             step.round_index,
-                             step.seq,
-                             (long long)schedule_tx_ms,
-                             (long long)target_us,
-                             (long long)k_uptime_get(),
-                             (long long)((k_uptime_get() * 1000) - target_us),
-                             schedule->first_poll_delay_ms,
-                             schedule->exchange_stride_us,
-                             range_request.timeout_ms);
 #if defined(CONFIG_IMEC_ML_CLICKER)
         if (clicker_callbacks.ml_enter_range_quiet != NULL) {
             clicker_callbacks.ml_enter_range_quiet();
@@ -1906,7 +1619,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                                   &step,
                                                   RANGE_RX_TIMEOUT);
             (void)uwb_clicker_abort_attempt(session);
-            stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
             LOG_WRN("scheduled click DS-TWR not started: reason=radio_setup_consumed_budget anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u remaining_ms=%lld exchange_budget_ms=%u attempt=%u ds_fail=%u",
                     (unsigned long long)step.anchor_id,
                     step.anchor_index,
@@ -1941,13 +1653,11 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
 
         if (idle_ret < 0) {
             (void)uwb_clicker_abort_attempt(session);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             last_ret = idle_ret;
             break;
         }
         if (ret == -ECANCELED) {
             (void)uwb_clicker_abort_attempt(session);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             last_ret = ret;
             break;
         }
@@ -1957,9 +1667,7 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
             if (status == RANGE_OK || !range_status_valid(status)) {
                 status = RANGE_RX_TIMEOUT;
             }
-            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             (void)uwb_clicker_record_range_result(session, &step, status);
-            stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
             LOG_WRN("scheduled click DS-TWR did not start: anchor=0x%016llx anchor_index=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
                     (unsigned long long)step.anchor_id,
                     step.anchor_index,
@@ -1970,19 +1678,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                     ret,
                     range_status_name(range_result.status),
                     range_result.status);
-            high_debug_log_event("RANGE_FAIL",
-                                 "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s exchange_started=0",
-                                 (unsigned long long)step.anchor_id,
-                                 session->config.click_event_id,
-                                 session->attempt_index,
-                                 uwb_schedule_burst_id(session->config.click_event_id,
-                                                       session->attempt_index),
-                                 (unsigned int)(step.sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 step.round_index,
-                                 step.seq,
-                                 ret,
-                                 range_status_name(status));
 #if defined(CONFIG_IMEC_ML_CLICKER)
             if (clicker_callbacks.ml_emit_range_sample_if_active != NULL) {
                 (void)clicker_callbacks.ml_emit_range_sample_if_active(session,
@@ -2007,7 +1702,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         if (ret == 0 && range_result.status == RANGE_OK) {
             int record_ret;
 
-            HIGH_DEBUG_COUNTER_INC(ds_twr_successes);
             record_ret = uwb_clicker_record_range_result(session, &step, RANGE_OK);
             if (record_ret != PROTO_OK) {
                 LOG_ERR("scheduled click DS-TWR state update failed: anchor=0x%016llx seq=%u ret=%d",
@@ -2026,22 +1720,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                     range_result.seq,
                     range_result.distance_mm,
                     range_result.quality);
-            stage1_led_result(STAGE1_LED_RESULT_OK);
-            high_debug_log_event("RANGE_OK",
-                                 "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u rsl_dbm=%d rsl_present=%u",
-                                 (unsigned long long)range_result.responder_id,
-                                 range_result.session_id,
-                                 session->attempt_index,
-                                 uwb_schedule_burst_id(session->config.click_event_id,
-                                                       session->attempt_index),
-                                 (unsigned int)(step.sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 step.round_index,
-                                 range_result.seq,
-                                 range_result.distance_mm,
-                                 range_result.quality,
-                                 range_result.rsl_dbm,
-                                 range_result.rsl_sampled ? 1u : 0u);
 #if defined(CONFIG_IMEC_ML_CLICKER)
             if (clicker_callbacks.ml_emit_range_sample_if_active != NULL) {
                 (void)clicker_callbacks.ml_emit_range_sample_if_active(session,
@@ -2058,13 +1736,8 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
             if (status == RANGE_OK || !range_status_valid(status)) {
                 status = RANGE_INTERNAL_ERROR;
             }
-            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             if (status == RANGE_TIMING_INVALID) {
-                HIGH_DEBUG_COUNTER_INC(ds_twr_timing_rejects);
             }
-            stage1_led_result(status == RANGE_RX_TIMEOUT ?
-                              STAGE1_LED_RESULT_TIMEOUT :
-                              STAGE1_LED_RESULT_ERROR);
             record_ret = uwb_clicker_record_range_result(session, &step, status);
             if (record_ret != PROTO_OK) {
                 LOG_ERR("scheduled click DS-TWR failure state update failed: anchor=0x%016llx seq=%u ret=%d status=%s(%u)",
@@ -2086,21 +1759,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                     ret,
                     range_status_name(status),
                     status);
-            high_debug_log_event(status == RANGE_TIMING_INVALID ?
-                                 "RANGE_TIMING_REJECT" : "RANGE_FAIL",
-                                 "anchor=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s status=%u",
-                                 (unsigned long long)step.anchor_id,
-                                 session->config.click_event_id,
-                                 session->attempt_index,
-                                 uwb_schedule_burst_id(session->config.click_event_id,
-                                                       session->attempt_index),
-                                 (unsigned int)(step.sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 step.round_index,
-                                 step.seq,
-                                 ret,
-                                 range_status_name(status),
-                                 status);
 #if defined(CONFIG_IMEC_ML_CLICKER)
             if (clicker_callbacks.ml_emit_range_sample_if_active != NULL) {
                 (void)clicker_callbacks.ml_emit_range_sample_if_active(session,
@@ -2164,7 +1822,6 @@ int app_clicker_run_normal_click(void)
     ret = app_click_event_sequence_next(&event_seq);
     if (ret < 0) {
         LOG_ERR("normal click identity allocation failed closed: %d", ret);
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
         return ret;
     }
     config = (struct uwb_clicker_config) {
@@ -2184,64 +1841,18 @@ int app_clicker_run_normal_click(void)
     BUILD_ASSERT(UWB_NORMAL_CLICK_MIN_ANCHORS <= MAX_SUCCESSFUL_ANCHORS,
                  "successful anchor result storage must cover the success threshold");
 
-    high_debug_log_event("CLICK_TRACE",
-                         "point=enter event_seq=%u clicker=0x%016llx nonce=0x%016llx min=%u max=%u attempts=%u samples=%u flags=0x%02x",
-                         event_seq,
-                         (unsigned long long)config.clicker_id,
-                         (unsigned long long)config.nonce,
-                         config.min_anchor_count,
-                         config.max_anchor_count,
-                         config.max_attempts,
-                         config.samples_per_anchor,
-                         config.flags);
-    stage1_click_diag("enter event_seq=%u clicker=0x%016llx nonce=0x%016llx min=%u max=%u attempts=%u samples=%u flags=0x%02x",
-                      event_seq,
-                      (unsigned long long)config.clicker_id,
-                      (unsigned long long)config.nonce,
-                      config.min_anchor_count,
-                      config.max_anchor_count,
-                      config.max_attempts,
-                      config.samples_per_anchor,
-                      config.flags);
-    stage1_led_phase(STAGE1_LED_PHASE_WAKE);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
     ret = uwb_clicker_session_start(&session, &config);
     if (ret != PROTO_OK) {
-        high_debug_log_event("CLICK_TRACE",
-                             "point=session_start_failed event_seq=%u proto_ret=%d",
-                             event_seq,
-                             ret);
-        stage1_click_diag("session_start_failed event_seq=%u proto_ret=%d",
-                          event_seq,
-                          ret);
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
         return -EINVAL;
     }
-    high_debug_log_event("CLICK_TRACE",
-                         "point=session_started event_seq=%u state=%u attempt=%u",
-                         event_seq,
-                         session.state,
-                         session.attempt_index);
-    stage1_click_diag("session_started event_seq=%u state=%u attempt=%u",
-                      event_seq,
-                      session.state,
-                      session.attempt_index);
 
     LOG_INF("normal click started on UWB wake path: event_seq=%u wake_ms=%u max_attempts=%u min_unique_anchors=%u samples_per_anchor=%u",
             event_seq,
             WAKE_ADV_MS,
             MAX_WAKE_ATTEMPTS,
             config.min_anchor_count,
-            config.samples_per_anchor);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
-        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
-        high_debug_log_event("BENCH_ONLY",
-                             "stage=1 one_anchor_schedule=enabled production_min_unique_anchors=%u",
-                             UWB_NORMAL_CLICK_MIN_ANCHORS);
-    }
-#endif
+             config.samples_per_anchor);
 
     click_deadline_ms = k_uptime_get() + CLICK_REPORT_DEADLINE_MS;
 
@@ -2261,18 +1872,6 @@ int app_clicker_run_normal_click(void)
                     event_seq,
                     session.attempt_index,
                     ret);
-            high_debug_log_event("CLICK_TRACE",
-                                 "point=attempt_gate_failed event_seq=%u attempt=%u ret=%d",
-                                 event_seq,
-                                 session.attempt_index,
-                                 ret);
-            stage1_click_diag("attempt_gate_failed event_seq=%u attempt=%u ret=%d",
-                              event_seq,
-                              session.attempt_index,
-                              ret);
-            stage1_led_result(ret == -ETIMEDOUT ?
-                              STAGE1_LED_RESULT_TIMEOUT :
-                              STAGE1_LED_RESULT_ERROR);
             return ret;
         }
 
@@ -2281,33 +1880,9 @@ int app_clicker_run_normal_click(void)
                 click_deadline_ms,
                 app_clicker_wake_train_opportunity_tail_ms(
                     &clicker_wake_train_config))) {
-            high_debug_log_event("CLICK_TRACE",
-                                 "point=deadline_before_wake event_seq=%u attempt=%u now_ms=%lld deadline_ms=%lld required_tail_ms=%u",
-                                 event_seq,
-                                 session.attempt_index,
-                                 (long long)k_uptime_get(),
-                                 (long long)click_deadline_ms,
-                                 app_clicker_wake_train_opportunity_tail_ms(
-                                     &clicker_wake_train_config));
-            stage1_click_diag("deadline_before_wake event_seq=%u attempt=%u now_ms=%lld deadline_ms=%lld required_tail_ms=%u",
-                              event_seq,
-                              session.attempt_index,
-                              (long long)k_uptime_get(),
-                              (long long)click_deadline_ms,
-                              app_clicker_wake_train_opportunity_tail_ms(
-                                  &clicker_wake_train_config));
             break;
         }
 
-        high_debug_log_event("CLICK_TRACE",
-                             "point=attempt_collect_begin event_seq=%u attempt=%u priority=0x%016llx",
-                             event_seq,
-                             session.attempt_index,
-                             (unsigned long long)priority_id);
-        stage1_click_diag("attempt_collect_begin event_seq=%u attempt=%u priority=0x%016llx",
-                          event_seq,
-                          session.attempt_index,
-                          (unsigned long long)priority_id);
         ret = clicker_collect_uwb_attempt_until(&session,
                                                 priority_id,
                                                 &schedule,
@@ -2319,21 +1894,6 @@ int app_clicker_run_normal_click(void)
                     event_seq,
                     session.attempt_index,
                     ret);
-            high_debug_log_event("CLICK_TRACE",
-                                 "point=attempt_collect_failed event_seq=%u attempt=%u ret=%d state=%u unique=%u/%u",
-                                 event_seq,
-                                 session.attempt_index,
-                                 ret,
-                                 session.state,
-                                 session.successful_unique_count,
-                                 session.config.min_anchor_count);
-            stage1_click_diag("attempt_collect_failed event_seq=%u attempt=%u ret=%d state=%u unique=%u/%u",
-                              event_seq,
-                              session.attempt_index,
-                              ret,
-                              session.state,
-                              session.successful_unique_count,
-                              session.config.min_anchor_count);
         } else {
             total_candidate_count += schedule.selected_count;
             LOG_INF("normal click UWB attempt scheduled anchors: event_seq=%u attempt=%u selected=%u unique_success=%u/%u",
@@ -2364,67 +1924,20 @@ int app_clicker_run_normal_click(void)
                         session.diagnostics.contention_delay_ms,
                         session.diagnostics.retry_delay_ms,
                         session.diagnostics.wake_claim_tx_count);
-                high_debug_log_event("CLICK_TRACE",
-                                     "point=success_after_range event_seq=%u attempt=%u selected=%u attempted=%u unique=%u/%u",
-                                     event_seq,
-                                     session.attempt_index,
-                                     schedule.selected_count,
-                                     attempted_count,
-                                     session.successful_unique_count,
-                                     session.config.min_anchor_count);
-                stage1_click_diag("success_after_range event_seq=%u attempt=%u selected=%u attempted=%u unique=%u/%u",
-                                  event_seq,
-                                  session.attempt_index,
-                                  schedule.selected_count,
-                                  attempted_count,
-                                  session.successful_unique_count,
-                                  session.config.min_anchor_count);
-                stage1_led_result(STAGE1_LED_RESULT_OK);
                 return 0;
             }
             if (ret < 0) {
                 last_ret = ret;
-                high_debug_log_event("CLICK_TRACE",
-                                     "point=range_failed event_seq=%u attempt=%u ret=%d state=%u attempted=%u unique=%u/%u",
-                                     event_seq,
-                                     session.attempt_index,
-                                     ret,
-                                     session.state,
-                                     attempted_count,
-                                     session.successful_unique_count,
-                                     session.config.min_anchor_count);
-                stage1_click_diag("range_failed event_seq=%u attempt=%u ret=%d state=%u attempted=%u unique=%u/%u",
-                                  event_seq,
-                                  session.attempt_index,
-                                  ret,
-                                  session.state,
-                                  attempted_count,
-                                  session.successful_unique_count,
-                                  session.config.min_anchor_count);
                 if (ret == -ECANCELED) {
-                    stage1_led_result(STAGE1_LED_RESULT_ERROR);
                     return ret;
                 }
             }
         }
 
         if (session.state == UWB_CLICKER_SUCCEEDED && ret < 0) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             return ret;
         }
         if (session.state == UWB_CLICKER_SUCCEEDED) {
-            high_debug_log_event("CLICK_TRACE",
-                                 "point=success_state event_seq=%u attempt=%u unique=%u/%u",
-                                 event_seq,
-                                 session.attempt_index,
-                                 session.successful_unique_count,
-                                 session.config.min_anchor_count);
-            stage1_click_diag("success_state event_seq=%u attempt=%u unique=%u/%u",
-                              event_seq,
-                              session.attempt_index,
-                              session.successful_unique_count,
-                              session.config.min_anchor_count);
-            stage1_led_result(STAGE1_LED_RESULT_OK);
             return 0;
         }
         if (session.attempt_index < session.config.max_attempts) {
@@ -2434,16 +1947,6 @@ int app_clicker_run_normal_click(void)
 
             ret = uwb_clicker_prepare_retry(&session);
             if (ret != PROTO_OK) {
-                high_debug_log_event("CLICK_TRACE",
-                                     "point=prepare_retry_failed event_seq=%u attempt=%u proto_ret=%d",
-                                     event_seq,
-                                     session.attempt_index,
-                                     ret);
-                stage1_click_diag("prepare_retry_failed event_seq=%u attempt=%u proto_ret=%d",
-                                  event_seq,
-                                  session.attempt_index,
-                                  ret);
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 return -EINVAL;
             }
             (void)app_clicker_apply_retry_delay(&session,
@@ -2467,25 +1970,6 @@ int app_clicker_run_normal_click(void)
         }
     }
 
-    high_debug_log_event("CLICK_TRACE",
-                         "point=final_failed event_seq=%u last_ret=%d attempts=%u selected_total=%u attempted=%u unique=%u/%u state=%u",
-                         event_seq,
-                         last_ret,
-                         session.attempt_index,
-                         total_candidate_count,
-                         attempted_count,
-                         session.successful_unique_count,
-                         session.config.min_anchor_count,
-                         session.state);
-    stage1_click_diag("final_failed event_seq=%u last_ret=%d attempts=%u selected_total=%u attempted=%u unique=%u/%u state=%u",
-                      event_seq,
-                      last_ret,
-                      session.attempt_index,
-                      total_candidate_count,
-                      attempted_count,
-                      session.successful_unique_count,
-                      session.config.min_anchor_count,
-                      session.state);
     LOG_WRN("normal click failed: event_seq=%u candidates_scheduled=%u attempted_ranges=%u successful_unique_ranges=%u required=%u retries=%u sample_order=%u ds_ok=%u ds_fail=%u timing_reject=%u polite_samples=%u polite_activity=%u contention_ms=%u retry_ms=%u wake_claim_tx=%u",
             event_seq,
             total_candidate_count,
@@ -2502,9 +1986,6 @@ int app_clicker_run_normal_click(void)
             session.diagnostics.contention_delay_ms,
             session.diagnostics.retry_delay_ms,
             session.diagnostics.wake_claim_tx_count);
-    stage1_led_result(last_ret == -ETIMEDOUT ?
-                      STAGE1_LED_RESULT_TIMEOUT :
-                      STAGE1_LED_RESULT_ERROR);
     return last_ret < 0 ? last_ret : -EIO;
 }
 
@@ -2910,9 +2391,6 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
     int ret;
 
     ret = clicker_ble_courtesy_init_once();
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=init ret=%d", ret);
-#endif
     if (ret < 0) {
         return ret;
     }
@@ -2929,31 +2407,14 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
                                   sizeof(ble_courtesy_adv_data),
                                   &written);
     if (ret != PROTO_OK || written != sizeof(ble_courtesy_adv_data)) {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-        high_debug_log_event("BLE_TEST",
-                             "phase=encode ret=%d written=%u expected=%u duration_units=%u",
-                             ret,
-                             (unsigned int)written,
-                             (unsigned int)sizeof(ble_courtesy_adv_data),
-                             ble_courtesy_local.defer_duration_units);
-#endif
         return -EINVAL;
     }
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST",
-                         "phase=encode ret=0 written=%u duration_units=%u",
-                         (unsigned int)written,
-                         ble_courtesy_local.defer_duration_units);
-#endif
 
     clicker_ble_courtesy_clear_higher_peer();
     /* Legacy scan and advertising share the random-address state. Start the
      * identity advertiser before identity scanning so Zephyr accepts both.
      */
     ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=adv_start ret=%d", ret);
-#endif
     if (ret != 0) {
         LOG_WRN("BLE courtesy advertising start failed: %d", ret);
         return ret;
@@ -2962,9 +2423,6 @@ int app_clicker_ble_courtesy_start(uint32_t event_seq,
 
     ble_courtesy_scan_active = true;
     ret = bt_le_scan_start(&scan_param, clicker_ble_courtesy_scan_cb);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST", "phase=scan_start ret=%d", ret);
-#endif
     if (ret != 0) {
         int stop_ret;
 
@@ -3061,11 +2519,6 @@ int app_clicker_ble_courtesy_low_power_stop(void)
             ble_courtesy_adv_active = false;
             ble_courtesy_scan_active = false;
             clicker_ble_courtesy_clear_higher_peer();
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-            high_debug_log_event("BLE_TEST",
-                                 "phase=low_power_stop ret=0 attempts=%u",
-                                 (unsigned int)(attempt + 1u));
-#endif
             return 0;
         }
         if (attempt + 1u < BLE_COURTESY_STOP_RETRY_COUNT) {
@@ -3075,12 +2528,6 @@ int app_clicker_ble_courtesy_low_power_stop(void)
     LOG_WRN("BLE courtesy disable before retained idle failed after %u attempts: %d",
             BLE_COURTESY_STOP_RETRY_COUNT,
             ret);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    high_debug_log_event("BLE_TEST",
-                         "phase=low_power_stop ret=%d attempts=%u",
-                         ret,
-                         BLE_COURTESY_STOP_RETRY_COUNT);
-#endif
     return ret;
 }
 #else
@@ -3106,15 +2553,13 @@ void app_clicker_ble_courtesy_stop(void)
 {
 }
 
-int BLE_CONNECTIVITY_TEST_UNUSED app_clicker_ble_courtesy_low_power_stop(void)
+int app_clicker_ble_courtesy_low_power_stop(void)
 {
     return 0;
 }
 #endif
 
-#if DT_NODE_HAS_STATUS(CLICK_BUTTON_NODE, okay) && \
-    !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) && \
-    !defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+#if DT_NODE_HAS_STATUS(CLICK_BUTTON_NODE, okay)
 static const struct gpio_dt_spec click_button = GPIO_DT_SPEC_GET(CLICK_BUTTON_NODE, gpios);
 static struct gpio_callback click_button_cb;
 static struct k_work click_button_work;
@@ -3129,8 +2574,7 @@ static struct k_work clicker_action_work;
 #define HAS_CLICK_BUTTON 0
 #endif
 
-#if HAS_CLICK_BUTTON || defined(CONFIG_IMEC_ML_CLICKER) || \
-    defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
+#if HAS_CLICK_BUTTON || defined(CONFIG_IMEC_ML_CLICKER)
 #define HAS_CLICKER_ACTION_WORK_QUEUE 1
 #else
 #define HAS_CLICKER_ACTION_WORK_QUEUE 0
@@ -3138,10 +2582,6 @@ static struct k_work clicker_action_work;
 
 #if HAS_CLICKER_ACTION_WORK_QUEUE
 K_THREAD_STACK_DEFINE(clicker_action_work_q_stack, CLICKER_ACTION_WORKQUEUE_STACK_SIZE);
-#if defined(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)
-BUILD_ASSERT(CLICKER_ACTION_WORKQUEUE_STACK_SIZE == 8192u,
-             "Stage 1 full-click sessions must run on the 8192-byte action stack");
-#endif
 #endif
 
 static struct button_fsm button_fsm;
@@ -3186,7 +2626,7 @@ int app_clicker_init(const struct app_clicker_callbacks *callbacks)
     return 0;
 }
 
-bool BLE_CONNECTIVITY_TEST_UNUSED clicker_reset_reason_was_systemoff(void)
+bool clicker_reset_reason_was_systemoff(void)
 {
 #if NRF_POWER_HAS_RESETREAS
     uint32_t reset_reason = nrf_power_resetreas_get(NRF_POWER);
@@ -3255,7 +2695,7 @@ static uint32_t systemoff_ram_retention_mask(void)
     return mask;
 }
 
-void BLE_CONNECTIVITY_TEST_UNUSED clicker_request_systemoff_ram_retention(void)
+void clicker_request_systemoff_ram_retention(void)
 {
 #if defined(POWER_RAM_POWER_S0RETENTION_Msk)
     uint32_t retention_mask;
@@ -3311,45 +2751,21 @@ int app_clicker_submit_work(struct k_work *work)
 
 uint8_t app_clicker_debug_min_anchor_count(void)
 {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
-        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
-        return 1u;
-    }
-#endif
     return UWB_NORMAL_CLICK_MIN_ANCHORS;
 }
 
 uint8_t app_clicker_debug_max_anchor_count(void)
 {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
-        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
-        return 1u;
-    }
-#endif
     return UWB_RANGE_SCHEDULE_MAX_ANCHORS;
 }
 
 uint8_t app_clicker_debug_samples_per_anchor(void)
 {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
-        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
-        return 1u;
-    }
-#endif
     return UWB_RANGING_REQUESTS_MAX_PER_ANCHOR;
 }
 
 uint8_t app_clicker_debug_session_flags(void)
 {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-    if (CONFIG_IMEC_BENCH_STAGE == 1 &&
-        IS_ENABLED(CONFIG_IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE)) {
-        return FLAG_DIAGNOSTIC;
-    }
-#endif
     return FLAG_COUNT_AS_CLICK;
 }
 
@@ -3377,9 +2793,8 @@ static int clicker_connect_status_leds_for_action(void)
 
 static void clicker_hold_terminal_status(int ret)
 {
-    if (!stage1_led_hold_click_result(ret, STATUS_PASS_DURATION_MS)) {
-        k_msleep(STATUS_PASS_DURATION_MS);
-    }
+    ARG_UNUSED(ret);
+    k_msleep(STATUS_PASS_DURATION_MS);
 }
 
 void app_clicker_handle_button_action(enum button_action action)
@@ -3400,26 +2815,7 @@ void app_clicker_handle_button_action(enum button_action action)
 
     switch (action) {
     case BUTTON_ACTION_NORMAL_CLICK:
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-        if (DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0) {
-            ret = clicker_callbacks.run_stage0_simulated_click != NULL ?
-                  clicker_callbacks.run_stage0_simulated_click() : -ENOSYS;
-            status.click_accepted = ret == 0;
-            status.click_failure = ret == 0 ? 0 : CLICK_FAILURE_INSUFFICIENT_RANGES;
-            status_apply(&status);
-            clicker_hold_terminal_status(ret);
-            break;
-        }
-#endif
-        stage1_click_trace_reset();
-        high_debug_log_event("BUTTON_ACTION",
-                             "action=normal_click point=before_run");
-        stage1_click_diag("button before_run action=normal_click");
         ret = app_clicker_run_normal_click();
-        high_debug_log_event("BUTTON_ACTION",
-                             "action=normal_click point=after_run ret=%d",
-                             ret);
-        stage1_click_diag("button after_run ret=%d", ret);
         status.click_accepted = ret == 0;
         if (ret != 0) {
             status.click_failure = (ret == -ETIMEDOUT) ?
@@ -3432,16 +2828,7 @@ void app_clicker_handle_button_action(enum button_action action)
         } else {
             LOG_WRN("normal click MVP failed: %d", ret);
         }
-        high_debug_log_event("BUTTON_ACTION",
-                             "action=normal_click point=before_led_hold ret=%d",
-                             ret);
-        stage1_click_diag("button before_led_hold ret=%d", ret);
         clicker_hold_terminal_status(ret);
-        high_debug_log_event("BUTTON_ACTION",
-                             "action=normal_click point=before_idle ret=%d",
-                             ret);
-        stage1_click_diag("button before_idle ret=%d", ret);
-        stage1_click_trace_dump("before_idle");
         break;
     case BUTTON_ACTION_SELF_TEST_ARMED:
         status.self_test_armed = true;
@@ -3459,30 +2846,15 @@ void app_clicker_handle_button_action(enum button_action action)
             LOG_ERR("self-test identity allocation failed closed: %d", ret);
             failure = SELF_TEST_FAILURE_INTERNAL;
         } else {
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-            if (DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0) {
-                ret = clicker_callbacks.run_stage0_hardware_self_test != NULL ?
-                      clicker_callbacks.run_stage0_hardware_self_test() : -ENOSYS;
-                failure = ret == 0 ? SELF_TEST_FAILURE_NONE :
-                                     SELF_TEST_FAILURE_DWM3000;
-            } else
-#endif
-            {
-                failure = app_clicker_run_self_test(self_test_event_seq);
-            }
+            failure = app_clicker_run_self_test(self_test_event_seq);
         }
         status.self_test_running = false;
         status.failure = failure;
         status.self_test_passed = failure == SELF_TEST_FAILURE_NONE;
         status_apply(&status);
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-        if (!(DEVICE_ROLE == ROLE_CLICKER && CONFIG_IMEC_BENCH_STAGE == 0))
-#endif
-        {
-            if (self_test_event_allocated) {
-                (void)app_clicker_emit_self_test_report(self_test_event_seq,
-                                                        failure);
-            }
+        if (self_test_event_allocated) {
+            (void)app_clicker_emit_self_test_report(self_test_event_seq,
+                                                    failure);
         }
         clicker_hold_terminal_status(
             failure == SELF_TEST_FAILURE_NONE ? 0 : -EIO);
@@ -3498,13 +2870,6 @@ void app_clicker_handle_button_action(enum button_action action)
 }
 
 #if HAS_CLICK_BUTTON
-static void clicker_notify_early_led(enum app_clicker_early_led_event event)
-{
-    if (clicker_callbacks.early_led != NULL) {
-        clicker_callbacks.early_led(event);
-    }
-}
-
 static bool click_button_latch_press(uint32_t pressed_at_ms)
 {
     bool latched = false;
@@ -3813,8 +3178,6 @@ static int click_button_try_arm_systemoff_wake(void)
     ret = click_button_configure_input();
     if (ret < 0) {
         LOG_WRN("click button wake input unavailable: %d", ret);
-        clicker_notify_early_led(
-            APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
         return ret;
     }
 
@@ -3823,15 +3186,12 @@ static int click_button_try_arm_systemoff_wake(void)
                                        GPIO_INT_DISABLE);
     if (ret < 0) {
         LOG_WRN("click button wake interrupt disable failed: %d", ret);
-        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_WAKE_ARM_FAILED);
         return ret;
     }
 
     pressed = click_button_pressed();
     if (pressed < 0) {
         LOG_WRN("click button wake release read failed: %d", pressed);
-        clicker_notify_early_led(
-            APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
         return pressed;
     }
     if (pressed != 0) {
@@ -3842,8 +3202,6 @@ static int click_button_try_arm_systemoff_wake(void)
     pressed = click_button_pressed();
     if (pressed < 0) {
         LOG_WRN("click button stable-release read failed: %d", pressed);
-        clicker_notify_early_led(
-            APP_CLICKER_EARLY_LED_BUTTON_WAKE_INPUT_UNAVAILABLE);
         return pressed;
     }
     if (pressed != 0) {
@@ -3856,7 +3214,6 @@ static int click_button_try_arm_systemoff_wake(void)
                                        GPIO_INT_LEVEL_LOW);
     if (ret < 0) {
         LOG_WRN("click button wake arm failed: %d", ret);
-        clicker_notify_early_led(APP_CLICKER_EARLY_LED_BUTTON_WAKE_ARM_FAILED);
         return ret;
     }
 
@@ -3912,8 +3269,6 @@ void app_clicker_enter_systemoff_idle(void)
         if (ret == -EBUSY) {
             if (!held_reported) {
                 LOG_WRN("click button still held; keeping System ON until a wake source can be armed");
-                clicker_notify_early_led(
-                    APP_CLICKER_EARLY_LED_BUTTON_STILL_HELD_NO_WAKE_ARM);
                 held_reported = true;
             }
             k_msleep(CLICK_BUTTON_RELEASE_POLL_MS);
@@ -4047,11 +3402,9 @@ static void clicker_enter_systemon_retained_idle(void)
         click_button_recovery_reset("retained_idle_wake", ret);
         return;
     }
-    high_debug_log_event("CLICKER_IDLE",
-                         "mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=%u dwm_pins=%s",
-                         (unsigned int)CLICK_BUTTON_PIN_NUM,
-                         1u,
-                         pins_floated ? "float" : "driven");
+    LOG_INF("CLICKER_IDLE" " mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=1 dwm_pins=%s",
+            (unsigned int)CLICK_BUTTON_PIN_NUM,
+            pins_floated ? "float" : "driven");
     LOG_INF("clicker entering retained system-on idle; wake source=P0.%u press-edge interrupt with release polling",
             (unsigned int)CLICK_BUTTON_PIN_NUM);
     status_leds_set(false, false, false);
@@ -4094,13 +3447,7 @@ static void clicker_action_work_handler(struct k_work *work)
                     "action_watchdog_begin", -EIO);
                 return;
             }
-            high_debug_log_event("BUTTON_ACTION",
-                                 "point=action_worker_begin action=%u",
-                                 (unsigned int)action);
             app_clicker_handle_button_action(action);
-            high_debug_log_event("BUTTON_ACTION",
-                                 "point=action_worker_end action=%u",
-                                 (unsigned int)action);
             if (!app_watchdog_note_clicker_action_progress(
                     clicker_action_watchdog_generation)) {
                 click_button_recovery_reset(
@@ -4254,10 +3601,6 @@ void app_clicker_submit_button_action(enum button_action action)
     if (submit_result == BUTTON_ACTION_HANDOFF_START_OWNER) {
         clicker_action_submit_or_recover("action_submit");
     } else {
-        high_debug_log_event("BUTTON_ACTION",
-                             "point=action_queued action=%u depth=%u",
-                             (unsigned int)action,
-                             queue_depth);
     }
 }
 
@@ -4276,11 +3619,6 @@ static void click_button_handle_signal_at(enum button_signal signal,
                 ret);
         return;
     }
-    high_debug_log_event("BUTTON_EDGE",
-                         "source=%s signal=%u action=%u",
-                         source == NULL ? "unknown" : source,
-                         (unsigned int)signal,
-                         (unsigned int)action);
     app_clicker_submit_button_action(action);
 }
 
@@ -4449,8 +3787,6 @@ static void click_button_rearm_work_handler(struct k_work *work)
         }
         if (clicker_systemon_retained_idle_enabled() &&
             atomic_get(&clicker_action_active) == 0) {
-            clicker_notify_early_led(
-                APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
         }
         click_button_handle_signal_at(
             BUTTON_SIGNAL_PRESS,
@@ -4503,8 +3839,6 @@ process_pending_press:
         }
         if (clicker_systemon_retained_idle_enabled() &&
             atomic_get(&clicker_action_active) == 0) {
-            clicker_notify_early_led(
-                APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
         }
         click_button_handle_signal_at(BUTTON_SIGNAL_PRESS,
                                       press_at_ms,
@@ -4542,8 +3876,6 @@ process_pending_press:
         }
         if (clicker_systemon_retained_idle_enabled() &&
             atomic_get(&clicker_action_active) == 0) {
-            clicker_notify_early_led(
-                APP_CLICKER_EARLY_LED_SYSTEMON_BUTTON_PRESS);
         }
         click_button_handle_signal_at(
             BUTTON_SIGNAL_PRESS,
@@ -4670,14 +4002,10 @@ void app_clicker_prepare_startup_idle(enum button_action *boot_action)
 
     if (DEVICE_ROLE == ROLE_CLICKER &&
         IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE) &&
-        !clicker_systemon_retained_idle_enabled() &&
-        !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS) &&
-        !IS_ENABLED(CONFIG_IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS)) {
+        !clicker_systemon_retained_idle_enabled()) {
         if (clicker_reset_reason_was_systemoff()) {
-            clicker_notify_early_led(APP_CLICKER_EARLY_LED_SYSTEMOFF_BUTTON_WAKE);
             if (!clicker_capture_systemoff_button_action(boot_action)) {
                 LOG_WRN("system-off wake button capture failed; returning to idle");
-                clicker_notify_early_led(APP_CLICKER_EARLY_LED_SYSTEMOFF_CAPTURE_FAILED);
                 app_clicker_enter_systemoff_idle();
             }
         } else {
@@ -4686,7 +4014,7 @@ void app_clicker_prepare_startup_idle(enum button_action *boot_action)
     }
 }
 #else
-void BLE_CONNECTIVITY_TEST_UNUSED app_clicker_enter_systemoff_idle(void)
+void app_clicker_enter_systemoff_idle(void)
 {
 }
 

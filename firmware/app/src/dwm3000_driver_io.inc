@@ -70,10 +70,8 @@ int dwm3000_driver_configure_wake_mode(void)
         return ret;
     }
 
-    if (!focused_anchor_rx_logs_enabled()) {
-        LOG_DBG("DWM3000 configured for UWB wake/discovery mode: sfd_timeout_symbols=%u",
-                (unsigned int)wake_config.sfdTO);
-    }
+    LOG_DBG("DWM3000 configured for UWB wake/discovery mode: sfd_timeout_symbols=%u",
+            (unsigned int)wake_config.sfdTO);
     return 0;
 }
 
@@ -194,9 +192,7 @@ int dwm3000_driver_standby(void)
         return ret;
     }
     radio_state_unknown = false;
-    if (!focused_anchor_rx_logs_enabled()) {
-        LOG_INF("DWM3000 entered sleep with retained config; wakeup pin required before next UWB window");
-    }
+    LOG_INF("DWM3000 entered sleep with retained config; wakeup pin required before next UWB window");
     return 0;
 }
 
@@ -337,7 +333,6 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                                                int8_t *rsl_dbm,
                                                enum dwm3000_rx_failure *failure,
                                                struct dwm3000_rx_frame_timing *timing,
-                                               bool log_events,
                                                bool allow_receive_abort)
 {
     uint8_t rx_buffer[UWB_MESH_MAX_FRAME_LEN + FCS_LEN];
@@ -396,8 +391,7 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                         NULL,
                         NULL,
                         NULL,
-                        rsl_dbm != NULL,
-                        log_events);
+                        rsl_dbm != NULL);
     {
         const dwt_config_t *config = config_for_phy(active_phy_mode);
 
@@ -482,8 +476,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                                        size_t *frame_len,
                                                        uint8_t *quality,
                                                        int8_t *rsl_dbm,
-                                                       enum dwm3000_rx_failure *failure,
-                                                       bool log_events)
+                                                       enum dwm3000_rx_failure *failure)
 {
     uint8_t rx_buffer[UWB_MESH_MAX_FRAME_LEN + FCS_LEN];
     uint32_t status = 0u;
@@ -535,7 +528,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
                                acquire_timeout_ms,
                                &status,
-                               log_events,
+                               true,
                                &observed_at_ms);
     last_status = status;
     if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
@@ -706,7 +699,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
                                        remaining_ms,
                                        &status,
-                                       log_events,
+                                       true,
                                        &observed_at_ms);
             last_status = status;
             if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
@@ -736,7 +729,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             ret = wait_status_internal(RX_TERMINAL_STATUS_MASK,
                                        remaining_ms,
                                        &status,
-                                       log_events,
+                                       true,
                                        &observed_at_ms);
             last_status = status;
             if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
@@ -793,7 +786,6 @@ int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,
                                                rsl_dbm,
                                                failure,
                                                NULL,
-                                               true,
                                                false);
 }
 
@@ -814,7 +806,6 @@ int dwm3000_driver_receive_frame_detailed_quiet(uint32_t timeout_ms,
                                                rsl_dbm,
                                                failure,
                                                NULL,
-                                               false,
                                                false);
 }
 
@@ -921,8 +912,7 @@ int dwm3000_driver_receive_frame_continuous_extend_on_activity(
                                                        frame_len,
                                                        quality,
                                                        rsl_dbm,
-                                                       failure,
-                                                       !focused_anchor_rx_logs_enabled());
+                                                       failure);
 }
 
 int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
@@ -934,14 +924,6 @@ int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
                                                   enum dwm3000_rx_failure *failure,
                                                   struct dwm3000_rx_frame_timing *timing)
 {
-    bool log_events = !focused_anchor_rx_logs_enabled();
-
-    if (log_events) {
-        dwm3000_debug_event(false,
-                            "UWB_RX_START",
-                            "mode=continuous_open timeout_ms=%u preamble_timeout_pac=0",
-                            timeout_ms);
-    }
     return receive_frame_with_preamble_timeout(timeout_ms,
                                                0u,
                                                frame,
@@ -951,7 +933,6 @@ int dwm3000_driver_receive_frame_continuous_timed(uint32_t timeout_ms,
                                                rsl_dbm,
                                                failure,
                                                timing,
-                                               log_events,
                                                true);
 }
 

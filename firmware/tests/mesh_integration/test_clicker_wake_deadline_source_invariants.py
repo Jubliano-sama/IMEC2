@@ -9,7 +9,6 @@ RADIO_RECOVERY = (
     ROOT / "app/src/app_radio_recovery.c"
 ).read_text()
 MAIN = (ROOT / "app/src/main.c").read_text()
-HIGH_DEBUG = (ROOT / "app/src/app_high_debug.c").read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 DRIVER_RADIO = (ROOT / "app/src/dwm3000_driver_radio.inc").read_text()
 MESH_ARBITRATION = (
@@ -429,116 +428,8 @@ assert first_transition < force_recovery < retry_transition < stop_watchdog
 assert "return 0;" in radio_recovery[first_transition:force_recovery]
 assert "return 0;" in radio_recovery[retry_transition:stop_watchdog]
 
-assert "dwm3000_driver_idle()" not in HIGH_DEBUG
-assert "dwm3000_driver_standby()" not in HIGH_DEBUG
 assert "dwm3000_driver_idle()" not in MAIN
 assert "dwm3000_driver_standby()" not in MAIN
-
-debug_probe = source_function_body(HIGH_DEBUG, "high_debug_probe_dwm3000")
-debug_probe_guard = debug_probe.index("radio_guard_uwb_start")
-debug_probe_cleanup = debug_probe.index(
-    "app_radio_standby_with_bounded_recovery", debug_probe_guard
-)
-debug_probe_release = debug_probe.index("radio_guard_uwb_stop", debug_probe_cleanup)
-debug_probe_cleanup_failure = debug_probe.index(
-    "if (cleanup_ret < 0)", debug_probe_release
-)
-assert (
-    debug_probe_guard
-    < debug_probe_cleanup
-    < debug_probe_release
-    < debug_probe_cleanup_failure
-)
-assert debug_probe.count("goto cleanup;") >= 3
-assert "return cleanup_ret;" in debug_probe[debug_probe_cleanup_failure:]
-
-debug_self_test = source_function_body(
-    HIGH_DEBUG, "high_debug_stage0_hardware_self_test"
-)
-debug_self_test_guard = debug_self_test.index(
-    "radio_guard_uwb_start", debug_self_test.index("high_debug_probe_dwm3000")
-)
-debug_self_test_configure = debug_self_test.index(
-    "dwm3000_driver_configure_default", debug_self_test_guard
-)
-debug_self_test_cleanup = debug_self_test.index(
-    "app_radio_standby_with_bounded_recovery", debug_self_test_configure
-)
-debug_self_test_release = debug_self_test.index(
-    "radio_guard_uwb_stop", debug_self_test_cleanup
-)
-assert (
-    debug_self_test_guard
-    < debug_self_test_configure
-    < debug_self_test_cleanup
-    < debug_self_test_release
-)
-assert "return cleanup_ret;" in debug_self_test[debug_self_test_release:]
-
-debug_wake_once = source_function_body(
-    HIGH_DEBUG, "high_debug_send_wake_claim_once"
-)
-debug_wake_tx = debug_wake_once.index("dwm3000_driver_send_frame")
-debug_wake_cleanup = debug_wake_once.index(
-    "app_radio_standby_with_bounded_recovery", debug_wake_tx
-)
-debug_wake_release = debug_wake_once.index(
-    "radio_guard_uwb_stop", debug_wake_cleanup
-)
-debug_wake_cleanup_failure = debug_wake_once.index(
-    "if (cleanup_ret < 0)", debug_wake_release
-)
-debug_wake_success_counter = debug_wake_once.index(
-    "HIGH_DEBUG_COUNTER_INC(wake_claim_tx)", debug_wake_cleanup_failure
-)
-assert (
-    debug_wake_tx
-    < debug_wake_cleanup
-    < debug_wake_release
-    < debug_wake_cleanup_failure
-    < debug_wake_success_counter
-)
-
-manual_wake = source_function_body(HIGH_DEBUG, "high_debug_manual_uwb_wake")
-manual_wake_guard = manual_wake.index("radio_guard_uwb_start")
-manual_wake_configure = manual_wake.index(
-    "dwm3000_driver_configure_default", manual_wake_guard
-)
-manual_wake_failure = manual_wake.index("if (ret < 0)", manual_wake_configure)
-manual_wake_failure_end = braced_statement_end(
-    manual_wake, manual_wake_failure
-)
-manual_wake_owned = manual_wake.index(
-    "high_debug_manual_uwb_awake = true", manual_wake_failure_end
-)
-assert (
-    manual_wake_guard
-    < manual_wake_configure
-    < manual_wake_failure
-    < manual_wake_failure_end
-    < manual_wake_owned
-)
-assert "app_radio_standby_with_bounded_recovery" in manual_wake[
-    manual_wake_failure:manual_wake_failure_end
-]
-assert "radio_guard_uwb_stop" in manual_wake[
-    manual_wake_failure:manual_wake_failure_end
-]
-assert "radio_guard_uwb_stop" not in manual_wake[
-    manual_wake_failure_end:manual_wake_owned
-]
-
-manual_sleep = source_function_body(HIGH_DEBUG, "high_debug_manual_uwb_sleep")
-manual_sleep_cleanup = manual_sleep.index(
-    "app_radio_standby_with_bounded_recovery"
-)
-manual_sleep_owner_clear = manual_sleep.index(
-    "high_debug_manual_uwb_awake = false", manual_sleep_cleanup
-)
-manual_sleep_release = manual_sleep.index(
-    "radio_guard_uwb_stop", manual_sleep_owner_clear
-)
-assert manual_sleep_cleanup < manual_sleep_owner_clear < manual_sleep_release
 
 self_test_report = function_body("app_clicker_emit_self_test_report")
 assert "outbound.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;" in self_test_report

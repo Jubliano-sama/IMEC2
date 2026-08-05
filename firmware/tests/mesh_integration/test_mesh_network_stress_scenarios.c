@@ -858,31 +858,6 @@ static size_t unique_gateway_acked_identity_count_for_node(
     return unique;
 }
 
-static const struct mesh_sim_delivery *delivery_for_identity(
-    const struct mesh_sim_world *sim,
-    uint8_t gateway,
-    uint64_t source_id,
-    uint32_t session_id,
-    uint16_t seq)
-{
-    const struct mesh_sim_delivery *match = NULL;
-
-    for (size_t i = 0u; i < sim->roles[gateway].delivery_count; i++) {
-        const struct mesh_sim_delivery *delivery =
-            &sim->roles[gateway].deliveries[i];
-
-        if (delivery->packet.src_id == source_id &&
-            delivery->packet.session_id == session_id &&
-            delivery->packet.seq == seq) {
-            if (match != NULL) {
-                return NULL;
-            }
-            match = delivery;
-        }
-    }
-    return match;
-}
-
 static size_t queued_packet_count_for(
     const struct mesh_sim_role_instance *node,
     uint64_t source_id,

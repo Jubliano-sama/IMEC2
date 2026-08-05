@@ -17,7 +17,6 @@
 #include "app_gateway_command_ingress.h"
 #include "app_gateway_command_lifecycle.h"
 #include "app_gateway_command_result.h"
-#include "app_high_debug.h"
 #include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_gateway_command_flow.h"

@@ -2,7 +2,6 @@
 
 #include "app_config.h"
 #include "app_gateway_ble.h"
-#include "app_high_debug.h"
 #include "app_mesh_report.h"
 #include "app_mesh_smoke_fast.h"
 #include "app_node_comm.h"
@@ -236,14 +235,6 @@ static void mesh_test_reap_terminal_deliveries(void)
                 mesh_test_drop_count++;
             }
             status_debug_note("DBG_MESH_TEST_DELIVERY_FAILED\n");
-            high_debug_log_event(
-                "MESH_TEST_DELIVERY_TERMINAL",
-                "id=%u seq=%u reason=%u attempts=%u drops=%u",
-                delivery->packet_id,
-                delivery->seq,
-                (unsigned int)event.reason,
-                event.attempts_started,
-                mesh_test_drop_count);
         }
         memset(delivery, 0, sizeof(*delivery));
     }
@@ -532,14 +523,6 @@ static uint32_t mesh_test_tx_once(void)
                 mesh_test_pending_admission_attempt = attempt;
                 mesh_test_pending_admission_valid = true;
             }
-            high_debug_log_event(
-                "MESH_TEST_ADMISSION_DEFER",
-                "id=%u attempt=%u seq=%u ret=%d pending=%u",
-                packet_id,
-                attempt,
-                outbound.packet.seq,
-                ret,
-                (unsigned int)service_pending);
             return MESH_TEST_RETRY_ADMISSION_MS;
         }
 
@@ -548,13 +531,6 @@ static uint32_t mesh_test_tx_once(void)
         if (mesh_test_drop_count < UINT32_MAX) {
             mesh_test_drop_count++;
         }
-        high_debug_log_event("MESH_TEST_TX_RETRY",
-                             "id=%u attempt=%u ret=%d drops=%u queued=%u",
-                             packet_id,
-                             attempt,
-                             ret,
-                             mesh_test_drop_count,
-                             queued_count);
         LOG_WRN("mesh-test synthetic packet not launched: id=%u attempt=%u ret=%d drops=%u queued=%u",
                 packet_id, attempt, ret, mesh_test_drop_count, queued_count);
         mesh_test_advance_packet_id();
@@ -647,14 +623,6 @@ void app_mesh_test_note_wake_event(const struct proto_packet *packet,
                 link_quality,
                 anchor_uwb_scan_interval_ms);
     }
-    high_debug_log_event("MESH_TEST_WAKE",
-                         "msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx quality=%u ch5_scan_interval_ms=%u",
-                         packet->msg_type,
-                         (unsigned long long)packet->src_id,
-                         (unsigned long long)packet->dst_id,
-                         (unsigned long long)previous_hop_id,
-                         link_quality,
-                         anchor_uwb_scan_interval_ms);
     mesh_smoke_fast_note_c5_refresh(&mesh_test_gateway_state);
 }
 
@@ -682,13 +650,6 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
                 link_quality,
                 anchor_uwb_scan_interval_ms);
     }
-    high_debug_log_event("MESH_TEST_WAKE_CLAIM",
-                         "src=0x%016llx event_seq=%u attempt=%u quality=%u ch5_scan_interval_ms=%u",
-                         (unsigned long long)source_id,
-                         event_seq,
-                         attempt_index,
-                         link_quality,
-                         anchor_uwb_scan_interval_ms);
     mesh_smoke_fast_note_c5_refresh(&mesh_test_gateway_state);
 }
 

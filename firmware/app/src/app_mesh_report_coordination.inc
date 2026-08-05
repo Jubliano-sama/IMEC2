@@ -380,7 +380,6 @@ static void mesh_coordinator_decide_now(
 {
     const uint32_t rx_queue_used = k_msgq_num_used_get(&mesh_rx_msgq);
     const uint32_t report_queue_used = report_tx_queue_used();
-    const uint32_t channel9_connection_count = mesh_channel9_connection_count();
     const bool relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
     const struct app_mesh_coordinator_runtime_capture capture = {
         .click_active = mesh_click_priority_active(),
@@ -414,18 +413,6 @@ static void mesh_coordinator_decide_now(
         const char *state_name =
             app_mesh_coordinator_state_name(decision->state);
 
-        high_debug_log_event("MESH_COORDINATOR",
-                             "owner=%s state=%s reason=%s q_rx=%u q_tx=%u relay=%u route_wait=%u ack_wait=%u ack_send=%u ch9=%u",
-                             owner == NULL ? "mesh" : owner,
-                             state_name,
-                             decision->reason == NULL ? "none" : decision->reason,
-                             capture.rx_queue_used,
-                             capture.report_queue_used,
-                             capture.relay_tx_active ? 1u : 0u,
-                             capture.route_waiting_tx_active ? 1u : 0u,
-                             capture.ch9_ack_wait_active ? 1u : 0u,
-                             capture.ch9_ack_send_pending ? 1u : 0u,
-                             channel9_connection_count);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_COORD state=%s owner=%s reason=%s rx=%u tx=%u relay=%u route=%u ack=%u qack=%u\n",
                                 state_name,
@@ -496,13 +483,6 @@ static void mesh_attach_paused_delivery_loss(struct mesh_outbound *out,
 
     ret = app_mesh_paused_delivery_attach_loss(&mesh_paused_delivery, out, &result);
     if (ret == PROTO_OK) {
-        high_debug_log_event("MESH_PAUSED_DELIVERY",
-                             "phase=loss-tlv msg=0x%02x dst=0x%016llx seq=%u lost=%u reason=%s",
-                             out->packet.msg_type,
-                             (unsigned long long)out->packet.dst_id,
-                             out->packet.seq,
-                             result.lost_count,
-                             reason == NULL ? "mesh" : reason);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_MESH_LOSS_TLV msg=0x%02x seq=%u lost=%u attach=%u update=%u reason=%s\n",
                                 out->packet.msg_type,
@@ -726,10 +706,6 @@ static void mesh_restore_anchor_low_duty_if_no_ch9(const char *reason)
     if (anchor_uwb_scan_interval_ms != CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS) {
         anchor_uwb_scan_interval_ms = CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS;
         status_debug_note("DBG_CH9_IDLE_CH5_LOW_DUTY\n");
-        high_debug_log_event("MESH_CH9_IDLE",
-                             "reason=%s ch5_scan_interval_ms=%u",
-                             reason == NULL ? "idle" : reason,
-                             anchor_uwb_scan_interval_ms);
         LOG_INF("mesh channel-9 idle; restored low-duty channel-5 scan: interval_ms=%u reason=%s",
                 anchor_uwb_scan_interval_ms,
                 reason == NULL ? "idle" : reason);
@@ -839,16 +815,6 @@ static int mesh_install_channel9_timing_direction(
                                 guard.active_peer_count,
                                 (unsigned long long)guard.conflict_peer_id,
                                 (unsigned int)guard.conflict_direction);
-            high_debug_log_event("MESH_CH9_GUARD",
-                                 "phase=reject install_reason=%s guard_reason=%s peer=0x%016llx direction=%s active=%u conflict=0x%016llx conflict_direction=%s ret=%d",
-                                 reason == NULL ? "install" : reason,
-                                 guard_reason,
-                                 (unsigned long long)peer_id,
-                                 direction,
-                                 guard.active_peer_count,
-                                 (unsigned long long)guard.conflict_peer_id,
-                                 conflict_direction,
-                                 ret);
             LOG_WRN("mesh route-test channel-9 timing rejected: peer=0x%016llx reason=%s direction=%s active=%u conflict=0x%016llx conflict_direction=%s ret=%d",
                     (unsigned long long)peer_id,
                     guard_reason,
@@ -934,20 +900,6 @@ static uint8_t mesh_expire_channel9_timings(uint32_t now_ms, const char *reason)
                 continue;
             }
             status_debug_note("DBG_CH9_TIMING_EXPIRE_DETAIL\n");
-            high_debug_log_event("MESH_CH9_TIMING",
-                                 "phase=expire-detail reason=%s index=%u peer=0x%016llx now_ms=%u next_ms=%u last_peer_ms=%u supervision_ms=%u event_counter=%u local_tx_even=%u route_fresh=%u timing_fresh=%u fallback=%u",
-                                 reason == NULL ? "expire" : reason,
-                                 i,
-                                 (unsigned long long)entry->next_hop_id,
-                                 now_ms,
-                                 entry->timing.next_event_time_ms,
-                                 entry->timing.last_successful_ch9_event_ms,
-                                 entry->timing.supervision_timeout_ms,
-                                 entry->timing.event_counter,
-                                 entry->timing.local_tx_on_even_events ? 1u : 0u,
-                                 entry->timing.route_fresh ? 1u : 0u,
-                                 entry->timing.timing_fresh ? 1u : 0u,
-                                 entry->timing.fallback_required ? 1u : 0u);
             (void)mesh_ch9_ack_batch_clear_for_peer(entry->next_hop_id,
                                                     reason == NULL ? "timing-expire" : reason);
         }
@@ -959,12 +911,6 @@ static uint8_t mesh_expire_channel9_timings(uint32_t now_ms, const char *reason)
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_CH9_TIMING_EXPIRED\n");
         }
-        high_debug_log_event("MESH_CH9_TIMING",
-                             "phase=expired count=%u reason=%s now_ms=%u active=%u",
-                             expired,
-                             reason == NULL ? "expire" : reason,
-                             now_ms,
-                             mesh_channel9_connection_count());
         mesh_restore_anchor_low_duty_if_no_ch9(reason);
     }
     return expired;
@@ -2629,11 +2575,6 @@ static bool mesh_queue_embedded_route_request(
                                         sizeof(pending.payload),
                                         &payload_len);
     if (ret < 0) {
-        high_debug_log_event("MESH_ROUTE_REQ_EMBEDDED_RX",
-                             "phase=reject src=0x%016llx ret=%d suffix_len=%u",
-                             (unsigned long long)claim->clicker_id,
-                             ret,
-                             (unsigned int)suffix_len);
         return false;
     }
 
@@ -2657,7 +2598,6 @@ static bool mesh_queue_embedded_route_request(
 
     ret = k_msgq_put(&mesh_rx_msgq, &pending, K_NO_WAIT);
     if (ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("embedded route request RX queue full; dropped src=0x%016llx seq=%u ret=%d",
                 (unsigned long long)pending.packet.src_id,
                 pending.packet.seq,
@@ -2677,14 +2617,6 @@ static bool mesh_queue_embedded_route_request(
                         (unsigned long long)pending.packet.src_id,
                         pending.packet.seq,
                         mesh_route_embedded_reply_hold_until_ms);
-    high_debug_log_event("MESH_ROUTE_REQ_EMBEDDED_RX",
-                         "phase=queued src=0x%016llx seq=%u suffix_len=%u payload_len=%u hold_until=%u quality=%u",
-                         (unsigned long long)pending.packet.src_id,
-                         pending.packet.seq,
-                         (unsigned int)suffix_len,
-                         (unsigned int)payload_len,
-                         mesh_route_embedded_reply_hold_until_ms,
-                         link_quality);
     (void)mesh_submit_owned_work(&mesh_rx_work,
                                  "embedded-route-rx");
     return true;
@@ -2736,14 +2668,6 @@ static void mesh_schedule_route_waiting_retry_after(const char *reason, uint32_t
                             mesh_route_waiting_tx.packet.seq,
                             mesh_runtime.route_discovery.active ? 1u : 0u);
     }
-    high_debug_log_event("MESH_ROUTE_WAIT",
-                         "reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u retry_in_ms=%u",
-                         reason == NULL ? "route-wait" : reason,
-                         mesh_route_waiting_tx.packet.msg_type,
-                         (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
-                         mesh_route_waiting_tx.packet.seq,
-                         mesh_runtime.route_discovery.attempts,
-                         delay_ms);
     LOG_INF("mesh route waiting: reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u retry_in_ms=%u",
             reason == NULL ? "route-wait" : reason,
             mesh_route_waiting_tx.packet.msg_type,
@@ -2812,15 +2736,6 @@ static void mesh_schedule_route_waiting_exhausted_retry(const char *reason)
                             app_mesh_paused_delivery_lost_count(
                                 &mesh_paused_delivery));
     }
-    high_debug_log_event("MESH_ROUTE_WAIT_EXHAUSTED",
-                         "reason=%s msg=0x%02x dst=0x%016llx seq=%u retry_in_ms=%u lost=%u",
-                         reason == NULL ? "route-exhausted" : reason,
-                         mesh_route_waiting_tx.packet.msg_type,
-                         (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
-                         mesh_route_waiting_tx.packet.seq,
-                         delay_ms,
-                         app_mesh_paused_delivery_lost_count(
-                             &mesh_paused_delivery));
     LOG_WRN("mesh route discovery exhausted; retained packet will retry: reason=%s msg=0x%02x dst=0x%016llx seq=%u retry_in_ms=%u",
             reason == NULL ? "route-exhausted" : reason,
             mesh_route_waiting_tx.packet.msg_type,
@@ -3081,7 +2996,6 @@ static bool mesh_role_uses_uwb_rx(void)
         return true;
     }
     return app_mesh_rx_policy_role_uses_uwb_rx(
-        stage1_anchor_focused_rx_logs_enabled(),
         DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY,
         IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER),
         mesh_channel9_connection_count() > 0u);

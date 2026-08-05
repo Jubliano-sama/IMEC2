@@ -222,12 +222,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
         goto out_unlock;
     }
 
-    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                         "phase=start next=0x%016llx seq=%u attempt=%u timeout_ms=%u",
-                         (unsigned long long)route_reply->next_hop_id,
-                         route_reply->packet.seq,
-                         attempt,
-                         RREP_ACK_TIMEOUT_MS);
     uwb_window_start_ms = k_uptime_get();
     ret = dwm3000_driver_configure_wake_mode();
     if (ret == 0) {
@@ -261,13 +255,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                 break;
             }
             if (ret < 0) {
-                high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                                     "phase=rx-fail next=0x%016llx seq=%u attempt=%u ret=%d rx_failure=%u",
-                                     (unsigned long long)route_reply->next_hop_id,
-                                     route_reply->packet.seq,
-                                     attempt,
-                                     ret,
-                                     (unsigned int)rx_failure);
                 continue;
             }
 
@@ -296,11 +283,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                     if (DEVICE_ROLE == ROLE_ANCHOR && click_priority) {
                         last_ret = -EAGAIN;
                         status_debug_note("DBG_ROUTE_REPLY_ACK_CLICK_PREEMPT\n");
-                        high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                                             "phase=click-preempt next=0x%016llx seq=%u attempt=%u",
-                                             (unsigned long long)route_reply->next_hop_id,
-                                             route_reply->packet.seq,
-                                             attempt);
                         break;
                     }
                     deadline_ms = app_mesh_route_reply_ack_deadline_after_preemption(
@@ -309,13 +291,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                         latest_deadline_ms,
                         true);
                     status_debug_note("DBG_ROUTE_REPLY_ACK_PREEMPT_EXTEND\n");
-                    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                                         "phase=c5-preempt-click next=0x%016llx seq=%u attempt=%u extended_deadline=%u latest_deadline=%u",
-                                         (unsigned long long)route_reply->next_hop_id,
-                                         route_reply->packet.seq,
-                                         attempt,
-                                         deadline_ms,
-                                         latest_deadline_ms);
                     continue;
                 }
             }
@@ -330,14 +305,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                                         sizeof(parsed->payload),
                                         &parsed->payload_len);
             if (ret != PROTO_OK || parsed->payload_len > UINT8_MAX) {
-                high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                                     "phase=reject next=0x%016llx seq=%u attempt=%u len=%u quality=%u decode_ret=%d",
-                                     (unsigned long long)route_reply->next_hop_id,
-                                     route_reply->packet.seq,
-                                     attempt,
-                                     (unsigned int)frame_len,
-                                     quality,
-                                     ret);
                 continue;
             }
 
@@ -355,23 +322,10 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
             capture_quality = quality;
             captured = true;
             status_debug_note("DBG_ROUTE_REPLY_ACK_RX\n");
-            high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                                 "phase=capture next=0x%016llx seq=%u ack_seq=%u attempt=%u quality=%u",
-                                 (unsigned long long)route_reply->next_hop_id,
-                                 route_reply->packet.seq,
-                                 parsed->packet.seq,
-                                 attempt,
-                                 quality);
             break;
         }
     } else {
         last_ret = ret;
-        high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                             "phase=config-fail next=0x%016llx seq=%u attempt=%u ret=%d",
-                             (unsigned long long)route_reply->next_hop_id,
-                             route_reply->packet.seq,
-                             attempt,
-                             ret);
     }
 
     release_ret = mesh_radio_standby_with_bounded_recovery(
@@ -415,12 +369,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
         goto out_unlock;
     }
 
-    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                         "phase=timeout next=0x%016llx seq=%u attempt=%u last_ret=%d",
-                         (unsigned long long)route_reply->next_hop_id,
-                         route_reply->packet.seq,
-                         attempt,
-                         last_ret);
     ret = last_ret;
 
 out_unlock:
@@ -530,12 +478,6 @@ static int mesh_send_route_reply_train_to_hop(const struct mesh_outbound *route_
         break;
     }
 
-    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                         "phase=failed next=0x%016llx seq=%u attempts=%u last_ret=%d",
-                         (unsigned long long)route_reply->next_hop_id,
-                         route_reply->packet.seq,
-                         (unsigned int)(RREP_RETRY_COUNT_PER_HOP + 1u),
-                         last_ret);
     return last_ret;
 }
 #endif
@@ -590,12 +532,6 @@ static int mesh_send_route_reply_train(const struct mesh_outbound *route_reply,
     if (backup_result.note_retry) {
         mesh_relay_note_route_reply_retry(&mesh_runtime);
     }
-    high_debug_log_event("MESH_ROUTE_REPLY_ACK_RX",
-                         "phase=backup primary=0x%016llx backup=0x%016llx seq=%u primary_ret=%d",
-                         (unsigned long long)route_reply->next_hop_id,
-                         (unsigned long long)backup_result.backup_next_hop_id,
-                         route_reply->packet.seq,
-                         primary_ret);
 
     ret = mesh_send_route_reply_train_to_hop(backup_route_reply);
     if (ret == 0 && acked_next_hop_id != NULL) {
@@ -836,7 +772,6 @@ static uint8_t mesh_requeue_ch9_batch_candidates(struct mesh_outbound *candidate
         if (ret == 0) {
             requeued++;
         } else {
-            HIGH_DEBUG_COUNTER_INC(mesh_drop);
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_CH9_TX_BATCH_REQUEUE idx=%u count=%u ret=%d strip=%d seq=%u r=%s\n",
@@ -1078,7 +1013,6 @@ static int mesh_commit_forwarded_gateway_ack_sent(
         LOG_WRN("forwarded gateway ACK committed with stale durable snapshot retained for safe replay: ret=%d seq=%u",
                 clear_ret, ack->packet.seq);
     }
-    HIGH_DEBUG_COUNTER_INC(mesh_ack);
     status_debug_printf("DBG_FORWARD_GATEWAY_ACK_COMMIT seq=%u dst=0x%llx next=0x%llx\n",
                         ack->packet.seq,
                         (unsigned long long)ack->packet.dst_id,
@@ -1418,7 +1352,6 @@ static uint8_t mesh_ch9_tx_retry_queue_used(void *ctx)
 static void mesh_ch9_tx_retry_note_drop(void *ctx)
 {
     ARG_UNUSED(ctx);
-    HIGH_DEBUG_COUNTER_INC(mesh_drop);
 }
 #endif
 
@@ -2061,13 +1994,6 @@ wake_train_attempt:
     activity_phase = NULL;
 
     mesh_stop_role_scan();
-    high_debug_log_event("MESH_CH5_WAKE_TX",
-                         "phase=start target=0x%016llx event_seq=%u embed=%u retry=%u reason=%s",
-                         (unsigned long long)target_id,
-                         event_seq,
-                         embed_route ? 1u : 0u,
-                         polite_retry,
-                         reason == NULL ? "route" : reason);
     LOG_INF("mesh route channel-5 wake train start: target=0x%016llx event_seq=%u embed=%u retry=%u reason=%s",
             (unsigned long long)target_id,
             event_seq,
@@ -2108,8 +2034,6 @@ wake_train_attempt:
         goto out;
     }
 
-    stage1_led_phase(STAGE1_LED_PHASE_WAKE);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
     status_debug_note("DBG_WAKE_TRAIN_CONFIG_BEGIN\n");
     ret = dwm3000_driver_configure_wake_mode();
@@ -2183,7 +2107,6 @@ wake_train_attempt:
             status_debug_tx_wake_claim_sent_pulse();
             sent_count++;
             embedded_count++;
-            HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
             uwb_clicker_note_wake_claim_tx(session, 1u);
         }
 
@@ -2223,7 +2146,6 @@ wake_train_attempt:
         }
         status_debug_tx_wake_claim_sent_pulse();
         sent_count++;
-        HIGH_DEBUG_COUNTER_INC(wake_claim_tx);
         uwb_clicker_note_wake_claim_tx(session, 1u);
 
         if (local_can_range_clicks &&
@@ -2302,19 +2224,9 @@ out:
 
     if (click_captured) {
         mesh_c5_contact_clear("click-preempt");
-        stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
-        high_debug_log_event("MESH_CH5_WAKE_TX",
-                             "phase=click-preempt target=0x%016llx event_seq=%u click_event=%u attempt=%u wake_claims=%u reason=%s",
-                             (unsigned long long)target_id,
-                             event_seq,
-                             click_claim.click_event_id,
-                             click_claim.attempt_index,
-                             sent_count,
-                             reason == NULL ? "route" : reason);
         goto out_unlock;
     }
     if (ret < 0) {
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
         mesh_c5_contact_clear("wake-train-fail");
         if (ret == -EAGAIN && c5_activity &&
             polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
@@ -2326,16 +2238,6 @@ out:
             polite_retry++;
             goto wake_train_attempt;
         }
-        high_debug_log_event("MESH_CH5_WAKE_TX",
-                             "phase=fail target=0x%016llx event_seq=%u ret=%d wake_claims=%u embedded=%u retry=%u activity=%u reason=%s",
-                             (unsigned long long)target_id,
-                             event_seq,
-                             ret,
-                             sent_count,
-                             embedded_count,
-                             polite_retry,
-                             c5_activity ? 1u : 0u,
-                             reason == NULL ? "route" : reason);
         LOG_WRN("mesh route channel-5 wake train failed: target=0x%016llx ret=%d wake_claims=%u embedded=%u retry=%u activity=%u phase=%s reason=%s",
                 (unsigned long long)target_id,
                 ret,
@@ -2360,17 +2262,6 @@ out:
     } else {
         mesh_c5_contact_clear("wake-train-timeout");
     }
-    stage1_led_result(sent_count == 0u ?
-                      STAGE1_LED_RESULT_TIMEOUT :
-                      STAGE1_LED_RESULT_OK);
-    high_debug_log_event("MESH_CH5_WAKE_TX",
-                         "phase=done target=0x%016llx event_seq=%u ret=%d wake_claims=%u embedded=%u reason=%s",
-                             (unsigned long long)target_id,
-                             event_seq,
-                             sent_count == 0u ? -ETIMEDOUT : 0,
-                             session->diagnostics.wake_claim_tx_count,
-                             embedded_count,
-                             reason == NULL ? "route" : reason);
     LOG_INF("mesh route channel-5 wake train complete: target=0x%016llx ret=%d wake_claims=%u embedded=%u reason=%s",
             (unsigned long long)target_id,
             sent_count == 0u ? -ETIMEDOUT : 0,
@@ -2555,11 +2446,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
         return ret;
     }
 
-    high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                         "phase=start target=0x%016llx window_ms=%u reason=%s",
-                         (unsigned long long)target_id,
-                         window_ms,
-                         reason == NULL ? "route" : reason);
     status_debug_note("DBG_ROUTE_REPLY_LISTEN_START\n");
     LOG_INF("mesh route reply listen start: target=0x%016llx window_ms=%u reason=%s",
             (unsigned long long)target_id,
@@ -2675,12 +2561,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         snapshot.sfd_timeout);
                     rx_failure_diagnostic_logged = true;
                 }
-                high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                     "phase=rx-fail target=0x%016llx ret=%d rx_failure=%u reason=%s",
-                                     (unsigned long long)target_id,
-                                     ret,
-                                     (unsigned int)rx_failure,
-                                     reason == NULL ? "route" : reason);
                 LOG_WRN("mesh route reply RX failed: target=0x%016llx ret=%d rx_failure=%u reason=%s",
                         (unsigned long long)target_id,
                         ret,
@@ -2715,10 +2595,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     if (DEVICE_ROLE == ROLE_ANCHOR && click_priority) {
                         last_ret = -EAGAIN;
                         status_debug_note("DBG_ROUTE_REPLY_CLICK_PREEMPT\n");
-                        high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                             "phase=click-preempt target=0x%016llx reason=%s",
-                                             (unsigned long long)target_id,
-                                             reason == NULL ? "route" : reason);
                         break;
                     }
                     deadline_ms = app_mesh_route_reply_ack_deadline_after_preemption(
@@ -2727,11 +2603,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         deadline_ms,
                         true);
                     status_debug_note("DBG_ROUTE_REPLY_RX_PREEMPT_BOUNDED\n");
-                    high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                         "phase=c5-preempt target=0x%016llx cumulative_deadline=%u reason=%s",
-                                         (unsigned long long)target_id,
-                                         deadline_ms,
-                                         reason == NULL ? "route" : reason);
                     continue;
                 }
             }
@@ -2751,13 +2622,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                         (unsigned int)frame_len,
                                         quality);
                 }
-                high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                     "phase=reject target=0x%016llx len=%u quality=%u decode_ret=%d reason=%s",
-                                     (unsigned long long)target_id,
-                                     (unsigned int)frame_len,
-                                     quality,
-                                     ret,
-                                     reason == NULL ? "route" : reason);
                 LOG_INF("mesh route reply listen ignored non-mesh frame: target=0x%016llx len=%u quality=%u ret=%d",
                         (unsigned long long)target_id,
                         (unsigned int)frame_len,
@@ -3107,17 +2971,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             if (app_mesh_c5_route_capture_requires_ack_hold(parsed.packet.msg_type)) {
                 captured_route_reply = true;
             }
-            high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                 "phase=capture target=0x%016llx msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u captured=%u reason=%s",
-                                 (unsigned long long)target_id,
-                                 parsed.packet.msg_type,
-                                 (unsigned long long)parsed.packet.src_id,
-                                 (unsigned long long)parsed.packet.dst_id,
-                                 (unsigned long long)parsed.previous_hop_id,
-                                 parsed.packet.seq,
-                                 quality,
-                                 (unsigned int)capture_count,
-                                 reason == NULL ? "route" : reason);
             LOG_INF("mesh route reply listen captured: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u captured=%u",
                     parsed.packet.msg_type,
                     (unsigned long long)parsed.packet.src_id,
@@ -3130,13 +2983,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 if (route_reply_captured != NULL) {
                     *route_reply_captured = true;
                 }
-                high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                     "phase=route-captured target=0x%016llx msg=0x%02x seq=%u captured=%u reason=%s",
-                                     (unsigned long long)target_id,
-                                     parsed.packet.msg_type,
-                                     parsed.packet.seq,
-                                     (unsigned int)capture_count,
-                                     reason == NULL ? "route" : reason);
                 LOG_INF("mesh route reply listen exiting after route capture: target=0x%016llx msg=0x%02x seq=%u captured=%u",
                         (unsigned long long)target_id,
                         parsed.packet.msg_type,
@@ -3145,13 +2991,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 break;
             }
             if (mesh_packet_is_event_control_type(parsed.packet.msg_type)) {
-                high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                                     "phase=event-control-captured target=0x%016llx msg=0x%02x seq=%u captured=%u reason=%s",
-                                     (unsigned long long)target_id,
-                                     parsed.packet.msg_type,
-                                     parsed.packet.seq,
-                                     (unsigned int)capture_count,
-                                     reason == NULL ? "route" : reason);
                 LOG_INF("mesh route reply listen exiting after event control: target=0x%016llx msg=0x%02x seq=%u captured=%u",
                         (unsigned long long)target_id,
                         parsed.packet.msg_type,
@@ -3165,11 +3004,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
         }
     } else {
         last_ret = ret;
-        high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                             "phase=config-fail target=0x%016llx ret=%d reason=%s",
-                             (unsigned long long)target_id,
-                             ret,
-                             reason == NULL ? "route" : reason);
         LOG_WRN("mesh route reply wake-mode config failed: target=0x%016llx ret=%d reason=%s",
                 (unsigned long long)target_id,
                 ret,
@@ -3217,12 +3051,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                      "route-listener-click-rx");
     }
 
-    high_debug_log_event("MESH_ROUTE_REPLY_RX",
-                         "phase=done target=0x%016llx captured=%u last_ret=%d reason=%s",
-                         (unsigned long long)target_id,
-                         (unsigned int)capture_count,
-                         last_ret,
-                         reason == NULL ? "route" : reason);
     status_debug_printf("DBG_ROUTE_REPLY_LISTEN_DONE captured=%u ret=%d\n",
                         (unsigned int)capture_count,
                         last_ret);

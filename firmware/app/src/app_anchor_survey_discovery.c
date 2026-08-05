@@ -2,7 +2,6 @@
 
 #include "app_config.h"
 #include "app_board.h"
-#include "app_high_debug.h"
 #include "app_mesh_local_delivery.h"
 #include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
@@ -1394,12 +1393,6 @@ static int receive_survey_probes_until(
         }
         survey_add_reach_entry(entries, entry_cap, entry_count,
                                probe.anchor_id, rsl_dbm, quality);
-        high_debug_log_event("SURVEY_DISCOVERY_PROBE_RX",
-                             "survey=%u opportunity=%u peer=0x%016llx slot=%u quality=%u rsl=%d peers=%u",
-                             config->survey_id, opportunity,
-                             (unsigned long long)probe.anchor_id,
-                             probe.anchor_slot, quality, rsl_dbm,
-                             (unsigned int)*entry_count);
     }
     return 0;
 }
@@ -1552,12 +1545,6 @@ int app_anchor_survey_discovery_run(
                         latest_tx_deadline_ms),
                     &probe_slot,
                     &rf_started);
-                high_debug_log_event(
-                    "SURVEY_DISCOVERY_PROBE_TX",
-                    "survey=%u round=%u rounds=%u slot=%u slot_ms=%u rf_started=%u completion_ret=%d",
-                    config->survey_id, opportunity, config->round_count,
-                    probe_slot, config->slot_ms,
-                    rf_started ? 1u : 0u, ret);
                 if (ret < 0) {
                     LOG_WRN("survey discovery probe TX failed: survey=%u round=%u rounds=%u slot=%u rf_started=%u ret=%d",
                             config->survey_id, opportunity,

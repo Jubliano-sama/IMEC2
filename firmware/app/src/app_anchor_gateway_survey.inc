@@ -1,15 +1,5 @@
 #line 2118 __BASE_FILE__
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
 #define GATEWAY_SURVEY_VERBOSE_LOG(...) LOG_INF(__VA_ARGS__)
-#else
-/*
- * Production survey progress is already exported through retained BLE events
- * and typed stack-evidence records. Keep verbose success-path text in the
- * explicit high-debug preset so the release gateway retains upgrade margin;
- * warnings and errors remain unconditional below.
- */
-#define GATEWAY_SURVEY_VERBOSE_LOG(...) do { } while (0)
-#endif
 
 static int gateway_survey_work_reschedule(uint32_t delay_ms)
 {

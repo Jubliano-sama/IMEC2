@@ -155,7 +155,6 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
 
         required_failures = (
             "node communication initialization",
-            "Stage 1 click-session worker submission",
             "anchor role startup",
             "anchor UWB mesh RX startup",
             "gateway role startup",

@@ -12,14 +12,10 @@ bool app_mesh_rx_policy_should_drop(bool mesh_route_test_transmitter,
            msg_type == MSG_GATEWAY_ROUTE_ADV;
 }
 
-bool app_mesh_rx_policy_role_uses_uwb_rx(bool focused_anchor_rx_logs,
-                                         bool permanent_receiver_role,
+bool app_mesh_rx_policy_role_uses_uwb_rx(bool permanent_receiver_role,
                                          bool scheduled_receiver_enabled,
                                          bool channel9_schedule_installed)
 {
-    if (focused_anchor_rx_logs) {
-        return false;
-    }
     return permanent_receiver_role ||
            (scheduled_receiver_enabled && channel9_schedule_installed);
 }

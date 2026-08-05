@@ -1,9 +1,5 @@
 #line 4287 __BASE_FILE__
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
 #define GATEWAY_CONTROL_VERBOSE_LOG(...) LOG_INF(__VA_ARGS__)
-#else
-#define GATEWAY_CONTROL_VERBOSE_LOG(...) do { } while (0)
-#endif
 
 #if DEVICE_ROLE == ROLE_GATEWAY
 static uint32_t gateway_discovery_assignment_epoch_cursor;
@@ -4409,14 +4405,6 @@ static void gateway_host_command_note_decoded(
 {
     ARG_UNUSED(ctx);
 
-    HIGH_DEBUG_COUNTER_INC(command_rx);
-    high_debug_log_event("COMMAND_RX",
-                         "transport=gateway_ble msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
-                         item->packet.msg_type,
-                         (unsigned long long)item->packet.src_id,
-                         (unsigned long long)item->packet.dst_id,
-                         item->packet.seq,
-                         (unsigned int)item->payload_len);
 }
 
 static uint32_t gateway_host_command_priority_retry_next(void)
@@ -4986,22 +4974,7 @@ bool gateway_handle_ble_frame(const uint8_t *frame,
                               size_t frame_len,
                               uint32_t result_reservation_token)
 {
-#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
-    int ret;
-
-    ARG_UNUSED(result_reservation_token);
-    ret = gateway_ble_send_packet_frame(frame, frame_len);
-    if (ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(gateway_ble_notify_failures);
-        LOG_WRN("gateway BLE connectivity test echo failed: frame_len=%u ret=%d",
-                (unsigned int)frame_len,
-                ret);
-        return false;
-    }
-    LOG_INF("gateway BLE connectivity test echoed packet frame: frame_len=%u",
-            (unsigned int)frame_len);
-    return false;
-#elif defined(CONFIG_IMEC_ML_CLICKER)
+#if defined(CONFIG_IMEC_ML_CLICKER)
     ARG_UNUSED(result_reservation_token);
     ml_clicker_handle_ble_frame(frame, frame_len);
     return false;
@@ -5076,14 +5049,6 @@ bool gateway_handle_ble_frame(const uint8_t *frame,
         LOG_WRN("gateway BLE COBS frame decode failed: %d", ret);
         return false;
     }
-    HIGH_DEBUG_COUNTER_INC(command_rx);
-    high_debug_log_event("COMMAND_RX",
-                         "transport=gateway_ble msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u",
-                         packet.msg_type,
-                         (unsigned long long)packet.src_id,
-                         (unsigned long long)packet.dst_id,
-                         packet.seq,
-                         (unsigned int)payload_len);
 
     ret = gateway_route_host_packet(&packet, payload, payload_len);
     if (ret < 0) {

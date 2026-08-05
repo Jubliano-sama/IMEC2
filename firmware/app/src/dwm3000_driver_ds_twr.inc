@@ -53,14 +53,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                             reply_delay_uus);
     }
 
-    dwm3000_debug_event(false,
-                        "DS_TWR_TIMING",
-                        "role=initiator reply_delay_uus=%u resp_rx_after_uus=%u resp_rx_timeout_uus=%u wait_timeout_ms=%u",
-                        reply_delay_uus,
-                        ds_twr_rx_after_tx_delay_uus(reply_delay_uus),
-                        ds_twr_rx_timeout_uus(reply_delay_uus),
-                        request->timeout_ms == 0u ?
-                        RESP_RX_TIMEOUT_MS : request->timeout_ms);
+
     dwt_setrxaftertxdelay(ds_twr_rx_after_tx_delay_uus(reply_delay_uus));
     dwt_setrxtimeout(ds_twr_rx_timeout_uus(reply_delay_uus));
     dwt_setpreambledetecttimeout(DELAYED_RX_PREAMBLE_TIMEOUT_PAC);
@@ -167,7 +160,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                 request->seq,
                                 request->round_index);
         }
-#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_CLICKER)
         LOG_WRN("UWB initiator RESP RX failed: ret=%d status=%u seq=%u round=%u timeout_ms=%u reply_delay_uus=%u",
                 ret,
                 range_status,
@@ -245,7 +238,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                 request->round_index,
                                 final_tx_time);
         }
-#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_CLICKER)
             LOG_WRN("UWB initiator FINAL TX start failed: ret=%d anchor=0x%016llx seq=%u round=%u reply_delay_uus=%u",
                     ret,
                     (unsigned long long)request->responder_id,
@@ -333,7 +326,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                             quality);
     }
 
-#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_CLICKER)
     LOG_INF("UWB initiator RESP RX ok: anchor=0x%016llx seq=%u round=%u quality=%u rsl=%d dBm poll_tx=0x%08x resp_rx=0x%08x",
             (unsigned long long)response.header.responder_id,
             request->seq,
@@ -350,13 +343,6 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             final_tx_time,
             final.final_tx_ts_32,
             request->skip_responder_report ? 1u : 0u);
-    if (!request->skip_responder_report) {
-        dwm3000_debug_event(false,
-                            "DS_TWR_TIMING",
-                            "role=initiator_report report_rx_after_uus=0 report_rx_timeout_uus=%u wait_timeout_ms=%u",
-                            REPORT_RX_TIMEOUT_UUS,
-                            REPORT_RX_TIMEOUT_MS);
-    }
 #endif
 
     if (request->skip_responder_report) {
@@ -370,7 +356,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
                                     request->seq,
                                     request->round_index);
             }
-#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_CLICKER)
             LOG_WRN("UWB initiator FINAL TX complete failed: ret=%d anchor=0x%016llx seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
                     ret,
                     (unsigned long long)request->responder_id,
@@ -386,7 +372,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             result->status = RANGE_INTERNAL_ERROR;
             return ret;
         }
-#if defined(CONFIG_IMEC_ML_CLICKER) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_CLICKER)
         LOG_INF("UWB initiator FINAL TX complete: anchor=0x%016llx seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
                 (unsigned long long)response.header.responder_id,
                 request->seq,
@@ -413,13 +399,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             int diag_ret;
 
             k_busy_wait(CLICKER_DIAG_TX_AFTER_FINAL_DELAY_US);
-            dwm3000_debug_event(false,
-                                "CLICKER_DIAG_TX",
-                                "anchor=0x%016llx seq=%u round=%u delay_after_final_us=%u",
-                                (unsigned long long)response.header.responder_id,
-                                request->seq,
-                                request->round_index,
-                                CLICKER_DIAG_TX_AFTER_FINAL_DELAY_US);
+
             diag_ret = send_clicker_diag(request,
                                          &response,
                                          &final,
@@ -605,7 +585,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
                         &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
-                        NULL, NULL, NULL, NULL, false, true);
+                        NULL, NULL, NULL, NULL, false);
     if (ret < 0) {
         if (result != NULL) {
             result->quality = quality;
@@ -626,7 +606,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
         if (ret == -ETIMEDOUT) {
             return -ETIMEDOUT;
         }
-#if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_ANCHOR)
         LOG_WRN("UWB responder POLL RX error: ret=%d sys_status=0x%08x failure=%s timeout_ms=%u",
                 ret,
                 status,
@@ -760,13 +740,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                             quality,
                             reply_delay_uus);
     }
-    dwm3000_debug_event(false,
-                        "DS_TWR_TIMING",
-                        "role=responder reply_delay_uus=%u final_rx_after_uus=%u final_rx_timeout_uus=%u wait_timeout_ms=%u",
-                        reply_delay_uus,
-                        ds_twr_rx_after_tx_delay_uus(reply_delay_uus),
-                        ds_twr_rx_timeout_uus(reply_delay_uus),
-                        ds_twr_rx_wait_timeout_ms(reply_delay_uus));
+
 
     capture_final_rsl = expected->capture_rsl;
     ret = receive_frame(ds_twr_rx_wait_timeout_ms(reply_delay_uus), &status,
@@ -777,8 +751,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         result != NULL ? &result->clock_offset_sampled : NULL,
                         result != NULL ? &result->carrier_integrator : NULL,
                         result != NULL ? &result->carrier_integrator_sampled : NULL,
-                        capture_final_rsl,
-                        true);
+                        capture_final_rsl);
     if (ret < 0) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=final-rx ret=%d sys=0x%08x fail=%u now=%u seq=%u round=%u\n",
@@ -789,7 +762,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 poll.seq,
                                 poll.round_index);
         }
-#if defined(CONFIG_IMEC_ML_ANCHOR) || defined(CONFIG_IMEC_HIGH_DEBUG)
+#if defined(CONFIG_IMEC_ML_ANCHOR)
         LOG_WRN("UWB responder FINAL RX failed: ret=%d sys_status=0x%08x failure=%s seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
                 ret,
                 status,

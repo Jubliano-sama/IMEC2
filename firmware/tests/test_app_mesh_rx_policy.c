@@ -27,20 +27,15 @@ static void test_transmitter_image_keeps_other_mesh_packets(void)
 
 static void test_permanent_receiver_roles_always_use_uwb_rx(void)
 {
-    assert(app_mesh_rx_policy_role_uses_uwb_rx(false, true, false, false));
-    assert(app_mesh_rx_policy_role_uses_uwb_rx(false, true, true, false));
+    assert(app_mesh_rx_policy_role_uses_uwb_rx(true, false, false));
+    assert(app_mesh_rx_policy_role_uses_uwb_rx(true, true, false));
 }
 
 static void test_scheduled_leaf_uses_rx_only_with_channel9_schedule(void)
 {
-    assert(!app_mesh_rx_policy_role_uses_uwb_rx(false, false, true, false));
-    assert(app_mesh_rx_policy_role_uses_uwb_rx(false, false, true, true));
-    assert(!app_mesh_rx_policy_role_uses_uwb_rx(false, false, false, true));
-}
-
-static void test_focused_anchor_logging_disables_background_rx(void)
-{
-    assert(!app_mesh_rx_policy_role_uses_uwb_rx(true, true, true, true));
+    assert(!app_mesh_rx_policy_role_uses_uwb_rx(false, true, false));
+    assert(app_mesh_rx_policy_role_uses_uwb_rx(false, true, true));
+    assert(!app_mesh_rx_policy_role_uses_uwb_rx(false, false, true));
 }
 
 static void test_gateway_ch9_rx_recovers_from_sfd_timeout(void)
@@ -248,7 +243,6 @@ int main(void)
     test_transmitter_image_keeps_other_mesh_packets();
     test_permanent_receiver_roles_always_use_uwb_rx();
     test_scheduled_leaf_uses_rx_only_with_channel9_schedule();
-    test_focused_anchor_logging_disables_background_rx();
     test_gateway_ch9_rx_recovers_from_sfd_timeout();
     test_gateway_ch9_rx_recovers_from_corrupt_frame();
     test_gateway_ch9_rx_does_not_recover_from_window_timeout();

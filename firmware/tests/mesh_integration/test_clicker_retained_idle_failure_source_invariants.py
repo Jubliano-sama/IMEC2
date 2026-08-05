@@ -6,7 +6,6 @@ import re
 ROOT = Path(__file__).resolve().parents[2]
 CLICKER = (ROOT / "app/src/app_clicker.c").read_text(encoding="utf-8")
 BOARD = (ROOT / "app/src/app_board.c").read_text(encoding="utf-8")
-HIGH_DEBUG = (ROOT / "app/src/app_high_debug.c").read_text(encoding="utf-8")
 
 
 def function_body(name: str, source: str = CLICKER) -> str:
@@ -148,22 +147,19 @@ assert action_reconnect < action_switch, (
 )
 
 terminal_hold = function_body("clicker_hold_terminal_status")
-debug_hold = terminal_hold.index("stage1_led_hold_click_result(")
 product_hold = terminal_hold.index(
-    "k_msleep(STATUS_PASS_DURATION_MS)", debug_hold
+    "k_msleep(STATUS_PASS_DURATION_MS)"
 )
-assert debug_hold < product_hold, (
-    "the production hold must remain the fallback when the stage-1 debug "
-    "helper does not own the result LEDs"
+assert product_hold >= 0, (
+    "the production hold must retain its terminal result"
 )
 
 normal_case = action_handler[
     action_handler.index("case BUTTON_ACTION_NORMAL_CLICK:") :
     action_handler.index("case BUTTON_ACTION_SELF_TEST_ARMED:")
 ]
-assert normal_case.count("clicker_hold_terminal_status(ret)") >= 2, (
-    "both the stage-0 and production normal-click exits must visibly retain "
-    "their terminal result"
+assert normal_case.count("clicker_hold_terminal_status(ret)") >= 1, (
+    "the production normal-click exit must visibly retain its terminal result"
 )
 self_test_case = action_handler[
     action_handler.index("case BUTTON_ACTION_SELF_TEST_START:") :
@@ -197,11 +193,5 @@ assert "return status_leds_connect();" in board_init, (
     "cold initialization and retained-idle reconnection must share the same "
     "GPIO configuration boundary"
 )
-
-debug_hold_helper = function_body("stage1_led_hold_click_result", HIGH_DEBUG)
-assert "return false;" in debug_hold_helper
-assert debug_hold_helper.index("k_msleep(hold_ms)") < debug_hold_helper.index(
-    "return true;"
-), "stage-1 ownership must be reported only after its complete hold"
 
 print("clicker retained-idle failure source invariants passed")

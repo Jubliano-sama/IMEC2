@@ -37,7 +37,7 @@ config IMEC_CLICKER_SYSTEMOFF_RAM_RETENTION
 
 config IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
     bool "Keep the clicker in retained system-on idle"
-    default y if IMEC_HIGH_DEBUG && (IMEC_ROLE_TAG || IMEC_ROLE_CLICKER)
+    default y
     help
       Deployment default for clicker idle. Keep the clicker booted, park board
       power sinks, put the DWM3000 into retained sleep, and let the kernel sleep
@@ -239,49 +239,20 @@ config IMEC_DS_TWR_RTT_DEBUG
 
 endmenu
 
-menu "IMEC high-debug bring-up"
 
-config IMEC_HIGH_DEBUG
-    bool "Enable high-debug staged bring-up firmware"
+config IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
+    int "Anchor low-duty UWB wake scan interval in milliseconds"
+    default 380
+    range 1 60000
     help
-      Enables bench-oriented logging, counters, command parser, and stage
-      behavior. Production role defaults are unchanged when this is disabled.
+      Interval between low-duty anchor wake-scan attempts.
 
-config IMEC_BENCH_STAGE
-    int "High-debug bench stage"
-    range 0 3
-    default 0
-    depends on IMEC_HIGH_DEBUG
+config IMEC_ANCHOR_UWB_SCAN_RX_US
+    int "Anchor low-duty UWB wake scan receive slice in microseconds"
+    default 3000
+    range 1 1000000
     help
-      Hardware bring-up stage: 0 is tag-only, 1 is one tag plus one anchor,
-      2 is one tag plus multiple anchors, and 3 adds the gateway.
-
-config IMEC_ROLE_TAG
-    bool "Build as tag alias"
-    depends on IMEC_HIGH_DEBUG
-    help
-      Bench alias for the existing clicker role.
-
-config IMEC_ROLE_CLICKER
-    bool "Build as clicker"
-    depends on IMEC_HIGH_DEBUG
-    help
-      Existing clicker role. The tag alias maps to this same role.
-
-config IMEC_ROLE_ANCHOR
-    bool "Build as anchor"
-    depends on IMEC_HIGH_DEBUG
-
-config IMEC_ROLE_GATEWAY
-    bool "Build as gateway"
-    depends on IMEC_HIGH_DEBUG
-
-config IMEC_RTT_LOGS
-    bool "Use RTT for high-debug human logs"
-    depends on IMEC_HIGH_DEBUG
-    help
-      Route human-readable logs to RTT. Gateway high-debug builds may keep RTT
-      as a bench-side backup while the PC-facing runtime link uses Bluetooth.
+      Active UWB receive time inside each low-duty anchor wake-scan attempt.
 
 config IMEC_GATEWAY_BLE
     bool "Use connected Bluetooth for gateway PC communication"
@@ -292,112 +263,3 @@ config IMEC_GATEWAY_BLE
       notifies COBS-delimited gateway packets back to the PC. This replaces the
       old app-side serial gateway transport. Firmware logs remain available
       through RTT and are not carried over BLE.
-
-config IMEC_GATEWAY_BLE_CONNECTIVITY_TEST
-    bool "Build only the gateway Bluetooth connectivity test"
-    depends on IMEC_GATEWAY_BLE
-    help
-      Boots only a BLE range-test path. It does not initialize the DWM3000,
-      UWB mesh, command routing, buttons, ADC, or high-debug staged bring-up
-      flow. The default image transmits a nonconnectable IMEC range-test
-      advertisement.
-
-config IMEC_GATEWAY_BLE_RANGE_SCANNER
-    bool "Build the gateway Bluetooth connectivity test as a range scanner"
-    depends on IMEC_GATEWAY_BLE_CONNECTIVITY_TEST && BT_OBSERVER
-    help
-      Switches the BLE-only connectivity image from range-test advertising to
-      passive scanning. The scanner lights status LED0 green while it has seen
-      the matching IMEC range-test advertisement within the last second.
-
-config IMEC_STAGE0_SEND_WAKE_CLAIM_ON_CLICK
-    bool "Send one WAKE_CLAIM train on Stage 0 short press"
-    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 0
-    help
-      Stage 0 normally stays tag-only. Enable this only when intentional RF
-      wake-claim transmission is wanted without requiring an anchor.
-
-config IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE
-    bool "Allow one-anchor Stage 1 bench ranging"
-    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1
-    help
-      Bench-only diagnostic path that lets a Stage 1 clicker schedule and range
-      one anchor. Production normal-click acceptance remains three unique
-      RANGE_OK anchors.
-
-config IMEC_STAGE1_TAG_CONTINUOUS_WAKE_CLAIMS
-    bool "Continuously transmit Stage 1 tag wake claims"
-    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_TAG
-    help
-      Bench-only diagnostic path that bypasses button/system-off behavior and
-      repeatedly transmits normal Stage 1 WAKE_CLAIM trains from boot. This is
-      intended for anchor RX bring-up with no manual button presses.
-
-config IMEC_STAGE1_TAG_CONTINUOUS_CLICK_SESSIONS
-    bool "Continuously run Stage 1 diagnostic click sessions"
-    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_TAG
-    depends on IMEC_STAGE1_ALLOW_SINGLE_ANCHOR_RANGE
-    help
-      Bench-only diagnostic path for the tag_stage1_click_spam preset. It
-      repeatedly runs the normal click-session path from boot, including the
-      wake claim, discovery, one-anchor diagnostic schedule, DS-TWR, and the
-      resulting anchor report path. This image never enables a deployable mesh
-      preset and does not use the physical button or clicker idle path.
-
-config IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN
-    bool "Use high-duty Stage 1 anchor UWB wake scan"
-    depends on IMEC_HIGH_DEBUG && IMEC_BENCH_STAGE = 1 && IMEC_ROLE_ANCHOR
-    help
-      Bench-only diagnostic path that keeps the Stage 1 anchor listening for
-      wake claims with an 80 ms RX window in each 400 ms wake-train period. The
-      scan uses one software-bounded open RX window with the hardware preamble
-      timeout disabled, matching the known-working DS-TWR responder listen style.
-      It retries immediately after partial/bad wake activity instead of applying
-      the normal false-wake cooldown. Production and normal high-debug low-duty
-      scan timing are unchanged when this is off.
-
-config IMEC_STAGE1_ANCHOR_FOCUSED_RX_LOGS
-    bool "Reduce repetitive Stage 1 anchor RX scan logs"
-    depends on IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN
-    default y
-    help
-      Bench-only log filter for high-duty anchor scans. It keeps claim,
-      arbitration, decode, and periodic diagnostics visible while suppressing
-      per-millisecond RX start, SFD-timeout, and sleep/wake chatter that can
-      overflow RTT and hide the protocol events under test.
-
-config IMEC_ANCHOR_UWB_SCAN_INTERVAL_MS
-    int "Anchor low-duty UWB wake scan interval in milliseconds"
-    default 380
-    range 1 60000
-    help
-      Interval between low-duty anchor wake-scan attempts. This does not apply
-      when the Stage 1 high-duty continuous scan option is enabled.
-
-config IMEC_ANCHOR_UWB_SCAN_RX_US
-    int "Anchor low-duty UWB wake scan receive slice in microseconds"
-    default 3000
-    range 1 1000000
-    help
-      Active UWB receive time inside each low-duty anchor wake-scan attempt.
-
-config IMEC_STAGE1_ANCHOR_SCAN_ALLOW_OVER_RX_BUDGET
-    bool "Allow Stage 1 anchor wake scan above the calibrated RX duty budget"
-    default n
-    help
-      Debug-only escape hatch for bring-up scans that intentionally trade
-      anchor sleep current for wake reliability measurements.
-
-config IMEC_HIGH_DEBUG_COUNTER_PERIOD_MS
-    int "High-debug counter dump period in milliseconds"
-    depends on IMEC_HIGH_DEBUG
-    default 30000
-    range 1000 3600000
-
-config IMEC_HIGH_DEBUG_COMMAND_POLL_MS
-    int "High-debug command poll period in milliseconds"
-    depends on IMEC_HIGH_DEBUG
-    default 20
-    range 5 1000
-
-endmenu

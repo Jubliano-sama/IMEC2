@@ -142,11 +142,6 @@ static int send_range_frame_until(const uint8_t *frame,
     }
 
     driver_stats.tx_starts++;
-    dwm3000_debug_event(false,
-                        "UWB_TX_START",
-                        "frame_len=%u tx_mode=0x%02x",
-                        (unsigned int)frame_len,
-                        tx_mode);
     ret = check_device_fatal_status("tx-preflight");
     if (ret < 0) {
         driver_stats.tx_failures++;
@@ -164,11 +159,6 @@ static int send_range_frame_until(const uint8_t *frame,
                 ret,
                 (unsigned int)frame_len,
                 tx_mode);
-        dwm3000_debug_event(true,
-                            "UWB_TX_DONE",
-                            "status=write-fail ret=%d frame_len=%u",
-                            ret,
-                            (unsigned int)frame_len);
         return ret;
     }
 
@@ -195,12 +185,6 @@ static int send_range_frame_until(const uint8_t *frame,
         if (host_now_ms >= absolute_deadline_ms ||
             absolute_deadline_ms - host_now_ms <= lead_ms) {
             driver_stats.tx_failures++;
-            dwm3000_debug_event(
-                true,
-                "UWB_TX_DONE",
-                "status=deadline-before-start frame_len=%u deadline_ms=%llu",
-                (unsigned int)frame_len,
-                (unsigned long long)absolute_deadline_ms);
             return -ETIMEDOUT;
         }
 
@@ -252,11 +236,6 @@ static int send_range_frame_until(const uint8_t *frame,
         LOG_WRN("DWM3000 TX start failed: frame_len=%u tx_mode=0x%02x",
                 (unsigned int)frame_len,
                 effective_tx_mode);
-        dwm3000_debug_event(true,
-                            "UWB_TX_DONE",
-                            "status=start-fail frame_len=%u tx_mode=0x%02x",
-                            (unsigned int)frame_len,
-                            effective_tx_mode);
         return -EIO;
     }
     return 0;
@@ -274,11 +253,6 @@ static int start_prepared_range_frame(size_t frame_len, uint8_t tx_mode)
     int ret;
 
     driver_stats.tx_starts++;
-    dwm3000_debug_event(false,
-                        "UWB_TX_START",
-                        "frame_len=%u tx_mode=0x%02x prepared=1",
-                        (unsigned int)frame_len,
-                        tx_mode);
     ret = check_device_fatal_status("prepared-tx-preflight");
     if (ret < 0) {
         driver_stats.tx_failures++;
@@ -309,11 +283,6 @@ static int start_prepared_range_frame(size_t frame_len, uint8_t tx_mode)
         LOG_WRN("DWM3000 prepared TX start failed: frame_len=%u tx_mode=0x%02x",
                 (unsigned int)frame_len,
                 tx_mode);
-        dwm3000_debug_event(true,
-                            "UWB_TX_DONE",
-                            "status=start-fail frame_len=%u tx_mode=0x%02x prepared=1",
-                            (unsigned int)frame_len,
-                            tx_mode);
         return -EIO;
     }
 }
@@ -352,7 +321,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          bool *clock_offset_sampled,
                          int32_t *carrier_integrator,
                          bool *carrier_integrator_sampled,
-                         bool capture_rsl, bool log_events)
+                         bool capture_rsl)
 {
     uint64_t observed_at_ms = 0u;
     int ret;
@@ -362,19 +331,12 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     }
     *frame_len = 0u;
     driver_stats.rx_starts++;
-    if (log_events) {
-        dwm3000_debug_event(false,
-                            "UWB_RX_START",
-                            "timeout_ms=%u buffer_len=%u",
-                            timeout_ms,
-                            (unsigned int)buffer_len);
-    }
-    ret = wait_status_internal(SYS_STATUS_RXFCG_BIT_MASK |
+        ret = wait_status_internal(SYS_STATUS_RXFCG_BIT_MASK |
                                SYS_STATUS_ALL_RX_TO |
                                DWM3000_RX_ERROR_STATUS_MASK,
                                timeout_ms,
                                status,
-                               log_events,
+                               true,
                                &observed_at_ms);
     if (ret < 0) {
         if (ret == -ETIMEDOUT) {
@@ -384,18 +346,6 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         }
         if (!radio_state_unknown) {
             dwt_forcetrxoff();
-        }
-        if (log_events) {
-            const char *event = ret == -ECANCELED ? "UWB_RX_ABORT" :
-                                ret == -ETIMEDOUT ? "UWB_RX_TIMEOUT" :
-                                "UWB_RX_ERROR";
-
-            dwm3000_debug_event(ret != -ECANCELED,
-                                event,
-                                "ret=%d timeout_ms=%u sys_status=0x%08x",
-                                ret,
-                                timeout_ms,
-                                status == NULL ? 0u : *status);
         }
         return ret;
     }
@@ -412,13 +362,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         ret = clear_status_checked(SYS_STATUS_ALL_RX_TO |
                                        DWM3000_RX_ERROR_STATUS_MASK,
                                    "rx-error-clear");
-        if (log_events) {
-            dwm3000_debug_event(true,
-                                "UWB_RX_DONE",
-                                "status=error sys_status=0x%08x",
-                                *status);
-        }
-        return ret < 0 ? ret : -EIO;
+                return ret < 0 ? ret : -EIO;
     }
 
     /*
@@ -465,24 +409,11 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
     if (ret < 0) {
         driver_stats.rx_failures++;
         dwt_forcetrxoff();
-        if (log_events) {
-            dwm3000_debug_event(true,
-                                "UWB_RX_DONE",
-                                "status=invalid-frame-length sys_status=0x%08x",
-                                *status);
-        }
-        return ret;
+                return ret;
     }
 
     driver_stats.rx_dones++;
-    if (log_events) {
-        dwm3000_debug_event(false,
-                            "UWB_RX_DONE",
-                            "status=ok sys_status=0x%08x frame_len=%u",
-                            *status,
-                            (unsigned int)*frame_len);
-    }
-    return 0;
+        return 0;
 }
 
 static int receive_response(const struct dwm3000_range_request *request,
@@ -580,7 +511,7 @@ static int receive_report(const struct dwm3000_range_request *request,
 
     ret = receive_frame(REPORT_RX_TIMEOUT_MS, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, true);
+                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, false);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->responder_id = responder_id;
@@ -756,14 +687,6 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
     dwt_setrxaftertxdelay(0u);
     dwt_setrxtimeout(0u);
     dwt_setpreambledetecttimeout(CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
-    dwm3000_debug_event(false,
-                        "CLICKER_DIAG_RX",
-                        "short=0x%04x seq=%u round=%u timeout_ms=%u preamble_timeout_pac=%u",
-                        poll->initiator_short_addr,
-                        poll->seq,
-                        poll->round_index,
-                        CLICKER_DIAG_RX_TIMEOUT_MS,
-                        CLICKER_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
     clear_all_events();
     ret = start_immediate_rx();
     if (ret < 0) {
@@ -784,8 +707,7 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
                         NULL,
                         NULL,
                         NULL,
-                        false,
-                        true);
+                        false);
     if (ret < 0) {
         if (result != NULL) {
             result->clicker_diag_dropped = true;
@@ -876,14 +798,6 @@ static int receive_anchor_diag(const struct dwm3000_range_request *request,
     dwt_setrxaftertxdelay(0u);
     dwt_setrxtimeout(0u);
     dwt_setpreambledetecttimeout(ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
-    dwm3000_debug_event(false,
-                        "ANCHOR_DIAG_RX",
-                        "anchor=0x%016llx seq=%u round=%u timeout_ms=%u preamble_timeout_pac=%u",
-                        (unsigned long long)request->responder_id,
-                        request->seq,
-                        request->round_index,
-                        ANCHOR_DIAG_RX_TIMEOUT_MS,
-                        ANCHOR_DIAG_RX_PREAMBLE_TIMEOUT_PAC);
     clear_all_events();
     ret = start_immediate_rx();
     if (ret < 0) {
@@ -904,8 +818,7 @@ static int receive_anchor_diag(const struct dwm3000_range_request *request,
                         NULL,
                         NULL,
                         NULL,
-                        false,
-                        true);
+                        false);
     if (ret < 0) {
         return ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
     }
@@ -993,8 +906,7 @@ static int receive_anchor_diag_fragments(const struct dwm3000_range_request *req
                             NULL,
                             NULL,
                             NULL,
-                            false,
-                            true);
+                            false);
         if (ret < 0) {
             last_error = ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
             if (ret == -ETIMEDOUT) {

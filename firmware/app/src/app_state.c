@@ -406,13 +406,7 @@ int local_anchor_discovery_slot(uint8_t slot_count, uint8_t *anchor_slot)
     if (anchor_slot == NULL || slot_count == 0u) {
         return PROTO_ERR_ARG;
     }
-#if IMEC_HIGH_DEBUG_ANCHOR_SLOT_ENABLED
-    if ((uint32_t)IMEC_HIGH_DEBUG_ANCHOR_SLOT >= slot_count) {
-        return PROTO_ERR_MALFORMED;
-    }
-    *anchor_slot = (uint8_t)IMEC_HIGH_DEBUG_ANCHOR_SLOT;
-    return PROTO_OK;
-#elif defined(CONFIG_IMEC_ML_ANCHOR)
+#if defined(CONFIG_IMEC_ML_ANCHOR)
     return uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, anchor_slot);
 #else
     uint32_t epoch = 0u;
@@ -932,9 +926,4 @@ void sleep_until_us(int64_t target_us)
     if (sub_ms_us > 0u && k_uptime_get() <= target_ms) {
         sleep_precise_us(sub_ms_us);
     }
-}
-
-int app_state_init(void)
-{
-    return 0;
 }

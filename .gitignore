@@ -1,6 +1,7 @@
 # West workspace metadata and downloaded dependencies
 .codex
 .west/
+.zephyr/
 .venv/
 .uv-cache/
 bootloader/

@@ -128,14 +128,12 @@ extern "C" {
     X("app_mesh_report.c", "mesh_route_waiting_work_handler", "mesh_route") \
     X("app_mesh_report.c", "mesh_event_negotiation_retry_work_handler", "mesh_route") \
     X("app_mesh_report.c", "mesh_uwb_rx_work_handler", "mesh_route")    \
-    X("app_gateway_ble.c", "gateway_ble_range_led_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_persistence_retry_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_collection_eack_work_handler", "mesh_route") \
     X("app_gateway_ble.c", "gateway_command_result_timeout_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_rx_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_stream_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_recovery_work_handler", "system_workqueue") \
-    X("app_gateway_ble.c", "gateway_ble_range_scan_cb", "bt_rx")              \
     X("app_gateway_ble.c", "gateway_ble_tx_complete", "bt_rx")                \
     X("app_gateway_ble.c", "gateway_ble_connected", "bt_rx")                  \
     X("app_gateway_ble.c", "gateway_ble_disconnected", "bt_rx")                \

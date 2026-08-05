@@ -34,9 +34,6 @@ enum gateway_ble_stream_reservation_result {
 };
 
 int gateway_ble_init(void);
-#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
-void gateway_ble_connectivity_test_run(void);
-#endif
 int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len);
 void gateway_ble_get_status(struct gateway_ble_status *status);
 bool gateway_ble_uwb_quiet_active(void);

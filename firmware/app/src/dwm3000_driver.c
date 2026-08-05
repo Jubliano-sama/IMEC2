@@ -24,11 +24,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-#define DWM3000_DRIVER_LOG_LEVEL LOG_LEVEL_DBG
-#else
 #define DWM3000_DRIVER_LOG_LEVEL LOG_LEVEL_INF
-#endif
 
 LOG_MODULE_REGISTER(dwm3000_driver, DWM3000_DRIVER_LOG_LEVEL);
 
@@ -46,12 +42,6 @@ static atomic_t receive_abort_enabled;
 #define DWM3000_DS_TWR_RTT_DEBUG_ENABLED \
     (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) || \
      IS_ENABLED(CONFIG_IMEC_DS_TWR_RTT_DEBUG))
-
-static bool focused_anchor_rx_logs_enabled(void)
-{
-    return DEVICE_ROLE == ROLE_ANCHOR &&
-           IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_FOCUSED_RX_LOGS);
-}
 
 #ifndef GATEWAY_ID
 #define GATEWAY_ID 0x9999888877776666ull

@@ -7,11 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
-#define DWM3000_SDK_PORT_LOG_LEVEL LOG_LEVEL_DBG
-#else
 #define DWM3000_SDK_PORT_LOG_LEVEL LOG_LEVEL_INF
-#endif
 
 LOG_MODULE_REGISTER(dwm3000_sdk_port, DWM3000_SDK_PORT_LOG_LEVEL);
 

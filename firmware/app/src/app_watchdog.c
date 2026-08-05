@@ -54,7 +54,6 @@ static uint32_t lease_age_ms(uint32_t now_ms, atomic_t *lease)
 static bool radio_lease_required(void)
 {
     return IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-           !IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST) &&
            DEVICE_ROLE != ROLE_CLICKER;
 }
 

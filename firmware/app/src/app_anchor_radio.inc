@@ -392,12 +392,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
 
         ret = uwb_range_schedule_sample_at(schedule, sample_index, &anchor_id, &seq);
         if (ret != PROTO_OK || anchor_id != DEVICE_ID) {
-            high_debug_log_event("DS_TWR_POLL_RX",
-                                 "sample=%u/%u expected_anchor=0x%016llx local_anchor=0x%016llx result=wrong-target",
-                                 (unsigned int)(sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 (unsigned long long)anchor_id,
-                                 (unsigned long long)DEVICE_ID);
             continue;
         }
 
@@ -466,28 +460,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                 (unsigned int)total_samples,
                 round_index,
                 seq);
-        stage1_led_phase(STAGE1_LED_PHASE_RANGE);
-        stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
-        high_debug_log_event("DS_TWR_POLL_RX",
-                             "listen=1 clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u schedule_rx_ms=%lld target_us=%lld listen_start_ms=%lld now_ms=%lld deadline_ms=%lld first_poll_ms=%u stride_us=%u",
-                             (unsigned long long)schedule->clicker_id,
-                             schedule->click_event_id,
-                             schedule->attempt_index,
-                             uwb_schedule_burst_id(schedule->click_event_id,
-                                                   schedule->attempt_index),
-                             (unsigned int)(sample_index + 1u),
-                             (unsigned int)total_samples,
-                             round_index,
-                             seq,
-                             (long long)schedule_rx_ms,
-                             (long long)scheduled_range_sample_target_us(schedule_rx_ms,
-                                                                         schedule,
-                                                                         sample_index),
-                             (long long)listen_start_ms,
-                             (long long)k_uptime_get(),
-                             (long long)listen_deadline_ms,
-                             schedule->first_poll_delay_ms,
-                             schedule->exchange_stride_us);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DS_SAMPLE_ARM evt=%u attempt=%u sample=%u/%u round=%u seq=%u target_us=%lld start=%lld now=%u deadline=%lld\n",
                                 schedule->click_event_id,
@@ -521,18 +493,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                                                          &range_result);
             if (ret == -EAGAIN) {
                 if (range_result.status == RANGE_WRONG_TARGET) {
-                    high_debug_log_event("DS_TWR_POLL_RX",
-                                         "result=wrong-target expected_clicker=0x%016llx observed_clicker=0x%016llx expected_anchor=0x%016llx observed_anchor=0x%016llx event_seq=%u observed_event_seq=%u expected_round=%u observed_round=%u expected_seq=%u observed_seq=%u",
-                                         (unsigned long long)schedule->clicker_id,
-                                         (unsigned long long)range_result.initiator_id,
-                                         (unsigned long long)DEVICE_ID,
-                                         (unsigned long long)range_result.responder_id,
-                                         schedule->click_event_id,
-                                         range_result.session_id,
-                                         round_index,
-                                         range_result.round_index,
-                                         seq,
-                                         range_result.seq);
                     LOG_DBG("anchor ignored nonmatching UWB POLL: expected_clicker=0x%016llx observed_clicker=0x%016llx expected_anchor=0x%016llx observed_anchor=0x%016llx event_seq=%u observed_event_seq=%u expected_round=%u observed_round=%u expected_seq=%u observed_seq=%u",
                             (unsigned long long)schedule->clicker_id,
                             (unsigned long long)range_result.initiator_id,
@@ -572,9 +532,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             if (range_result.status == RANGE_OK || !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_RX_TIMEOUT;
             }
-            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, range_result.status);
-            stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
             LOG_WRN("anchor scheduled UWB sample did not start: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u ret=%d",
                     (unsigned long long)schedule->clicker_id,
                     schedule->click_event_id,
@@ -583,24 +541,9 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     round_index,
                     seq,
                     ret);
-            high_debug_log_event("RANGE_FAIL",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s exchange_started=0",
-                                 (unsigned long long)schedule->clicker_id,
-                                 schedule->click_event_id,
-                                 schedule->attempt_index,
-                                 uwb_schedule_burst_id(schedule->click_event_id,
-                                                       schedule->attempt_index),
-                                 (unsigned int)(sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 round_index,
-                                 seq,
-                                 ret,
-                                 range_status_name(range_result.status));
         } else if (ret == 0 && range_result.status == RANGE_OK) {
-            HIGH_DEBUG_COUNTER_INC(ds_twr_successes);
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, RANGE_OK);
             anchor_range_window_record(&window_report, &range_result);
-            stage1_led_result(STAGE1_LED_RESULT_OK);
             LOG_INF("anchor scheduled UWB sample complete: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u distance_mm=%d quality=%u count=%u",
                     (unsigned long long)range_result.initiator_id,
                     range_result.session_id,
@@ -611,35 +554,16 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     range_result.distance_mm,
                     range_result.quality,
                     window_report.sample_count);
-            high_debug_log_event("RANGE_OK",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u anchor=0x%016llx distance_mm=%d quality=%u",
-                                 (unsigned long long)range_result.initiator_id,
-                                 range_result.session_id,
-                                 schedule->attempt_index,
-                                 uwb_schedule_burst_id(schedule->click_event_id,
-                                                       schedule->attempt_index),
-                                 (unsigned int)(sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 round_index,
-                                 range_result.seq,
-                                 (unsigned long long)range_result.responder_id,
-                                 range_result.distance_mm,
-                                 range_result.quality);
         } else {
             if (range_result.status == RANGE_OK || !range_status_valid(range_result.status)) {
                 range_result.status = RANGE_INTERNAL_ERROR;
             }
-            HIGH_DEBUG_COUNTER_INC(ds_twr_failures);
             if (range_result.status == RANGE_TIMING_INVALID) {
-                HIGH_DEBUG_COUNTER_INC(ds_twr_timing_rejects);
             }
             (void)uwb_anchor_note_range_result(&anchor_uwb_session, range_result.status);
             if (range_result.initiator_id != 0u && range_result.responder_id != 0u) {
                 anchor_range_window_record(&window_report, &range_result);
             }
-            stage1_led_result(range_result.status == RANGE_RX_TIMEOUT ?
-                              STAGE1_LED_RESULT_TIMEOUT :
-                              STAGE1_LED_RESULT_ERROR);
             LOG_WRN("anchor scheduled UWB sample failed: clicker=0x%016llx event_seq=%u sample=%u/%u round=%u seq=%u ret=%d status=%s(%u)",
                     (unsigned long long)schedule->clicker_id,
                     schedule->click_event_id,
@@ -650,21 +574,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                     ret,
                     range_status_name(range_result.status),
                     range_result.status);
-            high_debug_log_event(range_result.status == RANGE_TIMING_INVALID ?
-                                 "RANGE_TIMING_REJECT" : "RANGE_FAIL",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u burst_id=%u sample=%u/%u round=%u seq=%u ret=%d reason=%s status=%u",
-                                 (unsigned long long)schedule->clicker_id,
-                                 schedule->click_event_id,
-                                 schedule->attempt_index,
-                                 uwb_schedule_burst_id(schedule->click_event_id,
-                                                       schedule->attempt_index),
-                                 (unsigned int)(sample_index + 1u),
-                                 (unsigned int)total_samples,
-                                 round_index,
-                                 seq,
-                                 ret,
-                                 range_status_name(range_result.status),
-                                 range_result.status);
         }
     }
 
@@ -693,12 +602,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
                 schedule->click_event_id,
                 ANCHOR_SCHEDULE_NO_POLL_GUARD_MS,
                 (unsigned int)total_samples);
-        high_debug_log_event("RANGE_FAIL",
-                             "clicker=0x%016llx event_seq=%u attempt=%u reason=no-poll guard_ms=%u",
-                             (unsigned long long)schedule->clicker_id,
-                             schedule->click_event_id,
-                             schedule->attempt_index,
-                             ANCHOR_SCHEDULE_NO_POLL_GUARD_MS);
     } else if (poll_received &&
                schedule->diagnostics_required != UWB_RANGE_SCHEDULE_DIAGNOSTICS_OMITTED) {
 #if defined(CONFIG_IMEC_ML_ANCHOR)
@@ -721,14 +624,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             *report_status = report_ret;
         }
         if (report_ret < 0) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            high_debug_log_event(
-                "RANGE_REPORT_FAIL_CLOSED",
-                "clicker=0x%016llx event_seq=%u attempt=%u ret=%d",
-                (unsigned long long)schedule->clicker_id,
-                schedule->click_event_id,
-                schedule->attempt_index,
-                report_ret);
             LOG_ERR("anchor accepted range could not obtain durable report ownership: event=%u ret=%d",
                     schedule->click_event_id,
                     report_ret);
@@ -982,31 +877,11 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
     selected_claim = *first_claim;
     selected_rx_ms = first_rx_ms;
-    HIGH_DEBUG_COUNTER_INC(wake_claim_rx);
-    stage1_led_phase(STAGE1_LED_PHASE_WAKE);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
-    high_debug_log_event("WAKE_CLAIM_RX",
-                         "clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx nonce=0x%016llx quality=%u",
-                         (unsigned long long)first_claim->clicker_id,
-                         first_claim->click_event_id,
-                         first_claim->attempt_index,
-                         (unsigned long long)first_claim->priority_id,
-                         (unsigned long long)first_claim->nonce,
-                         first_quality);
     ret = uwb_anchor_accept_wake_claim(&anchor_uwb_session,
                                        first_claim,
                                        (uint32_t)first_rx_ms,
                                        &decision);
     if (ret != PROTO_OK) {
-        HIGH_DEBUG_COUNTER_INC(wake_claim_rejected);
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
-        high_debug_log_event("WAKE_CLAIM_REJECT",
-                             "clicker=0x%016llx event_seq=%u attempt=%u reason=%s ret=%d",
-                             (unsigned long long)first_claim->clicker_id,
-                             first_claim->click_event_id,
-                             first_claim->attempt_index,
-                             claim_decision_name(decision),
-                             ret);
         LOG_DBG("anchor rejected UWB WAKE_CLAIM: clicker=0x%016llx ret=%d decision=%u",
                 (unsigned long long)first_claim->clicker_id,
                 ret,
@@ -1014,15 +889,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         return false;
     }
     selected_decision = decision;
-    HIGH_DEBUG_COUNTER_INC(wake_claim_accepted);
-    stage1_led_result(STAGE1_LED_RESULT_OK);
-    high_debug_log_event("WAKE_CLAIM_ACCEPT",
-                         "clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx reason=%s",
-                         (unsigned long long)first_claim->clicker_id,
-                         first_claim->click_event_id,
-                         first_claim->attempt_index,
-                         (unsigned long long)first_claim->priority_id,
-                         claim_decision_name(decision));
     LOG_DBG("anchor UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u",
             (unsigned long long)first_claim->clicker_id,
             first_claim->click_event_id,
@@ -1094,7 +960,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                                            &claim,
                                            k_uptime_get_32(),
                                            &decision);
-        HIGH_DEBUG_COUNTER_INC(wake_claim_rx);
         LOG_DBG("anchor UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u",
                 (unsigned long long)claim.clicker_id,
                 claim.click_event_id,
@@ -1105,7 +970,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         if (ret == PROTO_OK &&
             (decision == UWB_ANCHOR_CLAIM_ACCEPTED ||
              decision == UWB_ANCHOR_CLAIM_REPLACED_BY_PRIORITY)) {
-            HIGH_DEBUG_COUNTER_INC(wake_claim_accepted);
             /*
              * Keep the first copy's absolute schedule.  Later copies carry
              * countdowns and may arrive with bounded transport skew; using
@@ -1120,24 +984,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 selected_quality = quality;
             }
             selected_decision = decision;
-            stage1_led_result(STAGE1_LED_RESULT_OK);
-            high_debug_log_event("WAKE_CLAIM_ACCEPT",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx reason=%s",
-                                 (unsigned long long)claim.clicker_id,
-                                 claim.click_event_id,
-                                 claim.attempt_index,
-                                 (unsigned long long)claim.priority_id,
-                                 claim_decision_name(decision));
         } else {
-            HIGH_DEBUG_COUNTER_INC(wake_claim_rejected);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            high_debug_log_event("WAKE_CLAIM_REJECT",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u reason=%s ret=%d",
-                                 (unsigned long long)claim.clicker_id,
-                                 claim.click_event_id,
-                                 claim.attempt_index,
-                                 claim_decision_name(decision),
-                                 ret);
         }
     }
 
@@ -1176,19 +1023,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                             discovery_late_guard_ms + UWB_DISCOVERY_RX_GUARD_MS,
                             discovery_uses_extended_phr ? "ext" : "std");
     }
-    high_debug_log_event("DISCOVER_WAIT",
-                         "clicker=0x%016llx event_seq=%u attempt=%u selected_rx_ms=%lld discovery_starts_in_ms=%u wait_start_ms=%lld deadline_ms=%lld listen_ms=%u",
-                         (unsigned long long)selected_claim.clicker_id,
-                         selected_claim.click_event_id,
-                         selected_claim.attempt_index,
-                         (long long)selected_rx_ms,
-                         selected_claim.discovery_starts_in_ms,
-                         (long long)(discovery_start_ms - UWB_DISCOVERY_RX_GUARD_MS),
-                         (long long)discovery_deadline_ms,
-                         UWB_DISCOVERY_LISTEN_MS);
 
-    stage1_led_phase(STAGE1_LED_PHASE_DISCOVERY);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
 
     ret = discovery_uses_extended_phr ?
           dwm3000_driver_configure_wake_mesh_control_mode() :
@@ -1200,14 +1035,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     }
     if (ret < 0) {
         last_discovery_ret = ret;
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
-        high_debug_log_event("DISCOVER_RX",
-                             "clicker=0x%016llx event_seq=%u attempt=%u result=config-fail phr=%s ret=%d",
-                             (unsigned long long)selected_claim.clicker_id,
-                             selected_claim.click_event_id,
-                             selected_claim.attempt_index,
-                             discovery_uses_extended_phr ? "ext" : "std",
-                             ret);
         goto discovery_miss;
     }
 
@@ -1295,13 +1122,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 if (queued && deferred_mesh_rx_queued != NULL) {
                     *deferred_mesh_rx_queued = true;
                 }
-                high_debug_log_event("MESH_CH5_AFTER_WAKE_RX",
-                                     "clicker=0x%016llx event_seq=%u frame_len=%u quality=%u valid=%u",
-                                     (unsigned long long)selected_claim.clicker_id,
-                                     selected_claim.click_event_id,
-                                     (unsigned int)frame_len,
-                                     quality,
-                                     valid_mesh_frame ? 1u : 0u);
                 LOG_INF("anchor accepted channel-5 mesh frame after wake claim: clicker=0x%016llx event_seq=%u len=%u quality=%u valid=%u",
                         (unsigned long long)selected_claim.clicker_id,
                         selected_claim.click_event_id,
@@ -1338,15 +1158,6 @@ discovery_miss:
         uint16_t discovery_battery_mv = 0u;
 #endif
 
-        HIGH_DEBUG_COUNTER_INC(discovery_rx);
-        high_debug_log_event("DISCOVER_RX",
-                             "clicker=0x%016llx event_seq=%u attempt=%u network_id=0x%08x channel=%u quality=%u",
-                             (unsigned long long)discover.clicker_id,
-                             discover.click_event_id,
-                             discover.attempt_index,
-                             discover.network_id,
-                             UWB_WAKE_CHANNEL,
-                             selected_quality);
 
         ret = uwb_anchor_build_discovery_reply(&anchor_uwb_session,
                                                &discover,
@@ -1354,7 +1165,6 @@ discovery_miss:
                                                discovery_battery_mv,
                                                &reply);
         if (ret != PROTO_OK) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_WRN("anchor UWB DISCOVERY_REPLY build rejected: %d", ret);
             return true;
         }
@@ -1372,7 +1182,6 @@ discovery_miss:
             enum app_discovery_assignment_provisioning_state provisioning_state =
                 local_anchor_discovery_assignment_provisioning_state();
 
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             if (provisioning_state == APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
                 status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED event=%u attempt=%u reply=disabled\n",
                                     discover.click_event_id,
@@ -1407,7 +1216,6 @@ discovery_miss:
         sleep_precise_us((uint32_t)reply.anchor_slot * UWB_DISCOVERY_SLOT_US);
         ret = uwb_encode_discovery_reply(&reply, frame, sizeof(frame), &frame_len);
         if (ret != PROTO_OK) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_WRN("anchor UWB DISCOVERY_REPLY encode failed: %d", ret);
             return true;
         }
@@ -1415,36 +1223,17 @@ discovery_miss:
                                         frame_len,
                                         UWB_DISCOVERY_REPLY_TX_TIMEOUT_MS);
         if (ret < 0) {
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_WRN("anchor UWB DISCOVERY_REPLY TX failed: %d", ret);
             return true;
         }
-        HIGH_DEBUG_COUNTER_INC(discovery_reply_tx);
-        stage1_led_result(STAGE1_LED_RESULT_OK);
-        high_debug_log_event("DISCOVERY_REPLY_TX",
-                             "clicker=0x%016llx event_seq=%u slot=%u slot_source=%s quality=%u",
-                             (unsigned long long)reply.selected_clicker_id,
-                             reply.click_event_id,
-                             reply.anchor_slot,
-                             ANCHOR_DISCOVERY_SLOT_SOURCE,
-                             reply.rx_quality);
         LOG_INF("anchor UWB DISCOVERY_REPLY sent: clicker=0x%016llx slot=%u source=%s quality=%u",
                 (unsigned long long)reply.selected_clicker_id,
                 reply.anchor_slot,
                 ANCHOR_DISCOVERY_SLOT_SOURCE,
                 reply.rx_quality);
     } else if (schedule_frame_ready) {
-        stage1_led_result(STAGE1_LED_RESULT_OK);
         LOG_INF("anchor fast range-only path: using direct RANGE_SCHEDULE without DISCOVER reply");
-        high_debug_log_event("DISCOVER_SKIP",
-                             "clicker=0x%016llx event_seq=%u attempt=%u reason=range_only_schedule",
-                             (unsigned long long)selected_claim.clicker_id,
-                             selected_claim.click_event_id,
-                             selected_claim.attempt_index);
     } else {
-        stage1_led_result(last_discovery_ret == -ETIMEDOUT ?
-                          STAGE1_LED_RESULT_TIMEOUT :
-                          STAGE1_LED_RESULT_ERROR);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ANCHOR_DISC_MISS ret=%d decode=%d now=%u\n",
                                 last_discovery_ret,
@@ -1458,8 +1247,6 @@ discovery_miss:
         return true;
     }
 
-    stage1_led_phase(STAGE1_LED_PHASE_SCHEDULE);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
     if (!schedule_frame_ready) {
         uint32_t schedule_rx_window_ms =
             UWB_RANGE_SCHEDULE_RX_MS +
@@ -1525,19 +1312,16 @@ discovery_miss:
 
             ret = uwb_decode_range_release(frame, frame_len, &release);
             if (ret != PROTO_OK) {
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 LOG_WRN("anchor UWB RANGE_RELEASE decode failed: %d", ret);
                 return true;
             }
 
             ret = uwb_anchor_accept_range_release(&anchor_uwb_session, &release);
             if (ret != PROTO_OK) {
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 LOG_WRN("anchor rejected UWB RANGE_RELEASE: %d", ret);
                 return true;
             }
 
-            stage1_led_result(STAGE1_LED_RESULT_OK);
             LOG_INF("anchor UWB RANGE_RELEASE accepted: clicker=0x%016llx event_seq=%u discovered=%u min=%u reason=%u",
                     (unsigned long long)release.clicker_id,
                     release.click_event_id,
@@ -1554,17 +1338,14 @@ discovery_miss:
 
             ret = uwb_decode_anchor_pair_schedule(frame, frame_len, &pair_schedule);
             if (ret != PROTO_OK) {
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 LOG_WRN("anchor pair-survey schedule decode failed: %d", ret);
                 return true;
             }
             if (!anchor_pair_schedule_matches_epoch(&pair_schedule)) {
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 LOG_WRN("anchor rejected pair-survey schedule identity: survey=%u",
                         pair_schedule.survey_id);
                 return true;
             }
-            stage1_led_result(STAGE1_LED_RESULT_OK);
             if (retained_sleep_us != NULL) {
                 *retained_sleep_us = u32_saturating_add(
                     *retained_sleep_us,
@@ -1578,55 +1359,24 @@ discovery_miss:
 
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
         if (ret != PROTO_OK) {
-            HIGH_DEBUG_COUNTER_INC(schedules_rejected);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_WRN("anchor UWB RANGE_SCHEDULE decode failed: %d", ret);
             return true;
         }
-        HIGH_DEBUG_COUNTER_INC(schedules_rx);
-        high_debug_log_event("RANGE_SCHEDULE_RX",
-                             "clicker=0x%016llx event_seq=%u attempt=%u selected=%u reply_delay_uus=%u nonce=0x%016llx",
-                             (unsigned long long)schedule.clicker_id,
-                             schedule.click_event_id,
-                             schedule.attempt_index,
-                             schedule.selected_count,
-                             schedule.reply_delay_us,
-                             (unsigned long long)schedule.nonce);
 
         ret = uwb_anchor_accept_range_schedule(&anchor_uwb_session,
                                                &schedule,
                                                (uint32_t)schedule_rx_ms,
                                                UWB_SCHEDULE_GUARD_MS);
         if (ret == PROTO_ERR_NOT_FOUND) {
-            HIGH_DEBUG_COUNTER_INC(schedules_rejected);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
             LOG_INF("anchor not selected in UWB RANGE_SCHEDULE: clicker=0x%016llx event_seq=%u",
                     (unsigned long long)schedule.clicker_id,
                     schedule.click_event_id);
             return true;
         }
         if (ret != PROTO_OK) {
-            HIGH_DEBUG_COUNTER_INC(schedules_rejected);
-            stage1_led_result(STAGE1_LED_RESULT_ERROR);
-            high_debug_log_event("RANGE_SCHEDULE_REJECT",
-                                 "clicker=0x%016llx event_seq=%u attempt=%u reason=proto_%d",
-                                 (unsigned long long)schedule.clicker_id,
-                                 schedule.click_event_id,
-                                 schedule.attempt_index,
-                                 ret);
             LOG_WRN("anchor rejected UWB RANGE_SCHEDULE: %d", ret);
             return true;
         }
-        HIGH_DEBUG_COUNTER_INC(schedules_accepted);
-        stage1_led_result(STAGE1_LED_RESULT_OK);
-        high_debug_log_event("RANGE_SCHEDULE_ACCEPT",
-                             "clicker=0x%016llx event_seq=%u attempt=%u selected=%u burst_id=%u",
-                             (unsigned long long)schedule.clicker_id,
-                             schedule.click_event_id,
-                             schedule.attempt_index,
-                             schedule.selected_count,
-                             uwb_schedule_burst_id(schedule.click_event_id,
-                                                   schedule.attempt_index));
 
         range_sleep_us = anchor_run_scheduled_uwb_ranges(
             &schedule,
@@ -1647,9 +1397,6 @@ discovery_miss:
             return false;
         }
     } else {
-        stage1_led_result(ret == -ETIMEDOUT ?
-                          STAGE1_LED_RESULT_TIMEOUT :
-                          STAGE1_LED_RESULT_ERROR);
         LOG_WRN("anchor UWB RANGE_SCHEDULE not received: ret=%d", ret);
     }
     return true;
@@ -1881,10 +1628,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
     int64_t uwb_window_start_ms = -1;
     bool preamble_detected = false;
-    bool focused_logs = stage1_anchor_focused_rx_logs_enabled();
     bool log_scan_window = false;
     uint32_t scan_debug_now_ms = 0u;
-    int64_t focused_spin_deadline_ms = -1;
     bool handled_claim = false;
     bool deferred_mesh_rx_queued = false;
     bool route_wake_handoff = false;
@@ -1972,25 +1717,12 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     anchor_set_uwb_busy(true);
     anchor_click_window_set_active(false);
     uwb_window_start_ms = k_uptime_get();
-    if (focused_logs) {
-        focused_spin_deadline_ms = uwb_window_start_ms + ANCHOR_STAGE1_FOCUSED_RX_SPIN_MS;
-    }
-
-focused_scan_attempt:
     frame_len = 0u;
     quality = 0u;
     retained_sleep_us = 0u;
     rx_failure = DWM3000_RX_FAILURE_NONE;
     preamble_detected = false;
     next_scan_delay_ms = anchor_uwb_scan_interval_ms;
-    stage1_led_phase(STAGE1_LED_PHASE_SCAN);
-    stage1_led_result(STAGE1_LED_RESULT_ACTIVE);
-    if (!focused_logs) {
-        high_debug_log_event("UWB_RX_START",
-                             "mode=anchor_wake_scan interval_ms=%u rx_window_ms=%u",
-                             anchor_uwb_scan_interval_ms,
-                             ANCHOR_UWB_SCAN_RX_MS);
-    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         scan_debug_now_ms = k_uptime_get_32();
         log_scan_window = anchor_ch5_scan_debug_next_ms == 0u ||
@@ -2055,13 +1787,7 @@ focused_scan_attempt:
         struct uwb_wake_claim_frame claim;
         int decode_ret;
 
-        stage1_led_result(STAGE1_LED_RESULT_OK);
         status_debug_uwb_rx_channel_pulse(UWB_CHANNEL_WAKE_CONTACT);
-        high_debug_log_event("UWB_RX_DONE",
-                             "mode=anchor_wake_scan frame_len=%u quality=%u rx_failure=%s",
-                             (unsigned int)frame_len,
-                             quality,
-                             app_anchor_rx_failure_name(rx_failure));
         decode_ret = uwb_decode_wake_claim(frame, frame_len, &claim);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ANCHOR_CH5_FRAME len=%u q=%u wake_ret=%d\n",
@@ -2069,7 +1795,6 @@ focused_scan_attempt:
                                 quality,
                                 decode_ret);
         }
-        stage1_anchor_focused_note_rx_frame(frame_len, quality, decode_ret);
         if (decode_ret == PROTO_OK) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                 !app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags,
@@ -2098,7 +1823,6 @@ focused_scan_attempt:
                                     quality);
                 goto scan_complete;
             }
-            stage1_anchor_focused_note_wake_claim(&claim);
             if (anchor_handle_uwb_claim(&claim,
                                         quality,
                                         k_uptime_get(),
@@ -2129,30 +1853,16 @@ focused_scan_attempt:
 
                 uwb_anchor_note_wake_decode_failure(&anchor_uwb_session,
                                                     failure);
-#if IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
-                next_scan_delay_ms = 0u;
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
-                LOG_WRN("anchor high-duty UWB wake ignored bad frame: wake_decode_ret=%d reason=%s frame_len=%u quality=%u retry_ms=%u crc_failures=%u frame_timeouts=%u",
-                        decode_ret,
-                        app_anchor_wake_decode_failure_name(failure),
-                        (unsigned int)frame_len,
-                        quality,
-                        next_scan_delay_ms,
-                        anchor_uwb_session.diagnostics.crc_failures,
-                        anchor_uwb_session.diagnostics.frame_timeouts);
-#else
                 uwb_anchor_note_false_wake_cooldown(&anchor_uwb_session);
                 next_scan_delay_ms = ANCHOR_FALSE_WAKE_COOLDOWN_MS;
-                stage1_led_result(STAGE1_LED_RESULT_ERROR);
                 LOG_WRN("anchor false UWB wake cooldown: wake_decode_ret=%d reason=%s frame_len=%u quality=%u cooldown_ms=%u crc_failures=%u frame_timeouts=%u",
                         decode_ret,
                         app_anchor_wake_decode_failure_name(failure),
                         (unsigned int)frame_len,
                         quality,
                         next_scan_delay_ms,
-                        anchor_uwb_session.diagnostics.crc_failures,
-                        anchor_uwb_session.diagnostics.frame_timeouts);
-#endif
+                anchor_uwb_session.diagnostics.crc_failures,
+                anchor_uwb_session.diagnostics.frame_timeouts);
             }
         }
     } else if (ret != -ETIMEDOUT) {
@@ -2160,24 +1870,8 @@ focused_scan_attempt:
             app_anchor_wake_failure_from_rx(rx_failure);
 
         uwb_anchor_note_wake_decode_failure(&anchor_uwb_session, failure);
-#if IS_ENABLED(CONFIG_IMEC_STAGE1_ANCHOR_CONTINUOUS_SCAN)
-        next_scan_delay_ms = 0u;
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
-        if (!focused_logs) {
-            LOG_WRN("anchor high-duty UWB wake scan retry after activity: ret=%d rx_failure=%s reason=%s retry_ms=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u",
-                    ret,
-                    app_anchor_rx_failure_name(rx_failure),
-                    app_anchor_wake_decode_failure_name(failure),
-                    next_scan_delay_ms,
-                    anchor_uwb_session.diagnostics.preambles,
-                    anchor_uwb_session.diagnostics.sfd_timeouts,
-                    anchor_uwb_session.diagnostics.frame_timeouts,
-                    anchor_uwb_session.diagnostics.crc_failures);
-        }
-#else
         uwb_anchor_note_false_wake_cooldown(&anchor_uwb_session);
         next_scan_delay_ms = ANCHOR_FALSE_WAKE_COOLDOWN_MS;
-        stage1_led_result(STAGE1_LED_RESULT_ERROR);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ANCHOR_CH5_ACTIVITY_COOLDOWN ret=%d fail=%u reason=%s rx_us=%u cooldown=%u\n",
                                 ret,
@@ -2195,26 +1889,6 @@ focused_scan_attempt:
                 anchor_uwb_session.diagnostics.sfd_timeouts,
                 anchor_uwb_session.diagnostics.frame_timeouts,
                 anchor_uwb_session.diagnostics.crc_failures);
-#endif
-    }
-    if (ret == -ETIMEDOUT) {
-        stage1_led_result(STAGE1_LED_RESULT_TIMEOUT);
-        if (!focused_logs) {
-            high_debug_log_event("UWB_RX_TIMEOUT",
-                                 "mode=anchor_wake_scan rx_failure=%s preamble=%u",
-                                 app_anchor_rx_failure_name(rx_failure),
-                                 preamble_detected ? 1u : 0u);
-        }
-    }
-
-    if (focused_logs &&
-        ret != 0 &&
-        focused_spin_deadline_ms > 0 &&
-        k_uptime_get() < focused_spin_deadline_ms &&
-        !anchor_uwb_window_active() &&
-        !app_anchor_survey_runtime_discovery_is_pending() &&
-        !mesh_relay_tx_active(&mesh_runtime)) {
-        goto focused_scan_attempt;
     }
 
 scan_complete:
@@ -2281,13 +1955,7 @@ scan_complete:
         next_scan_delay_ms = ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS;
     }
     anchor_scan_recovery_gap_requested = false;
-    if (focused_logs) {
-        stage1_anchor_focused_log_diagnostics(ret,
-                                              app_anchor_rx_failure_name(rx_failure),
-                                              preamble_detected,
-                                              &anchor_uwb_session);
-    } else {
-        LOG_DBG("anchor UWB diagnostics: last_ret=%d last_rx_failure=%s last_preamble=%u scans=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u claims=%u collisions=%u wins=%u losses=%u replies=%u schedules=%u ds_ok=%u ds_fail=%u timing_rejections=%u mesh_packets=%u sample_order=%u scan_startup_us=%u scan_pll_us=%u scan_rx_us=%u awake_us=%u false_cooldowns=%u",
+    LOG_DBG("anchor UWB diagnostics: last_ret=%d last_rx_failure=%s last_preamble=%u scans=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u claims=%u collisions=%u wins=%u losses=%u replies=%u schedules=%u ds_ok=%u ds_fail=%u timing_rejections=%u mesh_packets=%u sample_order=%u scan_startup_us=%u scan_pll_us=%u scan_rx_us=%u awake_us=%u false_cooldowns=%u",
                 ret,
                 app_anchor_rx_failure_name(rx_failure),
                 preamble_detected ? 1u : 0u,
@@ -2312,11 +1980,6 @@ scan_complete:
                 anchor_uwb_session.diagnostics.scan_rx_time_us,
                 anchor_uwb_session.diagnostics.awake_time_us,
                 anchor_uwb_session.diagnostics.false_wake_cooldowns);
-        high_debug_log_event("UWB_SLEEP",
-                             "mode=anchor_wake_scan next_delay_ms=%u retained_sleep_us=%u",
-                             next_scan_delay_ms,
-                             retained_sleep_us);
-    }
     anchor_uwb_scan_schedule_ms(next_scan_delay_ms);
 }
 

@@ -18,8 +18,7 @@ struct app_mesh_rx_handoff_state {
 
 bool app_mesh_rx_policy_should_drop(bool mesh_route_test_transmitter,
                                     uint8_t msg_type);
-bool app_mesh_rx_policy_role_uses_uwb_rx(bool focused_anchor_rx_logs,
-                                         bool permanent_receiver_role,
+bool app_mesh_rx_policy_role_uses_uwb_rx(bool permanent_receiver_role,
                                          bool scheduled_receiver_enabled,
                                          bool channel9_schedule_installed);
 bool app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(

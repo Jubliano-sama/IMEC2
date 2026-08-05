@@ -2126,7 +2126,6 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
 
     ret = gateway_ble_send_packet_frame(frame, frame_len);
     if (ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(gateway_ble_notify_failures);
         return ret;
     }
 
@@ -2136,15 +2135,6 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
             frame_packet.seq,
             (unsigned int)payload_len,
             (unsigned int)frame_len);
-    HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
-    high_debug_log_event("BLE_GATEWAY_PACKET_TX",
-                         "msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u frame_len=%u",
-                         frame_packet.msg_type,
-                         (unsigned long long)frame_packet.src_id,
-                         (unsigned long long)frame_packet.dst_id,
-                         frame_packet.seq,
-                         (unsigned int)payload_len,
-                         (unsigned int)frame_len);
     return 0;
 }
 
@@ -2199,14 +2189,7 @@ void gateway_emit_host_command_result_reserved(
                 ret);
     } else {
         (void)gateway_flush_host_command_results();
-        HIGH_DEBUG_COUNTER_INC(command_result_tx);
     }
-    high_debug_log_event("COMMAND_RESULT_TX",
-                         "transport=gateway_ble command=0x%04x status=%s reason=%u ret=%d",
-                         (unsigned int)command_id,
-                         command_status_name(status),
-                         reason,
-                         ret);
 }
 
 void gateway_emit_host_command_result(const struct proto_packet *command,

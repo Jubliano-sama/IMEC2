@@ -125,11 +125,6 @@ static uint32_t mesh_route_test_first_event_time_ms(uint32_t now_ms)
     }
 
     if (selected) {
-        high_debug_log_event("MESH_EVENT_TIMING",
-                             "phase=second-slot first_ms=%u default_ms=%u offset_ms=%u",
-                             selected_ms,
-                             default_first_ms,
-                             MESH_EVENT_DEFAULT_SECOND_SLOT_OFFSET_MS);
     }
     return selected_ms;
 }
@@ -2195,16 +2190,6 @@ static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
                                         &waiting,
                                         &store_result);
     if (store_result.replaced_existing) {
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
-        high_debug_log_event("MESH_PAUSED_DELIVERY",
-                             "phase=replace old_msg=0x%02x old_dst=0x%016llx old_seq=%u new_msg=0x%02x new_dst=0x%016llx new_seq=%u lost=%u",
-                             mesh_route_waiting_tx.packet.msg_type,
-                             (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
-                             mesh_route_waiting_tx.packet.seq,
-                             waiting.packet.msg_type,
-                             (unsigned long long)waiting.packet.dst_id,
-                             waiting.packet.seq,
-                             store_result.lost_count);
         LOG_WRN("mesh paused delivery replaced older packet: old_msg=0x%02x old_seq=%u new_msg=0x%02x new_seq=%u lost=%u",
                 mesh_route_waiting_tx.packet.msg_type,
                 mesh_route_waiting_tx.packet.seq,
@@ -2325,14 +2310,6 @@ static void mesh_drop_route_waiting_tx(const char *reason)
 
     app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
 
-    high_debug_log_event("MESH_ROUTE_WAIT_DROP",
-                         "reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u lost=%u",
-                         reason == NULL ? "drop" : reason,
-                         mesh_route_waiting_tx.packet.msg_type,
-                         (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
-                         mesh_route_waiting_tx.packet.seq,
-                         mesh_runtime.route_discovery.attempts,
-                         drop_result.lost_count);
     LOG_WRN("mesh route waiting packet dropped: reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u lost=%u",
             reason == NULL ? "drop" : reason,
             mesh_route_waiting_tx.packet.msg_type,

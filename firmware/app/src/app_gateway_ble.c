@@ -16,7 +16,6 @@
 #include "app_gateway_command_result.h"
 #include "app_gateway_ble_stream.h"
 #include "app_stack_workload_diag.h"
-#include "app_high_debug.h"
 #include "app_watchdog.h"
 #include "app_mesh_report.h"
 #include "app_mesh_persistence.h"
@@ -50,11 +49,7 @@
 
 LOG_MODULE_REGISTER(app_gateway_ble, LOG_LEVEL_DBG);
 
-#if defined(CONFIG_IMEC_HIGH_DEBUG)
 #define GATEWAY_BLE_VERBOSE_LOG(...) LOG_INF(__VA_ARGS__)
-#else
-#define GATEWAY_BLE_VERBOSE_LOG(...) do { } while (0)
-#endif
 
 #if DEVICE_ROLE == ROLE_GATEWAY
 void gateway_command_result_side_effects(const struct proto_packet *command,
@@ -348,529 +343,8 @@ static void gateway_observability_flush(bool include_snapshots)
 }
 #endif
 
-#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST) && defined(CONFIG_BT)
-#define BLE_RANGE_ADV_INTERVAL_MIN_UNITS 0x00a0u
-#define BLE_RANGE_ADV_INTERVAL_MAX_UNITS 0x00a0u
-#define BLE_RANGE_SCAN_INTERVAL_UNITS 0x0060u
-#define BLE_RANGE_SCAN_WINDOW_UNITS 0x0060u
-#define BLE_RANGE_LED_HOLD_MS 1000u
-#define BLE_RANGE_LED_POLL_MS 50u
-
-static const uint8_t gateway_ble_range_marker[] = {
-    0xff, 0xff, 'I', 'M', 'E', 'C', 'R', 'N', 'G', 0x01
-};
-static const char gateway_ble_range_name[] = "IMEC BLE Range";
-
-static struct k_work_delayable gateway_ble_range_led_work;
-static uint32_t gateway_ble_range_last_seen_ms;
-
-static int gateway_ble_range_enable(void)
-{
-    int ret = bt_enable(NULL);
-
-    GATEWAY_BLE_VERBOSE_LOG("BLE range bt_enable completed: ret=%d", ret);
-    if (ret != 0 && ret != -EALREADY) {
-        LOG_ERR("BLE range init failed: %d", ret);
-        return ret;
-    }
-    return 0;
-}
-
-static int gateway_ble_range_start_advertiser(void)
-{
-    const struct bt_le_adv_param adv_param = {
-        .id = BT_ID_DEFAULT,
-        .sid = 0u,
-        .secondary_max_skip = 0u,
-        .options = BT_LE_ADV_OPT_USE_IDENTITY,
-        .interval_min = BLE_RANGE_ADV_INTERVAL_MIN_UNITS,
-        .interval_max = BLE_RANGE_ADV_INTERVAL_MAX_UNITS,
-        .peer = NULL,
-    };
-    const struct bt_data ad[] = {
-        BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-        BT_DATA(BT_DATA_MANUFACTURER_DATA,
-                gateway_ble_range_marker,
-                sizeof(gateway_ble_range_marker)),
-        BT_DATA(BT_DATA_NAME_COMPLETE,
-                gateway_ble_range_name,
-                sizeof(gateway_ble_range_name) - 1u),
-    };
-    int ret;
-
-    ret = gateway_ble_range_enable();
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0u);
-    GATEWAY_BLE_VERBOSE_LOG("BLE range advertiser start: ret=%d name=%s interval_units=%u",
-            ret,
-            gateway_ble_range_name,
-            BLE_RANGE_ADV_INTERVAL_MIN_UNITS);
-    return ret;
-}
-
-static bool gateway_ble_range_parse_ad(struct bt_data *data, void *user_data)
-{
-    bool *matched = user_data;
-
-    if (data->type == BT_DATA_MANUFACTURER_DATA &&
-        data->data_len == sizeof(gateway_ble_range_marker) &&
-        memcmp(data->data,
-               gateway_ble_range_marker,
-               sizeof(gateway_ble_range_marker)) == 0) {
-        *matched = true;
-        return false;
-    }
-    return true;
-}
-
-static void gateway_ble_range_led_work_handler(struct k_work *work)
-{
-    uint32_t now_ms = k_uptime_get_32();
-    uint32_t last_seen_ms = gateway_ble_range_last_seen_ms;
-    uint32_t age_ms = now_ms - last_seen_ms;
-    bool seen_recently = last_seen_ms != 0u && age_ms < BLE_RANGE_LED_HOLD_MS;
-
-    ARG_UNUSED(work);
-
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_led0_set(false, seen_recently, false);
-    }
-    (void)k_work_reschedule(&gateway_ble_range_led_work,
-                            K_MSEC(BLE_RANGE_LED_POLL_MS));
-}
-
-static void gateway_ble_range_scan_cb(const bt_addr_le_t *addr,
-                                      int8_t rssi,
-                                      uint8_t adv_type,
-                                      struct net_buf_simple *buf)
-{
-    bool matched = false;
-
-    ARG_UNUSED(addr);
-    ARG_UNUSED(adv_type);
-
-    bt_data_parse(buf, gateway_ble_range_parse_ad, &matched);
-    if (!matched) {
-        return;
-    }
-
-    gateway_ble_range_last_seen_ms = k_uptime_get_32();
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_led0_set(false, true, false);
-    }
-    GATEWAY_BLE_VERBOSE_LOG("BLE range advertisement seen: rssi=%d", rssi);
-}
-
-static int gateway_ble_range_start_scanner(void)
-{
-    const struct bt_le_scan_param scan_param = {
-        .type = BT_LE_SCAN_TYPE_PASSIVE,
-        .options = BT_LE_SCAN_OPT_NONE,
-        .interval = BLE_RANGE_SCAN_INTERVAL_UNITS,
-        .window = BLE_RANGE_SCAN_WINDOW_UNITS,
-        .timeout = 0u,
-        .interval_coded = 0u,
-        .window_coded = 0u,
-    };
-    int ret;
-
-    ret = status_leds_init();
-    if (ret < 0) {
-        LOG_WRN("BLE range scanner LED setup incomplete: %d", ret);
-    }
-    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_led0_set(false, false, false);
-    }
-    k_work_init_delayable(&gateway_ble_range_led_work,
-                          gateway_ble_range_led_work_handler);
-
-    ret = gateway_ble_range_enable();
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = bt_le_scan_start(&scan_param, gateway_ble_range_scan_cb);
-    GATEWAY_BLE_VERBOSE_LOG("BLE range scanner start: ret=%d interval_units=%u window_units=%u",
-            ret,
-            BLE_RANGE_SCAN_INTERVAL_UNITS,
-            BLE_RANGE_SCAN_WINDOW_UNITS);
-    if (ret == 0) {
-        (void)k_work_reschedule(&gateway_ble_range_led_work,
-                                K_MSEC(BLE_RANGE_LED_POLL_MS));
-    }
-    return ret;
-}
-#endif
-
-#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
-int gateway_emit_host_packet(const struct proto_packet *packet,
-                             const uint8_t *payload,
-                             size_t payload_len)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-
-    return -ENOTSUP;
-}
-
-int gateway_ble_stream_packet(const struct proto_packet *packet,
-                              const uint8_t *payload,
-                              size_t payload_len,
-                              uint32_t received_at_ms)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(received_at_ms);
-
-    return -ENOTSUP;
-}
-
-int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
-                                      const uint8_t *payload,
-                                      size_t payload_len,
-                                      uint32_t received_at_ms)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(received_at_ms);
-
-    return -ENOTSUP;
-}
-
-int gateway_ble_commit_stream_reservation(const struct proto_packet *packet,
-                                          const uint8_t *payload,
-                                          size_t payload_len)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-
-    return -ENOTSUP;
-}
-
-int gateway_ble_commit_stream_reservation_projection(
-    const struct proto_packet *packet,
-    const uint8_t *raw_payload,
-    size_t raw_payload_len,
-    uint8_t accepted_record_mask)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(raw_payload);
-    ARG_UNUSED(raw_payload_len);
-    ARG_UNUSED(accepted_record_mask);
-
-    return -ENOTSUP;
-}
-
-void gateway_ble_cancel_stream_reservation(void)
-{
-}
-
-int gateway_preflight_result_semantic_delivery(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t first_received_at_ms,
-    uint32_t result_validation_token,
-    uint64_t previous_hop_id)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(first_received_at_ms);
-    ARG_UNUSED(result_validation_token);
-    ARG_UNUSED(previous_hop_id);
-
-    return -ENOTSUP;
-}
-
-int gateway_result_bundle_host_projection_mask(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t previous_hop_id,
-    uint8_t *accepted_record_mask)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(previous_hop_id);
-    if (accepted_record_mask != NULL) {
-        *accepted_record_mask = 0u;
-    }
-    return -ENOTSUP;
-}
-
-int gateway_finalize_semantic_delivery(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t previous_hop_id,
-    uint8_t received_radio_channel,
-    const struct mesh_event_plan *current_channel9_plan,
-    int semantic_acceptance)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(previous_hop_id);
-    ARG_UNUSED(received_radio_channel);
-    ARG_UNUSED(current_channel9_plan);
-    ARG_UNUSED(semantic_acceptance);
-
-    return -ENOTSUP;
-}
-
-void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics)
-{
-    if (diagnostics != NULL) {
-        memset(diagnostics, 0, sizeof(*diagnostics));
-    }
-}
-
-int gateway_encode_host_packet_frame(const struct proto_packet *packet,
-                                     const uint8_t *payload,
-                                     size_t payload_len,
-                                     uint8_t *frame,
-                                     size_t frame_cap,
-                                     size_t *frame_len,
-                                     struct proto_packet *frame_packet)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(frame);
-    ARG_UNUSED(frame_cap);
-    ARG_UNUSED(frame_len);
-    ARG_UNUSED(frame_packet);
-
-    return -ENOTSUP;
-}
-
-void gateway_emit_host_command_result(const struct proto_packet *command,
-                                      enum command_id command_id,
-                                      enum command_status status,
-                                      uint8_t reason)
-{
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-    ARG_UNUSED(status);
-    ARG_UNUSED(reason);
-}
-
-int gateway_command_result_reserve_ingress(uint32_t *token)
-{
-    ARG_UNUSED(token);
-    return -ENOTSUP;
-}
-
-int gateway_command_result_bind_ingress(uint32_t token,
-                                        const struct proto_packet *command,
-                                        enum command_id command_id)
-{
-    ARG_UNUSED(token);
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-    return -ENOTSUP;
-}
-
-int gateway_command_result_rebind_command(
-    const struct proto_packet *command,
-    enum command_id command_id,
-    const struct proto_packet *result_command)
-{
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-    ARG_UNUSED(result_command);
-    return -ENOTSUP;
-}
-
-void gateway_command_result_release_ingress(uint32_t token)
-{
-    ARG_UNUSED(token);
-}
-
-void gateway_command_result_release_command(
-    const struct proto_packet *command,
-    enum command_id command_id)
-{
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-}
-
-int gateway_begin_command_result_wait(const struct proto_packet *command,
-                                      enum command_id command_id)
-{
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-
-    return -ENOTSUP;
-}
-
-int gateway_begin_command_result_wait_for(const struct proto_packet *command,
-                                          enum command_id command_id,
-                                          uint32_t timeout_ms)
-{
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-    ARG_UNUSED(timeout_ms);
-
-    return -ENOTSUP;
-}
-
-int gateway_begin_command_result_wait_until(
-    const struct proto_packet *command,
-    enum command_id command_id,
-    uint32_t absolute_deadline_ms)
-{
-    ARG_UNUSED(command);
-    ARG_UNUSED(command_id);
-    ARG_UNUSED(absolute_deadline_ms);
-    return -ENOTSUP;
-}
-
-int gateway_command_result_validation_reserve(
-    const struct proto_packet *result,
-    uint64_t received_at_ms,
-    uint32_t *token)
-{
-    ARG_UNUSED(result);
-    ARG_UNUSED(received_at_ms);
-    ARG_UNUSED(token);
-    return -ENOTSUP;
-}
-
-void gateway_command_result_validation_release_reserved(uint32_t token)
-{
-    ARG_UNUSED(token);
-}
-
-bool gateway_clear_pending_command_result(const struct proto_packet *command)
-{
-    ARG_UNUSED(command);
-    return false;
-}
-
-int gateway_begin_command_collection(const struct gateway_command_options *options)
-{
-    ARG_UNUSED(options);
-
-    return -ENOTSUP;
-}
-
-void gateway_clear_command_collection(const struct gateway_command_options *options)
-{
-    ARG_UNUSED(options);
-}
-
-int gateway_set_registered_membership_roster(uint16_t membership_epoch,
-                                             const uint64_t *node_ids,
-                                             const uint8_t *slots,
-                                             size_t node_count,
-                                             uint32_t assignment_epoch,
-                                             uint32_t table_seq,
-                                             const struct discovery_assignment_table_commitment *table_commitment,
-                                             const struct gateway_membership_publication *publication)
-{
-    ARG_UNUSED(membership_epoch);
-    ARG_UNUSED(node_ids);
-    ARG_UNUSED(slots);
-    ARG_UNUSED(node_count);
-    ARG_UNUSED(assignment_epoch);
-    ARG_UNUSED(table_seq);
-    ARG_UNUSED(table_commitment);
-    ARG_UNUSED(publication);
-
-    return -ENOTSUP;
-}
-
-int gateway_get_registered_membership_roster_with_slots(
-    uint64_t *node_ids,
-    uint8_t *slots,
-    size_t node_cap,
-    size_t *node_count,
-    uint16_t *membership_epoch)
-{
-    ARG_UNUSED(node_ids);
-    ARG_UNUSED(slots);
-    ARG_UNUSED(node_cap);
-    if (node_count != NULL) {
-        *node_count = 0u;
-    }
-    if (membership_epoch != NULL) {
-        *membership_epoch = 0u;
-    }
-    return -ENOTSUP;
-}
-
-bool gateway_assignment_publication_pending(void)
-{
-    return false;
-}
-
-int gateway_complete_assignment_publication(
-    const struct gateway_command_event *base_event,
-    void *ctx)
-{
-    ARG_UNUSED(base_event);
-    ARG_UNUSED(ctx);
-    return -ENOTSUP;
-}
-
-void gateway_clear_registered_membership_roster(void)
-{
-}
-
-int gateway_note_command_result(const struct proto_packet *packet,
-                                const uint8_t *payload,
-                                size_t payload_len,
-                                uint64_t first_received_at_ms,
-                                uint32_t result_validation_token,
-                                uint64_t previous_hop_id,
-                                uint8_t received_radio_channel,
-                                const struct mesh_event_plan *current_channel9_plan)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(first_received_at_ms);
-    ARG_UNUSED(result_validation_token);
-    ARG_UNUSED(previous_hop_id);
-    ARG_UNUSED(received_radio_channel);
-    ARG_UNUSED(current_channel9_plan);
-    return -ENOTSUP;
-}
-
-int gateway_note_command_result_bundle(const struct proto_packet *packet,
-                                       const uint8_t *payload,
-                                       size_t payload_len,
-                                       uint64_t previous_hop_id,
-                                       uint8_t received_radio_channel,
-                                       const struct mesh_event_plan *current_channel9_plan)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(previous_hop_id);
-    ARG_UNUSED(received_radio_channel);
-    ARG_UNUSED(current_channel9_plan);
-    return -ENOTSUP;
-}
-
-void gateway_command_result_tracking_init(void)
-{
-}
-#else
 /* Result and collection custody stay in this translation unit. */
 #include "app_gateway_result_runtime.inc"
-#line 2855 __BASE_FILE__
-#endif
 
 #if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
 #define BT_UUID_IMEC_GATEWAY_SERVICE_VAL \
@@ -1228,7 +702,6 @@ static ssize_t gateway_ble_packet_rx_write(struct bt_conn *conn,
             ret = gateway_ble_rx_bytes(buf, len);
         }
         if (ret < 0) {
-            HIGH_DEBUG_COUNTER_INC(gateway_ble_rx_drops);
             LOG_ERR("gateway BLE command ingress failed closed: len=%u ret=%d flags=0x%02x",
                     len, ret, flags);
             /*
@@ -1837,7 +1310,6 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     gateway_ble_rx_overflow = false;
     gateway_ble_recovery_round = 0u;
     (void)k_work_cancel_delayable(&gateway_ble_recovery_work);
-    HIGH_DEBUG_COUNTER_INC(gateway_ble_connects);
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE PC link connected");
 }
 
@@ -1884,7 +1356,6 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
     bt_conn_unref(disconnected_conn);
     gateway_ble_rx_len = 0u;
     gateway_ble_rx_overflow = false;
-    HIGH_DEBUG_COUNTER_INC(gateway_ble_disconnects);
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE PC link disconnected: reason=0x%02x", reason);
     gateway_ble_schedule_recovery("disconnected");
 }
@@ -1962,9 +1433,6 @@ static void gateway_ble_recovery_work_handler(struct k_work *work)
     }
     gateway_ble_recovery_round = 0u;
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE PC link advertising as %s", GATEWAY_BLE_DEVICE_NAME);
-    high_debug_log_event("BLE_GATEWAY_READY",
-                         "device_name=%s packet_notify=0",
-                         GATEWAY_BLE_DEVICE_NAME);
 }
 
 static int gateway_ble_stop_advertising(const char *reason)
@@ -1986,9 +1454,6 @@ static int gateway_ble_stop_advertising(const char *reason)
     gateway_ble_advertising_active = false;
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE advertising stopped: reason=%s primary_channels=37-39",
             reason == NULL ? "unknown" : reason);
-    high_debug_log_event("BLE_GATEWAY_ADV_STOP",
-                         "reason=%s primary_channels=37-39",
-                         reason == NULL ? "unknown" : reason);
     return 0;
 }
 
@@ -2020,8 +1485,7 @@ int gateway_ble_init(void)
             &gateway_command_observability_state);
         k_spin_unlock(&gateway_command_observability_lock, key);
     }
-#if DEVICE_ROLE == ROLE_GATEWAY && \
-    !defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+#if DEVICE_ROLE == ROLE_GATEWAY
     gateway_ble_stream_initialized = true;
     (void)gateway_flush_host_command_results();
     atomic_clear(&gateway_host_journal_restored);
@@ -2076,9 +1540,6 @@ int gateway_ble_init(void)
     }
 
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE PC link advertising as %s", GATEWAY_BLE_DEVICE_NAME);
-    high_debug_log_event("BLE_GATEWAY_READY",
-                         "device_name=%s packet_notify=0",
-                         GATEWAY_BLE_DEVICE_NAME);
     return 0;
 }
 
@@ -2160,8 +1621,7 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
         uint32_t result_reservation_token = 0u;
         int ret;
 
-#if DEVICE_ROLE == ROLE_GATEWAY && \
-    !defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
+#if DEVICE_ROLE == ROLE_GATEWAY
         ret = gateway_command_result_reserve_ingress(
             &result_reservation_token);
         if (ret < 0) {
@@ -2384,42 +1844,6 @@ int gateway_observe_command_acceptance_if_available(
 #endif
 }
 
-int app_gateway_ble_init(void)
-{
-    return gateway_ble_init();
-}
 
-#if defined(CONFIG_IMEC_GATEWAY_BLE_CONNECTIVITY_TEST)
-void gateway_ble_connectivity_test_run(void)
-{
-    int ret;
-
-    printk("gateway BLE range test booting\n");
-#if defined(CONFIG_BT)
-    if (IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER)) {
-        ret = gateway_ble_range_start_scanner();
-    } else {
-        ret = gateway_ble_range_start_advertiser();
-    }
-#else
-    ret = -ENOTSUP;
-#endif
-    if (ret < 0) {
-        printk("gateway BLE range test init failed: %d\n", ret);
-        LOG_ERR("gateway BLE range test init failed: %d", ret);
-        for (;;) {
-            k_sleep(K_SECONDS(30));
-        }
-    }
-
-    GATEWAY_BLE_VERBOSE_LOG("gateway BLE range test active: mode=%s no UWB, mesh, DWM3000, ADC, or buttons initialized",
-            IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER) ? "scanner" : "advertiser");
-    for (;;) {
-        GATEWAY_BLE_VERBOSE_LOG("gateway BLE range test heartbeat: mode=%s",
-                IS_ENABLED(CONFIG_IMEC_GATEWAY_BLE_RANGE_SCANNER) ? "scanner" : "advertiser");
-        k_sleep(K_SECONDS(5));
-    }
-}
-#endif
 
 #undef GATEWAY_BLE_VERBOSE_LOG

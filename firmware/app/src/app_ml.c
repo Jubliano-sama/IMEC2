@@ -5,7 +5,6 @@
 #include "app_clicker.h"
 #include "app_config.h"
 #include "app_gateway_ble.h"
-#include "app_high_debug.h"
 #include "app_radio_recovery.h"
 #include "app_state.h"
 #include "app_watchdog.h"
@@ -378,16 +377,6 @@ uint32_t ml_anchor_run_post_burst_diagnostics(
                 entry_index,
                 expected.seq,
                 expected.timeout_ms);
-        high_debug_log_event("POST_BURST_DIAG_RX",
-                             "listen=1 clicker=0x%016llx event_seq=%u attempt=%u anchor_slot=%u seq=%u target_us=%lld listen_start_ms=%lld timeout_ms=%u",
-                             (unsigned long long)schedule->clicker_id,
-                             schedule->click_event_id,
-                             schedule->attempt_index,
-                             entry_index,
-                             expected.seq,
-                             (long long)target_us,
-                             (long long)listen_start_ms,
-                             expected.timeout_ms);
 
         while (k_uptime_get() < listen_deadline_ms) {
             int64_t remaining_ms = listen_deadline_ms - k_uptime_get();
@@ -406,13 +395,6 @@ uint32_t ml_anchor_run_post_burst_diagnostics(
                         expected.seq,
                         range_status_name(range_result.status),
                         range_result.status);
-                high_debug_log_event("POST_BURST_DIAG_RX",
-                                     "ignored=1 clicker=0x%016llx event_seq=%u seq=%u status=%u remaining_ms=%lld",
-                                     (unsigned long long)schedule->clicker_id,
-                                     schedule->click_event_id,
-                                     expected.seq,
-                                     range_result.status,
-                                     (long long)remaining_ms);
                 continue;
             }
             break;
@@ -427,15 +409,6 @@ uint32_t ml_anchor_run_post_burst_diagnostics(
                     range_result.rsl_sampled ? 1u : 0u,
                     range_result.cir_sampled ? 1u : 0u,
                     range_result.clicker_diag_received ? 1u : 0u);
-            high_debug_log_event("POST_BURST_DIAG_RX",
-                                 "result=ok clicker=0x%016llx event_seq=%u seq=%u status=%u rsl_present=%u cir_present=%u clicker_diag=%u",
-                                 (unsigned long long)range_result.initiator_id,
-                                 range_result.session_id,
-                                 range_result.seq,
-                                 range_result.status,
-                                 range_result.rsl_sampled ? 1u : 0u,
-                                 range_result.cir_sampled ? 1u : 0u,
-                                 range_result.clicker_diag_received ? 1u : 0u);
         } else {
             LOG_WRN("anchor post-burst diagnostic failed: clicker=0x%016llx event_seq=%u seq=%u ret=%d status=%s(%u) exchange_started=%u",
                     (unsigned long long)schedule->clicker_id,
@@ -445,14 +418,6 @@ uint32_t ml_anchor_run_post_burst_diagnostics(
                     range_status_name(range_result.status),
                     range_result.status,
                     range_result.exchange_started ? 1u : 0u);
-            high_debug_log_event("POST_BURST_DIAG_RX",
-                                 "result=fail clicker=0x%016llx event_seq=%u seq=%u ret=%d status=%u exchange_started=%u",
-                                 (unsigned long long)schedule->clicker_id,
-                                 schedule->click_event_id,
-                                 expected.seq,
-                                 ret,
-                                 range_result.status,
-                                 range_result.exchange_started ? 1u : 0u);
         }
     }
 
@@ -1234,7 +1199,6 @@ static int ml_clicker_send_encoded_frame_retained(const uint8_t *frame,
         &retries);
     ml_clicker_add_custody_retries(retries);
     if (ret < 0) {
-        HIGH_DEBUG_COUNTER_INC(gateway_ble_notify_failures);
         ml_clicker_note_custody_failure("frame", ret);
     }
     return ret;
@@ -1274,15 +1238,6 @@ static int ml_clicker_emit_host_packet_retained(
             frame_packet.seq,
             (unsigned int)payload_len,
             (unsigned int)frame_len);
-    HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
-    high_debug_log_event("BLE_GATEWAY_PACKET_TX",
-                         "msg=0x%02x src=0x%016llx dst=0x%016llx seq=%u payload_len=%u frame_len=%u",
-                         frame_packet.msg_type,
-                         (unsigned long long)frame_packet.src_id,
-                         (unsigned long long)frame_packet.dst_id,
-                         frame_packet.seq,
-                         (unsigned int)payload_len,
-                         (unsigned int)frame_len);
     return 0;
 }
 
@@ -1510,7 +1465,6 @@ static int ml_clicker_flush_buffered_frames(
 
         ml_clicker_runtime.buffered_frame_head++;
         ml_clicker_runtime.flushed_frames++;
-        HIGH_DEBUG_COUNTER_INC(gateway_packets_emitted);
     }
     ml_clicker_runtime.buffered_frames = 0u;
     ml_clicker_runtime.buffered_frame_head = 0u;
@@ -2509,17 +2463,6 @@ void ml_clicker_run_post_burst_diagnostics(
                     UWB_POST_BURST_DIAG_ATTEMPTS,
                     range_request.seq,
                     range_request.timeout_ms);
-            high_debug_log_event("POST_BURST_DIAG_TX",
-                                 "anchor=0x%016llx event_seq=%u entry=%u diag_attempt=%u/%u seq=%u target_us=%lld now_ms=%lld timeout_ms=%u",
-                                 (unsigned long long)entry->anchor_id,
-                                 session->config.click_event_id,
-                                 entry_index,
-                                 diag_attempt + 1u,
-                                 UWB_POST_BURST_DIAG_ATTEMPTS,
-                                 range_request.seq,
-                                 (long long)attempt_target_us,
-                                 (long long)k_uptime_get(),
-                                 range_request.timeout_ms);
 
             ret = dwm3000_driver_range_initiator(&range_request, &range_result);
             cleanup_ret = app_radio_idle_with_bounded_recovery(
@@ -2550,19 +2493,6 @@ void ml_clicker_run_post_burst_diagnostics(
                         range_result.cir_sampled ? 1u : 0u,
                         range_result.anchor_full_cir_sampled ? 1u : 0u,
                         range_result.clicker_diag_received ? 1u : 0u);
-                high_debug_log_event("POST_BURST_DIAG_TX",
-                                     "result=complete anchor=0x%016llx event_seq=%u entry=%u diag_attempt=%u seq=%u ret=%d status=%u rsl_present=%u cir_present=%u anchor_full_cir=%u clicker_diag=%u",
-                                     (unsigned long long)entry->anchor_id,
-                                     session->config.click_event_id,
-                                     entry_index,
-                                     diag_attempt + 1u,
-                                     range_request.seq,
-                                     ret,
-                                     range_result.status,
-                                     range_result.rsl_sampled ? 1u : 0u,
-                                     range_result.cir_sampled ? 1u : 0u,
-                                     range_result.anchor_full_cir_sampled ? 1u : 0u,
-                                     range_result.clicker_diag_received ? 1u : 0u);
                 stored->result = range_result;
                 stored->valid = true;
                 diag_complete = ret == 0 && range_result.status == RANGE_OK &&
@@ -2579,15 +2509,6 @@ void ml_clicker_run_post_burst_diagnostics(
                         ret,
                         range_status_name(range_result.status),
                         range_result.status);
-                high_debug_log_event("POST_BURST_DIAG_TX",
-                                     "result=fail anchor=0x%016llx event_seq=%u entry=%u diag_attempt=%u seq=%u ret=%d status=%u exchange_started=0",
-                                     (unsigned long long)entry->anchor_id,
-                                     session->config.click_event_id,
-                                     entry_index,
-                                     diag_attempt + 1u,
-                                     range_request.seq,
-                                     ret,
-                                     range_result.status);
             }
         }
 

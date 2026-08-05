@@ -108,7 +108,6 @@ assert re.search(r"\bnext_event_seq\b", STATE) is None
 for source_path in (
     APP / "src/app_clicker.c",
     APP / "src/app_ml.c",
-    APP / "src/app_high_debug.c",
 ):
     source = source_path.read_text()
     for call in re.finditer(r"app_click_event_sequence_next\([^;]+;", source):

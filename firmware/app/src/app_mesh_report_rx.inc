@@ -288,7 +288,6 @@ static void mesh_ch9_tx_pending_handle_timeout(uint32_t now_ms)
                 DEVICE_ID) == APP_MESH_CH9_TIMEOUT_DROP_TRANSIT) {
             entry->acked = true;
             transit_dropped++;
-            HIGH_DEBUG_COUNTER_INC(mesh_drop);
             status_debug_printf("DBG_TRANSIT_CUSTODY_DROP src=0x%llx seq=%u type=0x%02x reason=gateway-ack-timeout\n",
                                 (unsigned long long)retry->packet.src_id,
                                 retry->packet.seq,
@@ -771,7 +770,6 @@ static bool mesh_queue_from_frame_at_internal(
             pending.first_received_at_ms,
             &pending.result_validation_token);
         if (ret < 0 && ret != -ENOENT) {
-            HIGH_DEBUG_COUNTER_INC(mesh_drop);
             LOG_ERR("gateway result validation lease unavailable; dropped src=0x%016llx session=%u seq=%u ret=%d",
                     (unsigned long long)pending.packet.src_id,
                     pending.packet.session_id,
@@ -785,7 +783,6 @@ static bool mesh_queue_from_frame_at_internal(
     if (ret < 0) {
         gateway_command_result_validation_release_reserved(
             pending.result_validation_token);
-        HIGH_DEBUG_COUNTER_INC(mesh_drop);
         LOG_WRN("mesh UWB RX queue full; dropped msg=0x%02x src=0x%016llx dst=0x%016llx",
                 pending.packet.msg_type,
                 (unsigned long long)pending.packet.src_id,
@@ -796,7 +793,6 @@ static bool mesh_queue_from_frame_at_internal(
     if (DEVICE_ROLE == ROLE_ANCHOR) {
         uwb_anchor_note_mesh_packet(&anchor_uwb_session);
     }
-    HIGH_DEBUG_COUNTER_INC(mesh_rx);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_MESH_RX_QUEUED ch=%u msg=0x%02x src=0x%llx dst=0x%llx prev=0x%llx seq=%u q=%u\n",
                             radio_channel,
@@ -819,24 +815,7 @@ static bool mesh_queue_from_frame_at_internal(
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_GATEWAY_ACK_RX\n");
         }
-        HIGH_DEBUG_COUNTER_INC(mesh_ack);
-        high_debug_log_event("GATEWAY_ACK_RX",
-                             "src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u",
-                             (unsigned long long)pending.packet.src_id,
-                             (unsigned long long)pending.packet.dst_id,
-                             (unsigned long long)pending.previous_hop_id,
-                             pending.packet.seq,
-                             pending.link_quality);
     }
-    high_debug_log_event("MESH_RX",
-                         "msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx seq=%u quality=%u queue_depth=%u",
-                         pending.packet.msg_type,
-                         (unsigned long long)pending.packet.src_id,
-                         (unsigned long long)pending.packet.dst_id,
-                         (unsigned long long)pending.previous_hop_id,
-                         pending.packet.seq,
-                         pending.link_quality,
-                         k_msgq_num_used_get(&mesh_rx_msgq));
     LOG_INF("mesh UWB RX queued: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx quality=%u queue_depth=%u role=%s",
             pending.packet.msg_type,
             (unsigned long long)pending.packet.src_id,
@@ -1188,13 +1167,6 @@ static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
         (void)app_node_comm_request_route_refresh(
             route_adv_delay_ms, "route-solicit-wake-claim", false);
     }
-    high_debug_log_event("MESH_CH5_WAKE_RX",
-                         "src=0x%016llx event_seq=%u attempt=%u quality=%u role=%s",
-                         (unsigned long long)claim.clicker_id,
-                         claim.click_event_id,
-                         claim.attempt_index,
-                         link_quality,
-                         role_name());
     LOG_INF("mesh channel-5 wake claim RX: src=0x%016llx event_seq=%u attempt=%u quality=%u role=%s",
             (unsigned long long)claim.clicker_id,
             claim.click_event_id,
@@ -2472,10 +2444,6 @@ static void mesh_route_refresh_note_sent(const struct mesh_outbound *out,
 {
     ARG_UNUSED(ctx);
     mesh_relay_note_tx_sent(&mesh_runtime, out, now_ms);
-    high_debug_log_event("GATEWAY_ROUTE_ADV",
-                         "phase=sent seq=%u ttl=%u",
-                         out->packet.session_id,
-                         out->packet.ttl);
 }
 
 static void mesh_route_refresh_stop_scan(void *ctx)
