@@ -20,9 +20,7 @@
 #include "app_mesh_ch9_ack.h"
 #include "app_mesh_collection_deferral.h"
 #include "app_mesh_gateway_ack_policy.h"
-#include "app_mesh_persistence.h"
 #include "app_mesh_preemption.h"
-#include "app_mesh_route_state_persistence.h"
 #include "app_mesh_route_reply_ack.h"
 #include "app_mesh_route_ready_handoff.h"
 #include "app_mesh_async_route_request.h"
@@ -42,7 +40,6 @@
 #include "app_stack_workload_diag.h"
 #include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
-#include "anchor_range_fragment_policy.h"
 #include "dwm3000_driver.h"
 #include "discovery_assignment.h"
 #include "mesh.h"
@@ -98,6 +95,12 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
 #define ANCHOR_RANGE_FRAGMENT_PERSISTENCE_RETRY_MS 10u
+/* Gateway host-journal state codes, kept local because the persistence
+ * header that defined them is removed. They are only compared as "fresh vs
+ * owned" markers; with persistence gone every admission is fresh. */
+#define APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED 1u
+#define APP_MESH_GATEWAY_HOST_JOURNAL_PREPARED 2u
+#define APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW 3u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS \
     MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS
@@ -435,8 +438,25 @@ K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH,
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
 
+/* In-RAM sequencing state for an anchor range-report batch. The flash
+ * persistence codec (anchor_range_journal_control) and its NVS records are
+ * removed; only the fragment identity/order needed for ACK matching and
+ * acknowledged-mask accounting stays, held entirely in RAM. */
+struct anchor_range_report_control {
+    uint64_t clicker_id;
+    uint64_t anchor_id;
+    uint64_t gateway_id;
+    uint32_t event_seq;
+    struct {
+        uint16_t seq;
+        uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN];
+    } fragments[RANGE_REPORT_MAX_PACKET_FRAGMENTS];
+    uint8_t fragment_count;
+    uint8_t attempt_index;
+};
+
 struct anchor_range_report_batch_reservation {
-    struct anchor_range_journal_control journal;
+    struct anchor_range_report_control journal;
     uint64_t clicker_id;
     uint32_t event_seq;
     uint32_t queue_count_before_batch;
@@ -452,7 +472,7 @@ struct anchor_range_report_batch_reservation {
 static struct anchor_range_report_batch_reservation
     anchor_range_report_batch_reservation;
 struct anchor_range_report_journal_runtime {
-    struct anchor_range_journal_control control;
+    struct anchor_range_report_control control;
     uint16_t acknowledged_mask;
     bool active;
 };

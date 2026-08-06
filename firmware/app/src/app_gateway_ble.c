@@ -18,7 +18,6 @@
 #include "app_stack_workload_diag.h"
 #include "app_watchdog.h"
 #include "app_mesh_report.h"
-#include "app_mesh_persistence.h"
 #include "app_state.h"
 #include "gateway_membership.h"
 #include "gateway_ble_transport.h"
@@ -74,6 +73,7 @@ static struct k_spinlock gateway_command_seq_lock;
 #define GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE 256u
 static uint32_t gateway_broadcast_command_sequence_next;
 static uint32_t gateway_broadcast_command_sequence_remaining;
+static uint32_t gateway_broadcast_command_sequence_reserved_through;
 K_MUTEX_DEFINE(gateway_broadcast_command_sequence_mutex);
 static struct gateway_ble_stream_state gateway_ble_stream_state;
 static struct gateway_command_observability_state gateway_command_observability_state;
@@ -211,23 +211,41 @@ static uint32_t gateway_command_sequence_increment(uint32_t sequence)
     return sequence == UINT32_MAX ? 1u : sequence + 1u;
 }
 
+static uint32_t gateway_command_sequence_advance(uint32_t sequence,
+                                                 uint32_t count)
+{
+    uint64_t normalized;
+
+    if (sequence == 0u) {
+        return count;
+    }
+    normalized = (uint64_t)(sequence - 1u) + count;
+    return (uint32_t)(normalized % UINT32_MAX) + 1u;
+}
+
 static int gateway_broadcast_command_sequence_reserve_locked(void)
 {
-    uint32_t first_sequence = 0u;
-    int ret;
+    uint32_t first_sequence;
 
     if (gateway_broadcast_command_sequence_remaining != 0u) {
         return 0;
     }
-    ret = app_mesh_persistence_reserve_gateway_command_sequences(
-        GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE,
-        &first_sequence);
-    if (ret < 0) {
-        return ret;
-    }
+    /*
+     * RAM-only session: there is no durable watermark to restore, so the
+     * block always advances from the last reserved sequence. Persistence
+     * "save" is a no-op; the in-RAM counter keeps the sequence monotonic for
+     * the life of the session.
+     */
+    first_sequence = gateway_broadcast_command_sequence_reserved_through ==
+                     UINT32_MAX ? 1u :
+                     gateway_broadcast_command_sequence_reserved_through + 1u;
     gateway_broadcast_command_sequence_next = first_sequence;
     gateway_broadcast_command_sequence_remaining =
         GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE;
+    gateway_broadcast_command_sequence_reserved_through =
+        gateway_command_sequence_advance(
+            gateway_broadcast_command_sequence_reserved_through,
+            GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE);
     return 0;
 }
 
@@ -876,6 +894,35 @@ int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
     return 0;
 }
 
+/*
+ * RAM-only equivalent of the former persistence host-journal support check.
+ * It is a pure packet classifier (no storage), kept so host delivery still
+ * takes the journal path within the session; persistence "restore" restored
+ * nothing and "save" is a no-op.
+ */
+static bool gateway_host_journal_supported(const struct proto_packet *packet)
+{
+    if (packet == NULL ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_SURVEY_DISCOVERY_REPORT:
+    case MSG_SURVEY_PAIR_RESULT:
+        return true;
+    case MSG_MESH_DATA:
+        return (packet->flags & FLAG_DIAGNOSTIC) != 0u;
+    default:
+        return false;
+    }
+}
+
 static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
 {
     enum gateway_ble_tx_source completed_source = GATEWAY_BLE_TX_NONE;
@@ -936,8 +983,7 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
                                            &completed_packet);
         journal_supported =
             packet_ret == 0 &&
-            app_mesh_persistence_gateway_host_journal_supports(
-                &completed_packet);
+            gateway_host_journal_supported(&completed_packet);
         if (journal_identity_ret == 0 && journal_supported) {
             journal_retirement_pending =
                 gateway_ble_stream_state.head_send_phase ==

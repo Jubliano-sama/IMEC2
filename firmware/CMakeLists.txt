@@ -9,8 +9,6 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
-    src/anchor_range_fragment_policy.c
-    src/anchor_range_journal.c
     src/debug_log.c
     src/device_identity.c
     src/discovery_assignment.c
@@ -20,7 +18,6 @@ add_library(core
     src/protocol.c
     src/gateway_membership.c
     src/gateway_command.c
-    src/gateway_collection_journal.c
     src/uwb.c
     src/uwb_ble_courtesy.c
     src/uwb_session.c
@@ -63,20 +60,6 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
 add_test(NAME protocol COMMAND test_protocol)
-
-add_executable(test_anchor_range_journal tests/test_anchor_range_journal.c)
-target_link_libraries(test_anchor_range_journal PRIVATE core)
-add_test(NAME anchor_range_journal COMMAND test_anchor_range_journal)
-set_tests_properties(anchor_range_journal PROPERTIES
-    LABELS "mesh_integration;hardware_models;protocol;storage")
-
-add_executable(test_anchor_range_fragment_policy
-    tests/test_anchor_range_fragment_policy.c)
-target_link_libraries(test_anchor_range_fragment_policy PRIVATE core)
-add_test(NAME anchor_range_fragment_policy
-    COMMAND test_anchor_range_fragment_policy)
-set_tests_properties(anchor_range_fragment_policy PROPERTIES
-    LABELS "mesh_integration;hardware_models;protocol;storage;state")
 
 add_executable(test_mesh_event_owner tests/test_mesh_event_owner.c)
 target_link_libraries(test_mesh_event_owner PRIVATE core)
@@ -267,24 +250,6 @@ add_executable(test_gateway_command tests/test_gateway_command.c)
 target_link_libraries(test_gateway_command PRIVATE core)
 add_test(NAME gateway_command COMMAND test_gateway_command)
 
-add_executable(test_gateway_collection_journal
-    tests/test_gateway_collection_journal.c
-    src/gateway_collection_journal.c
-    src/gateway_command.c
-    src/gateway_membership.c
-    src/discovery_assignment.c
-    src/semantic_digest.c
-    src/protocol.c
-    src/mesh.c)
-target_include_directories(test_gateway_collection_journal PRIVATE include)
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(test_gateway_collection_journal PRIVATE
-        -Wall -Wextra -Werror -pedantic)
-endif()
-add_test(NAME gateway_collection_journal COMMAND test_gateway_collection_journal)
-set_tests_properties(gateway_collection_journal PROPERTIES
-    LABELS "mesh_integration;hardware_models;gateway;persistence")
-
 add_executable(gateway_gui_protocol_oracle
     tests/mesh_integration/gateway_gui_protocol_oracle.c)
 target_link_libraries(gateway_gui_protocol_oracle PRIVATE core)
@@ -343,41 +308,11 @@ add_test(NAME app_gateway_eack_retry COMMAND test_app_gateway_eack_retry)
 set_tests_properties(app_gateway_eack_retry PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway")
 
-add_test(NAME gateway_eack_retry_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_eack_retry_source_invariants.py)
-set_tests_properties(gateway_eack_retry_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;gateway;static_analysis")
-add_test(NAME gateway_durable_accept_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_durable_accept_source_invariants.py)
-set_tests_properties(gateway_durable_accept_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;gateway;survey;static_analysis")
-add_test(NAME click_ble_custody_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_ble_custody_source_invariants.py)
-set_tests_properties(click_ble_custody_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;gateway;click;ble;static_analysis")
-add_test(NAME deferred_outbox_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_deferred_outbox_source_invariants.py)
-set_tests_properties(deferred_outbox_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;preemption;static_analysis")
 add_test(NAME assignment_claim_semantic_acceptance
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_claim_semantic_acceptance.py)
 set_tests_properties(assignment_claim_semantic_acceptance PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;gateway;assignment;static_analysis")
-add_test(NAME assignment_state_serialization_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_state_serialization_source_invariants.py)
-set_tests_properties(assignment_state_serialization_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;gateway;assignment;static_analysis")
-add_test(NAME assignment_table_commitment_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_table_commitment_source_invariants.py)
-set_tests_properties(assignment_table_commitment_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;protocol;gateway;assignment;persistence;static_analysis")
 
 add_executable(test_app_gateway_ble_stream
     tests/test_app_gateway_ble_stream.c
@@ -433,11 +368,6 @@ add_test(NAME app_gateway_assignment_publisher
     COMMAND test_app_gateway_assignment_publisher)
 set_tests_properties(app_gateway_assignment_publisher
     PROPERTIES LABELS "mesh_integration;hardware_models;gateway_command;enumeration")
-add_test(NAME assignment_publisher_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_assignment_publisher_source_invariants.py)
-set_tests_properties(assignment_publisher_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;gateway_command;enumeration")
 add_test(NAME node_comm_source_boundary
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_source_boundary.py)
@@ -453,18 +383,7 @@ add_test(NAME route_control_wire_source_boundary
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_route_control_wire_source_boundary.py)
 set_tests_properties(route_control_wire_source_boundary
     PROPERTIES LABELS "mesh_integration;hardware_models;communication;route;static_analysis")
-add_test(NAME node_comm_protocol_callers
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_protocol_callers.py)
-set_tests_properties(node_comm_protocol_callers
-    PROPERTIES LABELS "mesh_integration;hardware_models;communication;survey;enumeration")
 
-add_test(NAME anchor_command_completion_durability_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_anchor_command_completion_durability_source_invariants.py)
-set_tests_properties(anchor_command_completion_durability_source_invariants
-    PROPERTIES
-    LABELS "mesh_integration;hardware_models;gateway_command;delivery;persistence;state;static_analysis")
 
 add_executable(test_app_stack_workload_diag
     tests/test_app_stack_workload_diag.c
@@ -564,11 +483,6 @@ add_test(NAME app_mesh_scheduler_liveness
          COMMAND test_app_mesh_scheduler_liveness)
 set_tests_properties(app_mesh_scheduler_liveness PROPERTIES
     LABELS "mesh_integration;hardware_models;communication")
-add_test(NAME mesh_scheduler_liveness_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_scheduler_liveness_source_invariants.py)
-set_tests_properties(mesh_scheduler_liveness_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;static_analysis")
 
 add_executable(test_app_mesh_async_route_request
     tests/test_app_mesh_async_route_request.c
@@ -753,23 +667,8 @@ target_link_libraries(test_app_mesh_preemption PRIVATE core)
 add_test(NAME app_mesh_preemption COMMAND test_app_mesh_preemption)
 set_tests_properties(app_mesh_preemption PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;preemption")
-add_test(NAME local_first_custody_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_local_first_custody_source_invariants.py)
-set_tests_properties(local_first_custody_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;preemption;static_analysis")
 
-add_test(NAME gateway_ble_custody_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_ble_custody_source_invariants.py)
-set_tests_properties(gateway_ble_custody_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;communication;gateway;ble;custody;static_analysis")
 
-add_test(NAME range_report_batch_admission_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_range_report_batch_admission_source_invariants.py)
-set_tests_properties(range_report_batch_admission_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;click;queues;custody;static_analysis")
 
 add_test(NAME gateway_survey_dynamic_deadline_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -858,11 +757,6 @@ add_test(NAME app_mesh_local_delivery COMMAND test_app_mesh_local_delivery)
 set_tests_properties(app_mesh_local_delivery
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence")
 
-add_test(NAME survey_delivery_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_delivery_source_invariants.py)
-set_tests_properties(survey_delivery_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence")
 
 add_test(NAME transaction_digest_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -870,17 +764,7 @@ add_test(NAME transaction_digest_source_invariants
 set_tests_properties(transaction_digest_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;static_analysis")
 
-add_test(NAME mesh_relay_semantic_digest_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_relay_semantic_digest_source_invariants.py)
-set_tests_properties(mesh_relay_semantic_digest_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;communication;persistence;static_analysis")
 
-add_test(NAME survey_pair_result_sequence_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_pair_result_sequence_source_invariants.py)
-set_tests_properties(survey_pair_result_sequence_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;static_analysis")
 
 add_test(NAME survey_discovery_failure_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -888,11 +772,6 @@ add_test(NAME survey_discovery_failure_source_invariants
 set_tests_properties(survey_discovery_failure_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing")
 
-add_test(NAME survey_active_generation_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_active_generation_source_invariants.py)
-set_tests_properties(survey_active_generation_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;survey;communication;timing")
 
 add_test(NAME survey_pair_control_lifecycle_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -930,38 +809,10 @@ add_test(NAME clicker_retained_idle_failure_source_invariants
 set_tests_properties(clicker_retained_idle_failure_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;click;power;state;static_analysis")
 
-add_test(NAME click_event_sequence_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_event_sequence_source_invariants.py)
-set_tests_properties(click_event_sequence_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;click;persistence;state;static_analysis")
 
-add_test(NAME click_event_sequence_two_boot_native
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_event_sequence_two_boot.py)
-set_tests_properties(click_event_sequence_two_boot_native
-    PROPERTIES LABELS "mesh_integration;hardware_models;click;persistence;state;native_sim"
-               TIMEOUT 180)
 
-add_test(NAME clicker_shared_nvs_four_boot_native
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_clicker_shared_nvs_four_boot.py)
-set_tests_properties(clicker_shared_nvs_four_boot_native
-    PROPERTIES LABELS "mesh_integration;hardware_models;click;persistence;protocol;state;native_sim"
-               TIMEOUT 300)
 
-add_test(NAME mesh_persistence_nvs_idempotence_native
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_persistence_nvs_idempotence.py)
-set_tests_properties(mesh_persistence_nvs_idempotence_native
-    PROPERTIES LABELS "mesh_integration;hardware_models;persistence;state;native_sim"
-               TIMEOUT 240)
 
-add_test(NAME mesh_persistence_retry_serialization_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_persistence_retry_serialization_source_invariants.py)
-set_tests_properties(mesh_persistence_retry_serialization_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;persistence;routing;state;static_analysis")
 
 add_test(NAME clicker_wake_deadline_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -988,11 +839,6 @@ add_test(NAME mesh_outbox_class_matrix COMMAND test_mesh_outbox_class_matrix)
 set_tests_properties(mesh_outbox_class_matrix PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;persistence;protocol")
 
-add_test(NAME mesh_clicker_relay_role_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_clicker_relay_role_source_invariants.py)
-set_tests_properties(mesh_clicker_relay_role_source_invariants PROPERTIES
-    LABELS "mesh_integration;hardware_models;click;routing;protocol;static_analysis")
 
 add_test(NAME mesh_clicker_on_demand_rx_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -1144,12 +990,6 @@ add_test(NAME mesh_deployment_policy
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_deployment_policy.py)
 set_tests_properties(mesh_deployment_policy PROPERTIES LABELS "hardware_models")
-
-add_test(NAME mesh_anchor_preset
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_anchor_preset.py)
-set_tests_properties(mesh_anchor_preset
-    PROPERTIES LABELS "mesh_integration;hardware_models;deployment")
 
 add_library(mesh_sim
     sim/mesh_sim.c
@@ -1313,17 +1153,7 @@ add_test(NAME mesh_survey_phy_scenarios COMMAND test_mesh_survey_phy_scenarios)
 set_tests_properties(mesh_survey_phy_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;survey;timing")
 
-add_test(NAME survey_command_source_invariants
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_command_source_invariants.py)
-set_tests_properties(survey_command_source_invariants
-    PROPERTIES LABELS "mesh_integration;hardware_models;survey;gateway_command")
 
-add_test(NAME survey_generation_persistence
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_generation_persistence.py)
-set_tests_properties(survey_generation_persistence
-    PROPERTIES LABELS "mesh_integration;hardware_models;survey;persistence;reset")
 
 add_executable(test_mesh_survey_topology_scenarios
     tests/mesh_integration/test_mesh_survey_topology_scenarios.c
@@ -1690,30 +1520,19 @@ set_property(TEST
     uwb_session
     dwm3000_models
     gateway_ble_transport_model
-    gateway_collection_journal
     gateway_eack_policy
     app_gateway_eack_retry
-    gateway_eack_retry_source_invariants
-    gateway_durable_accept_source_invariants
-    click_ble_custody_source_invariants
     assignment_claim_semantic_acceptance
-    assignment_state_serialization_source_invariants
     app_gateway_assignment_publisher
-    assignment_publisher_source_invariants
     app_discovery_assignment_policy
     app_mesh_scheduler_liveness
-    mesh_scheduler_liveness_source_invariants
     app_mesh_event_retry
     gateway_survey_dynamic_deadline_source_invariants
     gateway_survey_receive_deadline_source_invariants
-    survey_delivery_source_invariants
-    survey_pair_result_sequence_source_invariants
     survey_discovery_failure_source_invariants
-    survey_active_generation_source_invariants
     survey_pair_control_lifecycle_source_invariants
     anchor_survey_round_barrier_source_invariants
     gateway_survey_round_glue_source_invariants
-    survey_command_source_invariants
     app_node_comm_gateway_route_refresh
     mesh_direct_probe_recovery_scenarios
     mesh_integration

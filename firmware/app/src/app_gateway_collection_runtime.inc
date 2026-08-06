@@ -1,7 +1,7 @@
 #line 1209 __BASE_FILE__
 static int gateway_persist_collection_state(const char *reason)
 {
-    int ret;
+    ARG_UNUSED(reason);
 
     if (!gateway_collection_tracking_active() ||
         gateway_membership_restore_pending ||
@@ -11,18 +11,10 @@ static int gateway_persist_collection_state(const char *reason)
         return -ENOENT;
     }
 
-    ret = app_mesh_persistence_save_gateway_collection(&gateway_collection_state);
-    if (ret < 0) {
-        gateway_collection_persistence_dirty = true;
-        gateway_schedule_persistence_retry(reason);
-        LOG_WRN("gateway collection snapshot save failed: ret=%d reason=%s",
-                ret,
-                reason == NULL ? "" : reason);
-        return ret;
-    } else {
-        gateway_collection_persistence_dirty = false;
-        gateway_persistence_retry_round = 0u;
-    }
+    /* RAM-only build: the in-memory collection is always already authoritative,
+     * so the save is a no-op that merely records the accepted dirty round. */
+    gateway_collection_persistence_dirty = false;
+    gateway_persistence_retry_round = 0u;
     return 0;
 }
 
@@ -53,20 +45,12 @@ static bool gateway_collection_work_pending(void)
 
 static void gateway_collection_rollback_failed_start(void)
 {
-    int ret;
-
     gateway_collection_persistence_dirty = false;
     gateway_collection_eack_round_dirty = false;
     gateway_persistence_retry_round = 0u;
-    ret = app_mesh_persistence_restore_gateway_collection(
-        &gateway_collection_state);
-    if (ret < 0) {
-        gateway_collection_clear(&gateway_collection_state);
-        gateway_collection_restore_pending = true;
-        gateway_schedule_persistence_retry("collection-start-rollback-restore");
-        LOG_WRN("gateway collection start rollback found no durable snapshot: ret=%d",
-                ret);
-    }
+    /* RAM-only build: there is no durable snapshot to fall back to, so a
+     * failed start reverts the in-memory collection to its idle state. */
+    gateway_collection_clear(&gateway_collection_state);
 }
 
 static void gateway_schedule_collection_eack_round(void)
@@ -388,61 +372,6 @@ static bool gateway_collection_recovery_snapshot_matches(
                                  SEMANTIC_DIGEST_SHA256_LEN);
 }
 
-static int gateway_import_collection_recovery_eack_custody(void)
-{
-    struct gateway_collection_eack decoded = {0};
-    uint32_t recovery_attempt_id = 0u;
-    struct app_gateway_eack_retry_state *state =
-        &gateway_collection_eack_retry_state;
-    int marker_ret;
-
-    if (!state->snapshot.valid ||
-        gateway_collection_eack_custody_validate(
-            &state->snapshot) != PROTO_OK ||
-        gateway_collection_eack_packet_validate(
-            &state->snapshot.packet,
-            state->snapshot.payload,
-            state->snapshot.payload_len,
-            &decoded) != PROTO_OK) {
-        return -EBADMSG;
-    }
-    marker_ret = gateway_collection_eack_recovery_attempt_id(
-        state->snapshot.payload,
-        state->snapshot.payload_len,
-        &recovery_attempt_id);
-    if (marker_ret == PROTO_ERR_NOT_FOUND) {
-        return -ENOENT;
-    }
-    if (marker_ret != PROTO_OK ||
-        decoded.collection_open) {
-        return -EBADMSG;
-    }
-
-    /*
-     * Preserve the already-restored frozen snapshot while resetting every
-     * volatile retry lane. Reset recovery restarts the complete bounded flood
-     * with the same immutable attempt; it never rebuilds semantic bytes.
-     */
-    memset(&state->rf_retry, 0, sizeof(state->rf_retry));
-    memset(&state->c5_flood_progress, 0, sizeof(state->c5_flood_progress));
-    memset(&state->identity, 0, sizeof(state->identity));
-    memset(state->failed_channel9_next_hop_ids,
-           0,
-           sizeof(state->failed_channel9_next_hop_ids));
-    state->failed_channel9_next_hop_count = 0u;
-    state->force_c5_recovery = true;
-    state->identity = (struct app_gateway_eack_retry_identity) {
-        .gateway_id = decoded.gateway_id,
-        .command_seq = decoded.command_seq,
-        .collection_epoch_id = decoded.collection_epoch_id,
-        .eack_round = decoded.retry_round,
-        .eack_sequence = decoded.packet_sequence,
-    };
-    state->active = true;
-    gateway_collection_recovery_eack_active = true;
-    return 0;
-}
-
 static struct app_mesh_rf_retry_key
 gateway_collection_recovery_retry_key(void)
 {
@@ -667,14 +596,6 @@ int gateway_accept_collection_receipt_redrive(
     gateway_collection_eack_retry_state.active = true;
     gateway_collection_recovery_eack_active = true;
 
-    ret = app_mesh_persistence_save_gateway_eack_custody(
-        &gateway_collection_eack_retry_state.snapshot);
-    if (ret < 0) {
-        app_gateway_eack_retry_reset(
-            &gateway_collection_eack_retry_state);
-        gateway_collection_recovery_eack_active = false;
-        return ret;
-    }
     ret = gateway_send_collection_recovery_eack(
         previous_hop_id,
         received_radio_channel,
@@ -797,22 +718,6 @@ static int gateway_send_collection_eack(const char *reason,
             return -EBADMSG;
         }
         input.use_prebuilt_eack = true;
-    }
-
-    /*
-     * Store the exact datagram before every RF attempt.  Repeating an
-     * identical NVS write is harmless, and it closes the reset window after
-     * an earlier persistence failure without rebuilding mutable payload.
-     */
-    ret = app_mesh_persistence_save_gateway_eack_custody(
-        &gateway_collection_eack_retry_state.snapshot);
-    if (ret < 0) {
-        LOG_WRN("gateway collection EACK custody save failed before RF: ret=%d command_seq=%u collection=%u round=%u",
-                ret,
-                gateway_collection_state.command_seq,
-                gateway_collection_state.collection_epoch_id,
-                gateway_collection_state.retry_round);
-        return ret;
     }
 
     ret = app_gateway_collection_eack_send(
@@ -999,16 +904,9 @@ static int gateway_accept_collection_record(
         ret = gateway_persist_collection_state(reason);
         if (ret < 0) {
             if (collection_changed) {
-                int rollback_ret =
-                    app_mesh_persistence_rollback_gateway_collection(
-                        &gateway_collection_state);
-
+                /* RAM-only build: no durable rollback exists, just drop the
+                 * uncommitted in-memory update. */
                 gateway_collection_persistence_dirty = false;
-                if (rollback_ret < 0) {
-                    LOG_ERR("gateway collection result rollback failed: ret=%d persist_ret=%d",
-                            rollback_ret,
-                            ret);
-                }
             } else if (reopened) {
                 gateway_collection_state.eack_pending = false;
                 gateway_collection_persistence_dirty = false;

@@ -2574,7 +2574,8 @@ static struct k_work clicker_action_work;
 #define HAS_CLICK_BUTTON 0
 #endif
 
-#if HAS_CLICK_BUTTON || defined(CONFIG_IMEC_ML_CLICKER)
+#if (HAS_CLICK_BUTTON || defined(CONFIG_IMEC_ML_CLICKER)) && \
+    DEVICE_ROLE == ROLE_CLICKER
 #define HAS_CLICKER_ACTION_WORK_QUEUE 1
 #else
 #define HAS_CLICKER_ACTION_WORK_QUEUE 0

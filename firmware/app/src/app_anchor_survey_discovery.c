@@ -3,7 +3,6 @@
 #include "app_config.h"
 #include "app_board.h"
 #include "app_mesh_local_delivery.h"
-#include "app_mesh_persistence.h"
 #include "app_mesh_report.h"
 #include "app_node_comm.h"
 #include "app_stack_workload_diag.h"
@@ -131,13 +130,14 @@ static int survey_delivery_save(
     const struct app_mesh_local_delivery_snapshot *snapshot)
 {
     ARG_UNUSED(ctx);
-    return app_mesh_persistence_save_local_delivery(snapshot);
+    ARG_UNUSED(snapshot);
+    return 0;
 }
 
 static int survey_delivery_clear(void *ctx)
 {
     ARG_UNUSED(ctx);
-    return app_mesh_persistence_clear_local_delivery();
+    return 0;
 }
 
 static int survey_delivery_attempt_begin(const struct proto_packet *packet,
@@ -305,10 +305,10 @@ int app_anchor_survey_discovery_restore(bool *restored)
     memset(&survey_delivery_comm_identity, 0,
            sizeof(survey_delivery_comm_identity));
     survey_delivery_comm_identity_valid = false;
-    ret = app_mesh_persistence_restore_local_delivery(&delivery->snapshot);
+    /* No persistent delivery: treat restore as "nothing restored" (absent). */
     ret = app_mesh_local_delivery_recover(delivery,
                                           &delivery->snapshot,
-                                          ret,
+                                          0,
                                           &recovery);
     if (recovery.restored) {
         const struct mesh_outbound *outbound =
@@ -921,10 +921,10 @@ int app_anchor_survey_discovery_retry_report(void)
         struct app_mesh_local_delivery_snapshot recovered_snapshot = {0};
         struct app_mesh_local_delivery_recovery recovery = {0};
 
-        ret = app_mesh_persistence_restore_local_delivery(&recovered_snapshot);
+        /* No persistent delivery: nothing to restore from flash. */
         (void)app_mesh_local_delivery_recover(delivery,
                                               &recovered_snapshot,
-                                              ret,
+                                              0,
                                               &recovery);
         if (recovery.quarantined) {
             status_debug_printf("DBG_SURVEY_DELIVERY_JOURNAL_QUARANTINE restore=%d clear=%d\n",

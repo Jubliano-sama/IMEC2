@@ -2,7 +2,6 @@
 
 #include "app_anchor_survey_discovery.h"
 #include "app_anchor_survey_result_delivery.h"
-#include "app_mesh_persistence.h"
 #include "app_board.h"
 #include "app_config.h"
 #include "app_node_comm.h"
@@ -548,11 +547,6 @@ static int survey_generation_admit_locked(uint64_t generation, bool *advanced)
     }
     if (generation == survey_generation_active) {
         return 0;
-    }
-    ret = app_mesh_persistence_advance_anchor_survey_generation(
-        DEVICE_ID, GATEWAY_ID, generation);
-    if (ret < 0) {
-        return ret;
     }
     if (survey_generation_active != 0u &&
         survey_generation_active != generation) {
@@ -2411,12 +2405,8 @@ int app_anchor_survey_runtime_start(void)
     if (ret < 0) {
         return ret;
     }
-    ret = app_mesh_persistence_restore_anchor_survey_generation(
-        DEVICE_ID, GATEWAY_ID, &restored_generation);
-    if (ret < 0) {
-        survey_generation_restored = false;
-        return ret;
-    }
+/* No persistent anchor survey generation: high watermark stays at its
+ * default (0) and nothing is restored from flash. */
 #else
     ARG_UNUSED(ret);
 #endif

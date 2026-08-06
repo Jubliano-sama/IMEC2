@@ -9,6 +9,9 @@
 
 struct mesh_outbound;
 
+/* Fixed number of in-RAM survey pair-result delivery slots. */
+#define APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS 4u
+
 struct app_anchor_survey_result_delivery_ops {
     int (*schedule_work_ms)(uint32_t delay_ms);
     int (*active_owner_matches_outbound)(

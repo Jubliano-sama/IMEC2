@@ -4,17 +4,6 @@ source "Kconfig.zephyr"
 
 menu "IMEC power management"
 
-config IMEC_CLICK_EVENT_SEQUENCE_PERSISTENCE
-    bool "Reserve click event identities in NVS"
-    depends on FLASH && FLASH_MAP && FLASH_PAGE_LAYOUT && NVS && NVS_DATA_CRC
-    help
-      Reserve click event sequence numbers in durable blocks before use.
-      All clicker-role images enable this because these identities cross a
-      reset boundary as gateway de-duplication keys or ML collection
-      correlation keys. Mount, read, reservation, and read-back failures
-      reject allocation; there is no volatile fallback while this option is
-      enabled.
-
 config IMEC_CLICKER_SYSTEMOFF_IDLE
     bool "Put the clicker in system-off while idle"
     default n if IMEC_CLICKER_SYSTEMON_RETAINED_IDLE

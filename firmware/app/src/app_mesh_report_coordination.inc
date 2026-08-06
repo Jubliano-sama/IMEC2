@@ -1188,10 +1188,10 @@ static int mesh_gateway_accept_semantic_delivery(
         if (receipt_ret < 0) {
             return receipt_ret;
         }
-        ret = app_mesh_persistence_confirm_gateway_host_journal(
-            &pending->packet,
-            pending->payload,
-            pending->payload_len);
+        /* Gateway host-journal persistence is removed: there is no flash
+         * journal to confirm, so a confirm is a no-op owning nothing. The
+         * in-RAM BLE terminal-receipt state decides fresh vs. duplicate. */
+        ret = 0;
 
         if (ret < 0) {
             return ret;
@@ -1499,18 +1499,14 @@ static int mesh_save_outbox_durable(const char *reason)
 {
     uint32_t generation = mesh_persistence_generation_begin(
         &mesh_outbox_persistence_generation);
-    uint32_t now_ms = k_uptime_get_32();
     int ret;
 
-    mesh_outbox_persistence_dirty = true;
-    if (mesh_relay_tx_active(&mesh_runtime)) {
-        ret = app_mesh_persistence_save_outbox(&mesh_runtime, now_ms);
-    } else {
-        ret = app_mesh_persistence_init();
-        if (ret == 0) {
-            ret = app_mesh_persistence_clear_outbox();
-        }
-    }
+    (void)reason;
+    /* Outbox flash persistence is removed: the in-RAM relay/queue is the
+     * sole custody owner, so the durable save is a no-op that always
+     * succeeds and never leaves a dirty slot behind. */
+    mesh_outbox_persistence_dirty = false;
+    ret = 0;
     if (ret < 0) {
         if (mesh_persistence_generation_is_current(
                 mesh_outbox_persistence_generation, generation)) {
@@ -1523,43 +1519,14 @@ static int mesh_save_outbox_durable(const char *reason)
         return 0;
     }
 
-    ret = app_mesh_persistence_complete_deferred_outbox(&mesh_runtime,
-                                                         now_ms);
-    if (ret < 0 && ret != -ENOTSUP) {
-        if (mesh_persistence_generation_is_current(
-                mesh_outbox_persistence_generation, generation)) {
-            mesh_schedule_persistence_retry("deferred-outbox-cleanup");
-        }
-        LOG_WRN("mesh deferred outbox cleanup failed: %d", ret);
-        return ret;
-    }
+    /* Reconcile the in-RAM deferred owner after every primary save so a
+     * completed transaction is never left as a pending deferred slot. */
+    mesh_deferred_outbox_pending = false;
     if (!mesh_persistence_generation_is_current(
             mesh_outbox_persistence_generation, generation)) {
         return 0;
     }
 
-    /* Reconcile the explicit deferred owner after every primary save so
-     * a failed delete cannot be hidden by a later scheduler cancellation. */
-    ret = app_mesh_persistence_deferred_outbox_present();
-    if (ret >= 0) {
-        mesh_deferred_outbox_pending = ret > 0;
-    } else if (ret != -ENOTSUP && ret != -ENODEV && ret != -EAGAIN) {
-        mesh_deferred_outbox_pending = true;
-    }
-    if (!mesh_persistence_generation_is_current(
-            mesh_outbox_persistence_generation, generation)) {
-        return 0;
-    }
-
-    ret = app_mesh_persistence_complete_click_handoff(&mesh_runtime, now_ms);
-    if (ret < 0 && ret != -ENOTSUP) {
-        if (mesh_persistence_generation_is_current(
-                mesh_outbox_persistence_generation, generation)) {
-            mesh_schedule_persistence_retry("click-handoff-cleanup");
-        }
-        LOG_WRN("mesh committed click handoff cleanup failed: %d", ret);
-        return ret;
-    }
     if (mesh_persistence_generation_is_current(
             mesh_outbox_persistence_generation, generation)) {
         mesh_outbox_persistence_dirty = false;
@@ -1574,9 +1541,11 @@ static int mesh_save_child_custody_durable(const char *reason)
         &mesh_child_custody_persistence_generation);
     int ret;
 
-    mesh_child_custody_persistence_dirty = true;
-    ret = app_mesh_persistence_save_child_custody(&mesh_runtime,
-                                                  k_uptime_get_32());
+    (void)reason;
+    /* Child-custody flash persistence is removed; the in-RAM relay owns the
+     * custody, so this save is a no-op that always succeeds. */
+    mesh_child_custody_persistence_dirty = false;
+    ret = 0;
     if (ret < 0) {
         if (mesh_persistence_generation_is_current(
                 mesh_child_custody_persistence_generation, generation)) {
@@ -1617,17 +1586,12 @@ static void mesh_persistence_retry_work_handler(struct k_work *work)
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_preempt_save_outbox(void *ctx)
 {
-    int ret;
-
     ARG_UNUSED(ctx);
 
-    ret = app_mesh_persistence_save_deferred_outbox(
-        &mesh_runtime,
-        k_uptime_get_32());
-    if (ret == 0) {
-        mesh_deferred_outbox_pending = true;
-    }
-    return ret;
+    /* Deferred-outbox flash persistence is removed. The in-RAM deferred
+     * custody owner is recorded by the pending flag alone. */
+    mesh_deferred_outbox_pending = true;
+    return 0;
 }
 
 static int mesh_preempt_clear_outbox(void *ctx)
@@ -1658,7 +1622,7 @@ static int mesh_preempt_clear_outbox(void *ctx)
             return ret;
         }
     }
-    return app_mesh_persistence_clear_outbox();
+    return 0;
 }
 
 static int mesh_preempt_stage_click_handoff(void *ctx,
@@ -1667,8 +1631,7 @@ static int mesh_preempt_stage_click_handoff(void *ctx,
     ARG_UNUSED(ctx);
     ARG_UNUSED(outbound);
 
-    return app_mesh_persistence_stage_click_handoff(&mesh_runtime,
-                                                     k_uptime_get_32());
+    return 0;
 }
 
 static int mesh_preempt_commit_click_handoff(void *ctx,
@@ -1677,8 +1640,7 @@ static int mesh_preempt_commit_click_handoff(void *ctx,
     ARG_UNUSED(ctx);
     ARG_UNUSED(outbound);
 
-    return app_mesh_persistence_commit_click_handoff(&mesh_runtime,
-                                                      k_uptime_get_32());
+    return 0;
 }
 
 static int mesh_preempt_rollback_click_handoff(void *ctx,
@@ -1687,7 +1649,7 @@ static int mesh_preempt_rollback_click_handoff(void *ctx,
     ARG_UNUSED(ctx);
     ARG_UNUSED(outbound);
 
-    return app_mesh_persistence_rollback_click_handoff();
+    return 0;
 }
 
 static int mesh_preempt_cancel_timeout(void *ctx)
@@ -2123,21 +2085,16 @@ static int mesh_schedule_tx_timeout(void)
     uint32_t delay_ms;
     bool deferred_pending;
 
-    /* Refresh only when no in-RAM owner exists; the NVS copy then becomes the
-     * explicit owner that keeps this work item alive after a local ACK. */
+    /* Refresh only when no in-RAM owner exists; the in-RAM deferred flag is
+     * the explicit owner that keeps this work item alive after a local ACK. */
     if (!mesh_relay_tx_active(&mesh_runtime) &&
         !mesh_ch9_tx_pending_is_active() &&
         !mesh_relay_result_bundle_pending(&mesh_runtime)) {
-        int deferred_ret = app_mesh_persistence_deferred_outbox_present();
+        int deferred_ret = mesh_deferred_outbox_pending ? 1 : 0;
 
         if (deferred_ret >= 0) {
             mesh_deferred_outbox_pending = deferred_ret > 0;
         } else if (deferred_ret != -ENOTSUP) {
-            /* A mounted store that has not been read yet, or a failed read,
-             * is an unknown custody owner.  Keep the timeout alive until a
-             * successful restore/clear proves that the slot is empty. */
-            /* A read failure must not make durable custody disappear from
-             * the scheduler; the timeout handler will retry/reconcile it. */
             mesh_deferred_outbox_pending = true;
         }
     }
@@ -2750,13 +2707,11 @@ static void mesh_schedule_route_waiting_exhausted_retry(const char *reason)
 void mesh_report_resume_restored_outbox(const char *reason)
 {
     if (!mesh_relay_tx_active(&mesh_runtime)) {
-        int deferred_ret = app_mesh_persistence_deferred_outbox_present();
+        int deferred_ret = mesh_deferred_outbox_pending ? 1 : 0;
 
         if (deferred_ret >= 0) {
             mesh_deferred_outbox_pending = deferred_ret > 0;
         } else if (deferred_ret != -ENOTSUP) {
-            /* Unknown persistence state is fail-closed: retry rather than
-             * cancelling the only work item that can restore custody. */
             mesh_deferred_outbox_pending = true;
         }
     }

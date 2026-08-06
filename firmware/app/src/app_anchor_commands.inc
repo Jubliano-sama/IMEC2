@@ -4,6 +4,36 @@ static struct k_work_delayable anchor_discovery_ack_liveness_work;
 static uint32_t anchor_discovery_ack_liveness_generation;
 #endif
 
+static struct app_mesh_discovery_assignment_snapshot
+    anchor_ram_discovery_assignment_snapshot;
+
+static int anchor_restore_discovery_assignment_ram(
+    struct app_mesh_discovery_assignment_snapshot *out)
+{
+    if (out == NULL) {
+        return -EINVAL;
+    }
+    *out = anchor_ram_discovery_assignment_snapshot;
+    return 0;
+}
+
+static int anchor_save_discovery_assignment_ram(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
+    anchor_ram_discovery_assignment_snapshot = *snapshot;
+    return 0;
+}
+
+static int anchor_clear_discovery_assignment_ram(void)
+{
+    memset(&anchor_ram_discovery_assignment_snapshot, 0,
+           sizeof(anchor_ram_discovery_assignment_snapshot));
+    return 0;
+}
+
 static int anchor_checked_work_reschedule(struct k_work_delayable *work,
                                           k_timeout_t delay,
                                           const char *source)
@@ -141,7 +171,6 @@ static int anchor_commit_broadcast_command_replay(
     struct app_mesh_command_orchestrator *orchestrator =
         mesh_gateway_command_orchestrator_context();
     struct app_mesh_gateway_command_anchor_state candidate;
-    int ret;
 
     if (packet == NULL || options == NULL ||
         packet->dst_id != MESH_BROADCAST_ID ||
@@ -151,11 +180,6 @@ static int anchor_commit_broadcast_command_replay(
     candidate = orchestrator->anchor;
     app_mesh_gateway_command_flow_anchor_remember(
         &candidate, packet, options, now_ms);
-    ret = app_mesh_persistence_save_anchor_command_replay(
-        DEVICE_ID, GATEWAY_ID, &candidate.duplicate_cache);
-    if (ret < 0 && ret != -ENOTSUP) {
-        return ret;
-    }
     orchestrator->anchor = candidate;
     return 0;
 }
@@ -656,7 +680,7 @@ static int anchor_promote_discovery_assignment_after_ack_locked(
         pending->phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
         return -EINVAL;
     }
-    ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+    ret = anchor_restore_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -721,7 +745,7 @@ static int anchor_promote_discovery_assignment_after_ack_locked(
     snapshot.pending_slot_count = 0u;
     snapshot.pending_valid = 0u;
     snapshot.ack_retry_round = 0u;
-    ret = app_mesh_persistence_save_discovery_assignment(&snapshot);
+    ret = anchor_save_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -795,7 +819,7 @@ static int anchor_persist_discovery_assignment_ack_retry_round(
         pending->phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
         return -EINVAL;
     }
-    ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+    ret = anchor_restore_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -815,7 +839,7 @@ static int anchor_persist_discovery_assignment_ack_retry_round(
         return 0;
     }
     snapshot.ack_retry_round = retry_round;
-    return app_mesh_persistence_save_discovery_assignment(&snapshot);
+    return anchor_save_discovery_assignment_ram(&snapshot);
 }
 
 static void anchor_discovery_assignment_service_ack_promotion(
@@ -885,7 +909,7 @@ static int anchor_retire_superseded_discovery_ack(
         pending->phase != DISCOVERY_ASSIGNMENT_PHASE_ACK) {
         return -EINVAL;
     }
-    ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+    ret = anchor_restore_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -923,7 +947,7 @@ static int anchor_retire_superseded_discovery_ack(
         snapshot.pending_slot_count = 0u;
         snapshot.pending_valid = 0u;
         snapshot.ack_retry_round = 0u;
-        ret = app_mesh_persistence_save_discovery_assignment(&snapshot);
+        ret = anchor_save_discovery_assignment_ram(&snapshot);
     } else {
         /*
          * A first-assignment candidate has no finalized identity, so a
@@ -931,7 +955,7 @@ static int anchor_retire_superseded_discovery_ack(
          * through the checked path instead of pretending an empty snapshot was
          * committed.
          */
-        ret = app_mesh_persistence_clear_discovery_assignment_checked();
+        ret = anchor_clear_discovery_assignment_ram();
         if (ret == 0) {
             memset(&snapshot, 0, sizeof(snapshot));
         }
@@ -1625,7 +1649,7 @@ static int anchor_resume_pending_discovery_assignment_ack(
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return 0;
     }
-    ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+    ret = anchor_restore_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -1639,7 +1663,7 @@ static int anchor_resume_pending_discovery_assignment_ack(
     }
     if (explicit_table_replay && snapshot.ack_retry_round != 0u) {
         snapshot.ack_retry_round = 0u;
-        ret = app_mesh_persistence_save_discovery_assignment(&snapshot);
+        ret = anchor_save_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
             return ret;
         }
@@ -1685,7 +1709,7 @@ static bool anchor_collection_result_has_collection_identity(
 static int anchor_collection_result_clear_durable(void *context)
 {
     ARG_UNUSED(context);
-    return app_mesh_persistence_clear_collection_result();
+    return 0;
 }
 
 static bool anchor_collection_result_take_terminal(
@@ -1720,30 +1744,12 @@ static void anchor_collection_result_apply_actions(
 
 static int anchor_collection_result_persist(uint32_t delay_ms)
 {
-    struct app_mesh_collection_result_snapshot snapshot = {
-        .version = APP_MESH_COLLECTION_RESULT_SNAPSHOT_VERSION,
-        .local_id = DEVICE_ID,
-        .gateway_id = GATEWAY_ID,
-        .valid = anchor_collection_result_pending.active,
-    };
+    ARG_UNUSED(delay_ms);
 
     if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_collection_result_pending.active) {
         return -EINVAL;
     }
-
-    snapshot.command = anchor_collection_result_pending.command;
-    snapshot.result_id = anchor_collection_result_pending.result_id;
-    snapshot.collection_epoch_id = anchor_collection_result_pending.collection_epoch_id;
-    snapshot.delay_ms = delay_ms == 0u ? 1u : delay_ms;
-    snapshot.command_id = anchor_collection_result_pending.command_id;
-    snapshot.status = anchor_collection_result_pending.status;
-    snapshot.reason = anchor_collection_result_pending.reason;
-    snapshot.force_rediscovery_after_result =
-        anchor_collection_result_pending.force_rediscovery_after_result;
-    snapshot.reboot_after_result =
-        anchor_collection_result_pending.reboot_after_result;
-
-    return app_mesh_persistence_save_collection_result(&snapshot);
+    return 0;
 }
 
 static void anchor_collection_result_retry(const char *source)
@@ -1774,80 +1780,10 @@ static void anchor_collection_result_retry(const char *source)
 
 static int anchor_collection_result_restore_locked(void)
 {
-    struct app_mesh_collection_result_snapshot snapshot;
-    uint32_t delay_ms;
-    int ret;
-
     if (DEVICE_ROLE != ROLE_ANCHOR || anchor_collection_result_pending.active) {
         return -EBUSY;
     }
-
-    ret = app_mesh_persistence_restore_collection_result(&snapshot);
-    if (ret < 0) {
-        return ret;
-    }
-    if (!snapshot.valid) {
-        anchor_collection_result_restore_complete = true;
-        return 0;
-    }
-    if (snapshot.local_id != DEVICE_ID ||
-        snapshot.gateway_id != GATEWAY_ID ||
-        (snapshot.command.dst_id != DEVICE_ID &&
-         snapshot.command.dst_id != MESH_BROADCAST_ID)) {
-        return -EINVAL;
-    }
-    if (snapshot.result_id.node_id != 0u &&
-        (snapshot.result_id.node_id != DEVICE_ID ||
-         snapshot.result_id.gateway_id != GATEWAY_ID ||
-         snapshot.result_id.command_seq == 0u ||
-         snapshot.result_id.node_boot_counter == 0u ||
-         snapshot.result_id.result_seq == 0u)) {
-        return -EINVAL;
-    }
-    if (snapshot.result_id.node_id == 0u &&
-        (snapshot.result_id.gateway_id != 0u ||
-         snapshot.result_id.command_seq != 0u ||
-         snapshot.result_id.node_boot_counter != 0u ||
-         snapshot.result_id.result_seq != 0u ||
-         snapshot.collection_epoch_id != 0u ||
-         (!snapshot.force_rediscovery_after_result &&
-          !snapshot.reboot_after_result))) {
-        return -EINVAL;
-    }
-
-    anchor_collection_result_pending.command = snapshot.command;
-    anchor_collection_result_pending.result_id = snapshot.result_id;
-    anchor_collection_result_pending.collection_epoch_id = snapshot.collection_epoch_id;
-    anchor_collection_result_pending.command_id = snapshot.command_id;
-    anchor_collection_result_pending.status = snapshot.status;
-    anchor_collection_result_pending.reason = snapshot.reason;
-    anchor_collection_result_pending.force_rediscovery_after_result =
-        snapshot.force_rediscovery_after_result;
-    anchor_collection_result_pending.reboot_after_result =
-        snapshot.reboot_after_result;
-    anchor_collection_result_pending.active = true;
-    anchor_collection_result_pending.persistence_dirty = false;
-    anchor_collection_result_pending.persistence_retry_round = 0u;
-
-    /*
-     * The restored pending result keeps its exact pre-reset identity in
-     * `anchor_collection_result_pending`. Do not seed the allocator from it:
-     * every result created after this boot must use a fresh boot counter, and
-     * its per-boot sequence starts independently at one.
-     */
-
-    delay_ms = snapshot.delay_ms == 0u ? 1u : snapshot.delay_ms;
-    ret = anchor_checked_work_reschedule(
-        &anchor_collection_result_work,
-        K_MSEC(delay_ms),
-        "collection-result-restore");
-    if (ret < 0) {
-        return ret;
-    }
     anchor_collection_result_restore_complete = true;
-    LOG_INF("anchor collection command result restored: cmd=0x%04x delay_ms=%u",
-            (unsigned int)anchor_collection_result_pending.command_id,
-            delay_ms);
     return 0;
 }
 
@@ -2587,23 +2523,6 @@ static int anchor_set_route_from_command(const uint8_t *payload,
         return ret == PROTO_ERR_NO_SPACE ? -ENOSPC :
                ret == PROTO_ERR_STALE ? -ESTALE : -EINVAL;
     }
-    if (epoch_changed) {
-        /*
-         * Reserve the new generation before clearing any old-epoch route,
-         * timing, discovery, or custody relationship. A reset between this
-         * write and the mutation restores the newer empty generation, which
-         * is safe and forces rediscovery instead of reviving old custody.
-         */
-        ret = app_mesh_route_state_persist(&mesh_runtime,
-                                           candidate.route_epoch,
-                                           0u);
-        if (ret < 0) {
-            if (reason != NULL) {
-                *reason = (uint8_t)(-ret);
-            }
-            return ret;
-        }
-    }
     ret = mesh_relay_upsert_configured_gateway_route(&mesh_runtime,
                                                      &candidate);
     if (ret != PROTO_OK) {
@@ -2827,7 +2746,7 @@ static int anchor_apply_discovery_assignment_command(
         return -EINVAL;
     }
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
-        ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+        ret = anchor_restore_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
             return ret;
         }
@@ -2906,7 +2825,7 @@ static int anchor_apply_discovery_assignment_command(
         packet->session_id == 0u) {
         return -EINVAL;
     }
-    ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+    ret = anchor_restore_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -2945,7 +2864,7 @@ static int anchor_apply_discovery_assignment_command(
         if (ret < 0) {
             return ret;
         }
-        ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
+        ret = anchor_restore_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
             return ret;
         }
@@ -3123,7 +3042,7 @@ static int anchor_apply_discovery_assignment_command(
                        sizeof(snapshot.retired_epochs));
                 snapshot.retired_epoch_count = 0u;
             }
-            ret = app_mesh_persistence_save_discovery_assignment(&snapshot);
+            ret = anchor_save_discovery_assignment_ram(&snapshot);
             if (ret < 0) {
                 int rollback_ret =
                     anchor_restore_live_discovery_assignment_snapshot(
@@ -3219,7 +3138,7 @@ static int anchor_apply_discovery_assignment_command(
                    sizeof(snapshot.retired_epochs));
             snapshot.retired_epoch_count = 0u;
         }
-        ret = app_mesh_persistence_save_discovery_assignment(&snapshot);
+        ret = anchor_save_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
             int rollback_ret =
                 anchor_restore_live_discovery_assignment_snapshot(

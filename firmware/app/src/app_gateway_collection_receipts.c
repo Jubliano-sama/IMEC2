@@ -1,7 +1,6 @@
 #include "app_gateway_collection_receipts.h"
 
 #include "app_mesh_gateway_command_flow.h"
-#include "app_mesh_persistence.h"
 #include "gateway_command.h"
 
 #include <errno.h>
@@ -13,16 +12,7 @@
 
 LOG_MODULE_REGISTER(app_gateway_collection_receipts, LOG_LEVEL_INF);
 
-#define APP_GATEWAY_COLLECTION_RECEIPT_MAGIC UINT32_C(0x47435231)
-#define APP_GATEWAY_COLLECTION_RECEIPT_VERSION 2u
-#define APP_GATEWAY_COLLECTION_RECEIPT_LEGACY_VERSION 1u
-#define APP_GATEWAY_COLLECTION_RECEIPT_LEGACY_RECORD_SIZE 46u
-
 struct __packed app_gateway_collection_receipt_record {
-    uint32_t magic;
-    uint8_t version;
-    uint8_t valid;
-    uint16_t size;
     uint64_t gateway_id;
     uint64_t node_id;
     uint32_t command_seq;
@@ -32,24 +22,6 @@ struct __packed app_gateway_collection_receipt_record {
     uint16_t result_seq;
     uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t payload_len;
-    uint16_t checksum;
-};
-
-struct __packed app_gateway_collection_receipt_legacy_record {
-    uint32_t magic;
-    uint8_t version;
-    uint8_t valid;
-    uint16_t size;
-    uint64_t gateway_id;
-    uint64_t node_id;
-    uint32_t command_seq;
-    uint32_t node_boot_counter;
-    uint32_t collection_epoch_id;
-    uint16_t gateway_epoch;
-    uint16_t result_seq;
-    uint16_t payload_crc;
-    uint16_t payload_len;
-    uint16_t checksum;
 };
 
 BUILD_ASSERT(APP_GATEWAY_COLLECTION_RECEIPT_MAX_NODES ==
@@ -57,31 +29,21 @@ BUILD_ASSERT(APP_GATEWAY_COLLECTION_RECEIPT_MAX_NODES ==
              "receipt slots must cover the complete gateway collection roster");
 BUILD_ASSERT(sizeof(struct app_gateway_collection_receipt) == 72u,
              "collection receipt RAM scratch must stay bounded");
-BUILD_ASSERT(sizeof(struct app_gateway_collection_receipt_legacy_record) ==
-             APP_GATEWAY_COLLECTION_RECEIPT_LEGACY_RECORD_SIZE,
-             "legacy collection receipt decoder layout changed");
 BUILD_ASSERT(sizeof(struct app_gateway_collection_receipt_record) ==
              APP_GATEWAY_COLLECTION_RECEIPT_RECORD_SIZE,
-             "collection receipt NVS schema size changed");
-BUILD_ASSERT(offsetof(struct app_gateway_collection_receipt_record,
-                      gateway_id) == 8u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      node_id) == 16u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      command_seq) == 24u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      collection_epoch_id) == 32u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      gateway_epoch) == 36u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      payload_digest) == 40u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      payload_len) == 72u &&
-             offsetof(struct app_gateway_collection_receipt_record,
-                      checksum) == 74u,
-             "collection receipt NVS schema offsets changed");
+             "collection receipt RAM record size changed");
 
 K_MUTEX_DEFINE(gateway_collection_receipt_mutex);
+
+/*
+ * RAM-only fixed-slot receipt store backing the module's public API. It
+ * replaces the former per-node NVS receipts: nothing is restored from flash
+ * and every write only lasts for the current session. One encoded record per
+ * slot mirrors the previous durable schema so classify/record semantics are
+ * unchanged in RAM.
+ */
+static struct app_gateway_collection_receipt_record
+    gateway_collection_receipt_records[APP_GATEWAY_COLLECTION_RECEIPT_MAX_NODES];
 
 static bool command_result_id_equal(const struct command_result_id *left,
                                     const struct command_result_id *right)
@@ -132,27 +94,11 @@ bool app_gateway_collection_receipt_equal(
     return app_gateway_collection_receipt_same_result(left, right);
 }
 
-static uint16_t receipt_record_checksum(
-    const struct app_gateway_collection_receipt_record *record)
-{
-    struct app_gateway_collection_receipt_record copy;
-
-    if (record == NULL) {
-        return 0u;
-    }
-    copy = *record;
-    copy.checksum = 0u;
-    return proto_crc16_ccitt_false((const uint8_t *)&copy, sizeof(copy));
-}
-
 static void receipt_record_encode(
     const struct app_gateway_collection_receipt *receipt,
     struct app_gateway_collection_receipt_record *record)
 {
     memset(record, 0, sizeof(*record));
-    record->magic = APP_GATEWAY_COLLECTION_RECEIPT_MAGIC;
-    record->version = APP_GATEWAY_COLLECTION_RECEIPT_VERSION;
-    record->size = sizeof(*record);
     record->gateway_id = receipt->result_id.gateway_id;
     record->node_id = receipt->result_id.node_id;
     record->command_seq = receipt->result_id.command_seq;
@@ -164,8 +110,6 @@ static void receipt_record_encode(
            receipt->payload_digest,
            sizeof(record->payload_digest));
     record->payload_len = receipt->payload_len;
-    record->valid = 1u;
-    record->checksum = receipt_record_checksum(record);
 }
 
 static int receipt_record_decode(
@@ -174,12 +118,7 @@ static int receipt_record_decode(
 {
     struct app_gateway_collection_receipt decoded = {0};
 
-    if (record == NULL ||
-        record->magic != APP_GATEWAY_COLLECTION_RECEIPT_MAGIC ||
-        record->version != APP_GATEWAY_COLLECTION_RECEIPT_VERSION ||
-        record->size != sizeof(*record) ||
-        record->valid != 1u ||
-        record->checksum != receipt_record_checksum(record)) {
+    if (record == NULL) {
         return -EBADMSG;
     }
 
@@ -207,53 +146,14 @@ static int receipt_slot_read(
     uint8_t slot,
     struct app_gateway_collection_receipt *receipt)
 {
-    union {
-        struct app_gateway_collection_receipt_record current;
-        struct app_gateway_collection_receipt_legacy_record legacy;
-    } stored;
-    size_t stored_len = 0u;
-    int ret;
-
-    memset(&stored, 0, sizeof(stored));
-    ret = app_mesh_persistence_read_gateway_collection_receipt(
-        slot, &stored, sizeof(stored), &stored_len);
-    if (ret <= 0) {
-        return ret;
+    if (slot >= APP_GATEWAY_COLLECTION_RECEIPT_MAX_NODES) {
+        return -EINVAL;
     }
-    if (stored_len == APP_GATEWAY_COLLECTION_RECEIPT_LEGACY_RECORD_SIZE) {
-        const struct app_gateway_collection_receipt_legacy_record *legacy =
-            &stored.legacy;
-        struct app_gateway_collection_receipt_legacy_record copy;
-
-        copy = *legacy;
-        copy.checksum = 0u;
-        if (legacy->magic != APP_GATEWAY_COLLECTION_RECEIPT_MAGIC ||
-            legacy->version != APP_GATEWAY_COLLECTION_RECEIPT_LEGACY_VERSION ||
-            legacy->valid != 1u ||
-            legacy->size != APP_GATEWAY_COLLECTION_RECEIPT_LEGACY_RECORD_SIZE ||
-            legacy->checksum !=
-                proto_crc16_ccitt_false((const uint8_t *)&copy,
-                                        sizeof(copy))) {
-            return -EBADMSG;
-        }
-        /*
-         * Schema 1 retained only CRC16, so it cannot prove byte identity.
-         * Retiring a valid legacy receipt permits one conservative host
-         * redelivery instead of suppressing a distinct CRC collision.
-         */
-        ret = app_mesh_persistence_delete_gateway_collection_receipt(slot);
-        return ret < 0 ? ret : 0;
+    if (gateway_collection_receipt_records[slot].gateway_id == 0u) {
+        return 0;
     }
-    if (stored_len != sizeof(stored.current)) {
-        return -EBADMSG;
-    }
-    ret = receipt_record_decode(&stored.current, receipt);
-    if (ret < 0) {
-        LOG_ERR("gateway collection receipt slot %u is corrupt",
-                (unsigned int)slot);
-        return ret;
-    }
-    return 1;
+    return receipt_record_decode(&gateway_collection_receipt_records[slot],
+                                 receipt);
 }
 
 struct receipt_scan {
@@ -346,12 +246,11 @@ static int receipt_slot_write_and_verify(
     struct app_gateway_collection_receipt restored;
     int ret;
 
-    receipt_record_encode(receipt, &record);
-    ret = app_mesh_persistence_write_gateway_collection_receipt(
-        slot, &record, sizeof(record));
-    if (ret < 0) {
-        return ret;
+    if (slot >= APP_GATEWAY_COLLECTION_RECEIPT_MAX_NODES) {
+        return -EINVAL;
     }
+    receipt_record_encode(receipt, &record);
+    gateway_collection_receipt_records[slot] = record;
     ret = receipt_slot_read(slot, &restored);
     if (ret != 1) {
         return ret < 0 ? ret : -EIO;

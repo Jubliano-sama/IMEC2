@@ -413,7 +413,6 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     enum app_mesh_parent_loss_custody parent_loss_custody;
     bool pending_route_waiting = false;
     uint32_t now_ms;
-    int restore_ret;
 
     ARG_UNUSED(work);
     if (mesh_transport_paused()) {
@@ -435,67 +434,6 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         return;
     }
     now_ms = k_uptime_get_32();
-    if (!mesh_relay_tx_active(&mesh_runtime)) {
-        /*
-         * Click preemption transfers the frozen packet to the durable outbox
-         * before cancelling its in-RAM owner.  Resume that same packet in this
-         * boot once the click's radio-critical window has ended; startup-only
-         * restore would otherwise strand it until a reset.
-         */
-        restore_ret =
-            app_mesh_persistence_restore_outbox(&mesh_runtime, now_ms);
-        if (restore_ret < 0 && restore_ret != -ENOTSUP) {
-            /*
-             * A failed read leaves the active outbox's presence unknown. Do
-             * not consult the lower-priority deferred slot: doing so can
-             * reorder or overwrite the exact custody record whose read
-             * failed before it had a chance to populate mesh_runtime.
-             */
-            LOG_WRN("mesh active outbox restore failed: %d", restore_ret);
-            (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
-                                             REPORT_TX_RETRY_DELAY_MS,
-                                             "active-outbox-restore");
-            return;
-        }
-        if (!mesh_relay_tx_active(&mesh_runtime)) {
-            restore_ret = app_mesh_persistence_restore_deferred_outbox(
-                &mesh_runtime,
-                now_ms);
-            if (restore_ret == 0) {
-                mesh_deferred_outbox_pending = false;
-            }
-            if (restore_ret < 0 && restore_ret != -ENOTSUP) {
-                mesh_deferred_outbox_pending = true;
-                LOG_WRN("mesh deferred transit restore failed: %d",
-                        restore_ret);
-                (void)mesh_reschedule_owned_work(
-                    &mesh_tx_timeout_work,
-                    REPORT_TX_RETRY_DELAY_MS,
-                    "deferred-outbox-restore");
-                return;
-            }
-        } else {
-            restore_ret = app_mesh_persistence_complete_deferred_outbox(
-                &mesh_runtime,
-                now_ms);
-            if (restore_ret < 0 && restore_ret != -ENOTSUP) {
-                mesh_deferred_outbox_pending = true;
-                LOG_WRN("mesh deferred transit cleanup failed: %d",
-                        restore_ret);
-            } else if (restore_ret == 0) {
-                int deferred_present_ret =
-                    app_mesh_persistence_deferred_outbox_present();
-
-                if (deferred_present_ret >= 0) {
-                    mesh_deferred_outbox_pending = deferred_present_ret > 0;
-                } else if (deferred_present_ret != -ENOTSUP &&
-                           deferred_present_ret != -ENODEV &&
-                           deferred_present_ret != -EAGAIN) {
-                    mesh_deferred_outbox_pending = true;
-                }
-            }
-        }
-    }
     memset(result, 0, sizeof(*result));
     memset(pending_waiting, 0, sizeof(*pending_waiting));
 
@@ -2478,13 +2416,32 @@ static int mesh_route_refresh_schedule(void *ctx,
                                       "gateway-route-refresh");
 }
 
+static uint32_t mesh_route_refresh_reserved_sequence;
+
 static int mesh_route_refresh_reserve_sequences(void *ctx,
                                                 uint32_t count,
                                                 uint32_t *first_sequence)
 {
     ARG_UNUSED(ctx);
-    return app_mesh_persistence_reserve_gateway_command_sequences(
-        count, first_sequence);
+    if (count == 0u || first_sequence == NULL) {
+        return -EINVAL;
+    }
+    /* Command-sequence persistence is removed; reserve from an in-RAM
+     * monotonic counter instead of a flash snapshot. */
+    if (mesh_route_refresh_reserved_sequence == 0u) {
+        mesh_route_refresh_reserved_sequence =
+            (uint32_t)sys_rand32_get();
+        if (mesh_route_refresh_reserved_sequence == 0u) {
+            mesh_route_refresh_reserved_sequence = 1u;
+        }
+    }
+    *first_sequence = mesh_route_refresh_reserved_sequence;
+    if (mesh_route_refresh_reserved_sequence <= UINT32_MAX - count) {
+        mesh_route_refresh_reserved_sequence += count;
+    } else {
+        mesh_route_refresh_reserved_sequence = 1u;
+    }
+    return 0;
 }
 
 static bool mesh_route_refresh_defer(void *ctx)
@@ -2557,7 +2514,9 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
                     GATEWAY_ID,
                     1u);
     {
-        int restore_ret = app_mesh_route_state_restore(&mesh_runtime);
+        /* Route-state flash persistence is removed; nothing is restored and
+         * the in-RAM relay starts with the freshly initialized state. */
+        int restore_ret = 0;
 
         if (restore_ret < 0) {
             LOG_ERR("clicker route state restore failed closed: %d",
@@ -2641,8 +2600,8 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
 #endif
 #if DEVICE_ROLE == ROLE_CLICKER
     {
-        int restore_ret = app_mesh_persistence_restore_outbox(
-            &mesh_runtime, k_uptime_get_32());
+        /* Outbox persistence is removed; nothing is restored at startup. */
+        int restore_ret = 0;
 
         if (restore_ret < 0) {
             return restore_ret;

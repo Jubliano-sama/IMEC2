@@ -56,7 +56,6 @@ static void gateway_schedule_collection_eack_round(void);
 static int gateway_restore_membership_runtime(void);
 static int gateway_restore_collection_runtime(void);
 static int gateway_restore_host_journal_runtime(void);
-static int gateway_retire_notified_host_journal_runtime(void);
 
 struct gateway_decoded_command_result {
     enum command_status status;
@@ -371,25 +370,10 @@ static void gateway_schedule_persistence_retry(const char *reason)
 
 static int gateway_clear_eack_custody_or_defer(const char *reason)
 {
-    int ret = app_mesh_persistence_clear_gateway_eack_custody();
+    ARG_UNUSED(reason);
 
-    if (ret < 0) {
-        /*
-         * The old key may describe an EACK that reached RF. Keep one explicit
-         * runtime owner until its tombstone is durable, and stop every path
-         * that could freeze or transmit a replacement identity.
-         */
-        gateway_eack_custody_clear_pending = true;
-        atomic_clear(&gateway_collection_eack_schedule_deferred);
-        atomic_clear(&gateway_collection_eack_deferred_delay_ms);
-        (void)k_work_cancel_delayable(&gateway_collection_eack_work);
-        gateway_schedule_persistence_retry(reason);
-        LOG_WRN("gateway EACK custody clear deferred until NVS delete succeeds: ret=%d reason=%s",
-                ret,
-                reason == NULL ? "" : reason);
-        return ret;
-    }
-
+    /* RAM-only build: the EACK custody lives only in memory, so clearing it is
+     * an immediate no-op and never needs to be deferred to an NVS delete. */
     gateway_eack_custody_clear_pending = false;
     return 0;
 }
@@ -419,71 +403,6 @@ static void gateway_finalize_membership_clear(void)
     atomic_set(&gateway_assignment_publication_pending_state, 0);
 }
 
-/*
- * Bluetooth completion owns only the volatile ATT-credit transition.  Flash
- * reads and writes run here on the route owner so the bt_rx stack cannot enter
- * the NVS metadata/digest chain.  The stream retains the exact journal head
- * until the durable NOTIFIED transition either succeeds or returns a result
- * that restore can classify conservatively.
- */
-static int gateway_retire_notified_host_journal_runtime(void)
-{
-    struct proto_packet packet;
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    k_spinlock_key_t key;
-    int marker_ret;
-    int ret;
-
-    key = k_spin_lock(&gateway_ble_stream_lock);
-    if (gateway_ble_stream_state.head_send_phase !=
-        GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED) {
-        k_spin_unlock(&gateway_ble_stream_lock, key);
-        return 0;
-    }
-    ret = gateway_ble_stream_head_journal_identity(
-        &gateway_ble_stream_state, &packet, payload_digest);
-    k_spin_unlock(&gateway_ble_stream_lock, key);
-    if (ret < 0) {
-        return ret;
-    }
-
-    marker_ret =
-        app_mesh_persistence_mark_gateway_host_journal_notified_if_matches_digest(
-            &packet, payload_digest);
-    if (marker_ret == -EAGAIN || marker_ret == -EBUSY) {
-        return marker_ret;
-    }
-
-    /*
-     * A non-transient marker error can mean either that the write never
-     * happened or that NOTIFIED became durable but its verification failed.
-     * Remove only the exact retained RAM owner, then let durable restore
-     * distinguish COMMITTED (replay) from NOTIFIED (receipt/clear).
-     */
-    key = k_spin_lock(&gateway_ble_stream_lock);
-    if (gateway_ble_stream_state.head_send_phase !=
-        GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED) {
-        ret = -ESTALE;
-    } else {
-        gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
-                                     k_uptime_get_32());
-        ret = 0;
-    }
-    k_spin_unlock(&gateway_ble_stream_lock, key);
-    if (ret < 0) {
-        LOG_ERR("gateway journal phase race: %d", ret);
-        app_watchdog_stop_feeding();
-        return ret;
-    }
-
-    atomic_clear(&gateway_host_journal_restored);
-    atomic_set(&gateway_host_journal_restore_pending, 1);
-    if (marker_ret < 0) {
-        LOG_WRN("gateway journal marker ret=%d; reconciling", marker_ret);
-    }
-    return 1;
-}
-
 static void gateway_persistence_retry_work_handler(struct k_work *work)
 {
     int ret;
@@ -492,11 +411,6 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
     atomic_clear(&gateway_persistence_retry_schedule_deferred);
     atomic_clear(&gateway_persistence_retry_deferred_delay_ms);
 
-    ret = gateway_retire_notified_host_journal_runtime();
-    if (ret < 0) {
-        gateway_schedule_persistence_retry("host-output-restore");
-        return;
-    }
     if (gateway_membership_restore_pending) {
         ret = gateway_restore_membership_runtime();
         if (ret < 0) {
@@ -543,41 +457,21 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
         }
     }
     if (gateway_membership_clear_pending) {
-        ret = app_mesh_persistence_clear_gateway_membership();
-        if (ret < 0) {
-            gateway_schedule_persistence_retry("membership-clear");
-            return;
-        }
+        /* RAM-only: clearing is immediate, no NVS tombstone to wait for. */
         gateway_finalize_membership_clear();
     }
     if (gateway_collection_clear_pending) {
-        ret = app_mesh_persistence_clear_gateway_collection();
-        if (ret < 0) {
-            gateway_schedule_persistence_retry("collection-clear");
-            return;
-        }
         gateway_finalize_collection_clear();
     }
     if (gateway_collection_persistence_dirty) {
         if (!gateway_collection_tracking_active()) {
             gateway_collection_persistence_dirty = false;
         } else {
-            ret = app_mesh_persistence_save_gateway_collection(
-                &gateway_collection_state);
-            if (ret < 0) {
-                gateway_schedule_persistence_retry("collection");
-                return;
-            }
+            /* RAM-only: the in-memory collection is already authoritative. */
             gateway_collection_persistence_dirty = false;
         }
     }
     if (gateway_membership_persistence_dirty) {
-        ret = app_mesh_persistence_save_gateway_membership(
-            &gateway_membership_roster_state);
-        if (ret < 0) {
-            gateway_schedule_persistence_retry("membership");
-            return;
-        }
         gateway_membership_persistence_dirty = false;
     }
     if (gateway_ble_stream_initialized &&
@@ -979,63 +873,18 @@ int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
     }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-    if (app_mesh_persistence_gateway_host_journal_supports(packet)) {
-        int journal_ret;
+    /* RAM-only build: there is no durable host journal to classify or restore.
+     * Only the in-memory terminal-receipt ledger participates in admission. */
+    if (app_gateway_terminal_receipts_supports(packet, payload, payload_len)) {
+        int journal_ret = app_gateway_terminal_receipts_classify(
+            packet, payload, payload_len, k_uptime_get_32());
 
-        /* A journal left by a previous boot owns admission until it has been
-         * restored into the host queue.  This prevents a new accepted host
-         * record from overwriting the only durable copy. */
-        if (atomic_get(&gateway_host_journal_restore_pending) != 0) {
-            return -EAGAIN;
-        }
-        journal_ret = app_mesh_persistence_gateway_host_journal_matches(
-            packet, payload, payload_len);
-        if (journal_ret ==
-                APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED ||
-            journal_ret ==
-                APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW) {
-            return GATEWAY_BLE_STREAM_RESERVATION_JOURNAL_TERMINAL;
-        }
-        if (journal_ret ==
-                APP_MESH_GATEWAY_HOST_JOURNAL_NOTIFIED) {
-            gateway_ble_require_host_journal_restore(
-                "host-output-notified-retirement");
-            /*
-             * Host delivery is already terminal. Restore will transfer this
-             * raw identity into the compact receipt ledger, but the retained
-             * NOTIFIED journal is itself sufficient exact proof to re-ACK a
-             * lost raw ACK now without exposing the record to BLE again.
-             */
-            return GATEWAY_BLE_STREAM_RESERVATION_JOURNAL_TERMINAL;
-        }
-        if (journal_ret == -EBADMSG) {
-            /*
-             * The marker may be the only evidence for a record already
-             * gateway-ACKed to its sender.  Put the existing restore owner into
-             * service so every later admission remains closed until explicit
-             * repair, without reserving another host queue slot.
-             */
-            gateway_ble_require_host_journal_restore(
-                "host-output-corrupt-custody");
+        if (journal_ret == 1) {
+            return GATEWAY_BLE_STREAM_RESERVATION_RECEIPT_TERMINAL;
         }
         if (journal_ret < 0) {
             return journal_ret;
         }
-        if (app_gateway_terminal_receipts_supports(
-                packet, payload, payload_len)) {
-            journal_ret = app_gateway_terminal_receipts_classify(
-                packet, payload, payload_len, k_uptime_get_32());
-            if (journal_ret == 1) {
-                return GATEWAY_BLE_STREAM_RESERVATION_RECEIPT_TERMINAL;
-            }
-            if (journal_ret < 0) {
-                return journal_ret;
-            }
-        }
-        /*
-         * An exact PREPARED retry still needs bounded BLE capacity while it
-         * re-runs semantic preflight/commit and promotes the durable marker.
-         */
     }
 #endif
 
@@ -1072,13 +921,6 @@ int gateway_ble_commit_stream_reservation(const struct proto_packet *packet,
                                                 payload,
                                                 payload_len);
     k_spin_unlock(&gateway_ble_stream_lock, key);
-#if DEVICE_ROLE == ROLE_GATEWAY
-    if (ret < 0 &&
-        app_mesh_persistence_gateway_host_journal_supports(packet)) {
-        gateway_ble_require_host_journal_restore(
-            "host-output-stream-commit");
-    }
-#endif
     if (ret > 0) {
         gateway_ble_schedule_stream_drain();
     }
@@ -1113,13 +955,6 @@ int gateway_ble_commit_stream_reservation_projection(
         raw_payload_len,
         accepted_record_mask);
     k_spin_unlock(&gateway_ble_stream_lock, key);
-#if DEVICE_ROLE == ROLE_GATEWAY
-    if (ret < 0 &&
-        app_mesh_persistence_gateway_host_journal_supports(packet)) {
-        gateway_ble_require_host_journal_restore(
-            "host-output-projection-stream-commit");
-    }
-#endif
     if (ret > 0) {
         gateway_ble_schedule_stream_drain();
     }
@@ -1166,346 +1001,13 @@ void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagno
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-static int gateway_recover_prepared_host_journal(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint32_t received_at_ms)
-{
-    const uint8_t *collection_epoch_raw = NULL;
-    uint8_t collection_epoch_len = 0u;
-    bool collection_record = false;
-    int ret;
-
-    if (packet == NULL || payload == NULL ||
-        packet->payload_len != payload_len) {
-        return -EINVAL;
-    }
-
-    switch (packet->msg_type) {
-    case MSG_CLICK_REPORT:
-        ret = app_mesh_persistence_commit_gateway_host_journal(
-            packet, payload, payload_len);
-        return ret < 0 ? ret :
-               APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED;
-    case MSG_RESULT_BUNDLE:
-        collection_record = true;
-        break;
-    case MSG_COMMAND_RESULT: {
-        struct discovery_assignment_result assignment_result;
-        int assignment_ret = discovery_assignment_parse_result_tlvs(
-            payload, payload_len, &assignment_result);
-
-        if (assignment_ret == PROTO_OK) {
-            /*
-             * Assignment control is not host output and current firmware
-             * never journals it. Retire a legacy/torn record so the sender
-             * can retry against the restored durable membership proof.
-             */
-            ret =
-                app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                    packet, payload, payload_len);
-            return ret < 0 ? ret : 0;
-        }
-        if (assignment_ret != PROTO_ERR_NOT_FOUND) {
-            ret =
-                app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                    packet, payload, payload_len);
-            return ret < 0 ? ret : 0;
-        }
-
-        ret = tlv_find_unique(payload,
-                              payload_len,
-                              TLV_COLLECTION_EPOCH_ID,
-                              &collection_epoch_raw,
-                              &collection_epoch_len);
-        if (ret == PROTO_OK) {
-            if (collection_epoch_len != sizeof(uint32_t)) {
-                ret =
-                    app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                        packet, payload, payload_len);
-                return ret < 0 ? ret : 0;
-            }
-            collection_record = true;
-        } else if (ret != PROTO_ERR_NOT_FOUND) {
-            ret =
-                app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                    packet, payload, payload_len);
-            return ret < 0 ? ret : 0;
-        }
-        break;
-    }
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
-        break;
-    default:
-        return -EBADMSG;
-    }
-
-    if (collection_record) {
-        if (gateway_collection_restore_pending ||
-            gateway_membership_restore_pending ||
-            gateway_eack_custody_clear_pending) {
-            return -EAGAIN;
-        }
-        ret = gateway_preflight_result_semantic_delivery(
-            packet,
-            payload,
-            payload_len,
-            received_at_ms,
-            0u,
-            0u);
-        if (ret == APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE ||
-            ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE) {
-            ret = app_mesh_persistence_commit_gateway_host_journal(
-                packet, payload, payload_len);
-            return ret < 0 ? ret :
-                   APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED;
-        }
-        if (ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW) {
-            /*
-             * PREPARED landed before the durable collection mutation. Drop
-             * only this unaccepted journal owner; relay custody will retry
-             * the exact record with its previous-hop context intact.
-             */
-            ret =
-                app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                    packet, payload, payload_len);
-            return ret < 0 ? ret : 0;
-        }
-        if (ret == -EAGAIN || ret == -EBUSY) {
-            return ret;
-        }
-        if (ret == -EBADMSG || ret == -EINVAL) {
-            ret =
-                app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                    packet, payload, payload_len);
-            return ret < 0 ? ret : 0;
-        }
-        /*
-         * The durable collection has already become terminal or was cleared
-         * during reset recovery. Its volatile orchestration cannot be
-         * resumed, but retaining the exact raw record avoids losing host
-         * evidence and lets a later exact relay retry retire its custody.
-         */
-    }
-
-    ret = app_mesh_persistence_recover_raw_gateway_host_journal(
-        packet, payload, payload_len);
-    return ret < 0 ? ret :
-           APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW;
-}
-
 static int gateway_restore_host_journal_runtime(void)
 {
-    struct proto_packet staging_packet = {0};
-    struct proto_packet *packet = &staging_packet;
-    uint8_t *payload;
-    size_t payload_len = 0u;
-    uint32_t received_at_ms = 0u;
-    uint8_t host_projection_mask = 0u;
-    uint32_t staging_offset =
-        GATEWAY_BLE_STREAM_RECORD_POOL_BYTES -
-        PACKET_EXT_MAX_PAYLOAD_LEN;
-    k_spinlock_key_t key;
-    int ret;
-
-    if (!gateway_ble_stream_initialized) {
-        atomic_set(&gateway_host_journal_restore_pending, 1);
-        return -EAGAIN;
-    }
-    if (atomic_get(&gateway_host_journal_restored) != 0) {
-        atomic_clear(&gateway_host_journal_restore_pending);
-        mesh_gateway_semantic_commit_owner_clear();
-        return 0;
-    }
-
-    /* Do not let a retry overwrite an active semantic reservation or a
-     * record already occupying the payload staging tail. */
-    key = k_spin_lock(&gateway_ble_stream_lock);
-    if (gateway_ble_stream_state.reservation_active ||
-        gateway_ble_stream_state.head_send_phase !=
-            GATEWAY_BLE_STREAM_HEAD_IDLE ||
-        gateway_ble_stream_state.restore_staging_active ||
-        gateway_ble_stream_state.pool_used > staging_offset) {
-        k_spin_unlock(&gateway_ble_stream_lock, key);
-        atomic_set(&gateway_host_journal_restore_pending, 1);
-        return -EAGAIN;
-    }
-    payload = &gateway_ble_stream_state.record_pool[staging_offset];
-    gateway_ble_stream_state.restore_staging_active = true;
-    gateway_ble_stream_state.restore_staging_offset = staging_offset;
-    k_spin_unlock(&gateway_ble_stream_lock, key);
-
-    ret = app_mesh_persistence_restore_gateway_host_journal_projection(
-        packet,
-        payload,
-        PACKET_EXT_MAX_PAYLOAD_LEN,
-        &payload_len,
-        &received_at_ms,
-        &host_projection_mask);
-    if (ret == APP_MESH_GATEWAY_HOST_JOURNAL_PREPARED) {
-        ret = gateway_recover_prepared_host_journal(
-            packet,
-            payload,
-            payload_len,
-            received_at_ms);
-    }
-    if (ret == APP_MESH_GATEWAY_HOST_JOURNAL_NOTIFIED) {
-        bool journal_cleared = false;
-
-        /*
-         * Host notification is already terminal.  Materialize per-node
-         * collection receipts from the retained immutable raw journal before
-         * deleting it; partial bundle progress is idempotent, and any failure
-         * keeps NOTIFIED durable so neither reset nor retry can expose the
-         * record to the host again.
-         */
-        ret = app_gateway_collection_receipts_record_host_notification(
-            packet,
-            payload,
-            payload_len,
-            host_projection_mask);
-        if (ret == 0 &&
-            app_gateway_terminal_receipts_supports(
-                packet, payload, payload_len)) {
-            int finalize_ret =
-                app_mesh_persistence_finalize_gateway_host_journal_if_complete(
-                    packet, payload, payload_len);
-
-            if (finalize_ret < 0) {
-                ret = finalize_ret;
-            } else if (finalize_ret > 0) {
-                /*
-                 * ACK_CONFIRM was already durable before NOTIFIED. The raw
-                 * source has advanced, so no duplicate-suppression receipt is
-                 * needed and retaining one would consume a source slot until
-                 * expiry.
-                 */
-                journal_cleared = true;
-            } else {
-                ret = app_gateway_terminal_receipts_record(
-                    packet,
-                    payload,
-                    payload_len,
-                    k_uptime_get_32());
-                if (ret > 0) {
-                    ret = 0;
-                }
-            }
-        }
-        if (ret == 0 && !journal_cleared) {
-            ret =
-                app_mesh_persistence_clear_gateway_host_journal_if_matches(
-                    packet, payload, payload_len);
-        }
-        if (ret < 0) {
-            key = k_spin_lock(&gateway_ble_stream_lock);
-            gateway_ble_stream_state.restore_staging_active = false;
-            gateway_ble_stream_state.restore_staging_offset = 0u;
-            k_spin_unlock(&gateway_ble_stream_lock, key);
-            atomic_set(&gateway_host_journal_restore_pending, 1);
-            return ret;
-        }
-
-        key = k_spin_lock(&gateway_ble_stream_lock);
-        gateway_ble_stream_state.restore_staging_active = false;
-        gateway_ble_stream_state.restore_staging_offset = 0u;
-        k_spin_unlock(&gateway_ble_stream_lock, key);
-        atomic_clear(&gateway_host_journal_restore_pending);
-        atomic_clear(&gateway_host_journal_restored);
-        mesh_gateway_semantic_commit_owner_clear();
-        return 0;
-    }
-    if (ret == -EBADMSG) {
-        struct proto_packet terminal_packet;
-        uint8_t terminal_digest[SEMANTIC_DIGEST_SHA256_LEN];
-        bool source_confirmed = false;
-        int terminal_ret =
-            app_mesh_persistence_restore_gateway_host_terminal_marker(
-                &terminal_packet,
-                terminal_digest,
-                &source_confirmed);
-
-        if (terminal_ret == 0) {
-            /* A concurrent exact terminal clear completed after the failed
-             * payload read, so there is no longer an admission owner. */
-            ret = 0;
-        } else if (terminal_ret > 0) {
-            int proof_ret = source_confirmed ? 1 :
-                app_gateway_terminal_receipts_classify_identity(
-                    &terminal_packet,
-                    terminal_digest,
-                    k_uptime_get_32());
-
-            if (proof_ret > 0) {
-                terminal_ret =
-                    app_mesh_persistence_retire_notified_gateway_host_journal_if_matches(
-                        &terminal_packet,
-                        terminal_digest);
-                ret = terminal_ret < 0 ? terminal_ret : 0;
-            } else if (proof_ret < 0) {
-                ret = proof_ret;
-            }
-        } else {
-            ret = terminal_ret;
-        }
-    }
-    if (ret == 0) {
-        key = k_spin_lock(&gateway_ble_stream_lock);
-        gateway_ble_stream_state.restore_staging_active = false;
-        gateway_ble_stream_state.restore_staging_offset = 0u;
-        k_spin_unlock(&gateway_ble_stream_lock, key);
-        atomic_clear(&gateway_host_journal_restore_pending);
-        atomic_clear(&gateway_host_journal_restored);
-        mesh_gateway_semantic_commit_owner_clear();
-        return 0;
-    }
-    if (ret < 0) {
-        key = k_spin_lock(&gateway_ble_stream_lock);
-        gateway_ble_stream_state.restore_staging_active = false;
-        gateway_ble_stream_state.restore_staging_offset = 0u;
-        k_spin_unlock(&gateway_ble_stream_lock, key);
-        if (ret == -EBADMSG) {
-            LOG_ERR("gateway host-output journal is corrupt and retained; host-output admission remains closed");
-        }
-        atomic_set(&gateway_host_journal_restore_pending, 1);
-        return ret;
-    }
-
-    key = k_spin_lock(&gateway_ble_stream_lock);
-    ret = host_projection_mask == 0u ?
-        gateway_ble_stream_enqueue_staged_packet(
-            &gateway_ble_stream_state,
-            packet,
-            payload_len,
-            received_at_ms,
-            k_uptime_get_32(),
-            true) :
-        gateway_ble_stream_enqueue_staged_bundle_projection(
-            &gateway_ble_stream_state,
-            packet,
-            payload_len,
-            host_projection_mask,
-            received_at_ms,
-            k_uptime_get_32(),
-            true);
-    gateway_ble_stream_state.restore_staging_active = false;
-    gateway_ble_stream_state.restore_staging_offset = 0u;
-    if (ret > 0) {
-        gateway_ble_stream_state.items[
-            gateway_ble_stream_state.count - 1u].retain_until_sent = true;
-    }
-    k_spin_unlock(&gateway_ble_stream_lock, key);
-    if (ret <= 0) {
-        atomic_set(&gateway_host_journal_restore_pending, 1);
-        return ret == 0 ? -EAGAIN : ret;
-    }
-
-    atomic_set(&gateway_host_journal_restored, 1);
+    /* RAM-only build: there is no durable host journal to restore, so a
+     * restore reports success and clears the admission-recovery owners. */
     atomic_clear(&gateway_host_journal_restore_pending);
+    atomic_clear(&gateway_host_journal_restored);
     mesh_gateway_semantic_commit_owner_clear();
-    gateway_ble_schedule_stream_drain();
     return 0;
 }
 
@@ -2349,6 +1851,9 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
     struct gateway_membership_roster candidate;
     int ret;
 
+    ARG_UNUSED(assignment_epoch);
+    ARG_UNUSED(table_seq);
+
     if (DEVICE_ROLE != ROLE_GATEWAY || node_ids == NULL || slots == NULL ||
         table_commitment == NULL ||
         publication == NULL || publication->publish_pending == 0u) {
@@ -2372,16 +1877,8 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
         return mesh_errno_from_proto(ret);
     }
 
-    ret = app_mesh_persistence_save_gateway_assignment_membership(
-        &candidate,
-        assignment_epoch,
-        table_seq,
-        table_commitment,
-        publication);
-    if (ret < 0) {
-        LOG_WRN("gateway membership snapshot save failed: ret=%d", ret);
-        return ret;
-    }
+    /* RAM-only build: the roster lives only in memory, so registration commits
+     * directly to the in-RAM state and marks publication pending. */
     gateway_membership_roster_state = candidate;
     gateway_membership_persistence_dirty = false;
     atomic_set(&gateway_assignment_publication_pending_state, 1);
@@ -2434,8 +1931,6 @@ int gateway_complete_assignment_publication(
     const struct gateway_command_event *base_event,
     void *ctx)
 {
-    int ret;
-
     ARG_UNUSED(ctx);
     if (DEVICE_ROLE != ROLE_GATEWAY || base_event == NULL ||
         base_event->kind !=
@@ -2443,46 +1938,24 @@ int gateway_complete_assignment_publication(
         base_event->command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
         return -EINVAL;
     }
-    ret = app_mesh_persistence_complete_gateway_assignment_publication(
-        base_event->gateway_sequence,
-        base_event->gateway_epoch,
-        base_event->host_session_id,
-        base_event->host_seq);
-    if (ret < 0) {
-        LOG_WRN("gateway assignment publication completion persist failed: assignment_epoch=%u ret=%d",
-                base_event->gateway_sequence,
-                ret);
-        return ret;
-    }
+    /* RAM-only build: the publication is already complete in memory. */
     atomic_set(&gateway_assignment_publication_pending_state, 0);
     return 0;
 }
 
 void gateway_clear_registered_membership_roster(void)
 {
-    int ret;
-
     if (DEVICE_ROLE != ROLE_GATEWAY || gateway_membership_restore_pending ||
         gateway_collection_restore_pending) {
         return;
     }
 
-    ret = app_mesh_persistence_clear_gateway_membership();
-    if (ret < 0) {
-        gateway_membership_clear_pending = true;
-        gateway_membership_persistence_dirty = false;
-        gateway_schedule_persistence_retry("membership-clear");
-        LOG_WRN("gateway membership clear deferred until NVS delete succeeds: ret=%d",
-                ret);
-        return;
-    }
+    /* RAM-only build: clearing the roster is immediate, no NVS delete. */
     gateway_finalize_membership_clear();
 }
 
 void gateway_clear_command_collection(const struct gateway_command_options *options)
 {
-    int ret;
-
     if (DEVICE_ROLE != ROLE_GATEWAY || options == NULL ||
         !gateway_collection_tracking_active()) {
         return;
@@ -2492,16 +1965,7 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
         return;
     }
 
-    ret = app_mesh_persistence_clear_gateway_collection();
-    if (ret < 0) {
-        gateway_collection_clear_pending = true;
-        gateway_collection_persistence_dirty = false;
-        (void)k_work_cancel_delayable(&gateway_collection_eack_work);
-        gateway_schedule_persistence_retry("collection-clear");
-        LOG_WRN("gateway collection clear deferred until journal tombstone persists: ret=%d",
-                ret);
-        return;
-    }
+    /* RAM-only build: clearing the collection is immediate, no NVS tombstone. */
     gateway_finalize_collection_clear();
 }
 
@@ -3148,194 +2612,18 @@ int gateway_begin_command_result_wait_until(
 
 static int gateway_restore_membership_runtime(void)
 {
-    bool publication_pending = false;
-    int ret = app_mesh_persistence_restore_gateway_membership(
-        &gateway_membership_roster_state,
-        &publication_pending);
-
-    if (ret < 0) {
-        gateway_membership_clear(&gateway_membership_roster_state);
-        atomic_set(&gateway_assignment_publication_pending_state, 0);
-        gateway_membership_restore_pending = true;
-        LOG_WRN("gateway membership snapshot restore unavailable: ret=%d", ret);
-        return ret;
-    }
-    atomic_set(&gateway_assignment_publication_pending_state,
-               publication_pending ? 1 : 0);
+    /* RAM-only build: there is no durable membership snapshot to restore. */
+    atomic_set(&gateway_assignment_publication_pending_state, 0);
     gateway_membership_restore_pending = false;
     return 0;
 }
 
-static bool gateway_restored_eack_is_committed_predecessor(
-    const struct gateway_collection_eack *eack)
-{
-    uint16_t next_sequence;
-    uint8_t next_round;
-
-    if (eack == NULL || !gateway_collection_tracking_active()) {
-        return false;
-    }
-    next_sequence = eack->packet_sequence == UINT16_MAX ?
-                    1u : (uint16_t)(eack->packet_sequence + 1u);
-    next_round = eack->retry_round == UINT8_MAX ?
-                 UINT8_MAX : (uint8_t)(eack->retry_round + 1u);
-
-    /*
-     * A valid old key is safe to retire only when the durable collection is
-     * exactly the next protocol round written before that tombstone. Results
-     * can arrive while the frozen EACK is on RF, so received_count and
-     * collection_open may legitimately advance in that same durable write;
-     * they are not part of the predecessor proof. Any fixed-identity or
-     * sequence mismatch is corruption and remains fail-closed.
-     */
-    return eack->gateway_id == gateway_collection_state.gateway_id &&
-           eack->gateway_epoch == gateway_collection_state.gateway_epoch &&
-           eack->command_seq == gateway_collection_state.command_seq &&
-           eack->collection_epoch_id ==
-               gateway_collection_state.collection_epoch_id &&
-           eack->membership_epoch ==
-               gateway_collection_state.membership_epoch &&
-           eack->expected_count == gateway_collection_state.expected_count &&
-           next_sequence == gateway_collection_state.eack_sequence &&
-           next_round == gateway_collection_state.retry_round;
-}
-
 static int gateway_restore_collection_runtime(void)
 {
-    struct gateway_collection_eack decoded_eack = {0};
-    int custody_ret;
-    int ret;
-
-    ret = app_mesh_persistence_restore_gateway_collection(&gateway_collection_state);
-    if (ret < 0) {
-        gateway_collection_clear(&gateway_collection_state);
-        gateway_collection_restore_pending = true;
-        LOG_WRN("gateway collection journal restore unavailable: ret=%d", ret);
-        return ret;
-    }
+    /* RAM-only build: there is no durable collection or EACK custody to
+     * restore, so a restore just clears the admission-recovery owners. */
     gateway_collection_restore_pending = false;
     gateway_collection_recovery_eack_active = false;
-    custody_ret = app_mesh_persistence_restore_gateway_eack_custody(
-        &gateway_collection_eack_retry_state.snapshot);
-    if (custody_ret < 0) {
-        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-        /*
-         * The custody key may describe an EACK that reached RF before reset.
-         * Until that exact record can be restored or an operator explicitly
-         * repairs the key, neither collection admission nor a replacement
-         * EACK is safe.  Leave restore pending so every collection boundary
-         * fails closed and the persistence retry owner keeps health visible.
-         */
-        gateway_collection_restore_pending = true;
-        LOG_ERR("gateway collection EACK custody blocks collection recovery: ret=%d",
-                custody_ret);
-        return custody_ret;
-    } else if (gateway_collection_eack_retry_state.snapshot.valid) {
-        ret = gateway_import_collection_recovery_eack_custody();
-        if (ret == 0) {
-            LOG_INF("gateway collection receipt EACK custody restored: session=%u seq=%u",
-                    gateway_collection_eack_retry_state.snapshot.packet.session_id,
-                    gateway_collection_eack_retry_state.snapshot.packet.seq);
-            gateway_schedule_collection_recovery_eack_retry(
-                "collection-receipt-eack-reset-resume", -EAGAIN);
-            return 0;
-        }
-        if (ret != -ENOENT) {
-            LOG_ERR("gateway collection recovery EACK custody is malformed and retained: ret=%d",
-                    ret);
-            app_gateway_eack_retry_reset(
-                &gateway_collection_eack_retry_state);
-            gateway_collection_restore_pending = true;
-            return -EBADMSG;
-        }
-    }
-
-    if (!gateway_collection_tracking_active()) {
-        bool custody_present =
-            gateway_collection_eack_retry_state.snapshot.valid;
-
-        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-        if (custody_present) {
-            (void)gateway_clear_eack_custody_or_defer(
-                "orphaned-eack-custody-clear");
-        }
-        return 0;
-    }
-
-    LOG_INF("gateway collection tracking restored: command_seq=%u collection=%u received=%u expected=%u open=%u eack_pending=%u",
-            gateway_collection_state.command_seq,
-            gateway_collection_state.collection_epoch_id,
-            gateway_collection_state.received_count,
-            gateway_collection_state.expected_count,
-            gateway_collection_state.collection_open ? 1u : 0u,
-            gateway_collection_state.eack_pending ? 1u : 0u);
-    if (gateway_collection_eack_retry_state.snapshot.valid) {
-        ret = app_gateway_eack_retry_import_custody(
-            &gateway_collection_eack_retry_state,
-            &gateway_collection_state,
-            &gateway_collection_eack_retry_state.snapshot);
-        if (ret == PROTO_OK) {
-            ret = gateway_collection_eack_packet_validate(
-                &gateway_collection_eack_retry_state.snapshot.packet,
-                gateway_collection_eack_retry_state.snapshot.payload,
-                gateway_collection_eack_retry_state.snapshot.payload_len,
-                &decoded_eack);
-        }
-        if (ret == PROTO_OK &&
-            gateway_collection_state.eack_pending) {
-            gateway_collection_eack_round_dirty =
-                decoded_eack.received_count !=
-                    gateway_collection_state.received_count ||
-                decoded_eack.collection_open !=
-                    gateway_collection_state.collection_open;
-            gateway_schedule_collection_eack_retry(
-                "collection-eack-reset-resume", -EAGAIN, 0u);
-            return 0;
-        }
-
-        /*
-         * A crash after the durable round advance but before key deletion
-         * leaves exactly one provable predecessor. Delete only that identity.
-         * Every other valid-but-inconsistent record remains fail-closed.
-         */
-        ret = gateway_collection_eack_packet_validate(
-            &gateway_collection_eack_retry_state.snapshot.packet,
-            gateway_collection_eack_retry_state.snapshot.payload,
-            gateway_collection_eack_retry_state.snapshot.payload_len,
-            &decoded_eack);
-        if (ret != PROTO_OK ||
-            !gateway_restored_eack_is_committed_predecessor(&decoded_eack)) {
-            LOG_ERR("gateway collection EACK custody conflicts with durable collection and is retained: ret=%d",
-                    ret);
-            app_gateway_eack_retry_reset(
-                &gateway_collection_eack_retry_state);
-            gateway_collection_restore_pending = true;
-            return -EBADMSG;
-        }
-
-        LOG_WRN("gateway collection EACK predecessor clear resumed after reset: command_seq=%u collection=%u seq=%u",
-                decoded_eack.command_seq,
-                decoded_eack.collection_epoch_id,
-                decoded_eack.packet_sequence);
-        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-        if (gateway_clear_eack_custody_or_defer(
-                "restored-eack-predecessor-clear") < 0) {
-            return 0;
-        }
-    }
-
-    if (!gateway_collection_state.eack_pending) {
-        app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-        return 0;
-    }
-
-    if (!gateway_collection_state.collection_open) {
-        /* A reset landed after the final result but before its EACK custody. */
-        gateway_schedule_collection_eack_retry(
-            "collection-eack-final-reset-gap", -EAGAIN, 0u);
-    } else {
-        gateway_schedule_collection_eack_round();
-    }
     return 0;
 }
 

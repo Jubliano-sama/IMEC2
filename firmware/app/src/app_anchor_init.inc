@@ -50,34 +50,9 @@ int app_anchor_init(void)
     if (ret < 0) {
         return ret;
     }
-#if DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_GATEWAY
-    /* Mount persistence before any mesh work can query deferred custody.  The
-     * scheduler's presence accessor is intentionally cache-only, so a failed
-     * mount remains visible as a retryable error instead of doing flash I/O
-     * from the system workqueue. */
-    ret = app_mesh_persistence_init();
-    if (ret < 0 && ret != -ENOTSUP) {
-        LOG_WRN("mesh persistence startup mount unavailable: %d", ret);
-    }
-#endif
 #if DEVICE_ROLE == ROLE_GATEWAY
-    ret = gateway_discovery_assignment_restore_epoch_cursor();
-    if (ret < 0) {
-        /*
-         * Complete runtime initialization with admission gated.  The first
-         * assignment reservation retries this restore before any policy,
-         * transaction, or RF mutation.
-         */
-        LOG_ERR("gateway assignment epoch restore deferred: %d", ret);
-    }
     ret = gateway_broadcast_command_sequence_init();
     if (ret < 0) {
-        /*
-         * Keep the runtime available for persistence recovery, but every
-         * broadcast command builder fails closed until a block is durably
-         * reserved.  A volatile fallback would reuse accepted identities
-         * after gateway reset.
-         */
         LOG_ERR("gateway broadcast sequence reservation deferred: %d", ret);
     }
 #endif
@@ -204,170 +179,9 @@ int app_anchor_start_anchor_role(void)
         LOG_ERR("anchor downlink store attach failed: %d", ret);
         return ret;
     }
-    ret = app_mesh_route_state_restore(&mesh_runtime);
-    if (ret < 0) {
-        LOG_ERR("anchor route state restore failed closed: %d", ret);
-        return ret;
-    }
-    if (ret == 1) {
-        LOG_INF("anchor route state restored: epoch=%u adv_seq=%u",
-                mesh_runtime.upstream.current_epoch,
-                mesh_runtime.gateway_route_adv_seq);
-    }
-    ret = app_mesh_persistence_restore_outbox(&mesh_runtime, k_uptime_get_32());
-    if (ret < 0 && ret != -ENOTSUP) {
-        LOG_ERR("anchor mesh outbox restore failed closed: %d", ret);
-        return ret;
-    }
-    if (mesh_relay_tx_active(&mesh_runtime)) {
-        ret = app_mesh_persistence_complete_deferred_outbox(
-            &mesh_runtime,
-            k_uptime_get_32());
-        if (ret < 0 && ret != -ENOTSUP) {
-            LOG_WRN("anchor deferred outbox cleanup unavailable: %d", ret);
-        }
-    } else {
-        ret = app_mesh_persistence_restore_deferred_outbox(
-            &mesh_runtime,
-            k_uptime_get_32());
-        if (ret < 0 && ret != -ENOTSUP) {
-            LOG_ERR("anchor deferred outbox restore failed closed: %d", ret);
-            return ret;
-        }
-    }
-    ret = mesh_restore_anchor_range_report_journal();
-    if (ret < 0 && ret != -ENOTSUP) {
-        /*
-         * A committed range journal is the durable owner for every fragment
-         * in the click result. Starting sensing with an unreadable owner could
-         * overwrite it or expose only a prefix, so boot fails closed.
-         */
-        LOG_ERR("anchor range report journal restore failed closed: %d", ret);
-        return ret;
-    }
     ret = app_anchor_survey_discovery_restore(&delivery_restored);
     if (ret < 0) {
         return ret;
-    }
-    ret = app_mesh_persistence_restore_child_custody(&mesh_runtime,
-                                                    k_uptime_get_32());
-    if (ret < 0 && ret != -ENOTSUP) {
-        LOG_ERR("anchor mesh child custody restore failed closed: %d", ret);
-        return ret;
-    }
-    {
-        struct gateway_command_rx_duplicate_cache replay = {0};
-
-        ret = app_mesh_persistence_restore_anchor_command_replay(
-            DEVICE_ID, GATEWAY_ID, &replay);
-        if (ret == 1) {
-            mesh_gateway_command_orchestrator_context()
-                ->anchor.duplicate_cache = replay;
-            LOG_INF("anchor broadcast replay window restored: newest=%u",
-                    replay.newest_command_seq);
-        } else if (ret < 0 && ret != -ENOTSUP) {
-            /*
-             * Accepting commands with an unreadable watermark could repeat a
-             * reboot or configuration mutation. Keep normal sensing offline
-             * rather than silently discarding the durable exactly-once
-             * boundary.
-             */
-            LOG_ERR("anchor command replay restore failed closed: %d", ret);
-            return ret;
-        }
-    }
-    if (anchor_discovery_assignment_required()) {
-        struct app_mesh_discovery_assignment_snapshot snapshot = {0};
-        const char *unprovisioned_source = "erased-nvs";
-        int restore_ret;
-
-        local_anchor_reset_discovery_assignment();
-        restore_ret = app_mesh_persistence_restore_discovery_assignment(&snapshot);
-        if (restore_ret == 0 && snapshot.valid &&
-            snapshot.local_id == DEVICE_ID && snapshot.gateway_id == GATEWAY_ID) {
-            ret = local_anchor_restore_discovery_assignment(snapshot.epoch,
-                                                            snapshot.table_command_seq,
-                                                            snapshot.epoch != 0u ?
-                                                                &snapshot.table_commitment :
-                                                                NULL,
-                                                            snapshot.slot,
-                                                            snapshot.slot_count,
-                                                            snapshot.provisioned,
-                                                            snapshot.ordered_epoch_valid,
-                                                            snapshot.retired_epochs,
-                                                            snapshot.retired_epoch_count,
-                                                            snapshot.pending_epoch,
-                                                            snapshot.pending_table_command_seq,
-                                                            snapshot.pending_valid != 0u ?
-                                                                &snapshot.pending_table_commitment :
-                                                                NULL,
-                                                            snapshot.pending_valid != 0u);
-            if (ret == PROTO_OK) {
-                const char *state_name =
-                    snapshot.ack_pending ? "ACK_PENDING" :
-                    snapshot.provisioned ? "PROVISIONED" :
-                                           "UNPROVISIONED";
-
-                unprovisioned_source =
-                    snapshot.ack_pending ? "ack-pending-nvs" : "nvs";
-                status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=%s source=nvs epoch=%u generation=%u slot=%u slots=%u pending_epoch=%u pending_generation=%u pending_slot=%u\n",
-                                    state_name,
-                                    snapshot.epoch,
-                                    snapshot.table_command_seq,
-                                    snapshot.slot,
-                                    snapshot.slot_count,
-                                    snapshot.pending_epoch,
-                                    snapshot.pending_table_command_seq,
-                                    snapshot.pending_slot);
-                LOG_INF("anchor discovery assignment restored: state=%s epoch=%u generation=%u slot=%u slot_count=%u pending_epoch=%u pending_generation=%u pending_slot=%u",
-                        state_name,
-                        snapshot.epoch,
-                        snapshot.table_command_seq,
-                        snapshot.slot,
-                        snapshot.slot_count,
-                        snapshot.pending_epoch,
-                        snapshot.pending_table_command_seq,
-                        snapshot.pending_slot);
-            } else {
-                unprovisioned_source = "invalid-nvs";
-                ret =
-                    app_mesh_persistence_clear_discovery_assignment_checked();
-                if (ret < 0) {
-                    LOG_ERR("anchor invalid discovery assignment retirement failed closed: %d",
-                            ret);
-                    return ret;
-                }
-                local_anchor_reset_discovery_assignment();
-            }
-        } else if (restore_ret == 0) {
-            unprovisioned_source = "invalid-nvs";
-            ret = app_mesh_persistence_clear_discovery_assignment_checked();
-            if (ret < 0) {
-                LOG_ERR("anchor mismatched discovery assignment retirement failed closed: %d",
-                        ret);
-                return ret;
-            }
-        } else if (restore_ret == -ENOTSUP) {
-            unprovisioned_source = "nvs-disabled";
-        } else {
-            /*
-             * Do not erase the ordered baseline or start assignment RX after
-             * a transient storage failure.  Initialization must retry with
-             * the durable watermark intact.
-             */
-            LOG_ERR("anchor discovery assignment restore failed closed: %d",
-                    restore_ret);
-            return restore_ret;
-        }
-        if (local_anchor_discovery_assignment_provisioning_state() ==
-            APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
-            status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED source=%s restore=%d reply=disabled\n",
-                                unprovisioned_source,
-                                restore_ret);
-            LOG_WRN("anchor discovery assignment UNPROVISIONED: source=%s restore=%d; normal click replies disabled until gateway assignment",
-                    unprovisioned_source,
-                    restore_ret);
-        }
     }
     ret = uwb_anchor_session_init(&anchor_uwb_session, &anchor_config);
     if (ret < 0) {
@@ -476,15 +290,6 @@ int app_anchor_start_gateway_role(void)
                     DEVICE_ID,
                     GATEWAY_ID,
                     1u);
-    ret = app_mesh_route_state_restore(&mesh_runtime);
-    if (ret < 0) {
-        LOG_ERR("gateway route state restore failed closed: %d", ret);
-        return ret;
-    }
-    if (ret == 1) {
-        LOG_INF("gateway route state restored: epoch=%u",
-                mesh_runtime.upstream.current_epoch);
-    }
     ret = app_mesh_report_attach_gateway_ack_store();
     if (ret < 0) {
         LOG_ERR("gateway ACK store attach failed: %d", ret);

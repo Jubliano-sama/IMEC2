@@ -1,6 +1,38 @@
 #line 2118 __BASE_FILE__
 #define GATEWAY_SURVEY_VERBOSE_LOG(...) LOG_INF(__VA_ARGS__)
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+static uint64_t gateway_ram_survey_generation_cursor;
+
+static int gateway_ram_reserve_survey_generation(uint64_t gateway_id,
+                                                  uint64_t *generation)
+{
+    if (gateway_id == 0u || generation == NULL) {
+        return -EINVAL;
+    }
+    if (gateway_ram_survey_generation_cursor == 0u) {
+        gateway_ram_survey_generation_cursor = 1u;
+    } else {
+        gateway_ram_survey_generation_cursor++;
+        if ((uint32_t)gateway_ram_survey_generation_cursor == 0u) {
+            gateway_ram_survey_generation_cursor++;
+        }
+    }
+    *generation = gateway_ram_survey_generation_cursor;
+    return 0;
+}
+#else
+static int gateway_ram_reserve_survey_generation(uint64_t gateway_id,
+                                                  uint64_t *generation)
+{
+    ARG_UNUSED(gateway_id);
+    if (generation != NULL) {
+        *generation = 0u;
+    }
+    return -ENOTSUP;
+}
+#endif
+
 static int gateway_survey_work_reschedule(uint32_t delay_ms)
 {
     int ret = mesh_route_owner_work_reschedule(
@@ -684,7 +716,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
             true, command_budget_ms, 1u, collection_delay_ms);
     }
 
-    ret = app_mesh_persistence_reserve_gateway_survey_generation(
+    ret = gateway_ram_reserve_survey_generation(
         DEVICE_ID, &operation_generation);
     if (ret < 0) {
         return gateway_reject_survey_request(

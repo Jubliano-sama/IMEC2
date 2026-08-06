@@ -1,7 +1,6 @@
 #include "app_gateway_terminal_receipts.h"
 
 #include "app_config.h"
-#include "app_mesh_persistence.h"
 
 #include <errno.h>
 #include <string.h>
@@ -11,12 +10,9 @@
 
 LOG_MODULE_REGISTER(app_gateway_terminal_receipts, LOG_LEVEL_INF);
 
-#define APP_GATEWAY_TERMINAL_RECEIPT_VERSION 1u
 struct __packed app_gateway_terminal_receipt_record {
     uint64_t src_id;
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint16_t checksum;
-    uint8_t version;
     uint8_t valid;
 };
 
@@ -37,30 +33,54 @@ static uint32_t gateway_terminal_receipt_observed_at_ms[
     APP_GATEWAY_TERMINAL_RECEIPT_CAPACITY];
 static bool gateway_terminal_receipts_initialized;
 
+/*
+ * RAM-only fixed-slot receipt store replacing the former per-slot NVS
+ * terminal receipts. Nothing is restored from flash and every write lasts
+ * only for the current session; the encoded record mirrors the previous
+ * durable schema so classify/confirm/record semantics are unchanged in RAM.
+ */
+static struct app_gateway_terminal_receipt_record
+    gateway_terminal_receipt_record_store[APP_GATEWAY_TERMINAL_RECEIPT_CAPACITY];
+
 BUILD_ASSERT(sizeof(gateway_terminal_receipt_observed_at_ms) <= 512u,
              "terminal receipt runtime index must remain compact");
-
-static uint16_t terminal_receipt_checksum(
-    const struct app_gateway_terminal_receipt_record *record)
-{
-    struct app_gateway_terminal_receipt_record copy;
-
-    if (record == NULL) {
-        return 0u;
-    }
-    copy = *record;
-    copy.checksum = 0u;
-    return proto_crc16_ccitt_false((const uint8_t *)&copy, sizeof(copy));
-}
 
 static bool terminal_receipt_record_valid(
     const struct app_gateway_terminal_receipt_record *record)
 {
     return record != NULL &&
-           record->version == APP_GATEWAY_TERMINAL_RECEIPT_VERSION &&
            record->valid == 1u &&
-           record->src_id != 0u &&
-           record->checksum == terminal_receipt_checksum(record);
+           record->src_id != 0u;
+}
+
+/*
+ * RAM-only equivalent of the former persistence host-journal support check.
+ * It is a pure packet classifier (no storage) and gates which packets take
+ * the terminal-receipt path; persistence "restore" restored nothing and the
+ * "save" is a no-op, so only the in-session cache is consulted.
+ */
+static bool terminal_receipt_host_journal_supported(
+    const struct proto_packet *packet)
+{
+    if (packet == NULL ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_ANCHOR_HEARTBEAT:
+    case MSG_COMMAND_RESULT:
+    case MSG_RESULT_BUNDLE:
+    case MSG_SURVEY_DISCOVERY_REPORT:
+    case MSG_SURVEY_PAIR_RESULT:
+        return true;
+    case MSG_MESH_DATA:
+        return (packet->flags & FLAG_DIAGNOSTIC) != 0u;
+    default:
+        return false;
+    }
 }
 
 static bool terminal_receipt_packet_supported(
@@ -71,7 +91,7 @@ static bool terminal_receipt_packet_supported(
     const uint8_t *collection_epoch = NULL;
     uint8_t collection_epoch_len = 0u;
 
-    if (!app_mesh_persistence_gateway_host_journal_supports(packet) ||
+    if (!terminal_receipt_host_journal_supported(packet) ||
         packet->msg_type == MSG_RESULT_BUNDLE) {
         return false;
     }
@@ -129,51 +149,34 @@ static int terminal_receipt_read(
     uint8_t slot,
     struct app_gateway_terminal_receipt_record *record)
 {
-    size_t stored_len = 0u;
-    int ret;
-
-    memset(record, 0, sizeof(*record));
-    ret = app_mesh_persistence_read_gateway_terminal_receipt(
-        slot, record, sizeof(*record), &stored_len);
-    if (ret <= 0) {
-        return ret;
+    if (slot >= APP_GATEWAY_TERMINAL_RECEIPT_CAPACITY) {
+        return -EINVAL;
     }
-    if (stored_len != sizeof(*record) ||
-        !terminal_receipt_record_valid(record)) {
-        return -EBADMSG;
+    if (!terminal_receipt_record_valid(
+            &gateway_terminal_receipt_record_store[slot])) {
+        return 0;
     }
+    *record = gateway_terminal_receipt_record_store[slot];
     return 1;
 }
 
 static int terminal_receipts_restore_locked(uint32_t now_ms)
 {
+    ARG_UNUSED(now_ms);
+
     if (gateway_terminal_receipts_initialized) {
         return 0;
     }
-
+    /*
+     * Nothing is restored from flash: a fresh session starts with an empty
+     * cache. Persistence restore is a no-op, so just clear the RAM store.
+     */
+    memset(gateway_terminal_receipt_record_store,
+           0,
+           sizeof(gateway_terminal_receipt_record_store));
     memset(gateway_terminal_receipt_observed_at_ms,
            0,
            sizeof(gateway_terminal_receipt_observed_at_ms));
-    for (uint8_t slot = 0u;
-         slot < APP_GATEWAY_TERMINAL_RECEIPT_CAPACITY;
-         slot++) {
-        struct app_gateway_terminal_receipt_record record;
-        int ret = terminal_receipt_read(slot, &record);
-
-        if (ret < 0) {
-            return ret;
-        }
-        if (ret == 0) {
-            continue;
-        }
-        /*
-         * No trusted wall clock crosses reset. Conservatively restart the
-         * complete raw-custody horizon so a reboot cannot expire duplicate
-         * suppression earlier than the source's durable retry window.
-         */
-        gateway_terminal_receipt_observed_at_ms[slot] =
-            now_ms == 0u ? 1u : now_ms;
-    }
     gateway_terminal_receipts_initialized = true;
     return 0;
 }
@@ -193,12 +196,14 @@ int app_gateway_terminal_receipts_restore(uint32_t now_ms)
 
 static int terminal_receipt_expire_slot_locked(uint8_t slot)
 {
-    int ret = app_mesh_persistence_delete_gateway_terminal_receipt(slot);
-
-    if (ret == 0) {
-        gateway_terminal_receipt_observed_at_ms[slot] = 0u;
+    if (slot >= APP_GATEWAY_TERMINAL_RECEIPT_CAPACITY) {
+        return -EINVAL;
     }
-    return ret;
+    memset(&gateway_terminal_receipt_record_store[slot],
+           0,
+           sizeof(gateway_terminal_receipt_record_store[slot]));
+    gateway_terminal_receipt_observed_at_ms[slot] = 0u;
+    return 0;
 }
 
 static int terminal_receipts_classify_identity_locked(
@@ -364,27 +369,11 @@ int app_gateway_terminal_receipts_record(
     memcpy(new_record.semantic_digest,
            semantic_digest,
            sizeof(new_record.semantic_digest));
-    new_record.version = APP_GATEWAY_TERMINAL_RECEIPT_VERSION;
     new_record.valid = 1u;
-    new_record.checksum = terminal_receipt_checksum(&new_record);
-    ret = app_mesh_persistence_write_gateway_terminal_receipt(
-        (uint8_t)free_slot, &new_record, sizeof(new_record));
-    if (ret == 0) {
-        struct app_gateway_terminal_receipt_record verify;
-
-        ret = terminal_receipt_read((uint8_t)free_slot, &verify);
-        if (ret == 1 &&
-            verify.src_id == new_record.src_id &&
-            semantic_digest_equal(verify.semantic_digest,
-                                  new_record.semantic_digest,
-                                  sizeof(verify.semantic_digest))) {
-            gateway_terminal_receipt_observed_at_ms[free_slot] =
-                now_ms == 0u ? 1u : now_ms;
-            ret = 1;
-        } else if (ret >= 0) {
-            ret = -EIO;
-        }
-    }
+    gateway_terminal_receipt_record_store[free_slot] = new_record;
+    gateway_terminal_receipt_observed_at_ms[free_slot] =
+        now_ms == 0u ? 1u : now_ms;
+    ret = 1;
 
 out:
     k_mutex_unlock(&gateway_terminal_receipt_mutex);
@@ -471,6 +460,9 @@ void app_gateway_terminal_receipts_test_reset_runtime(void)
 {
     k_mutex_lock(&gateway_terminal_receipt_mutex, K_FOREVER);
     gateway_terminal_receipts_initialized = false;
+    memset(gateway_terminal_receipt_record_store,
+           0,
+           sizeof(gateway_terminal_receipt_record_store));
     memset(gateway_terminal_receipt_observed_at_ms,
            0,
            sizeof(gateway_terminal_receipt_observed_at_ms));

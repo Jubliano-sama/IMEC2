@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #define APP_GATEWAY_COLLECTION_RECEIPT_MAX_NODES 50u
-#define APP_GATEWAY_COLLECTION_RECEIPT_RECORD_SIZE 76u
+#define APP_GATEWAY_COLLECTION_RECEIPT_RECORD_SIZE 66u
 
 /*
  * The receipt is the latest terminal collection result for one node.  The

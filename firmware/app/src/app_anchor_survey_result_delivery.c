@@ -3,7 +3,6 @@
 #include "app_board.h"
 #include "app_config.h"
 #include "app_mesh_local_delivery.h"
-#include "app_mesh_persistence.h"
 #include "app_node_comm.h"
 #include "app_watchdog.h"
 #include "survey.h"
@@ -91,22 +90,17 @@ static int result_delivery_save(
 {
     const struct survey_pair_result_delivery_slot *slot = ctx;
 
-    if (slot == NULL) {
-        return -EINVAL;
-    }
-    return app_mesh_persistence_save_survey_pair_result_delivery(
-        slot->index, snapshot);
+    ARG_UNUSED(slot);
+    ARG_UNUSED(snapshot);
+    return 0;
 }
 
 static int result_delivery_clear(void *ctx)
 {
     const struct survey_pair_result_delivery_slot *slot = ctx;
 
-    if (slot == NULL) {
-        return -EINVAL;
-    }
-    return app_mesh_persistence_clear_survey_pair_result_delivery(
-        slot->index);
+    ARG_UNUSED(slot);
+    return 0;
 }
 
 static bool result_delivery_slot_matches(
@@ -402,8 +396,7 @@ int app_anchor_survey_result_delivery_restore(bool *restored)
         struct app_mesh_local_delivery_snapshot snapshot = {0};
         struct survey_pair_result_delivery_slot *slot =
             &result_delivery_slots[i];
-        int ret = app_mesh_persistence_restore_survey_pair_result_delivery(
-            i, &snapshot);
+        int ret = 0;
 
         slot->handle = 0u;
         if (ret == 0) {

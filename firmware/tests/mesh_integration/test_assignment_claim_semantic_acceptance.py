@@ -386,7 +386,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "gateway_discovery_assignment_ack_proof_admission",
         )
         durable = proof.index(
-            "app_mesh_persistence_gateway_assignment_proves("
+            "gateway_discovery_assignment_live_proof("
         )
         accepted = proof.index("if (proof_ret == 1)", durable)
         roster = proof.index(

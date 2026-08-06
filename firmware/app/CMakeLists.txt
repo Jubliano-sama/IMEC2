@@ -155,21 +155,6 @@ elseif(FIRMWARE_ROLE STREQUAL "clicker")
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/prj-clicker.conf")
 endif()
 
-if(FIRMWARE_ROLE STREQUAL "anchor" OR FIRMWARE_ROLE STREQUAL "gateway")
-    set(IMEC_MESH_PERSISTENCE_CONF
-        "${CMAKE_CURRENT_BINARY_DIR}/imec-mesh-persistence.conf")
-    file(WRITE "${IMEC_MESH_PERSISTENCE_CONF}"
-        "CONFIG_FLASH=y\n"
-        "CONFIG_FLASH_MAP=y\n"
-        "CONFIG_FLASH_PAGE_LAYOUT=y\n"
-        "CONFIG_NVS=y\n")
-    list(FIND EXTRA_CONF_FILE "${IMEC_MESH_PERSISTENCE_CONF}"
-         IMEC_MESH_PERSISTENCE_CONF_INDEX)
-    if(IMEC_MESH_PERSISTENCE_CONF_INDEX EQUAL -1)
-        list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_PERSISTENCE_CONF}")
-    endif()
-endif()
-
 if(IMEC_ML_BUILD AND IMEC_PRESET_EXTRA_CONF)
     list(APPEND EXTRA_CONF_FILE "${CMAKE_CURRENT_LIST_DIR}/conf/${IMEC_PRESET_EXTRA_CONF}")
 elseif(IMEC_PRESET_EXTRA_CONF)
@@ -274,8 +259,6 @@ else()
 endif()
 
 set(IMEC_APP_LOCAL_SOURCES
-    src/app_nvs_storage.c
-    src/app_mesh_route_state_persistence.c
     src/app_click_event_sequence.c
     src/app_state.c
     src/app_device_identity.c
@@ -309,7 +292,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_gateway_command_flow.c
     src/app_mesh_local_delivery.c
     src/app_mesh_rx_policy.c
-    src/app_mesh_persistence.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c
     src/app_mesh_ch9_ack.c
@@ -351,8 +333,6 @@ if(FIRMWARE_ROLE STREQUAL "gateway")
 endif()
 
 target_sources(app PRIVATE
-    ../src/anchor_range_fragment_policy.c
-    ../src/anchor_range_journal.c
     ../src/node_comm.c
     ../src/node_transaction.c
     ../src/semantic_digest.c
@@ -372,7 +352,6 @@ target_sources(app PRIVATE
     ../src/device_identity.c
     ../src/protocol.c
     ../src/gateway_command.c
-    ../src/gateway_collection_journal.c
     ../src/gateway_ble_transport.c
     ../src/discovery_assignment.c
     ../src/dwm3000_timing.c
