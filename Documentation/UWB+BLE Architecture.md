@@ -6,6 +6,8 @@
 | Anchor         | Low-duty UWB wake scan, click admission, hash-derived discovery reply slot, responder burst, report queue, mesh relay, heartbeat/status, survey samples | Server-side event grouping, final position solve, question schedule |
 | Gateway anchor | Same hardware as an anchor plus a connected BLE PC link, mesh root behavior, command routing, gateway ACKs, packet-age-aware survey orchestration       | Distance solving and application storage                            |
 
+The connected PC side is this repo's Python GUI (`tools/gateway_gui/`). It is the intended home for heavy host-side processing: distance solving, CIR reassembly, localization, and diagnostics are allowed and expected to live there rather than in gateway firmware.
+
 ### Traffic Lanes
 
 | Lane               | Channel            | Used for                                                                                                         | Must yield to                                       |
@@ -13,7 +15,7 @@
 | Click/contact lane | UWB channel 5      | Clicker wake claims, discovery, schedule admission, shared ranging burst, route discovery, route contact refresh | Nothing lower priority                              |
 | Payload lane       | UWB channel 9      | Reports, heartbeats, command results, gateway ACKs, survey data, routed packets                                  | Active click service, required channel-5 wake scans |
 | Courtesy side lane | BLE channel 37     | Short clicker-to-clicker priority hint before UWB wake                                                           | UWB wake train start                                |
-| Gateway PC lane    | Connected BLE GATT | PC command input, gateway packet output, and gateway identity                                                    | UWB work keeps priority over host servicing         |
+| Gateway PC lane    | Connected BLE GATT | PC command input, gateway packet output, gateway identity, and host-side processing in `tools/gateway_gui/`       | UWB work keeps priority over host servicing         |
 
 ### Radio Scheduling
 
