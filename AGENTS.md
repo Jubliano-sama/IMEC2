@@ -6,6 +6,7 @@ This workspace is a Zephyr/west firmware tree for the IMEC clicker, anchor, and 
 - `firmware/src/`: platform-independent C modules with native unit tests.
 - `firmware/app/`: Zephyr application, board overlay, DWM3000 port, role-specific runtime.
 - `firmware/tests/`: native C tests.
+- `tools/gateway_gui/`: Python desktop GUI that connects to the gateway over BLE and owns the heavy host-side processing.
 - `Documentation/`: architecture, protocols, implementation task list.
 
 I like ambitious ideas, simple systems, and software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
@@ -13,6 +14,12 @@ I like ambitious ideas, simple systems, and software that feels obvious. Do not 
 Channel both "measure twice, cut once" and "yagni". Fight scope creep. Try to honor the dev's intent in both a minimal and realistic fashion.
 
 The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
+
+## Gateway BLE GUI (tools/gateway_gui)
+
+This repo contains a Python desktop GUI (`tools/gateway_gui/`, Tkinter) that connects to the gateway over BLE GATT. It is a first-class part of the system, not a debug throwaway: it scans and connects to `IMEC Gateway`, subscribes to gateway packet notifications, sends gateway commands, and decodes click reports, CIR samples, geometry, and survey diagnostics.
+
+Treat the GUI as the gateway's external RAM. The gateway firmware is constrained, and a lot of processing is allowed and expected to happen host-side in the GUI rather than in firmware: anchor geometry solving, CIR reassembly/decoding, click localization, command orchestration, and RAM-only dedup state all already live there. Do not push that kind of work into firmware just because you are editing firmware; check whether the GUI is the right home first.
 
 ## Build, Test, and Development Commands
 
