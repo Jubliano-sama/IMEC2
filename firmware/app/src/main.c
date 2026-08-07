@@ -216,15 +216,21 @@ BUILD_ASSERT(CLICK_REPORT_DEADLINE_MS + 2500u <
 
 static void watchdog_init_fail_closed(int error)
 {
+#if defined(CONFIG_WATCHDOG)
     printk("fatal: hardware watchdog initialization failed: %d; rebooting in %u ms\n",
            error,
            APP_WATCHDOG_INIT_RETRY_DELAY_MS);
     app_watchdog_stop_feeding();
+#else
+    printk("PoC watchdog disabled: watchdog init failed %d (ignored)\n", error);
+#endif
     k_msleep(APP_WATCHDOG_INIT_RETRY_DELAY_MS);
+#if defined(CONFIG_WATCHDOG)
     sys_reboot(SYS_REBOOT_COLD);
     for (;;) {
         k_cpu_idle();
     }
+#endif
 }
 
 static void runtime_start_fail_closed(const char *phase, int error)
@@ -233,7 +239,9 @@ static void runtime_start_fail_closed(const char *phase, int error)
            phase == NULL ? "runtime startup" : phase,
            error,
            APP_WATCHDOG_INIT_RETRY_DELAY_MS);
+#if defined(CONFIG_WATCHDOG)
     app_watchdog_stop_feeding();
+#endif
     k_msleep(APP_WATCHDOG_INIT_RETRY_DELAY_MS);
     sys_reboot(SYS_REBOOT_COLD);
     for (;;) {
@@ -301,10 +309,15 @@ int main(void)
         k_msleep(recovery_delay_ms);
     }
 #endif
+#if defined(CONFIG_WATCHDOG)
     ret = app_watchdog_init();
     if (ret < 0) {
         watchdog_init_fail_closed(ret);
     }
+#else
+    printk("PoC: hardware watchdog disabled (CONFIG_WATCHDOG=n)\n");
+    ret = 0;
+#endif
 
     battery_adc_ret = battery_adc_divider_disable();
     if (DEVICE_ROLE == ROLE_CLICKER) {

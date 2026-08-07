@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* PoC: watchdog disabled. Values kept only so BUILD_ASSERTs elsewhere still
+ * parse; they are not enforced when CONFIG_WATCHDOG=n. Re-enable for
+ * production after end-to-end enumeration/survey/mesh is proven. */
 #define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 180000u
 #define APP_WATCHDOG_PROGRESS_LEASE_MS 120000u
 #define APP_WATCHDOG_STARTUP_GRACE_MS 30000u

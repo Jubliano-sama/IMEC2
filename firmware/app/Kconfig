@@ -6,18 +6,15 @@ menu "IMEC power management"
 
 config IMEC_CLICKER_SYSTEMOFF_IDLE
     bool "Put the clicker in system-off while idle"
-    default n if IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
-    default y
-    select POWEROFF
+    default n
     help
-      Fallback mode for power profiling or recovery experiments. The clicker
-      parks the DWM3000 and board GPIOs, arms the physical click button as a
-      wake source, and enters nRF system-off whenever it is not actively
-      handling a click or self-test interaction.
+      Fallback mode for power profiling or recovery experiments. PoC default
+      is disabled: the clicker stays in always-on kernel idle so UWB stays
+      ready and no poweroff path is exercised.
 
 config IMEC_CLICKER_SYSTEMOFF_RAM_RETENTION
     bool "Retain RAM while clicker is in system-off idle"
-    default y
+    default n
     depends on IMEC_CLICKER_SYSTEMOFF_IDLE
     help
       Before entering nRF system-off idle, request RAM section retention so a
@@ -26,14 +23,12 @@ config IMEC_CLICKER_SYSTEMOFF_RAM_RETENTION
 
 config IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
     bool "Keep the clicker in retained system-on idle"
-    default y
+    default n
     help
-      Deployment default for clicker idle. Keep the clicker booted, park board
-      power sinks, put the DWM3000 into retained sleep, and let the kernel sleep
-      until the physical button GPIO interrupt fires. This is lower latency than
-      system-off because it avoids the reset/boot path, while still allowing
-      low-current System ON sleep. The system-off path remains available by
-      disabling this option.
+      PoC default: disabled. The clicker stays booted with the
+      DWM3000 idle (not retained sleep) and the kernel sleeps on
+      the button GPIO interrupt. Re-enable for battery profiling
+      after the bring-up path is stable.
 
 endmenu
 

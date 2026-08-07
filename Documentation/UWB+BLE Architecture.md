@@ -19,9 +19,11 @@ The connected PC side is this repo's Python GUI (`tools/gateway_gui/`). It is th
 
 ### Radio Scheduling
 
-The DWM3000 is one radio. Firmware never assumes channel 5 and channel 9 can run at the same time.
+The DWM3000 is one radio. Firmware never assumes channel 5 and channel 9 can run at the same time (`firmware/include/mesh_radio_timing.h`, `firmware/app/src/app_state.c:857`).
 
 Channel-9 events may be clipped, skipped, or retried later. Channel-5 wake/contact work is not skipped merely to finish payload traffic.
+
+**PoC:** `MESH_RADIO_EVENT_INTERVAL_MS 440`, `MESH_RADIO_EVENT_WINDOW_MS 120`, `MESH_RADIO_EVENT_GUARD_MS 30`, `MESH_RADIO_EVENT_MAX_MISSES 16`, `MESH_RADIO_EVENT_SUPERVISION_MS 30000`, `MESH_RADIO_WAKE_TRAIN_MS 400` (`firmware/include/mesh_radio_timing.h:6-20`). Watchdog and low-power are disabled for bring-up (`CONFIG_WATCHDOG=n`, `CONFIG_PM_DEVICE=n`, `CONFIG_POWEROFF=n`, `IMEC_CLICKER_SYSTEMON_RETAINED_IDLE=n`/`SYSTEMOFF_IDLE=n` in `firmware/app/prj.conf`/`prj-clicker.conf`/`Kconfig:7-31`); clicker stays in `poc_always_on` idle (`firmware/app/src/app_clicker.c:3416`) and `sleep_with_uwb_standby_until_ms()` does not enter retained sleep.
 
 ## Hardware Platform
 
@@ -153,18 +155,18 @@ The BLE interval uses the fastest BLE 5.x non-connectable range on the target: 2
 
 ### Ranging Radio Settings
 
-Click ranging uses:
+Click ranging uses (`firmware/app/src/app_config.h:130-172`, `firmware/include/uwb.h`, `dwm3000` driver):
 
-- UWB channel 5.
+- UWB channel 5 (`UWB_CHANNEL_WAKE_CONTACT`).
 - 850 kbps.
-- Preamble length 4096.
+- Preamble length 4096 (`MESH_RADIO_WAKE_TRAIN_MS 400` wake, `C5_POLITE_SNIFF_MS 20`).
 - PAC32.
 - SFD timeout 4073.
 - STS disabled.
 - First-path threshold `IP_CONFIG_LO.IP_NTM=12`.
-- Fixed equal `UWB_RANGE_REPLY_DELAY_UUS` DWM/DW3000 delayed-TX response/final delay, selected from provisional short-range and long-range presets.
+- Fixed equal `UWB_RANGE_REPLY_DELAY_UUS` DWM/DW3000 delayed-TX response/final delay, selected from provisional short-range and long-range presets (`UWB_RANGE_REPLY_DELAY_LONG_RANGE_UUS 8000` in `firmware/app/src/app_config.h:132-133`).
 - Maximum configured DWM3000 TX power.
-- SPI at 2 MHz for reset/init and 32 MHz at runtime.
+- SPI at 2 MHz for reset/init and 32 MHz at runtime (`firmware/app/dts/bindings/uwb/qorvo,dwm3000.yaml`: `slow-spi-frequency ≤7MHz`, `fast-spi-frequency 32MHz`).
 
 Channel 9 is not used for wake, discovery, route refresh, or ranging. It is only used for negotiated mesh payload events after channel-5 contact exists.
 

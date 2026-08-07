@@ -856,23 +856,9 @@ void sleep_until_ms(int64_t target_ms)
 
 uint32_t sleep_with_uwb_standby_until_ms(int64_t target_ms)
 {
-    int64_t now_ms = k_uptime_get();
-
-    if (now_ms < target_ms) {
-        int ret = dwm3000_driver_standby();
-
-        if (ret < 0) {
-            LOG_WRN("DWM3000 sleep entry before scheduled wait failed: %d", ret);
-        } else {
-            int64_t sleep_start_ms = k_uptime_get();
-
-            sleep_until_ms(target_ms);
-            return (uint32_t)MIN((uint64_t)MAX(0, k_uptime_get() - sleep_start_ms) *
-                                 1000u,
-                                 (uint64_t)UINT32_MAX);
-        }
-    }
-
+    /* PoC: do not enter retained sleep between windows. Keep radio idle
+     * so bring-up isn't chasing wake/sleep timing. Production can restore
+     * the standby path. */
     sleep_until_ms(target_ms);
     return 0u;
 }

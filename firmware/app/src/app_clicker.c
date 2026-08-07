@@ -3167,7 +3167,11 @@ static void clicker_systemoff_now(void)
 
     clicker_request_systemoff_ram_retention();
     LOG_PANIC();
+#if defined(CONFIG_POWEROFF)
     sys_poweroff();
+#else
+    LOG_WRN("PoC: POWEROFF disabled, systemoff requested but staying on");
+#endif
 }
 
 static int click_button_try_arm_systemoff_wake(void)
@@ -3412,14 +3416,36 @@ static void clicker_enter_systemon_retained_idle(void)
     status_leds_disconnect();
 }
 
+static void clicker_enter_poc_always_on_idle(void)
+{
+    int ret;
+
+    (void)battery_adc_divider_disable();
+    (void)app_clicker_ble_courtesy_low_power_stop();
+    /* PoC: keep radio idle, not retained sleep, so wake overlap stays
+     * trivial and bring-up isn't chasing sleep/wake retention. */
+    (void)dwm3000_driver_idle();
+    ret = clicker_arm_retained_idle_wake();
+    if (ret < 0) {
+        click_button_recovery_reset("poc_idle_wake", ret);
+        return;
+    }
+    LOG_INF("CLICKER_IDLE mode=poc_always_on wake_source=P0.%u radio_idle=1",
+            (unsigned int)CLICK_BUTTON_PIN_NUM);
+    status_leds_set(false, false, false);
+}
+
 void app_clicker_enter_idle(void)
 {
     if (clicker_systemon_retained_idle_enabled()) {
         clicker_enter_systemon_retained_idle();
         return;
     }
-
-    app_clicker_enter_systemoff_idle();
+    if (IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMOFF_IDLE)) {
+        app_clicker_enter_systemoff_idle();
+        return;
+    }
+    clicker_enter_poc_always_on_idle();
 }
 
 static void clicker_action_work_handler(struct k_work *work)

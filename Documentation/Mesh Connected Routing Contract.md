@@ -5,11 +5,9 @@ A custom independent UWB Mesh Communication protocol is a core part of this proj
 ## **Route formation happens before connection scheduling**
 Where a node with gateway-bound traffic and no route needs to find a route, it first sends a short direct channel 9 gateway probe.
 
-Otherwise the node sends a typed route wake train and route request on channel 5. Discovery expands as:
+Otherwise the node sends a typed route wake train and route request on channel 5. Route discovery uses the connected-routing flood TTLs (`firmware/include/mesh_relay.h:44-47`, `firmware/include/mesh.h:16-17`): default `MESH_DEFAULT_TTL 4`, network max `MESH_NETWORK_MAX_HOPS 8`, with flood epochs `LOCAL 2 / REGIONAL 4 / GLOBAL 8`.
 
-`Attempt 1: TTL 1 -> Attempt 2: TTL 2 -> Attempt 3: TTL 4 -> Attempt 4+: TTL 6`
-
-The retry base is `1000 ms -> 2000 ms -> 4000 ms -> 8000 keep doubling to a 60000 ms cap`, with fresh up to 10%, flatly distributed random jitter every time. Idle anchors answer when they have a usable path. Otherwise they probe the gateway and may rebroadcast when TTL and capacity allow. Replies return through protected channel 5 windows with per-hop ACKs and exact ancestry.
+The retry base is `1000 ms -> 2000 ms -> 4000 ms -> 8000 keep doubling to a 60000 ms cap` (`MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_BASE_MS 1000`, `MESH_RELAY_ROUTE_DISCOVERY_BACKOFF_MAX_MS 60000`), with fresh up to 10%, flatly distributed random jitter every time plus the relay retry ceiling `MESH_RELAY_RETRY_BACKOFF_MAX_MS = ROUTE_RETRY_BACKOFF_MAX_MS 6000 + 50%`. Idle anchors answer when they have a usable path. Otherwise they probe the gateway and may rebroadcast when TTL and capacity allow. Replies return through protected channel 5 windows with per-hop ACKs and exact ancestry.
 
 An anchor-to-anchor route becomes connected only after PROPOSE/ACCEPT negotiates one exact channel 9 timing rhythm. The successful PROPOSE transmission defines the phase. ACCEPT confirms that phase.
 
@@ -17,25 +15,25 @@ An anchor-to-anchor route becomes connected only after PROPOSE/ACCEPT negotiates
 
 Each connected anchor can retain one upstream rhythm for its parent and one downstream rhythm for its child. Every rhythm belongs to one peer and keeps its own event counter. The PROPOSE owner transmits in the first event while the accepting peer receives; each following event advances that connection's counter and reverses its TX/RX direction. The two connections reverse independently, so the relay's overall radio sequence is not required to alternate globally between TX and RX.
 
-The required production timing for one connection is:
+The required production timing for one connection is (`firmware/include/mesh_radio_timing.h:10-20`):
 
-`30 ms retune/early-RX guard -> 120 ms event window -> 30 ms trailing reservation -> repeat every 460 ms`
+`30 ms retune/early-RX guard -> 120 ms event window -> 30 ms trailing reservation -> repeat every 440 ms` (`MESH_RADIO_EVENT_INTERVAL_MS 440`, `MESH_RADIO_EVENT_GUARD_MS 30`, `MESH_RADIO_EVENT_WINDOW_MS 120`)
 
 Because this rhythm is strict, it requires the node which already has a connection to propose the timing, which will always be the node further away from the gateway. Therefore, if a node already has a connection towards the gateway, it cannot accept a connection or reply to it at all, let the original transmitter retry, there's a good chance a slot will free up before it enter route repair.
 
-`Connection A: T, T + 460 ms, T + 920 ms, ...`
+`Connection A: T, T + 440 ms, T + 880 ms, ...` (`MESH_RADIO_EVENT_INTERVAL_MS`)
 
-`Connection B: T + 230 ms, T + 690 ms, T + 1150 ms, ...`
+`Connection B: T + 220 ms, T + 660 ms, T + 1100 ms, ...` (`MESH_RADIO_EVENT_INTERVAL_MS / 2`)
 
-The normal 30 ms guards reserve 180 ms around each 120 ms window, leaving 50 ms between the two reservations. A receive turn's extra 60 ms late tail still leaves 20 ms of channel 5 receive time before the other connection's leading guard. Empty transmit turns may be skipped, but receive turns remain peer-liveness opportunities. Eight consecutive missed receive turns make the timing stale.
+The normal 30 ms guards reserve 180 ms around each 120 ms window, leaving 40 ms between the two 180 ms reservations at 220 ms offset. A receive turn's extra 60 ms late tail (`MESH_RADIO_EVENT_RX_LATE_GUARD_MS 60`) extends into the next guard but the scheduler still guarantees at least 20 ms of channel 5 receive time before the other connection's leading guard (clipped/skipped TX turns are allowed). Empty transmit turns may be skipped, but receive turns remain peer-liveness opportunities. Sixteen consecutive missed receive turns make the timing stale (`MESH_RADIO_EVENT_MAX_MISSES 16`, supervision `MESH_RADIO_EVENT_SUPERVISION_MS 30000`).
 
 ## **The connected cadence must remain regular**
 
-The steady schedule is:
+The steady schedule is (`firmware/app/src/app_config.h:224-240` aliases `mesh_radio_timing.h`):
 
-`Channel 9 TX/RX -> at least 20 ms Channel 5 RX -> Channel 9 TX/RX -> at least 20 ms Channel 5 RX -> Repeat`
+`Channel 9 TX/RX -> at least 20 ms Channel 5 RX -> Channel 9 TX/RX -> at least 20 ms Channel 5 RX -> Repeat` — clipped or skipped TX turns are allowed, RX turns stay as liveness checks. `Channel 9` events may be clipped, skipped, or retried; `Channel 5` wake/contact work is never skipped to finish payload.
 
-Each channel 5 window during a connection is 100 percent receive duty unless the node is itself originating a wake flood. An node may use the window for wake transmission, therefore skipping a connection turn to make a new connection. Unrelated, malformed, or route-class frames do not end a receive window. Between adjacent windows the DWM3000 stays idle or retune-ready rather than entering retained or deep sleep.
+Each channel 5 window during a connection is 100 percent receive duty unless the node is itself originating a wake flood. A node may use the window for wake transmission, therefore skipping a connection turn to make a new connection. Unrelated, malformed, or route-class frames do not end a receive window. Between adjacent windows the DWM3000 stays idle or retune-ready rather than entering retained or deep sleep. **PoC note:** `sleep_with_uwb_standby_until_ms()` in `firmware/app/src/app_state.c:857` is stubbed to `sleep_until_ms()` only — no `dwt_entersleep()` retained sleep — and clicker `IMEC_CLICKER_SYSTEM*` idle is `n` (`firmware/app/Kconfig:7-31`, `prj.conf` `CONFIG_WATCHDOG=n`/`CONFIG_PM_DEVICE=n`). Production re-enables the standby path.
 
 A route-request wake does not interrupt an active channel 9 rhythm. A valid click/ranging wake does. Once an anchor accepts a click claim, it stays on channel 5 continuously through the remaining wake train, discovery, reply, schedule reception, all inter-sample gaps, and all DS-TWR exchanges. It abandons the existing channel 9 rhythm. Wake overlap is therefore checked against the worst-case channel 5-off gap of the complete two-connection schedule, including guards and late receive tails. Every wake train reaches a channel 5 receive window before it ends.
 
@@ -57,7 +55,7 @@ Hop ACK transfers custody to the next anchor; gateway ACK proves final acceptanc
 
 Direct-to-gateway traffic is batched. The sender reserves reply time, sends only what fits, marks the final packet, then switches to channel 9 receive. The gateway returns one batch ACK after the final marker. Missing entries retry in a later channel 9 window, without a new wake train while the connection remains alive.
 
-The first three gateway-ACK failures retry the selected parent with bases of 1500 ms, 3000 ms, and 6000 ms. The fourth failure invalidates the active path and places that parent in a 60-second hold-down. An alternate current route is tried before new discovery. A connection can close  through explicit close, route invalidation, or sustained inactivity across several channel 9 cycles.
+The first three gateway-ACK failures retry the selected parent with bases of 1500 ms, 3000 ms, and 6000 ms (`ROUTE_RETRY_BACKOFF_FIRST_MS 1500`, `ROUTE_RETRY_BACKOFF_SECOND_MS 3000`, `ROUTE_RETRY_BACKOFF_MAX_MS 6000`, `ROUTE_RETRIES_PER_CANDIDATE 3` in `firmware/include/route.h:17-22`, `ROUTE_GATEWAY_ACK_TIMEOUT_MS 2000`). The fourth failure invalidates the active path and places that parent in a 60-second hold-down. An alternate current route is tried before new discovery. The gateway-ACK retry budget is `MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS` (sum of the ACK timeouts plus backoffs plus `MESH_RELAY_RETRY_BACKOFF_MAX_MS`, `firmware/include/mesh_relay.h:39-43`). A connection can close through explicit close, route invalidation, or sustained inactivity across several channel 9 cycles (supervision `30000 ms`).
 
 ## The Role of the Gateway 
 The Gateway does not use normal cadence connections in any way, connections to the gateway are therefore a special case, they do not follow a set cadence. A node can send to the gateway in batches, adding a flag to a packet when the batch has compeleted for that TX cycle, upon which the gateway will send a batch or single packet ACK ASAP. 
