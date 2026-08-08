@@ -60,6 +60,50 @@ static void test_poll_round_trip_diagnostic_not_click(void)
     assert((decoded.flags & FLAG_COUNT_AS_CLICK) == 0u);
 }
 
+static void test_click_poll_carries_bounded_age(void)
+{
+    const struct uwb_range_header poll =
+        header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    struct uwb_poll_frame decoded = {0};
+    uint8_t buf[UWB_CLICK_POLL_LEN];
+    size_t written = 0u;
+
+    assert(uwb_encode_click_poll(&poll, 1234u, buf, sizeof(buf), &written) ==
+           PROTO_OK);
+    assert(written == UWB_CLICK_POLL_LEN);
+    assert(uwb_decode_poll_frame(buf, written, &decoded) == PROTO_OK);
+    assert_same_header(&decoded.header, &poll);
+    assert(decoded.metadata_version == UWB_POLL_METADATA_VERSION_CLICK_AGE);
+    assert(decoded.metadata_flags == UWB_POLL_METADATA_CLICK_AGE_PRESENT);
+    assert(decoded.click_age_ms == 1234u);
+
+    assert(uwb_encode_click_poll(&poll,
+                                 (uint32_t)UWB_CLICK_AGE_MAX_MS + 1u,
+                                 buf,
+                                 sizeof(buf),
+                                 &written) == PROTO_OK);
+    assert(uwb_decode_poll_frame(buf, written, &decoded) == PROTO_OK);
+    assert(decoded.click_age_ms == UWB_CLICK_AGE_MAX_MS);
+    assert((decoded.metadata_flags &
+            UWB_POLL_METADATA_CLICK_AGE_SATURATED) != 0u);
+
+    buf[UWB_HEADER_LEN] = UWB_POLL_METADATA_VERSION_NONE;
+    assert(uwb_decode_poll_frame(buf, written, &decoded) ==
+           PROTO_ERR_MALFORMED);
+    assert(uwb_encode_click_poll(&poll, 1u, buf, sizeof(buf), &written) ==
+           PROTO_OK);
+    buf[UWB_HEADER_LEN + 1u] = UWB_POLL_METADATA_CLICK_AGE_SATURATED;
+    assert(uwb_decode_poll_frame(buf, written, &decoded) ==
+           PROTO_ERR_MALFORMED);
+    assert(uwb_encode_poll(&poll, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+    assert(uwb_encode_click_poll(&poll,
+                                 1u,
+                                 buf,
+                                 UWB_CLICK_POLL_LEN - 1u,
+                                 &written) == PROTO_ERR_NO_SPACE);
+}
+
 static void test_response_final_and_report_round_trip(void)
 {
     const struct uwb_response_frame response = {
@@ -384,25 +428,25 @@ static void test_rejects_invalid_header_and_status(void)
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK | FLAG_GATEWAY_ACK_REQUIRED);
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.network_id = 0u;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.seq = 0u;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.session_nonce = 0u;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.initiator_id = 0u;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.responder_id = bad_header.initiator_id;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.initiator_short_addr++;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
-    bad_header = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    bad_header = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     bad_header.responder_short_addr++;
     assert(uwb_encode_poll(&bad_header, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     assert(uwb_encode_report(&bad_report, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
@@ -423,7 +467,7 @@ static void test_rejects_invalid_header_and_status(void)
 
 static void test_decode_rejects_wrong_type(void)
 {
-    const struct uwb_range_header poll = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    const struct uwb_range_header poll = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     uint8_t buf[UWB_POLL_LEN];
     size_t written = 0u;
 
@@ -434,7 +478,7 @@ static void test_decode_rejects_wrong_type(void)
 
 static void test_decode_rejects_mismatched_full_id_short_address(void)
 {
-    const struct uwb_range_header poll = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    const struct uwb_range_header poll = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     uint8_t buf[UWB_POLL_LEN];
     size_t written = 0u;
 
@@ -453,7 +497,7 @@ static void test_decode_rejects_mismatched_full_id_short_address(void)
 
 static void test_decode_rejects_malformed_range_header_fields(void)
 {
-    const struct uwb_range_header poll = header(MSG_UWB_POLL, FLAG_COUNT_AS_CLICK);
+    const struct uwb_range_header poll = header(MSG_UWB_POLL, FLAG_DIAGNOSTIC);
     uint8_t buf[UWB_POLL_LEN];
     size_t written = 0u;
 
@@ -2199,6 +2243,7 @@ static void test_anchor_pair_schedule_and_result_round_trip(void)
 int main(void)
 {
     test_poll_round_trip_diagnostic_not_click();
+    test_click_poll_carries_bounded_age();
     test_response_final_and_report_round_trip();
     test_clicker_diag_round_trip();
     test_anchor_diag_round_trip();

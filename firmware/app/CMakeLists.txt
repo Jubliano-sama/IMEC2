@@ -180,7 +180,10 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_BT_DATA_LEN_UPDATE=y\n"
             "CONFIG_BT_L2CAP_TX_MTU=247\n"
             "CONFIG_BT_BUF_ACL_RX_SIZE=251\n"
-            "CONFIG_BT_BUF_ACL_TX_COUNT=10\n"
+            # Gateway notifications are explicitly serialized to one
+            # application-owned in-flight packet. Four host TX buffers retain
+            # controller/host slack without consuming the static RAM reserve.
+            "CONFIG_BT_BUF_ACL_TX_COUNT=4\n"
             "CONFIG_BT_BUF_ACL_TX_SIZE=251\n"
             "CONFIG_BT_CTLR_DATA_LENGTH_MAX=251\n"
             "CONFIG_BT_LOG_LEVEL_WRN=y\n"
@@ -195,11 +198,18 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             # keep the lossy deferred application log ring compact enough to
             # preserve the gateway's required static RAM reserve, including
             # the full broadcast-command replay commitment.
-            "CONFIG_LOG_BUFFER_SIZE=1536\n"
+            "CONFIG_LOG_BUFFER_SIZE=1024\n"
             # The exact compiler chain for gateway assignment-result encoding
             # is 3152 bytes; retain the required 1024-byte runtime margin plus
             # one alignment step without weakening the global RAM-headroom gate.
             "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4256\n")
+    elseif(FIRMWARE_ROLE STREQUAL "anchor" AND
+           NOT IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
+        file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+            # Typed stack/protocol evidence has its own RTT channel. Keep the
+            # ordinary deferred warning/error ring bounded so the five-result
+            # survey journal leaves the required 10 KiB static RAM reserve.
+            "CONFIG_LOG_BUFFER_SIZE=2048\n")
     endif()
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
@@ -241,10 +251,10 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
 
-# Four immutable survey samples (or transmitter stress datagrams) may be
+# Five immutable survey samples (or transmitter stress datagrams) may be
 # admitted together while one protocol-response slot remains available.
 # Keep the pure/native scheduler's wider capacity out of constrained images.
-target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=5)
+target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=6)
 
 if(FIRMWARE_ROLE STREQUAL "clicker")
     target_compile_definitions(app PRIVATE DEVICE_ROLE=1)
@@ -259,7 +269,9 @@ else()
 endif()
 
 set(IMEC_APP_LOCAL_SOURCES
+    src/app_anchor_click_event_runtime.c
     src/app_click_event_sequence.c
+    src/app_clicker_event_runtime.c
     src/app_state.c
     src/app_device_identity.c
     src/app_board.c
@@ -269,6 +281,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
     src/app_gateway_survey_observability.c
+    src/app_gateway_survey_event_runtime.c
     src/app_gateway_survey_round.c
     src/app_gateway_collection_eack.c
     src/app_gateway_eack_retry.c
@@ -279,8 +292,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_test.c
     src/app_mesh_smoke_fast.c
     src/app_mesh_c5_priority.c
-    src/app_mesh_coordinator.c
-    src/app_mesh_coordinator_runtime.c
     src/app_mesh_command_orchestrator.c
     src/app_mesh_arbitration_zephyr.c
     src/app_node_comm_gateway_control.c
@@ -297,7 +308,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_mesh_ch9_ack.c
     src/app_mesh_direct_probe_diag.c
     src/app_mesh_direct_gateway_retry.c
-    src/app_mesh_gateway_command_priority.c
     src/app_mesh_collection_deferral.c
     src/app_mesh_tx_handoff_gate.c
     src/app_mesh_route_reply_ack.c
@@ -326,12 +336,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/dwm3000_driver_handler_contract.c
 )
 
-if(FIRMWARE_ROLE STREQUAL "gateway")
-    list(APPEND IMEC_APP_LOCAL_SOURCES
-        src/app_gateway_collection_receipts.c
-        src/app_gateway_terminal_receipts.c)
-endif()
-
 target_sources(app PRIVATE
     ../src/node_comm.c
     ../src/node_transaction.c
@@ -355,6 +359,12 @@ target_sources(app PRIVATE
     ../src/gateway_ble_transport.c
     ../src/discovery_assignment.c
     ../src/dwm3000_timing.c
+    ../src/firmware_events.c
+    ../src/firmware_delivery_loss.c
+    ../src/firmware_state_click.c
+    ../src/firmware_state_control.c
+    ../src/firmware_state_mesh.c
+    ../src/firmware_state_radio.c
     ../src/gateway_membership.c
     ../src/uwb.c
     ../src/uwb_ble_courtesy.c

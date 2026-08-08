@@ -1,30 +1,11 @@
 #include "app_gateway_survey_round.h"
 
-#include <errno.h>
 #include <string.h>
 
 _Static_assert(SURVEY_GATEWAY_MAX_PAIRS == 150u,
                "gateway round wrapper must retain the complete pair map");
 _Static_assert(SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 25u,
                "gateway round wrapper must retain the runtime lane cap");
-
-bool app_gateway_survey_round_go_submit_retryable(int error)
-{
-    return error == -EAGAIN || error == -EBUSY ||
-           error == -ENOSPC || error == -ESHUTDOWN;
-}
-
-bool app_gateway_survey_round_go_terminal_retryable(
-    enum node_comm_terminal_reason reason,
-    uint8_t attempts_started)
-{
-    if (attempts_started != 0u) {
-        return false;
-    }
-    return reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ||
-           reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ||
-           reason == NODE_COMM_TERMINAL_CANCELLED;
-}
 
 static int app_gateway_survey_round_stage_details(
     const struct survey_pair_round_lane *lane,
@@ -176,28 +157,20 @@ static bool app_gateway_survey_round_lane_attempt_terminal(
             lane->state == SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED);
 }
 
-static bool app_gateway_survey_round_every_live_lane_armed(
+static bool app_gateway_survey_round_has_observing_lane(
     const struct app_gateway_survey_round *round)
 {
     const size_t lane_count = app_gateway_survey_round_lane_count(round);
-    bool armed = false;
-
-    if (lane_count == 0u) {
-        return false;
-    }
     for (size_t i = 0u; i < lane_count; i++) {
         const struct survey_pair_round_lane *lane =
             survey_pair_round_runtime_lane(&round->runtime, i);
 
-        if (survey_pair_round_lane_armed(lane)) {
-            armed = true;
-            continue;
-        }
-        if (!app_gateway_survey_round_lane_attempt_terminal(lane)) {
-            return false;
+        if (lane != NULL &&
+            lane->state == SURVEY_PAIR_ROUND_LANE_OBSERVING) {
+            return true;
         }
     }
-    return armed;
+    return false;
 }
 
 static void app_gateway_survey_round_advance_dispatch(
@@ -218,8 +191,8 @@ static void app_gateway_survey_round_advance_dispatch(
         round->dispatch_lane_index++;
     }
     round->dispatch_stage = SURVEY_GATEWAY_AUTO_IDLE;
-    if (app_gateway_survey_round_every_live_lane_armed(round)) {
-        round->phase = APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED;
+    if (app_gateway_survey_round_has_observing_lane(round)) {
+        round->phase = APP_GATEWAY_SURVEY_ROUND_OBSERVING;
     } else if (survey_pair_round_runtime_batch_complete(&round->runtime)) {
         round->phase = APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE;
     }
@@ -298,6 +271,11 @@ int app_gateway_survey_round_note_control_success(
         round->dispatch_stage = SURVEY_GATEWAY_AUTO_START_INITIATOR;
         break;
     case SURVEY_GATEWAY_AUTO_START_INITIATOR:
+        ret = survey_pair_round_runtime_mark_observing(
+            &round->runtime, round->dispatch_lane_index);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
         app_gateway_survey_round_advance_dispatch(round);
         break;
     default:
@@ -346,43 +324,6 @@ int app_gateway_survey_round_note_control_failure(
         *lane_index = control.lane_index;
     }
     app_gateway_survey_round_advance_dispatch(round);
-    return PROTO_OK;
-}
-
-bool app_gateway_survey_round_go_needed(
-    const struct app_gateway_survey_round *round)
-{
-    return round != NULL &&
-           round->phase == APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED &&
-           app_gateway_survey_round_every_live_lane_armed(round);
-}
-
-int app_gateway_survey_round_mark_observing_after_go(
-    struct app_gateway_survey_round *round)
-{
-    const size_t lane_count = app_gateway_survey_round_lane_count(round);
-
-    if (round == NULL) {
-        return PROTO_ERR_ARG;
-    }
-    if (!app_gateway_survey_round_go_needed(round)) {
-        return PROTO_ERR_STALE;
-    }
-    for (size_t i = 0u; i < lane_count; i++) {
-        const struct survey_pair_round_lane *lane =
-            survey_pair_round_runtime_lane(&round->runtime, i);
-        int ret;
-
-        if (!survey_pair_round_lane_armed(lane)) {
-            continue;
-        }
-        ret = survey_pair_round_runtime_mark_observing(&round->runtime, i);
-
-        if (ret != PROTO_OK) {
-            return ret;
-        }
-    }
-    round->phase = APP_GATEWAY_SURVEY_ROUND_OBSERVING;
     return PROTO_OK;
 }
 
@@ -488,7 +429,8 @@ int app_gateway_survey_round_note_sample(
     if (round == NULL || sample == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (round->phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
+    if (round->phase != APP_GATEWAY_SURVEY_ROUND_DISPATCHING &&
+        round->phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
         return PROTO_ERR_STALE;
     }
     ret = app_gateway_survey_round_preflight_sample(
@@ -553,7 +495,8 @@ int app_gateway_survey_round_finalize_lane(
     if (round == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (round->phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
+    if (round->phase != APP_GATEWAY_SURVEY_ROUND_DISPATCHING &&
+        round->phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
         return PROTO_ERR_STALE;
     }
     lane = survey_pair_round_runtime_lane(&round->runtime, lane_index);
@@ -631,7 +574,7 @@ int app_gateway_survey_round_begin_termination(
     /*
      * Validation above is mutation-free. Once TERMINATING is visible, every
      * possible remote lease has exact lane custody and normal dispatch can no
-     * longer expose another PREPARE, START, or GO.
+     * longer expose another PREPARE or START.
      */
     round->runtime.pending_rerun_count = 0u;
     for (size_t i = 0u; i < round->runtime.lane_count; i++) {
@@ -736,6 +679,26 @@ bool app_gateway_survey_round_batch_complete(
     return round != NULL &&
            round->phase == APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE &&
            survey_pair_round_runtime_batch_complete(&round->runtime);
+}
+
+bool app_gateway_survey_round_batch_has_result_evidence(
+    const struct app_gateway_survey_round *round)
+{
+    if (round == NULL || !app_gateway_survey_round_batch_complete(round)) {
+        return false;
+    }
+    for (size_t i = 0u; i < round->runtime.lane_count; i++) {
+        const struct survey_pair_round_lane *lane =
+            &round->runtime.lanes[i];
+
+        if (lane->usable_result_mask != 0u ||
+            lane->responder_usable_mask != 0u ||
+            lane->initiator_unusable_mask != 0u ||
+            lane->responder_unusable_mask != 0u) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int app_gateway_survey_round_advance_batch(

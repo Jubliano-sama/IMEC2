@@ -152,6 +152,75 @@ failure_reset = ble_work.index(
 )
 assert notify_failure < failure_clear < failure_threshold < failure_reset
 
+rx_work = function_body(BLE, "gateway_ble_rx_work_handler")
+peek_receipt = rx_work.index("k_msgq_peek(&gateway_ble_rx_msgq")
+receipt_classification = rx_work.index(
+    "gateway_ble_pending_is_host_receipt", peek_receipt
+)
+result_reservation = rx_work.index(
+    "gateway_command_result_reserve_ingress", receipt_classification
+)
+receipt_dequeue = rx_work.index(
+    "k_msgq_get(&gateway_ble_rx_msgq, &pending, K_NO_WAIT)",
+    receipt_classification,
+)
+assert peek_receipt < receipt_classification < receipt_dequeue < result_reservation
+receipt_branch = rx_work[receipt_classification:result_reservation]
+assert "gateway_handle_ble_frame(pending.frame, pending.len, 0u)" in receipt_branch
+assert "gateway_command_result_reserve_ingress" not in receipt_branch
+
+tx_complete = function_body(BLE, "gateway_ble_tx_complete")
+assert "gateway_ble_stream_mark_host_notified" in tx_complete
+assert "head_send_phase = GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED" not in tx_complete
+assert "mesh_gateway_host_receipt_ready" not in tx_complete
+assert "gateway_ble_host_receipt_timeout_work" in tx_complete
+assert "GATEWAY_BLE_HOST_RECEIPT_TIMEOUT_MS" in BLE
+cancel_active = function_body(BLE, "gateway_ble_stream_cancel_active")
+assert "gateway_ble_stream_rewind_host_notification" in cancel_active
+assert "gateway_ble_host_receipt_timeout_work" in cancel_active
+
+receipt = function_body(RESULT_RUNTIME, "gateway_ble_accept_host_receipt")
+assert "gateway_host_receipt_packet_validate" in receipt
+assert "semantic_digest_sha256(record, record_len, record_digest)" in receipt
+assert "gateway_ble_stream_accept_host_receipt" in receipt
+assert receipt.index("gateway_ble_stream_accept_host_receipt") < receipt.index(
+    "mesh_gateway_host_receipt_ready()"
+)
+finish = function_body(RESULT_RUNTIME, "gateway_ble_finish_host_delivery")
+assert "GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED" in finish
+assert "GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED" not in finish
+control = read_composed_source(ROOT / "app/src/app_anchor.c")
+handle = function_body(control, "gateway_handle_ble_frame")
+assert handle.index("gateway_ble_accept_host_receipt_frame") < handle.index(
+    "app_mesh_command_orchestrator_gateway_ingress"
+)
+
+delivery = (ROOT / "app/src/app_mesh_report_delivery.inc").read_text(
+    encoding="utf-8"
+)
+drain = function_body(delivery, "mesh_drain_rx_queue_locked")
+redrive_gate = drain.index(
+    "semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE"
+)
+redrive_condition = drain.rfind("if (semantic_ret < 0", 0, redrive_gate)
+host_ready = drain.index("host_custody_ready = true", redrive_condition)
+stream_reserve = drain.index("gateway_ble_reserve_stream_packet", host_ready)
+assert redrive_condition < host_ready < stream_reserve
+no_host = drain[drain.index("if (!stream_reservation_acquired)", redrive_gate) :]
+assert no_host.index("gateway_finalize_semantic_delivery") < no_host.index(
+    "mesh_relay_commit_gateway_delivery"
+)
+common_actions = delivery.index(
+    "mesh_handle_result_actions(result, pending->radio_channel"
+)
+pending_barrier = delivery.rfind(
+    "if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0)",
+    0,
+    common_actions,
+)
+assert pending_barrier >= 0
+assert common_actions - pending_barrier < 300
+
 tx_reset = function_body(BLE, "gateway_ble_tx_reset_locked")
 for reset_statement in (
     "gateway_ble_tx_source = GATEWAY_BLE_TX_NONE",

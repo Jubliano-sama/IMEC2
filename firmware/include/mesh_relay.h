@@ -1028,8 +1028,8 @@ int mesh_relay_commit_terminal_release(
     const uint8_t *payload,
     size_t payload_len);
 /*
- * Commit a gateway-local delivery only after the protocol owner has durably
- * accepted it. On success, result contains the exact gateway ACK action and
+ * Commit a gateway-local delivery only after the protocol owner has accepted
+ * the exact item. On success, result contains the exact gateway ACK action and
  * binds duplicate handling to the accepted full semantic commitment. Exact
  * survey retries are ACK-sticky; collection result and bundle retries return
  * to the semantic owner so it can re-arm a missed collection EACK.

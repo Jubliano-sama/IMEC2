@@ -412,7 +412,7 @@ def _owner_capacity(policy: PresetPolicy, owner: str) -> int:
         "system_workqueue": policy.system_workqueue_bytes,
         "clicker_action": 8192 if policy.preset == "mesh_clicker" else 0,
         "anchor_uwb_scan": (
-            12288 if policy.preset in {
+            6144 if policy.preset in {
                 "mesh_anchor", "mesh_anchor_forcedhop",
             } else 0
         ),
@@ -773,9 +773,13 @@ def _attribute_linked_functions(
     for record in linked:
         linked_by_key.setdefault((record.source.name, _canonical_function(record.function)), []).append(record)
     graph_nodes = set(cgraphs)
-    by_function: dict[str, set[tuple[str, str]]] = {}
+    linked_by_function: dict[str, set[tuple[str, str]]] = {}
     for node in linked_by_key:
-        by_function.setdefault(node[1], set()).add(node)
+        linked_by_function.setdefault(node[1], set()).add(node)
+    graph_by_function: dict[str, set[tuple[str, str]]] = {}
+    for node in graph_nodes:
+        if not node[1].startswith(_CGRAPH_VARIABLE_PREFIX):
+            graph_by_function.setdefault(node[1], set()).add(node)
     for node in linked_by_key:
         if node not in cgraphs:
             evidence.issues.append(f"missing compiler call-graph node for {node[0]}:{node[1]}")
@@ -818,7 +822,20 @@ def _attribute_linked_functions(
                     if local:
                         candidates = local
                     else:
-                        candidates = list(by_function.get(target, ()))
+                        graph_candidates = graph_by_function.get(target, set())
+                        # A cross-translation-unit callee may have been inlined
+                        # and therefore have no surviving linker symbol or .su
+                        # row of its own. Follow its compiler graph when the
+                        # definition is unique; that preserves ownership across
+                        # the inlined intermediary. Ambiguous same-name static
+                        # definitions still fail closed unless the linker leaves
+                        # an exact surviving candidate.
+                        if len(graph_candidates) == 1:
+                            candidates = list(graph_candidates)
+                        else:
+                            candidates = list(
+                                linked_by_function.get(target, ())
+                            )
                     if reference_edge:
                         candidates = [candidate for candidate in candidates
                                       if candidate not in roots]

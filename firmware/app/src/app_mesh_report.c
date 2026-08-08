@@ -1,20 +1,16 @@
 #include "app_mesh_report.h"
 #include "app_mesh_report_encode.h"
 #include "app_anchor.h"
+#include "app_anchor_click_event_runtime.h"
 
 #include "app_board.h"
 #include "app_clicker.h"
 #include "app_config.h"
 #include "app_gateway_ble.h"
-#if DEVICE_ROLE == ROLE_GATEWAY
-#include "app_gateway_terminal_receipts.h"
-#endif
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_direct_probe_diag.h"
 #include "app_mesh_direct_gateway_retry.h"
 #include "app_mesh_event_retry.h"
-#include "app_mesh_coordinator.h"
-#include "app_mesh_coordinator_runtime.h"
 #include "app_mesh_command_orchestrator.h"
 #include "app_mesh_flood.h"
 #include "app_mesh_ch9_ack.h"
@@ -38,6 +34,8 @@
 #include "app_operation_policy.h"
 #include "app_state.h"
 #include "app_stack_workload_diag.h"
+#include "firmware_delivery_loss.h"
+#include "firmware_state_machines.h"
 #include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
@@ -95,12 +93,6 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
 #define ANCHOR_RANGE_FRAGMENT_PERSISTENCE_RETRY_MS 10u
-/* Gateway host-journal state codes, kept local because the persistence
- * header that defined them is removed. They are only compared as "fresh vs
- * owned" markers; with persistence gone every admission is fresh. */
-#define APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED 1u
-#define APP_MESH_GATEWAY_HOST_JOURNAL_PREPARED 2u
-#define APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW 3u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS \
     MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS
@@ -276,10 +268,13 @@ BUILD_ASSERT(MESH_EVENT_DEFAULT_WINDOW_MS + MESH_EVENT_RX_LATE_GUARD_MS <
              "mesh route-test late RX guard must not overlap the second channel-9 slot");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS < ROUTE_GATEWAY_ACK_TIMEOUT_MS,
              "direct gateway batch window must fit inside the ACK timeout");
+/* Eight missed receive turns intentionally expire stale synchronized timing
+ * before the longest jittered ACK retry gap. Retransmit then takes the
+ * existing channel-5 event-repair path instead of trusting an old phase. */
 BUILD_ASSERT((MESH_EVENT_DEFAULT_MAX_MISSED *
-              MESH_EVENT_DEFAULT_INTERVAL_MS * 2u) >
+              MESH_EVENT_DEFAULT_INTERVAL_MS) <
              (ROUTE_GATEWAY_ACK_TIMEOUT_MS + MESH_RELAY_RETRY_BACKOFF_MAX_MS),
-             "channel-9 missed-RX budget must cover the longest ACK retry gap");
+             "long ACK retry gaps must require channel-9 timing repair");
 BUILD_ASSERT(MESH_EVENT_DEFAULT_SUPERVISION_MS >
              MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS,
              "channel-9 supervision must cover all permitted ACK retries");
@@ -488,7 +483,7 @@ static struct k_work mesh_uwb_rx_rearm_work;
 static struct k_work_delayable mesh_persistence_retry_work;
 static struct k_work_delayable mesh_node_comm_cancel_work;
 static bool mesh_outbox_persistence_dirty;
-/* A deferred NVS copy is a live custody owner even while the relay is idle. */
+/* A deferred in-RAM copy is a live custody owner even while the relay is idle. */
 static bool mesh_deferred_outbox_pending;
 static bool mesh_child_custody_persistence_dirty;
 static uint8_t mesh_persistence_retry_round;
@@ -537,30 +532,6 @@ static atomic_t mesh_rx_response_active_state;
 static atomic_t mesh_rx_handler_active_state;
 static atomic_t mesh_transport_paused_state;
 static atomic_t mesh_route_ready_generation;
-/*
- * Bridges a transient failure between a successful semantic mutation and the
- * durable PREPARED->COMMITTED marker update. A retry may take the no-mutation
- * shortcut only for this exact immutable semantic identity. Relay-local TTL
- * and message age are deliberately absent.
- */
-struct gateway_semantic_commit_owner {
-    uint64_t src_id;
-    uint64_t dst_id;
-    uint32_t session_id;
-    uint16_t seq;
-    uint16_t payload_len;
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t msg_type;
-    uint8_t flags;
-    bool active;
-};
-
-#if DEVICE_ROLE == ROLE_GATEWAY
-BUILD_ASSERT(sizeof(struct gateway_semantic_commit_owner) == 64u,
-             "semantic commit owner layout changed; re-audit gateway RAM");
-static struct gateway_semantic_commit_owner gateway_semantic_commit_owner;
-static struct k_spinlock gateway_semantic_commit_owner_lock;
-#endif
 #if DEVICE_ROLE == ROLE_ANCHOR
 static struct app_mesh_c5_control_route_history
     mesh_c5_control_route_history;
@@ -742,6 +713,19 @@ static struct app_mesh_queue_head_owner report_tx_queue_head_owner;
 static struct mesh_relay_result mesh_work_result;
 static struct mesh_outbound mesh_tx_timeout_pending_waiting;
 static struct mesh_rx_pending mesh_rx_work_pending;
+#if DEVICE_ROLE == ROLE_GATEWAY
+/* The retained RX item is the only firmware custody record needed while the
+ * GUI notification is in flight.  The BLE callback only flips the boundary
+ * and resubmits the mesh owner; it never mutates relay state from BT context. */
+static atomic_t mesh_gateway_host_delivery_pending_state;
+static atomic_t mesh_gateway_host_receipt_received_state;
+static atomic_t mesh_gateway_host_delivery_semantic_accepted_state;
+static atomic_t mesh_gateway_host_delivery_semantic_finalized_state;
+static atomic_t mesh_gateway_host_delivery_relay_committed_state;
+static atomic_t mesh_gateway_host_delivery_ack_handoff_state;
+static int mesh_gateway_host_delivery_semantic_acceptance;
+static struct k_work_delayable mesh_gateway_host_delivery_retry_work;
+#endif
 static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
 static K_MUTEX_DEFINE(mesh_direct_gateway_probe_scratch_lock);
 static struct mesh_outbound mesh_direct_gateway_probe_scratch;
@@ -757,7 +741,7 @@ static uint8_t mesh_route_wake_suffix_scratch[MESH_ROUTE_WAKE_ROUTE_SUFFIX_MAX_L
 static uint8_t mesh_route_wake_frame_scratch[MESH_ROUTE_TEST_CH5_STD_PAYLOAD_MAX_LEN];
 static K_MUTEX_DEFINE(mesh_route_wait_scratch_lock);
 static struct mesh_outbound mesh_route_waiting_tx_scratch;
-static struct app_mesh_paused_delivery_state mesh_paused_delivery;
+static struct fw_delivery_loss_state mesh_delivery_loss;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static K_MUTEX_DEFINE(report_tx_queue_overflow_lock);
 #endif

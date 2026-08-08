@@ -422,9 +422,10 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_first_gateway_ack_send_failures_enter_identity_backoff(self):
         body = function_body(REPORT, "mesh_handle_result_actions")
-        current_start = body.index(
+        current_failure = body.index(
             "gateway ACK current channel-9 send failed"
-        ) - 900
+        )
+        current_start = current_failure - 900
         planned_start = body.index(
             "APP_MESH_GATEWAY_ACK_ACTION_SEND_PLANNED_CHANNEL9"
         )
@@ -432,7 +433,8 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "APP_MESH_GATEWAY_ACK_ACTION_STORE_WAITING_REFRESH_CHANNEL9"
         )
 
-        current_block = body[current_start : current_start + 1500]
+        current_end = body.index("goto after_gateway_ack;", current_failure)
+        current_block = body[current_start:current_end]
         planned_block = body[planned_start:planned_end]
         self.assertIn("mesh_rf_retry_next_delay_ms", current_block)
         self.assertIn("mesh_schedule_route_waiting_retry_after", current_block)

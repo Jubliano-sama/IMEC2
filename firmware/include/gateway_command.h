@@ -161,7 +161,8 @@ struct gateway_collection_result_snapshot_entry {
  * Bit N describes record N in the immutable incoming result bundle.  A set
  * bit means that record was newly accepted by the collection transaction and
  * belongs in the host-visible canonical projection.  The raw bundle remains
- * the transport and journal identity.
+ * the transport and collection-transaction identity; it is not a host
+ * delivery journal.
  */
 struct gateway_collection_bundle_projection {
     uint8_t accepted_record_mask;
@@ -486,7 +487,9 @@ int gateway_collection_record_result_from_hop(struct gateway_collection_state *c
 /*
  * Run the exact collection-result admission path without mutating collection.
  * A caller that serializes collection ownership may use a successful result as
- * the write-ahead-journal preflight for the matching record call.
+ * the collection-state preflight for the matching record call.  Any durable
+ * collection checkpoint is a separate protocol-state mechanism from the
+ * volatile BLE host-delivery item.
  */
 int gateway_collection_preflight_result_from_hop(
     const struct gateway_collection_state *collection,

@@ -78,15 +78,12 @@ static void test_operation_generation_and_commitment_isolate_stale_traffic(void)
                &lease, &old_pair, 7u, old_commitment, &old_prepare,
                100u, PREPARE_LEASE_MS) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round_bound(
+    assert(survey_pair_lease_start_round_bound_at(
                &lease, &old_pair, 7u, old_commitment, &old_start,
-               101u) == SURVEY_PAIR_LEASE_ACCEPTED);
+               101u, 1000u) == SURVEY_PAIR_LEASE_ACCEPTED);
     assert(survey_pair_lease_release_start(&lease, &old_start));
-    assert(survey_pair_lease_go_until_bound(
-               &lease, old_generation, old_pair.survey_id, 7u,
-               old_commitment, 102u, 1000u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
     assert(survey_pair_lease_ready_snapshot(&lease, NULL));
+    assert(survey_pair_lease_execution_remaining_ms(&lease, 102u) == 898u);
 
     /*
      * A gateway incarnation change supersedes an armed old round even when
@@ -99,15 +96,11 @@ static void test_operation_generation_and_commitment_isolate_stale_traffic(void)
     assert(lease.phase == SURVEY_PAIR_LEASE_PREPARED);
     assert_pair_equal(&lease.pair, &new_pair);
     assert(!lease.start_released);
-    assert(!lease.go_released);
+    assert(!lease.start_execution_armed);
 
     assert(survey_pair_lease_start_round_bound(
                &lease, &old_pair, 7u, old_commitment, &old_start,
                104u) == SURVEY_PAIR_LEASE_STALE);
-    assert(survey_pair_lease_go_until_bound(
-               &lease, old_generation, old_pair.survey_id, 7u,
-               old_commitment, 104u, 1000u) ==
-           SURVEY_PAIR_LEASE_STALE);
     assert(!survey_pair_lease_abort_matching_round_bound(
         &lease,
         &old_pair,
@@ -186,14 +179,6 @@ static void test_new_generation_cannot_overwrite_running_radio_owner(void)
                &lease, &pair, round_id, commitment,
                &start, 101u) == SURVEY_PAIR_LEASE_ACCEPTED);
     assert(survey_pair_lease_release_start(&lease, &start));
-    assert(survey_pair_lease_go_until_bound(
-               &lease,
-               generation,
-               pair.survey_id,
-               round_id,
-               commitment,
-               101u,
-               102u) == SURVEY_PAIR_LEASE_ACCEPTED);
     assert(survey_pair_lease_mark_running(&lease, NULL, NULL));
     assert(survey_pair_lease_prepare_round_bound(
                &lease, &next_pair, round_id + 1u,
@@ -336,24 +321,20 @@ static void test_start_is_exact_ordered_transition(void)
     assert(survey_pair_lease_release_start(&lease, &start));
     assert(survey_pair_lease_ready_snapshot(&lease, NULL));
     assert(survey_pair_lease_start(&lease, &pair, &retry, 102u) ==
-           SURVEY_PAIR_LEASE_SUPERSEDED);
-    assert(lease.start_id.command_seq == retry.command_seq);
+           SURVEY_PAIR_LEASE_STALE);
+    assert(lease.start_id.command_seq == start.command_seq);
     assert(survey_pair_lease_pending_snapshot(&lease, NULL));
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(!survey_pair_lease_mark_running(&lease, NULL, NULL));
-    assert(!survey_pair_lease_release_start(&lease, &start));
-    assert(survey_pair_lease_release_start(&lease, &retry));
     assert(survey_pair_lease_ready_snapshot(&lease, &snapshot));
     assert(survey_pair_lease_mark_running(&lease, &snapshot, NULL));
     assert_pair_equal(&snapshot, &pair);
     assert(lease.phase == SURVEY_PAIR_LEASE_RUNNING);
     assert(survey_pair_lease_start(&lease, &pair, &start, 103u) ==
-           SURVEY_PAIR_LEASE_STALE);
-    assert(survey_pair_lease_start(&lease, &pair, &retry, 103u) ==
            SURVEY_PAIR_LEASE_DUPLICATE);
+    assert(survey_pair_lease_start(&lease, &pair, &retry, 103u) ==
+           SURVEY_PAIR_LEASE_BUSY);
     assert(survey_pair_lease_start(&lease, &pair, &newer, 103u) ==
            SURVEY_PAIR_LEASE_BUSY);
-    assert(lease.start_id.command_seq == retry.command_seq);
+    assert(lease.start_id.command_seq == start.command_seq);
     assert(survey_pair_lease_finish(&lease));
     assert(lease.phase == SURVEY_PAIR_LEASE_IDLE);
     assert(lease.last_accepted_id_valid);
@@ -361,7 +342,7 @@ static void test_start_is_exact_ordered_transition(void)
                                      PREPARE_LEASE_MS) ==
            SURVEY_PAIR_LEASE_STALE);
     assert(survey_pair_lease_start(&lease, &pair, &retry, 104u) ==
-           SURVEY_PAIR_LEASE_STALE);
+           SURVEY_PAIR_LEASE_INVALID_STATE);
     assert(survey_pair_lease_invariant(&lease));
 }
 
@@ -655,112 +636,6 @@ static void test_round_bound_abort_cannot_cancel_a_new_generation(void)
     assert(survey_pair_lease_invariant(&lease));
 }
 
-static void test_nonzero_round_waits_for_exact_go(void)
-{
-    const struct survey_pair pair = pair_with(110u, 1u);
-    const struct survey_pair_control_id prepare = control_id(110u, 10u);
-    const struct survey_pair_control_id start = control_id(110u, 11u);
-    const struct survey_pair_control_id retry = control_id(110u, 12u);
-    struct survey_pair running_pair = pair_with(999u, 9u);
-    uint16_t running_round_id = UINT16_C(0xbeef);
-    struct survey_pair_lease lease = {0};
-
-    assert(survey_pair_lease_prepare_round(&lease,
-                                           &pair,
-                                           7u,
-                                           &prepare,
-                                           100u,
-                                           PREPARE_LEASE_MS) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(lease.round_id == 7u);
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         7u,
-                                         &start,
-                                         101u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_release_start(&lease, &start));
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    assert(survey_pair_lease_go(&lease, 111u, 7u, 102u) ==
-           SURVEY_PAIR_LEASE_STALE);
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 8u, 102u) ==
-           SURVEY_PAIR_LEASE_STALE);
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 7u, 102u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 7u, 102u) ==
-           SURVEY_PAIR_LEASE_DUPLICATE);
-
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         7u,
-                                         &retry,
-                                         103u) ==
-           SURVEY_PAIR_LEASE_STALE);
-    assert(lease.start_id.command_seq == start.command_seq);
-    assert(lease.go_released);
-    assert(lease.start_released);
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_mark_running(&lease,
-                                          &running_pair,
-                                          &running_round_id));
-    assert_pair_equal(&running_pair, &pair);
-    assert(running_round_id == 7u);
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 7u, 104u) ==
-           SURVEY_PAIR_LEASE_DUPLICATE);
-    assert(lease.phase == SURVEY_PAIR_LEASE_RUNNING);
-    assert(survey_pair_lease_finish(&lease));
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 7u, 105u) ==
-           SURVEY_PAIR_LEASE_STALE);
-    assert(survey_pair_lease_invariant(&lease));
-}
-
-static void test_failed_go_admission_can_reopen_only_the_exact_round(void)
-{
-    const struct survey_pair pair = pair_with(115u, 1u);
-    const struct survey_pair_control_id prepare = control_id(115u, 15u);
-    const struct survey_pair_control_id start = control_id(115u, 16u);
-    struct survey_pair_lease lease = {0};
-
-    assert(survey_pair_lease_prepare_round(&lease,
-                                           &pair,
-                                           9u,
-                                           &prepare,
-                                           100u,
-                                           PREPARE_LEASE_MS) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         9u,
-                                         &start,
-                                         101u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_release_start(&lease, &start));
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 9u, 102u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    assert(!survey_pair_lease_revoke_go(&lease, pair.survey_id + 1u, 9u));
-    assert(!survey_pair_lease_revoke_go(&lease, pair.survey_id, 8u));
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    assert(survey_pair_lease_revoke_go(&lease, pair.survey_id, 9u));
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_pending_snapshot(&lease, NULL));
-    assert(!survey_pair_lease_revoke_go(&lease, pair.survey_id, 9u));
-    assert(survey_pair_lease_invariant(&lease));
-
-    assert(survey_pair_lease_go(&lease, pair.survey_id, 9u, 103u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_mark_running(&lease, NULL, NULL));
-    assert(!survey_pair_lease_revoke_go(&lease, pair.survey_id, 9u));
-    assert(survey_pair_lease_finish(&lease));
-    assert(survey_pair_lease_invariant(&lease));
-}
-
 static void test_round_mismatch_cannot_retarget_active_lease(void)
 {
     const struct survey_pair pair = pair_with(120u, 1u);
@@ -807,172 +682,53 @@ static void test_round_mismatch_cannot_retarget_active_lease(void)
     assert(survey_pair_lease_invariant(&lease));
 }
 
-static void test_go_expiry_at_worst_case_wrap_boundary(void)
-{
-    const struct survey_pair pair = pair_with(130u, 1u);
-    const struct survey_pair_control_id prepare = control_id(130u, 30u);
-    const struct survey_pair_control_id start = control_id(130u, 31u);
-    struct survey_pair_lease lease = {0};
-
-    assert(survey_pair_lease_prepare_round(&lease,
-                                           &pair,
-                                           UINT16_MAX,
-                                           &prepare,
-                                           UINT32_MAX - 99u,
-                                           100u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(lease.prepared_deadline_ms == 0u);
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         UINT16_MAX,
-                                         &start,
-                                         UINT32_MAX - 98u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_go(&lease,
-                                pair.survey_id,
-                                UINT16_MAX,
-                                UINT32_MAX) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(survey_pair_lease_release_start(&lease, &start));
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    survey_pair_lease_reset(&lease);
-    assert(survey_pair_lease_prepare_round(&lease,
-                                           &pair,
-                                           UINT16_MAX,
-                                           &prepare,
-                                           UINT32_MAX - 99u,
-                                           100u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         UINT16_MAX,
-                                         &start,
-                                         UINT32_MAX - 98u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_go(&lease,
-                                pair.survey_id,
-                                UINT16_MAX,
-                                0u) == SURVEY_PAIR_LEASE_EXPIRED);
-    assert(lease.phase == SURVEY_PAIR_LEASE_IDLE);
-    assert(survey_pair_lease_go(&lease,
-                                pair.survey_id,
-                                UINT16_MAX,
-                                1u) == SURVEY_PAIR_LEASE_STALE);
-    assert(survey_pair_lease_invariant(&lease));
-}
-
-static void test_go_execution_deadline_is_closed_and_does_not_slide(void)
+static void test_start_execution_deadline_is_closed_and_does_not_slide(void)
 {
     const struct survey_pair pair = pair_with(140u, 1u);
     const struct survey_pair_control_id prepare = control_id(140u, 40u);
     const struct survey_pair_control_id start = control_id(140u, 41u);
     struct survey_pair_lease lease = {0};
 
-    assert(survey_pair_lease_prepare_round(&lease,
-                                           &pair,
-                                           12u,
-                                           &prepare,
-                                           100u,
-                                           PREPARE_LEASE_MS) ==
+    assert(survey_pair_lease_prepare_round(&lease, &pair, 12u, &prepare,
+                                           100u, PREPARE_LEASE_MS) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         12u,
-                                         &start,
-                                         101u) ==
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 12u, NULL, &start, 101u, 300u) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_release_start(&lease, &start));
-
-    assert(survey_pair_lease_go_until(&lease,
-                                      pair.survey_id,
-                                      12u,
-                                      200u,
-                                      200u) ==
-           SURVEY_PAIR_LEASE_INVALID_ARGUMENT);
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    assert(survey_pair_lease_go_until(&lease,
-                                      pair.survey_id,
-                                      12u,
-                                      200u,
-                                      300u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(lease.go_execution_deadline_ms == 300u);
-    assert(survey_pair_lease_go_until(&lease,
-                                      pair.survey_id,
-                                      12u,
-                                      201u,
-                                      400u) ==
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 12u, NULL, &start, 102u, 400u) ==
            SURVEY_PAIR_LEASE_DUPLICATE);
-    assert(lease.go_execution_deadline_ms == 300u);
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(!survey_pair_lease_expire(&lease, 299u));
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    /* Equality closes only this GO; START stays armed for a fresh future GO. */
-    assert(!survey_pair_lease_mark_running_at(&lease, 300u, NULL, NULL));
-    assert(lease.phase == SURVEY_PAIR_LEASE_START_PENDING);
-    assert(lease.start_released);
-    assert(!lease.go_released);
-    assert(lease.go_execution_deadline_ms == 0u);
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    assert(survey_pair_lease_go_until(&lease,
-                                      pair.survey_id,
-                                      12u,
-                                      301u,
-                                      500u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_mark_running_at(&lease, 499u, NULL, NULL));
-    assert(lease.phase == SURVEY_PAIR_LEASE_RUNNING);
+    assert(lease.start_execution_deadline_ms == 300u);
+    assert(survey_pair_lease_release_start(&lease, &start));
+    assert(survey_pair_lease_execution_remaining_ms(&lease, 299u) == 1u);
+    assert(!survey_pair_lease_mark_running_at(&lease, 299u, NULL, NULL));
+    assert(survey_pair_lease_mark_running_at(&lease, 300u, NULL, NULL));
     assert(survey_pair_lease_finish(&lease));
     assert(survey_pair_lease_invariant(&lease));
 }
 
-static void test_go_execution_deadline_zero_is_valid_and_expires_at_wrap(void)
+static void test_start_execution_deadline_zero_is_valid_at_wrap(void)
 {
     const struct survey_pair pair = pair_with(150u, 1u);
     const struct survey_pair_control_id prepare = control_id(150u, 50u);
     const struct survey_pair_control_id start = control_id(150u, 51u);
     struct survey_pair_lease lease = {0};
 
-    assert(survey_pair_lease_prepare_round(&lease,
-                                           &pair,
-                                           13u,
-                                           &prepare,
-                                           UINT32_MAX - 100u,
-                                           200u) ==
+    assert(survey_pair_lease_prepare_round(&lease, &pair, 13u, &prepare,
+                                           UINT32_MAX - 100u, 200u) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round(&lease,
-                                         &pair,
-                                         13u,
-                                         &start,
-                                         UINT32_MAX - 2u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 13u, NULL, &start,
+               UINT32_MAX - 2u, 0u) == SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(lease.start_execution_armed);
+    assert(lease.start_execution_deadline_ms == 0u);
     assert(survey_pair_lease_release_start(&lease, &start));
-
-    assert(survey_pair_lease_go_until(&lease,
-                                      pair.survey_id,
-                                      13u,
-                                      UINT32_MAX - 1u,
-                                      0u) ==
-           SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(lease.go_released);
-    assert(lease.go_execution_deadline_ms == 0u);
-    assert(survey_pair_lease_invariant(&lease));
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-    assert(!survey_pair_lease_expire(&lease, UINT32_MAX));
-    assert(survey_pair_lease_ready_snapshot(&lease, NULL));
-
-    /* Equality closes only the wrapped GO; the prepared START remains armed. */
-    assert(!survey_pair_lease_expire(&lease, 0u));
-    assert(lease.phase == SURVEY_PAIR_LEASE_START_PENDING);
-    assert(lease.start_released);
-    assert(!lease.go_released);
-    assert(lease.go_execution_deadline_ms == 0u);
-    assert(!survey_pair_lease_ready_snapshot(&lease, NULL));
+    assert(survey_pair_lease_execution_remaining_ms(
+               &lease, UINT32_MAX) == 1u);
+    assert(!survey_pair_lease_mark_running_at(
+        &lease, UINT32_MAX, NULL, NULL));
+    assert(survey_pair_lease_mark_running_at(&lease, 0u, NULL, NULL));
+    assert(survey_pair_lease_finish(&lease));
     assert(survey_pair_lease_invariant(&lease));
 }
 
@@ -988,12 +744,9 @@ int main(void)
     test_argument_and_sequence_wrap_validation();
     test_targeted_abort_cannot_cancel_a_new_pair();
     test_round_bound_abort_cannot_cancel_a_new_generation();
-    test_nonzero_round_waits_for_exact_go();
-    test_failed_go_admission_can_reopen_only_the_exact_round();
     test_round_mismatch_cannot_retarget_active_lease();
-    test_go_expiry_at_worst_case_wrap_boundary();
-    test_go_execution_deadline_is_closed_and_does_not_slide();
-    test_go_execution_deadline_zero_is_valid_and_expires_at_wrap();
+    test_start_execution_deadline_is_closed_and_does_not_slide();
+    test_start_execution_deadline_zero_is_valid_at_wrap();
     test_operation_generation_and_commitment_isolate_stale_traffic();
     test_operation_generation_rejects_legacy_round_zero();
     test_new_generation_cannot_overwrite_running_radio_owner();

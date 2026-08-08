@@ -248,7 +248,6 @@ static void test_ingress_to_c5_normalizes_command_class_ttl(void)
     } command_cases[] = {
         {CMD_PING, FLOOD_EPOCH_GLOBAL_TTL},
         {CMD_ASSIGN_DISCOVERY_SLOTS, FLOOD_EPOCH_GLOBAL_TTL},
-        {CMD_SURVEY_GO, FLOOD_EPOCH_GLOBAL_TTL},
         {CMD_SURVEY_PREPARE_PAIR, MESH_DEFAULT_TTL},
         {CMD_SURVEY_START_PAIR, MESH_DEFAULT_TTL},
         {CMD_SURVEY_ABORT, MESH_DEFAULT_TTL},

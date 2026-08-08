@@ -94,14 +94,20 @@ stream queue can drop lower-priority status or diagnostic records under
 pressure, and non-mesh gateway builds may pause BLE activity around UWB work.
 This GUI is therefore a host-delivery view, not a complete RF trace.
 
-Gateway click records are at-least-once across a gateway reset: the durable
-journal can replay an exact packet after BLE notification completion but before
-its NVS clear. The GUI keeps a bounded exact-identity-and-payload cache across
-BLE reconnects while this process remains alive, so an exact replay stays one
-visible/CIR-merged record; a same-identity mutation is shown as a conflict.
-The cache is bounded and RAM-only, so pressure can evict an old identity and a
-GUI-process restart has no persistent host acknowledgement; neither case
-provides end-to-end exactly-once delivery.
+Gateway host records can replay after gateway retries or resets because source
+custody is not released at BLE notification completion. That completion moves
+the stream item to `WAIT_GUI_RECEIPT`; the GUI first stores and deduplicates the
+exact record in process RAM, then sends an exact identity-plus-record-digest
+receipt. Only the gateway's accepted `HOST_ITEM_ACCEPTED` receipt permits a
+mesh ACK and later stream-item retirement. A disconnect before the receipt
+rewinds the item for resend, while a reset leaves source custody upstream.
+The deduplicator is bounded and scoped to the firmware `DEVICE_ID` read from
+GATT, so different gateways cannot share entries. Its history survives a
+disconnect/reconnect to the same gateway while this process remains alive; an
+exact replay stays one visible/CIR-merged record, while a same-identity
+mutation is shown as a conflict. LRU eviction or a GUI-process restart removes
+old history, so a later replay may be shown again; there is no durable host
+acknowledgement or NVS-backed journal.
 
 ## Supported Commands
 
@@ -109,10 +115,12 @@ provides end-to-end exactly-once delivery.
   `CMD_SURVEY_REACHABILITY = 0x0100` to the identity read from GATT. Its payload
   contains the survey identity and one complete versioned operation policy:
   discovery start delay, slot duration/count, one to four rounds, report grace,
-  total budget, zero to two pair reruns, one to four samples, and a concurrency
+  total budget, zero to two pair reruns, exactly five samples, and a concurrency
   cap up to 25. Gateway firmware gathers one-way or mutual reachability, plans
-  disjoint-neighborhood batches, arms each pair with PREPARE/START, then launches
-  each batch with one common future `CMD_SURVEY_GO`.
+  disjoint-neighborhood batches, and arms each pair in the fixed order
+  PREPARE initiator, PREPARE responder, START responder, START initiator. The
+  START controls carry the common future execution instant; there is no
+  separate go-command. Pair distance is the median of the five usable samples.
 - **Here I Am** sends local `CMD_FORCE_REDISCOVERY = 0x000c` to the gateway's
   own `DEVICE_ID`. Its correlated successful terminal follows completion of the
   gateway's bounded `MSG_GATEWAY_ROUTE_ADV` flood custody; it does not claim
@@ -179,6 +187,11 @@ that every scheduled pair opportunity was observed. The default solver is the
 exact `visibility_branching_tuned` profile adapted from the user-owned
 AnchorGeometrySolver commit `01c3edb470bcd868403e04a6cded754360decdf0`.
 The spring-energy solver is an explicit alternate; failures never fall back.
+This view is a RAM-only 2D diagnostic preview, not the production 3D
+self-setup result. The maintained 3D requirement remains unresolved until the
+future host API/solver defines height or plane constraints, workplace-frame
+registration, reflection handling, and uncertainty for partial or non-rigid
+distance graphs.
 
 `Click Location` groups ranges by protocol session, event sequence, and clicker
 ID and solves against the current geometry generation. Duplicate, stale,

@@ -401,7 +401,7 @@ static bool run_click_uwb_path(
     struct uwb_range_header poll_header;
     struct uwb_range_header decoded_poll;
     uint8_t frame[UWB_RANGE_SCHEDULE_MAX_LEN];
-    uint8_t poll[UWB_POLL_LEN];
+    uint8_t poll[UWB_CLICK_POLL_LEN];
     uint8_t response_bytes[UWB_RESP_LEN];
     uint8_t final_bytes[UWB_FINAL_LEN];
     uint8_t report_bytes[UWB_REPORT_LEN];
@@ -593,7 +593,11 @@ static bool run_click_uwb_path(
         range_report.status = RANGE_OK;
         range_report.rsl_dbm = -52;
 
-        ret = uwb_encode_poll(&poll_header, poll, sizeof(poll), &written);
+        ret = uwb_encode_click_poll(&poll_header,
+                                    123u + (uint32_t)range_index,
+                                    poll,
+                                    sizeof(poll),
+                                    &written);
         CHECK(ret == PROTO_OK && written == sizeof(poll),
               "POLL encode failed ret=%d", ret);
         at_us = world->now_us + 3000u;
@@ -895,6 +899,8 @@ struct ble_admission_context {
     struct gateway_ble_stream_state stream;
     uint32_t attempts;
     uint32_t commits;
+    uint32_t gui_notifications;
+    uint32_t gui_receipts;
 };
 
 static int admit_gateway_click(const struct proto_packet *packet,
@@ -904,8 +910,18 @@ static int admit_gateway_click(const struct proto_packet *packet,
                                void *ctx)
 {
     struct ble_admission_context *admission = ctx;
+    enum gateway_ble_stream_class packet_class;
     int ret;
 
+    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
+                                                      packet->flags);
+    if (!gateway_ble_should_stream_packet(packet->msg_type,
+                                          packet->flags,
+                                          packet_class)) {
+        /* Internal gateway ACK confirms are semantic mesh traffic, not GUI
+         * records, so they must not consume the one host-custody slot. */
+        return PROTO_OK;
+    }
     admission->attempts++;
     ret = gateway_ble_stream_reserve_packet(&admission->stream, packet,
                                             payload, payload_len,
@@ -921,6 +937,28 @@ static int admit_gateway_click(const struct proto_packet *packet,
         return PROTO_ERR_BUSY;
     }
     admission->commits++;
+
+    /* The mesh ACK is receipt-gated in production.  This joined seam has no
+     * asynchronous BLE worker, so model the notification and exact GUI
+     * receipt before returning admission success; the simulator then queues
+     * its gateway ACK only after this boundary has completed. */
+    {
+        const uint8_t *record = NULL;
+        size_t record_len = 0u;
+
+        ret = gateway_ble_stream_begin_send_view(&admission->stream,
+                                                 &record,
+                                                 &record_len);
+        if (ret != 0 || record == NULL || record_len == 0u ||
+            gateway_ble_stream_mark_host_notified(&admission->stream) != 0 ||
+            gateway_ble_stream_accept_host_receipt(&admission->stream) != 0) {
+            gateway_ble_stream_cancel_send(&admission->stream);
+            gateway_ble_stream_cancel_reservation(&admission->stream);
+            return PROTO_ERR_BUSY;
+        }
+        admission->gui_notifications++;
+        admission->gui_receipts++;
+    }
     return PROTO_OK;
 }
 
@@ -1009,7 +1047,8 @@ static size_t count_full_identity_transitions(
             transition->packet_dst_id == packet->dst_id &&
             transition->packet_session_id == packet->session_id &&
             transition->packet_seq == packet->seq &&
-            transition->msg_type == packet->msg_type) {
+            (transition->msg_type == packet->msg_type ||
+             transition->msg_type == MSG_GATEWAY_ACK_CONFIRM)) {
             count++;
         }
     }
@@ -1061,6 +1100,7 @@ static bool test_click_path(void)
 
     for (uint32_t step = 0u; step < MAX_MESH_STEPS; step++) {
         bool direct = false;
+        struct proto_packet direct_packet = {0};
         int action_ret;
 
         if (fixture.world.roles[fixture.gateway].delivery_count ==
@@ -1104,10 +1144,17 @@ static bool test_click_path(void)
                 fixture.world.roles[fixture.relay2].tx_queue[i].outbound.next_hop_id ==
                     GATEWAY_ID) {
                 direct = true;
+                direct_packet = fixture.world.roles[fixture.relay2].tx_queue[i].
+                    outbound.packet;
                 break;
             }
         }
         if (direct) {
+            size_t delivery_count_before =
+                fixture.world.roles[fixture.gateway].delivery_count;
+            uint32_t rejection_count_before =
+                fixture.world.roles[fixture.gateway].
+                    gateway_semantic_rejection_count;
             uint16_t tx_index;
             uint16_t ack_index;
             uint64_t ready = fixture.world.now_us;
@@ -1139,7 +1186,23 @@ static bool test_click_path(void)
                                                  payload_start, gateway_rx_end) == MESH_SIM_OK &&
                       mesh_sim_run_until(&fixture.world, gateway_rx_end) == MESH_SIM_OK,
                   "direct gateway RX failed");
-            if (!pressure_released) {
+            if (!gateway_ble_should_stream_packet(
+                    direct_packet.msg_type,
+                    direct_packet.flags,
+                    gateway_ble_stream_classify_packet(
+                        direct_packet.msg_type, direct_packet.flags))) {
+                CHECK(fixture.world.roles[fixture.gateway].delivery_count ==
+                          delivery_count_before &&
+                          fixture.world.roles[fixture.gateway].
+                              gateway_semantic_rejection_count ==
+                          rejection_count_before &&
+                          gateway_ble_stream_depth(&admission.stream) == 0u,
+                      "internal gateway control touched GUI custody: "
+                      "msg=0x%02x delivered=%zu stream=%u",
+                      direct_packet.msg_type,
+                      fixture.world.roles[fixture.gateway].delivery_count,
+                      gateway_ble_stream_depth(&admission.stream));
+            } else if (!pressure_released) {
                 bool gateway_ack_queued = false;
 
                 for (size_t queue_index = 0u;
@@ -1187,18 +1250,53 @@ static bool test_click_path(void)
                 gateway_ble_stream_cancel_reservation(&admission.stream);
                 pressure_released = true;
                 continue;
-            }
-            CHECK(fixture.world.roles[fixture.gateway].delivery_count <=
+            } else {
+                CHECK(fixture.world.roles[fixture.gateway].delivery_count <=
                           UWB_NORMAL_CLICK_MIN_ANCHORS &&
-                      admission.commits ==
-                          fixture.world.roles[fixture.gateway].delivery_count &&
-                      gateway_ble_stream_depth(&admission.stream) ==
-                          1u,
-                  "gateway did not atomically commit click to BLE stream: "
-                  "delivered=%zu commits=%" PRIu32 " stream=%u",
+                      fixture.world.roles[fixture.gateway].
+                              gateway_semantic_rejection_count ==
+                          rejection_count_before,
+                  "BLE admission unexpectedly rejected after pressure release: "
+                  "delivered=%zu rejected=%" PRIu32 " attempts=%" PRIu32
+                  " commits=%" PRIu32 " stream=%u reservation=%u phase=%u",
                   fixture.world.roles[fixture.gateway].delivery_count,
+                  fixture.world.roles[fixture.gateway].
+                      gateway_semantic_rejection_count,
+                  admission.attempts,
                   admission.commits,
-                  gateway_ble_stream_depth(&admission.stream));
+                  gateway_ble_stream_depth(&admission.stream),
+                  admission.stream.reservation_active ? 1u : 0u,
+                  admission.stream.head_send_phase);
+                if (fixture.world.roles[fixture.gateway].delivery_count >
+                    delivery_count_before) {
+                    CHECK(admission.commits ==
+                          fixture.world.roles[fixture.gateway].delivery_count &&
+                          gateway_ble_stream_depth(&admission.stream) == 1u &&
+                          admission.stream.head_send_phase ==
+                              GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED,
+                      "gateway did not atomically commit receipt-gated click: "
+                      "delivered=%zu commits=%" PRIu32 " stream=%u phase=%u",
+                      fixture.world.roles[fixture.gateway].delivery_count,
+                      admission.commits,
+                      gateway_ble_stream_depth(&admission.stream),
+                      admission.stream.head_send_phase);
+                } else {
+                    CHECK(fixture.world.roles[fixture.gateway].delivery_count ==
+                          delivery_count_before &&
+                          admission.commits ==
+                              fixture.world.roles[fixture.gateway].delivery_count &&
+                          gateway_ble_stream_depth(&admission.stream) == 0u &&
+                          fixture.world.roles[fixture.gateway].
+                              gateway_semantic_duplicate_ack_count > 0u,
+                      "gateway duplicate ACK did not preserve retired GUI item: "
+                      "delivered=%zu commits=%" PRIu32 " stream=%u dup_acks=%" PRIu32,
+                      fixture.world.roles[fixture.gateway].delivery_count,
+                      admission.commits,
+                      gateway_ble_stream_depth(&admission.stream),
+                          fixture.world.roles[fixture.gateway].
+                              gateway_semantic_duplicate_ack_count);
+                }
+            }
             CHECK(mesh_sim_run_until(&fixture.world,
                                      fixture.world.roles[fixture.gateway].dwm3000.cpu_busy_until_us) ==
                       MESH_SIM_OK,
@@ -1235,18 +1333,25 @@ static bool test_click_path(void)
                   fixture.world.roles[fixture.relay2].relay.pending.packet.session_id,
                   fixture.world.roles[fixture.relay2].relay.pending.packet.seq);
             /*
-             * The production journal has one durable owner.  Once this
-             * record has reached the host, retiring it permits the next
-             * source-retained report to be admitted; acknowledging all three
-             * into volatile RAM at once would make reset lose accepted data.
+             * The exact GUI receipt and mesh ACK handoff have completed for
+             * a new report. Retiring that one host-custody owner permits the
+             * next source-retained report to be admitted.
              */
-            gateway_ble_stream_mark_sent(
-                &admission.stream,
-                (uint32_t)(fixture.world.now_us / 1000u));
-            host_outputs++;
-            CHECK(gateway_ble_stream_depth(&admission.stream) == 0u &&
-                      !admission.stream.journal_payload_digest_valid,
-                  "completed host journal owner was not retired");
+            if (gateway_ble_should_stream_packet(
+                    direct_packet.msg_type,
+                    direct_packet.flags,
+                    gateway_ble_stream_classify_packet(
+                        direct_packet.msg_type, direct_packet.flags)) &&
+                fixture.world.roles[fixture.gateway].delivery_count >
+                delivery_count_before) {
+                gateway_ble_stream_mark_sent(
+                    &admission.stream,
+                    (uint32_t)(fixture.world.now_us / 1000u));
+                host_outputs++;
+                CHECK(gateway_ble_stream_depth(&admission.stream) == 0u &&
+                          !admission.stream.host_custody_source_payload_active,
+                      "completed host receipt owner was not retired");
+            }
         } else {
             struct mesh_sim_connection_action action;
             uint16_t selected = UINT16_MAX;
@@ -1350,6 +1455,8 @@ static bool test_click_path(void)
     }
     CHECK(pressure_released && admission.attempts >= 4u &&
               admission.commits == UWB_NORMAL_CLICK_MIN_ANCHORS &&
+              admission.gui_notifications == UWB_NORMAL_CLICK_MIN_ANCHORS &&
+              admission.gui_receipts == UWB_NORMAL_CLICK_MIN_ANCHORS &&
               host_outputs == UWB_NORMAL_CLICK_MIN_ANCHORS,
           "BLE pressure retry was not exercised attempts=%" PRIu32
           " commits=%" PRIu32 " host_outputs=%u",

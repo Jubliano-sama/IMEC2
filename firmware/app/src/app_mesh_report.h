@@ -33,23 +33,16 @@ enum app_gateway_semantic_acceptance {
     /*
      * The payload is structurally valid, but reset or terminal operation
      * cleanup removed the volatile state needed to apply it. Preserve the
-     * exact raw host record and retire sender custody without claiming a
+     * exact raw delivery item and retire sender custody without claiming a
      * semantic state transition.
      */
     APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW = 2,
     /*
-     * The collection record is already durable and host-visible custody no
-     * longer exists. Reapply only the durable collection/EACK transition; do
-     * not create another host journal or BLE record.
+     * Collection state already owns this result and no new BLE host item is
+     * needed. Reapply only the durable collection/EACK transition; do not
+     * enqueue a duplicate host record.
      */
     APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE = 3,
-    /*
-     * Volatile collection state has moved on, but every represented result
-     * has a durable terminal host receipt (or a strictly later per-node
-     * receipt). Bypass host output and reconstruct a fresh CLOSED EACK without
-     * mutating the active collection.
-     */
-    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE = 4,
 };
 
 struct mesh_delivery_health {
@@ -69,10 +62,12 @@ struct anchor_range_window_report {
     uint8_t range_round_indices[RANGE_REPORT_MAX_DISTANCE_SAMPLES];
     int64_t distance_sum_mm;
     int64_t first_exchange_start_ms;
+    int64_t click_timestamp_ms;
     uint32_t quality_sum;
     uint16_t sample_count;
     bool have_result;
     bool have_exchange_start_ms;
+    bool have_click_timestamp_ms;
     bool rsl_sampled;
     bool cir_sampled;
     bool anchor_full_cir_sampled;
@@ -261,11 +256,6 @@ int mesh_restore_anchor_range_report_journal(void);
  */
 int mesh_report_active_owner_matches_outbound(
     const struct mesh_outbound *outbound);
-/*
- * Release the same-boot semantic-to-journal promotion owner after durable
- * journal restoration or cleanup has made that bridge unnecessary.
- */
-void mesh_gateway_semantic_commit_owner_clear(void);
 int mesh_anchor_range_report_note_gateway_confirmed(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
@@ -286,6 +276,8 @@ bool mesh_queue_from_frame_deferred(const uint8_t *frame,
                                     uint8_t radio_channel,
                                     bool *valid_mesh_frame,
                                     uint64_t *previous_hop_id);
+/* BLE completion boundary for a gateway-local ACK-required host item. */
+void mesh_gateway_host_receipt_ready(void);
 bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
                                           size_t frame_len,
                                           uint8_t link_quality);

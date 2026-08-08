@@ -1,6 +1,7 @@
 #ifndef STATUS_H
 #define STATUS_H
 
+#include "firmware_state_machines.h"
 #include "protocol.h"
 
 #include <stdbool.h>
@@ -10,9 +11,9 @@
 extern "C" {
 #endif
 
-#define BUTTON_DEBOUNCE_MS 50u
-#define BUTTON_LONG_PRESS_MS 1500u
-#define SELF_TEST_ARM_WINDOW_MS 3000u
+#define BUTTON_DEBOUNCE_MS FW_BUTTON_DEBOUNCE_MS
+#define BUTTON_LONG_PRESS_MS FW_BUTTON_LONG_PRESS_MS
+#define SELF_TEST_ARM_WINDOW_MS FW_BUTTON_SELF_TEST_ARM_MS
 #define STATUS_PASS_DURATION_MS 2000u
 #define STATUS_FAILURE_REPEAT_COUNT 3u
 
@@ -57,16 +58,6 @@ enum click_failure {
     CLICK_FAILURE_INSUFFICIENT_RANGES = 2,
 };
 
-struct button_fsm {
-    bool pressed;
-    bool armed;
-    bool confirm_press;
-    bool have_last_edge_ms;
-    uint32_t pressed_at_ms;
-    uint32_t armed_at_ms;
-    uint32_t last_edge_ms;
-};
-
 struct status_inputs {
     bool self_test_armed;
     bool self_test_running;
@@ -86,11 +77,6 @@ struct status_indication {
     uint32_t duration_ms;
 };
 
-void button_fsm_init(struct button_fsm *fsm);
-int button_fsm_handle(struct button_fsm *fsm,
-                           enum button_signal signal,
-                           uint32_t now_ms,
-                           enum button_action *action);
 int status_select(const struct status_inputs *inputs,
                        struct status_indication *indication);
 

@@ -328,21 +328,24 @@ static void test_survey_sample_admission_matches_anchor_execution_capacity(void)
     enum gateway_command_event_reason reason;
     enum command_status status;
 
-    assert(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT == 4u);
-    for (uint16_t sample_count = SURVEY_MIN_SAMPLE_COUNT;
-         sample_count <= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT;
-         sample_count++) {
-        status = COMMAND_INTERNAL_ERROR;
-        reason = GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
-        assert(gateway_command_survey_sample_admission(
-            sample_count, &status, &reason));
-        assert(status == COMMAND_OK);
-        assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
-    }
+    assert(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT == 5u);
+    status = COMMAND_INTERNAL_ERROR;
+    reason = GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
+    assert(gateway_command_survey_sample_admission(
+        SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT, &status, &reason));
+    assert(status == COMMAND_OK);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
 
     status = COMMAND_OK;
     reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
     assert(!gateway_command_survey_sample_admission(0u, &status, &reason));
+    assert(status == COMMAND_DENIED);
+    assert(reason == GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
+
+    status = COMMAND_OK;
+    reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
+    assert(!gateway_command_survey_sample_admission(
+        SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT - 1u, &status, &reason));
     assert(status == COMMAND_DENIED);
     assert(reason == GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
 

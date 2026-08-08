@@ -12,7 +12,6 @@ static struct k_work_delayable gateway_command_timeout_side_effect_retry_work;
 static struct k_work_delayable gateway_collection_eack_work;
 static struct app_gateway_eack_retry_state gateway_collection_eack_retry_state;
 static bool gateway_collection_eack_round_dirty;
-static bool gateway_collection_recovery_eack_active;
 static struct k_work_delayable gateway_persistence_retry_work;
 static bool gateway_collection_persistence_dirty;
 static bool gateway_collection_clear_pending;
@@ -23,8 +22,6 @@ static bool gateway_membership_clear_pending;
 static bool gateway_membership_restore_pending;
 static atomic_t gateway_assignment_publication_pending_state =
     ATOMIC_INIT(0);
-static atomic_t gateway_host_journal_restore_pending = ATOMIC_INIT(0);
-static atomic_t gateway_host_journal_restored = ATOMIC_INIT(0);
 static bool gateway_ble_stream_initialized;
 static atomic_t gateway_persistence_retry_schedule_deferred =
     ATOMIC_INIT(0);
@@ -55,7 +52,6 @@ static bool gateway_collection_tracking_active(void);
 static void gateway_schedule_collection_eack_round(void);
 static int gateway_restore_membership_runtime(void);
 static int gateway_restore_collection_runtime(void);
-static int gateway_restore_host_journal_runtime(void);
 
 struct gateway_decoded_command_result {
     enum command_status status;
@@ -384,15 +380,12 @@ static void gateway_finalize_collection_clear(void)
     gateway_collection_eack_round_dirty = false;
     gateway_collection_persistence_dirty = false;
     gateway_collection_clear_pending = false;
-    if (!gateway_collection_recovery_eack_active) {
-        app_gateway_eack_retry_reset(
-            &gateway_collection_eack_retry_state);
-        (void)gateway_clear_eack_custody_or_defer(
-            "collection-clear-eack-custody");
-        atomic_clear(&gateway_collection_eack_schedule_deferred);
-        atomic_clear(&gateway_collection_eack_deferred_delay_ms);
-        (void)k_work_cancel_delayable(&gateway_collection_eack_work);
-    }
+    app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
+    (void)gateway_clear_eack_custody_or_defer(
+        "collection-clear-eack-custody");
+    atomic_clear(&gateway_collection_eack_schedule_deferred);
+    atomic_clear(&gateway_collection_eack_deferred_delay_ms);
+    (void)k_work_cancel_delayable(&gateway_collection_eack_work);
 }
 
 static void gateway_finalize_membership_clear(void)
@@ -424,24 +417,6 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
             gateway_schedule_persistence_retry("collection-restore");
             return;
         }
-    }
-    /*
-     * PREPARED host-output classification may consult the restored durable
-     * collection/membership proof. Never retry it ahead of those owners or a
-     * transient restore failure can self-sustain forever.
-     */
-    if (atomic_get(&gateway_host_journal_restore_pending) != 0) {
-        ret = gateway_restore_host_journal_runtime();
-        if (ret < 0) {
-            gateway_schedule_persistence_retry("host-output-restore");
-            return;
-        }
-        /*
-         * The host-complete head remains a stream barrier until NOTIFIED has
-         * been classified, receipts have landed, and the durable owner has
-         * cleared. Only then may a later queued record consume ATT credit.
-         */
-        gateway_ble_schedule_stream_drain();
     }
     if (gateway_eack_custody_clear_pending) {
         ret = gateway_clear_eack_custody_or_defer(
@@ -570,19 +545,6 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
     packet_class = packet == NULL ?
         GATEWAY_BLE_STREAM_CLASS_UNKNOWN :
         gateway_ble_stream_classify_packet(packet->msg_type, packet->flags);
-    /*
-     * A durable host record from the previous boot owns recovery progress.
-     * Best-effort telemetry must not continuously refill the only queue from
-     * which that owner is waiting to evict or drain records.
-     */
-#if DEVICE_ROLE == ROLE_GATEWAY
-    if (atomic_get(&gateway_host_journal_restore_pending) != 0 &&
-        (packet_class == GATEWAY_BLE_STREAM_CLASS_DIAGNOSTIC ||
-         packet_class == GATEWAY_BLE_STREAM_CLASS_STATUS)) {
-        return -EAGAIN;
-    }
-#endif
-
     ready = gateway_ble_stream_ready();
     retain_until_sent = false;
     if (packet != NULL &&
@@ -872,22 +834,6 @@ int gateway_ble_reserve_stream_packet(const struct proto_packet *packet,
         return -ENOTSUP;
     }
 
-#if DEVICE_ROLE == ROLE_GATEWAY
-    /* RAM-only build: there is no durable host journal to classify or restore.
-     * Only the in-memory terminal-receipt ledger participates in admission. */
-    if (app_gateway_terminal_receipts_supports(packet, payload, payload_len)) {
-        int journal_ret = app_gateway_terminal_receipts_classify(
-            packet, payload, payload_len, k_uptime_get_32());
-
-        if (journal_ret == 1) {
-            return GATEWAY_BLE_STREAM_RESERVATION_RECEIPT_TERMINAL;
-        }
-        if (journal_ret < 0) {
-            return journal_ret;
-        }
-    }
-#endif
-
     ready = gateway_ble_stream_ready();
     key = k_spin_lock(&gateway_ble_stream_lock);
     ret = gateway_ble_stream_reserve_packet(&gateway_ble_stream_state,
@@ -974,15 +920,156 @@ void gateway_ble_cancel_stream_reservation(void)
     k_spin_unlock(&gateway_ble_stream_lock, key);
 }
 
-void gateway_ble_require_host_journal_restore(const char *reason)
+static bool gateway_ble_packet_identity_matches(
+    const struct proto_packet *left,
+    const struct proto_packet *right)
 {
-#if DEVICE_ROLE == ROLE_GATEWAY
-    atomic_set(&gateway_host_journal_restore_pending, 1);
-    atomic_clear(&gateway_host_journal_restored);
-    gateway_schedule_persistence_retry(reason);
-#else
-    ARG_UNUSED(reason);
-#endif
+    return left != NULL && right != NULL &&
+           left->msg_type == right->msg_type &&
+           left->flags == right->flags &&
+           left->src_id == right->src_id &&
+           left->dst_id == right->dst_id &&
+           left->session_id == right->session_id &&
+           left->seq == right->seq;
+}
+
+static bool gateway_host_receipt_identity_matches(
+    const struct gateway_host_receipt_identity *identity,
+    const struct proto_packet *packet,
+    const uint8_t record_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    return identity != NULL && packet != NULL && record_digest != NULL &&
+           identity->original_msg_type == packet->msg_type &&
+           identity->original_flags == packet->flags &&
+           identity->src_id == packet->src_id &&
+           identity->dst_id == packet->dst_id &&
+           identity->session_id == packet->session_id &&
+           identity->seq == packet->seq &&
+           semantic_digest_equal(identity->stream_record_digest,
+                                 record_digest,
+                                 SEMANTIC_DIGEST_SHA256_LEN);
+}
+
+static int gateway_ble_accept_host_receipt(
+    const struct proto_packet *receipt_packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    struct gateway_host_receipt_identity identity;
+    struct proto_packet head_packet;
+    const uint8_t *record = NULL;
+    size_t record_len = 0u;
+    uint8_t record_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    k_spinlock_key_t key;
+    int ret;
+
+    if (receipt_packet == NULL || payload == NULL) {
+        return -EINVAL;
+    }
+    ret = gateway_host_receipt_packet_validate(receipt_packet,
+                                               payload,
+                                               payload_len,
+                                               &identity);
+    if (ret != PROTO_OK) {
+        return -EBADMSG;
+    }
+    if (receipt_packet->dst_id != DEVICE_ID ||
+        receipt_packet->src_id == DEVICE_ID ||
+        receipt_packet->session_id != identity.session_id ||
+        receipt_packet->seq != identity.seq) {
+        return -EBADMSG;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_peek(&gateway_ble_stream_state,
+                                  &record,
+                                  &record_len);
+    if (ret < 0) {
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        return ret;
+    }
+    ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                         &head_packet);
+    if (ret < 0 ||
+        !semantic_digest_sha256(record, record_len, record_digest) ||
+        !gateway_host_receipt_identity_matches(&identity,
+                                               &head_packet,
+                                               record_digest)) {
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        return -ESTALE;
+    }
+    if (gateway_ble_stream_state.head_send_phase ==
+            GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED) {
+        ret = gateway_ble_stream_accept_host_receipt(
+            &gateway_ble_stream_state);
+    } else if (gateway_ble_stream_state.head_send_phase ==
+               GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED) {
+        /* A duplicate GUI receipt is harmless and re-arms mesh completion. */
+        ret = -EALREADY;
+    } else {
+        ret = -EAGAIN;
+    }
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret != 0 && ret != -EALREADY) {
+        return ret;
+    }
+    mesh_gateway_host_receipt_ready();
+    return 0;
+}
+
+int gateway_ble_accept_host_receipt_frame(const uint8_t *frame,
+                                          size_t frame_len)
+{
+    struct proto_packet packet;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+    int ret;
+
+    if (frame == NULL || frame_len == 0u) {
+        return -EINVAL;
+    }
+    ret = serial_frame_decode_packet(frame,
+                                     frame_len,
+                                     &packet,
+                                     payload,
+                                     sizeof(payload),
+                                     &payload_len);
+    if (ret != PROTO_OK || packet.msg_type != MSG_GATEWAY_HOST_RECEIPT) {
+        /* Let the ordinary gateway ingress report malformed/non-host frames. */
+        return 0;
+    }
+    ret = gateway_ble_accept_host_receipt(&packet, payload, payload_len);
+    return ret == 0 || ret == -EALREADY ? 1 : ret;
+}
+
+int gateway_ble_finish_host_delivery(const struct proto_packet *packet)
+{
+    k_spinlock_key_t key;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || packet == NULL) {
+        return packet == NULL ? -EINVAL : -ENOTSUP;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    if (gateway_ble_stream_state.count == 0u ||
+        gateway_ble_stream_state.head_send_phase !=
+            GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED) {
+        ret = -EAGAIN;
+    } else if (!gateway_ble_stream_state.items[0].host_custody_owner ||
+               !gateway_ble_packet_identity_matches(
+                   packet, &gateway_ble_stream_state.items[0].packet)) {
+        ret = -ESTALE;
+    } else {
+        gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
+                                     k_uptime_get_32());
+        ret = 0;
+    }
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret == 0) {
+        gateway_ble_schedule_stream_drain();
+    }
+    return ret;
 }
 
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics)
@@ -1001,37 +1088,8 @@ void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagno
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-static int gateway_restore_host_journal_runtime(void)
-{
-    /* RAM-only build: there is no durable host journal to restore, so a
-     * restore reports success and clears the admission-recovery owners. */
-    atomic_clear(&gateway_host_journal_restore_pending);
-    atomic_clear(&gateway_host_journal_restored);
-    mesh_gateway_semantic_commit_owner_clear();
-    return 0;
-}
-
 #include "app_gateway_collection_runtime.inc"
 #line 1874 __BASE_FILE__
-#endif
-
-#if DEVICE_ROLE != ROLE_GATEWAY
-int gateway_accept_collection_receipt_redrive(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t previous_hop_id,
-    uint8_t received_radio_channel,
-    const struct mesh_event_plan *current_channel9_plan)
-{
-    ARG_UNUSED(packet);
-    ARG_UNUSED(payload);
-    ARG_UNUSED(payload_len);
-    ARG_UNUSED(previous_hop_id);
-    ARG_UNUSED(received_radio_channel);
-    ARG_UNUSED(current_channel9_plan);
-    return -ENOTSUP;
-}
 #endif
 
 static int gateway_validate_raw_command_result(
@@ -1240,7 +1298,6 @@ int gateway_preflight_result_semantic_delivery(
     if (packet->msg_type == MSG_RESULT_BUNDLE) {
         uint16_t accepted_count = 0u;
         uint16_t duplicate_count = 0u;
-        int receipt_ret;
 
         ret = gateway_validate_raw_result_bundle(
             packet, payload, payload_len);
@@ -1248,14 +1305,9 @@ int gateway_preflight_result_semantic_delivery(
             return ret;
         }
         if (!gateway_collection_tracking_active()) {
-            receipt_ret =
-                app_gateway_collection_receipts_classify_retry(
-                    packet, payload, payload_len);
-            return receipt_ret == 1 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE :
-                   receipt_ret == 0 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW :
-                   receipt_ret;
+            /* The GUI owns history. Without an active collection there is no
+             * firmware proof that this result may release source custody. */
+            return -EAGAIN;
         }
         ret = gateway_collection_preflight_bundle_from_hop(
             &gateway_collection_state,
@@ -1271,14 +1323,9 @@ int gateway_preflight_result_semantic_delivery(
                 ret != PROTO_ERR_NO_SPACE) {
                 return mesh_errno_from_proto(ret);
             }
-            receipt_ret =
-                app_gateway_collection_receipts_classify_retry(
-                    packet, payload, payload_len);
-            return receipt_ret == 1 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE :
-                   receipt_ret == 0 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW :
-                   receipt_ret;
+            /* Stale/expired collection state has no volatile receipt ledger;
+             * leave the sender's packet retryable instead of ACKing raw data. */
+            return -EAGAIN;
         }
         if (accepted_count == 0u && duplicate_count == 0u) {
             return -EBADMSG;
@@ -1292,7 +1339,6 @@ int gateway_preflight_result_semantic_delivery(
         const uint8_t *collection_epoch_raw = NULL;
         uint8_t collection_epoch_len = 0u;
         bool duplicate = false;
-        int receipt_ret;
         int epoch_ret = tlv_find_unique(payload,
                                         payload_len,
                                         TLV_COLLECTION_EPOCH_ID,
@@ -1321,14 +1367,7 @@ int gateway_preflight_result_semantic_delivery(
             return ret;
         }
         if (!gateway_collection_tracking_active()) {
-            receipt_ret =
-                app_gateway_collection_receipts_classify_retry(
-                    packet, payload, payload_len);
-            return receipt_ret == 1 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE :
-                   receipt_ret == 0 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW :
-                   receipt_ret;
+            return -EAGAIN;
         }
         ret = gateway_collection_preflight_result_from_hop(
             &gateway_collection_state,
@@ -1343,14 +1382,7 @@ int gateway_preflight_result_semantic_delivery(
                 ret != PROTO_ERR_NO_SPACE) {
                 return mesh_errno_from_proto(ret);
             }
-            receipt_ret =
-                app_gateway_collection_receipts_classify_retry(
-                    packet, payload, payload_len);
-            return receipt_ret == 1 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE :
-                   receipt_ret == 0 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW :
-                   receipt_ret;
+            return -EAGAIN;
         }
         return duplicate ?
                APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE :
@@ -2623,7 +2655,6 @@ static int gateway_restore_collection_runtime(void)
     /* RAM-only build: there is no durable collection or EACK custody to
      * restore, so a restore just clears the admission-recovery owners. */
     gateway_collection_restore_pending = false;
-    gateway_collection_recovery_eack_active = false;
     return 0;
 }
 
@@ -2640,7 +2671,6 @@ void gateway_command_result_tracking_init(void)
     gateway_collection_clear(&gateway_collection_state);
     app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
     gateway_collection_eack_round_dirty = false;
-    gateway_collection_recovery_eack_active = false;
     gateway_membership_clear(&gateway_membership_roster_state);
     memset(&gateway_command_timeout_dispatch_state,
            0,
@@ -2664,15 +2694,12 @@ void gateway_command_result_tracking_init(void)
     gateway_membership_clear_pending = false;
     gateway_membership_restore_pending = true;
     atomic_set(&gateway_assignment_publication_pending_state, 0);
-    atomic_set(&gateway_host_journal_restore_pending, 1);
-    atomic_clear(&gateway_host_journal_restored);
     gateway_ble_stream_initialized = false;
     atomic_clear(&gateway_persistence_retry_schedule_deferred);
     atomic_clear(&gateway_persistence_retry_deferred_delay_ms);
     atomic_clear(&gateway_collection_eack_schedule_deferred);
     atomic_clear(&gateway_collection_eack_deferred_delay_ms);
     gateway_persistence_retry_round = 0u;
-    mesh_gateway_semantic_commit_owner_clear();
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return;
     }

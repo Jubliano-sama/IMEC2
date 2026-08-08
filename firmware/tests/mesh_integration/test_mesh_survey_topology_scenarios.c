@@ -12,6 +12,7 @@
 #define ANCHOR_ID_BASE UINT64_C(0xa002000000010000)
 #define SURVEY_ID UINT32_C(0x50665006)
 #define ROUTE_EPOCH UINT32_C(19)
+#define OPERATION_GENERATION UINT64_C(0x0000000100000001)
 #define MAX_ANCHORS 50u
 #define MAX_BATCH_ANCHORS 4u
 #define MAX_BATCH_CONNECTIONS 4u
@@ -24,6 +25,9 @@
 
 static struct mesh_sim_world world;
 static struct survey_gateway_context survey_context;
+
+static int complete_direct_gateway_confirmation(uint8_t anchor,
+                                                uint8_t gateway);
 
 #define REQUIRE(expression)                                                     \
     do {                                                                        \
@@ -294,8 +298,23 @@ static int build_report(size_t anchor_count,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = survey_operation_generation_append_tlv(
+        payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len,
+        OPERATION_GENERATION);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = tlv_append_u16(payload,
+                         UWB_MESH_MAX_PAYLOAD_LEN,
+                         payload_len,
+                         TLV_COMMAND_STATUS,
+                         COMMAND_OK);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     return survey_init_discovery_report_packet(
-        packet, ANCHOR_ID_BASE + anchor_index, GATEWAY_ID, SURVEY_ID, 0u, seq,
+        packet, ANCHOR_ID_BASE + anchor_index, GATEWAY_ID, SURVEY_ID,
+        OPERATION_GENERATION, seq,
         (uint8_t)*payload_len);
 }
 
@@ -311,7 +330,8 @@ static int note_delivery(const struct mesh_sim_delivery *delivery)
 
     if (ret != PROTO_OK ||
         delivery->packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
-        delivery->packet.session_id != survey_id ||
+        delivery->packet.session_id !=
+            survey_operation_session_id(OPERATION_GENERATION) ||
         delivery->packet.src_id != anchor_id) {
         return PROTO_ERR_MALFORMED;
     }
@@ -423,7 +443,10 @@ static int run_topology(size_t anchor_count)
     size_t delivered = 0u;
 
     REQUIRE(anchor_count >= 2u && anchor_count <= MAX_ANCHORS);
-    REQUIRE(survey_gateway_begin(&survey_context, SURVEY_ID, 3u) == PROTO_OK);
+    REQUIRE(survey_gateway_begin_operation(&survey_context,
+                                           SURVEY_ID,
+                                           OPERATION_GENERATION,
+                                           3u) == PROTO_OK);
     while (delivered < anchor_count) {
         size_t batch_count = anchor_count - delivered;
 
@@ -573,6 +596,10 @@ static int test_unscheduled_direct_gateway_custody(void)
                 &world, gateway, anchor, ack_air_start_us, ack_window_end_us,
                 NULL) == MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, ack_window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[anchor].relay.pending.packet.msg_type ==
+            MSG_GATEWAY_ACK_CONFIRM);
+    REQUIRE(complete_direct_gateway_confirmation(anchor, gateway) ==
+            MESH_SIM_OK);
     REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
     REQUIRE(mesh_sim_count_transitions(&world,
                                        MESH_SIM_TRANSITION_GATEWAY_ACKED,
@@ -607,6 +634,101 @@ static void discard_gateway_ack(uint8_t gateway, size_t queue_index)
     memset(&world.roles[gateway].tx_queue[queue_index], 0,
            sizeof(world.roles[gateway].tx_queue[queue_index]));
     world.roles[gateway].tx_queue_count--;
+}
+
+static int queued_message_index(uint8_t node,
+                                uint64_t next_hop_id,
+                                uint8_t msg_type)
+{
+    const struct mesh_sim_role_instance *role = &world.roles[node];
+
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        if (role->tx_queue[i].valid &&
+            role->tx_queue[i].outbound.next_hop_id == next_hop_id &&
+            role->tx_queue[i].outbound.packet.msg_type == msg_type) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int complete_direct_gateway_confirmation(uint8_t anchor,
+                                                uint8_t gateway)
+{
+    struct mesh_relay *relay = &world.roles[anchor].relay;
+    uint64_t ready_us;
+    uint64_t air_start_us;
+    uint64_t window_end_us;
+    int ret;
+
+    if ((relay->pending.state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF &&
+         relay->pending.state != MESH_RELAY_TX_WAIT_GATEWAY_ACK) ||
+        relay->pending.packet.msg_type != MSG_GATEWAY_ACK_CONFIRM) {
+        return MESH_SIM_ERR_PROTOCOL;
+    }
+    if (relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        ready_us = (uint64_t)relay->pending.retry_after_ms * 1000u;
+        if (ready_us < world.now_us) {
+            ready_us = world.now_us;
+        }
+        ret = mesh_sim_run_until(&world, ready_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    if (queued_message_index(anchor, GATEWAY_ID,
+                             MSG_GATEWAY_ACK_CONFIRM) < 0) {
+        return MESH_SIM_ERR_EVENT_ORDER;
+    }
+
+    ready_us = world.now_us;
+    if (world.roles[anchor].dwm3000.cpu_busy_until_us > ready_us) {
+        ready_us = world.roles[anchor].dwm3000.cpu_busy_until_us;
+    }
+    if (world.roles[gateway].dwm3000.cpu_busy_until_us > ready_us) {
+        ready_us = world.roles[gateway].dwm3000.cpu_busy_until_us;
+    }
+    if (ready_us > world.now_us) {
+        ret = mesh_sim_run_until(&world, ready_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + UINT64_C(50000);
+    ret = mesh_sim_direct_gateway_arm_rx(&world, gateway, air_start_us,
+                                         window_end_us);
+    if (ret == MESH_SIM_OK) {
+        ret = mesh_sim_direct_gateway_start_queued_tx(
+            &world, anchor, air_start_us, window_end_us, NULL);
+    }
+    if (ret == MESH_SIM_OK) {
+        ret = mesh_sim_run_until(&world, window_end_us);
+    }
+    if (ret != MESH_SIM_OK || gateway_ack_queue_index(
+                                   gateway, world.roles[anchor].id) < 0) {
+        return ret == MESH_SIM_OK ? MESH_SIM_ERR_PROTOCOL : ret;
+    }
+
+    ready_us = world.roles[gateway].dwm3000.cpu_busy_until_us;
+    if (ready_us > world.now_us) {
+        ret = mesh_sim_run_until(&world, ready_us);
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
+    window_end_us = air_start_us + DIRECT_ACK_SERVICE_US;
+    ret = mesh_sim_direct_gateway_schedule_ack(
+        &world, gateway, anchor, air_start_us, window_end_us, NULL);
+    if (ret == MESH_SIM_OK) {
+        ret = mesh_sim_run_until(&world, window_end_us);
+    }
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    return relay->pending.state == MESH_RELAY_TX_IDLE ?
+               MESH_SIM_OK : MESH_SIM_ERR_PROTOCOL;
 }
 
 static int schedule_mesh_payload_retry(uint8_t node, uint64_t *due_us)
@@ -725,6 +847,10 @@ static int test_gateway_semantic_rejection_retry_and_sticky_ack(void)
                 &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
             MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[anchor].relay.pending.packet.msg_type ==
+            MSG_GATEWAY_ACK_CONFIRM);
+    REQUIRE(complete_direct_gateway_confirmation(anchor, gateway) ==
+            MESH_SIM_OK);
     REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
     REQUIRE(mesh_sim_count_transitions(&world,
                                        MESH_SIM_TRANSITION_GATEWAY_ACKED,
@@ -741,9 +867,9 @@ static int test_gateway_collection_duplicate_redelivers_for_eack_rearm(void)
         .flags = FLAG_GATEWAY_ACK_REQUIRED,
         .src_id = ANCHOR_ID_BASE,
         .dst_id = GATEWAY_ID,
-        .session_id = UINT32_C(0x5a17f103),
-        .seq = 12u,
-        .ttl = 2u,
+        .session_id = UINT32_C(0x4a17f103),
+        .seq = 18u,
+        .ttl = MESH_DEFAULT_TTL,
     };
     const struct command_result_id result_id = {
         .gateway_id = GATEWAY_ID,
@@ -768,6 +894,12 @@ static int test_gateway_collection_duplicate_redelivers_for_eack_rearm(void)
     REQUIRE(mesh_sim_set_link(&world, anchor, gateway, 96u, 1u) == MESH_SIM_OK);
     REQUIRE(mesh_relay_note_direct_gateway_route(&world.roles[anchor].relay,
                                                  0u) == PROTO_OK);
+    REQUIRE(mesh_append_command_result(payload,
+                                       sizeof(payload),
+                                       &payload_len,
+                                       CMD_SURVEY_PREPARE_PAIR,
+                                       COMMAND_OK,
+                                       0u) == PROTO_OK);
     REQUIRE(command_result_id_append_tlvs(payload,
                                           sizeof(payload),
                                           &payload_len,
@@ -799,9 +931,12 @@ static int test_gateway_collection_duplicate_redelivers_for_eack_rearm(void)
     discard_gateway_ack(gateway, (size_t)ack_index);
 
     for (uint32_t duplicate_attempt = 1u;
-         duplicate_attempt <= 3u;
+         duplicate_attempt <= 2u;
          duplicate_attempt++) {
         REQUIRE(schedule_mesh_payload_retry(anchor, &due_us) == MESH_SIM_OK);
+        REQUIRE(mesh_relay_note_direct_gateway_route(
+                    &world.roles[anchor].relay,
+                    (uint32_t)(world.now_us / 1000u)) == PROTO_OK);
         REQUIRE(mesh_sim_run_until(&world, due_us) == MESH_SIM_OK);
         air_start_us = world.now_us + DIRECT_TX_PREPARE_US;
         window_end_us = air_start_us + UINT64_C(50000);
@@ -921,6 +1056,10 @@ static int test_direct_short_rx_and_mismatched_ack_retry(void)
                 &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
             MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
+    REQUIRE(world.roles[anchor].relay.pending.packet.msg_type ==
+            MSG_GATEWAY_ACK_CONFIRM);
+    REQUIRE(complete_direct_gateway_confirmation(anchor, gateway) ==
+            MESH_SIM_OK);
     REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
     REQUIRE(world.event_count == 0u);
     REQUIRE(world.connection_count == 0u);
@@ -1113,6 +1252,10 @@ static int test_twenty_direct_reports_retry_to_exactly_once(void)
                             &world, gateway, candidates[i].node,
                             ack_air_start_us, ack_end_us, NULL) == MESH_SIM_OK);
                 REQUIRE(mesh_sim_run_until(&world, ack_end_us) == MESH_SIM_OK);
+                REQUIRE(world.roles[candidates[i].node].relay.pending.packet
+                            .msg_type == MSG_GATEWAY_ACK_CONFIRM);
+                REQUIRE(complete_direct_gateway_confirmation(
+                            candidates[i].node, gateway) == MESH_SIM_OK);
                 REQUIRE(world.roles[candidates[i].node].relay.pending.state ==
                         MESH_RELAY_TX_IDLE);
                 candidates[i].done = true;

@@ -14,6 +14,12 @@ add_library(core
     src/discovery_assignment.c
     src/dwm3000_runtime.c
     src/dwm3000_timing.c
+    src/firmware_events.c
+    src/firmware_delivery_loss.c
+    src/firmware_state_click.c
+    src/firmware_state_control.c
+    src/firmware_state_mesh.c
+    src/firmware_state_radio.c
     src/gateway_ble_transport.c
     src/protocol.c
     src/gateway_membership.c
@@ -56,6 +62,57 @@ endif()
 
 enable_testing()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+add_executable(test_firmware_events tests/test_firmware_events.c)
+target_link_libraries(test_firmware_events PRIVATE core)
+add_test(NAME firmware_events COMMAND test_firmware_events)
+set_tests_properties(firmware_events PROPERTIES
+    LABELS "mesh_integration;hardware_models;state;architecture")
+
+add_executable(test_firmware_state_machines
+    tests/test_firmware_state_machines.c)
+target_link_libraries(test_firmware_state_machines PRIVATE core)
+add_test(NAME firmware_state_machines COMMAND test_firmware_state_machines)
+set_tests_properties(firmware_state_machines PROPERTIES
+    LABELS "mesh_integration;hardware_models;state;architecture")
+
+add_executable(test_app_clicker_event_runtime
+    tests/test_app_clicker_event_runtime.c
+    app/src/app_clicker_event_runtime.c)
+target_include_directories(test_app_clicker_event_runtime PRIVATE app/src)
+target_link_libraries(test_app_clicker_event_runtime PRIVATE core)
+add_test(NAME app_clicker_event_runtime
+    COMMAND test_app_clicker_event_runtime)
+set_tests_properties(app_clicker_event_runtime PROPERTIES
+    LABELS "mesh_integration;hardware_models;state;click")
+
+add_executable(test_app_anchor_click_event_runtime
+    tests/test_app_anchor_click_event_runtime.c
+    app/src/app_anchor_click_event_runtime.c)
+target_include_directories(test_app_anchor_click_event_runtime PRIVATE app/src)
+target_link_libraries(test_app_anchor_click_event_runtime PRIVATE core)
+add_test(NAME app_anchor_click_event_runtime
+    COMMAND test_app_anchor_click_event_runtime)
+set_tests_properties(app_anchor_click_event_runtime PROPERTIES
+    LABELS "mesh_integration;hardware_models;state;click;custody")
+
+add_executable(test_app_gateway_survey_event_runtime
+    tests/test_app_gateway_survey_event_runtime.c
+    app/src/app_gateway_survey_event_runtime.c)
+target_include_directories(test_app_gateway_survey_event_runtime PRIVATE app/src)
+target_link_libraries(test_app_gateway_survey_event_runtime PRIVATE core)
+add_test(NAME app_gateway_survey_event_runtime
+    COMMAND test_app_gateway_survey_event_runtime)
+set_tests_properties(app_gateway_survey_event_runtime PROPERTIES
+    LABELS "mesh_integration;hardware_models;state;survey")
+
+add_executable(test_app_node_comm_delivery_state
+    tests/test_app_node_comm_delivery_state.c)
+target_link_libraries(test_app_node_comm_delivery_state PRIVATE core)
+add_test(NAME app_node_comm_delivery_state
+    COMMAND test_app_node_comm_delivery_state)
+set_tests_properties(app_node_comm_delivery_state PROPERTIES
+    LABELS "mesh_integration;hardware_models;state;communication;custody")
 
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
@@ -466,14 +523,6 @@ add_test(NAME app_mesh_c5_priority COMMAND test_app_mesh_c5_priority)
 set_tests_properties(app_mesh_c5_priority PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;timing;wake")
 
-add_executable(test_app_mesh_coordinator
-    tests/test_app_mesh_coordinator.c
-    app/src/app_mesh_coordinator.c
-)
-target_include_directories(test_app_mesh_coordinator PRIVATE app/src)
-target_link_libraries(test_app_mesh_coordinator PRIVATE core)
-add_test(NAME app_mesh_coordinator COMMAND test_app_mesh_coordinator)
-
 add_executable(test_app_mesh_scheduler_liveness
     tests/test_app_mesh_scheduler_liveness.c
 )
@@ -497,24 +546,6 @@ add_test(NAME app_mesh_async_route_request
     COMMAND test_app_mesh_async_route_request)
 set_tests_properties(app_mesh_async_route_request PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;route;state")
-
-add_executable(test_app_mesh_coordinator_runtime
-    tests/test_app_mesh_coordinator_runtime.c
-    app/src/app_mesh_coordinator.c
-    app/src/app_mesh_coordinator_runtime.c
-)
-target_include_directories(test_app_mesh_coordinator_runtime PRIVATE app/src)
-target_link_libraries(test_app_mesh_coordinator_runtime PRIVATE core)
-add_test(NAME app_mesh_coordinator_runtime COMMAND test_app_mesh_coordinator_runtime)
-
-add_executable(test_app_mesh_gateway_command_priority
-    tests/test_app_mesh_gateway_command_priority.c
-    app/src/app_mesh_gateway_command_priority.c
-)
-target_include_directories(test_app_mesh_gateway_command_priority PRIVATE app/src)
-target_link_libraries(test_app_mesh_gateway_command_priority PRIVATE core)
-add_test(NAME app_mesh_gateway_command_priority
-    COMMAND test_app_mesh_gateway_command_priority)
 
 add_executable(test_app_gateway_command_ingress
     tests/test_app_gateway_command_ingress.c
@@ -1145,7 +1176,6 @@ set_tests_properties(node_comm_delivery_stress_scenarios
 add_executable(test_mesh_survey_phy_scenarios
     tests/mesh_integration/test_mesh_survey_phy_scenarios.c
     app/src/app_mesh_c5_priority.c
-    app/src/app_mesh_gateway_command_priority.c
 )
 target_include_directories(test_mesh_survey_phy_scenarios PRIVATE app/src)
 target_link_libraries(test_mesh_survey_phy_scenarios PRIVATE mesh_sim)
@@ -1314,14 +1344,11 @@ add_executable(test_mesh_app_arbitration_scenarios
     tests/mesh_integration/test_mesh_app_arbitration_scenarios.c
     app/src/app_mesh_c5_priority.c
     app/src/app_mesh_ch9_ack.c
-    app/src/app_mesh_coordinator.c
-    app/src/app_mesh_coordinator_runtime.c
     app/src/app_mesh_command_orchestrator.c
     app/src/app_mesh_arbitration_zephyr.c
     app/src/app_gateway_command_ingress.c
     app/src/app_gateway_command_lifecycle.c
     app/src/app_mesh_gateway_command_flow.c
-    app/src/app_mesh_gateway_command_priority.c
     app/src/app_mesh_preemption.c
     app/src/app_mesh_flood.c
 )

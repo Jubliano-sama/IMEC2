@@ -271,7 +271,7 @@ class SurveyAndClickTests(unittest.TestCase):
         stale_generation = current_generation - (1 << 32)
         model.begin_survey(survey_id, host_session_id=100, host_sequence=4)
 
-        # A recovered host-journal packet can be delivered after a new host
+        # A replayed host packet can be delivered after a new host
         # command starts even though it belongs to the previous use of the
         # same 32-bit survey/session identity.
         self.assertIsNotNone(model.observe_pair_packet(pair_result(
@@ -630,6 +630,42 @@ class SurveyAndClickTests(unittest.TestCase):
         for anchor in (1,2,3): state = model.observe(click(anchor, 1, event=4, sequence=anchor))
         self.assertEqual(state.status, "invalid")
         self.assertIn("collinear", state.message)
+
+    def test_interleaved_clicks_keep_independent_bounded_range_sets(self):
+        positions = {
+            f"0x{anchor:016x}": point
+            for anchor, point in {
+                1: (0, 0), 2: (5, 0), 3: (0, 4), 4: (5, 4)
+            }.items()
+        }
+        model = ClickLocationModel()
+        model.set_geometry(positions, 1)
+        targets = {10: (2.0, 1.5), 20: (3.0, 2.5)}
+
+        solved = {}
+        sequence = 1
+        for anchor in (1, 2, 3):
+            for event_id, target in targets.items():
+                state = model.observe(click(
+                    anchor,
+                    math.dist(target, positions[f"0x{anchor:016x}"]),
+                    event=event_id,
+                    sequence=sequence,
+                ))
+                sequence += 1
+                if state is not None and state.status == "solved":
+                    solved[event_id] = state.result
+
+        self.assertEqual(set(solved), set(targets))
+        for event_id, target in targets.items():
+            self.assertAlmostEqual(solved[event_id].x_m, target[0], places=3)
+            self.assertAlmostEqual(solved[event_id].y_m, target[1], places=3)
+
+        for event_id in range(100, 100 + model.MAX_TRACKED_EVENTS + 1):
+            model.observe(click(1, 1.0, event=event_id, sequence=sequence))
+            sequence += 1
+        self.assertEqual(len(model._ranges_by_key), model.MAX_TRACKED_EVENTS)
+        self.assertNotIn((7, 100, 0xC1), model._ranges_by_key)
 
 
 class WakeAndTopologyTests(unittest.TestCase):

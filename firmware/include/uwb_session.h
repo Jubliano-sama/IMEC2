@@ -84,6 +84,7 @@ struct uwb_clicker_config {
     uint32_t network_id;
     uint64_t clicker_id;
     uint32_t click_event_id;
+    uint32_t click_timestamp_ms;
     uint64_t nonce;
     uint8_t min_anchor_count;
     uint8_t max_anchor_count;

@@ -444,6 +444,30 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
         self.assertGreater(released_progress, release_failure_end)
 
+    def test_ch9_route_adv_keep_awake_has_successful_default_release(self) -> None:
+        released = function_body(
+            MESH_TRANSPORT,
+            "mesh_send_outbound_with_release_on_channel_until",
+        )
+        release_default = released.index("int release_ret = 0;")
+        ch9_release = released.index(
+            "if (ret == 0 && radio_channel == UWB_CHANNEL_MESH_PAYLOAD)"
+        )
+        route_adv_guard = released.index(
+            "else if (out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV)",
+            ch9_release,
+        )
+        release_failure = released.index("if (release_ret < 0)", route_adv_guard)
+        ch9_release_body = released[ch9_release:release_failure]
+
+        self.assertLess(release_default, ch9_release)
+        self.assertLess(ch9_release, route_adv_guard)
+        self.assertLess(route_adv_guard, release_failure)
+        self.assertIn(
+            "release_ret =\n                mesh_release_radio_after_mesh_turn(",
+            ch9_release_body,
+        )
+
     def test_ch9_batch_aggregates_progress_until_successful_slot_release(
         self,
     ) -> None:

@@ -364,13 +364,13 @@ def main() -> None:
         survey_id=7,
         duration_ms=profile.discovery.report_grace_ms,
         discovery_slot_count=profile.discovery.slot_count,
-        sample_count=1,
+        sample_count=5,
         expected_anchor_count=5,
         command_budget_ms=profile.discovery.operation_budget_ms,
         operation_policy=profile,
     )
     expected_survey_payload = (
-        "100200011504070000001a04fa0000000f0201004c0106"
+        "100200011504070000001a04fa0000000f0205004c0106"
         "78020500ab04c0270900" + policy_suffix
     )
     policy_survey_parsed = firmware_parse(oracle, policy_survey.frame)

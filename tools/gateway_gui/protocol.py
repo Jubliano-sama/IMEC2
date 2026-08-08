@@ -7,6 +7,7 @@ decoder independent of Zephyr lets the GUI and its tests run on a desktop.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import math
 from typing import Any, Callable
 
@@ -44,13 +45,22 @@ GATEWAY_COMMAND_BUDGET_MAX_MS = 900000
 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 235209
 ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
 SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 600000
-SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 4
+SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 5
 
 MSG_CLICK_REPORT = 0x20
+MSG_SELF_TEST_REPORT = 0x21
+MSG_ANCHOR_HEARTBEAT = 0x22
 MSG_MESH_DATA = 0x30
 MSG_COMMAND = 0x40
 MSG_COMMAND_RESULT = 0x41
+MSG_RESULT_BUNDLE = 0x44
+MSG_SURVEY_PAIR_RESULT = 0x53
+MSG_SURVEY_DISCOVERY_REPORT = 0x55
 MSG_GATEWAY_COMMAND_EVENT = 0x56
+MSG_GATEWAY_HOST_RECEIPT = 0x57
+
+GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN = 56
+GATEWAY_HOST_RECEIPT_TLV_LEN = 2 + GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN
 
 # Click-report semantic flags and bounds mirror firmware/include/protocol.h and
 # firmware/include/report.h.  Envelope decoding intentionally remains
@@ -66,7 +76,7 @@ CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
 CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
-CMD_SURVEY_GO = 0x0105
+CMD_SURVEY_GO_RETIRED_ID = 0x0105
 
 TLV_EVENT_SEQ = 0x06
 TLV_TIMESTAMP_MS = 0x07
@@ -124,6 +134,7 @@ TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT = 0xB2
 TLV_SURVEY_OPERATION_GENERATION = 0xB6
 TLV_SURVEY_ROUND_COMMITMENT = 0xB7
 TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8
+TLV_GATEWAY_HOST_RECEIPT_IDENTITY = 0xBB
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -153,8 +164,8 @@ MESSAGE_NAMES = {
     0x18: "UWB_ANCHOR_PAIR_SCHEDULE",
     0x19: "UWB_ANCHOR_PAIR_RESULT",
     MSG_CLICK_REPORT: "CLICK_REPORT",
-    0x21: "SELF_TEST_REPORT",
-    0x22: "ANCHOR_HEARTBEAT",
+    MSG_SELF_TEST_REPORT: "SELF_TEST_REPORT",
+    MSG_ANCHOR_HEARTBEAT: "ANCHOR_HEARTBEAT",
     MSG_MESH_DATA: "MESH_DATA",
     0x31: "MESH_HOP_ACK",
     0x32: "GATEWAY_ACK",
@@ -174,21 +185,22 @@ MESSAGE_NAMES = {
     MSG_GATEWAY_COMMAND_EVENT: "GATEWAY_COMMAND_EVENT",
     0x42: "RESULT_OFFER",
     0x43: "RESULT_GRANT",
-    0x44: "RESULT_BUNDLE",
+    MSG_RESULT_BUNDLE: "RESULT_BUNDLE",
     0x45: "GATEWAY_COLLECTION_EACK",
     0x50: "SURVEY_REACH_REQ",
     0x51: "SURVEY_REACH_REPORT",
     0x52: "SURVEY_PAIR_PREPARE",
-    0x53: "SURVEY_PAIR_RESULT",
+    MSG_SURVEY_PAIR_RESULT: "SURVEY_PAIR_RESULT",
     0x54: "SURVEY_DISCOVERY_START",
-    0x55: "SURVEY_DISCOVERY_REPORT",
+    MSG_SURVEY_DISCOVERY_REPORT: "SURVEY_DISCOVERY_REPORT",
+    MSG_GATEWAY_HOST_RECEIPT: "GATEWAY_HOST_RECEIPT",
     0x7F: "ERROR",
 }
 
 SHARED_MESSAGE_TYPES = {
     MSG_CLICK_REPORT,
-    0x21,
-    0x22,
+    MSG_SELF_TEST_REPORT,
+    MSG_ANCHOR_HEARTBEAT,
     MSG_MESH_DATA,
     0x31,
     0x32,
@@ -208,16 +220,28 @@ SHARED_MESSAGE_TYPES = {
     MSG_GATEWAY_COMMAND_EVENT,
     0x42,
     0x43,
-    0x44,
+    MSG_RESULT_BUNDLE,
     0x45,
     0x50,
     0x51,
     0x52,
-    0x53,
+    MSG_SURVEY_PAIR_RESULT,
     0x54,
-    0x55,
+    MSG_SURVEY_DISCOVERY_REPORT,
+    MSG_GATEWAY_HOST_RECEIPT,
     0x7F,
 }
+
+# These identifiers are valid in the shared serial/COBS envelope but have no
+# UWB lane. A host receipt is deliberately a serial-only acknowledgement of
+# GUI RAM ownership, while the two older gateway message types remain
+# telemetry/control compatibility types.
+HOST_ONLY_MESSAGE_TYPES = {
+    MSG_GATEWAY_COMMAND_EVENT,
+    MSG_GATEWAY_HOST_RECEIPT,
+    0x7F,
+}
+RF_SHARED_MESSAGE_TYPES = SHARED_MESSAGE_TYPES - HOST_ONLY_MESSAGE_TYPES
 
 COMMAND_NAMES = {
     0x0001: "PING",
@@ -236,7 +260,7 @@ COMMAND_NAMES = {
     0x0102: "SURVEY_START_PAIR",
     0x0103: "SURVEY_ABORT",
     CMD_ASSIGN_DISCOVERY_SLOTS: "ASSIGN_DISCOVERY_SLOTS",
-    CMD_SURVEY_GO: "SURVEY_GO",
+    CMD_SURVEY_GO_RETIRED_ID: "RETIRED_SURVEY_GO",
     0x8000: "ML_START_COLLECTION",
     0x8001: "ML_START_FAST_RANGING",
     0x8002: "ML_START_ANCHOR_PAIR_SURVEY",
@@ -516,6 +540,10 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_MESH_ACK_SEMANTIC_IDENTITY: TlvSpec(
         "MESH_ACK_SEMANTIC_IDENTITY", _mesh_ack_semantic_identity
     ),
+    TLV_GATEWAY_HOST_RECEIPT_IDENTITY: TlvSpec(
+        "GATEWAY_HOST_RECEIPT_IDENTITY",
+        _exact_bytes(GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN),
+    ),
 }
 
 # Keep every currently assigned protocol TLV named even where the GUI does not
@@ -713,6 +741,28 @@ class Packet:
     def raw_value(self, type_id: int) -> bytes | None:
         tlv = self.first_tlv(type_id)
         return None if tlv is None else tlv.raw
+
+
+@dataclass(frozen=True)
+class GatewayHostReceiptIdentity:
+    """Identity committed by a GUI receipt for one gateway stream record."""
+
+    original_msg_type: int
+    original_flags: int
+    src_id: int
+    dst_id: int
+    session_id: int
+    seq: int
+    stream_record_digest: bytes
+
+
+@dataclass(frozen=True)
+class GatewayHostReceiptFrame:
+    """Serialized host receipt and its decoded metadata."""
+
+    frame: bytes
+    packet: Packet
+    identity: GatewayHostReceiptIdentity
 
 
 @dataclass(frozen=True)
@@ -1378,6 +1428,144 @@ def append_tlv(payload: bytearray, type_id: int, value: bytes) -> None:
     payload.extend(value)
 
 
+def _validate_gateway_host_receipt_identity(
+    identity: GatewayHostReceiptIdentity,
+    *,
+    error_type: type[Exception] = ValueError,
+) -> None:
+    if identity.original_msg_type not in RF_SHARED_MESSAGE_TYPES:
+        raise error_type(
+            f"host receipt original message type 0x{identity.original_msg_type:02x} "
+            "is not valid on an RF lane"
+        )
+    for name, value, maximum in (
+        ("original_msg_type", identity.original_msg_type, 0xFF),
+        ("original_flags", identity.original_flags, 0xFF),
+        ("src_id", identity.src_id, 0xFFFFFFFFFFFFFFFF),
+        ("dst_id", identity.dst_id, 0xFFFFFFFFFFFFFFFF),
+        ("session_id", identity.session_id, 0xFFFFFFFF),
+        ("seq", identity.seq, 0xFFFF),
+    ):
+        if not isinstance(value, int) or not 0 <= value <= maximum:
+            raise error_type(f"{name} is outside its encoded range")
+    if identity.src_id == 0 or identity.dst_id == 0:
+        raise error_type("host receipt source and destination IDs must be non-zero")
+    if identity.src_id == identity.dst_id:
+        raise error_type("host receipt source and destination IDs must differ")
+    if identity.session_id == 0 or identity.seq == 0:
+        raise error_type("host receipt session and sequence must be non-zero")
+    if not isinstance(identity.stream_record_digest, bytes) or len(
+        identity.stream_record_digest
+    ) != GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN - 24:
+        raise error_type("host receipt stream digest must be exactly 32 bytes")
+
+
+def encode_gateway_host_receipt_identity(
+    identity: GatewayHostReceiptIdentity,
+) -> bytes:
+    _validate_gateway_host_receipt_identity(identity)
+    return bytes((identity.original_msg_type, identity.original_flags)) + (
+        identity.src_id.to_bytes(8, "little")
+        + identity.dst_id.to_bytes(8, "little")
+        + identity.session_id.to_bytes(4, "little")
+        + identity.seq.to_bytes(2, "little")
+        + identity.stream_record_digest
+    )
+
+
+def decode_gateway_host_receipt_identity(value: bytes) -> GatewayHostReceiptIdentity:
+    if len(value) != GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN:
+        raise DecodeError(
+            f"host receipt identity must be exactly "
+            f"{GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN} bytes"
+        )
+    identity = GatewayHostReceiptIdentity(
+        original_msg_type=value[0],
+        original_flags=value[1],
+        src_id=int.from_bytes(value[2:10], "little"),
+        dst_id=int.from_bytes(value[10:18], "little"),
+        session_id=int.from_bytes(value[18:22], "little"),
+        seq=int.from_bytes(value[22:24], "little"),
+        stream_record_digest=value[24:56],
+    )
+    _validate_gateway_host_receipt_identity(identity, error_type=DecodeError)
+    return identity
+
+
+def parse_gateway_host_receipt(packet: Packet) -> GatewayHostReceiptIdentity:
+    if packet.msg_type != MSG_GATEWAY_HOST_RECEIPT:
+        raise DecodeError("packet is not a gateway host receipt")
+    if (
+        packet.flags != 0
+        or packet.src_id == 0
+        or packet.dst_id == 0
+        or packet.src_id == packet.dst_id
+        or packet.session_id == 0
+        or packet.seq == 0
+        or packet.ttl != 1
+    ):
+        raise DecodeError("invalid gateway host receipt envelope")
+    if len(packet.payload) != GATEWAY_HOST_RECEIPT_TLV_LEN:
+        raise DecodeError("gateway host receipt payload has the wrong length")
+    if (
+        packet.payload[0] != TLV_GATEWAY_HOST_RECEIPT_IDENTITY
+        or packet.payload[1] != GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN
+    ):
+        raise DecodeError("gateway host receipt must contain one identity TLV")
+    return decode_gateway_host_receipt_identity(packet.payload[2:])
+
+
+def build_gateway_host_receipt(
+    packet: Packet,
+    *,
+    host_id: int,
+    gateway_id: int,
+) -> GatewayHostReceiptFrame:
+    """Build a serial receipt after the GUI has accepted a stream record.
+
+    The digest covers ``packet.raw_transport`` byte-for-byte, including the
+    gateway-stream header and payload CRC.  Mirroring the source session and
+    sequence in the receipt envelope makes a retry produce the same COBS
+    frame, while the fixed identity TLV remains the gateway's authority.
+    """
+    if packet.transport != "gateway-stream-v1" or not packet.raw_transport:
+        raise ValueError("host receipts require one parsed gateway stream record")
+    if not isinstance(host_id, int) or not 0 < host_id <= 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("host ID must be a non-zero uint64")
+    if not isinstance(gateway_id, int) or not 0 < gateway_id <= 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("gateway ID must be a non-zero uint64")
+    if host_id == gateway_id:
+        raise ValueError("host and gateway IDs must differ")
+
+    identity = GatewayHostReceiptIdentity(
+        original_msg_type=packet.msg_type,
+        original_flags=packet.flags,
+        src_id=packet.src_id,
+        dst_id=packet.dst_id,
+        session_id=packet.session_id,
+        seq=packet.seq,
+        stream_record_digest=hashlib.sha256(packet.raw_transport).digest(),
+    )
+    identity_value = encode_gateway_host_receipt_identity(identity)
+    payload = bytearray()
+    append_tlv(payload, TLV_GATEWAY_HOST_RECEIPT_IDENTITY, identity_value)
+    frame = encode_cobs_packet(
+        msg_type=MSG_GATEWAY_HOST_RECEIPT,
+        flags=0,
+        src_id=host_id,
+        dst_id=gateway_id,
+        session_id=packet.session_id,
+        seq=packet.seq,
+        ttl=1,
+        payload=bytes(payload),
+    )
+    return GatewayHostReceiptFrame(
+        frame=frame,
+        packet=parse_cobs_packet(frame),
+        identity=identity,
+    )
+
+
 def append_operation_policy_tlvs(
     payload: bytearray, profile: OperationPolicyProfile
 ) -> None:
@@ -1417,7 +1605,7 @@ def build_anchor_discovery_command(
     survey_id: int,
     duration_ms: int,
     discovery_slot_count: int = 6,
-    sample_count: int = 1,
+    sample_count: int = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     expected_anchor_count: int | None = None,
     command_budget_ms: int | None = None,
     operation_policy: OperationPolicyProfile | None = None,
@@ -1434,9 +1622,9 @@ def build_anchor_discovery_command(
         raise ValueError("duration must be in 1..0xffffffff ms")
     if not 1 <= discovery_slot_count <= 50:
         raise ValueError("discovery slot count must be in 1..50")
-    if not 1 <= sample_count <= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
+    if sample_count != SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
         raise ValueError(
-            "sample count must be in 1.."
+            "sample count must be exactly "
             f"{SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT}"
         )
     if expected_anchor_count is not None and not (

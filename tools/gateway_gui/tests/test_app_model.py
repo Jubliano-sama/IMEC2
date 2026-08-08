@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -23,6 +24,7 @@ from tools.gateway_gui.protocol import (
     CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+    FLAG_GATEWAY_ACK_REQUIRED,
     GATEWAY_COMMAND_BUDGET_MAX_MS,
     MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
@@ -253,6 +255,358 @@ class AppModelTests(unittest.TestCase):
             for call in gui._append_log.call_args_list
         ))
 
+    def test_reliable_non_click_replay_is_suppressed_and_conflict_stays_forensic(
+        self,
+    ) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = 0xAAA
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock()
+        gui.__dict__["_packet_summary"] = Mock(return_value="command result")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+        canonical = Packet(
+            transport="test",
+            raw_transport=b"canonical-record",
+            raw_packet=None,
+            msg_type=MSG_COMMAND_RESULT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=0x1111,
+            dst_id=0x2222,
+            session_id=7,
+            seq=3,
+            ttl=4,
+            age_ms=10,
+            age_kind="gateway_queue_age_ms",
+            payload=b"canonical",
+            tlvs=(),
+        )
+        replay = replace(
+            canonical,
+            transport="gateway-stream-v1",
+            raw_transport=b"replayed-record",
+            age_ms=900,
+        )
+        conflict = replace(canonical, payload=b"changed")
+
+        gui._add_packet(canonical)
+        gui._add_packet(replay)
+
+        gui._observe_diagnostic_packet.assert_called_once_with(
+            canonical, received_at=None
+        )
+        gui.cir_reassembler.ingest.assert_called_once_with(canonical)
+        self.assertEqual(gui.packet_tree.insert.call_count, 1)
+        self.assertEqual(gui.packet_counter, 1)
+
+        gui._add_packet(conflict)
+
+        # The conflicting packet remains visible, but it cannot trigger a
+        # second diagnostic/model or CIR mutation.
+        gui._observe_diagnostic_packet.assert_called_once_with(
+            canonical, received_at=None
+        )
+        gui.cir_reassembler.ingest.assert_called_once_with(canonical)
+        self.assertEqual(gui.packet_tree.insert.call_count, 2)
+        self.assertEqual(gui.packet_counter, 2)
+        self.assertIs(gui.packet_by_iid["packet-2"], conflict)
+        self.assertTrue(any(
+            "Conflicting command result" in call.args[1]
+            for call in gui._append_log.call_args_list
+        ))
+
+    def test_host_receipt_retries_after_reconnect_but_conflict_stays_unreceipted(
+        self,
+    ) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = 0x2222
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock()
+        gui.__dict__["_packet_summary"] = Mock(return_value="command result")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+        canonical = Packet(
+            transport="gateway-stream-v1",
+            raw_transport=b"immutable-stream-record",
+            raw_packet=None,
+            msg_type=MSG_COMMAND_RESULT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=0x1111,
+            dst_id=0x2222,
+            session_id=7,
+            seq=3,
+            ttl=None,
+            age_ms=10,
+            age_kind="gateway_queue_age_ms",
+            payload=b"canonical",
+            tlvs=(),
+        )
+        replay = replace(canonical, age_ms=900)
+        conflict = replace(canonical, payload=b"changed")
+        receipt = SimpleNamespace(frame=b"exact-cobs-receipt")
+
+        with patch(
+            "tools.gateway_gui.app.build_gateway_host_receipt",
+            return_value=receipt,
+        ) as builder:
+            gui._add_packet(canonical)
+            # Reconnect temporarily clears the GATT identity. The same packet
+            # destination keeps the RAM scope and permits a receipt retry.
+            gui.gateway_id = None
+            gui._add_packet(replay)
+            gui._add_packet(conflict)
+
+        self.assertEqual(builder.call_count, 2)
+        self.assertEqual(
+            [call.kwargs for call in builder.call_args_list],
+            [
+                {
+                    "host_id": DEFAULT_HOST_ID,
+                    "gateway_id": 0x2222,
+                },
+                {
+                    "host_id": DEFAULT_HOST_ID,
+                    "gateway_id": 0x2222,
+                },
+            ],
+        )
+        self.assertEqual(
+            [call.args for call in gui.transport.send_frame.call_args_list],
+            [
+                (b"exact-cobs-receipt", "gateway host receipt"),
+                (b"exact-cobs-receipt", "gateway host receipt"),
+            ],
+        )
+        gui._observe_diagnostic_packet.assert_called_once_with(
+            canonical, received_at=None
+        )
+        self.assertEqual(gui.cir_reassembler.ingest.call_count, 1)
+        self.assertEqual(gui.packet_tree.insert.call_count, 2)
+        self.assertIs(gui.packet_by_iid["packet-2"], conflict)
+        self.assertTrue(any(
+            "Conflicting command result" in call.args[1]
+            for call in gui._append_log.call_args_list
+        ))
+
+    def test_unknown_gatt_identity_uses_stream_destination_for_receipt_scope(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = None
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock()
+        gui.__dict__["_packet_summary"] = Mock(return_value="stream")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+        packet = Packet(
+            transport="gateway-stream-v1",
+            raw_transport=b"stream",
+            raw_packet=None,
+            msg_type=MSG_COMMAND_RESULT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=0x1111,
+            dst_id=0x3333,
+            session_id=8,
+            seq=4,
+            ttl=None,
+            age_ms=0,
+            age_kind="gateway_queue_age_ms",
+            payload=b"result",
+            tlvs=(),
+        )
+
+        with patch(
+            "tools.gateway_gui.app.build_gateway_host_receipt",
+            return_value=SimpleNamespace(frame=b"receipt"),
+        ) as builder:
+            gui._add_packet(packet)
+
+        self.assertEqual(gui.delivery_dedup.gateway_id, 0x3333)
+        builder.assert_called_once_with(
+            packet,
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=0x3333,
+        )
+        gui.transport.send_frame.assert_called_once_with(
+            b"receipt", "gateway host receipt"
+        )
+
+    def test_host_receipt_skips_best_effort_non_stream_and_gateway_local_records(
+        self,
+    ) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = 0x2222
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock()
+        gui.__dict__["_packet_summary"] = Mock(return_value="record")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+
+        def packet(*, transport: str, msg_type: int, flags: int, seq: int) -> Packet:
+            return Packet(
+                transport=transport,
+                raw_transport=f"record-{seq}".encode(),
+                raw_packet=None,
+                msg_type=msg_type,
+                flags=flags,
+                src_id=0x1111,
+                dst_id=0x2222,
+                session_id=9,
+                seq=seq,
+                ttl=None,
+                age_ms=0,
+                age_kind="gateway_queue_age_ms",
+                payload=b"record",
+                tlvs=(),
+            )
+
+        with patch("tools.gateway_gui.app.build_gateway_host_receipt") as builder:
+            gui._add_packet(
+                packet(
+                    transport="gateway-stream-v1",
+                    msg_type=MSG_CLICK_REPORT,
+                    flags=0,
+                    seq=1,
+                )
+            )
+            gui._add_packet(
+                packet(
+                    transport="cobs-shared-packet",
+                    msg_type=MSG_COMMAND_RESULT,
+                    flags=FLAG_GATEWAY_ACK_REQUIRED,
+                    seq=2,
+                )
+            )
+            gui._add_packet(
+                packet(
+                    transport="gateway-stream-v1",
+                    msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                    flags=0,
+                    seq=3,
+                )
+            )
+
+        builder.assert_not_called()
+        gui.transport.send_frame.assert_not_called()
+
+    def test_failed_semantic_apply_does_not_commit_or_receipt_a_new_record(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = 0x2222
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock(
+            side_effect=RuntimeError("model apply failed")
+        )
+        gui.__dict__["_packet_summary"] = Mock(return_value="result")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+        packet = Packet(
+            transport="gateway-stream-v1",
+            raw_transport=b"stream-record",
+            raw_packet=None,
+            msg_type=MSG_COMMAND_RESULT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=0x1111,
+            dst_id=0x2222,
+            session_id=10,
+            seq=5,
+            ttl=None,
+            age_ms=0,
+            age_kind="gateway_queue_age_ms",
+            payload=b"result",
+            tlvs=(),
+        )
+
+        with patch(
+            "tools.gateway_gui.app.build_gateway_host_receipt",
+            return_value=SimpleNamespace(frame=b"receipt"),
+        ) as builder:
+            with self.assertRaisesRegex(RuntimeError, "model apply failed"):
+                gui._add_packet(packet)
+
+            # The failed semantic path left no authoritative RAM entry and no
+            # receipt, so the replay must apply normally and become receipted.
+            self.assertEqual(gui.delivery_dedup.size, 0)
+            gui.transport.send_frame.assert_not_called()
+            gui._observe_diagnostic_packet.side_effect = None
+            gui._add_packet(packet)
+
+        self.assertEqual(gui.delivery_dedup.size, 1)
+        self.assertEqual(gui._observe_diagnostic_packet.call_count, 2)
+        builder.assert_called_once_with(
+            packet,
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=0x2222,
+        )
+        gui.transport.send_frame.assert_called_once_with(
+            b"receipt", "gateway host receipt"
+        )
+
     def test_auto_survey_id_is_fresh_for_each_send_with_frozen_clocks(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = True
@@ -265,7 +619,7 @@ class AppModelTests(unittest.TestCase):
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui)
-        gui.sample_count_text = FakeVariable("1")  # type: ignore[assignment]
+        gui.sample_count_text = FakeVariable("5")  # type: ignore[assignment]
         gui.status_text = FakeVariable()  # type: ignore[assignment]
         gui.transport = Mock()
         gui.geometry_model = Mock()
@@ -329,7 +683,7 @@ class AppModelTests(unittest.TestCase):
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui)
-        gui.sample_count_text = FakeVariable("1")  # type: ignore[assignment]
+        gui.sample_count_text = FakeVariable("5")  # type: ignore[assignment]
         gui.status_text = FakeVariable()  # type: ignore[assignment]
         gui.transport = Mock()
         gui.geometry_model = Mock()

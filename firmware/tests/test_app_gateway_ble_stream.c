@@ -895,115 +895,6 @@ static void test_pool_boundary_preserves_retained_click_custody(void)
     assert(state.items[0].retain_until_sent);
 }
 
-static void test_staged_extended_payload_survives_overlap_and_pressure(void)
-{
-    struct gateway_ble_stream_state state;
-    struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 401u);
-    struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 500u);
-    uint8_t payload[PACKET_EXT_MAX_PAYLOAD_LEN];
-    uint8_t result_payload[1] = {0x5au};
-    const uint8_t *record = NULL;
-    size_t record_len = 0u;
-    size_t staging_offset =
-        GATEWAY_BLE_STREAM_RECORD_POOL_BYTES - PACKET_EXT_MAX_PAYLOAD_LEN;
-    uint16_t pool_before;
-
-    fill_payload(payload, sizeof(payload));
-    click.payload_len = sizeof(payload);
-
-    /* The 958-byte source tail overlaps the first destination record. */
-    gateway_ble_stream_init(&state);
-    memcpy(&state.record_pool[staging_offset], payload, sizeof(payload));
-    state.restore_staging_active = true;
-    state.restore_staging_offset = (uint16_t)staging_offset;
-    assert(gateway_ble_stream_enqueue_staged_packet(&state,
-                                                    &click,
-                                                    sizeof(payload),
-                                                    0u,
-                                                    1u,
-                                                    true) == 1);
-    state.restore_staging_active = false;
-    state.restore_staging_offset = 0u;
-    assert(gateway_ble_stream_peek(&state, &record, &record_len) == 0);
-    assert(record_len == GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
-                              sizeof(payload));
-    assert(memcmp(&record[GATEWAY_BLE_STREAM_RECORD_HEADER_LEN],
-                  payload,
-                  sizeof(payload)) == 0);
-
-    /* Full BLE pressure must reject a staged click without changing the
-     * retained queue or the bytes that a later retry will restore. */
-    gateway_ble_stream_init(&state);
-    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
-        result.seq = (uint16_t)(500u + i);
-        assert(gateway_ble_stream_enqueue_packet(&state,
-                                                 &result,
-                                                 result_payload,
-                                                 sizeof(result_payload),
-                                                 0u,
-                                                 (uint32_t)(10u + i),
-                                                 true) == 1);
-    }
-    pool_before = state.pool_used;
-    memcpy(&state.record_pool[staging_offset], payload, sizeof(payload));
-    state.restore_staging_active = true;
-    state.restore_staging_offset = (uint16_t)staging_offset;
-    assert(gateway_ble_stream_enqueue_staged_packet(&state,
-                                                    &click,
-                                                    sizeof(payload),
-                                                    0u,
-                                                    20u,
-                                                    true) == -ENOSPC);
-    assert(state.pool_used == pool_before);
-    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
-    assert(memcmp(&state.record_pool[staging_offset],
-                  payload,
-                  sizeof(payload)) == 0);
-    state.restore_staging_active = false;
-    state.restore_staging_offset = 0u;
-}
-
-static void test_staged_durable_result_evicts_full_best_effort_queue(void)
-{
-    struct gateway_ble_stream_state state;
-    struct proto_packet diagnostic = packet(MSG_SELF_TEST_REPORT, 0u, 600u);
-    struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 700u);
-    uint8_t diagnostic_payload[1] = {0x11u};
-    uint8_t result_payload[8] = {0x22u};
-    size_t staging_offset =
-        GATEWAY_BLE_STREAM_RECORD_POOL_BYTES - PACKET_EXT_MAX_PAYLOAD_LEN;
-
-    gateway_ble_stream_init(&state);
-    for (uint8_t i = 0u; i < GATEWAY_BLE_STREAM_QUEUE_DEPTH; i++) {
-        diagnostic.seq = (uint16_t)(600u + i);
-        assert(gateway_ble_stream_enqueue_packet(&state,
-                                                 &diagnostic,
-                                                 diagnostic_payload,
-                                                 sizeof(diagnostic_payload),
-                                                 0u,
-                                                 (uint32_t)(10u + i),
-                                                 true) == 1);
-    }
-    memcpy(&state.record_pool[staging_offset],
-           result_payload,
-           sizeof(result_payload));
-    result.payload_len = sizeof(result_payload);
-    state.restore_staging_active = true;
-    state.restore_staging_offset = (uint16_t)staging_offset;
-
-    assert(gateway_ble_stream_enqueue_staged_packet(&state,
-                                                    &result,
-                                                    sizeof(result_payload),
-                                                    0u,
-                                                    20u,
-                                                    true) == 1);
-    assert(gateway_ble_stream_depth(&state) == GATEWAY_BLE_STREAM_QUEUE_DEPTH);
-    assert(state.items[state.count - 1u].packet_type == MSG_COMMAND_RESULT);
-    assert(state.diagnostics.drops_priority == 1u);
-    state.restore_staging_active = false;
-    state.restore_staging_offset = 0u;
-}
-
 static void test_result_bundle_projection_preserves_raw_reservation_identity(void)
 {
     struct gateway_ble_stream_state state;
@@ -1055,52 +946,6 @@ static void test_result_bundle_projection_preserves_raw_reservation_identity(voi
     assert_single_record_bundle_stream(stream_record,
                                        stream_record_len,
                                        &ids[1]);
-}
-
-static void test_result_bundle_projection_survives_raw_journal_restore(void)
-{
-    struct gateway_ble_stream_state state;
-    struct command_result_id ids[2] = {0};
-    struct proto_packet bundle = packet(
-        MSG_RESULT_BUNDLE, FLAG_GATEWAY_ACK_REQUIRED, 31u);
-    uint8_t raw_payload[256];
-    const uint8_t *stream_record = NULL;
-    size_t raw_payload_len = 0u;
-    size_t stream_record_len = 0u;
-    size_t staging_offset =
-        GATEWAY_BLE_STREAM_RECORD_POOL_BYTES - PACKET_EXT_MAX_PAYLOAD_LEN;
-
-    make_two_record_result_bundle(raw_payload,
-                                  sizeof(raw_payload),
-                                  &raw_payload_len,
-                                  ids);
-    bundle.payload_len = (uint16_t)raw_payload_len;
-    gateway_ble_stream_init(&state);
-    memcpy(&state.record_pool[staging_offset],
-           raw_payload,
-           raw_payload_len);
-    state.restore_staging_active = true;
-    state.restore_staging_offset = (uint16_t)staging_offset;
-
-    assert(gateway_ble_stream_enqueue_staged_bundle_projection(
-               &state,
-               &bundle,
-               raw_payload_len,
-               0x01u,
-               100u,
-               120u,
-               true) == 1);
-    state.restore_staging_active = false;
-    state.restore_staging_offset = 0u;
-    assert(state.count == 1u);
-    assert(state.items[0].packet.msg_type == MSG_RESULT_BUNDLE);
-    assert(state.items[0].packet.payload_len == raw_payload_len);
-    assert(gateway_ble_stream_peek(&state,
-                                   &stream_record,
-                                   &stream_record_len) == 0);
-    assert_single_record_bundle_stream(stream_record,
-                                       stream_record_len,
-                                       &ids[0]);
 }
 
 static void test_reservation_reports_full_queue_backpressure(void)
@@ -1282,19 +1127,19 @@ static void test_reservation_commit_is_exact_and_single_use(void)
     assert(diag.enqueue_attempts == 1u);
 }
 
-static void test_host_notification_phase_retains_exact_journal_head(void)
+static void test_host_receipt_phase_retains_exact_stream_head(void)
 {
     struct gateway_ble_stream_state state;
     struct proto_packet result = packet(MSG_COMMAND_RESULT, 0u, 45u);
     struct proto_packet other = packet(MSG_ANCHOR_HEARTBEAT, 0u, 46u);
-    struct proto_packet journal_packet;
+    struct proto_packet head_packet;
     uint8_t payload[7] = {1u, 3u, 5u, 7u, 9u, 11u, 13u};
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     const uint8_t *record = NULL;
     size_t record_len = 0u;
 
     result.payload_len = sizeof(payload);
     gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_mark_host_notified(&state) == -ENOENT);
     assert(gateway_ble_stream_reserve_packet(&state,
                                              &result,
                                              payload,
@@ -1306,26 +1151,32 @@ static void test_host_notification_phase_retains_exact_journal_head(void)
                                                  &result,
                                                  payload,
                                                  sizeof(payload)) == 1);
-    assert(gateway_ble_stream_head_journal_identity(&state,
-                                                    &journal_packet,
-                                                    payload_digest) == 0);
+    assert(gateway_ble_stream_mark_host_notified(&state) == -EAGAIN);
+    assert(gateway_ble_stream_head_packet(&state, &head_packet) == 0);
+    assert(head_packet.seq == result.seq);
 
     assert(gateway_ble_stream_begin_send_view(&state,
                                               &record,
                                               &record_len) == 0);
     assert(record != NULL);
     assert(record_len > GATEWAY_BLE_STREAM_RECORD_HEADER_LEN);
-    state.head_send_phase = GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED;
+    assert(gateway_ble_stream_mark_host_notified(&state) == 0);
 
-    /* Link cleanup cannot turn a host-complete record into a retransmit. */
+    /* A disconnect/timeout rewinds only the unreceipted host boundary. */
     gateway_ble_stream_cancel_send(&state);
     assert(state.head_send_phase ==
            GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED);
+    assert(gateway_ble_stream_rewind_host_notification(&state) == 0);
+    assert(state.head_send_phase == GATEWAY_BLE_STREAM_HEAD_IDLE);
+    assert(gateway_ble_stream_begin_send_view(&state,
+                                              &record,
+                                              &record_len) == 0);
+    assert(gateway_ble_stream_mark_host_notified(&state) == 0);
     assert(gateway_ble_stream_begin_send_view(&state,
                                               &record,
                                               &record_len) == -EBUSY);
 
-    /* Priority pressure cannot evict the exact journal identity either. */
+    /* Priority pressure cannot evict the exact retained stream head either. */
     assert(gateway_ble_stream_enqueue_packet(&state,
                                              &other,
                                              payload,
@@ -1336,20 +1187,33 @@ static void test_host_notification_phase_retains_exact_journal_head(void)
     assert(gateway_ble_stream_depth(&state) == 2u);
     {
         struct proto_packet retained_packet;
-        uint8_t retained_digest[SEMANTIC_DIGEST_SHA256_LEN];
-
-        assert(gateway_ble_stream_head_journal_identity(
-                   &state,
-                   &retained_packet,
-                   retained_digest) == 0);
-        assert(retained_packet.seq == journal_packet.seq);
-        assert(memcmp(retained_digest,
-                      payload_digest,
-                      sizeof(retained_digest)) == 0);
+        assert(gateway_ble_stream_head_packet(&state, &retained_packet) == 0);
+        assert(retained_packet.seq == head_packet.seq);
     }
+    assert(gateway_ble_stream_accept_host_receipt(&state) == 0);
+    assert(state.head_send_phase ==
+           GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED);
+    assert(gateway_ble_stream_rewind_host_notification(&state) == -EALREADY);
+    assert(state.head_send_phase ==
+           GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED);
     gateway_ble_stream_mark_sent(&state, 125u);
     assert(gateway_ble_stream_depth(&state) == 1u);
     assert(state.items[0].packet.seq == other.seq);
+
+    gateway_ble_stream_init(&state);
+    assert(gateway_ble_stream_enqueue_packet(&state,
+                                             &other,
+                                             payload,
+                                             sizeof(payload),
+                                             100u,
+                                             125u,
+                                             true) == 1);
+    assert(gateway_ble_stream_begin_send_view(&state,
+                                              &record,
+                                              &record_len) == 0);
+    assert(gateway_ble_stream_mark_host_notified(&state) == -EPERM);
+    gateway_ble_stream_cancel_send(&state);
+    gateway_ble_stream_mark_sent(&state, 126u);
 }
 
 static void test_reservation_rejects_crc16_collision(void)
@@ -1606,14 +1470,11 @@ int main(void)
     test_active_head_cannot_be_evicted();
     test_pool_holds_core_click_and_two_cir_records();
     test_pool_boundary_preserves_retained_click_custody();
-    test_staged_extended_payload_survives_overlap_and_pressure();
-    test_staged_durable_result_evicts_full_best_effort_queue();
     test_result_bundle_projection_preserves_raw_reservation_identity();
-    test_result_bundle_projection_survives_raw_journal_restore();
     test_reservation_reports_full_queue_backpressure();
     test_reservation_protects_capacity_and_cancel_releases_it();
     test_reservation_commit_is_exact_and_single_use();
-    test_host_notification_phase_retains_exact_journal_head();
+    test_host_receipt_phase_retains_exact_stream_head();
     test_reservation_rejects_crc16_collision();
     test_reservation_uses_priority_eviction_and_survives_drain();
     test_ble_recovery_backoff_is_random_exponential_and_capped();

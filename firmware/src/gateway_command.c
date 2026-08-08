@@ -352,6 +352,9 @@ int gateway_command_extract_id(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
 
+    if (proto_get_u16_le(value) == CMD_SURVEY_GO_RETIRED_ID) {
+        return PROTO_ERR_MALFORMED;
+    }
     *command_id = (enum command_id)proto_get_u16_le(value);
     return PROTO_OK;
 }

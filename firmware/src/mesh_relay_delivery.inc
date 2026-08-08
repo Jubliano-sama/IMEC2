@@ -1394,8 +1394,8 @@ clicker_leaf_rx_allowed:
             if (relay->role == MESH_RELAY_ROLE_ANCHOR &&
                 packet->msg_type == MSG_SURVEY_PAIR_PREPARE) {
                 /*
-                 * Relay acceptance precedes the application's durable
-                 * command-result admission.  Redeliver an exact retry so a
+                 * Relay acceptance precedes the application's command-result
+                 * admission. Redeliver an exact retry so a
                  * transient result-capacity failure can make progress.  The
                  * pair lease and command-result owners make an already
                  * accepted prepare idempotent; never re-ACK or reforward it

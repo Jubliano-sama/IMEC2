@@ -23,11 +23,18 @@ class FakeServices:
             PACKET_RX_UUID,
             GATEWAY_IDENTITY_UUID,
         }
+        self.packet_rx = type(
+            "PacketRxCharacteristic",
+            (),
+            {"max_write_without_response_size": 4},
+        )()
 
     def get_service(self, uuid: str) -> object | None:
         return object() if uuid == SERVICE_UUID else None
 
     def get_characteristic(self, uuid: str) -> object | None:
+        if uuid == PACKET_RX_UUID:
+            return self.packet_rx
         return object() if uuid in self.characteristics else None
 
 
@@ -50,6 +57,7 @@ class FakeBleakClient:
         self.read_uuids: list[str] = []
         self.notify_uuids: list[str] = []
         self.notify_callback: Any = None
+        self.writes: list[tuple[bytes, bool]] = []
         self.__class__.instances.append(self)
 
     async def connect(self) -> None:
@@ -65,6 +73,11 @@ class FakeBleakClient:
     async def start_notify(self, uuid: str, callback: Any) -> None:
         self.notify_uuids.append(uuid)
         self.notify_callback = callback
+
+    async def write_gatt_char(
+        self, _characteristic: Any, data: bytes, *, response: bool
+    ) -> None:
+        self.writes.append((bytes(data), response))
 
 
 class BlockingBleakClient(FakeBleakClient):
@@ -203,6 +216,36 @@ class BleTransportIdentityTests(unittest.TestCase):
             transport._emit("packet", packet=object())
 
         self.assertEqual(events[0]["received_at"], 12.5)
+
+    def test_host_receipt_frame_is_written_unchanged_in_att_chunks(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+        client = FakeBleakClient(
+            "AA:BB:CC:DD:EE:FF",
+            timeout=12.0,
+            disconnected_callback=lambda _client: None,
+        )
+        client.is_connected = True
+        transport._client = client
+        frame = b"\x02receipt\x00"
+
+        asyncio.run(transport._send_frame(frame, "gateway host receipt"))
+
+        self.assertEqual(
+            client.writes,
+            [
+                (b"\x02rec", False),
+                (b"eipt", False),
+                (b"\x00", False),
+            ],
+        )
+        self.assertEqual(
+            [event["kind"] for event in events],
+            ["tx_written"],
+        )
+        self.assertEqual(events[0]["label"], "gateway host receipt")
+        self.assertEqual(events[0]["raw"], frame)
+        self.assertEqual(events[0]["byte_count"], len(frame))
 
 
 if __name__ == "__main__":

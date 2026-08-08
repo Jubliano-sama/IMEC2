@@ -7,32 +7,14 @@ static bool gateway_survey_round_active(void)
            gateway_survey_round.phase != APP_GATEWAY_SURVEY_ROUND_COMPLETE;
 }
 
-static bool gateway_survey_round_release_go_delivery(void)
-{
-    int ret;
-
-    if (gateway_survey_round_go_delivery_handle == 0u) {
-        return true;
-    }
-    ret = app_node_comm_abandon_delivery(
-        gateway_survey_round_go_delivery_handle);
-    if (ret < 0 && ret != -ENOENT && ret != -EALREADY) {
-        LOG_ERR("gateway survey GO abandonment failed: handle=%u ret=%d",
-                gateway_survey_round_go_delivery_handle,
-                ret);
-        app_watchdog_stop_feeding();
-        return false;
-    }
-    gateway_survey_round_go_delivery_handle = 0u;
-    return true;
-}
-
 static void gateway_survey_round_reset(void)
 {
-    if (!gateway_survey_round_release_go_delivery()) {
-        return;
-    }
     memset(&gateway_survey_round, 0, sizeof(gateway_survey_round));
+    memset(&gateway_survey_start_release,
+           0,
+           sizeof(gateway_survey_start_release));
+    app_gateway_survey_event_runtime_init(
+        &gateway_survey_event_runtime);
     gateway_survey_round_observation_started_at_ms = 0u;
     gateway_survey_round_observation_deadline_ms = 0u;
     gateway_survey_round_cleanup_lane_index = 0u;
@@ -65,16 +47,40 @@ static int gateway_survey_round_start(void)
 
     /*
      * The route-owner worker must freeze and validate the final plan before
-     * entering the concurrent driver.  Failing closed here prevents a future
-     * caller from creating remote PREPARE state through the old planner
-     * shortcut.
+     * entering the concurrent driver.  This is also the boundary at which
+     * this event seam begins: discovery and report collection have already
+     * completed in their existing owner, so no historical events are replayed
+     * here.  Failing closed prevents a caller from creating remote PREPARE
+     * state through the old planner shortcut.
      */
     if (!gateway_survey_context.pairs_planned ||
         !gateway_survey_topology_accounted) {
         return PROTO_ERR_MALFORMED;
     }
+    if (!app_gateway_survey_event_runtime_active(
+            &gateway_survey_event_runtime)) {
+        ret = gateway_survey_state_result_to_proto(
+            app_gateway_survey_event_runtime_begin_selection(
+                &gateway_survey_event_runtime,
+                gateway_survey_context.operation_generation,
+                (uint64_t)k_uptime_get()));
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    } else if (app_gateway_survey_event_runtime_state(
+                   &gateway_survey_event_runtime) != FW_SURVEY_SELECT_PAIRS) {
+        return PROTO_ERR_STALE;
+    }
     if (gateway_survey_context.pair_count == 0u) {
+        ret = gateway_survey_state_event(FW_EVENT_NO_PAIR_AVAILABLE, 0u);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
         return PROTO_ERR_NOT_FOUND;
+    }
+    ret = gateway_survey_state_event(FW_EVENT_PAIR_AVAILABLE, 0u);
+    if (ret != PROTO_OK) {
+        return ret;
     }
     ret = app_gateway_survey_round_begin(&gateway_survey_round,
                                          &gateway_survey_context,
@@ -125,8 +131,8 @@ static int gateway_survey_round_commitment(
         entries[SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES];
     const size_t lane_count =
         app_gateway_survey_round_lane_count(&gateway_survey_round);
-    const uint32_t execute_delay_ms = survey_round_go_execute_delay_ms(
-        gateway_survey_known_max_report_hops());
+    const uint32_t execute_delay_ms =
+        SURVEY_ROUND_START_EXECUTE_DELAY_MS;
     const uint32_t longest_run_ms =
         gateway_survey_round_longest_run_ms();
     struct survey_round_plan_identity identity = {
@@ -170,203 +176,6 @@ static int gateway_survey_round_commitment(
                                            commitment);
 }
 
-static int gateway_survey_build_go(
-    struct mesh_outbound *outbound,
-    const struct survey_round_go *go,
-    uint32_t execute_delay_ms,
-    uint32_t run_ms,
-    uint32_t command_seq)
-{
-    uint32_t expiry_ms;
-    uint32_t expiry_s;
-    size_t payload_len = 0u;
-    int ret;
-
-    if (outbound == NULL || go == NULL ||
-        go->operation_generation == 0u || go->survey_id == 0u ||
-        go->round_id == SURVEY_LEGACY_ROUND_ID ||
-        execute_delay_ms == 0u || command_seq == 0u ||
-        UINT32_MAX - execute_delay_ms < run_ms ||
-        UINT32_MAX - execute_delay_ms - run_ms <
-            SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS + 1000u) {
-        return -EINVAL;
-    }
-    memset(outbound, 0, sizeof(*outbound));
-    ret = survey_round_go_append_tlvs(outbound->payload,
-                                      sizeof(outbound->payload),
-                                      &payload_len,
-                                      go);
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u8(outbound->payload,
-                            sizeof(outbound->payload),
-                            &payload_len,
-                            TLV_COMMAND_SCOPE,
-                            CMD_SCOPE_ALL_HEARD);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u8(outbound->payload,
-                            sizeof(outbound->payload),
-                            &payload_len,
-                            TLV_COMMAND_RESPONSE_MODE,
-                            CMD_RESPONSE_NONE);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u32(outbound->payload,
-                             sizeof(outbound->payload),
-                             &payload_len,
-                             TLV_COMMAND_SEQ,
-                             command_seq);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u32(outbound->payload,
-                             sizeof(outbound->payload),
-                             &payload_len,
-                             TLV_FLOOD_EPOCH_ID,
-                             command_seq);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u32(outbound->payload,
-                             sizeof(outbound->payload),
-                             &payload_len,
-                             TLV_EXECUTE_DELAY_MS,
-                             execute_delay_ms);
-    }
-    expiry_ms = execute_delay_ms + run_ms +
-                SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS + 1000u;
-    expiry_s = (expiry_ms + 999u) / 1000u;
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u32(outbound->payload,
-                             sizeof(outbound->payload),
-                             &payload_len,
-                             TLV_COMMAND_EXPIRY_S,
-                             expiry_s);
-    }
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    ret = survey_round_go_init_packet(
-        &outbound->packet,
-        DEVICE_ID,
-        survey_operation_session_id(go->operation_generation),
-        (uint16_t)command_seq,
-        (uint16_t)payload_len);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    outbound->packet.dst_id = MESH_BROADCAST_ID;
-    outbound->packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
-    outbound->payload_len = (uint16_t)payload_len;
-    outbound->next_hop_id = MESH_BROADCAST_ID;
-    outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-    ret = gateway_command_append_default_flood_controls(outbound);
-    return ret == PROTO_OK ? 0 : mesh_errno_from_proto(ret);
-}
-
-static int gateway_survey_round_build_go(struct mesh_outbound *outbound,
-                                         uint32_t execute_delay_ms,
-                                         uint32_t command_seq)
-{
-    struct survey_round_go go = {
-        .operation_generation =
-            gateway_survey_context.operation_generation,
-        .survey_id = gateway_survey_context.survey_id,
-        .round_id = gateway_survey_round.runtime.batch_sequence,
-    };
-    int ret;
-
-    if (outbound == NULL || execute_delay_ms == 0u || command_seq == 0u) {
-        return -EINVAL;
-    }
-    memset(outbound, 0, sizeof(*outbound));
-    ret = gateway_survey_round_commitment(go.round_commitment);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    return gateway_survey_build_go(
-        outbound,
-        &go,
-        execute_delay_ms,
-        gateway_survey_round_longest_run_ms(),
-        command_seq);
-}
-
-static int gateway_survey_round_submit_go(void)
-{
-    struct mesh_outbound outbound;
-    uint32_t execute_delay_ms = survey_round_go_execute_delay_ms(
-        gateway_survey_known_max_report_hops());
-    uint32_t longest_run_ms = gateway_survey_round_longest_run_ms();
-    uint64_t full_now_ms = (uint64_t)k_uptime_get();
-    uint32_t now_ms = (uint32_t)full_now_ms;
-    uint32_t command_seq = gateway_next_broadcast_command_seq();
-    uint32_t required_ms;
-    int ret;
-
-    if (command_seq == 0u) {
-        return -EIO;
-    }
-    required_ms = execute_delay_ms + longest_run_ms +
-                  SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS;
-    if (uptime_ms_until_deadline(now_ms,
-                                 gateway_survey_operation_deadline_ms) <
-            required_ms) {
-        return -ETIMEDOUT;
-    }
-    ret = gateway_survey_round_build_go(&outbound,
-                                        execute_delay_ms,
-                                        command_seq);
-    if (ret < 0) {
-        return ret;
-    }
-    ret = app_node_comm_submit_delivery(
-        &outbound,
-        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
-        full_now_ms + execute_delay_ms,
-        ((uint32_t)CMD_SURVEY_GO << 16) | (uint16_t)command_seq,
-        &gateway_survey_round_go_delivery_handle);
-    if (ret < 0) {
-        gateway_survey_round_go_delivery_handle = 0u;
-        return ret;
-    }
-    gateway_survey_round_observation_started_at_ms = now_ms;
-    gateway_survey_round_observation_deadline_ms = now_ms + required_ms;
-    GATEWAY_SURVEY_VERBOSE_LOG("gateway survey round GO submitted: survey=%u round=%u lanes=%u max_hops=%u execute_delay_ms=%u run_ms=%u handle=%u",
-            gateway_survey_context.survey_id,
-            gateway_survey_round.runtime.batch_sequence,
-            (unsigned int)app_gateway_survey_round_lane_count(
-                &gateway_survey_round),
-            gateway_survey_known_max_report_hops(),
-            execute_delay_ms,
-            longest_run_ms,
-            gateway_survey_round_go_delivery_handle);
-    return 0;
-}
-
-static bool gateway_survey_round_ensure_observing(void)
-{
-    uint8_t attempts_started = 0u;
-
-    if (gateway_survey_round.phase == APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
-        return true;
-    }
-    if (!app_gateway_survey_round_go_needed(&gateway_survey_round) ||
-        gateway_survey_round_go_delivery_handle == 0u ||
-        app_node_comm_delivery_attempts_started(
-            gateway_survey_round_go_delivery_handle,
-            &attempts_started) < 0 || attempts_started == 0u) {
-        return false;
-    }
-    if (app_gateway_survey_round_mark_observing_after_go(
-            &gateway_survey_round) != PROTO_OK) {
-        return false;
-    }
-    GATEWAY_SURVEY_VERBOSE_LOG("gateway survey round RF started: survey=%u round=%u attempts=%u",
-            gateway_survey_context.survey_id,
-            gateway_survey_round.runtime.batch_sequence,
-            attempts_started);
-    return true;
-}
-
 static int gateway_survey_round_note_sample(uint64_t reporter_id,
                                             const struct survey_sample *sample,
                                             uint64_t received_at_ms)
@@ -375,8 +184,7 @@ static int gateway_survey_round_note_sample(uint64_t reporter_id,
     bool accepted_new = false;
     int ret;
 
-    if (!gateway_survey_round_active() ||
-        !gateway_survey_round_ensure_observing()) {
+    if (!gateway_survey_round_active()) {
         return -ESTALE;
     }
     if (!gateway_survey_receive_in_interval(
@@ -466,13 +274,7 @@ static bool gateway_survey_round_emit_lane_terminal(
     return true;
 }
 
-/*
- * A synchronized GO has no per-endpoint acknowledgement. If one pair does
- * not produce a complete observation, either endpoint may still retain the
- * old round in START_PENDING even when the other endpoint ran and retired.
- * Serialize one exact lane at a time through the established ABORT owner and
- * keep the current batch commitment live until both endpoint debts retire.
- */
+/* Retire every endpoint lease whose ordered START did not yield a result. */
 static int gateway_survey_round_start_next_observation_cleanup(void)
 {
     const size_t lane_count = app_gateway_survey_round_lane_count(
@@ -552,8 +354,19 @@ static bool gateway_survey_round_advance_completed_batch(void)
     if (!app_gateway_survey_round_batch_complete(&gateway_survey_round)) {
         return false;
     }
-    if (!gateway_survey_round_release_go_delivery()) {
-        return false;
+    ret = gateway_survey_state_event(
+        app_gateway_survey_round_batch_has_result_evidence(
+            &gateway_survey_round) ? FW_EVENT_PAIR_RESULT_RECEIVED :
+                                      FW_EVENT_TIMER_EXPIRED,
+        0u);
+    if (ret == PROTO_OK) {
+        ret = gateway_survey_state_event(FW_EVENT_GRAPH_BUILT, 0u);
+    }
+    if (ret != PROTO_OK) {
+        gateway_survey_auto_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return true;
     }
     ret = app_gateway_survey_round_advance_batch(&gateway_survey_round,
                                                  &complete);
@@ -566,7 +379,21 @@ static bool gateway_survey_round_advance_completed_batch(void)
         return true;
     }
     if (complete) {
+        ret = gateway_survey_state_event(FW_EVENT_NO_PAIR_AVAILABLE, 0u);
+        if (ret != PROTO_OK) {
+            gateway_survey_auto_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
+        }
         gateway_survey_auto_finish();
+        return true;
+    }
+    ret = gateway_survey_state_event(FW_EVENT_PAIR_AVAILABLE, 0u);
+    if (ret != PROTO_OK) {
+        gateway_survey_auto_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
     gateway_survey_round_sync_auto();
@@ -806,7 +633,7 @@ static bool gateway_survey_round_note_control_result(
     gateway_survey_round_sync_auto();
     /*
      * A successful command result is followed by a gateway ACK on Channel 9.
-     * Keep the next PREPARE, START, or GO wake train out of that exchange just
+     * Keep the next PREPARE or START wake train out of that exchange just
      * as the serial survey path does. Without this ownership boundary the
      * parallel-round driver can start the next control a few milliseconds
      * after the result was decoded, preempting the ACK and leaving the prior
@@ -864,7 +691,6 @@ static bool gateway_survey_round_drive(void)
 {
     struct app_gateway_survey_round_control control;
     struct survey_gateway_auto_action action;
-    struct node_comm_terminal_event event;
     int ret;
 
     if (!gateway_survey_round_retire_failed_control_lane()) {
@@ -919,80 +745,17 @@ static bool gateway_survey_round_drive(void)
         }
         return true;
     }
-    if (app_gateway_survey_round_go_needed(&gateway_survey_round)) {
-        if (gateway_survey_round_go_delivery_handle == 0u) {
-            ret = gateway_survey_round_submit_go();
-            if (ret < 0) {
-                if (app_gateway_survey_round_go_submit_retryable(ret)) {
-                    status_debug_printf(
-                        "DBG_SURVEY_ROUND_GO_ADMISSION_RETRY survey=%u round=%u ret=%d\n",
-                        gateway_survey_context.survey_id,
-                        gateway_survey_round.runtime.batch_sequence,
-                        ret);
-                    (void)gateway_survey_work_reschedule(
-                        GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-                } else {
-                    gateway_survey_auto_finish_status(
-                        ret == -ETIMEDOUT ? COMMAND_TIMEOUT :
-                                            COMMAND_RADIO_ERROR,
-                        ret == -ETIMEDOUT ?
-                            GATEWAY_COMMAND_EVENT_REASON_TIMEOUT :
-                            GATEWAY_COMMAND_EVENT_REASON_RADIO);
-                }
-            } else {
-                (void)gateway_survey_work_reschedule(
-                    GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            }
-            return true;
-        }
-        (void)gateway_survey_round_ensure_observing();
-        if (!app_node_comm_take_delivery_event_for(
-                gateway_survey_round_go_delivery_handle,
-                &event)) {
-            (void)gateway_survey_work_reschedule(
-                GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            return true;
-        }
-        GATEWAY_SURVEY_VERBOSE_LOG("gateway survey round GO terminal: survey=%u round=%u reason=%u attempts=%u",
-                gateway_survey_context.survey_id,
-                gateway_survey_round.runtime.batch_sequence,
-                (unsigned int)event.reason,
-                event.attempts_started);
-        if (app_gateway_survey_round_go_terminal_retryable(
-                event.reason, event.attempts_started)) {
-            gateway_survey_round_go_delivery_handle = 0u;
-            status_debug_printf(
-                "DBG_SURVEY_ROUND_GO_ZERO_ATTEMPT_RETRY survey=%u round=%u reason=%u\n",
-                gateway_survey_context.survey_id,
-                gateway_survey_round.runtime.batch_sequence,
-                (unsigned int)event.reason);
-            (void)gateway_survey_work_reschedule(
-                GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            return true;
-        }
-        if (event.attempts_started == 0u) {
-            gateway_survey_round_go_delivery_handle = 0u;
-            gateway_survey_auto_finish_status(
-                COMMAND_RADIO_ERROR,
-                GATEWAY_COMMAND_EVENT_REASON_RADIO);
-            return true;
-        }
-        (void)gateway_survey_round_ensure_observing();
-        gateway_survey_round_go_delivery_handle = 0u;
-    }
     if (gateway_survey_round.phase == APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
         uint32_t remaining_ms;
 
-        if (gateway_survey_round_go_delivery_handle != 0u &&
-            app_node_comm_take_delivery_event_for(
-                gateway_survey_round_go_delivery_handle,
-                &event)) {
-            GATEWAY_SURVEY_VERBOSE_LOG("gateway survey round GO terminal during observation: survey=%u round=%u reason=%u attempts=%u",
-                    gateway_survey_context.survey_id,
-                    gateway_survey_round.runtime.batch_sequence,
-                    (unsigned int)event.reason,
-                    event.attempts_started);
-            gateway_survey_round_go_delivery_handle = 0u;
+        if (app_gateway_survey_event_runtime_state(
+                &gateway_survey_event_runtime) == FW_SURVEY_ARM_PAIRS &&
+            gateway_survey_state_event(FW_EVENT_PAIR_ARMED, 0u) !=
+                PROTO_OK) {
+            gateway_survey_auto_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
         }
         if (gateway_survey_round_finalize_observation()) {
             return true;

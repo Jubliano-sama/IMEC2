@@ -835,7 +835,7 @@ void app_anchor_survey_runtime_handle_pair_prepare(
                  * Validate the complete decoded lease transition before a
                  * newer generation can become durable or abort live RF work.
                  * The full-round digest is opaque at one endpoint, but its
-                 * exact value remains bound across PREPARE, START, and GO.
+                 * exact value remains bound across PREPARE and START.
                  */
                 status = COMMAND_MALFORMED_PAYLOAD;
                 reason = EINVAL;
@@ -1185,6 +1185,7 @@ static bool pair_start_delivery_ready(void)
     struct node_comm_terminal_event event;
     struct survey_pair_control_id control_id = {0};
     uint32_t delivery_handle;
+    uint32_t release_remaining_ms = 0u;
     bool delivery_confirmed = false;
     bool ready = false;
     bool still_current;
@@ -1196,7 +1197,14 @@ static bool pair_start_delivery_ready(void)
         return false;
     }
     if (survey_pair_lease_ready_snapshot(&pair_lease, NULL)) {
+        release_remaining_ms = survey_pair_lease_execution_remaining_ms(
+            &pair_lease, k_uptime_get_32());
         k_spin_unlock(&survey_lock, key);
+        if (release_remaining_ms != 0u) {
+            (void)schedule_owned(K_MSEC(release_remaining_ms),
+                                 "pair-start-release");
+            return false;
+        }
         return true;
     }
     delivery_handle = pair_start_delivery_handle;
@@ -1228,6 +1236,12 @@ static bool pair_start_delivery_ready(void)
                                                                  &control_id);
             ready = delivery_confirmed &&
                     survey_pair_lease_ready_snapshot(&pair_lease, NULL);
+            if (ready) {
+                release_remaining_ms =
+                    survey_pair_lease_execution_remaining_ms(
+                        &pair_lease, k_uptime_get_32());
+                ready = release_remaining_ms == 0u;
+            }
         } else {
             (void)survey_pair_lease_abort(&pair_lease);
             pair_start_pending = false;
@@ -1244,12 +1258,17 @@ static bool pair_start_delivery_ready(void)
                 (unsigned int)event.reason,
                 event.attempts_started);
     } else if (!ready) {
-        LOG_INF("survey start result gateway-confirmed; waiting for matching round GO: handle=%u attempts=%u",
+        LOG_INF("survey start result gateway-confirmed; waiting %u ms for START release: handle=%u attempts=%u",
+                release_remaining_ms,
                 delivery_handle,
                 event.attempts_started);
     } else {
         LOG_INF("survey start result gateway-confirmed before DS-TWR: handle=%u attempts=%u",
                 delivery_handle, event.attempts_started);
+    }
+    if (release_remaining_ms != 0u) {
+        (void)schedule_owned(K_MSEC(release_remaining_ms),
+                             "pair-start-release");
     }
     return ready;
 }
@@ -1831,6 +1850,7 @@ int app_anchor_survey_runtime_start_pair_from_command(
     enum command_status *status,
     uint8_t *reason)
 {
+    struct gateway_command_options command_options = {0};
     struct app_operation_policy_candidate policy_candidate;
     struct survey_pair pair = {0};
     struct survey_pair_control_id control_id;
@@ -1839,6 +1859,9 @@ int app_anchor_survey_runtime_start_pair_from_command(
     bool as_responder;
     bool cancel_start_kick = false;
     uint32_t superseded_delivery_handle = 0u;
+    uint32_t execution_deadline_ms;
+    uint32_t execution_remaining_ms;
+    uint32_t now_ms;
     uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
     k_spinlock_key_t key;
     int ret;
@@ -1864,12 +1887,27 @@ int app_anchor_survey_runtime_start_pair_from_command(
         ret = survey_round_commitment_extract_tlv(
             payload, payload_len, round_commitment);
     }
+    if (ret == PROTO_OK) {
+        ret = gateway_command_extract_options(payload,
+                                              payload_len,
+                                              &command_options);
+    }
     if (ret != PROTO_OK || pair.operation_generation == 0u ||
         round_id == SURVEY_LEGACY_ROUND_ID ||
+        command_options.execute_delay_ms !=
+            SURVEY_ROUND_START_EXECUTE_DELAY_MS ||
+        packet->message_age_ms >= command_options.execute_delay_ms ||
         packet->session_id !=
             survey_operation_session_id(pair.operation_generation)) {
         *status = COMMAND_MALFORMED_PAYLOAD;
         *reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
+        return -EINVAL;
+    }
+    execution_remaining_ms = command_options.execute_delay_ms -
+                             packet->message_age_ms;
+    if (execution_remaining_ms > (uint32_t)INT32_MAX) {
+        *status = COMMAND_MALFORMED_PAYLOAD;
+        *reason = 1u;
         return -EINVAL;
     }
     if (pair.initiator_id != DEVICE_ID && pair.responder_id != DEVICE_ID) {
@@ -1887,18 +1925,21 @@ int app_anchor_survey_runtime_start_pair_from_command(
         *reason = 3u;
         return -EBUSY;
     }
+    now_ms = k_uptime_get_32();
+    execution_deadline_ms = now_ms + execution_remaining_ms;
     key = k_spin_lock(&survey_lock);
     control_id = (struct survey_pair_control_id) {
         .session_id = packet->session_id,
         .command_seq = packet->seq,
     };
-    decision = survey_pair_lease_start_round_bound(
+    decision = survey_pair_lease_start_round_bound_at(
         &pair_lease,
         &pair,
         round_id,
         round_commitment,
         &control_id,
-        k_uptime_get_32());
+        now_ms,
+        execution_deadline_ms);
     if (decision == SURVEY_PAIR_LEASE_BUSY) {
         *status = COMMAND_BUSY;
         *reason = 3u;
@@ -1965,96 +2006,6 @@ int app_anchor_survey_runtime_start_pair_from_command(
             (unsigned long long)pair.responder_id,
             pair.sample_count,
             as_responder ? "responder" : "initiator");
-    return 0;
-}
-
-int app_anchor_survey_runtime_go_round_from_command(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint32_t execution_deadline_ms,
-    enum command_status *status,
-    uint8_t *reason)
-{
-    struct survey_round_go go = {0};
-    enum survey_pair_lease_decision decision;
-    bool ready;
-    uint32_t now_ms;
-    k_spinlock_key_t key;
-    int schedule_ret = 0;
-    int ret;
-
-    if (packet == NULL || payload == NULL || status == NULL || reason == NULL ||
-        packet->msg_type != MSG_COMMAND || packet->src_id != GATEWAY_ID ||
-        packet->dst_id != MESH_BROADCAST_ID) {
-        return -EINVAL;
-    }
-    ret = survey_round_go_from_tlvs(payload, payload_len, &go);
-    if (ret != PROTO_OK ||
-        packet->session_id !=
-            survey_operation_session_id(go.operation_generation)) {
-        *status = COMMAND_MALFORMED_PAYLOAD;
-        *reason = (uint8_t)(ret == PROTO_OK ? 1u : -ret);
-        return -EINVAL;
-    }
-
-    key = k_spin_lock(&survey_lock);
-    now_ms = k_uptime_get_32();
-    if (uptime_deadline_reached(now_ms, execution_deadline_ms)) {
-        decision = SURVEY_PAIR_LEASE_EXPIRED;
-    } else {
-        decision = survey_pair_lease_go_until_bound(
-            &pair_lease,
-            go.operation_generation,
-            go.survey_id,
-            go.round_id,
-            go.round_commitment,
-            now_ms,
-            execution_deadline_ms);
-    }
-    ready = pair_start_pending &&
-            survey_pair_lease_ready_snapshot(&pair_lease, NULL);
-    k_spin_unlock(&survey_lock, key);
-
-    if (decision != SURVEY_PAIR_LEASE_ACCEPTED &&
-        decision != SURVEY_PAIR_LEASE_DUPLICATE) {
-        *status = decision == SURVEY_PAIR_LEASE_BUSY ? COMMAND_BUSY :
-                  COMMAND_INVALID_STATE;
-        *reason = decision == SURVEY_PAIR_LEASE_EXPIRED ? 5u : 4u;
-        return decision == SURVEY_PAIR_LEASE_BUSY ? -EBUSY : -ESTALE;
-    }
-    *status = COMMAND_OK;
-    *reason = 0u;
-    if (ready) {
-        schedule_ret = schedule(K_NO_WAIT);
-        if (schedule_ret < 0) {
-            bool recovered = false;
-
-            if (decision == SURVEY_PAIR_LEASE_ACCEPTED) {
-                key = k_spin_lock(&survey_lock);
-                recovered = survey_pair_lease_revoke_go_bound(
-                    &pair_lease,
-                    go.operation_generation,
-                    go.survey_id,
-                    go.round_id,
-                    go.round_commitment);
-                k_spin_unlock(&survey_lock, key);
-            }
-            if (!recovered) {
-                app_watchdog_stop_feeding();
-            }
-            *status = COMMAND_INTERNAL_ERROR;
-            *reason = (uint8_t)(-schedule_ret);
-            LOG_WRN("survey round GO work admission failed: survey=%u round=%u ret=%d",
-                    go.survey_id, go.round_id, schedule_ret);
-            return schedule_ret;
-        }
-    }
-    LOG_INF("survey round GO %s: survey=%u round=%u ready=%u",
-            decision == SURVEY_PAIR_LEASE_ACCEPTED ? "accepted" : "duplicate",
-            go.survey_id,
-            go.round_id,
-            ready ? 1u : 0u);
     return 0;
 }
 

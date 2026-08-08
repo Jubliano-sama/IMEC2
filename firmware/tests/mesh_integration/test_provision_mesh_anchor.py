@@ -755,7 +755,7 @@ def args(**overrides: object) -> argparse.Namespace:
         "survey_id": 0,
         "survey_duration_ms": 1000,
         "discovery_slots": 6,
-        "samples": 3,
+        "samples": 5,
         "notification_hold_s": 0.25,
         "require_survey_success": True,
         "require_assignment_success": False,

@@ -78,8 +78,8 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #define GATEWAY_SURVEY_TRANSACTION_POLL_MS 50u
 
 BUILD_ASSERT(GATEWAY_SURVEY_TRANSACTION_POLL_MS <
-             SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS,
-             "survey GO admission retries must fit before a fresh execution horizon");
+             SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+             "survey polling must fit before the START release horizon");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
              "gateway enumeration must cover the connected anchor maximum");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
@@ -142,8 +142,8 @@ BUILD_ASSERT(ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES > 0u &&
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
              "post-wake route RX buffer must still fit normal ranging schedules");
-BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 12288u,
-             "mesh-route anchor scan needs the enlarged wake-frame stack");
+BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 6144u,
+             "mesh-route anchor scan must retain its measured safety margin");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_PRIORITY < ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
              "mesh route work must preempt low-duty anchor scan handoff");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 9216u,
@@ -365,8 +365,7 @@ struct gateway_manual_survey_pair_state {
     struct survey_pair pair;
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t deadline_ms;
-    uint32_t go_due_ms;
-    uint32_t go_delivery_handle;
+    uint32_t start_release_started_at_ms;
     uint16_t round_id;
     uint8_t prepare_submitted_mask;
     uint8_t prepare_possible_mask;
@@ -378,11 +377,17 @@ struct gateway_manual_survey_pair_state {
     uint16_t initiator_result_mask;
     uint16_t responder_result_mask;
     uint8_t valid : 1;
-    uint8_t go_rf_started : 1;
+    uint8_t start_release_armed : 1;
     uint8_t cleanup_requested : 1;
 };
 static struct gateway_manual_survey_pair_state
     gateway_manual_survey_pair_state;
+struct gateway_survey_start_release {
+    struct survey_pair pair;
+    uint32_t started_at_ms;
+    bool valid;
+};
+static struct gateway_survey_start_release gateway_survey_start_release;
 enum gateway_operation_owner {
     GATEWAY_OPERATION_OWNER_NONE = 0,
     GATEWAY_OPERATION_OWNER_AUTO_SURVEY,
@@ -414,7 +419,6 @@ static uint32_t gateway_survey_transaction_client_token;
 static enum command_status gateway_survey_finish_pending_status;
 static enum gateway_command_event_reason gateway_survey_finish_pending_reason;
 static bool gateway_survey_finish_pending;
-static uint32_t gateway_survey_round_go_delivery_handle;
 static uint32_t gateway_survey_round_observation_deadline_ms;
 static size_t gateway_survey_round_cleanup_lane_index;
 static bool gateway_survey_round_cleanup_lane_valid;
@@ -504,13 +508,6 @@ struct anchor_pending_command_execution {
     bool active;
 };
 static struct anchor_pending_command_execution anchor_pending_command_execution;
-/*
- * Survey GO owns the tight synchronized execution lane. One ordinary delayed
- * broadcast may be parked here while GO executes, then resumes against its
- * original absolute deadline.
- */
-static struct anchor_pending_command_execution
-    anchor_deferred_command_execution;
 struct anchor_pending_click_handoff {
     struct uwb_wake_claim_frame claim;
     int64_t received_at_ms;

@@ -376,12 +376,12 @@ static bool mesh_click_priority_active(void)
 
 static void mesh_coordinator_decide_now(
     const char *owner,
-    struct app_mesh_coordinator_decision *decision)
+    struct fw_radio_activity_decision *decision)
 {
     const uint32_t rx_queue_used = k_msgq_num_used_get(&mesh_rx_msgq);
     const uint32_t report_queue_used = report_tx_queue_used();
     const bool relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
-    const struct app_mesh_coordinator_runtime_capture capture = {
+    const struct fw_radio_activity_capture capture = {
         .click_active = mesh_click_priority_active(),
         .survey_pending = DEVICE_ROLE == ROLE_ANCHOR &&
                           mesh_report_anchor_survey_discovery_is_pending(),
@@ -411,7 +411,7 @@ static void mesh_coordinator_decide_now(
 
     if (state_changed) {
         const char *state_name =
-            app_mesh_coordinator_state_name(decision->state);
+            fw_radio_activity_state_name(decision->state);
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_COORD state=%s owner=%s reason=%s rx=%u tx=%u relay=%u route=%u ack=%u qack=%u\n",
@@ -431,7 +431,7 @@ static void mesh_coordinator_decide_now(
 
 static bool mesh_coordinator_mesh_work_allowed(const char *owner)
 {
-    struct app_mesh_coordinator_decision decision;
+    struct fw_radio_activity_decision decision;
 
     mesh_coordinator_decide_now(owner, &decision);
     if (decision.mesh_work_allowed) {
@@ -440,7 +440,7 @@ static bool mesh_coordinator_mesh_work_allowed(const char *owner)
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_COORD_MESH_DEFER owner=%s state=%s reason=%s\n",
                             owner == NULL ? "mesh" : owner,
-                            app_mesh_coordinator_state_name(decision.state),
+                            fw_radio_activity_state_name(decision.state),
                             decision.reason == NULL ? "none" :
                             decision.reason);
     }
@@ -473,15 +473,15 @@ static bool mesh_outbound_reports_local_delivery_loss(const struct mesh_outbound
 static void mesh_attach_paused_delivery_loss(struct mesh_outbound *out,
                                              const char *reason)
 {
-    struct app_mesh_paused_delivery_attach_result result;
+    struct fw_delivery_loss_attach_result result;
     int ret;
 
     if (!mesh_outbound_reports_local_delivery_loss(out) ||
-        app_mesh_paused_delivery_lost_count(&mesh_paused_delivery) == 0u) {
+        fw_delivery_loss_count(&mesh_delivery_loss) == 0u) {
         return;
     }
 
-    ret = app_mesh_paused_delivery_attach_loss(&mesh_paused_delivery, out, &result);
+    ret = fw_delivery_loss_attach(&mesh_delivery_loss, out, &result);
     if (ret == PROTO_OK) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_MESH_LOSS_TLV msg=0x%02x seq=%u lost=%u attach=%u update=%u reason=%s\n",
@@ -1174,35 +1174,11 @@ static int mesh_gateway_accept_semantic_delivery(
 
     switch (pending->packet.msg_type) {
     case MSG_GATEWAY_ACK_CONFIRM: {
-#if DEVICE_ROLE == ROLE_GATEWAY
-        int receipt_ret = app_gateway_terminal_receipts_confirm(
-            &pending->packet,
-            pending->payload,
-            pending->payload_len,
-            k_uptime_get_32());
-#else
-        int receipt_ret = 0;
-#endif
-        int ret;
-
-        if (receipt_ret < 0) {
-            return receipt_ret;
-        }
-        /* Gateway host-journal persistence is removed: there is no flash
-         * journal to confirm, so a confirm is a no-op owning nothing. The
-         * in-RAM BLE terminal-receipt state decides fresh vs. duplicate. */
-        ret = 0;
-
-        if (ret < 0) {
-            return ret;
-        }
-        if (ret > 1) {
-            gateway_ble_require_host_journal_restore(
-                "gateway-ack-confirm");
-        }
-        return ret > 0 || receipt_ret > 0 ?
-                   APP_GATEWAY_SEMANTIC_ACCEPT_NEW :
-                   APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+        /* ACK_CONFIRM is an RF proof that the source received a previous
+         * gateway ACK. GUI RAM owns host history, so the proof is validated
+         * structurally and then handled idempotently without a firmware
+         * receipt ledger. */
+        return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
     case MSG_CLICK_REPORT:
         if (report_validate_click_payload(&pending->packet,
@@ -1211,10 +1187,10 @@ static int mesh_gateway_accept_semantic_delivery(
             return -EINVAL;
         }
         /*
-         * Host-journal replay is classified before this application
-         * dispatcher.  A fresh click reaches this case only after validation
-         * capacity is reserved; transport identity is committed later, after
-         * durable host-output and BLE custody.
+         * Host-delivery duplicate/retry gating is classified before this
+         * application dispatcher. A fresh click reaches this case only after
+         * validation capacity and bounded host-item custody are reserved;
+         * transport identity is committed at the later semantic boundary.
          */
         return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     case MSG_SELF_TEST_REPORT:
@@ -1266,9 +1242,9 @@ static int mesh_gateway_accept_semantic_delivery(
 }
 
 /*
- * Read-only admission pass for the write-ahead host journal. The mesh RX
- * worker owns all relevant gateway protocol state across this call, PREPARED
- * persistence, and mesh_gateway_accept_semantic_delivery().
+ * Read-only semantic admission pass. The mesh RX worker owns all relevant
+ * gateway protocol state across this call and the later host-custody and
+ * semantic commit; collection checkpoints, when used, are separate state.
  */
 static int mesh_gateway_preflight_semantic_delivery(
     const struct mesh_rx_pending *pending)
@@ -1351,7 +1327,7 @@ static int mesh_gateway_preflight_semantic_delivery(
     case MSG_SURVEY_PAIR_RESULT:
         /*
          * A stale pair result still belongs to the sender's bounded result
-         * delivery owner. Do not journal it as recovered host data or commit a
+         * delivery owner. Do not project it as recovered host data or commit a
          * gateway ACK: the live round must remain untouched and the sender
          * retires this obsolete custody only at its existing deadline.
          */
@@ -2127,7 +2103,7 @@ static int mesh_schedule_tx_timeout(void)
         deadline = mesh_relay_result_bundle_due_ms(&mesh_runtime);
     }
     if (deferred_pending && deadline == UINT32_MAX) {
-        /* Durable custody has no relay deadline after a local ACK; poll the
+        /* Retained custody has no relay deadline after a local ACK; poll the
          * promotion path on the normal retry cadence instead of cancelling. */
         deadline = now + REPORT_TX_RETRY_DELAY_MS;
     }
@@ -2690,8 +2666,8 @@ static void mesh_schedule_route_waiting_exhausted_retry(const char *reason)
                             mesh_route_waiting_tx.packet.msg_type,
                             (unsigned long long)mesh_route_waiting_tx.packet.dst_id,
                             mesh_route_waiting_tx.packet.seq,
-                            app_mesh_paused_delivery_lost_count(
-                                &mesh_paused_delivery));
+                            fw_delivery_loss_count(
+                                &mesh_delivery_loss));
     }
     LOG_WRN("mesh route discovery exhausted; retained packet will retry: reason=%s msg=0x%02x dst=0x%016llx seq=%u retry_in_ms=%u",
             reason == NULL ? "route-exhausted" : reason,

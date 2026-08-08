@@ -547,15 +547,6 @@ enum survey_gateway_drive_action survey_gateway_drive_action(
     if (state->response_ack_settle_pending) {
         return SURVEY_GATEWAY_DRIVE_NONE;
     }
-    if (state->round_go_delivery_pending) {
-        /*
-         * GO remains in GO_REQUIRED until its first RF attempt establishes
-         * the shared observation instant. Custody polling is an external
-         * wait; treating the phase as immediately runnable overrides the
-         * bounded poll with a zero-delay workqueue loop.
-         */
-        return SURVEY_GATEWAY_DRIVE_POLL_WAIT;
-    }
     if (state->auto_waiting || state->pair_observation_active) {
         return SURVEY_GATEWAY_DRIVE_POLL_WAIT;
     }

@@ -1153,6 +1153,149 @@ static void test_result_busy_disambiguates_alternate_from_correlation(void)
     assert(!decoded.has_optional_alternate_parent);
 }
 
+static void test_gateway_host_receipt_identity_round_trip_and_strictness(void)
+{
+    const struct gateway_host_receipt_identity identity = {
+        .original_msg_type = MSG_CLICK_REPORT,
+        .original_flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        .src_id = UINT64_C(0x1122334455667788),
+        .dst_id = UINT64_C(0x99AABBCCDDEEFF00),
+        .session_id = UINT32_C(0xA1B2C3D4),
+        .seq = UINT16_C(0xE5F6),
+        .stream_record_digest = {
+            0x00u, 0x01u, 0x02u, 0x03u, 0x04u, 0x05u, 0x06u, 0x07u,
+            0x08u, 0x09u, 0x0Au, 0x0Bu, 0x0Cu, 0x0Du, 0x0Eu, 0x0Fu,
+            0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
+            0x18u, 0x19u, 0x1Au, 0x1Bu, 0x1Cu, 0x1Du, 0x1Eu, 0x1Fu,
+        },
+    };
+    static const uint8_t expected_value[PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN] = {
+        0x20u, 0x24u,
+        0x88u, 0x77u, 0x66u, 0x55u, 0x44u, 0x33u, 0x22u, 0x11u,
+        0x00u, 0xFFu, 0xEEu, 0xDDu, 0xCCu, 0xBBu, 0xAAu, 0x99u,
+        0xD4u, 0xC3u, 0xB2u, 0xA1u,
+        0xF6u, 0xE5u,
+        0x00u, 0x01u, 0x02u, 0x03u, 0x04u, 0x05u, 0x06u, 0x07u,
+        0x08u, 0x09u, 0x0Au, 0x0Bu, 0x0Cu, 0x0Du, 0x0Eu, 0x0Fu,
+        0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u,
+        0x18u, 0x19u, 0x1Au, 0x1Bu, 0x1Cu, 0x1Du, 0x1Eu, 0x1Fu,
+    };
+    uint8_t value[PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN];
+    uint8_t payload[PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES];
+    struct gateway_host_receipt_identity decoded = {0};
+    struct proto_packet packet = {
+        .msg_type = MSG_GATEWAY_HOST_RECEIPT,
+        .flags = 0u,
+        .src_id = UINT64_C(0xA1C1BEEFC0DE0001),
+        .dst_id = UINT64_C(0x9999888877776666),
+        .session_id = identity.session_id,
+        .seq = identity.seq,
+        .ttl = 1u,
+        .payload_len = PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES,
+    };
+    size_t value_len = 0u;
+    size_t payload_len = 0u;
+
+    assert(PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN == 56u);
+    assert(PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES == 58u);
+    assert(!proto_packet_msg_type_allowed_over_uwb(MSG_GATEWAY_HOST_RECEIPT));
+    assert(gateway_host_receipt_identity_encode(&identity,
+                                                value,
+                                                sizeof(value),
+                                                &value_len) == PROTO_OK);
+    assert(value_len == sizeof(expected_value));
+    assert(memcmp(value, expected_value, sizeof(value)) == 0);
+    assert(gateway_host_receipt_identity_decode(value,
+                                                value_len,
+                                                &decoded) == PROTO_OK);
+    assert(decoded.original_msg_type == identity.original_msg_type);
+    assert(decoded.original_flags == identity.original_flags);
+    assert(decoded.src_id == identity.src_id);
+    assert(decoded.dst_id == identity.dst_id);
+    assert(decoded.session_id == identity.session_id);
+    assert(decoded.seq == identity.seq);
+    assert(memcmp(decoded.stream_record_digest,
+                  identity.stream_record_digest,
+                  sizeof(decoded.stream_record_digest)) == 0);
+
+    assert(gateway_host_receipt_identity_append_tlv(payload,
+                                                     sizeof(payload),
+                                                     &payload_len,
+                                                     &identity) == PROTO_OK);
+    assert(payload_len == sizeof(payload));
+    assert(payload[0] == TLV_GATEWAY_HOST_RECEIPT_IDENTITY);
+    assert(payload[1] == PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN);
+    assert(gateway_host_receipt_identity_from_tlvs(payload,
+                                                   payload_len,
+                                                   &decoded) == PROTO_OK);
+    assert(decoded.original_msg_type == identity.original_msg_type);
+    assert(decoded.original_flags == identity.original_flags);
+    assert(decoded.src_id == identity.src_id);
+    assert(decoded.dst_id == identity.dst_id);
+    assert(decoded.session_id == identity.session_id);
+    assert(decoded.seq == identity.seq);
+    assert(memcmp(decoded.stream_record_digest,
+                  identity.stream_record_digest,
+                  sizeof(decoded.stream_record_digest)) == 0);
+    assert(gateway_host_receipt_packet_validate(&packet,
+                                                payload,
+                                                payload_len,
+                                                &decoded) == PROTO_OK);
+
+    {
+        uint8_t malformed[PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES + 2u];
+
+        memcpy(malformed, payload, sizeof(payload));
+        malformed[1] = (uint8_t)(malformed[1] - 1u);
+        assert(gateway_host_receipt_identity_from_tlvs(malformed,
+                                                       sizeof(payload),
+                                                       &decoded) == PROTO_ERR_MALFORMED);
+
+        memcpy(malformed, payload, sizeof(payload));
+        malformed[sizeof(payload)] = TLV_GATEWAY_HOST_RECEIPT_IDENTITY;
+        malformed[sizeof(payload) + 1u] = 0u;
+        assert(gateway_host_receipt_identity_from_tlvs(malformed,
+                                                       sizeof(malformed),
+                                                       &decoded) == PROTO_ERR_MALFORMED);
+
+        memcpy(malformed, payload, sizeof(payload));
+        memset(&malformed[PROTO_TLV_HEADER_LEN + 2u],
+               0,
+               sizeof(identity.src_id));
+        assert(gateway_host_receipt_identity_from_tlvs(malformed,
+                                                       sizeof(payload),
+                                                       &decoded) == PROTO_ERR_MALFORMED);
+    }
+
+    {
+        struct gateway_host_receipt_identity invalid = identity;
+
+        invalid.src_id = 0u;
+        assert(gateway_host_receipt_identity_encode(&invalid,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_ERR_MALFORMED);
+        invalid = identity;
+        invalid.original_msg_type = MSG_GATEWAY_HOST_RECEIPT;
+        assert(gateway_host_receipt_identity_encode(&invalid,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_ERR_MALFORMED);
+        invalid = identity;
+        invalid.session_id = 0u;
+        assert(gateway_host_receipt_identity_encode(&invalid,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_ERR_MALFORMED);
+    }
+
+    packet.flags = FLAG_DIAGNOSTIC;
+    assert(gateway_host_receipt_packet_validate(&packet,
+                                                payload,
+                                                payload_len,
+                                                &decoded) == PROTO_ERR_MALFORMED);
+}
+
 static void test_cobs_round_trip(void)
 {
     const uint8_t raw[] = {0x11u, 0x00u, 0x22u, 0x33u, 0x00u, 0x00u, 0x44u};
@@ -1205,6 +1348,7 @@ int main(void)
     test_unique_tlv_and_result_decoders_reject_duplicates();
     test_report_validators_reject_schema_smuggling_and_mismatch();
     test_result_busy_disambiguates_alternate_from_correlation();
+    test_gateway_host_receipt_identity_round_trip_and_strictness();
     test_cobs_round_trip();
     test_operation_policy_tlv_registration();
     return 0;

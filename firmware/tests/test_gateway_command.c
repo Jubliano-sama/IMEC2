@@ -448,7 +448,6 @@ static void test_prepare_outbound_uses_command_class_ttl_for_every_host_value(vo
     } command_cases[] = {
         {CMD_PING, FLOOD_EPOCH_GLOBAL_TTL},
         {CMD_ASSIGN_DISCOVERY_SLOTS, FLOOD_EPOCH_GLOBAL_TTL},
-        {CMD_SURVEY_GO, FLOOD_EPOCH_GLOBAL_TTL},
         {CMD_SURVEY_PREPARE_PAIR, MESH_DEFAULT_TTL},
         {CMD_SURVEY_START_PAIR, MESH_DEFAULT_TTL},
         {CMD_SURVEY_ABORT, MESH_DEFAULT_TTL},
@@ -624,6 +623,23 @@ static void test_duplicate_command_singletons_are_rejected(void)
                           TLV_DURATION_MS, 200u) == PROTO_OK);
     assert(gateway_command_extract_duration_ms(
                payload, payload_len, 50u, &duration_ms) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_retired_survey_go_is_rejected(void)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+    uint8_t payload[8];
+    size_t payload_len = 0u;
+
+    assert(tlv_append_u16(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_COMMAND_ID,
+                          CMD_SURVEY_GO_RETIRED_ID) == PROTO_OK);
+    assert(gateway_command_extract_id(payload,
+                                      payload_len,
+                                      &command_id) ==
            PROTO_ERR_MALFORMED);
 }
 
@@ -5074,6 +5090,7 @@ int main(void)
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
     test_duplicate_command_singletons_are_rejected();
+    test_retired_survey_go_is_rejected();
     test_extract_options_defaults_to_single_node_small_result();
     test_extract_options_rejects_unsupported_group_scope();
     test_command_scope_applies_to_explicit_and_derived_membership();

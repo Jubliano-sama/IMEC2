@@ -1,153 +1,160 @@
 #include "app_mesh_arbitration_zephyr.h"
 
-#include "app_mesh_gateway_command_priority.h"
 #include "dwm3000_driver.h"
+#include "firmware_state_machines.h"
 
 #include <errno.h>
 #include <string.h>
 
-static struct app_mesh_gateway_command_priority gateway_priority;
+#define GATEWAY_HANDOFF_OPERATION_ID UINT64_C(1)
+#define GATEWAY_HANDOFF_RETRY_MS 10u
+
+static struct fw_radio_handoff_sm gateway_handoff;
 static struct app_mesh_arbitration_zephyr_gateway_ops gateway_ops;
-static app_mesh_arbitration_zephyr_schedule_failure_fn gateway_schedule_failure_handler;
-static void *gateway_schedule_failure_ctx;
-static struct k_spinlock gateway_priority_lock;
-static struct k_work_delayable gateway_priority_retry_work;
-static bool gateway_priority_retry_work_initialized;
+static app_mesh_arbitration_zephyr_schedule_failure_fn failure_handler;
+static void *failure_context;
+static struct k_spinlock gateway_handoff_lock;
+static struct k_work_delayable retry_work;
+static bool retry_work_initialized;
+static uint32_t next_generation;
 static struct {
     struct k_work_delayable *work;
     uint32_t admission_cutoff;
     bool valid;
-} gateway_priority_binding;
+} pending_binding;
+static struct k_work_delayable *pending_work;
 
-#define GATEWAY_PRIORITY_SCHEDULE_RETRY_MS 10u
-
-static void gateway_command_request_receive_abort(void *ctx)
+static bool schedule_error_retryable(int error)
 {
-    ARG_UNUSED(ctx);
-    dwm3000_driver_request_receive_abort(
-        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+    return error == -EAGAIN || error == -EBUSY || error == -ENOSPC;
 }
 
-static int gateway_command_reschedule_now(void *ctx, void *work)
+static uint32_t generation_next(uint32_t generation)
 {
-    const struct app_mesh_arbitration_zephyr_gateway_ops *ops = ctx;
-    struct k_work_delayable *delayed_work = work;
-
-    if (ops == NULL || delayed_work == NULL) {
-        return -EINVAL;
-    }
-    if (ops->priority_work_queue != NULL) {
-        return k_work_reschedule_for_queue(ops->priority_work_queue,
-                                           delayed_work,
-                                           K_NO_WAIT);
-    }
-    return k_work_reschedule(delayed_work, K_NO_WAIT);
+    generation++;
+    return generation == 0u ? 1u : generation;
 }
 
-static void gateway_command_clear_receive_abort(void *ctx)
+static struct fw_event handoff_event(enum fw_event_type type)
 {
-    ARG_UNUSED(ctx);
-    dwm3000_driver_clear_receive_abort(
-        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
-}
-
-static struct app_mesh_gateway_command_priority_ops gateway_priority_ops(void)
-{
-    return (struct app_mesh_gateway_command_priority_ops) {
-        .gateway_role = gateway_ops.gateway_role,
-        .request_receive_abort = gateway_command_request_receive_abort,
-        .reschedule_now = gateway_command_reschedule_now,
-        .clear_receive_abort = gateway_command_clear_receive_abort,
-        .ctx = &gateway_ops,
+    return (struct fw_event) {
+        .operation_id = gateway_handoff.identity.operation_id,
+        .generation = gateway_handoff.identity.generation,
+        .target = FW_MACHINE_RADIO,
+        .source = FW_EVENT_SOURCE_SERVICE,
+        .type = type,
     };
 }
 
-static void gateway_priority_notify_failure(
-    app_mesh_arbitration_zephyr_schedule_failure_fn handler,
-    void *ctx,
-    int error,
-    const struct app_mesh_gateway_command_priority_failure *failure)
+static int schedule_pending_work(void)
 {
-    if (handler != NULL && failure != NULL &&
-        failure->generation != 0u && failure->admission_cutoff != 0u) {
-        handler(ctx,
-                error,
-                failure->generation,
-                failure->admission_cutoff);
+    if (pending_work == NULL) {
+        return -EINVAL;
     }
+    if (gateway_ops.priority_work_queue != NULL) {
+        return k_work_reschedule_for_queue(gateway_ops.priority_work_queue,
+                                           pending_work,
+                                           K_NO_WAIT);
+    }
+    return k_work_reschedule(pending_work, K_NO_WAIT);
 }
 
-static int gateway_priority_schedule_retry_locked(void)
+static int schedule_retry_owner(void)
 {
-    return k_work_reschedule(&gateway_priority_retry_work,
-                             K_MSEC(GATEWAY_PRIORITY_SCHEDULE_RETRY_MS));
+    return k_work_reschedule(&retry_work,
+                             K_MSEC(GATEWAY_HANDOFF_RETRY_MS));
 }
 
-static int gateway_priority_retain_retry_locked(
-    const struct app_mesh_gateway_command_priority_ops *priority_ops,
-    struct app_mesh_gateway_command_priority_failure *failure,
-    int target_error)
+static int drive_schedule_locked(
+    enum fw_event_type trigger,
+    uint32_t *failed_generation,
+    uint32_t *failed_cutoff)
 {
-    int ret = gateway_priority_schedule_retry_locked();
+    struct fw_transition transition;
+    struct fw_event event;
+    int ret;
 
-    if (ret >= 0) {
-        return target_error;
-    }
-    /*
-     * A rejected retry-work submission is not a custody owner. Drive the
-     * remaining target attempts synchronously so the generation either gains
-     * executable work custody or reaches its bounded terminal callback.
-     */
-    while (app_mesh_gateway_command_priority_schedule_retry_pending(
-               &gateway_priority)) {
-        target_error = app_mesh_gateway_command_priority_retry_schedule(
-            &gateway_priority, priority_ops, failure);
-        if (target_error >= 0) {
-            break;
+    for (;;) {
+        event = handoff_event(trigger);
+        if (fw_radio_handoff_sm_handle(&gateway_handoff,
+                                       &event,
+                                       &transition) != FW_SM_APPLIED ||
+            transition.effect.type != FW_EFFECT_RADIO_SCHEDULE_PENDING) {
+            return -EINVAL;
         }
+
+        ret = schedule_pending_work();
+        event = handoff_event(ret >= 0 ? FW_EVENT_EFFECT_SUCCEEDED :
+                                         FW_EVENT_EFFECT_FAILED);
+        if (ret < 0 && schedule_error_retryable(ret)) {
+            event.payload.flags |= FW_EVENT_FLAG_RETRYABLE;
+        }
+        (void)fw_radio_handoff_sm_handle(&gateway_handoff,
+                                         &event,
+                                         &transition);
+        if (ret >= 0) {
+            pending_work = NULL;
+            return ret;
+        }
+        if (transition.effect.type == FW_EFFECT_RADIO_CLEAR_ABORT) {
+            if (failed_generation != NULL) {
+                *failed_generation = event.generation;
+            }
+            if (failed_cutoff != NULL) {
+                *failed_cutoff = transition.effect.payload.value;
+            }
+            pending_work = NULL;
+            dwm3000_driver_clear_receive_abort(
+                DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+            return ret;
+        }
+        if (transition.effect.type != FW_EFFECT_START_TIMER) {
+            return -EINVAL;
+        }
+        if (schedule_retry_owner() >= 0) {
+            return ret;
+        }
+        /* Rejected retry work owns nothing; take the next bounded attempt. */
+        trigger = FW_EVENT_TIMER_EXPIRED;
     }
-    return target_error;
 }
 
-static void gateway_priority_retry_work_handler(struct k_work *work)
+static void notify_failure(app_mesh_arbitration_zephyr_schedule_failure_fn fn,
+                           void *context,
+                           int error,
+                           uint32_t generation,
+                           uint32_t admission_cutoff)
 {
-    struct app_mesh_gateway_command_priority_failure failure = {0};
-    struct app_mesh_gateway_command_priority_ops priority_ops;
-    app_mesh_arbitration_zephyr_schedule_failure_fn failure_handler = NULL;
-    void *failure_ctx = NULL;
+    if (fn != NULL && generation != 0u && admission_cutoff != 0u) {
+        fn(context, error, generation, admission_cutoff);
+    }
+}
+
+static void retry_work_handler(struct k_work *work)
+{
+    app_mesh_arbitration_zephyr_schedule_failure_fn notify = NULL;
+    void *notify_context = NULL;
+    uint32_t failed_generation = 0u;
+    uint32_t failed_cutoff = 0u;
     k_spinlock_key_t key;
     int ret;
 
     ARG_UNUSED(work);
-    key = k_spin_lock(&gateway_priority_lock);
-    if (!app_mesh_gateway_command_priority_schedule_retry_pending(
-            &gateway_priority)) {
-        k_spin_unlock(&gateway_priority_lock, key);
+    key = k_spin_lock(&gateway_handoff_lock);
+    if (gateway_handoff.state != FW_RADIO_HANDOFF_WAIT_RETRY) {
+        k_spin_unlock(&gateway_handoff_lock, key);
         return;
     }
-    priority_ops = gateway_priority_ops();
-    ret = app_mesh_gateway_command_priority_retry_schedule(
-        &gateway_priority, &priority_ops, &failure);
-    if (ret < 0 &&
-        app_mesh_gateway_command_priority_schedule_retry_pending(
-            &gateway_priority)) {
-        /*
-         * Keep the frozen generation and one-shot receive abort asserted.
-         * The safe-boundary owner is also allowed to retry this state, so a
-         * rejected delayed-work reschedule cannot orphan accepted custody.
-         */
-        ret = gateway_priority_retain_retry_locked(
-            &priority_ops, &failure, ret);
+    ret = drive_schedule_locked(FW_EVENT_TIMER_EXPIRED,
+                                &failed_generation,
+                                &failed_cutoff);
+    if (failed_generation != 0u) {
+        notify = failure_handler;
+        notify_context = failure_context;
     }
-    if (failure.generation != 0u) {
-        failure_handler = gateway_schedule_failure_handler;
-        failure_ctx = gateway_schedule_failure_ctx;
-    }
-    k_spin_unlock(&gateway_priority_lock, key);
-    gateway_priority_notify_failure(failure_handler,
-                                    failure_ctx,
-                                    ret,
-                                    &failure);
+    k_spin_unlock(&gateway_handoff_lock, key);
+    notify_failure(notify, notify_context, ret,
+                   failed_generation, failed_cutoff);
 }
 
 int app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
@@ -159,16 +166,15 @@ int app_mesh_arbitration_zephyr_gateway_bind_admission_cutoff(
     if (work == NULL || admission_cutoff == 0u) {
         return -EINVAL;
     }
-    key = k_spin_lock(&gateway_priority_lock);
-    if (gateway_priority_binding.valid &&
-        gateway_priority_binding.work != work) {
-        k_spin_unlock(&gateway_priority_lock, key);
+    key = k_spin_lock(&gateway_handoff_lock);
+    if (pending_binding.valid && pending_binding.work != work) {
+        k_spin_unlock(&gateway_handoff_lock, key);
         return -EBUSY;
     }
-    gateway_priority_binding.work = work;
-    gateway_priority_binding.admission_cutoff = admission_cutoff;
-    gateway_priority_binding.valid = true;
-    k_spin_unlock(&gateway_priority_lock, key);
+    pending_binding.work = work;
+    pending_binding.admission_cutoff = admission_cutoff;
+    pending_binding.valid = true;
+    k_spin_unlock(&gateway_handoff_lock, key);
     return 0;
 }
 
@@ -176,96 +182,90 @@ int app_mesh_arbitration_zephyr_gateway_command_submit(
     const struct app_mesh_arbitration_zephyr_gateway_ops *ops,
     struct k_work_delayable *work)
 {
-    struct app_mesh_arbitration_zephyr_gateway_ops candidate_ops;
-    struct app_mesh_gateway_command_priority_ops priority_ops;
-    bool already_active;
+    struct fw_transition transition;
+    struct fw_event event;
     uint32_t admission_cutoff = 0u;
-    void *waiting_work;
     k_spinlock_key_t key;
     int ret;
 
-    if (ops == NULL || work == NULL) {
+    if (ops == NULL || !ops->gateway_role || work == NULL) {
         return -EINVAL;
     }
-    key = k_spin_lock(&gateway_priority_lock);
-    if (!gateway_priority_retry_work_initialized) {
-        k_work_init_delayable(&gateway_priority_retry_work,
-                              gateway_priority_retry_work_handler);
-        gateway_priority_retry_work_initialized = true;
+    key = k_spin_lock(&gateway_handoff_lock);
+    if (!retry_work_initialized) {
+        fw_radio_handoff_sm_init(&gateway_handoff);
+        k_work_init_delayable(&retry_work, retry_work_handler);
+        retry_work_initialized = true;
     }
-    candidate_ops = *ops;
-    already_active =
-        app_mesh_gateway_command_priority_active(&gateway_priority);
-    waiting_work = gateway_priority.work;
-    if (gateway_priority_binding.valid &&
-        gateway_priority_binding.work == work) {
-        admission_cutoff = gateway_priority_binding.admission_cutoff;
-        memset(&gateway_priority_binding, 0,
-               sizeof(gateway_priority_binding));
+    if (pending_binding.valid && pending_binding.work == work) {
+        admission_cutoff = pending_binding.admission_cutoff;
+        memset(&pending_binding, 0, sizeof(pending_binding));
     }
-    priority_ops = (struct app_mesh_gateway_command_priority_ops) {
-        .gateway_role = candidate_ops.gateway_role,
-        .request_receive_abort = gateway_command_request_receive_abort,
-        .reschedule_now = gateway_command_reschedule_now,
-        .clear_receive_abort = gateway_command_clear_receive_abort,
-        .ctx = &candidate_ops,
-    };
-
-    ret = app_mesh_gateway_command_priority_request(&gateway_priority,
-                                                    &priority_ops,
-                                                    work,
-                                                    admission_cutoff);
-    if (ret == 0 && (!already_active || waiting_work != work)) {
-        gateway_ops = candidate_ops;
+    if (admission_cutoff == 0u) {
+        admission_cutoff = gateway_handoff.identity.active ?
+                               gateway_handoff.admission_cutoff : 1u;
     }
-    k_spin_unlock(&gateway_priority_lock, key);
+    if (gateway_handoff.identity.active && pending_work != work) {
+        k_spin_unlock(&gateway_handoff_lock, key);
+        return -EBUSY;
+    }
+    if (!gateway_handoff.identity.active) {
+        next_generation = generation_next(next_generation);
+        gateway_ops = *ops;
+        pending_work = work;
+        event = (struct fw_event) {
+            .operation_id = GATEWAY_HANDOFF_OPERATION_ID,
+            .generation = next_generation,
+            .target = FW_MACHINE_RADIO,
+            .source = FW_EVENT_SOURCE_SERVICE,
+            .type = FW_EVENT_RADIO_PREEMPT_REQUESTED,
+        };
+    } else {
+        event = handoff_event(FW_EVENT_RADIO_PREEMPT_REQUESTED);
+    }
+    event.payload.value = admission_cutoff;
+    ret = fw_radio_handoff_sm_handle(&gateway_handoff,
+                                     &event,
+                                     &transition) == FW_SM_APPLIED ? 0 :
+          -EBUSY;
+    if (ret == 0 &&
+        transition.effect.type == FW_EFFECT_RADIO_REQUEST_ABORT) {
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+    }
+    k_spin_unlock(&gateway_handoff_lock, key);
     return ret;
 }
 
 int app_mesh_arbitration_zephyr_gateway_receive_abort_observed(void)
 {
-    struct app_mesh_gateway_command_priority_failure failure = {0};
-    struct app_mesh_gateway_command_priority_ops priority_ops;
-    app_mesh_arbitration_zephyr_schedule_failure_fn failure_handler = NULL;
-    void *failure_ctx = NULL;
+    app_mesh_arbitration_zephyr_schedule_failure_fn notify = NULL;
+    void *notify_context = NULL;
+    uint32_t failed_generation = 0u;
+    uint32_t failed_cutoff = 0u;
+    enum fw_event_type trigger;
     k_spinlock_key_t key;
     int ret;
 
-    key = k_spin_lock(&gateway_priority_lock);
-    if (app_mesh_gateway_command_priority_waiting_for_safe_boundary(
-            &gateway_priority)) {
-        priority_ops = gateway_priority_ops();
-        ret = app_mesh_gateway_command_priority_acknowledge_safe_boundary(
-            &gateway_priority, &priority_ops, &failure);
-    } else if (app_mesh_gateway_command_priority_schedule_retry_pending(
-                   &gateway_priority)) {
-        /*
-         * The independent delayed retry is the normal owner. A repeated
-         * safe-boundary observation is a second liveness edge and may make
-         * the same frozen attempt without changing its generation or cutoff.
-         */
-        priority_ops = gateway_priority_ops();
-        ret = app_mesh_gateway_command_priority_retry_schedule(
-            &gateway_priority, &priority_ops, &failure);
+    key = k_spin_lock(&gateway_handoff_lock);
+    if (gateway_handoff.state == FW_RADIO_HANDOFF_WAIT_SAFE_BOUNDARY) {
+        trigger = FW_EVENT_RADIO_SAFE_BOUNDARY;
+    } else if (gateway_handoff.state == FW_RADIO_HANDOFF_WAIT_RETRY) {
+        trigger = FW_EVENT_TIMER_EXPIRED;
     } else {
-        k_spin_unlock(&gateway_priority_lock, key);
+        k_spin_unlock(&gateway_handoff_lock, key);
         return 0;
     }
-    if (ret < 0 &&
-        app_mesh_gateway_command_priority_schedule_retry_pending(
-            &gateway_priority)) {
-        ret = gateway_priority_retain_retry_locked(
-            &priority_ops, &failure, ret);
+    ret = drive_schedule_locked(trigger,
+                                &failed_generation,
+                                &failed_cutoff);
+    if (failed_generation != 0u) {
+        notify = failure_handler;
+        notify_context = failure_context;
     }
-    if (failure.generation != 0u) {
-        failure_handler = gateway_schedule_failure_handler;
-        failure_ctx = gateway_schedule_failure_ctx;
-    }
-    k_spin_unlock(&gateway_priority_lock, key);
-    gateway_priority_notify_failure(failure_handler,
-                                    failure_ctx,
-                                    ret,
-                                    &failure);
+    k_spin_unlock(&gateway_handoff_lock, key);
+    notify_failure(notify, notify_context, ret,
+                   failed_generation, failed_cutoff);
     return ret;
 }
 
@@ -273,9 +273,9 @@ void app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
     app_mesh_arbitration_zephyr_schedule_failure_fn handler,
     void *ctx)
 {
-    k_spinlock_key_t key = k_spin_lock(&gateway_priority_lock);
+    k_spinlock_key_t key = k_spin_lock(&gateway_handoff_lock);
 
-    gateway_schedule_failure_handler = handler;
-    gateway_schedule_failure_ctx = ctx;
-    k_spin_unlock(&gateway_priority_lock, key);
+    failure_handler = handler;
+    failure_context = ctx;
+    k_spin_unlock(&gateway_handoff_lock, key);
 }

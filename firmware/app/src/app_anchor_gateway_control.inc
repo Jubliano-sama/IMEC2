@@ -2402,47 +2402,25 @@ static void gateway_manual_survey_pair_expire(uint32_t now_ms)
     }
 }
 
-static void gateway_manual_survey_pair_arm_go_after_settle(void)
+static void gateway_manual_survey_pair_arm_start_release(void)
 {
     const uint8_t both_endpoints =
         SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
         SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK;
-    uint8_t attempts_started = 0u;
-    int ret;
-
     if (!gateway_manual_survey_pair_state.valid ||
         gateway_manual_survey_pair_state.cleanup_requested ||
         gateway_manual_survey_pair_state.started_mask != both_endpoints ||
         gateway_manual_survey_pair_state.round_id ==
             SURVEY_LEGACY_ROUND_ID ||
-        gateway_manual_survey_pair_state.go_rf_started) {
+        gateway_manual_survey_pair_state.start_release_armed) {
         return;
     }
-    if (gateway_manual_survey_pair_state.go_delivery_handle != 0u) {
-        if (app_node_comm_delivery_attempts_started(
-                gateway_manual_survey_pair_state.go_delivery_handle,
-                &attempts_started) < 0) {
-            return;
-        }
-        if (attempts_started != 0u) {
-            gateway_manual_survey_pair_state.go_rf_started = true;
-            return;
-        }
-        ret = app_node_comm_abandon_delivery(
-            gateway_manual_survey_pair_state.go_delivery_handle);
-        if (ret < 0) {
-            LOG_ERR("manual survey GO re-arm abandonment failed: handle=%u ret=%d",
-                    gateway_manual_survey_pair_state.go_delivery_handle,
-                    ret);
-            app_watchdog_stop_feeding();
-            return;
-        }
-        gateway_manual_survey_pair_state.go_delivery_handle = 0u;
+    if (!gateway_survey_start_release.valid) {
+        return;
     }
-    gateway_manual_survey_pair_state.go_due_ms =
-        k_uptime_get_32() + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
-    (void)gateway_survey_work_reschedule(
-        SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS);
+    gateway_manual_survey_pair_state.start_release_started_at_ms =
+        gateway_survey_start_release.started_at_ms;
+    gateway_manual_survey_pair_state.start_release_armed = true;
 }
 
 static void gateway_manual_survey_pair_note_terminal(
@@ -2477,18 +2455,13 @@ static void gateway_manual_survey_pair_note_terminal(
             (uint8_t)~target_mask;
         if (status == COMMAND_OK) {
             gateway_manual_survey_pair_state.started_mask |= target_mask;
-            gateway_manual_survey_pair_arm_go_after_settle();
+            gateway_manual_survey_pair_arm_start_release();
         }
         break;
     case CMD_SURVEY_ABORT:
         gateway_manual_survey_pair_state.abort_submitted_mask &=
             (uint8_t)~target_mask;
         if (status == COMMAND_OK) {
-            if (gateway_manual_survey_pair_state.go_delivery_handle != 0u) {
-                (void)app_node_comm_abandon_delivery(
-                    gateway_manual_survey_pair_state.go_delivery_handle);
-                gateway_manual_survey_pair_state.go_delivery_handle = 0u;
-            }
             gateway_manual_survey_pair_state.aborted_mask |= target_mask;
             gateway_manual_survey_pair_state.prepare_possible_mask &=
                 (uint8_t)~target_mask;
@@ -2782,153 +2755,6 @@ static bool gateway_survey_wait_for_discovery_collection(void)
 }
 #endif
 
-static bool gateway_manual_survey_pair_service_go(void)
-{
-#if DEVICE_ROLE != ROLE_GATEWAY
-    return false;
-#else
-    const uint8_t both_endpoints =
-        SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
-        SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK;
-    struct node_comm_terminal_event event;
-    struct mesh_outbound outbound;
-    struct survey_round_go go = {0};
-    uint64_t full_now_ms;
-    uint32_t execute_delay_ms;
-    uint32_t run_ms;
-    uint32_t remaining_ms;
-    uint32_t command_seq;
-    uint8_t attempts_started = 0u;
-    int ret;
-
-    if (!gateway_manual_survey_pair_state.valid ||
-        gateway_manual_survey_pair_state.cleanup_requested ||
-        gateway_manual_survey_pair_state.started_mask != both_endpoints ||
-        gateway_manual_survey_pair_state.round_id ==
-            SURVEY_LEGACY_ROUND_ID) {
-        return false;
-    }
-    full_now_ms = (uint64_t)k_uptime_get();
-    gateway_manual_survey_pair_expire((uint32_t)full_now_ms);
-    if (!gateway_manual_survey_pair_state.valid ||
-        gateway_manual_survey_pair_state.cleanup_requested) {
-        return false;
-    }
-    if (gateway_manual_survey_pair_state.go_delivery_handle == 0u) {
-        if (gateway_manual_survey_pair_state.go_rf_started) {
-            return false;
-        }
-        if (!uptime_deadline_reached(
-                (uint32_t)full_now_ms,
-                gateway_manual_survey_pair_state.go_due_ms)) {
-            remaining_ms = uptime_ms_until_deadline(
-                (uint32_t)full_now_ms,
-                gateway_manual_survey_pair_state.go_due_ms);
-            (void)gateway_survey_work_reschedule(remaining_ms);
-            return true;
-        }
-
-        execute_delay_ms =
-            survey_round_go_execute_delay_ms(FLOOD_EPOCH_GLOBAL_TTL);
-        run_ms = gateway_survey_pair_run_delay_ms(
-            &gateway_manual_survey_pair_state.pair);
-        remaining_ms = uptime_ms_until_deadline(
-            (uint32_t)full_now_ms,
-            gateway_manual_survey_pair_state.deadline_ms);
-        if (execute_delay_ms == 0u ||
-            UINT32_MAX - execute_delay_ms < run_ms ||
-            remaining_ms <= execute_delay_ms + run_ms +
-                                SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS) {
-            LOG_ERR("manual survey GO no longer fits prepared lease: survey=%u remaining_ms=%u",
-                    gateway_manual_survey_pair_state.pair.survey_id,
-                    remaining_ms);
-            ret = gateway_manual_survey_pair_begin_cleanup();
-            if (ret < 0) {
-                LOG_ERR("manual survey unfit cleanup admission failed: ret=%d",
-                        ret);
-                app_watchdog_stop_feeding();
-            }
-            return false;
-        }
-        command_seq = gateway_next_broadcast_command_seq();
-        if (command_seq == 0u) {
-            (void)gateway_survey_work_reschedule(
-                GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            return true;
-        }
-        go.operation_generation =
-            gateway_manual_survey_pair_state.pair.operation_generation;
-        go.survey_id =
-            gateway_manual_survey_pair_state.pair.survey_id;
-        go.round_id = gateway_manual_survey_pair_state.round_id;
-        memcpy(go.round_commitment,
-               gateway_manual_survey_pair_state.round_commitment,
-               sizeof(go.round_commitment));
-        ret = gateway_survey_build_go(&outbound,
-                                      &go,
-                                      execute_delay_ms,
-                                      run_ms,
-                                      command_seq);
-        if (ret < 0) {
-            LOG_ERR("manual survey GO build failed: survey=%u ret=%d",
-                    go.survey_id, ret);
-            (void)gateway_survey_work_reschedule(
-                GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            return true;
-        }
-        ret = app_node_comm_submit_delivery(
-            &outbound,
-            NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
-            full_now_ms + execute_delay_ms,
-            ((uint32_t)CMD_SURVEY_GO << 16) |
-                (uint16_t)command_seq,
-            &gateway_manual_survey_pair_state.go_delivery_handle);
-        if (ret < 0) {
-            gateway_manual_survey_pair_state.go_delivery_handle = 0u;
-            (void)gateway_survey_work_reschedule(
-                GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            return true;
-        }
-        status_debug_printf(
-            "DBG_MANUAL_SURVEY_GO_SUBMITTED survey=%u round=%u execute_delay_ms=%u handle=%u\n",
-            go.survey_id,
-            go.round_id,
-            execute_delay_ms,
-            gateway_manual_survey_pair_state.go_delivery_handle);
-    }
-
-    ret = app_node_comm_delivery_attempts_started(
-        gateway_manual_survey_pair_state.go_delivery_handle,
-        &attempts_started);
-    if (ret == 0 && attempts_started != 0u) {
-        gateway_manual_survey_pair_state.go_rf_started = true;
-    }
-    if (!app_node_comm_take_delivery_event_for(
-            gateway_manual_survey_pair_state.go_delivery_handle,
-            &event)) {
-        (void)gateway_survey_work_reschedule(
-            GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-        return true;
-    }
-    gateway_manual_survey_pair_state.go_delivery_handle = 0u;
-    if (event.attempts_started == 0u) {
-        gateway_manual_survey_pair_state.go_due_ms =
-            k_uptime_get_32() + GATEWAY_SURVEY_TRANSACTION_POLL_MS;
-        (void)gateway_survey_work_reschedule(
-            GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-        return true;
-    }
-    gateway_manual_survey_pair_state.go_rf_started = true;
-    status_debug_printf(
-        "DBG_MANUAL_SURVEY_GO_RF survey=%u round=%u attempts=%u terminal=%u\n",
-        gateway_manual_survey_pair_state.pair.survey_id,
-        gateway_manual_survey_pair_state.round_id,
-        event.attempts_started,
-        (unsigned int)event.reason);
-    return false;
-#endif
-}
-
 static void gateway_survey_work_handler(struct k_work *work)
 {
     struct survey_gateway_auto_action action = {0};
@@ -2944,10 +2770,6 @@ static void gateway_survey_work_handler(struct k_work *work)
     }
 #if DEVICE_ROLE == ROLE_GATEWAY
     gateway_survey_service_active_delivery();
-    if (!gateway_survey_active &&
-        gateway_manual_survey_pair_service_go()) {
-        return;
-    }
     if (gateway_survey_finish_pending &&
         (gateway_survey_transaction.active.state == NODE_TRANSACTION_EMPTY ||
          gateway_survey_transaction.active.request_delivery_terminal)) {
@@ -3059,7 +2881,7 @@ static void gateway_survey_work_handler(struct k_work *work)
              * Every pair serializes four accepted PREPARE/START response-ACK
              * settle intervals, even when ranging itself runs in concurrent
              * lanes. Reject an impossible plan before the first PREPARE can
-             * create remote state; observation, GO, RF retry, and cleanup
+             * create remote state; observation, RF retry, and cleanup
              * time only increase the required budget.
              */
             if (!survey_gateway_transaction_pair_plan_fits_minimum_budget(
@@ -3232,12 +3054,12 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
                                            (uint8_t)(ret == PROTO_OK ? 2u : -ret));
         return ret == PROTO_OK ? -EINVAL : mesh_errno_from_proto(ret);
     }
-    if (pair.sample_count > SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
+    if (pair.sample_count != SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
         gateway_emit_host_command_result(host_packet,
                                            command_id,
                                            COMMAND_DENIED,
                                            4u);
-        LOG_WRN("gateway survey pair control rejected: cmd=0x%04x survey=%u samples=%u runtime_max=%u",
+        LOG_WRN("gateway survey pair control rejected: cmd=0x%04x survey=%u samples=%u required=%u",
                 (unsigned int)command_id,
                 pair.survey_id,
                 pair.sample_count,
@@ -4502,16 +4324,24 @@ static void gateway_host_command_submit_next_queued(void)
     struct app_gateway_command_ingress_item item;
     int ret;
 
-    if (k_msgq_peek(&gateway_host_command_msgq, &item) != 0) {
+    if (gateway_host_command_retry_pending ||
+        k_msgq_peek(&gateway_host_command_msgq, &item) != 0) {
         return;
     }
-    ret = gateway_host_command_submit_priority(NULL, item.admission_id);
+    /*
+     * Every terminal path can ask for the FIFO head to run.  Cross one
+     * delayable-work boundary before attempting priority admission so a
+     * permanent admission failure cannot recurse through
+     * submit -> retry -> retire -> submit on the system workqueue stack.
+     */
+    gateway_host_command_retry_pending = true;
+    ret = k_work_reschedule(&gateway_host_command_retry_work, K_NO_WAIT);
     if (ret < 0) {
-        (void)gateway_host_command_retire_failed_generation(
-            item.admission_id,
-            item.admission_id,
-            ret);
-        gateway_host_command_submit_next_queued();
+        gateway_host_command_retry_pending = false;
+        LOG_ERR("gateway command FIFO kick scheduling failed closed: admission=%u ret=%d",
+                item.admission_id,
+                ret);
+        app_watchdog_stop_feeding();
     }
 }
 
@@ -4886,6 +4716,15 @@ bool gateway_handle_ble_frame(const uint8_t *frame,
     };
     bool command_handled;
     int ret;
+
+    /* A GUI receipt is a host-only custody boundary, never a mesh command. */
+    ret = gateway_ble_accept_host_receipt_frame(frame, frame_len);
+    if (ret != 0) {
+        if (ret < 0) {
+            LOG_WRN("gateway BLE host receipt rejected: %d", ret);
+        }
+        return false;
+    }
 
     ret = app_mesh_command_orchestrator_gateway_ingress(
         &ingress_ops,

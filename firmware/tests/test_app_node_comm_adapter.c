@@ -3577,7 +3577,7 @@ static void test_durable_burst_reservation_is_atomic_and_retains_protocol_slot(v
         sizeof(reservation_tokens) / sizeof(reservation_tokens[0]);
 
     reset_fixture();
-    assert(APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY == 4u);
+    assert(APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY == 5u);
     assert(app_node_comm_reserve_durable_reliable_uplinks(
                reservation_count,
                reservation_tokens,
@@ -3942,22 +3942,22 @@ static void test_survey_rf_retry_identity_sweep_diversifies_and_caps(void)
 }
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
-static void test_transmitter_freezes_four_full_payloads_with_protocol_reserve(void)
+static void test_transmitter_freezes_five_full_payloads_with_protocol_reserve(void)
 {
-    struct mesh_outbound envelopes[4u];
+    struct mesh_outbound envelopes[5u];
     struct mesh_outbound blocked = reliable_uplink_envelope(140u);
     struct mesh_outbound protocol = reliable_uplink_envelope(141u);
     struct node_comm_terminal_event event;
-    uint8_t expected[4u][900u];
-    uint32_t handles[4u];
+    uint8_t expected[5u][900u];
+    uint32_t handles[5u];
     uint32_t blocked_handle = 0u;
     uint32_t protocol_handle;
 
-    assert(APP_NODE_COMM_MAX_DELIVERIES == 5u);
+    assert(APP_NODE_COMM_MAX_DELIVERIES == 6u);
     assert(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ==
            PACKET_EXT_MAX_PAYLOAD_LEN);
     reset_fixture();
-    for (size_t request = 0u; request < 4u; request++) {
+    for (size_t request = 0u; request < 5u; request++) {
         envelopes[request] = reliable_uplink_envelope(
             (uint16_t)(129u + request));
         for (size_t byte = 0u; byte < sizeof(expected[request]); byte++) {
@@ -3983,24 +3983,24 @@ static void test_transmitter_freezes_four_full_payloads_with_protocol_reserve(vo
     assert(blocked_handle == 0u);
     assert(app_node_comm_submit_protocol_response(
                &protocol, 60000u, 141u, &protocol_handle) == 0);
-    assert(app_node_comm_pending_delivery_count() == 5u);
+    assert(app_node_comm_pending_delivery_count() == 6u);
 
-    for (size_t request = 0u; request < 4u; request++) {
+    for (size_t request = 0u; request < 5u; request++) {
         memset(envelopes[request].payload,
                0,
                sizeof(expected[request]));
         envelopes[request].packet.seq++;
     }
     memset(&protocol, 0, sizeof(protocol));
-    memset(try_uplink_confirmed, 1, 5u * sizeof(try_uplink_confirmed[0]));
+    memset(try_uplink_confirmed, 1, 6u * sizeof(try_uplink_confirmed[0]));
 
-    /* Protocol priority consumes the reserved fifth slot before source work. */
+    /* Protocol priority consumes the reserved sixth slot before source work. */
     assert(app_node_comm_service_deliveries() == 0);
     assert(try_uplink_envelopes[0].packet.seq == 141u);
     assert(app_node_comm_take_delivery_event_for(protocol_handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
 
-    for (size_t request = 0u; request < 4u; request++) {
+    for (size_t request = 0u; request < 5u; request++) {
         assert(app_node_comm_service_deliveries() == 0);
         assert(try_uplink_envelopes[request + 1u].payload_len ==
                sizeof(expected[request]));
@@ -4014,7 +4014,7 @@ static void test_transmitter_freezes_four_full_payloads_with_protocol_reserve(vo
         assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
         assert(event.attempts_started == 1u);
     }
-    assert(try_uplink_calls == 5u);
+    assert(try_uplink_calls == 6u);
     assert(app_node_comm_pending_delivery_count() == 0u);
 }
 #endif
@@ -4282,7 +4282,7 @@ int main(void)
     test_retry_backoff_hashes_complete_packet_identity();
     test_survey_rf_retry_identity_sweep_diversifies_and_caps();
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
-    test_transmitter_freezes_four_full_payloads_with_protocol_reserve();
+    test_transmitter_freezes_five_full_payloads_with_protocol_reserve();
 #endif
     test_durable_uplink_uses_shared_reliable_backend();
     test_durable_uplink_budget_exhaustion_keeps_terminal_reason();

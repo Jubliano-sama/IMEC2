@@ -66,6 +66,7 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_SURVEY_REACH_REQ:
     case MSG_SURVEY_REACH_REPORT:
     case MSG_GATEWAY_COMMAND_EVENT:
+    case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:
     default:
         return false;
@@ -1017,6 +1018,7 @@ int mesh_packet_rx_semantics_validate(const struct proto_packet *packet,
     case MSG_SURVEY_REACH_REQ:
     case MSG_SURVEY_REACH_REPORT:
     case MSG_GATEWAY_COMMAND_EVENT:
+    case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:
         /*
          * These compatibility/control identifiers have no UWB RF lane.

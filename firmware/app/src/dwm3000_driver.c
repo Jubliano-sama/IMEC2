@@ -85,11 +85,12 @@ static atomic_t receive_abort_enabled;
  * and initiator final delay identical first, then reduce this common value only
  * after proving the slower path still has headroom.
  *
- * Current timing-critical frame sizes before the radio FCS:
- *   poll=41 B, response=49 B, final=53 B, report=49 B.
- * The initiator receives an 8 B longer response before scheduling the final
- * than the responder receives before scheduling the response. At 850 kbps that
- * path delta is ceil(8 B * 8 bits * 1e6 / 850e3) = 76 us. The shared
+ * Current timing-critical frame sizes before the radio FCS are 42 B for a
+ * diagnostic/survey poll, 46 B for a normal-click poll, 50 B for a response,
+ * 57 B for a final, and 50 B for a report. The worst case remains the compact
+ * poll: the initiator receives an 8 B longer response before scheduling the
+ * final than the responder receives before scheduling the response. At
+ * 850 kbps that path delta is ceil(8 B * 8 bits * 1e6 / 850e3) = 76 us. The shared
  * UWB_RANGE_REPLY_DELAY_UUS DWM/DW3000 delayed-TX delay intentionally lets the
  * shorter poll path wait, keeping both reply times equal. The shared protocol
  * header keeps separate provisional short-range and long-range delay presets;

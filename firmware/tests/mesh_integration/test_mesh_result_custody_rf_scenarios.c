@@ -1,6 +1,7 @@
 #include "gateway_command.h"
 #include "mesh_sim.h"
 #include "mesh_sim_invariants.h"
+#include "semantic_digest.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,7 +25,7 @@
 #define MAX_IDENTICAL_RESULT_BUNDLE_TX 4u
 #define MAX_IDENTICAL_RESULT_BUNDLE_TX_PER_RADIO 4u
 #define MAX_IDENTICAL_EACK_TX_PER_RADIO 2u
-#define MAX_TOTAL_EACK_TX 9u
+#define MAX_TOTAL_EACK_TX 14u
 #define EXPECTED_LEAF_EACK_FORWARDS 1u
 
 struct fixture {
@@ -698,8 +699,11 @@ static bool lose_gateway_ack_then_accept_duplicate_retry(
     CHECK(retry.packet.message_age_ms > accepted_bundle->packet.message_age_ms);
     CHECK(transmit_outbound(f, f->collector, &gateway_receiver, 1u, &retry,
                             &retry_tx_index) == MESH_SIM_OK);
-    /* Collection duplicates are deliberately redelivered to the app so its
-     * durable semantic store can classify them before another ACK is sent. */
+    /*
+     * The gateway's RAM semantic admission may redeliver an exact collection
+     * duplicate, but an ordinary gateway ACK only acknowledges gateway
+     * acceptance; source custody remains until the exact collection EACK.
+     */
     CHECK(gateway->delivery_count == 1u);
     CHECK(gateway->gateway_semantic_commit_count == 1u);
     CHECK(gateway->gateway_semantic_duplicate_redelivery_count == 1u);
@@ -726,8 +730,8 @@ static bool lose_gateway_ack_then_accept_duplicate_retry(
     CHECK(f->world.transmissions[ack_tx_index].start_us -
               f->world.transmissions[retry_tx_index].end_us <=
           SAME_TURN_ACK_BOUND_US);
-    CHECK(collector->relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(!collector->relay.outbox_record.valid);
+    CHECK(collector->relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+    CHECK(collector->relay.outbox_record.valid);
     return true;
 }
 
@@ -766,6 +770,97 @@ static bool build_stale_eack(const struct mesh_outbound *correct,
     return true;
 }
 
+static bool build_recovery_eack_for_bundle(
+    const struct mesh_outbound *ordinary,
+    const struct mesh_relay *relay,
+    struct mesh_outbound *recovery)
+{
+    struct gateway_collection_eack eack;
+    uint8_t digest[SEMANTIC_DIGEST_SHA256_LEN];
+    size_t payload_len = 0u;
+    uint32_t recovery_attempt_id;
+
+    CHECK(ordinary != NULL);
+    CHECK(relay != NULL);
+    CHECK(recovery != NULL);
+    CHECK(relay->pending.state != MESH_RELAY_TX_IDLE);
+    CHECK(relay->pending.packet.msg_type == MSG_RESULT_BUNDLE);
+    CHECK(gateway_collection_eack_from_tlvs(ordinary->payload,
+                                             ordinary->payload_len,
+                                             &eack) == PROTO_OK);
+    CHECK(semantic_digest_sha256(relay->pending.payload,
+                                 relay->pending.payload_len,
+                                 digest));
+
+    /* Recovery EACKs have a fresh transport attempt identity, while the
+     * ordinary collection fields continue to identify the same command. */
+    recovery_attempt_id = (uint32_t)eack.packet_sequence + 1u;
+    if (recovery_attempt_id == 0u) {
+        recovery_attempt_id = 1u;
+    }
+    eack.expected_count = 1u;
+    eack.received_count = 1u;
+    eack.packet_sequence = (uint16_t)recovery_attempt_id;
+    if (eack.packet_sequence == 0u) {
+        eack.packet_sequence = 1u;
+        recovery_attempt_id = 1u;
+    }
+    eack.eack_format = EACK_FORMAT_EXPLICIT_RECEIVED_LIST;
+    eack.retry_round = 0u;
+    eack.next_retry_spread_ms = 0u;
+    eack.collection_open = false;
+
+    memset(recovery, 0, sizeof(*recovery));
+    CHECK(gateway_collection_eack_append_tlvs(recovery->payload,
+                                               sizeof(recovery->payload),
+                                               &payload_len,
+                                               &eack) == PROTO_OK);
+    CHECK(tlv_append_u32(recovery->payload,
+                         sizeof(recovery->payload),
+                         &payload_len,
+                         TLV_COLLECTION_RECOVERY_ATTEMPT_ID,
+                         recovery_attempt_id) == PROTO_OK);
+    CHECK(tlv_append_u64(recovery->payload,
+                         sizeof(recovery->payload),
+                         &payload_len,
+                         TLV_NODE_ID,
+                         relay->pending.packet.src_id) == PROTO_OK);
+    CHECK(tlv_append_u16(recovery->payload,
+                         sizeof(recovery->payload),
+                         &payload_len,
+                         TLV_RESULT_SEQ,
+                         relay->pending.packet.seq) == PROTO_OK);
+    CHECK(tlv_append_u16(recovery->payload,
+                         sizeof(recovery->payload),
+                         &payload_len,
+                         TLV_PAYLOAD_LEN,
+                         relay->pending.payload_len) == PROTO_OK);
+    CHECK(tlv_append_bytes(recovery->payload,
+                           sizeof(recovery->payload),
+                           &payload_len,
+                           TLV_RESULT_SHA256_COMMITMENT,
+                           digest,
+                           sizeof(digest)) == PROTO_OK);
+    recovery->packet = (struct proto_packet) {
+        .msg_type = MSG_GATEWAY_COLLECTION_EACK,
+        .flags = 0u,
+        .src_id = eack.gateway_id,
+        .dst_id = MESH_BROADCAST_ID,
+        .session_id = eack.command_seq,
+        .seq = eack.packet_sequence,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+        .payload_len = (uint16_t)payload_len,
+    };
+    recovery->payload_len = (uint16_t)payload_len;
+    recovery->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    recovery->next_hop_id = MESH_BROADCAST_ID;
+    CHECK(gateway_collection_eack_packet_validate(&recovery->packet,
+                                                   recovery->payload,
+                                                   recovery->payload_len,
+                                                   NULL) == PROTO_OK);
+    return true;
+}
+
 static bool drain_leaf_eack_forwards(struct fixture *f)
 {
     const uint8_t children[] = {f->child_a, f->child_b};
@@ -799,6 +894,9 @@ static bool deliver_eack_with_loss_stale_and_duplicate(struct fixture *f)
     struct mesh_outbound eack;
     struct mesh_outbound upstream_forward;
     struct mesh_outbound collector_forward;
+    struct mesh_outbound recovery_eack;
+    struct mesh_outbound recovery_upstream_forward;
+    struct mesh_outbound recovery_collector_forward;
     struct mesh_outbound stale;
     struct mesh_outbound malformed;
     const uint8_t upstream_receiver = f->upstream;
@@ -877,6 +975,45 @@ static bool deliver_eack_with_loss_stale_and_duplicate(struct fixture *f)
     CHECK(mesh_sim_count_transitions(&f->world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      CHILD_B_ID) == 1u);
+    CHECK(drain_leaf_eack_forwards(f));
+
+    /* The ordinary collection EACK acknowledges gateway collection state,
+     * while this bundle source needs the exact recovery identity before its
+     * durable source custody can be released.  Exercise that terminal EACK
+     * over the same gateway -> upstream -> collector -> leaves path. */
+    CHECK(build_recovery_eack_for_bundle(&collector_forward,
+                                         &collector->relay,
+                                         &recovery_eack));
+    CHECK(transmit_outbound(f,
+                            f->gateway,
+                            &upstream_receiver,
+                            1u,
+                            &recovery_eack,
+                            NULL) == MESH_SIM_OK);
+    CHECK(take_queued_outbound(upstream,
+                               MSG_GATEWAY_COLLECTION_EACK,
+                               MESH_BROADCAST_ID,
+                               true,
+                               &recovery_upstream_forward) == MESH_SIM_OK);
+    CHECK(transmit_outbound(f,
+                            f->upstream,
+                            &collector_receiver,
+                            1u,
+                            &recovery_upstream_forward,
+                            NULL) == MESH_SIM_OK);
+    CHECK(collector->relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(!collector->relay.outbox_record.valid);
+    CHECK(take_queued_outbound(collector,
+                               MSG_GATEWAY_COLLECTION_EACK,
+                               MESH_BROADCAST_ID,
+                               true,
+                               &recovery_collector_forward) == MESH_SIM_OK);
+    CHECK(transmit_outbound(f,
+                            f->collector,
+                            children,
+                            2u,
+                            &recovery_collector_forward,
+                            NULL) == MESH_SIM_OK);
     CHECK(drain_leaf_eack_forwards(f));
     return true;
 }

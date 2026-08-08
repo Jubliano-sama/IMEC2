@@ -5,9 +5,11 @@
 #include "app_config.h"
 
 #include <zephyr/kernel.h>
+#if !defined(APP_STACK_DIAG_NATIVE_TEST)
 #include <zephyr/init.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/util.h>
+#endif
 
 #include <errno.h>
 #include <stdarg.h>

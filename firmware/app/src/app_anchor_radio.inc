@@ -1,3 +1,5 @@
+#include "app_anchor_click_event_runtime.h"
+
 #line 6569 __BASE_FILE__
 #define SURVEY_PAIR_RESULT_TIMING_TLV_MAX_LEN                            \
     (PROTO_TLV_U8_ENCODED_LEN + (2u * PROTO_TLV_U16_ENCODED_LEN) +     \
@@ -173,6 +175,10 @@ static void anchor_range_window_record(
         report->first_exchange_start_ms = result->exchange_start_ms;
         report->have_exchange_start_ms = true;
     }
+    if (!report->have_click_timestamp_ms && result->click_timestamp_present) {
+        report->click_timestamp_ms = result->click_timestamp_ms;
+        report->have_click_timestamp_ms = true;
+    }
 
     if (!report->have_result || result->status == RANGE_OK) {
         report->result = *result;
@@ -181,6 +187,10 @@ static void anchor_range_window_record(
     if (report->have_exchange_start_ms) {
         report->result.exchange_start_ms = report->first_exchange_start_ms;
         report->result.exchange_started = true;
+    }
+    if (report->have_click_timestamp_ms) {
+        report->result.click_timestamp_ms = report->click_timestamp_ms;
+        report->result.click_timestamp_present = true;
     }
     if (result->rsl_sampled && !report->rsl_sampled) {
         sampled_rsl = result->rsl_dbm;
@@ -243,6 +253,89 @@ static void anchor_range_window_finalize(
                                         (report->sample_count / 2u)) /
                                        report->sample_count);
     report->result.status = RANGE_OK;
+}
+
+/*
+ * The event runtime observes this worker's already-held radio lease.  It is
+ * intentionally kept separate from radio_guard_uwb_start()/stop(): aborting
+ * a protocol phase must never release the physical Channel-5 owner here.
+ */
+static void anchor_click_event_abort_if_needed(const char *reason)
+{
+    int ret;
+    bool result_owned;
+
+    if (!app_anchor_click_event_runtime_active()) {
+        return;
+    }
+    result_owned = app_anchor_click_event_runtime_result_owned();
+    ret = app_anchor_click_event_runtime_abort(k_uptime_get_32(), NULL);
+    if (ret < 0) {
+        LOG_ERR("anchor click event abort failed: reason=%s ret=%d",
+                reason != NULL ? reason : "unknown",
+                ret);
+    }
+    if (!result_owned) {
+        /* This clears only the protocol epoch; the radio lease is external. */
+        uwb_anchor_abort_epoch(&anchor_uwb_session);
+    }
+}
+
+static bool anchor_click_event_handle(enum fw_event_type type,
+                                      const char *reason)
+{
+    int ret = app_anchor_click_event_runtime_handle(type,
+                                                     k_uptime_get_32(),
+                                                     NULL);
+
+    if (ret < 0) {
+        LOG_ERR("anchor click event transition failed: event=%u reason=%s ret=%d",
+                type,
+                reason != NULL ? reason : "unknown",
+                ret);
+        return false;
+    }
+    return true;
+}
+
+static bool anchor_click_event_authorize_discovery_reply(const char *reason)
+{
+    struct fw_transition transition;
+    int ret = app_anchor_click_event_runtime_handle(
+        FW_EVENT_DISCOVER_RECEIVED, k_uptime_get_32(), &transition);
+
+    if (ret < 0) {
+        LOG_ERR("anchor click discovery transition failed: reason=%s ret=%d",
+                reason != NULL ? reason : "unknown", ret);
+        return false;
+    }
+    if (transition.effect.type != FW_EFFECT_ANCHOR_SEND_DISCOVERY_REPLY) {
+        LOG_ERR("anchor click discovery transition has wrong effect: reason=%s effect=%u",
+                reason != NULL ? reason : "unknown",
+                transition.effect.type);
+        return false;
+    }
+    return true;
+}
+
+static bool anchor_click_event_authorize_range(const char *reason)
+{
+    struct fw_transition transition;
+    int ret = app_anchor_click_event_runtime_handle(
+        FW_EVENT_RANGE_DUE, k_uptime_get_32(), &transition);
+
+    if (ret < 0) {
+        LOG_ERR("anchor click range transition failed: reason=%s ret=%d",
+                reason != NULL ? reason : "unknown", ret);
+        return false;
+    }
+    if (transition.effect.type != FW_EFFECT_ANCHOR_RANGE) {
+        LOG_ERR("anchor click range transition has wrong effect: reason=%s effect=%u",
+                reason != NULL ? reason : "unknown",
+                transition.effect.type);
+        return false;
+    }
+    return true;
 }
 
 static int anchor_start_uwb_scan(void);
@@ -627,6 +720,16 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             LOG_ERR("anchor accepted range could not obtain durable report ownership: event=%u ret=%d",
                     schedule->click_event_id,
                     report_ret);
+        } else if ((schedule->flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) != 0u &&
+                   window_report.have_result &&
+                   app_anchor_click_event_runtime_active() &&
+                   !anchor_click_event_handle(FW_EVENT_RESULT_RETAINED,
+                                              "range-result-retained")) {
+            LOG_ERR("anchor range result was queued but event custody transition failed: event=%u",
+                    schedule->click_event_id);
+            if (report_status != NULL) {
+                *report_status = -EPROTO;
+            }
         }
     }
 #endif
@@ -888,6 +991,15 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 decision);
         return false;
     }
+    ret = app_anchor_click_event_runtime_claim(first_claim,
+                                               k_uptime_get_32(),
+                                               NULL);
+    if (ret < 0) {
+        LOG_ERR("anchor accepted UWB WAKE_CLAIM but event phase could not start: ret=%d",
+                ret);
+        uwb_anchor_abort_epoch(&anchor_uwb_session);
+        return false;
+    }
     selected_decision = decision;
     LOG_DBG("anchor UWB claim arbitration: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx ret=%d decision=%u",
             (unsigned long long)first_claim->clicker_id,
@@ -980,6 +1092,15 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 selected_claim = claim;
                 selected_rx_ms = k_uptime_get();
                 selected_quality = quality;
+                ret = app_anchor_click_event_runtime_claim(&claim,
+                                                           k_uptime_get_32(),
+                                                           NULL);
+                if (ret < 0) {
+                    LOG_ERR("anchor priority claim replaced RF epoch but event phase could not restart: ret=%d",
+                            ret);
+                    uwb_anchor_abort_epoch(&anchor_uwb_session);
+                    return false;
+                }
             } else if (quality > selected_quality) {
                 selected_quality = quality;
             }
@@ -997,6 +1118,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     click_priority = app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
     if (click_priority && mesh_preempt_for_click_event() < 0) {
         LOG_ERR("anchor click claim deferred because mesh custody preemption failed");
+        anchor_click_event_abort_if_needed("mesh-preemption");
         return false;
     }
     anchor_click_window_set_active(click_priority);
@@ -1131,6 +1253,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                 if (click_priority) {
                     continue;
                 }
+                anchor_click_event_abort_if_needed("mesh-frame-during-discovery");
                 return true;
             }
             status_debug_printf("DBG_ANCHOR_MESH_AFTER_WAKE_REJECT len=%u type=0x%02x q=%u discover_ret=%d valid=%u queued=%u\n",
@@ -1166,6 +1289,7 @@ discovery_miss:
                                                &reply);
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY build rejected: %d", ret);
+            anchor_click_event_abort_if_needed("discovery-reply-build");
             return true;
         }
 #if defined(CONFIG_IMEC_ML_ANCHOR)
@@ -1199,6 +1323,7 @@ discovery_miss:
                         discover.discovery_slot_count,
                         ret);
             }
+            anchor_click_event_abort_if_needed("discovery-slot");
             return true;
         }
         if (provisioning_state == APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
@@ -1217,13 +1342,20 @@ discovery_miss:
         ret = uwb_encode_discovery_reply(&reply, frame, sizeof(frame), &frame_len);
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY encode failed: %d", ret);
+            anchor_click_event_abort_if_needed("discovery-reply-encode");
             return true;
+        }
+        if (!anchor_click_event_authorize_discovery_reply(
+                "discovery-reply-send")) {
+            anchor_click_event_abort_if_needed("discovery-reply-transition");
+            return false;
         }
         ret = dwm3000_driver_send_frame(frame,
                                         frame_len,
                                         UWB_DISCOVERY_REPLY_TX_TIMEOUT_MS);
         if (ret < 0) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY TX failed: %d", ret);
+            anchor_click_event_abort_if_needed("discovery-reply-tx");
             return true;
         }
         LOG_INF("anchor UWB DISCOVERY_REPLY sent: clicker=0x%016llx slot=%u source=%s quality=%u",
@@ -1244,6 +1376,7 @@ discovery_miss:
                 last_discovery_ret,
                 last_discovery_decode_ret,
                 UWB_DISCOVERY_LISTEN_MS);
+        anchor_click_event_abort_if_needed("discovery-timeout");
         return true;
     }
 
@@ -1313,12 +1446,14 @@ discovery_miss:
             ret = uwb_decode_range_release(frame, frame_len, &release);
             if (ret != PROTO_OK) {
                 LOG_WRN("anchor UWB RANGE_RELEASE decode failed: %d", ret);
+                anchor_click_event_abort_if_needed("range-release-decode");
                 return true;
             }
 
             ret = uwb_anchor_accept_range_release(&anchor_uwb_session, &release);
             if (ret != PROTO_OK) {
                 LOG_WRN("anchor rejected UWB RANGE_RELEASE: %d", ret);
+                anchor_click_event_abort_if_needed("range-release-reject");
                 return true;
             }
 
@@ -1328,6 +1463,7 @@ discovery_miss:
                     release.discovered_anchor_count,
                     release.min_anchor_count,
                     release.reason);
+            anchor_click_event_abort_if_needed("range-release");
             return true;
         }
 
@@ -1339,11 +1475,13 @@ discovery_miss:
             ret = uwb_decode_anchor_pair_schedule(frame, frame_len, &pair_schedule);
             if (ret != PROTO_OK) {
                 LOG_WRN("anchor pair-survey schedule decode failed: %d", ret);
+                anchor_click_event_abort_if_needed("pair-schedule-decode");
                 return true;
             }
             if (!anchor_pair_schedule_matches_epoch(&pair_schedule)) {
                 LOG_WRN("anchor rejected pair-survey schedule identity: survey=%u",
                         pair_schedule.survey_id);
+                anchor_click_event_abort_if_needed("pair-schedule-identity");
                 return true;
             }
             if (retained_sleep_us != NULL) {
@@ -1353,6 +1491,7 @@ discovery_miss:
             } else {
                 (void)anchor_run_clicker_pair_survey(&pair_schedule, schedule_rx_ms);
             }
+            anchor_click_event_abort_if_needed("pair-survey-complete");
             return true;
         }
 #endif
@@ -1360,6 +1499,7 @@ discovery_miss:
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB RANGE_SCHEDULE decode failed: %d", ret);
+            anchor_click_event_abort_if_needed("range-schedule-decode");
             return true;
         }
 
@@ -1371,11 +1511,37 @@ discovery_miss:
             LOG_INF("anchor not selected in UWB RANGE_SCHEDULE: clicker=0x%016llx event_seq=%u",
                     (unsigned long long)schedule.clicker_id,
                     schedule.click_event_id);
+            anchor_click_event_abort_if_needed("range-schedule-not-selected");
             return true;
         }
         if (ret != PROTO_OK) {
             LOG_WRN("anchor rejected UWB RANGE_SCHEDULE: %d", ret);
+            anchor_click_event_abort_if_needed("range-schedule-reject");
             return true;
+        }
+
+        {
+            struct fw_transition transition;
+
+            ret = app_anchor_click_event_runtime_schedule_received(
+                discover_received,
+                k_uptime_get_32(),
+                &transition);
+            if (ret == 0 &&
+                transition.effect.type != FW_EFFECT_START_TIMER) {
+                LOG_ERR("anchor click schedule transition has wrong effect: effect=%u",
+                        transition.effect.type);
+                ret = -EPROTO;
+            }
+        }
+        if (ret < 0) {
+            LOG_ERR("anchor accepted UWB RANGE_SCHEDULE but event phase could not advance");
+            anchor_click_event_abort_if_needed("range-schedule-transition");
+            return false;
+        }
+        if (!anchor_click_event_authorize_range("range-schedule-due")) {
+            anchor_click_event_abort_if_needed("range-due-transition");
+            return false;
         }
 
         range_sleep_us = anchor_run_scheduled_uwb_ranges(
@@ -1394,10 +1560,12 @@ discovery_miss:
              * ownership of the report. Keep the handler result truthful
              * while the persistence boundary forces watchdog recovery.
              */
+            anchor_click_event_abort_if_needed("range-report-retention");
             return false;
         }
     } else {
         LOG_WRN("anchor UWB RANGE_SCHEDULE not received: ret=%d", ret);
+        anchor_click_event_abort_if_needed("range-schedule-timeout");
     }
     return true;
 }
@@ -1496,6 +1664,9 @@ release_radio:
     anchor_set_uwb_busy(false);
 
 complete:
+    /* Preserve retained report custody; abort only non-terminal phases. */
+    anchor_click_event_abort_if_needed(handled ? "click-complete" :
+                                       "click-aborted");
     mesh_range_report_batch_abort(claim->clicker_id,
                                   claim->click_event_id,
                                   claim->attempt_index);

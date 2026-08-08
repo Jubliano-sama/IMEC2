@@ -150,19 +150,19 @@ ctest --test-dir firmware/build-stress \
 
 The real Here-I-Am route request/reply/ACK and reverse-route formation, deeper
 discovery announce/listen, assignment publisher/persistence,
-START/GO/ABORT lease cleanup, survey journal/reset, and maximum-depth topology
+START/ABORT lease cleanup, survey journal/reset, and maximum-depth topology
 cases remain in their focused assignment, gateway-control, survey PHY/topology,
 and pair-lease suites. They are part of the required labels below rather than
 being approximated inside one oversized scenario.
 
 `mesh_survey_phy_scenarios` carries one gateway-planned pair across the
-remaining radio boundary. Both endpoint leases cross PREPARE, START custody,
-and matching GO before real production POLL, RESP, FINAL, and REPORT codecs run
+remaining radio boundary. Both endpoint leases cross PREPARE and synchronized
+START custody before real production POLL, RESP, FINAL, and REPORT codecs run
 over complete channel-5 airtime windows. The first FINAL has no receive window,
-so the same sample retries within the public initiator timeout; all three
+so the same sample retries within the public initiator timeout; all five
 samples then complete exactly once, a duplicate sample is idempotent, stale
 operation-N input cannot mutate operation N+1, and the gateway round plus both
-radios must release all ownership within an exact 15-transmission bound. Pair
+radios must release all ownership within an exact 23-transmission bound. Pair
 results carry the synchronized round generation; the runtime regression queues
 the identical pair for rerun and proves a delayed result from batch N cannot
 fill batch N+1's freshly cleared sample mask.
@@ -174,7 +174,7 @@ coordinator; the source-invariant and application-policy tests in the same
 matrix cover those seams separately.
 
 `mesh_survey_round_adversarial_lifecycle` extends the continuous path through
-all four discovery announce rounds and PREPARE/START/GO/ABORT. It forces a
+all four discovery announce rounds and PREPARE/START/ABORT. It forces a
 gateway-to-relay-to-leaf topology and injects lost, duplicated, corrupted,
 reordered, stale, and expired controls plus a reset and route repair between
 operations N and N+1. It bounds total RF traffic, identical control traffic,

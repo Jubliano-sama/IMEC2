@@ -39,6 +39,7 @@ static void test_rf_channel_admission_is_exhaustive_and_fail_closed(void)
         MSG_SURVEY_REACH_REQ,
         MSG_SURVEY_REACH_REPORT,
         MSG_GATEWAY_COMMAND_EVENT,
+        MSG_GATEWAY_HOST_RECEIPT,
         MSG_ERROR,
     };
 
@@ -83,6 +84,7 @@ static void test_non_rf_types_fail_semantic_ingress(void)
         MSG_SURVEY_REACH_REQ,
         MSG_SURVEY_REACH_REPORT,
         MSG_GATEWAY_COMMAND_EVENT,
+        MSG_GATEWAY_HOST_RECEIPT,
         MSG_ERROR,
     };
     const uint64_t source_id = UINT64_C(0x1000000000000001);

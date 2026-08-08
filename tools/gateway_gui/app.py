@@ -17,7 +17,11 @@ from .command_orchestration import (
     GatewayCommandPlan,
     GatewayCommandTransition,
 )
-from .delivery_dedup import GatewayClickDeduplicator, PacketDisposition
+from .delivery_dedup import (
+    GatewayPacketDeduplicator,
+    PacketDisposition,
+    is_host_delivery_packet,
+)
 from .diagnostics_integration import GatewayDiagnosticsMixin
 from .operation_policy import (
     ASSIGNMENT_DEFAULT_BUDGET_MS,
@@ -46,6 +50,7 @@ from .protocol import (
     GATEWAY_STREAM_FLAG_TRUNCATED,
     MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
+    MSG_GATEWAY_COMMAND_EVENT,
     Packet,
     STREAM_CLASS_NAMES,
     TLV_ANCHOR_DIAG_BYTES,
@@ -99,6 +104,7 @@ from .protocol import (
     TLV_UWB_RX_DIAG_BYTES,
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
+    build_gateway_host_receipt,
     build_here_i_am_command,
     click_samples,
     decode_cir_sample,
@@ -173,12 +179,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.events: queue.Queue[dict[str, Any]] = queue.Queue()
         self.transport = BleTransport(self.events.put)
         self.packet_by_iid: dict[str, Packet] = {}
-        # The gateway journal is durable, but BLE notification completion and
-        # NVS clear are separate operations. Keep this session cache alive
-        # across reconnects so an exact journal replay cannot become a second
-        # visible/model/export record. It is intentionally RAM-only and
-        # bounded; a new GUI process starts a fresh host session.
-        self.click_delivery_dedup = GatewayClickDeduplicator()
+        # Keep reliable host records in a bounded RAM cache across BLE
+        # reconnects so an exact replay cannot become a second visible/model
+        # record. The cache is scoped when the GATT gateway identity arrives;
+        # a new GUI process starts a fresh host session.
+        self.delivery_dedup = GatewayPacketDeduplicator()
         self.cir_reassembler = CirReassembler()
         self.cir_key_by_packet_id: dict[int, CirAssemblyKey] = {}
         self.cir_errors_by_packet_id: dict[int, tuple[str, ...]] = {}
@@ -238,7 +243,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
             value=str(PAIR_DEFAULT_MAX_RERUNS)
         )
         self.pair_max_parallel_text = tk.StringVar(value="auto (25)")
-        self.sample_count_text = tk.StringVar(value="1")
+        self.sample_count_text = tk.StringVar(
+            value=str(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
+        )
         self.sample_warning_text = tk.StringVar(value="Select a click report to inspect aligned samples.")
         self.cir_state_text = tk.StringVar(value="Select a CIR diagnostic fragment to inspect its assembly.")
 
@@ -411,11 +418,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
             "classifier still serializes pairs that can interfere.",
         )
         self._labeled_spin(
-            discovery, 10, "Pair samples", self.sample_count_text, 1, 4
+            discovery, 10, "Pair samples", self.sample_count_text, 5, 5
         )
         ttk.Label(
             discovery,
-            text="Each pair can collect 1 to 4 samples in its shared survey round.",
+            text="Each pair collects exactly 5 samples in its shared survey round.",
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
@@ -1163,10 +1170,16 @@ class GatewayGui(GatewayDiagnosticsMixin):
             label = str(event.get("label", "command"))
             byte_count = int(event.get("byte_count", 0))
             chunks = int(event.get("chunks", 0))
-            message = (
-                f"BLE write complete for {label}: {byte_count} bytes in {chunks} ATT chunk(s); "
-                "command outcome is pending COMMAND_RESULT"
-            )
+            if label == "gateway host receipt":
+                message = (
+                    f"BLE write complete for {label}: {byte_count} bytes in "
+                    f"{chunks} ATT chunk(s); gateway will release custody after validation"
+                )
+            else:
+                message = (
+                    f"BLE write complete for {label}: {byte_count} bytes in {chunks} ATT chunk(s); "
+                    "command outcome is pending COMMAND_RESULT"
+                )
             self.status_text.set(message)
             self._append_log("tx", message)
 
@@ -1219,6 +1232,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"observed {format_device_id(value)}"
             )
         self.gateway_id = value
+        delivery_dedup = getattr(self, "delivery_dedup", None)
+        if delivery_dedup is not None:
+            delivery_dedup.set_gateway_id(value)
         self.gateway_id_text.set(format_device_id(value))
         self.gateway_id_source.set(source)
         self._update_command_state()
@@ -1263,25 +1279,136 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
+    @staticmethod
+    def _is_receiptable_gateway_packet(packet: Packet) -> bool:
+        """Return whether a packet is a gateway stream record we can receipt."""
+        return (
+            packet.transport == "gateway-stream-v1"
+            and packet.msg_type != MSG_GATEWAY_COMMAND_EVENT
+            and is_host_delivery_packet(packet)
+        )
+
+    def _log_gateway_receipt(self, tag: str, message: str) -> None:
+        """Keep receipt failures non-fatal for headless/model receive paths."""
+        try:
+            self._append_log(tag, message)
+        except Exception:
+            # Logging must not turn a custody-preserving transport failure into
+            # a receive-loop failure, especially for model-only fixtures.
+            pass
+
+    def _maybe_send_gateway_host_receipt(
+        self,
+        packet: Packet,
+        delivery: Any,
+        *,
+        gateway_scope: int | None = None,
+    ) -> None:
+        """Receipt a cached stream record while leaving custody upstream on error."""
+        if delivery.disposition not in (
+            PacketDisposition.NEW,
+            PacketDisposition.DUPLICATE,
+        ):
+            return
+        if not delivery.cached or not self._is_receiptable_gateway_packet(packet):
+            return
+
+        if gateway_scope is None:
+            configured_gateway_id = getattr(self, "gateway_id", None)
+            gateway_id = (
+                packet.dst_id
+                if configured_gateway_id is None
+                else configured_gateway_id
+            )
+        else:
+            gateway_id = gateway_scope
+        if gateway_id != packet.dst_id:
+            self._log_gateway_receipt(
+                "error",
+                "Not sending host receipt: stream destination "
+                f"{format_device_id(packet.dst_id)} does not match gateway "
+                f"scope {format_device_id(gateway_id)}",
+            )
+            return
+        if gateway_id == 0:
+            # Before the GATT identity event arrives, the stream destination is
+            # the only safe gateway scope available to the GUI.
+            self._log_gateway_receipt(
+                "error",
+                "Not sending host receipt: gateway identity is unavailable "
+                "and the stream record has no destination",
+            )
+            return
+
+        try:
+            host_id = self._parse_int("Host ID", self.host_id_text.get())
+        except (AttributeError, ValueError) as exc:
+            self._log_gateway_receipt("error", f"Not sending host receipt: {exc}")
+            return
+
+        try:
+            receipt = build_gateway_host_receipt(
+                packet,
+                host_id=host_id,
+                gateway_id=gateway_id,
+            )
+            self.transport.send_frame(receipt.frame, "gateway host receipt")
+        except Exception as exc:
+            # A failed write must not alter the cache or semantic models; the
+            # gateway will retain source custody and replay the stream record.
+            self._log_gateway_receipt(
+                "error",
+                f"Gateway host receipt was not sent; upstream custody remains: "
+                f"{type(exc).__name__}: {exc}",
+            )
+
     def _add_packet(
         self, packet: Packet, *, received_at: float | None = None
     ) -> None:
-        dedup = getattr(self, "click_delivery_dedup", None)
+        dedup = getattr(self, "delivery_dedup", None)
         if dedup is None:
             # Keep headless/model fixtures that construct GatewayGui via
             # ``__new__`` on the same safe receive path as the real app.
-            dedup = GatewayClickDeduplicator()
-            self.click_delivery_dedup = dedup
-        delivery = dedup.observe(packet)
+            dedup = GatewayPacketDeduplicator(
+                gateway_id=getattr(self, "gateway_id", None)
+            )
+            self.delivery_dedup = dedup
+        if (
+            self._is_receiptable_gateway_packet(packet)
+            and getattr(self, "gateway_id", None) is None
+            and packet.dst_id != 0
+        ):
+            # Scope the first stream record to its destination before caching
+            # it, so the later GATT identity event preserves the entry across
+            # the reconnect/identity handoff.
+            try:
+                dedup.set_gateway_id(packet.dst_id)
+            except ValueError as exc:
+                self._log_gateway_receipt(
+                    "error", f"Not sending host receipt: {exc}"
+                )
+        receipt_gateway_scope = None
+        if self._is_receiptable_gateway_packet(packet):
+            receipt_gateway_scope = getattr(self, "gateway_id", None)
+            if receipt_gateway_scope is None:
+                receipt_gateway_scope = packet.dst_id
+        delivery = dedup.observe(packet, commit=False)
+        packet_label = packet.message_name.lower().replace("_", " ")
         if delivery.disposition is PacketDisposition.DUPLICATE:
+            # Exact replays still need a fresh transport attempt after a
+            # reconnect, but only after the already-committed RAM record is
+            # recognized. Conflicts never receive a receipt.
+            self._maybe_send_gateway_host_receipt(
+                packet, delivery, gateway_scope=receipt_gateway_scope
+            )
             identity = delivery.identity
             assert identity is not None
             self._append_log(
                 "event",
-                "Suppressed exact replay of click report "
+                f"Suppressed exact replay of {packet_label} "
                 f"src={format_device_id(identity.src_id)} "
                 f"session={identity.session_id} seq={identity.seq}; "
-                "the gateway journal is at-least-once across reset",
+                "host delivery is at-least-once",
             )
             return
         if delivery.disposition is PacketDisposition.CONFLICT:
@@ -1289,11 +1416,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
             assert identity is not None
             self._append_log(
                 "error",
-                "Conflicting click report reused packet identity "
+                f"Conflicting {packet_label} reused packet identity "
                 f"src={format_device_id(identity.src_id)} "
                 f"session={identity.session_id} seq={identity.seq}; "
-                "showing the forensic record without applying it to "
-                "localization or CIR state",
+                "showing the forensic record without applying a second "
+                "semantic mutation",
             )
         canonical_delivery = delivery.disposition is PacketDisposition.NEW
         if canonical_delivery:
@@ -1345,6 +1472,26 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._observe_gateway_id(packet)
         if cir_result is not None and cir_result.key is not None:
             self._refresh_selected_cir(cir_result.key)
+        if canonical_delivery and delivery.cached:
+            try:
+                committed = dedup.commit(packet, delivery)
+            except Exception as exc:
+                committed = False
+                self._log_gateway_receipt(
+                    "error", f"Gateway delivery commit failed: {exc}"
+                )
+            if committed:
+                # The semantic/model path completed, so this RAM entry now
+                # represents data the GUI can replay without reapplying.
+                self._maybe_send_gateway_host_receipt(
+                    packet, delivery, gateway_scope=receipt_gateway_scope
+                )
+            else:
+                self._log_gateway_receipt(
+                    "error",
+                    "Gateway delivery was applied but not committed to the "
+                    "active RAM scope; no host receipt was sent",
+                )
 
     def _packet_summary(self, packet: Packet) -> str:
         cir_key = self.cir_key_by_packet_id.get(id(packet))

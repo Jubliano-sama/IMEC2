@@ -1,7 +1,7 @@
 #include "mesh_sim.h"
 #include "mesh_sim_invariants.h"
 #include "app_mesh_c5_priority.h"
-#include "app_mesh_gateway_command_priority.h"
+#include "firmware_state_machines.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "protocol.h"
@@ -82,43 +82,49 @@ static int survey_schedule_after_safe_boundary(void *ctx, void *work)
     return 0;
 }
 
-static void survey_clear_ch9_abort(void *ctx)
-{
-    struct gateway_priority_fixture *fixture = ctx;
-
-    fixture->abort_requested = false;
-}
-
 static void preempt_ch9_for_survey(void *survey_work)
 {
     struct gateway_priority_fixture fixture = {
         .ch9_rx_active = true,
     };
-    const struct app_mesh_gateway_command_priority_ops ops = {
-        .gateway_role = true,
-        .request_receive_abort = survey_request_ch9_abort,
-        .reschedule_now = survey_schedule_after_safe_boundary,
-        .clear_receive_abort = survey_clear_ch9_abort,
-        .ctx = &fixture,
+    struct fw_radio_handoff_sm handoff;
+    struct fw_transition transition;
+    struct fw_event event = {
+        .operation_id = 1u,
+        .generation = 1u,
+        .target = FW_MACHINE_RADIO,
+        .source = FW_EVENT_SOURCE_SERVICE,
+        .type = FW_EVENT_RADIO_PREEMPT_REQUESTED,
+        .payload.value = 1u,
     };
-    struct app_mesh_gateway_command_priority priority = {0};
-    struct app_mesh_gateway_command_priority_failure failure;
 
-    CHECK(app_mesh_gateway_command_priority_request(
-              &priority, &ops, survey_work, 1u) == 0,
+    fw_radio_handoff_sm_init(&handoff);
+    CHECK(fw_radio_handoff_sm_handle(&handoff, &event, &transition) ==
+              FW_SM_APPLIED,
           "three-sample survey priority request failed");
+    CHECK(transition.effect.type == FW_EFFECT_RADIO_REQUEST_ABORT,
+          "survey priority request did not request receive abort");
+    survey_request_ch9_abort(&fixture);
     CHECK(fixture.event_count == 1u &&
               fixture.events[0] == GATEWAY_PRIORITY_ABORT_RX &&
               fixture.scheduled_work == NULL,
           "survey work ran before channel-9 reached a safe boundary");
-    CHECK(app_mesh_gateway_command_priority_waiting_for_safe_boundary(&priority),
+    CHECK(handoff.state == FW_RADIO_HANDOFF_WAIT_SAFE_BOUNDARY,
           "survey priority state did not wait for channel-9 completion");
 
     /* Models dwm3000_driver_receive_frame_continuous() returning -ECANCELED. */
     fixture.ch9_rx_active = false;
-    CHECK(app_mesh_gateway_command_priority_acknowledge_safe_boundary(
-              &priority, &ops, &failure) == 0,
+    event.type = FW_EVENT_RADIO_SAFE_BOUNDARY;
+    CHECK(fw_radio_handoff_sm_handle(&handoff, &event, &transition) ==
+              FW_SM_APPLIED &&
+              transition.effect.type == FW_EFFECT_RADIO_SCHEDULE_PENDING,
           "three-sample survey did not resume at the channel-9 safe boundary");
+    CHECK(survey_schedule_after_safe_boundary(&fixture, survey_work) == 0,
+          "three-sample survey scheduling effect failed");
+    event.type = FW_EVENT_EFFECT_SUCCEEDED;
+    CHECK(fw_radio_handoff_sm_handle(&handoff, &event, &transition) ==
+              FW_SM_APPLIED && handoff.state == FW_RADIO_HANDOFF_IDLE,
+          "three-sample survey handoff did not finish after scheduling");
     CHECK(fixture.event_count == 2u &&
               fixture.events[1] == GATEWAY_PRIORITY_SCHEDULE_SURVEY &&
               fixture.scheduled_work == survey_work,
@@ -530,7 +536,7 @@ static int build_pair_prepare_control(struct mesh_outbound *control,
         .initiator_id = ANCHOR_ID,
         .responder_id = ANCHOR_2_ID,
         .survey_id = SURVEY_ID,
-        .sample_count = 3u,
+        .sample_count = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     };
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     size_t payload_len = 0u;
@@ -830,7 +836,7 @@ static int build_pair_start_control(struct mesh_outbound *control,
         .initiator_id = ANCHOR_ID,
         .responder_id = ANCHOR_2_ID,
         .survey_id = SURVEY_ID,
-        .sample_count = 3u,
+        .sample_count = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     };
     size_t payload_len = 0u;
     int ret;
@@ -1246,7 +1252,7 @@ static int model_single_pair_round_commitment(
         .survey_id = pair->survey_id,
         .operation_session_id =
             survey_operation_session_id(pair->operation_generation),
-        .execute_delay_ms = survey_round_go_execute_delay_ms(1u),
+        .execute_delay_ms = SURVEY_ROUND_START_EXECUTE_DELAY_MS,
         .observation_window_ms = SURVEY_PAIR_RESPONDER_WINDOW_MS,
         .round_id = round_id,
         .max_parallel_pairs = 1u,
@@ -1337,39 +1343,40 @@ static void test_planned_pair_runs_full_bounded_exchange(
               &responder_prepare, 10u, SURVEY_PAIR_PREPARED_LEASE_MS) ==
               SURVEY_PAIR_LEASE_ACCEPTED,
           "responder did not accept planned PREPARE");
-    CHECK(survey_pair_lease_start_round_bound(
+    CHECK(survey_pair_lease_start_round_bound_at(
               &responder_lease, planned_pair, round_id, round_commitment,
-              &responder_start, 11u) == SURVEY_PAIR_LEASE_ACCEPTED,
+              &responder_start, 11u,
+              11u + SURVEY_ROUND_START_EXECUTE_DELAY_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
           "responder did not accept planned START");
-    CHECK(survey_pair_lease_start_round_bound(
+    CHECK(survey_pair_lease_start_round_bound_at(
               &initiator_lease, planned_pair, round_id, round_commitment,
-              &initiator_start, 11u) == SURVEY_PAIR_LEASE_ACCEPTED,
+              &initiator_start, 11u,
+              11u + SURVEY_ROUND_START_EXECUTE_DELAY_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
           "initiator did not accept planned START");
     CHECK(survey_pair_lease_release_start(&responder_lease, &responder_start) &&
               survey_pair_lease_release_start(&initiator_lease,
                                                &initiator_start),
           "START result custody did not release both endpoint leases");
-    CHECK(survey_pair_lease_go_until_bound(
-              &initiator_lease, planned_pair->operation_generation,
-              planned_pair->survey_id, round_id + 1u, round_commitment,
-              12u, 12u + SURVEY_PAIR_START_SKEW_MARGIN_MS) ==
-              SURVEY_PAIR_LEASE_STALE &&
-              !survey_pair_lease_ready_snapshot(&initiator_lease, NULL),
-          "mismatched GO released the initiator");
-    CHECK(survey_pair_lease_go_until_bound(
-              &initiator_lease, planned_pair->operation_generation,
-              planned_pair->survey_id, round_id, round_commitment, 12u,
-              12u + SURVEY_PAIR_START_SKEW_MARGIN_MS) ==
-              SURVEY_PAIR_LEASE_ACCEPTED &&
-              survey_pair_lease_go_until_bound(
-                  &responder_lease, planned_pair->operation_generation,
-                  planned_pair->survey_id, round_id, round_commitment, 12u,
-                  12u + SURVEY_PAIR_START_SKEW_MARGIN_MS) ==
-                  SURVEY_PAIR_LEASE_ACCEPTED,
-          "matching GO did not release the pair");
-    CHECK(survey_pair_lease_mark_running(&responder_lease, NULL, NULL) &&
-              survey_pair_lease_mark_running(&initiator_lease, NULL, NULL),
-          "released endpoint leases did not enter RUNNING");
+    CHECK(!survey_pair_lease_mark_running_at(
+              &responder_lease,
+              10u + SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+              NULL, NULL) &&
+              !survey_pair_lease_mark_running_at(
+                  &initiator_lease,
+                  10u + SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+                  NULL, NULL),
+          "START released an endpoint before its synchronized deadline");
+    CHECK(survey_pair_lease_mark_running_at(
+              &responder_lease,
+              11u + SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+              NULL, NULL) &&
+              survey_pair_lease_mark_running_at(
+                  &initiator_lease,
+                  11u + SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+                  NULL, NULL),
+          "START did not release both endpoints at its synchronized deadline");
 
     CHECK(survey_gateway_begin_operation(
               &plan, planned_pair->survey_id,
@@ -1405,7 +1412,7 @@ static void test_planned_pair_runs_full_bounded_exchange(
                   SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK &&
               survey_pair_round_runtime_mark_observing(&round_runtime, 0u) ==
                   PROTO_OK,
-          "gateway round did not cross the START/GO observation barrier");
+          "gateway round did not cross the START observation barrier");
 
     {
         struct survey_sample stale_sample = {
@@ -1655,16 +1662,16 @@ static void test_planned_pair_runs_full_bounded_exchange(
                   SURVEY_PAIR_PREPARED_LEASE_MS) ==
                   SURVEY_PAIR_LEASE_ACCEPTED,
               "next survey operation could not acquire the released lease");
-        CHECK(survey_pair_lease_go_until_bound(
-                  &initiator_lease, planned_pair->operation_generation,
-                  planned_pair->survey_id, round_id, round_commitment, 21u,
-                  21u + SURVEY_PAIR_START_SKEW_MARGIN_MS) ==
+        CHECK(survey_pair_lease_start_round_bound_at(
+                  &initiator_lease, planned_pair, round_id,
+                  round_commitment, &initiator_start, 21u,
+                  21u + SURVEY_ROUND_START_EXECUTE_DELAY_MS) ==
                   SURVEY_PAIR_LEASE_STALE &&
                   initiator_lease.phase == SURVEY_PAIR_LEASE_PREPARED &&
                   initiator_lease.pair.operation_generation ==
                       next_pair.operation_generation &&
                   initiator_lease.pair.survey_id == planned_pair->survey_id,
-              "stale GO from operation N mutated operation N+1");
+              "stale START from operation N mutated operation N+1");
         CHECK(survey_pair_lease_abort(&initiator_lease),
               "next survey lease did not clean up after stale-control check");
     }
@@ -1843,7 +1850,8 @@ static void test_two_anchor_survey_lifecycle(void)
               survey_gateway_begin_operation(&gateway_context,
                                              SURVEY_ID,
                                              config.operation_generation,
-                                             3u) == PROTO_OK,
+                                             SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) ==
+                  PROTO_OK,
           "gateway survey context setup failed");
     CHECK(survey_gateway_note_reach_report(&gateway_context, SURVEY_ID + 1u,
                                            ANCHOR_ID, &reports[0], 1u) ==
@@ -1914,7 +1922,8 @@ static void test_two_anchor_survey_lifecycle(void)
               PROTO_OK && planned_pair.survey_id == SURVEY_ID &&
               planned_pair.operation_generation ==
                   config.operation_generation &&
-              planned_pair.sample_count == 3u,
+              planned_pair.sample_count ==
+                  SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
           "planned survey pair did not reconstruct context-wide fields");
 
     CHECK(survey_gateway_auto_begin(&auto_context) == PROTO_OK,
