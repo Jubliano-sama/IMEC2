@@ -65,7 +65,8 @@ static size_t build_valid_click_report(struct proto_packet *packet,
     assert(report_init_click_packet(packet,
                                     anchor_id,
                                     GATEWAY,
-                                    event_seq,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, event_seq),
                                     seq,
                                     (uint8_t)payload_len) == PROTO_OK);
     return payload_len;
@@ -879,7 +880,8 @@ static void test_relay_forwards_gateway_bound_packet_and_reforwards_duplicate(vo
     assert(report_init_range_packet(&report,
                                     ANCHOR_A,
                                     GATEWAY,
-                                    42u,
+                                    proto_click_report_session_id(ANCHOR_C,
+                                                                  42u),
                                     9u,
                                     FLAG_DIAGNOSTIC,
                                     (uint16_t)payload_len) == PROTO_OK);
@@ -985,14 +987,16 @@ static void test_range_retry_attempts_do_not_conflict_in_relay_dedup(void)
     assert(report_init_range_packet(&attempt_one,
                                     ANCHOR_A,
                                     GATEWAY,
-                                    UINT32_C(0x010203),
+                                    proto_click_report_session_id(
+                                        ANCHOR_C, UINT32_C(0x010203)),
                                     attempt_one_seq,
                                     FLAG_DIAGNOSTIC,
                                     (uint16_t)payload_one_len) == PROTO_OK);
     assert(report_init_range_packet(&attempt_two,
                                     ANCHOR_A,
                                     GATEWAY,
-                                    UINT32_C(0x010203),
+                                    proto_click_report_session_id(
+                                        ANCHOR_C, UINT32_C(0x010203)),
                                     attempt_two_seq,
                                     FLAG_DIAGNOSTIC,
                                     (uint16_t)payload_two_len) == PROTO_OK);
@@ -10504,12 +10508,15 @@ static void test_gateway_semantic_delivery_requires_commit_before_ack(void)
         bool collection_duplicate;
 
         if (packet.msg_type == MSG_CLICK_REPORT) {
+            const uint64_t clicker_id = UINT64_C(0x1112131415161718);
+            const uint32_t event_seq = packet.session_id;
+
             packet.flags |= FLAG_COUNT_AS_CLICK;
             assert(tlv_append_u64(payload,
                                   sizeof(payload),
                                   &payload_len,
                                   TLV_CLICKER_ID,
-                                  UINT64_C(0x1112131415161718)) == PROTO_OK);
+                                  clicker_id) == PROTO_OK);
             assert(tlv_append_u64(payload,
                                   sizeof(payload),
                                   &payload_len,
@@ -10519,7 +10526,9 @@ static void test_gateway_semantic_delivery_requires_commit_before_ack(void)
                                   sizeof(payload),
                                   &payload_len,
                                   TLV_EVENT_SEQ,
-                                  packet.session_id) == PROTO_OK);
+                                  event_seq) == PROTO_OK);
+            packet.session_id =
+                proto_click_report_session_id(clicker_id, event_seq);
         } else if (packet.msg_type == MSG_COMMAND_RESULT) {
             struct command_result_id result_id = {
                 .gateway_id = GATEWAY,
@@ -11629,6 +11638,7 @@ static void test_gateway_survey_ack_history_survives_maximum_plan(void)
 
     {
         size_t payload_len = 0u;
+        uint32_t event_seq;
         uint32_t session_id;
 
         assert(tlv_append_u64(payload,
@@ -11641,12 +11651,14 @@ static void test_gateway_survey_ack_history_survives_maximum_plan(void)
                               &payload_len,
                               TLV_ANCHOR_ID,
                               origin_base) == PROTO_OK);
+        event_seq = identity++;
         assert(tlv_append_u32(payload,
                               sizeof(payload),
                               &payload_len,
                               TLV_EVENT_SEQ,
-                              identity) == PROTO_OK);
-        session_id = identity++;
+                              event_seq) == PROTO_OK);
+        session_id = proto_click_report_session_id(
+            UINT64_C(0x123456789abcdef0), event_seq);
         assert(report_init_click_packet(&packet,
                                         origin_base,
                                         GATEWAY,

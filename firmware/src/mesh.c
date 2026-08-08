@@ -521,7 +521,8 @@ static int mesh_click_report_payload_validate(
     }
     event_seq = proto_get_u32_le(value);
     return clicker_id != 0u && anchor_id == packet->src_id &&
-                   event_seq == packet->session_id ?
+                   proto_click_report_session_id(clicker_id, event_seq) ==
+                       packet->session_id ?
                PROTO_OK : PROTO_ERR_MALFORMED;
 }
 

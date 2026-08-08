@@ -72,6 +72,35 @@ FLAG_COUNT_AS_CLICK = 0x20
 RANGE_REPORT_MAX_DISTANCE_SAMPLES = 96
 DETECTION_SOURCE_UWB_WAKE_CLAIM = 1
 
+_CLICK_REPORT_IDENTITY_FNV_OFFSET = 2166136261
+_CLICK_REPORT_IDENTITY_FNV_PRIME = 16777619
+
+
+def click_report_session_id(clicker_id: int, event_seq: int) -> int:
+    """Return the firmware-compatible transport session for one click.
+
+    Semantic event numbers are local to a clicker. The transport projection
+    includes the full clicker ID so equal counters from different clickers
+    normally separate in reliable-delivery deduplication. The semantic digest
+    makes a rare 32-bit projection collision fail closed.
+    """
+
+    if (
+        isinstance(clicker_id, bool)
+        or not isinstance(clicker_id, int)
+        or not 1 <= clicker_id <= 0xFFFFFFFFFFFFFFFF
+        or isinstance(event_seq, bool)
+        or not isinstance(event_seq, int)
+        or not 1 <= event_seq <= 0xFFFFFFFF
+    ):
+        return 0
+    identity = clicker_id.to_bytes(8, "little") + event_seq.to_bytes(4, "little")
+    value = _CLICK_REPORT_IDENTITY_FNV_OFFSET
+    for byte in identity:
+        value ^= byte
+        value = (value * _CLICK_REPORT_IDENTITY_FNV_PRIME) & 0xFFFFFFFF
+    return value or 1
+
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
 CMD_SURVEY_ABORT = 0x0103
@@ -1056,8 +1085,10 @@ def validate_click_payload(packet: Packet, payload: bytes | None = None) -> None
         raise DecodeError("malformed click report: clicker/anchor IDs must be nonzero and distinct")
     if anchor_id != packet.src_id:
         raise DecodeError("malformed click report: ANCHOR_ID must equal packet source")
-    if event_seq == 0 or event_seq != packet.session_id:
-        raise DecodeError("malformed click report: EVENT_SEQ must equal nonzero packet session")
+    if event_seq == 0 or click_report_session_id(clicker_id, event_seq) != packet.session_id:
+        raise DecodeError(
+            "malformed click report: packet session must bind CLICKER_ID and EVENT_SEQ"
+        )
 
     detection_present = {
         type_id: bool(_click_tlv_values(tlvs, type_id))

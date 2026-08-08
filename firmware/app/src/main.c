@@ -163,8 +163,9 @@ BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >= SURVEY_DISCOVERY_MIN_SLOT_MS,
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,
              "survey discovery slot helper must cover the UWB slot count");
 BUILD_ASSERT(MAX_SCHEDULED_ANCHORS > 0u &&
-             MAX_SCHEDULED_ANCHORS <= UWB_DISCOVERY_SLOT_COUNT,
-             "scheduled anchor count must fit UWB discovery slot field");
+             MAX_SCHEDULED_ANCHORS <= UWB_DISCOVERY_SLOT_COUNT &&
+             MAX_SCHEDULED_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+             "normal-click anchor count must fit discovery and schedule capacity");
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= 127u,
              "range schedule must fit one standard UWB frame");
 BUILD_ASSERT((UWB_RANGE_SCHEDULE_MAX_ANCHORS +

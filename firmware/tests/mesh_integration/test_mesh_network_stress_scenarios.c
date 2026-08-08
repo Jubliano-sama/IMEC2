@@ -356,7 +356,8 @@ static int build_click_report(uint64_t anchor_id,
     ret = report_init_click_packet(packet,
                                    anchor_id,
                                    GATEWAY_ID,
-                                   event_seq,
+                                   proto_click_report_session_id(
+                                       fields.clicker_id, event_seq),
                                    seq,
                                    (uint8_t)length);
     if (ret == PROTO_OK) {

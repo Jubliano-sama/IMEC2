@@ -94,7 +94,9 @@ static void test_click_report_packet_counts_as_click(void)
     assert(report_init_click_packet(&packet,
                                          fields.anchor_id,
                                          0x9999888877776666ull,
-                                         0x12345678u,
+                                         proto_click_report_session_id(
+                                             fields.clicker_id,
+                                             fields.event_seq),
                                          1u,
                                          (uint8_t)payload_len) == PROTO_OK);
 
@@ -177,7 +179,8 @@ static void test_diagnostic_range_packet_is_not_click(void)
     assert(report_init_range_packet(&packet,
                                     fields.anchor_id,
                                     0x9999888877776666ull,
-                                    0x12345678u,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
                                     3u,
                                     FLAG_DIAGNOSTIC,
                                     (uint8_t)payload_len) == PROTO_OK);
@@ -189,14 +192,16 @@ static void test_diagnostic_range_packet_is_not_click(void)
     assert(report_init_range_packet(&packet,
                                     fields.anchor_id,
                                     0x9999888877776666ull,
-                                    0x12345678u,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
                                     0u,
                                     FLAG_DIAGNOSTIC,
                                     (uint8_t)payload_len) == PROTO_ERR_MALFORMED);
     assert(report_init_range_packet(&packet,
                                     fields.anchor_id,
                                     0x9999888877776666ull,
-                                    0x12345678u,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
                                     3u,
                                     FLAG_DIAGNOSTIC | FLAG_COUNT_AS_CLICK,
                                     (uint8_t)payload_len) == PROTO_ERR_MALFORMED);
@@ -397,7 +402,8 @@ static void test_ml_single_sample_diagnostics_fit_and_encode_offsets(void)
     assert(report_init_range_packet(&packet,
                                     fields.clicker_id,
                                     0x9999888877776666ull,
-                                    fields.event_seq,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
                                     12u,
                                     FLAG_DIAGNOSTIC,
                                     (uint8_t)payload_len) == PROTO_OK);
@@ -738,7 +744,8 @@ static void test_max_single_packet_range_samples_fit_one_uwb_mesh_frame(void)
     assert(report_init_click_packet(&packet,
                                     fields.anchor_id,
                                     outbound.next_hop_id,
-                                    0x12345678u,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
                                     1u,
                                     (uint8_t)payload_len) == PROTO_OK);
 
@@ -1057,7 +1064,10 @@ static void test_click_payload_semantic_validation(void)
     assert(report_append_range_tlvs(payload, sizeof(payload), &payload_len,
                                     &fields) == PROTO_OK);
     assert(report_init_click_packet(&packet, fields.anchor_id,
-                                    UINT64_C(0x9999), fields.event_seq, 1u,
+                                    UINT64_C(0x9999),
+                                    proto_click_report_session_id(
+                                        fields.clicker_id, fields.event_seq),
+                                    1u,
                                     (uint8_t)payload_len) == PROTO_OK);
     assert(report_validate_click_payload(&packet, payload, payload_len) ==
            PROTO_OK);
@@ -1150,7 +1160,11 @@ static void test_click_payload_semantic_validation_accepts_cir_fragment(void)
                                            &payload_len, &fragment) ==
            PROTO_OK);
     assert(report_init_range_packet(&packet, fragment.anchor_id,
-                                    UINT64_C(0x9999), fragment.event_seq, 1u,
+                                    UINT64_C(0x9999),
+                                    proto_click_report_session_id(
+                                        fragment.clicker_id,
+                                        fragment.event_seq),
+                                    1u,
                                     FLAG_DIAGNOSTIC,
                                     (uint16_t)payload_len) == PROTO_OK);
     assert(report_validate_click_payload(&packet, payload, payload_len) ==

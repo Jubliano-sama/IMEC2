@@ -46,6 +46,7 @@ from tools.gateway_gui.protocol import (
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
+    click_report_session_id,
     encode_cobs_packet,
     parse_cobs_packet,
     validate_click_payload,
@@ -64,7 +65,8 @@ def firmware_parse(oracle: str, frame: bytes) -> str:
 CLICKER = 0x1111222233334444
 CLICK_ANCHOR = 0x5555666677778888
 CLICK_GATEWAY = 0x9999AAAABBBBCCCC
-CLICK_SESSION = 0x11223344
+CLICK_EVENT_SEQ = 0x11223344
+CLICK_SESSION = click_report_session_id(CLICKER, CLICK_EVENT_SEQ)
 
 
 def _tlv(type_id: int, value: bytes) -> bytes:
@@ -120,7 +122,7 @@ def _common_click_payload() -> bytearray:
     payload = bytearray()
     append_tlv(payload, TLV_CLICKER_ID, CLICKER.to_bytes(8, "little"))
     append_tlv(payload, TLV_ANCHOR_ID, CLICK_ANCHOR.to_bytes(8, "little"))
-    append_tlv(payload, TLV_EVENT_SEQ, CLICK_SESSION.to_bytes(4, "little"))
+    append_tlv(payload, TLV_EVENT_SEQ, CLICK_EVENT_SEQ.to_bytes(4, "little"))
     append_tlv(payload, TLV_TIMESTAMP_MS, (1_234_567).to_bytes(8, "little"))
     return payload
 

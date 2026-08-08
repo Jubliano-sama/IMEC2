@@ -341,7 +341,9 @@ static int anchor_cir_report_queue_next(void)
         ret = report_init_range_packet(&outbound.packet,
                                        fragment.anchor_id,
                                        GATEWAY_ID,
-                                       fragment.event_seq,
+                                       proto_click_report_session_id(
+                                           fragment.clicker_id,
+                                           fragment.event_seq),
                                        outbound.packet.seq,
                                        FLAG_DIAGNOSTIC,
                                        (uint16_t)payload_len);
@@ -644,7 +646,9 @@ build_payload:
         ret = report_init_range_packet(&packet,
                                        range_result->responder_id,
                                        GATEWAY_ID,
-                                       event_seq,
+                                       proto_click_report_session_id(
+                                           clicker_id,
+                                           event_seq),
                                        packet_seq,
                                        range_result->flags,
                                        (uint8_t)payload_len);

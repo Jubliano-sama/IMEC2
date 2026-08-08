@@ -687,7 +687,11 @@ static int test_click_preemption_and_retry(void)
                                      &click_len, &fields) == PROTO_OK &&
             click_len <= UINT8_MAX &&
             report_init_click_packet(&click_packet, ANCHOR_ID_BASE,
-                                     GATEWAY_ID, UINT32_C(0x52000001), 1u,
+                                     GATEWAY_ID,
+                                     proto_click_report_session_id(
+                                         fields.clicker_id,
+                                         fields.event_seq),
+                                     1u,
                                      (uint8_t)click_len) == PROTO_OK &&
             report_validate_click_payload(&click_packet, click_payload,
                                           click_len) == PROTO_OK);

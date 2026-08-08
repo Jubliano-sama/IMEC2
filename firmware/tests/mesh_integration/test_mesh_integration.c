@@ -429,7 +429,9 @@ static size_t build_click_report(uint8_t *payload,
     assert(report_init_click_packet(packet,
                                     ANCHOR_1_ID,
                                     GATEWAY_ID,
-                                    0x2001u,
+                                    proto_click_report_session_id(
+                                        fields.clicker_id,
+                                        fields.event_seq),
                                     1u,
                                     (uint8_t)payload_len) == PROTO_OK);
     assert(report_validate_click_payload(packet, payload, payload_len) ==

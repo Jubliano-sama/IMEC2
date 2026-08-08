@@ -704,7 +704,9 @@ static bool run_click_uwb_path(
                   anchor_index, ret, length);
             ret = report_init_click_packet(
                 &report_packets[anchor_index], anchor_ids[anchor_index],
-                GATEWAY_ID, CLICK_EVENT_ID, (uint16_t)(anchor_index + 1u),
+                GATEWAY_ID,
+                proto_click_report_session_id(CLICKER_ID, CLICK_EVENT_ID),
+                (uint16_t)(anchor_index + 1u),
                 (uint8_t)length);
             CHECK(ret == PROTO_OK,
                   "click report packet build failed anchor=%zu ret=%d",

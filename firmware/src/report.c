@@ -297,7 +297,9 @@ int report_validate_click_payload(const struct proto_packet *packet,
         clicker_id == 0u || anchor_id == 0u ||
         clicker_id == anchor_id ||
         anchor_id != packet->src_id ||
-        event_seq == 0u || event_seq != packet->session_id) {
+        event_seq == 0u ||
+        proto_click_report_session_id(clicker_id, event_seq) !=
+            packet->session_id) {
         return PROTO_ERR_MALFORMED;
     }
     if ((seen & CLICK_PAYLOAD_DETECTION_FIELDS) != 0u &&
