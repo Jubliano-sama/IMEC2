@@ -519,6 +519,10 @@ build_payload:
             anchor_sequence_timestamp_at(range_local_ms,
                                          &fields.timestamp_ms);
         }
+        if (range_result->click_timestamp_present) {
+            anchor_sequence_timestamp_at(range_result->click_timestamp_ms,
+                                         &fields.timestamp_ms);
+        }
 
         fields.clicker_id = clicker_id;
         fields.anchor_id = range_result->responder_id;

@@ -1222,7 +1222,7 @@ static uint64_t bounded_ds_twr_exchange_us(void)
 {
     uint64_t wire_time_us =
         dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_RANGE,
-                                       UWB_POLL_LEN) +
+                                       UWB_CLICK_POLL_LEN) +
         dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_RANGE,
                                        UWB_RESP_LEN) +
         dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_RANGE,

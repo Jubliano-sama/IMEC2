@@ -938,7 +938,7 @@ static void test_dense_pair_plan_is_rejected_before_partial_remote_state(void)
         SURVEY_GATEWAY_MAX_PAIRS,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
 
-    /* Even 50 pairs consume the complete default before discovery or GO. */
+    /* Even 50 pairs consume the complete default before discovery or ranging. */
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
         50u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));

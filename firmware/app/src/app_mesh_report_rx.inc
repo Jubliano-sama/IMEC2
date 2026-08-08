@@ -71,7 +71,7 @@ bool mesh_process_queued_rx_now(const char *reason)
 {
     uint32_t pending_count = k_msgq_num_used_get(&mesh_rx_msgq);
     uint32_t handled_count;
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     int lock_ret;
     int submit_ret;
 
@@ -96,7 +96,7 @@ bool mesh_process_queued_rx_now(const char *reason)
             status_debug_printf("DBG_MESH_RX_DIRECT_COORD_DEFER submit=%d q=%u state=%s reason=%s\n",
                                 submit_ret,
                                 k_msgq_num_used_get(&mesh_rx_msgq),
-                                app_mesh_coordinator_state_name(
+                                fw_radio_activity_state_name(
                                     coordinator_decision.state),
                                 reason == NULL ? "direct" : reason);
         }
@@ -424,9 +424,9 @@ static void mesh_tx_timeout_handler(struct k_work *work)
     if (mesh_outbox_persistence_dirty) {
         /*
          * A state transition (especially raw report -> ACK_CONFIRM) is not
-         * eligible for RF until the exact successor has passed NVS write and
-         * readback. An older already-queued timeout must not transmit the
-         * newer RAM owner while reset recovery still owns the predecessor.
+         * eligible for RF until the exact successor has passed the custody
+         * transition. An older already-queued timeout must not transmit the
+         * newer RAM owner while the predecessor is still retained for retry.
          */
         (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
                                          REPORT_TX_RETRY_DELAY_MS,
@@ -483,6 +483,7 @@ static void mesh_tx_timeout_handler(struct k_work *work)
                                NULL,
                                NULL,
                                0u,
+                               NULL,
                                NULL);
     if (mesh_relay_tx_active(&mesh_runtime) ||
         mesh_relay_result_bundle_pending(&mesh_runtime)) {
@@ -1322,7 +1323,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
     int channel5_gap_last_error = 0;
     int radio_release_ret;
     uint32_t route_adv_wait_ms = 0u;
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     int ret;
 
     ARG_UNUSED(work);
@@ -1366,7 +1367,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_UWB_RX_COORD_DEFER state=%s reason=%s route=%u q=%u\n",
-                                app_mesh_coordinator_state_name(
+                                fw_radio_activity_state_name(
                                     coordinator_decision.state),
                                 coordinator_decision.reason == NULL ? "none" :
                                 coordinator_decision.reason,
@@ -2532,7 +2533,7 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     app_mesh_report_encode_init(&report_encode_config);
     atomic_set(&mesh_transport_paused_state, 0);
     app_mesh_rx_handoff_reset(&mesh_rx_handoff);
-    app_mesh_paused_delivery_reset(&mesh_paused_delivery);
+    fw_delivery_loss_init(&mesh_delivery_loss);
 #if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
     k_work_queue_start(&mesh_route_work_q,
                        mesh_route_work_q_stack,
@@ -2545,6 +2546,17 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     app_node_comm_gateway_route_refresh_init(&route_refresh_config,
                                              (uint32_t)DEVICE_ID);
     k_work_init(&mesh_rx_work, mesh_rx_work_handler);
+#if DEVICE_ROLE == ROLE_GATEWAY
+    atomic_clear(&mesh_gateway_host_delivery_pending_state);
+    atomic_clear(&mesh_gateway_host_receipt_received_state);
+    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
+    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
+    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
+    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
+    mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
+    k_work_init_delayable(&mesh_gateway_host_delivery_retry_work,
+                          mesh_gateway_host_delivery_retry_work_handler);
+#endif
     k_work_init_delayable(&mesh_uwb_rx_work, mesh_uwb_rx_work_handler);
     k_work_init(&mesh_uwb_rx_rearm_work, mesh_uwb_rx_rearm_work_handler);
     k_work_init_delayable(&mesh_persistence_retry_work,
@@ -2569,7 +2581,6 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     mesh_gateway_ack_store_init(&mesh_gateway_ack_store);
     mesh_gateway_ack_store_initialized = true;
     mesh_gateway_ack_store_attached = false;
-    mesh_gateway_semantic_commit_owner_clear();
 #endif
     k_work_init_delayable(&mesh_tx_timeout_work, mesh_tx_timeout_handler);
     k_work_init_delayable(&mesh_route_waiting_work,

@@ -372,7 +372,11 @@ static void test_clicker_politeness_decodes_relevant_uwb_packets(void)
 
     poll.initiator_short_addr = uwb_session_short_addr_from_id(poll.initiator_id);
     poll.responder_short_addr = uwb_session_short_addr_from_id(poll.responder_id);
-    assert(uwb_encode_poll(&poll, frame, sizeof(frame), &frame_len) == PROTO_OK);
+    assert(uwb_encode_click_poll(&poll,
+                                 42u,
+                                 frame,
+                                 sizeof(frame),
+                                 &frame_len) == PROTO_OK);
     assert(uwb_clicker_decode_politeness_wait(&session,
                                               frame,
                                               frame_len,

@@ -1,148 +1,4 @@
 #line 12150 __BASE_FILE__
-#if DEVICE_ROLE == ROLE_GATEWAY
-static bool gateway_semantic_commit_owner_identity_matches(
-    const struct gateway_semantic_commit_owner *owner,
-    const struct proto_packet *packet,
-    size_t payload_len,
-    const uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN])
-{
-    return owner != NULL && owner->active && packet != NULL &&
-           packet->payload_len == payload_len &&
-           owner->msg_type == packet->msg_type &&
-           owner->flags == packet->flags &&
-           owner->src_id == packet->src_id &&
-           owner->dst_id == packet->dst_id &&
-           owner->session_id == packet->session_id &&
-           owner->seq == packet->seq &&
-           owner->payload_len == payload_len &&
-           semantic_digest_equal(owner->payload_digest,
-                                 payload_digest,
-                                 SEMANTIC_DIGEST_SHA256_LEN);
-}
-#endif
-
-static bool gateway_semantic_commit_owner_matches(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    k_spinlock_key_t key;
-    bool matches;
-
-    if (packet == NULL || payload == NULL ||
-        packet->payload_len != payload_len || payload_len == 0u ||
-        payload_len > UINT16_MAX) {
-        return false;
-    }
-    if (!semantic_digest_sha256(payload, payload_len, payload_digest)) {
-        return false;
-    }
-    key = k_spin_lock(&gateway_semantic_commit_owner_lock);
-    matches = gateway_semantic_commit_owner_identity_matches(
-        &gateway_semantic_commit_owner,
-        packet,
-        payload_len,
-        payload_digest);
-    k_spin_unlock(&gateway_semantic_commit_owner_lock, key);
-    return matches;
-#else
-    (void)packet;
-    (void)payload;
-    (void)payload_len;
-    return false;
-#endif
-}
-
-static void gateway_semantic_commit_owner_set(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    struct gateway_semantic_commit_owner next = {0};
-    k_spinlock_key_t key;
-
-    if (packet == NULL || payload == NULL ||
-        packet->payload_len != payload_len || payload_len == 0u ||
-        payload_len > UINT16_MAX) {
-        mesh_gateway_semantic_commit_owner_clear();
-        return;
-    }
-    next.msg_type = packet->msg_type;
-    next.flags = packet->flags;
-    next.src_id = packet->src_id;
-    next.dst_id = packet->dst_id;
-    next.session_id = packet->session_id;
-    next.seq = packet->seq;
-    next.payload_len = (uint16_t)payload_len;
-    if (!semantic_digest_sha256(payload,
-                                payload_len,
-                                next.payload_digest)) {
-        mesh_gateway_semantic_commit_owner_clear();
-        return;
-    }
-    next.active = true;
-
-    key = k_spin_lock(&gateway_semantic_commit_owner_lock);
-    gateway_semantic_commit_owner = next;
-    k_spin_unlock(&gateway_semantic_commit_owner_lock, key);
-#else
-    (void)packet;
-    (void)payload;
-    (void)payload_len;
-#endif
-}
-
-static void gateway_semantic_commit_owner_clear_if_matches(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    k_spinlock_key_t key;
-
-    if (packet == NULL || payload == NULL ||
-        packet->payload_len != payload_len || payload_len == 0u ||
-        payload_len > UINT16_MAX) {
-        return;
-    }
-    if (!semantic_digest_sha256(payload, payload_len, payload_digest)) {
-        return;
-    }
-    key = k_spin_lock(&gateway_semantic_commit_owner_lock);
-    if (gateway_semantic_commit_owner_identity_matches(
-            &gateway_semantic_commit_owner,
-            packet,
-            payload_len,
-            payload_digest)) {
-        memset(&gateway_semantic_commit_owner,
-               0,
-               sizeof(gateway_semantic_commit_owner));
-    }
-    k_spin_unlock(&gateway_semantic_commit_owner_lock, key);
-#else
-    (void)packet;
-    (void)payload;
-    (void)payload_len;
-#endif
-}
-
-void mesh_gateway_semantic_commit_owner_clear(void)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    k_spinlock_key_t key =
-        k_spin_lock(&gateway_semantic_commit_owner_lock);
-
-    memset(&gateway_semantic_commit_owner,
-           0,
-           sizeof(gateway_semantic_commit_owner));
-    k_spin_unlock(&gateway_semantic_commit_owner_lock, key);
-#endif
-}
-
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_try_send_report_tx_ch9_batch(void)
 {
@@ -154,7 +10,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
     };
     struct mesh_channel5_requirements requirements;
     struct mesh_event_plan plan = {0};
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     uint64_t next_hop_id = 0u;
     uint32_t now_ms;
     uint32_t deadline_ms;
@@ -344,7 +200,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_CH9_TX_BATCH_STOP reason=coord sent=%u state=%s seq=%u q=%u\n",
                                     sent_count,
-                                    app_mesh_coordinator_state_name(
+                                    fw_radio_activity_state_name(
                                         coordinator_decision.state),
                                     queued->packet.seq,
                                     k_msgq_num_used_get(&report_tx_msgq));
@@ -575,7 +431,7 @@ static int mesh_try_send_report_tx_ch9_batch(void)
             break;
         }
         mesh_relay_note_tx_sent(&mesh_runtime, tx, k_uptime_get_32());
-        app_mesh_paused_delivery_note_sent(&mesh_paused_delivery, tx);
+        fw_delivery_loss_note_sent(&mesh_delivery_loss, tx);
         if (mesh_ch9_tx_pending_track_sent(tx, deadline_ms)) {
             ack_wait_started = true;
         }
@@ -987,6 +843,10 @@ int mesh_range_report_batch_reserve(uint64_t clicker_id,
             ret = -EBUSY;
             goto out;
         }
+        if (app_anchor_click_event_runtime_result_owned()) {
+            ret = -EAGAIN;
+            goto out;
+        }
         memset(&anchor_range_report_journal_runtime, 0,
                sizeof(anchor_range_report_journal_runtime));
     }
@@ -1091,8 +951,8 @@ void mesh_range_report_batch_abort(uint64_t clicker_id,
         /*
          * Every exact fragment is already staged and invisible. Preserve
          * that complete batch while the control-record commit/readback is
-         * retried; discarding it here would strand a possibly committed NVS
-         * owner until reset.
+         * retried; discarding it here would strand a possibly committed
+         * fragment owner until the batch can be reconciled.
          */
         k_mutex_unlock(&report_tx_queue_overflow_lock);
         report_tx_schedule(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
@@ -1292,8 +1152,10 @@ int mesh_anchor_range_report_note_gateway_confirmed(
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
+    struct anchor_range_report_control retired_control = {0};
     uint16_t all_acknowledged;
     uint8_t fragment_index = 0u;
+    bool retire = false;
     int ret;
 
     if (packet == NULL || semantic_digest == NULL) {
@@ -1323,6 +1185,37 @@ int mesh_anchor_range_report_note_gateway_confirmed(
         LOG_INF("anchor range journal retired after all gateway ACKs: event=%u fragments=%u",
                 anchor_range_report_journal_runtime.control.event_seq,
                 anchor_range_report_journal_runtime.control.fragment_count);
+        retired_control = anchor_range_report_journal_runtime.control;
+        retire = true;
+    }
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    if (!retire) {
+        return 0;
+    }
+    ret = app_anchor_click_event_runtime_custody_released(
+        retired_control.clicker_id,
+        retired_control.event_seq,
+        retired_control.attempt_index,
+        k_uptime_get_32(),
+        NULL);
+    if (ret < 0) {
+        LOG_ERR("anchor range lifecycle rejected gateway-confirmed custody release: event=%u attempt=%u ret=%d",
+                retired_control.event_seq,
+                retired_control.attempt_index,
+                ret);
+        return ret;
+    }
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    if (anchor_range_report_journal_runtime.active &&
+        anchor_range_report_journal_runtime.control.clicker_id ==
+            retired_control.clicker_id &&
+        anchor_range_report_journal_runtime.control.event_seq ==
+            retired_control.event_seq &&
+        anchor_range_report_journal_runtime.control.attempt_index ==
+            retired_control.attempt_index) {
         memset(&anchor_range_report_journal_runtime, 0,
                sizeof(anchor_range_report_journal_runtime));
     }
@@ -1341,6 +1234,7 @@ int mesh_anchor_range_report_note_terminal_release(
     size_t payload_len)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
+    struct anchor_range_report_control retired_control = {0};
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t fragment_index = 0u;
     int ret;
@@ -1378,8 +1272,35 @@ int mesh_anchor_range_report_note_terminal_release(
     LOG_WRN("anchor range journal retired after terminal fragment: event=%u index=%u",
             anchor_range_report_journal_runtime.control.event_seq,
             fragment_index);
-    memset(&anchor_range_report_journal_runtime, 0,
-           sizeof(anchor_range_report_journal_runtime));
+    retired_control = anchor_range_report_journal_runtime.control;
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    ret = app_anchor_click_event_runtime_custody_released(
+        retired_control.clicker_id,
+        retired_control.event_seq,
+        retired_control.attempt_index,
+        k_uptime_get_32(),
+        NULL);
+    if (ret < 0) {
+        LOG_ERR("anchor range lifecycle rejected terminal custody release: event=%u attempt=%u ret=%d",
+                retired_control.event_seq,
+                retired_control.attempt_index,
+                ret);
+        return ret;
+    }
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    if (anchor_range_report_journal_runtime.active &&
+        anchor_range_report_journal_runtime.control.clicker_id ==
+            retired_control.clicker_id &&
+        anchor_range_report_journal_runtime.control.event_seq ==
+            retired_control.event_seq &&
+        anchor_range_report_journal_runtime.control.attempt_index ==
+            retired_control.attempt_index) {
+        memset(&anchor_range_report_journal_runtime, 0,
+               sizeof(anchor_range_report_journal_runtime));
+    }
     k_mutex_unlock(&report_tx_queue_overflow_lock);
     return 0;
 #else
@@ -1441,7 +1362,7 @@ static int mesh_queue_anchor_cir_fragment(struct mesh_outbound *outbound,
 static void report_tx_work_handler(struct k_work *work)
 {
     struct mesh_outbound *outbound = &report_tx_worker_scratch;
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     bool anchor_busy;
     bool survey_busy;
     bool relay_tx_active;
@@ -1785,7 +1706,7 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
 
 #if DEVICE_ROLE == ROLE_ANCHOR
     struct mesh_outbound queued;
-    struct app_mesh_paused_delivery_store_result drop_result = {0};
+    struct fw_delivery_loss_store_result drop_result = {0};
     uint32_t queue_depth = 0u;
     bool admitted = false;
     bool owner_active_at_failure = false;
@@ -1799,7 +1720,7 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
 
     ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
     if (ret != 0) {
-        app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
+        fw_delivery_loss_note_drop(&mesh_delivery_loss, &drop_result);
         return -ENOSPC;
     }
 
@@ -1879,7 +1800,7 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
     k_mutex_unlock(&report_tx_queue_overflow_lock);
 
     if (!admitted) {
-        app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
+        fw_delivery_loss_note_drop(&mesh_delivery_loss, &drop_result);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_REPORT_QUEUE_FULL lost=%u ret=%d owner=%u\n",
                                 drop_result.lost_count,
@@ -2461,9 +2382,9 @@ static int mesh_complete_gateway_ack_confirm(
     ret = mesh_save_outbox_durable("gateway-ack-confirm-terminal");
     if (ret < 0) {
         /*
-         * The in-RAM owner is already terminal, while the last proven NVS
-         * state is still the compact confirm. The persistence retry clears
-         * it this boot; a reset safely replays the same idempotent cleanup.
+         * The in-RAM owner is already terminal. Keep it available while the
+         * cleanup hook is retried; this path does not depend on a gateway host
+         * journal or receipt ledger.
          */
         return ret;
     }
@@ -2550,6 +2471,27 @@ static int mesh_complete_terminal_release(
     return mesh_save_outbox_durable("result-grant-terminal");
 }
 
+static bool mesh_gateway_ack_route_waiting_owns(
+    const struct mesh_outbound *ack)
+{
+    const struct mesh_outbound *waiting = &mesh_route_waiting_tx;
+
+    if (ack == NULL || !mesh_route_waiting_tx_valid ||
+        ack->next_hop_id != waiting->next_hop_id ||
+        ack->radio_channel != waiting->radio_channel ||
+        ack->payload_len != waiting->payload_len ||
+        ack->packet.msg_type != waiting->packet.msg_type ||
+        ack->packet.flags != waiting->packet.flags ||
+        ack->packet.src_id != waiting->packet.src_id ||
+        ack->packet.dst_id != waiting->packet.dst_id ||
+        ack->packet.session_id != waiting->packet.session_id ||
+        ack->packet.seq != waiting->packet.seq) {
+        return false;
+    }
+    return ack->payload_len == 0u ||
+           memcmp(ack->payload, waiting->payload, ack->payload_len) == 0;
+}
+
 static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                        uint8_t received_radio_channel,
                                        const struct mesh_rx_pending *rx,
@@ -2557,7 +2499,8 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                        const uint8_t *confirmed_payload,
                                        size_t confirmed_payload_len,
                                        const uint8_t confirmed_digest[
-                                           SEMANTIC_DIGEST_SHA256_LEN])
+                                           SEMANTIC_DIGEST_SHA256_LEN],
+                                       bool *gateway_ack_handed_off)
 {
     bool forward_sent = false;
     bool forward_queued_gateway_ack = false;
@@ -2572,6 +2515,12 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
         .note_tx_sent = mesh_handoff_note_tx_sent,
     };
     struct app_mesh_result_handoff_status handoff_status;
+
+    if (gateway_ack_handed_off != NULL) {
+        *gateway_ack_handed_off =
+            (result == NULL ||
+             (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) == 0u);
+    }
 
     if (DEVICE_ROLE == ROLE_ANCHOR &&
         (result->actions & MESH_RELAY_ACTION_CHILD_CUSTODY_CHANGED) != 0u &&
@@ -2617,6 +2566,12 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
             if (meta_ret == PROTO_OK && batch_metadata.present) {
                 gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
                 mesh_ch9_ack_batch_queue(gateway_ack, rx);
+                if (gateway_ack_handed_off != NULL) {
+                    /* Route-test batch admission is the radio owner for this
+                     * ACK. The queue helper validates the exact packet and
+                     * keeps duplicate entries idempotent. */
+                    *gateway_ack_handed_off = true;
+                }
                 status_debug_printf("DBG_GATEWAY_BATCH_ACK_QUEUE batch=%u final=%u n=%u rxseq=%u ackseq=%u next=0x%llx\n",
                                     batch_metadata.batch_id,
                                     batch_metadata.final_packet ? 1u : 0u,
@@ -2678,6 +2633,9 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                     (unsigned long long)gateway_ack->packet.dst_id,
                                     (unsigned long long)gateway_ack->next_hop_id);
                 if (ret == 0) {
+                    if (gateway_ack_handed_off != NULL) {
+                        *gateway_ack_handed_off = true;
+                    }
                     app_mesh_rf_retry_note_success(
                         &mesh_deferred_gateway_ack_rf_retry,
                         &retry_key);
@@ -2708,6 +2666,8 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                         ret,
                         (unsigned long long)gateway_ack->packet.dst_id,
                         gateway_ack->packet.seq);
+            } else if (gateway_ack_handed_off != NULL) {
+                *gateway_ack_handed_off = true;
             }
             goto after_gateway_ack;
         }
@@ -2715,6 +2675,9 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
         if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_QUEUE_ROUTE_TEST_ACK) {
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
             mesh_ch9_ack_batch_queue(gateway_ack, rx);
+            if (gateway_ack_handed_off != NULL) {
+                *gateway_ack_handed_off = true;
+            }
             goto after_gateway_ack;
         }
 
@@ -2739,6 +2702,9 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                                     (unsigned long long)gateway_ack->next_hop_id);
             }
             if (ret == 0) {
+                if (gateway_ack_handed_off != NULL) {
+                    *gateway_ack_handed_off = true;
+                }
                 const struct app_mesh_rf_retry_key retry_key =
                     mesh_rf_retry_packet_key(
                         &gateway_ack->packet,
@@ -2771,6 +2737,10 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                 ack_state.current_channel9_ret = ret;
                 app_mesh_gateway_ack_decide(&ack_state, &ack_decision);
                 mesh_store_route_waiting_tx(gateway_ack);
+                if (gateway_ack_handed_off != NULL) {
+                    *gateway_ack_handed_off =
+                        mesh_gateway_ack_route_waiting_owns(gateway_ack);
+                }
                 mesh_schedule_route_waiting_retry_after(ack_decision.reason,
                                                         retry_delay_ms);
                 goto after_gateway_ack;
@@ -2813,6 +2783,9 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
             ret = mesh_send_outbound(gateway_ack, ack_decision.reason);
             if (ret == 0) {
+                if (gateway_ack_handed_off != NULL) {
+                    *gateway_ack_handed_off = true;
+                }
                 app_mesh_rf_retry_note_success(
                     &mesh_deferred_gateway_ack_rf_retry,
                     &retry_key);
@@ -2826,6 +2799,10 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                     "gateway-ack-planned-channel9");
 
                 mesh_store_route_waiting_tx(gateway_ack);
+                if (gateway_ack_handed_off != NULL) {
+                    *gateway_ack_handed_off =
+                        mesh_gateway_ack_route_waiting_owns(gateway_ack);
+                }
                 mesh_schedule_route_waiting_retry_after(
                     "gateway-ack-planned-channel9",
                     retry_delay_ms);
@@ -2836,6 +2813,10 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                     (unsigned long long)gateway_ack->next_hop_id,
                     ret);
             mesh_store_route_waiting_tx(gateway_ack);
+            if (gateway_ack_handed_off != NULL) {
+                *gateway_ack_handed_off =
+                    mesh_gateway_ack_route_waiting_owns(gateway_ack);
+            }
             (void)mesh_propose_event_after_channel5_contact(gateway_ack->next_hop_id,
                                                             ack_decision.reason);
             mesh_schedule_route_waiting_retry_after(ack_decision.reason,
@@ -2872,6 +2853,10 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                     (unsigned long long)gateway_ack->next_hop_id,
                     ret);
             mesh_store_route_waiting_tx(gateway_ack);
+            if (gateway_ack_handed_off != NULL) {
+                *gateway_ack_handed_off =
+                    mesh_gateway_ack_route_waiting_owns(gateway_ack);
+            }
             mesh_schedule_route_waiting_retry_after(retry_reason,
                                                     retry_delay_ms);
         }
@@ -3083,9 +3068,9 @@ after_gateway_ack:
                                           &forward_admission_retained);
         if (!forward_admission_retained) {
             /*
-             * Freshness was read-back durable before action processing.
-             * Rolling it back here would let an intermediate sequence
-             * overwrite the live path while NVS still names the newer one.
+             * Freshness was committed before action processing. Rolling it
+             * back here would let an intermediate sequence overwrite the live
+             * path while the in-RAM route state still names the newer one.
              * Retryable failures retain the exact advertisement in the
              * dedicated superseding lane; any other failure stops the
              * transport instead of regressing ordering state.
@@ -3568,10 +3553,9 @@ after_gateway_ack:
 
         if (save_ret < 0) {
             /*
-             * The last durable primary snapshot is still the original raw
-             * report.  Do not transmit the in-RAM confirm until its exact
-             * replacement has passed write/readback; a reset safely replays
-             * the original and obtains another ACK.
+             * Keep the exact in-RAM confirm owner until the custody handoff
+             * succeeds; a retry must not transmit a replacement while the
+             * original proof boundary is unresolved.
              */
             LOG_WRN("gateway ACK-confirm persistence deferred: ret=%d",
                     save_ret);
@@ -3647,8 +3631,8 @@ after_gateway_ack:
         if (deferred_cleanup_safe) {
             (void)mesh_save_outbox_durable("gateway-confirmed");
         } else {
-            /* Keep the primary snapshot so the next timeout can reconcile
-             * both durable copies before retrying this already-ACKed packet. */
+            /* Keep the primary in-RAM owner so the next timeout can reconcile
+             * deferred cleanup before retrying this already-ACKed packet. */
             LOG_WRN("mesh primary outbox retained until deferred cleanup succeeds");
         }
         mesh_schedule_tx_timeout();
@@ -3714,6 +3698,218 @@ gateway_confirmation_done:
     }
 }
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+static void mesh_gateway_host_delivery_retry_work_handler(struct k_work *work)
+{
+    int ret;
+
+    ARG_UNUSED(work);
+    if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0 ||
+        atomic_get(&mesh_gateway_host_receipt_received_state) == 0) {
+        return;
+    }
+    ret = mesh_submit_owned_work(&mesh_rx_work,
+                                 "gateway-host-receipt-retry");
+    if (ret < 0 && ret != -EALREADY) {
+        LOG_ERR("gateway host-receipt completion work lost: ret=%d", ret);
+        (void)mesh_reschedule_owned_work(
+            &mesh_gateway_host_delivery_retry_work,
+            MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+            "gateway-host-receipt-retry-reschedule");
+    }
+}
+
+void mesh_gateway_host_receipt_ready(void)
+{
+    int ret;
+
+    if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
+        LOG_WRN("gateway host receipt arrived without retained custody");
+        return;
+    }
+    atomic_set(&mesh_gateway_host_receipt_received_state, 1);
+    ret = mesh_submit_owned_work(&mesh_rx_work,
+                                 "gateway-host-receipt");
+    if (ret < 0 && ret != -EALREADY) {
+        LOG_ERR("gateway host receipt event could not reach mesh owner: ret=%d",
+                ret);
+        ret = mesh_reschedule_owned_work(
+            &mesh_gateway_host_delivery_retry_work,
+            MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+            "gateway-host-receipt-reschedule");
+        if (ret < 0) {
+            LOG_ERR("gateway host receipt retry could not be scheduled: ret=%d",
+                    ret);
+            app_watchdog_stop_feeding();
+        }
+    }
+}
+
+static int mesh_complete_gateway_host_delivery_locked(void)
+{
+    struct mesh_rx_pending *pending = &mesh_rx_work_pending;
+    struct mesh_relay_result *result = &mesh_work_result;
+    bool gateway_ack_handed_off = false;
+    uint32_t validation_token;
+    int semantic_ret;
+    int ret;
+
+    if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0 ||
+        atomic_get(&mesh_gateway_host_receipt_received_state) == 0) {
+        return -EAGAIN;
+    }
+
+    semantic_ret = mesh_gateway_host_delivery_semantic_acceptance;
+    if (atomic_get(&mesh_gateway_host_delivery_semantic_accepted_state) == 0) {
+        /* ACCEPT_BATCH is deliberately a pure preflight/reservation.  The
+         * semantic owner is allowed to mutate only after the GUI has accepted
+         * the exact retained stream record. */
+        if (semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
+            validation_token = pending->result_validation_token;
+            ret = mesh_gateway_accept_semantic_delivery(pending);
+            gateway_command_result_validation_release_reserved(
+                validation_token);
+            pending->result_validation_token = 0u;
+            if (ret < 0) {
+                LOG_WRN("gateway host-delivery semantic acceptance retained: msg=0x%02x src=0x%016llx ret=%d",
+                        pending->packet.msg_type,
+                        (unsigned long long)pending->packet.src_id,
+                        ret);
+                goto retry;
+            }
+            if (ret != APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+                ret != APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
+                ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW &&
+                ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE) {
+                LOG_ERR("gateway host-delivery semantic acceptance invalid: msg=0x%02x src=0x%016llx ret=%d",
+                        pending->packet.msg_type,
+                        (unsigned long long)pending->packet.src_id,
+                        ret);
+                goto retry;
+            }
+            semantic_ret = ret;
+            mesh_gateway_host_delivery_semantic_acceptance = ret;
+        }
+        atomic_set(&mesh_gateway_host_delivery_semantic_accepted_state, 1);
+        if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+            pending->packet.msg_type == MSG_MESH_DATA) {
+            app_mesh_test_note_gateway_delivery(
+                &pending->packet,
+                pending->payload,
+                pending->payload_len,
+                pending->received_at_ms,
+                k_msgq_num_used_get(&mesh_rx_msgq));
+        }
+    }
+    if (atomic_get(&mesh_gateway_host_delivery_semantic_finalized_state) == 0 &&
+        semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
+        ret = gateway_finalize_semantic_delivery(
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            pending->previous_hop_id,
+            pending->radio_channel,
+            pending->current_channel9_plan_valid ?
+            &pending->current_channel9_plan : NULL,
+            semantic_ret);
+        if (ret < 0) {
+            LOG_WRN("gateway host-delivery semantic finalization retained: msg=0x%02x src=0x%016llx ret=%d",
+                    pending->packet.msg_type,
+                    (unsigned long long)pending->packet.src_id,
+                    ret);
+            goto retry;
+        }
+        atomic_set(&mesh_gateway_host_delivery_semantic_finalized_state, 1);
+    } else if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
+        atomic_set(&mesh_gateway_host_delivery_semantic_finalized_state, 1);
+    }
+
+    if (atomic_get(&mesh_gateway_host_delivery_relay_committed_state) == 0) {
+        ret = mesh_relay_commit_gateway_delivery(
+            &mesh_runtime,
+            &pending->packet,
+            pending->payload,
+            pending->payload_len,
+            pending->previous_hop_id,
+            k_uptime_get_32(),
+            result);
+        if (ret != PROTO_OK) {
+            LOG_WRN("gateway host-delivery relay commit retained: msg=0x%02x src=0x%016llx ret=%d",
+                    pending->packet.msg_type,
+                    (unsigned long long)pending->packet.src_id,
+                    ret);
+            goto retry;
+        }
+        atomic_set(&mesh_gateway_host_delivery_relay_committed_state, 1);
+    }
+
+    if (atomic_get(&mesh_gateway_host_delivery_ack_handoff_state) == 0) {
+        mesh_handle_result_actions(
+            result,
+            pending->radio_channel,
+            pending,
+            NULL,
+            NULL,
+            0u,
+            NULL,
+            &gateway_ack_handed_off);
+        if (!gateway_ack_handed_off) {
+            LOG_WRN("gateway host-delivery ACK has no mesh owner yet: msg=0x%02x src=0x%016llx",
+                    pending->packet.msg_type,
+                    (unsigned long long)pending->packet.src_id);
+            goto retry;
+        }
+        atomic_set(&mesh_gateway_host_delivery_ack_handoff_state, 1);
+    }
+
+    ret = gateway_ble_finish_host_delivery(&pending->packet);
+    if (ret < 0) {
+        LOG_WRN("gateway host-delivery BLE retirement retained: ret=%d", ret);
+        goto retry;
+    }
+    atomic_clear(&mesh_gateway_host_receipt_received_state);
+    atomic_clear(&mesh_gateway_host_delivery_pending_state);
+    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
+    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
+    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
+    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
+    mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
+    (void)k_work_cancel_delayable(&mesh_gateway_host_delivery_retry_work);
+    return 0;
+
+retry:
+    if (atomic_get(&mesh_gateway_host_delivery_semantic_accepted_state) == 0 &&
+        pending->packet.msg_type == MSG_COMMAND_RESULT &&
+        pending->result_validation_token == 0u) {
+        uint32_t token = 0u;
+
+        ret = gateway_command_result_validation_reserve(
+            &pending->packet,
+            pending->first_received_at_ms,
+            &token);
+        if (ret == 0) {
+            pending->result_validation_token = token;
+        } else if (ret != -ENOENT) {
+            LOG_WRN("gateway host-delivery validation owner could not be rearmed: ret=%d",
+                    ret);
+        }
+    }
+    ret = mesh_reschedule_owned_work(
+        &mesh_gateway_host_delivery_retry_work,
+        MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
+        "gateway-host-receipt-completion");
+    if (ret < 0 && ret != -EALREADY) {
+        LOG_ERR("gateway host-receipt completion retry lost: ret=%d", ret);
+        app_watchdog_stop_feeding();
+    }
+    return -EAGAIN;
+}
+#else
+void mesh_gateway_host_receipt_ready(void)
+{
+}
+#endif
+
 static uint32_t mesh_drain_rx_queue_locked(const char *owner)
 {
     struct mesh_rx_pending *pending = &mesh_rx_work_pending;
@@ -3726,11 +3922,26 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                             owner == NULL ? "rx" : owner,
                             k_msgq_num_used_get(&mesh_rx_msgq));
     }
+#if DEVICE_ROLE == ROLE_GATEWAY
+    /* An exact GUI receipt is a barrier: finish semantic acceptance, EACK,
+     * and mesh-ACK handoff before dequeuing another RX item, otherwise a
+     * later item can overwrite the retained raw payload. */
+    if (atomic_get(&mesh_gateway_host_delivery_pending_state) != 0) {
+        if (atomic_get(&mesh_gateway_host_receipt_received_state) == 0) {
+            return 0u;
+        }
+        if (mesh_complete_gateway_host_delivery_locked() < 0) {
+            return 0u;
+        }
+    }
+#endif
     while (k_msgq_get(&mesh_rx_msgq, pending, K_NO_WAIT) == 0) {
         uint32_t now_ms = k_uptime_get_32();
         bool delivered_event_control = false;
         bool admitted_event_control = false;
+#if DEVICE_ROLE == ROLE_GATEWAY
         bool gateway_semantic_delivery_processed = false;
+#endif
         struct proto_packet confirmed_packet = {0};
         uint8_t confirmed_payload[
             MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN] = {0};
@@ -3903,79 +4114,51 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                                     pending->radio_channel,
                                     "c5-control-rx");
         }
+#if DEVICE_ROLE == ROLE_GATEWAY
         if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
             mesh_gateway_delivery_requires_semantic_acceptance(
                 &pending->packet)) {
             bool internal_control =
                 mesh_gateway_delivery_is_internal_control(pending);
-            bool collection_redrive_without_host = false;
             bool host_custody_ready = false;
-            bool journal_owned_for_packet = false;
             bool semantic_preflight_complete = false;
             bool stream_reservation_acquired = false;
-            bool stream_terminal_journal_match = false;
-            bool stream_terminal_receipt_match = false;
             uint8_t host_projection_mask = 0u;
-            int journal_ret = 0;
             int reservation_ret = 0;
             int semantic_ret = -EINVAL;
 
             /*
-             * Classify a durable collection duplicate before BLE admission.
-             * Once its original host journal is gone, the retry exists only
-             * to re-arm a lost collection EACK and must not be blocked by, or
-             * consume, host queue capacity. Every other record still reserves
-             * downstream host-output custody before protocol mutation.
+             * The GUI is the external RAM for host history.  Firmware only
+             * admits a semantic packet after it owns the retained BLE item;
+             * collection state remains in RAM for EACK retry, but no flash
+             * journal or receipt ledger participates in this decision.
              */
             mesh_rx_pending_refresh_age(pending, k_uptime_get_32());
             gateway_semantic_delivery_processed = true;
             if (internal_control) {
                 host_custody_ready = true;
             } else {
-                journal_ret =
-                    /* Host-journal persistence is removed: no prior record is
-                     * retained, so every admission is classified as fresh. */
-                    0;
-                if (journal_ret == 0) {
-                    semantic_ret =
-                        mesh_gateway_preflight_semantic_delivery(pending);
-                    semantic_preflight_complete = true;
-                    if (semantic_ret ==
-                            APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
-                        pending->packet.msg_type == MSG_RESULT_BUNDLE) {
-                        int projection_ret =
-                            gateway_result_bundle_host_projection_mask(
-                                &pending->packet,
-                                pending->payload,
-                                pending->payload_len,
-                                pending->previous_hop_id,
-                                &host_projection_mask);
+                semantic_ret = mesh_gateway_preflight_semantic_delivery(pending);
+                semantic_preflight_complete = true;
+                if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+                    pending->packet.msg_type == MSG_RESULT_BUNDLE) {
+                    int projection_ret = gateway_result_bundle_host_projection_mask(
+                        &pending->packet,
+                        pending->payload,
+                        pending->payload_len,
+                        pending->previous_hop_id,
+                        &host_projection_mask);
 
-                        if (projection_ret < 0) {
-                            semantic_ret = projection_ret;
-                        }
+                    if (projection_ret < 0) {
+                        semantic_ret = projection_ret;
                     }
-                    if (semantic_ret < 0) {
-                        /*
-                         * A completed negative pure preflight owns no host
-                         * journal and needs no BLE capacity. Preserve that
-                         * rejection through the result gate below.
-                         */
-                        host_custody_ready = true;
-                    } else if (semantic_ret ==
-                                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE ||
-                               semantic_ret ==
-                                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE) {
-                        collection_redrive_without_host = true;
-                        host_custody_ready = true;
-                    }
-                } else if (journal_ret < 0) {
-                    semantic_ret = journal_ret;
+                }
+                if (semantic_ret < 0 ||
+                    semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE) {
+                    /* A negative preflight and an active collection redrive
+                     * don't need another host record. */
                     host_custody_ready = true;
                 } else {
-                    journal_owned_for_packet = true;
-                }
-                if (!host_custody_ready) {
                     reservation_ret = gateway_ble_reserve_stream_packet(
                         &pending->packet,
                         pending->payload,
@@ -3984,16 +4167,7 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                     stream_reservation_acquired =
                         reservation_ret ==
                             GATEWAY_BLE_STREAM_RESERVATION_ACQUIRED;
-                    stream_terminal_journal_match =
-                        reservation_ret ==
-                            GATEWAY_BLE_STREAM_RESERVATION_JOURNAL_TERMINAL;
-                    stream_terminal_receipt_match =
-                        reservation_ret ==
-                            GATEWAY_BLE_STREAM_RESERVATION_RECEIPT_TERMINAL;
-                    host_custody_ready =
-                        stream_reservation_acquired ||
-                        stream_terminal_journal_match ||
-                        stream_terminal_receipt_match;
+                    host_custody_ready = stream_reservation_acquired;
                 }
             }
             if (internal_control &&
@@ -4008,29 +4182,6 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                         (unsigned long long)pending->packet.src_id,
                         reservation_ret);
             } else {
-                if (stream_terminal_journal_match &&
-                    journal_ret !=
-                        APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED &&
-                    journal_ret !=
-                        APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW) {
-                    gateway_ble_require_host_journal_restore(
-                        "host-output-reservation-phase-race");
-                    goto mesh_rx_item_cleanup;
-                }
-                if (stream_terminal_receipt_match) {
-                    /*
-                     * Terminal host proof has already moved out of the
-                     * singleton journal. Suppress semantic mutation and BLE
-                     * delivery, then commit only relay duplicate/ACK state.
-                     */
-                    gateway_semantic_commit_owner_clear_if_matches(
-                        &pending->packet,
-                        pending->payload,
-                        pending->payload_len);
-                    semantic_ret =
-                        APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-                    semantic_preflight_complete = true;
-                }
                 /*
                  * A completed negative pure preflight must reach rejection
                  * before PREPARE or the mutating semantic dispatcher.
@@ -4038,220 +4189,31 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 if (semantic_preflight_complete && semantic_ret < 0) {
                     goto gateway_semantic_result_ready;
                 }
-                if (stream_terminal_receipt_match) {
-                    /* The durable receipt selected the duplicate outcome. */
-                } else if (journal_ret < 0) {
-                    semantic_ret = journal_ret;
-                } else if (
-                    journal_ret ==
-                        APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED ||
-                    journal_ret ==
-                        APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW) {
-                    /*
-                     * A prior marker write may have succeeded while its
-                     * readback failed. Exact terminal identity is the durable
-                     * authority, so retire the same-boot mutation hint before
-                     * any later journal owner can be admitted.
-                     */
-                    if (!stream_terminal_journal_match) {
-                        if (stream_reservation_acquired) {
-                            gateway_ble_cancel_stream_reservation();
-                        }
-                        gateway_ble_require_host_journal_restore(
-                            "host-output-terminal-race");
-                        goto mesh_rx_item_cleanup;
-                    }
-                    gateway_semantic_commit_owner_clear_if_matches(
-                        &pending->packet,
-                        pending->payload,
-                        pending->payload_len);
-                    semantic_ret =
-                        APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-                } else {
-                    if (!internal_control &&
-                        !semantic_preflight_complete &&
-                        !(journal_ret ==
-                              APP_MESH_GATEWAY_HOST_JOURNAL_PREPARED &&
-                          gateway_semantic_commit_owner_matches(
-                              &pending->packet,
-                              pending->payload,
-                              pending->payload_len))) {
-                        /*
-                         * Validate the complete semantic transition while RX
-                         * still owns every relevant state machine. Invalid or
-                         * stale input must never create a PREPARED owner that
-                         * blocks later host records.
-                         */
-                        semantic_ret =
-                            mesh_gateway_preflight_semantic_delivery(
-                                pending);
-                        if (semantic_ret < 0) {
-                            goto gateway_semantic_result_ready;
-                        }
-                    }
-                    if (!internal_control && journal_ret == 0 &&
-                        !collection_redrive_without_host) {
-                        /*
-                         * Host-journal persistence is removed; there is no
-                         * PREPARED marker to write. The semantic/mutation
-                         * ownership stays in RAM for this session.
-                         */
-                        ret = 0;
-                        if (ret < 0) {
-                            if (stream_reservation_acquired) {
-                                gateway_ble_cancel_stream_reservation();
-                            }
-                            gateway_ble_require_host_journal_restore(
-                                "host-output-prepare-uncertain");
-                            LOG_WRN("gateway host journal prepare failed without protocol mutation or ACK: msg=0x%02x src=0x%016llx ret=%d",
-                                    pending->packet.msg_type,
-                                    (unsigned long long)
-                                        pending->packet.src_id,
-                                    ret);
-                            goto mesh_rx_item_cleanup;
-                        }
-                        journal_owned_for_packet = true;
-                    }
-                    if (!internal_control &&
-                        journal_ret ==
-                            APP_MESH_GATEWAY_HOST_JOURNAL_PREPARED &&
-                        gateway_semantic_commit_owner_matches(
-                            &pending->packet,
-                            pending->payload,
-                            pending->payload_len)) {
-                        /*
-                         * The prior semantic call succeeded in this boot and
-                         * only durable phase promotion failed. Do not apply
-                         * the mutation twice; retry the marker transition.
-                         */
-                        semantic_ret =
-                            APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-                    } else {
-                        if (semantic_ret ==
-                            APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
-                            /* Pure preflight proved a valid terminal raw
-                             * record; no volatile semantic owner remains. */
-                        } else if (semantic_ret ==
-                            APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE) {
-                            semantic_ret =
-                                gateway_accept_collection_receipt_redrive(
-                                    &pending->packet,
-                                    pending->payload,
-                                    pending->payload_len,
-                                    pending->previous_hop_id,
-                                    pending->radio_channel,
-                                    pending->current_channel9_plan_valid ?
-                                    &pending->current_channel9_plan : NULL);
-                            if (semantic_ret == 0) {
-                                semantic_ret =
-                                    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE;
-                            }
-                        } else {
-                            semantic_ret =
-                                mesh_gateway_accept_semantic_delivery(
-                                    pending);
-                            if (!internal_control && semantic_ret >= 0 &&
-                                semantic_ret !=
-                                    APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
-                                semantic_ret !=
-                                    APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
-                                semantic_ret !=
-                                    APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW &&
-                                semantic_ret !=
-                                    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE) {
-                                semantic_ret = -EINVAL;
-                            }
-                            if (!internal_control && semantic_ret >= 0) {
-                                gateway_semantic_commit_owner_set(
-                                    &pending->packet,
-                                    pending->payload,
-                                    pending->payload_len);
-                            }
-                        }
+                if (!stream_reservation_acquired &&
+                    semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE) {
+                    semantic_ret = mesh_gateway_accept_semantic_delivery(pending);
+                    if (semantic_ret >= 0 &&
+                        semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
+                        semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
+                        semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW &&
+                        semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE) {
+                        semantic_ret = -EINVAL;
                     }
                 }
 gateway_semantic_result_ready:
                 if (semantic_ret < 0) {
-                    if (!internal_control) {
-                        int rollback_ret = 0;
-
-                        if (journal_owned_for_packet &&
-                            journal_ret !=
-                                APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED &&
-                            journal_ret !=
-                                APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW) {
-                            /* Host-journal rollback persistence removed. */
-                            rollback_ret = 0;
-                        }
-                        if (stream_reservation_acquired) {
-                            gateway_ble_cancel_stream_reservation();
-                        }
-                        if (rollback_ret < 0) {
-                            gateway_ble_require_host_journal_restore(
-                                "host-output-rejected-rollback");
-                            LOG_ERR("gateway rejected host journal rollback failed; durable owner remains fail-closed: msg=0x%02x src=0x%016llx ret=%d",
-                                    pending->packet.msg_type,
-                                    (unsigned long long)
-                                        pending->packet.src_id,
-                                    rollback_ret);
-                        } else if (journal_owned_for_packet) {
-                            gateway_semantic_commit_owner_clear_if_matches(
-                                &pending->packet,
-                                pending->payload,
-                                pending->payload_len);
-                        }
+                    if (stream_reservation_acquired) {
+                        gateway_ble_cancel_stream_reservation();
                     }
                     LOG_WRN("gateway semantic delivery rejected without ACK: msg=0x%02x src=0x%016llx ret=%d",
                             pending->packet.msg_type,
                             (unsigned long long)pending->packet.src_id,
                             semantic_ret);
                     goto mesh_rx_item_cleanup;
-                } else if (!internal_control &&
-                           !collection_redrive_without_host &&
-                           journal_ret !=
-                               APP_MESH_GATEWAY_HOST_JOURNAL_COMMITTED &&
-                           journal_ret !=
-                               APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW &&
-                           (semantic_ret ==
-                                APP_GATEWAY_SEMANTIC_ACCEPT_NEW ||
-                            semantic_ret ==
-                                APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE ||
-                            semantic_ret ==
-                                APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW ||
-                            semantic_ret ==
-                                APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE)) {
-                    ret = 0; /* host-journal commit persistence removed */
-                    if (ret < 0) {
-                        if (stream_reservation_acquired) {
-                            gateway_ble_cancel_stream_reservation();
-                        }
-                        gateway_ble_require_host_journal_restore(
-                            "host-output-marker-uncertain");
-                        LOG_WRN("gateway semantic commit marker failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
-                                pending->packet.msg_type,
-                                (unsigned long long)
-                                    pending->packet.src_id,
-                                ret);
-                        goto mesh_rx_item_cleanup;
-                    }
-                    gateway_semantic_commit_owner_clear_if_matches(
-                        &pending->packet,
-                        pending->payload,
-                        pending->payload_len);
-                    /*
-                     * Semantic state and the write-ahead host journal are now
-                     * committed. Commit the reserved RAM stream entry before
-                     * exposing relay duplicate identity or gateway ACK.
-                     */
-                    if (!stream_reservation_acquired) {
-                        gateway_ble_require_host_journal_restore(
-                            "host-output-reservation-owner");
-                        LOG_ERR("gateway semantic journal committed without owned BLE reservation: msg=0x%02x src=0x%016llx",
-                                pending->packet.msg_type,
-                                (unsigned long long)
-                                    pending->packet.src_id);
-                        goto mesh_rx_item_cleanup;
-                    }
+                } else if (stream_reservation_acquired) {
+                    /* Keep the pure preflight result with the raw pending
+                     * packet. Semantic mutation, gateway ACK, and collection
+                     * EACK all stay behind the exact GUI receipt. */
                     ret = gateway_ble_commit_stream_reservation_projection(
                         &pending->packet,
                         pending->payload,
@@ -4267,30 +4229,18 @@ gateway_semantic_result_ready:
                                 ret);
                         goto mesh_rx_item_cleanup;
                     }
-                    if (semantic_ret ==
-                        APP_GATEWAY_SEMANTIC_ACCEPT_NEW) {
-                        app_mesh_test_note_gateway_delivery(
-                            &pending->packet,
-                            pending->payload,
-                            pending->payload_len,
-                            pending->received_at_ms,
-                            k_msgq_num_used_get(&mesh_rx_msgq));
-                    }
-                } else if (collection_redrive_without_host &&
-                           (semantic_ret ==
-                                APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE ||
-                            semantic_ret ==
-                                APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE)) {
-                    gateway_semantic_commit_owner_clear_if_matches(
-                        &pending->packet,
-                        pending->payload,
-                        pending->payload_len);
+                    mesh_gateway_host_delivery_semantic_acceptance = semantic_ret;
+                    atomic_clear(&mesh_gateway_host_receipt_received_state);
+                    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
+                    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
+                    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
+                    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
+                    atomic_set(&mesh_gateway_host_delivery_pending_state, 1);
                 } else if (semantic_ret ==
                                APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
                            !internal_control) {
-                    if (stream_reservation_acquired) {
-                        gateway_ble_cancel_stream_reservation();
-                    }
+                    /* The same-boot semantic owner already has a host item;
+                     * only the retry ACK/EACK needs to be emitted. */
                 } else if (!internal_control) {
                     if (stream_reservation_acquired) {
                         gateway_ble_cancel_stream_reservation();
@@ -4302,14 +4252,11 @@ gateway_semantic_result_ready:
                     goto mesh_rx_item_cleanup;
                 }
 
-                ret = journal_ret ==
-                          APP_MESH_GATEWAY_HOST_JOURNAL_RECOVERED_RAW ||
-                      semantic_ret ==
-                          APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW ||
-                      semantic_ret ==
-                          APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECEIPT_REDRIVE ?
-                      0 :
-                      gateway_finalize_semantic_delivery(
+                if (!stream_reservation_acquired) {
+                    ret = semantic_ret ==
+                              APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW ?
+                          0 :
+                          gateway_finalize_semantic_delivery(
                           &pending->packet,
                           pending->payload,
                           pending->payload_len,
@@ -4317,30 +4264,32 @@ gateway_semantic_result_ready:
                           pending->radio_channel,
                           pending->current_channel9_plan_valid ?
                           &pending->current_channel9_plan : NULL,
-                          semantic_ret);
-                if (ret < 0) {
-                    LOG_WRN("gateway semantic post-custody finalization failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
-                            pending->packet.msg_type,
-                            (unsigned long long)pending->packet.src_id,
-                            ret);
-                    goto mesh_rx_item_cleanup;
-                }
-                ret = mesh_relay_commit_gateway_delivery(
-                    &mesh_runtime,
-                    &pending->packet,
-                    pending->payload,
-                    pending->payload_len,
-                    pending->previous_hop_id,
-                    k_uptime_get_32(),
-                    result);
-                if (ret != PROTO_OK) {
-                    LOG_WRN("gateway semantic delivery commit failed: msg=0x%02x src=0x%016llx ret=%d",
-                            pending->packet.msg_type,
-                            (unsigned long long)pending->packet.src_id,
-                            ret);
+                              semantic_ret);
+                    if (ret < 0) {
+                        LOG_WRN("gateway semantic post-custody finalization failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
+                                pending->packet.msg_type,
+                                (unsigned long long)pending->packet.src_id,
+                                ret);
+                        goto mesh_rx_item_cleanup;
+                    }
+                    ret = mesh_relay_commit_gateway_delivery(
+                        &mesh_runtime,
+                        &pending->packet,
+                        pending->payload,
+                        pending->payload_len,
+                        pending->previous_hop_id,
+                        k_uptime_get_32(),
+                        result);
+                    if (ret != PROTO_OK) {
+                        LOG_WRN("gateway semantic delivery commit failed: msg=0x%02x src=0x%016llx ret=%d",
+                                pending->packet.msg_type,
+                                (unsigned long long)pending->packet.src_id,
+                                ret);
+                    }
                 }
             }
         }
+#endif
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             pending->packet.msg_type == MSG_GATEWAY_ACK) {
             if ((result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) != 0u) {
@@ -4351,14 +4300,23 @@ gateway_semantic_result_ready:
                 status_debug_note("DBG_LEGACY_ACK_IDLE\n");
             }
         }
-        mesh_handle_result_actions(result, pending->radio_channel, pending,
-                                   confirmed_packet_valid ?
-                                   &confirmed_packet : NULL,
-                                   confirmed_payload_len > 0u ?
-                                       confirmed_payload : NULL,
-                                   confirmed_payload_len,
-                                   confirmed_digest_valid ?
-                                       confirmed_digest : NULL);
+#if DEVICE_ROLE == ROLE_GATEWAY
+        /* A retained host item is a hard barrier: semantic finalization,
+         * relay commit, and the source ACK all wait for HOST_ACCEPTED. */
+        if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
+#endif
+            mesh_handle_result_actions(result, pending->radio_channel, pending,
+                                       confirmed_packet_valid ?
+                                       &confirmed_packet : NULL,
+                                       confirmed_payload_len > 0u ?
+                                           confirmed_payload : NULL,
+                                       confirmed_payload_len,
+                                       confirmed_digest_valid ?
+                                           confirmed_digest : NULL,
+                                       NULL);
+#if DEVICE_ROLE == ROLE_GATEWAY
+        }
+#endif
         if (mesh_transport_paused()) {
             goto mesh_rx_item_cleanup;
         }
@@ -4372,8 +4330,8 @@ gateway_semantic_result_ready:
          * the survey after a relay operation.
          */
         mesh_rx_pending_refresh_age(pending, k_uptime_get_32());
+#if DEVICE_ROLE == ROLE_GATEWAY
         if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
-            DEVICE_ROLE == ROLE_GATEWAY &&
             !gateway_semantic_delivery_processed) {
             if (pending->packet.msg_type == MSG_COMMAND_RESULT) {
                 gateway_note_command_result(&pending->packet,
@@ -4415,8 +4373,10 @@ gateway_semantic_result_ready:
             if (ret < 0) {
                 LOG_DBG("gateway BLE stream packet not queued: %d", ret);
             }
-        } else if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u &&
-                   DEVICE_ROLE == ROLE_ANCHOR) {
+        }
+#endif
+#if DEVICE_ROLE == ROLE_ANCHOR
+        if ((result->actions & MESH_RELAY_ACTION_DELIVER_LOCAL) != 0u) {
             ret = mesh_report_anchor_handle_local_command(
                 &pending->packet,
                 pending->payload,
@@ -4442,10 +4402,26 @@ gateway_semantic_result_ready:
                                               pending->payload,
                                                     pending->payload_len);
         }
+#endif
         handled_count++;
 mesh_rx_item_cleanup:
+#if DEVICE_ROLE == ROLE_GATEWAY
+        /* A retained host item owns the command-result validation lease until
+         * post-receipt semantic acceptance; releasing it here would let the
+         * timeout worker clear the same-boot owner before the GUI receipt. */
+        if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
+            gateway_command_result_validation_release_reserved(
+                pending->result_validation_token);
+        }
+#else
         gateway_command_result_validation_release_reserved(
             pending->result_validation_token);
+#endif
+#if DEVICE_ROLE == ROLE_GATEWAY
+        if (atomic_get(&mesh_gateway_host_delivery_pending_state) != 0) {
+            break;
+        }
+#endif
         if (mesh_transport_paused()) {
             break;
         }

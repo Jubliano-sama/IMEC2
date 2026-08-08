@@ -30,6 +30,11 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
         }
         return ret;
     }
+    if (((request->flags & FLAG_COUNT_AS_CLICK) != 0u) !=
+        request->click_timestamp_present) {
+        result->status = RANGE_INTERNAL_ERROR;
+        return -EINVAL;
+    }
 
     ret = ensure_phy_mode(DWM3000_PHY_RANGE);
     if (ret < 0) {
@@ -70,7 +75,21 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
     poll_header.initiator_id = request->initiator_id;
     poll_header.responder_id = request->responder_id;
 
-    ret = uwb_encode_poll(&poll_header, tx_buffer, sizeof(tx_buffer), &tx_len);
+    if (request->click_timestamp_present) {
+        uint32_t click_age_ms =
+            k_uptime_get_32() - request->click_timestamp_ms;
+
+        ret = uwb_encode_click_poll(&poll_header,
+                                    click_age_ms,
+                                    tx_buffer,
+                                    sizeof(tx_buffer),
+                                    &tx_len);
+    } else {
+        ret = uwb_encode_poll(&poll_header,
+                              tx_buffer,
+                              sizeof(tx_buffer),
+                              &tx_len);
+    }
     if (ret != PROTO_OK) {
         result->status = RANGE_INTERNAL_ERROR;
         return -EINVAL;
@@ -522,7 +541,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                uint32_t timeout_ms,
                                struct dwm3000_range_result *result)
 {
-    struct uwb_range_header poll;
+    struct uwb_poll_frame poll;
     struct uwb_response_frame response;
     struct uwb_final_frame final;
     struct uwb_report_frame report;
@@ -535,6 +554,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     uint64_t poll_rx_ts;
     uint64_t resp_tx_ts;
     uint64_t final_rx_ts;
+    int64_t poll_received_at_ms = 0;
     uint16_t reply_delay_uus;
     uint8_t quality = 0u;
     int8_t rsl_dbm = 0;
@@ -586,6 +606,9 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
                         &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
                         NULL, NULL, NULL, NULL, false);
+    if (ret == 0) {
+        poll_received_at_ms = k_uptime_get();
+    }
     if (ret < 0) {
         if (result != NULL) {
             result->quality = quality;
@@ -634,36 +657,37 @@ static int responder_poll_once(uint64_t local_anchor_id,
         }
         return -EAGAIN;
     }
-    if (!poll_targets_anchor(&poll, local_anchor_id)) {
+    if (!poll_targets_anchor(&poll.header, local_anchor_id)) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=poll-other reason=target observed=0x%llx expected=0x%llx seq=%u round=%u\n",
-                                (unsigned long long)poll.responder_id,
+                                (unsigned long long)poll.header.responder_id,
                                 (unsigned long long)local_anchor_id,
-                                poll.seq,
-                                poll.round_index);
+                                poll.header.seq,
+                                poll.header.round_index);
         }
         if (result != NULL) {
-            result_set_poll_metadata(result, &poll, poll.responder_id);
+            result_set_poll_metadata(result, &poll.header,
+                                     poll.header.responder_id);
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
             result->status = RANGE_WRONG_TARGET;
         }
         return -EAGAIN;
     }
-    if (!poll_matches_expected(&poll, expected)) {
+    if (!poll_matches_expected(&poll.header, expected)) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
             status_debug_printf("DBG_DS_RESP stage=poll-other reason=identity evt=%u/%u seq=%u/%u round=%u/%u init=0x%llx/0x%llx\n",
-                                poll.session_id,
+                                poll.header.session_id,
                                 expected->session_id,
-                                poll.seq,
+                                poll.header.seq,
                                 expected->seq,
-                                poll.round_index,
+                                poll.header.round_index,
                                 expected->round_index,
-                                (unsigned long long)poll.initiator_id,
+                                (unsigned long long)poll.header.initiator_id,
                                 (unsigned long long)expected->initiator_id);
         }
         if (result != NULL) {
-            result_set_poll_metadata(result, &poll, local_anchor_id);
+            result_set_poll_metadata(result, &poll.header, local_anchor_id);
             result->quality = quality;
             result->rsl_dbm = rsl_dbm;
             result->status = RANGE_WRONG_TARGET;
@@ -671,8 +695,19 @@ static int responder_poll_once(uint64_t local_anchor_id,
         return -EAGAIN;
     }
     if (result != NULL) {
-        result_set_poll_metadata(result, &poll, local_anchor_id);
+        result_set_poll_metadata(result, &poll.header, local_anchor_id);
         result->exchange_start_ms = k_uptime_get();
+        if ((poll.metadata_flags & UWB_POLL_METADATA_CLICK_AGE_PRESENT) != 0u) {
+            result->click_age_ms = poll.click_age_ms;
+            result->click_age_saturated =
+                (poll.metadata_flags &
+                 UWB_POLL_METADATA_CLICK_AGE_SATURATED) != 0u;
+            if (!result->click_age_saturated) {
+                result->click_timestamp_ms =
+                    poll_received_at_ms - poll.click_age_ms;
+                result->click_timestamp_present = true;
+            }
+        }
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
         result->exchange_started = true;
@@ -685,15 +720,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
     resp_tx_ts = delayed_tx_timestamp_from_programmed_time(resp_tx_time);
 
     response.header.type = MSG_UWB_RESP;
-    response.header.seq = poll.seq;
-    response.header.round_index = poll.round_index;
-    response.header.network_id = poll.network_id;
-    response.header.session_id = poll.session_id;
-    response.header.session_nonce = poll.session_nonce;
-    response.header.initiator_short_addr = poll.initiator_short_addr;
+    response.header.seq = poll.header.seq;
+    response.header.round_index = poll.header.round_index;
+    response.header.network_id = poll.header.network_id;
+    response.header.session_id = poll.header.session_id;
+    response.header.session_nonce = poll.header.session_nonce;
+    response.header.initiator_short_addr = poll.header.initiator_short_addr;
     response.header.responder_short_addr = short_addr_from_id(local_anchor_id);
-    response.header.flags = poll.flags;
-    response.header.initiator_id = poll.initiator_id;
+    response.header.flags = poll.header.flags;
+    response.header.initiator_id = poll.header.initiator_id;
     response.header.responder_id = local_anchor_id;
     response.poll_rx_ts_32 = (uint32_t)poll_rx_ts;
     response.resp_tx_ts_32 = (uint32_t)resp_tx_ts;
@@ -722,8 +757,8 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 ret,
                                 (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
                                 k_uptime_get_32(),
-                                poll.seq,
-                                poll.round_index,
+                                poll.header.seq,
+                                poll.header.round_index,
                                 resp_tx_time);
         }
         return -ETIME;
@@ -731,8 +766,8 @@ static int responder_poll_once(uint64_t local_anchor_id,
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=resp-armed now=%u seq=%u round=%u tx_time=0x%08x resp_tx=0x%08x\n",
                             k_uptime_get_32(),
-                            poll.seq,
-                            poll.round_index,
+                            poll.header.seq,
+                            poll.header.round_index,
                             resp_tx_time,
                             (unsigned int)resp_tx_ts);
         status_debug_printf("DBG_DS_RESP stage=resp-raw poll_rx=0x%08x q=%u reply_uus=%u\n",
@@ -759,16 +794,16 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 status,
                                 (unsigned int)status_to_rx_failure(status),
                                 k_uptime_get_32(),
-                                poll.seq,
-                                poll.round_index);
+                                poll.header.seq,
+                                poll.header.round_index);
         }
 #if defined(CONFIG_IMEC_ML_ANCHOR)
         LOG_WRN("UWB responder FINAL RX failed: ret=%d sys_status=0x%08x failure=%s seq=%u round=%u wait_ms=%u reply_delay_uus=%u",
                 ret,
                 status,
                 rx_failure_debug_name(status_to_rx_failure(status)),
-                poll.seq,
-                poll.round_index,
+                poll.header.seq,
+                poll.header.round_index,
                 ds_twr_rx_wait_timeout_ms(reply_delay_uus),
                 reply_delay_uus);
 #endif
@@ -788,7 +823,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     if (ret < 0) {
         report_status = RANGE_BAD_FRAME;
     } else if (!dwm3000_driver_final_matches_poll(&final,
-                                                  &poll,
+                                                  &poll.header,
                                                   local_anchor_id)) {
         report_status = RANGE_WRONG_TARGET;
     } else if (validate_driver_reply_timing(
@@ -819,7 +854,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     }
 
     if (result != NULL) {
-        result_set_poll_metadata(result, &poll, local_anchor_id);
+        result_set_poll_metadata(result, &poll.header, local_anchor_id);
         result->distance_mm = distance_mm;
         result->quality = quality;
         result->rsl_dbm = rsl_dbm;
@@ -834,25 +869,26 @@ static int responder_poll_once(uint64_t local_anchor_id,
         status_debug_printf("DBG_DS_RESP stage=final-decode status=%u now=%u seq=%u round=%u final_rx=0x%08x\n",
                             report_status,
                             k_uptime_get_32(),
-                            poll.seq,
-                            poll.round_index,
+                            poll.header.seq,
+                            poll.header.round_index,
                             (unsigned int)final_rx_ts);
     }
 
     if (expected->skip_responder_report &&
         report_status == RANGE_OK &&
         request_expects_clicker_diag(expected)) {
-        int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
+        int diag_ret = receive_clicker_diag(&poll.header, local_anchor_id,
+                                            result);
 
         if (diag_ret < 0) {
             LOG_DBG("UWB clicker diagnostic not received: short=0x%04x seq=%u ret=%d",
-                    poll.initiator_short_addr,
-                    poll.seq,
+                    poll.header.initiator_short_addr,
+                    poll.header.seq,
                     diag_ret);
         } else {
             LOG_INF("UWB clicker diagnostic received: short=0x%04x seq=%u bytes=%u",
-                    poll.initiator_short_addr,
-                    poll.seq,
+                    poll.header.initiator_short_addr,
+                    poll.header.seq,
                     result != NULL ? result->clicker_diag_len : 0u);
         }
     }
@@ -860,31 +896,32 @@ static int responder_poll_once(uint64_t local_anchor_id,
     if (expected->skip_responder_report) {
         capture_anchor_full_cir(expected, result);
         LOG_INF("UWB responder report skipped for short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",
-                poll.initiator_short_addr,
+                poll.header.initiator_short_addr,
                 report_status,
                 distance_mm,
                 quality,
                 rsl_dbm);
         if (report_status == RANGE_OK && request_sends_anchor_diag(expected)) {
-            int anchor_diag_ret = send_anchor_diag(&poll, result);
+            int anchor_diag_ret = send_anchor_diag(&poll.header, result);
 
             if (anchor_diag_ret < 0) {
                 LOG_WRN("UWB anchor diagnostic TX failed: short=0x%04x seq=%u ret=%d",
-                        poll.initiator_short_addr,
-                        poll.seq,
+                        poll.header.initiator_short_addr,
+                        poll.header.seq,
                         anchor_diag_ret);
             } else {
                 LOG_INF("UWB anchor diagnostic sent: short=0x%04x seq=%u bytes=%u",
-                        poll.initiator_short_addr,
-                        poll.seq,
+                        poll.header.initiator_short_addr,
+                        poll.header.seq,
                         result != NULL && result->cir_sampled ? UWB_CIR_SAMPLE_LEN : 0u);
                 if (request_sends_anchor_diag_fragments(expected)) {
-                    int fragment_ret = send_anchor_diag_fragments(&poll, expected, result);
+                    int fragment_ret = send_anchor_diag_fragments(
+                        &poll.header, expected, result);
 
                     if (fragment_ret < 0) {
                         LOG_WRN("UWB anchor diagnostic fragments TX failed: short=0x%04x seq=%u ret=%d",
-                                poll.initiator_short_addr,
-                                poll.seq,
+                                poll.header.initiator_short_addr,
+                                poll.header.seq,
                                 fragment_ret);
                     }
                 }
@@ -894,15 +931,15 @@ static int responder_poll_once(uint64_t local_anchor_id,
     }
 
     report.header.type = MSG_UWB_REPORT;
-    report.header.seq = poll.seq;
-    report.header.round_index = poll.round_index;
-    report.header.network_id = poll.network_id;
-    report.header.session_id = poll.session_id;
-    report.header.session_nonce = poll.session_nonce;
-    report.header.initiator_short_addr = poll.initiator_short_addr;
+    report.header.seq = poll.header.seq;
+    report.header.round_index = poll.header.round_index;
+    report.header.network_id = poll.header.network_id;
+    report.header.session_id = poll.header.session_id;
+    report.header.session_nonce = poll.header.session_nonce;
+    report.header.initiator_short_addr = poll.header.initiator_short_addr;
     report.header.responder_short_addr = short_addr_from_id(local_anchor_id);
-    report.header.flags = poll.flags;
-    report.header.initiator_id = poll.initiator_id;
+    report.header.flags = poll.header.flags;
+    report.header.initiator_id = poll.header.initiator_id;
     report.header.responder_id = local_anchor_id;
     report.distance_mm = distance_mm;
     report.quality = quality;
@@ -922,16 +959,16 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 ret,
                                 (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
                                 k_uptime_get_32(),
-                                poll.seq,
-                                poll.round_index);
+                                poll.header.seq,
+                                poll.header.round_index);
         }
         return ret;
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=report-armed now=%u seq=%u round=%u\n",
                             k_uptime_get_32(),
-                            poll.seq,
-                            poll.round_index);
+                            poll.header.seq,
+                            poll.header.round_index);
     }
 
     ret = wait_tx_complete(REPORT_RX_TIMEOUT_MS);
@@ -941,67 +978,70 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                 ret,
                                 (unsigned int)dwt_read32bitreg(SYS_STATUS_ID),
                                 k_uptime_get_32(),
-                                poll.seq,
-                                poll.round_index);
+                                poll.header.seq,
+                                poll.header.round_index);
         }
         return ret;
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=report-sent now=%u seq=%u round=%u\n",
                             k_uptime_get_32(),
-                            poll.seq,
-                            poll.round_index);
+                            poll.header.seq,
+                            poll.header.round_index);
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=done ret=%d status=%u now=%u seq=%u round=%u\n",
                             report_status == RANGE_OK ? 0 : -EIO,
                             report_status,
                             k_uptime_get_32(),
-                            poll.seq,
-                            poll.round_index);
+                            poll.header.seq,
+                            poll.header.round_index);
     }
 
     LOG_INF("UWB report sent to short=0x%04x: status=%u distance_mm=%d quality=%u rsl=%d dBm",
-            poll.initiator_short_addr,
+            poll.header.initiator_short_addr,
             report.status,
             report.distance_mm,
             report.quality,
             report.rsl_dbm);
     if (report_status == RANGE_OK && request_expects_clicker_diag(expected)) {
-        int diag_ret = receive_clicker_diag(&poll, local_anchor_id, result);
+        int diag_ret = receive_clicker_diag(&poll.header, local_anchor_id,
+                                            result);
 
         if (diag_ret < 0) {
             LOG_DBG("UWB clicker diagnostic not received: short=0x%04x seq=%u ret=%d",
-                    poll.initiator_short_addr,
-                    poll.seq,
+                    poll.header.initiator_short_addr,
+                    poll.header.seq,
                     diag_ret);
         } else {
             LOG_INF("UWB clicker diagnostic received: short=0x%04x seq=%u bytes=%u",
-                    poll.initiator_short_addr,
-                    poll.seq,
+                    poll.header.initiator_short_addr,
+                    poll.header.seq,
                     result != NULL ? result->clicker_diag_len : 0u);
         }
     }
     if (report_status == RANGE_OK && request_sends_anchor_diag(expected)) {
-        int anchor_diag_ret = send_anchor_diag(&poll, result);
+        int anchor_diag_ret = send_anchor_diag(&poll.header, result);
 
         if (anchor_diag_ret < 0) {
             LOG_WRN("UWB anchor diagnostic TX failed: short=0x%04x seq=%u ret=%d",
-                    poll.initiator_short_addr,
-                    poll.seq,
+                    poll.header.initiator_short_addr,
+                    poll.header.seq,
                     anchor_diag_ret);
         } else {
             LOG_INF("UWB anchor diagnostic sent: short=0x%04x seq=%u bytes=%u",
-                    poll.initiator_short_addr,
-                    poll.seq,
+                    poll.header.initiator_short_addr,
+                    poll.header.seq,
                     result != NULL && result->cir_sampled ? UWB_CIR_SAMPLE_LEN : 0u);
             if (request_sends_anchor_diag_fragments(expected)) {
-                int fragment_ret = send_anchor_diag_fragments(&poll, expected, result);
+                int fragment_ret = send_anchor_diag_fragments(&poll.header,
+                                                              expected,
+                                                              result);
 
                 if (fragment_ret < 0) {
                     LOG_WRN("UWB anchor diagnostic fragments TX failed: short=0x%04x seq=%u ret=%d",
-                            poll.initiator_short_addr,
-                            poll.seq,
+                            poll.header.initiator_short_addr,
+                            poll.header.seq,
                             fragment_ret);
                 }
             }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import combinations
@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import random
+from statistics import median
 from typing import Iterable, Protocol
 
 from .anchor_geometry import AnchorPairDistance, AnchorLayoutResult, solve_anchor_layout
@@ -347,13 +348,13 @@ class SurveyGeometryModel:
             self.failures.add(pair)
             return
 
-        mean_distance_mm = sum(
+        median_distance_mm = median(
             samples[index].distance_mm or 0 for index in range(sample_count)
-        ) / sample_count
+        )
         self.pairs[pair] = AnchorPairDistance(
             pair[0],
             pair[1],
-            mean_distance_mm / 1000.0,
+            median_distance_mm / 1000.0,
             source=(
                 f"survey {survey_id}, generation "
                 f"{self._operation_generation}, round {round_id}"
@@ -748,11 +749,16 @@ class ClickDiagnosticState:
 
 
 class ClickLocationModel:
+    MAX_TRACKED_EVENTS = 32
+
     def __init__(self) -> None:
         self.geometry_generation = 0
         self.positions_m: dict[str, tuple[float, float]] = {}
         self.current_key: tuple[int, int, int] | None = None
         self.ranges_m: dict[str, float] = {}
+        self._ranges_by_key: OrderedDict[
+            tuple[int, int, int], dict[str, float]
+        ] = OrderedDict()
         self.state = ClickDiagnosticState("no_geometry", "No solved anchor geometry.", None, 0)
 
     def set_geometry(self, positions: dict[str, tuple[float, float]], generation: int) -> ClickDiagnosticState:
@@ -760,6 +766,7 @@ class ClickLocationModel:
         self.geometry_generation = generation
         self.current_key = None
         self.ranges_m.clear()
+        self._ranges_by_key.clear()
         status = "stale" if positions else "no_geometry"
         self.state = ClickDiagnosticState(status, "Waiting for a new click event." if positions else "No solved anchor geometry.", None, generation)
         return self.state
@@ -775,9 +782,16 @@ class ClickLocationModel:
             return self.state
         assert isinstance(event_seq, int) and isinstance(clicker, int) and isinstance(anchor, int)
         key = packet.session_id, event_seq, clicker
-        if key != self.current_key:
-            self.current_key = key
-            self.ranges_m.clear()
+        ranges_m = self._ranges_by_key.get(key)
+        if ranges_m is None:
+            if len(self._ranges_by_key) >= self.MAX_TRACKED_EVENTS:
+                self._ranges_by_key.popitem(last=False)
+            ranges_m = {}
+            self._ranges_by_key[key] = ranges_m
+        else:
+            self._ranges_by_key.move_to_end(key)
+        self.current_key = key
+        self.ranges_m = ranges_m
         if not self.positions_m:
             self.state = ClickDiagnosticState("invalid", "No solved anchor geometry.", key, self.geometry_generation, wake=wake)
             return self.state

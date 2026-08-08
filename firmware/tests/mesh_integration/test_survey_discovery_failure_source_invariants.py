@@ -271,7 +271,7 @@ assert "pair_round_id = pair_lease.round_id" not in worker, (
 assert worker.count("schedule_pair_rf_retry(") == 2
 assert "REPORT_TX_RETRY_DELAY_MS" not in worker
 assert worker.count("SURVEY_NON_RF_SERVICE_POLL_MS") == 4, (
-    "discovery report-stage retries plus pair-result custody and four-record "
+    "discovery report-stage retries plus pair-result custody and five-record "
     "admission pressure must use non-RF service polling without consuming "
     "radio retry rounds"
 )

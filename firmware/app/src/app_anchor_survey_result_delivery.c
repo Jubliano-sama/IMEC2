@@ -607,7 +607,7 @@ int app_anchor_survey_result_delivery_cancel_reservations(
         /*
          * Reservations are RAM-owned by node communication. Losing the only
          * token after a rejected cancellation would permanently reduce the
-         * four-record admission capacity, so force bounded reboot recovery.
+         * five-record admission capacity, so force bounded reboot recovery.
          */
         app_watchdog_stop_feeding();
     }

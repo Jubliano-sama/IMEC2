@@ -112,6 +112,7 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_SURVEY_DISCOVERY_START:
     case MSG_SURVEY_DISCOVERY_REPORT:
     case MSG_GATEWAY_COMMAND_EVENT:
+    case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:
         return true;
     default:
@@ -131,6 +132,7 @@ bool proto_packet_msg_type_allowed_over_uwb(uint8_t msg_type)
      * retention state from a received UWB frame.
      */
     return msg_type != MSG_GATEWAY_COMMAND_EVENT &&
+           msg_type != MSG_GATEWAY_HOST_RECEIPT &&
            msg_type != MSG_ERROR;
 }
 
@@ -399,6 +401,146 @@ int tlv_find_unique(const uint8_t *payload,
     *value = found_value;
     *len = found_len;
     return PROTO_OK;
+}
+
+static bool gateway_host_receipt_identity_valid(
+    const struct gateway_host_receipt_identity *identity)
+{
+    if (identity == NULL ||
+        !proto_packet_msg_type_allowed_over_uwb(identity->original_msg_type) ||
+        identity->src_id == 0u || identity->dst_id == 0u ||
+        identity->src_id == identity->dst_id || identity->session_id == 0u ||
+        identity->seq == 0u) {
+        return false;
+    }
+    return true;
+}
+
+int gateway_host_receipt_identity_encode(
+    const struct gateway_host_receipt_identity *identity,
+    uint8_t *value,
+    size_t value_cap,
+    size_t *written)
+{
+    if (identity == NULL || value == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (!gateway_host_receipt_identity_valid(identity)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (value_cap < PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    value[0] = identity->original_msg_type;
+    value[1] = identity->original_flags;
+    proto_put_u64_le(&value[2], identity->src_id);
+    proto_put_u64_le(&value[10], identity->dst_id);
+    proto_put_u32_le(&value[18], identity->session_id);
+    proto_put_u16_le(&value[22], identity->seq);
+    memcpy(&value[24],
+           identity->stream_record_digest,
+           SEMANTIC_DIGEST_SHA256_LEN);
+    *written = PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN;
+    return PROTO_OK;
+}
+
+int gateway_host_receipt_identity_decode(
+    const uint8_t *value,
+    size_t value_len,
+    struct gateway_host_receipt_identity *identity)
+{
+    if (value == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (value_len != PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    memset(identity, 0, sizeof(*identity));
+    identity->original_msg_type = value[0];
+    identity->original_flags = value[1];
+    identity->src_id = proto_get_u64_le(&value[2]);
+    identity->dst_id = proto_get_u64_le(&value[10]);
+    identity->session_id = proto_get_u32_le(&value[18]);
+    identity->seq = proto_get_u16_le(&value[22]);
+    memcpy(identity->stream_record_digest,
+           &value[24],
+           SEMANTIC_DIGEST_SHA256_LEN);
+    return gateway_host_receipt_identity_valid(identity) ?
+               PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+int gateway_host_receipt_identity_append_tlv(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct gateway_host_receipt_identity *identity)
+{
+    uint8_t value[PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN];
+    size_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || offset == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = gateway_host_receipt_identity_encode(identity,
+                                               value,
+                                               sizeof(value),
+                                               &value_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return tlv_append_bytes(payload,
+                            payload_cap,
+                            offset,
+                            TLV_GATEWAY_HOST_RECEIPT_IDENTITY,
+                            value,
+                            (uint8_t)value_len);
+}
+
+int gateway_host_receipt_identity_from_tlvs(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_host_receipt_identity *identity)
+{
+    /* A host receipt has exactly one fixed-width TLV.  Requiring the exact
+     * serialized length rejects duplicate fields, unknown trailing TLVs, and
+     * partial headers instead of silently accepting an ambiguous receipt. */
+    if (payload == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (payload_len != PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES ||
+        payload[0] != TLV_GATEWAY_HOST_RECEIPT_IDENTITY ||
+        payload[1] != PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return gateway_host_receipt_identity_decode(
+        &payload[PROTO_TLV_HEADER_LEN],
+        PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN,
+        identity);
+}
+
+int gateway_host_receipt_packet_validate(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_host_receipt_identity *identity)
+{
+    if (packet == NULL || payload == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (packet->msg_type != MSG_GATEWAY_HOST_RECEIPT || packet->flags != 0u ||
+        packet->src_id == 0u || packet->dst_id == 0u ||
+        packet->src_id == packet->dst_id || packet->session_id == 0u ||
+        packet->seq == 0u || packet->ttl != 1u ||
+        packet->payload_len != payload_len ||
+        payload_len != PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return gateway_host_receipt_identity_from_tlvs(payload,
+                                                   payload_len,
+                                                   identity);
 }
 
 static int tlv_require_u8(const uint8_t *payload, size_t payload_len, uint8_t type, uint8_t *value)

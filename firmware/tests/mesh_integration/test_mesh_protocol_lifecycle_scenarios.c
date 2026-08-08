@@ -629,6 +629,9 @@ static int build_reach_report(uint64_t source_id, uint64_t peer_id,
                               uint8_t *payload,
                               size_t *payload_len)
 {
+    const uint64_t operation_generation =
+        survey_id == SURVEY_ID_1 ? SURVEY_OPERATION_GENERATION_1 :
+                                   SURVEY_OPERATION_GENERATION_2;
     const struct survey_reachability_entry entry = {
         .peer_id = peer_id,
         .rssi_dbm = -61,
@@ -637,10 +640,19 @@ static int build_reach_report(uint64_t source_id, uint64_t peer_id,
     int ret = survey_append_reach_report_tlvs(
         payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len, survey_id,
         source_id, &entry, 1u);
+    if (ret == PROTO_OK) {
+        ret = survey_operation_generation_append_tlv(
+            payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len,
+            operation_generation);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u16(payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len,
+                             TLV_COMMAND_STATUS, COMMAND_OK);
+    }
     return ret == PROTO_OK ?
            survey_init_discovery_report_packet(packet, source_id, GATEWAY_ID,
-                                               survey_id, 0u, seq,
-                                               (uint8_t)*payload_len) : ret;
+                                               survey_id, operation_generation,
+                                               seq, (uint8_t)*payload_len) : ret;
 }
 
 static int note_reach_delivery(struct survey_gateway_context *context,
@@ -649,14 +661,20 @@ static int note_reach_delivery(struct survey_gateway_context *context,
     struct survey_reachability_entry entries[2];
     uint32_t survey_id = 0u;
     uint64_t anchor_id = 0u;
+    uint64_t operation_generation = 0u;
     size_t entry_count = 0u;
     int ret = survey_extract_reach_report_tlvs(
         item->payload, item->payload_len, &survey_id, &anchor_id,
         entries, 2u, &entry_count);
+    if (ret == PROTO_OK) {
+        ret = survey_operation_generation_extract_tlv(
+            item->payload, item->payload_len, &operation_generation);
+    }
     if (ret != PROTO_OK ||
         item->packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
         item->packet.src_id != anchor_id ||
-        item->packet.session_id != survey_id) {
+        item->packet.session_id !=
+            survey_operation_session_id(operation_generation)) {
         return PROTO_ERR_MALFORMED;
     }
     return survey_gateway_note_reach_report(context, survey_id, anchor_id,
@@ -1100,7 +1118,7 @@ static bool run_survey_transaction_phase(void)
         transaction, true, fixture->world.now_us / 1000u);
 
     payload_len = 0u;
-    CHECK(build_pair_result(&pair2, 71u, &packet,
+    CHECK(build_pair_result(&pair2, 1u, &packet,
                             payload, &payload_len) == PROTO_OK,
           "survey sample build failed");
     lifecycle.deliveries++;
@@ -1127,7 +1145,8 @@ static bool run_survey_transaction_phase(void)
 static bool run_lifecycle(void)
 {
     struct fixture *fixture = &lifecycle.fixture;
-    uint64_t retries;
+    uint64_t delivery_retries = 0u;
+    uint64_t confirm_retries = 0u;
 
     memset(&lifecycle, 0, sizeof(lifecycle));
     CHECK(setup_forced_relay(fixture) == MESH_SIM_OK,
@@ -1143,10 +1162,26 @@ static bool run_lifecycle(void)
         return false;
     }
 
-    retries = mesh_sim_count_transitions(
-        &fixture->world, MESH_SIM_TRANSITION_RETRY_READY, 0u);
-    CHECK(retries > 0u && retries <= 8u,
-          "retries are absent or unbounded count=%" PRIu64, retries);
+    for (size_t i = 0u; i < fixture->world.transition_count; i++) {
+        const struct mesh_sim_transition *transition =
+            &fixture->world.transitions[i];
+
+        if (transition->kind != MESH_SIM_TRANSITION_RETRY_READY) {
+            continue;
+        }
+        if (transition->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
+            confirm_retries++;
+        } else {
+            delivery_retries++;
+        }
+    }
+    CHECK(delivery_retries > 0u && delivery_retries <= 8u,
+          "delivery retries are absent or unbounded count=%" PRIu64,
+          delivery_retries);
+    CHECK(confirm_retries == lifecycle.deliveries + 1u,
+          "terminal confirmation count disagrees with deliveries and replay "
+          "count=%" PRIu64 " deliveries=%zu",
+          confirm_retries, lifecycle.deliveries);
     CHECK(mesh_sim_count_transitions(
               &fixture->world, MESH_SIM_TRANSITION_ROUTE_REQUIRED, 0u) == 0u,
           "preinstalled gateway route advertisement fell into discovery");

@@ -1062,7 +1062,7 @@ static int mesh_send_outbound_with_release_on_channel_until(
     int64_t uwb_window_start_ms = -1;
     bool channel5_extended_control = false;
     uint8_t radio_channel;
-    int release_ret;
+    int release_ret = 0;
     int ret;
 
     if (rf_started_out != NULL) {
@@ -1554,7 +1554,7 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
 static bool mesh_c5_flood_defer_active_cb(void *ctx)
 {
     const struct mesh_c5_flood_tx_context *flood_ctx = ctx;
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     struct app_mesh_c5_flood_priority_state state = {
         .response_priority = flood_ctx != NULL && flood_ctx->response_priority,
     };

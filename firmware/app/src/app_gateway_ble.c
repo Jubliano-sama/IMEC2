@@ -8,8 +8,6 @@
 #include "app_board.h"
 #include "app_config.h"
 #include "app_gateway_collection_eack.h"
-#include "app_gateway_collection_receipts.h"
-#include "app_gateway_terminal_receipts.h"
 #include "app_gateway_eack_retry.h"
 #include "app_gateway_eack_policy.h"
 #include "app_gateway_command_observability.h"
@@ -103,10 +101,8 @@ static int gateway_observability_reserve_identity(
         return 0;
     }
 
-    /*
-     * This may reserve the next durable NVS block, so every caller must run
-     * it before taking BLE, stream, or observability spinlocks.
-     */
+    /* This can take the RAM sequence allocator's mutex, so callers must run it
+     * before taking BLE, stream, or observability spinlocks. */
     event_seq = gateway_next_broadcast_command_seq();
     if (event_seq == 0u) {
         return -EIO;
@@ -386,12 +382,16 @@ static void gateway_observability_flush(bool include_snapshots)
 #define GATEWAY_BLE_PACKET_TX_CHUNK_MAX_LEN CONFIG_BT_L2CAP_TX_MTU
 #define GATEWAY_BLE_TX_IN_FLIGHT_TIMEOUT_MS 10000u
 #define GATEWAY_BLE_NOTIFY_FAILURE_RESET_THRESHOLD 8u
+#define GATEWAY_BLE_HOST_RECEIPT_TIMEOUT_MS 1000u
 
 BUILD_ASSERT(GATEWAY_BLE_TX_IN_FLIGHT_TIMEOUT_MS > 0u &&
              GATEWAY_BLE_TX_IN_FLIGHT_TIMEOUT_MS < INT32_MAX,
              "BLE notification completion deadline must be wrap safe");
 BUILD_ASSERT(GATEWAY_BLE_NOTIFY_FAILURE_RESET_THRESHOLD > 0u,
              "BLE synchronous notification failures need a reset bound");
+BUILD_ASSERT(GATEWAY_BLE_HOST_RECEIPT_TIMEOUT_MS > 0u &&
+             GATEWAY_BLE_HOST_RECEIPT_TIMEOUT_MS < INT32_MAX,
+             "host receipt timeout must be wrap safe");
 
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST) && DEVICE_ROLE == ROLE_GATEWAY
 BUILD_ASSERT(CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE >= 4096u,
@@ -416,6 +416,7 @@ K_MSGQ_DEFINE(gateway_ble_rx_msgq,
 
 static struct k_work gateway_ble_rx_work;
 static struct k_work_delayable gateway_ble_stream_work;
+static struct k_work_delayable gateway_ble_host_receipt_timeout_work;
 static struct k_work_delayable gateway_ble_recovery_work;
 static struct bt_conn *gateway_ble_conn;
 static bool gateway_ble_advertising_active;
@@ -456,6 +457,8 @@ static int gateway_ble_start_advertising(void);
 static int gateway_ble_stop_advertising(const char *reason);
 static void gateway_ble_rx_work_handler(struct k_work *work);
 static void gateway_ble_stream_work_handler(struct k_work *work);
+static void gateway_ble_host_receipt_timeout_work_handler(
+    struct k_work *work);
 static void gateway_ble_recovery_work_handler(struct k_work *work);
 static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data);
 static void gateway_ble_tx_reset_locked(void);
@@ -798,7 +801,30 @@ static void gateway_ble_stream_cancel_active(void)
     k_spinlock_key_t key = k_spin_lock(&gateway_ble_stream_lock);
 
     gateway_ble_stream_cancel_send(&gateway_ble_stream_state);
+    (void)gateway_ble_stream_rewind_host_notification(
+        &gateway_ble_stream_state);
     k_spin_unlock(&gateway_ble_stream_lock, key);
+    (void)k_work_cancel_delayable(&gateway_ble_host_receipt_timeout_work);
+}
+
+static void gateway_ble_host_receipt_timeout_work_handler(
+    struct k_work *work)
+{
+    k_spinlock_key_t key;
+    int ret;
+
+    ARG_UNUSED(work);
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_rewind_host_notification(
+        &gateway_ble_stream_state);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret == 0) {
+        LOG_WRN("gateway host receipt timeout; resending exact BLE record");
+        gateway_ble_schedule_stream_drain();
+    } else if (ret != -EALREADY && ret != -EAGAIN && ret != -ENOENT) {
+        LOG_ERR("gateway host receipt timeout rewind failed: ret=%d", ret);
+        gateway_ble_schedule_failed("host-receipt-timeout", ret);
+    }
 }
 
 static bool gateway_ble_tx_select_frame_locked(void)
@@ -894,13 +920,8 @@ int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
     return 0;
 }
 
-/*
- * RAM-only equivalent of the former persistence host-journal support check.
- * It is a pure packet classifier (no storage), kept so host delivery still
- * takes the journal path within the session; persistence "restore" restored
- * nothing and "save" is a no-op.
- */
-static bool gateway_host_journal_supported(const struct proto_packet *packet)
+/* Packets whose BLE completion owns a source-custody ACK boundary. */
+static bool gateway_host_custody_supported(const struct proto_packet *packet)
 {
     if (packet == NULL ||
         (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
@@ -966,34 +987,37 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
 
     if (completed_source == GATEWAY_BLE_TX_STREAM) {
         struct proto_packet completed_packet;
-        uint8_t completed_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-        bool journal_retirement_pending = false;
-        bool journal_supported = false;
-        int journal_identity_ret;
+        bool host_custody_pending = false;
+        bool host_custody_supported = false;
+        bool host_notification_transitioned = false;
+        int host_notification_ret = -EAGAIN;
         int packet_ret;
 
         key = k_spin_lock(&gateway_ble_stream_lock);
-        journal_identity_ret =
-            gateway_ble_stream_head_journal_identity(
-                &gateway_ble_stream_state,
-                &completed_packet,
-                completed_payload_digest);
-        packet_ret = journal_identity_ret == 0 ? 0 :
-            gateway_ble_stream_head_packet(&gateway_ble_stream_state,
-                                           &completed_packet);
-        journal_supported =
-            packet_ret == 0 &&
-            gateway_host_journal_supported(&completed_packet);
-        if (journal_identity_ret == 0 && journal_supported) {
-            journal_retirement_pending =
-                gateway_ble_stream_state.head_send_phase ==
-                    GATEWAY_BLE_STREAM_HEAD_SENDING;
-            if (journal_retirement_pending) {
-                gateway_ble_stream_state.head_send_phase =
-                    GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED;
+        packet_ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                                    &completed_packet);
+        host_custody_supported =
+            packet_ret == 0 && gateway_ble_stream_state.count > 0u &&
+            gateway_ble_stream_state.items[0].retain_until_sent &&
+            gateway_host_custody_supported(&completed_packet);
+        if (host_custody_supported) {
+            host_notification_ret = gateway_ble_stream_mark_host_notified(
+                &gateway_ble_stream_state);
+            host_notification_transitioned = host_notification_ret == 0;
+            host_custody_pending = host_notification_transitioned ||
+                                   host_notification_ret == -EALREADY;
+            if (host_notification_ret < 0 &&
+                host_notification_ret != -EALREADY) {
+                LOG_ERR("gateway host-notified transition rejected: ret=%d",
+                        host_notification_ret);
+                /* Keep the retained record and fail closed; retiring it here
+                 * would release mesh custody without a GUI receipt. */
+                host_custody_pending = true;
+                gateway_ble_schedule_failed("host-notified-transition",
+                                            host_notification_ret);
             }
         }
-        if (!journal_retirement_pending) {
+        if (!host_custody_supported) {
             gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
                                          k_uptime_get_32());
         }
@@ -1001,15 +1025,25 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
         k_spin_unlock(&gateway_ble_stream_lock, key);
         if (packet_ret == 0) {
 #if DEVICE_ROLE == ROLE_GATEWAY
-            if (journal_supported) {
-                gateway_ble_require_host_journal_restore(
-                    "host-output-restore");
-                if (!journal_retirement_pending) {
-                    LOG_WRN("gateway journal identity missing: %d",
-                            journal_identity_ret);
+            if (host_custody_supported) {
+                if (!host_custody_pending) {
+                    LOG_WRN("gateway host-custody completion phase invalid: %u",
+                            gateway_ble_stream_state.head_send_phase);
                 }
             }
 #endif
+            if (host_notification_transitioned) {
+                int receipt_schedule_ret = k_work_reschedule(
+                    &gateway_ble_host_receipt_timeout_work,
+                    K_MSEC(GATEWAY_BLE_HOST_RECEIPT_TIMEOUT_MS));
+
+                if (receipt_schedule_ret < 0) {
+                    LOG_ERR("gateway host receipt timeout scheduling failed: ret=%d",
+                            receipt_schedule_ret);
+                    gateway_ble_schedule_failed("host-receipt-timeout-schedule",
+                                                receipt_schedule_ret);
+                }
+            }
             if (completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
                 gateway_observability_mark_sent_state(
                     completed_packet.session_id);
@@ -1519,6 +1553,8 @@ int gateway_ble_init(void)
     k_work_init(&gateway_ble_rx_work, gateway_ble_rx_work_handler);
     k_work_init_delayable(&gateway_ble_stream_work,
                           gateway_ble_stream_work_handler);
+    k_work_init_delayable(&gateway_ble_host_receipt_timeout_work,
+                          gateway_ble_host_receipt_timeout_work_handler);
     k_work_init_delayable(&gateway_ble_recovery_work,
                           gateway_ble_recovery_work_handler);
     gateway_ble_stream_init(&gateway_ble_stream_state);
@@ -1534,12 +1570,6 @@ int gateway_ble_init(void)
 #if DEVICE_ROLE == ROLE_GATEWAY
     gateway_ble_stream_initialized = true;
     (void)gateway_flush_host_command_results();
-    atomic_clear(&gateway_host_journal_restored);
-    atomic_set(&gateway_host_journal_restore_pending, 1);
-    ret = gateway_restore_host_journal_runtime();
-    if (ret < 0) {
-        gateway_schedule_persistence_retry("host-output-restore-init");
-    }
     if (gateway_assignment_publication_pending()) {
         /*
          * Publication restore reconstructs a full 50-anchor batch. Keep that
@@ -1653,6 +1683,27 @@ static int gateway_ble_rx_bytes(const uint8_t *data, size_t len)
     return first_error;
 }
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+static bool gateway_ble_pending_is_host_receipt(
+    const struct gateway_ble_frame_pending *pending)
+{
+    struct proto_packet packet;
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    if (pending == NULL ||
+        serial_frame_decode_packet(pending->frame,
+                                    pending->len,
+                                    &packet,
+                                    payload,
+                                    sizeof(payload),
+                                    &payload_len) != PROTO_OK) {
+        return false;
+    }
+    return packet.msg_type == MSG_GATEWAY_HOST_RECEIPT;
+}
+#endif
+
 static void gateway_ble_rx_work_handler(struct k_work *work)
 {
     struct gateway_ble_frame_pending pending;
@@ -1666,6 +1717,24 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
     for (;;) {
         uint32_t result_reservation_token = 0u;
         int ret;
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+        /* Host receipts must bypass result-credit admission, or a full
+         * command-result pool can strand the exact item they release. Peek
+         * first, then dequeue/consume receipts with token zero. */
+        ret = k_msgq_peek(&gateway_ble_rx_msgq, &pending);
+        if (ret < 0) {
+            break;
+        }
+        if (gateway_ble_pending_is_host_receipt(&pending)) {
+            ret = k_msgq_get(&gateway_ble_rx_msgq, &pending, K_NO_WAIT);
+            if (ret < 0) {
+                break;
+            }
+            (void)gateway_handle_ble_frame(pending.frame, pending.len, 0u);
+            continue;
+        }
+#endif
 
 #if DEVICE_ROLE == ROLE_GATEWAY
         ret = gateway_command_result_reserve_ingress(

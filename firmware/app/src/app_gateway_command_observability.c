@@ -74,8 +74,7 @@ bool gateway_command_survey_sample_admission(
         return false;
     }
 
-    if (sample_count < SURVEY_MIN_SAMPLE_COUNT ||
-        sample_count > SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
+    if (sample_count != SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) {
         *status = COMMAND_DENIED;
         *reason = GATEWAY_COMMAND_EVENT_REASON_CAPACITY;
         return false;

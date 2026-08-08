@@ -20,7 +20,7 @@ extern "C" {
 #define ROUTE_RETRY_BACKOFF_FIRST_MS 1500u
 #define ROUTE_RETRY_BACKOFF_SECOND_MS 3000u
 #define ROUTE_RETRY_BACKOFF_MAX_MS 6000u
-#define ROUTE_PARENT_HOLDDOWN_S 30u
+#define ROUTE_PARENT_HOLDDOWN_S 60u
 #define ROUTE_PARENT_HOLDDOWN_MS (ROUTE_PARENT_HOLDDOWN_S * 1000u)
 /* Kept for compatibility; route age alone no longer invalidates candidates. */
 #define ROUTE_CANDIDATE_MAX_AGE_MS 30000u

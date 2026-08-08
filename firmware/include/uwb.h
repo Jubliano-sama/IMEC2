@@ -19,6 +19,12 @@ extern "C" {
 #define UWB_FRAME_CRC_LEN 2u
 #define UWB_HEADER_LEN 42u
 #define UWB_POLL_LEN UWB_HEADER_LEN
+#define UWB_CLICK_POLL_LEN (UWB_HEADER_LEN + 4u)
+#define UWB_POLL_METADATA_VERSION_NONE 0u
+#define UWB_POLL_METADATA_VERSION_CLICK_AGE 1u
+#define UWB_POLL_METADATA_CLICK_AGE_PRESENT (1u << 0)
+#define UWB_POLL_METADATA_CLICK_AGE_SATURATED (1u << 1)
+#define UWB_CLICK_AGE_MAX_MS UINT16_MAX
 #define UWB_RESP_LEN (UWB_HEADER_LEN + 8u)
 #define UWB_FINAL_LEN (UWB_HEADER_LEN + 15u)
 #define UWB_FINAL_DIAG_CLICKER_CLOCK_OFFSET_PRESENT (1u << 0)
@@ -153,6 +159,19 @@ struct uwb_range_header {
     uint8_t flags;
     uint64_t initiator_id;
     uint64_t responder_id;
+};
+
+/*
+ * A normal-click POLL is the first frame of each DS-TWR exchange.  It carries
+ * the clicker's current event age so every responding anchor can project the
+ * physical button instant into its own uptime domain.  Survey/diagnostic POLLs
+ * retain the compact header-only representation.
+ */
+struct uwb_poll_frame {
+    struct uwb_range_header header;
+    uint8_t metadata_version;
+    uint8_t metadata_flags;
+    uint16_t click_age_ms;
 };
 
 struct uwb_response_frame {
@@ -381,9 +400,17 @@ int uwb_encode_poll(const struct uwb_range_header *header,
                          uint8_t *out,
                          size_t out_cap,
                          size_t *written);
+int uwb_encode_click_poll(const struct uwb_range_header *header,
+                          uint32_t click_age_ms,
+                          uint8_t *out,
+                          size_t out_cap,
+                          size_t *written);
 int uwb_decode_poll(const uint8_t *data,
                          size_t len,
                          struct uwb_range_header *header);
+int uwb_decode_poll_frame(const uint8_t *data,
+                          size_t len,
+                          struct uwb_poll_frame *frame);
 int uwb_encode_response(const struct uwb_response_frame *frame,
                              uint8_t *out,
                              size_t out_cap,

@@ -344,7 +344,7 @@ static int build_packet(uint64_t source_id,
         .dst_id = GATEWAY_ID,
         .session_id = UINT32_C(0x71000000) ^ (uint32_t)source_id ^ packet_id,
         .seq = seq,
-        .ttl = 12u,
+        .ttl = MESH_DEFAULT_TTL,
         .payload_len = (uint16_t)length,
     };
     *payload_len = length;

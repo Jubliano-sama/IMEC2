@@ -41,7 +41,6 @@ struct survey_gateway_drive_state {
     bool auto_waiting;
     bool pair_observation_active;
     bool round_drive_ready;
-    bool round_go_delivery_pending;
     bool cleanup_pending;
     bool boundary_pending;
     bool response_ack_settle_pending;

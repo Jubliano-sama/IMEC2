@@ -72,6 +72,14 @@ extern "C" {
      PROTO_TLV_U32_ENCODED_LEN + \
      (2u * PROTO_TLV_U16_ENCODED_LEN) + \
      PROTO_TLV_HEADER_LEN + SEMANTIC_DIGEST_SHA256_LEN)
+#define PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN \
+    (2u * sizeof(uint8_t) + (2u * sizeof(uint64_t)) + \
+     sizeof(uint32_t) + sizeof(uint16_t) + SEMANTIC_DIGEST_SHA256_LEN)
+#define PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES \
+    (PROTO_TLV_HEADER_LEN + PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN)
+#define GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN \
+    PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN
+#define GATEWAY_HOST_RECEIPT_PAYLOAD_LEN PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES
 #define UWB_CIR_SAMPLE_LEN 6u
 
 enum result {
@@ -148,6 +156,8 @@ enum msg_type {
     MSG_SURVEY_DISCOVERY_START = 0x54,
     MSG_SURVEY_DISCOVERY_REPORT = 0x55,
     MSG_GATEWAY_COMMAND_EVENT = 0x56,
+    /* Host-to-gateway receipt; valid over serial/COBS, never over UWB. */
+    MSG_GATEWAY_HOST_RECEIPT = 0x57,
 
     MSG_ERROR = 0x7F,
 };
@@ -383,6 +393,8 @@ enum tlv_type {
      * counters, 0 means it transmits on odd event counters.
      */
     TLV_MESH_EVENT_TX_ON_EVEN = 0xBA,
+    /* Exact identity of the gateway stream record accepted by the GUI. */
+    TLV_GATEWAY_HOST_RECEIPT_IDENTITY = 0xBB,
 };
 
 enum detection_source {
@@ -426,7 +438,7 @@ enum command_id {
     CMD_SURVEY_START_PAIR = 0x0102,
     CMD_SURVEY_ABORT = 0x0103,
     CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104,
-    CMD_SURVEY_GO = 0x0105,
+    /* 0x0105 retired: survey release is carried by START. */
     CMD_ML_START_COLLECTION = 0x8000,
     CMD_ML_START_FAST_RANGING = 0x8001,
     CMD_ML_START_ANCHOR_PAIR_SURVEY = 0x8002,
@@ -435,6 +447,8 @@ enum command_id {
     CMD_ML_STOP_LIVE_TRACKING = 0x8005,
     CMD_VENDOR_BASE = 0x8000,
 };
+
+#define CMD_SURVEY_GO_RETIRED_ID 0x0105u
 
 enum command_status {
     COMMAND_OK = 0,
@@ -568,6 +582,25 @@ struct gateway_collection_recovery_identity {
     uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
 };
 
+/*
+ * The value of TLV_GATEWAY_HOST_RECEIPT_IDENTITY is a fixed-width commitment
+ * to one gateway-stream record.  The original packet fields are retained so
+ * the gateway can bind the host receipt to a source retry without storing a
+ * fleet-wide receipt history in flash or RAM.
+ */
+struct gateway_host_receipt_identity {
+    uint8_t original_msg_type;
+    uint8_t original_flags;
+    uint64_t src_id;
+    uint64_t dst_id;
+    uint32_t session_id;
+    uint16_t seq;
+    uint8_t stream_record_digest[SEMANTIC_DIGEST_SHA256_LEN];
+};
+
+_Static_assert(PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN == 56u,
+               "host receipt identity wire size must remain 56 bytes");
+
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);
 uint16_t proto_crc16_ccitt_false_update(uint16_t crc,
                                         const uint8_t *data,
@@ -685,6 +718,29 @@ int gateway_collection_eack_contains_node_id(const uint8_t *payload,
                                              size_t payload_len,
                                              uint64_t node_id,
                                              bool *contains);
+int gateway_host_receipt_identity_encode(
+    const struct gateway_host_receipt_identity *identity,
+    uint8_t *value,
+    size_t value_cap,
+    size_t *written);
+int gateway_host_receipt_identity_decode(
+    const uint8_t *value,
+    size_t value_len,
+    struct gateway_host_receipt_identity *identity);
+int gateway_host_receipt_identity_append_tlv(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct gateway_host_receipt_identity *identity);
+int gateway_host_receipt_identity_from_tlvs(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_host_receipt_identity *identity);
+int gateway_host_receipt_packet_validate(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    struct gateway_host_receipt_identity *identity);
 
 uint16_t proto_get_u16_le(const uint8_t *data);
 uint32_t proto_get_u32_le(const uint8_t *data);

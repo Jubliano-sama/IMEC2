@@ -7,18 +7,18 @@
 
 static int decode_poll_with_optional_fcs(const uint8_t *frame,
                                          size_t frame_len,
-                                         struct uwb_range_header *poll)
+                                         struct uwb_poll_frame *poll)
 {
     int ret;
 
-    ret = uwb_decode_poll(frame, frame_len, poll);
+    ret = uwb_decode_poll_frame(frame, frame_len, poll);
     if (ret == PROTO_OK) {
         return PROTO_OK;
     }
     if (frame_len <= UWB_PHY_FCS_LEN) {
         return PROTO_ERR_MALFORMED;
     }
-    ret = uwb_decode_poll(frame, frame_len - UWB_PHY_FCS_LEN, poll);
+    ret = uwb_decode_poll_frame(frame, frame_len - UWB_PHY_FCS_LEN, poll);
     return ret == PROTO_OK ? PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
@@ -69,7 +69,7 @@ int dwm3000_driver_test_evaluate_exchange(
     struct dwm3000_range_result *result,
     struct dwm3000_driver_exchange_evaluation *evaluation)
 {
-    struct uwb_range_header poll;
+    struct uwb_poll_frame poll;
     struct uwb_final_frame final;
     int ret;
 
@@ -93,11 +93,14 @@ int dwm3000_driver_test_evaluate_exchange(
         return -EBADMSG;
     }
     evaluation->poll_valid = true;
-    set_result_metadata(result, &poll, local_anchor_id);
-    if (poll.responder_short_addr !=
+    set_result_metadata(result, &poll.header, local_anchor_id);
+    result->click_age_ms = poll.click_age_ms;
+    result->click_age_saturated =
+        (poll.metadata_flags & UWB_POLL_METADATA_CLICK_AGE_SATURATED) != 0u;
+    if (poll.header.responder_short_addr !=
             uwb_session_short_addr_from_id(local_anchor_id) ||
-        poll.responder_id != local_anchor_id ||
-        !dwm3000_driver_header_matches_request(&poll,
+        poll.header.responder_id != local_anchor_id ||
+        !dwm3000_driver_header_matches_request(&poll.header,
                                                expected,
                                                MSG_UWB_POLL)) {
         result->status = RANGE_WRONG_TARGET;
@@ -121,7 +124,7 @@ int dwm3000_driver_test_evaluate_exchange(
     }
     evaluation->final_received = true;
     if (!dwm3000_driver_final_matches_poll(&final,
-                                           &poll,
+                                           &poll.header,
                                            local_anchor_id)) {
         result->status = RANGE_WRONG_TARGET;
         evaluation->status = RANGE_WRONG_TARGET;

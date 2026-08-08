@@ -21,6 +21,8 @@ This repo contains a Python desktop GUI (`tools/gateway_gui/`, Tkinter) that con
 
 Treat the GUI as the gateway's external RAM. The gateway firmware is constrained, and a lot of processing is allowed and expected to happen host-side in the GUI rather than in firmware: anchor geometry solving, CIR reassembly/decoding, click localization, command orchestration, and RAM-only dedup state all already live there. Do not push that kind of work into firmware just because you are editing firmware; check whether the GUI is the right home first.
 
+Do not use NVS as secondary RAM. Its flash endurance is only about 10,000 write cycles, so packet receipts, queue state, retries, counters, and other frequently changing runtime state belong in bounded firmware RAM or the GUI's RAM. NVS remains appropriate for infrequent durable configuration or checkpoints whose worst-case write rate is explicitly bounded to roughly daily-scale writes; document and test that bound before adding a new NVS writer.
+
 ## Build, Test, and Development Commands
 
 Use the local uv-managed Python environment:

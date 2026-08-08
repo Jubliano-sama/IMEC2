@@ -15,7 +15,6 @@ extern "C" {
 enum app_gateway_survey_round_phase {
     APP_GATEWAY_SURVEY_ROUND_INACTIVE = 0,
     APP_GATEWAY_SURVEY_ROUND_DISPATCHING,
-    APP_GATEWAY_SURVEY_ROUND_GO_REQUIRED,
     APP_GATEWAY_SURVEY_ROUND_OBSERVING,
     APP_GATEWAY_SURVEY_ROUND_BATCH_COMPLETE,
     APP_GATEWAY_SURVEY_ROUND_TERMINATING,
@@ -77,18 +76,9 @@ int app_gateway_survey_round_note_control_failure(
     enum survey_pair_round_cleanup_outcome outcome,
     size_t *lane_index);
 
-bool app_gateway_survey_round_go_needed(
-    const struct app_gateway_survey_round *round);
-int app_gateway_survey_round_mark_observing_after_go(
-    struct app_gateway_survey_round *round);
-bool app_gateway_survey_round_go_submit_retryable(int error);
-bool app_gateway_survey_round_go_terminal_retryable(
-    enum node_comm_terminal_reason reason,
-    uint8_t attempts_started);
-
 /*
  * Purely classify one sample against the current batch. The caller selects
- * ARMED while previewing the GO transition or OBSERVING after that transition.
+ * OBSERVING after this lane's ordered START responder/initiator controls.
  */
 int app_gateway_survey_round_preflight_sample(
     const struct app_gateway_survey_round *round,
@@ -138,6 +128,10 @@ bool app_gateway_survey_round_terminating(
     const struct app_gateway_survey_round *round);
 
 bool app_gateway_survey_round_batch_complete(
+    const struct app_gateway_survey_round *round);
+/* True when at least one lane retained a range-result sample or unusable
+ * sample marker; a control timeout alone is not pair-result evidence. */
+bool app_gateway_survey_round_batch_has_result_evidence(
     const struct app_gateway_survey_round *round);
 /* Loads the next rerun/planned chunk only after the live batch is complete. */
 int app_gateway_survey_round_advance_batch(

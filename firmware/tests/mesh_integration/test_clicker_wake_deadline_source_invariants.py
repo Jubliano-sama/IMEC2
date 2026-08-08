@@ -321,47 +321,94 @@ assert "INT64_MAX" in public_collect
 
 normal = function_body("app_clicker_run_normal_click")
 deadline = normal.index("click_deadline_ms =")
-normal_collect = normal.index("clicker_collect_uwb_attempt_until", deadline)
-deadline_argument = normal.index("click_deadline_ms", normal_collect)
-normal_epoch_output = normal.index("&schedule_tx_ms", deadline_argument)
+normal_wake = normal.index("app_clicker_send_wake_claim_train_until", deadline)
+wake_deadline_argument = normal.index("click_deadline_ms", normal_wake)
+normal_discover = normal.index(
+    "app_clicker_discover_uwb_anchors_until", wake_deadline_argument
+)
+discover_deadline_argument = normal.index("click_deadline_ms", normal_discover)
+normal_schedule = normal.index(
+    "clicker_build_and_send_schedule_for_event", discover_deadline_argument
+)
+schedule_deadline_argument = normal.index("click_deadline_ms", normal_schedule)
+normal_epoch_output = normal.index("&schedule_tx_ms", schedule_deadline_argument)
 normal_range = normal.index(
     "app_clicker_range_scheduled_anchors", normal_epoch_output
 )
 normal_epoch_input = normal.index("schedule_tx_ms", normal_range)
+range_deadline_argument = normal.index("click_deadline_ms", normal_epoch_input)
 assert (
     deadline
-    < normal_collect
-    < deadline_argument
+    < normal_wake
+    < wake_deadline_argument
+    < normal_discover
+    < discover_deadline_argument
+    < normal_schedule
+    < schedule_deadline_argument
     < normal_epoch_output
     < normal_range
     < normal_epoch_input
+    < range_deadline_argument
 )
-normal_cancel = normal.index("if (ret == -ECANCELED)", normal_range)
+normal_cancel = normal.index("if (range_ret == -ECANCELED)", normal_range)
 normal_cancel_end = braced_statement_end(normal, normal_cancel)
-retry_prepare = normal.index("uwb_clicker_prepare_retry", normal_collect)
-retry_tail = normal.index(
-    "app_clicker_wake_train_opportunity_tail_ms", normal_collect, retry_prepare
-)
-retry_delay = normal.index("app_clicker_apply_retry_delay", retry_prepare)
+retry = function_body("clicker_runtime_prepare_retry")
+retry_prepare = retry.index("uwb_clicker_prepare_retry")
+retry_tail = retry.index("app_clicker_wake_train_opportunity_tail_ms")
+retry_delay = retry.index("app_clicker_apply_retry_delay", retry_prepare)
 contention_delay = normal.index(
+    "clicker_runtime_prepare_retry", normal_cancel_end
+)
+retry_contention_delay = retry.index(
     "app_clicker_apply_contention_delay", retry_delay
 )
-assert normal_range < normal_cancel < normal_cancel_end < retry_prepare
-assert "return ret;" in normal[normal_cancel:normal_cancel_end]
+assert normal_range < normal_cancel < normal_cancel_end < contention_delay
+assert "return range_ret;" in normal[normal_cancel:normal_cancel_end]
+range_error = normal.index("if (range_ret < 0)", normal_cancel_end)
 success_with_error = normal.index(
-    "if (session.state == UWB_CLICKER_SUCCEEDED && ret < 0)",
-    normal_cancel_end,
+    "if (session.state == UWB_CLICKER_SUCCEEDED)",
+    range_error,
 )
+success_with_error_end = braced_statement_end(normal, success_with_error)
 plain_success = normal.index(
-    "if (session.state == UWB_CLICKER_SUCCEEDED)", success_with_error + 1
+    "if (payload.count >= session.config.min_anchor_count",
+    success_with_error_end,
 )
-assert normal_cancel_end < success_with_error < plain_success < retry_prepare
-assert "required_retry_tail_ms" in normal[retry_tail:contention_delay]
+assert (
+    normal_cancel_end
+    < range_error
+    < success_with_error
+    < success_with_error_end
+    < plain_success
+    < contention_delay
+)
+assert "clicker_runtime_abort_click" in normal[
+    success_with_error:success_with_error_end
+]
+assert "return range_ret;" in normal[
+    success_with_error:success_with_error_end
+]
+assert retry_prepare < retry_tail < retry_delay < retry_contention_delay
+assert "required_retry_tail_ms" in retry[retry_tail:retry_contention_delay]
+
+# One logical click owns one generation across bounded retries, while RF
+# attempt accounting is emitted only after the wake sender reports real TX.
+rf_evidence = normal.index(
+    "session.diagnostics.wake_claim_tx_count != wake_claim_tx_count",
+    normal_wake,
+)
+rf_started = normal.index("FW_EVENT_RF_STARTED", rf_evidence)
+wake_error = normal.index("if (wake_ret < 0)", rf_started)
+retry_event = normal.index(
+    "clicker_runtime_retry_after_failure",
+    wake_error,
+)
+assert normal_wake < rf_evidence < rf_started < wake_error < retry_event
 
 diagnostic = function_body("app_clicker_run_uwb_diagnostic_click")
 diagnostic_deadline = diagnostic.index("click_deadline_ms =")
 diagnostic_collect = diagnostic.index(
-    "clicker_collect_uwb_attempt_until", diagnostic_deadline
+    "clicker_collect_uwb_attempt_with_options_until", diagnostic_deadline
 )
 diagnostic_deadline_argument = diagnostic.index(
     "click_deadline_ms", diagnostic_collect

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
 from typing import Any
 
@@ -18,6 +19,8 @@ from tools.gateway_gui.protocol import (
     FLAG_COUNT_AS_CLICK,
     FLAG_DIAGNOSTIC,
     FLAG_GATEWAY_ACK_REQUIRED,
+    GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN,
+    GATEWAY_HOST_RECEIPT_TLV_LEN,
     GATEWAY_STREAM_MAGIC,
     GATEWAY_STREAM_FLAG_TRUNCATED,
     GATEWAY_STREAM_RECORD_HEADER_LEN,
@@ -26,8 +29,11 @@ from tools.gateway_gui.protocol import (
     GATEWAY_STREAM_VERSION,
     GatewayReceiveBuffer,
     MSG_CLICK_REPORT,
+    MSG_GATEWAY_COMMAND_EVENT,
+    MSG_GATEWAY_HOST_RECEIPT,
     MSG_MESH_DATA,
     PACKET_EXT_MAX_PAYLOAD_LEN,
+    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_ANCHOR_ID,
     TLV_BURST_ID,
     TLV_CLICKER_ID,
@@ -49,6 +55,7 @@ from tools.gateway_gui.protocol import (
     TLV_DISTANCE_SAMPLES_MM,
     TLV_DURATION_MS,
     TLV_EVENT_SEQ,
+    TLV_GATEWAY_HOST_RECEIPT_IDENTITY,
     TLV_QUALITY,
     TLV_RANGE_STATUS,
     TLV_RANGE_ROUND_INDICES,
@@ -66,17 +73,22 @@ from tools.gateway_gui.protocol import (
     TLV_UWB_CIR_TOTAL_BYTES,
     TLV_UWB_CLOCK_OFFSET_RAW,
     DecodeError,
+    GatewayHostReceiptIdentity,
     append_tlv,
     build_anchor_discovery_command,
     build_survey_abort_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
+    build_gateway_host_receipt,
     click_samples,
     crc16_ccitt_false,
+    decode_gateway_host_receipt_identity,
     decode_cir_sample,
     decode_gateway_identity,
     encode_cobs_packet,
+    encode_gateway_host_receipt_identity,
     parse_cobs_packet,
+    parse_gateway_host_receipt,
     parse_stream_record,
     parse_tlvs,
     validate_click_payload,
@@ -502,6 +514,143 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(len(received.errors), 1)
         self.assertIn("TLV 0x61 length 255 overruns payload at offset 82", received.errors[0])
 
+    def test_gateway_host_receipt_builder_round_trip_and_wire_parity(self) -> None:
+        stream = stream_record(click_payload())
+        source = parse_stream_record(stream)
+        receipt = build_gateway_host_receipt(
+            source,
+            host_id=0xA1C1BEEFC0DE0001,
+            gateway_id=0x9999888877776666,
+        )
+
+        self.assertEqual(receipt.identity.original_msg_type, MSG_CLICK_REPORT)
+        self.assertEqual(receipt.identity.original_flags, 0x24)
+        self.assertEqual(receipt.identity.src_id, source.src_id)
+        self.assertEqual(receipt.identity.dst_id, source.dst_id)
+        self.assertEqual(receipt.identity.session_id, source.session_id)
+        self.assertEqual(receipt.identity.seq, source.seq)
+        self.assertEqual(
+            receipt.identity.stream_record_digest,
+            hashlib.sha256(stream).digest(),
+        )
+        self.assertEqual(
+            receipt.identity.stream_record_digest.hex(),
+            hashlib.sha256(source.raw_transport).hexdigest(),
+        )
+        self.assertEqual(receipt.packet.transport, "cobs-shared-packet")
+        self.assertEqual(receipt.packet.msg_type, MSG_GATEWAY_HOST_RECEIPT)
+        self.assertEqual(receipt.packet.src_id, 0xA1C1BEEFC0DE0001)
+        self.assertEqual(receipt.packet.dst_id, 0x9999888877776666)
+        self.assertEqual(receipt.packet.session_id, source.session_id)
+        self.assertEqual(receipt.packet.seq, source.seq)
+        self.assertEqual(receipt.packet.ttl, 1)
+        self.assertEqual(receipt.packet.flags, 0)
+        self.assertEqual(len(receipt.packet.payload), GATEWAY_HOST_RECEIPT_TLV_LEN)
+        self.assertEqual(
+            receipt.packet.payload[:2],
+            bytes((TLV_GATEWAY_HOST_RECEIPT_IDENTITY, 56)),
+        )
+        self.assertEqual(
+            receipt.packet.payload[2:],
+            bytes((MSG_CLICK_REPORT, 0x24))
+            + source.src_id.to_bytes(8, "little")
+            + source.dst_id.to_bytes(8, "little")
+            + source.session_id.to_bytes(4, "little")
+            + source.seq.to_bytes(2, "little")
+            + hashlib.sha256(stream).digest(),
+        )
+        decoded = parse_gateway_host_receipt(receipt.packet)
+        self.assertEqual(decoded, receipt.identity)
+
+    def test_gateway_host_receipt_identity_fixed_vector_matches_c_layout(self) -> None:
+        identity = GatewayHostReceiptIdentity(
+            original_msg_type=MSG_CLICK_REPORT,
+            original_flags=0x24,
+            src_id=0x1122334455667788,
+            dst_id=0x99AABBCCDDEEFF00,
+            session_id=0xA1B2C3D4,
+            seq=0xE5F6,
+            stream_record_digest=bytes(range(32)),
+        )
+        expected = bytes.fromhex(
+            "2024"
+            "8877665544332211"
+            "00ffeeddccbbaa99"
+            "d4c3b2a1"
+            "f6e5"
+            "000102030405060708090a0b0c0d0e0f"
+            "101112131415161718191a1b1c1d1e1f"
+        )
+        encoded = encode_gateway_host_receipt_identity(identity)
+        self.assertEqual(len(encoded), GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN)
+        self.assertEqual(encoded, expected)
+        self.assertEqual(decode_gateway_host_receipt_identity(encoded), identity)
+
+    def test_gateway_host_receipt_rejects_malformed_identity_and_trailing_tlvs(self) -> None:
+        source = parse_stream_record(stream_record(click_payload()))
+        receipt = build_gateway_host_receipt(
+            source,
+            host_id=0xA1C1BEEFC0DE0001,
+            gateway_id=0x9999888877776666,
+        )
+        identity_value = receipt.packet.payload[2:]
+
+        for malformed in (
+            identity_value[:-1],
+            b"\x00" * GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN,
+        ):
+            with self.assertRaises(DecodeError):
+                decode_gateway_host_receipt_identity(malformed)
+
+        duplicate_payload = receipt.packet.payload + receipt.packet.payload
+        duplicate_frame = encode_cobs_packet(
+            msg_type=MSG_GATEWAY_HOST_RECEIPT,
+            flags=0,
+            src_id=receipt.packet.src_id,
+            dst_id=receipt.packet.dst_id,
+            session_id=receipt.packet.session_id,
+            seq=receipt.packet.seq,
+            ttl=1,
+            payload=duplicate_payload,
+        )
+        with self.assertRaises(DecodeError):
+            parse_gateway_host_receipt(parse_cobs_packet(duplicate_frame))
+
+        trailing_payload = receipt.packet.payload + bytes((0x01, 0x00))
+        trailing_frame = encode_cobs_packet(
+            msg_type=MSG_GATEWAY_HOST_RECEIPT,
+            flags=0,
+            src_id=receipt.packet.src_id,
+            dst_id=receipt.packet.dst_id,
+            session_id=receipt.packet.session_id,
+            seq=receipt.packet.seq,
+            ttl=1,
+            payload=trailing_payload,
+        )
+        with self.assertRaises(DecodeError):
+            parse_gateway_host_receipt(parse_cobs_packet(trailing_frame))
+
+    def test_gateway_host_receipt_rejects_invalid_source_and_host_only_records(self) -> None:
+        source = bytearray(stream_record(click_payload()))
+        source[16:24] = b"\x00" * 8
+        malformed = parse_stream_record(bytes(source))
+        with self.assertRaises(ValueError):
+            build_gateway_host_receipt(
+                malformed,
+                host_id=0xA1C1BEEFC0DE0001,
+                gateway_id=0x9999888877776666,
+            )
+
+        host_only = parse_stream_record(
+            stream_record(b"", msg_type=MSG_GATEWAY_COMMAND_EVENT, packet_flags=0)
+        )
+        with self.assertRaises(ValueError):
+            build_gateway_host_receipt(
+                host_only,
+                host_id=0xA1C1BEEFC0DE0001,
+                gateway_id=0x9999888877776666,
+            )
+
     def test_receive_buffer_accepts_stream_then_legacy_cobs(self) -> None:
         record = stream_record(click_payload())
         legacy = encode_cobs_packet(
@@ -528,7 +677,7 @@ class ProtocolTests(unittest.TestCase):
             survey_id=0xA0B0C0D0,
             duration_ms=250,
             discovery_slot_count=6,
-            sample_count=1,
+            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
         )
         packet = command.packet
         self.assertEqual(command.command_id, CMD_SURVEY_REACHABILITY)
@@ -539,7 +688,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(packet.value(TLV_COMMAND_ID), CMD_SURVEY_REACHABILITY)
         self.assertEqual(packet.value(TLV_SURVEY_ID), 0xA0B0C0D0)
         self.assertEqual(packet.value(TLV_DURATION_MS), 250)
-        self.assertEqual(packet.value(TLV_SAMPLE_COUNT), 1)
+        self.assertEqual(
+            packet.value(TLV_SAMPLE_COUNT),
+            SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+        )
         self.assertEqual(packet.value(TLV_DISCOVERY_SLOT_COUNT), 6)
         self.assertEqual(
             [value.type_id for value in packet.tlvs],
@@ -645,7 +797,7 @@ class ProtocolTests(unittest.TestCase):
                 survey_id=3,
                 duration_ms=250,
                 discovery_slot_count=3,
-                sample_count=1,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
             ),
         )
         for command in commands:
@@ -708,7 +860,7 @@ class ProtocolTests(unittest.TestCase):
             survey_id=12,
             duration_ms=1_500,
             discovery_slot_count=12,
-            sample_count=1,
+            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
             command_budget_ms=500_000,
         )
         assignment = build_assign_discovery_slots_command(
@@ -751,19 +903,22 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legacy duration"):
             build_anchor_discovery_command(
                 **common, session_id=20, seq=21, survey_id=22,
-                duration_ms=1_499, discovery_slot_count=12, sample_count=1,
+                duration_ms=1_499, discovery_slot_count=12,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
                 command_budget_ms=500_000,
             )
         with self.assertRaisesRegex(ValueError, "legacy discovery slot"):
             build_anchor_discovery_command(
                 **common, session_id=20, seq=21, survey_id=22,
-                duration_ms=1_500, discovery_slot_count=11, sample_count=1,
+                duration_ms=1_500, discovery_slot_count=11,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
                 command_budget_ms=500_000,
             )
         with self.assertRaisesRegex(ValueError, "legacy command budget"):
             build_anchor_discovery_command(
                 **common, session_id=20, seq=21, survey_id=22,
-                duration_ms=1_500, discovery_slot_count=12, sample_count=1,
+                duration_ms=1_500, discovery_slot_count=12,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
                 command_budget_ms=499_999,
             )
         with self.assertRaisesRegex(ValueError, "legacy expected"):

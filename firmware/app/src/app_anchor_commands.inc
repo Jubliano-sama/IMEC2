@@ -3200,6 +3200,8 @@ static int anchor_execute_command_side_effects(const struct proto_packet *packet
     enum device_role requested_role = ROLE_ANCHOR;
     int ret = 0;
 
+    ARG_UNUSED(execution_deadline_ms);
+
     if (command_id == CMD_REBOOT) {
         *reboot_after_result = true;
     } else if (command_id == CMD_SET_ROLE) {
@@ -3254,17 +3256,6 @@ static int anchor_execute_command_side_effects(const struct proto_packet *packet
                                                                payload_len,
                                                                status,
                                                                reason);
-        if (ret < 0 && *status == COMMAND_OK) {
-            *status = COMMAND_INTERNAL_ERROR;
-            *reason = (uint8_t)(-ret);
-        }
-    } else if (command_id == CMD_SURVEY_GO) {
-        ret = app_anchor_survey_runtime_go_round_from_command(packet,
-                                                             payload,
-                                                             payload_len,
-                                                             execution_deadline_ms,
-                                                             status,
-                                                             reason);
         if (ret < 0 && *status == COMMAND_OK) {
             *status = COMMAND_INTERNAL_ERROR;
             *reason = (uint8_t)(-ret);
@@ -3331,10 +3322,6 @@ static int anchor_finish_broadcast_command(
                                               &reason,
                                               &force_rediscovery_after_result,
                                               &reboot_after_result);
-    if (command_id == CMD_SURVEY_GO && ret < 0) {
-        return ret;
-    }
-
     if (command_options->response_mode == CMD_RESPONSE_NONE) {
         LOG_INF("anchor broadcast command handled without result: cmd=0x%04x command_seq=%u status=%u reason=%u",
                 (unsigned int)command_id,
@@ -3381,67 +3368,14 @@ static int anchor_schedule_broadcast_command_execution(
     const struct gateway_command_options *options,
     uint32_t delay_ms)
 {
-    struct anchor_pending_command_execution previous = {0};
-    struct survey_round_go incoming_go = {0};
-    enum command_id command_id = CMD_VENDOR_BASE;
-    bool parked_previous = false;
-    bool preempted_previous = false;
     int ret;
 
     if (packet == NULL || payload == NULL || options == NULL ||
         payload_len > sizeof(anchor_pending_command_execution.payload)) {
         return -EINVAL;
     }
-    ret = gateway_command_extract_id(payload, payload_len, &command_id);
-    if (ret != PROTO_OK) {
-        return -EBADMSG;
-    }
-    if (command_id == CMD_SURVEY_GO) {
-        ret = survey_round_go_from_tlvs(payload,
-                                        payload_len,
-                                        &incoming_go);
-        if (ret != PROTO_OK ||
-            packet->session_id != survey_operation_session_id(
-                incoming_go.operation_generation) ||
-            !app_anchor_survey_runtime_operation_generation_active(
-                incoming_go.operation_generation)) {
-            return -ESTALE;
-        }
-    }
     if (anchor_pending_command_execution.active) {
-        enum command_id pending_command_id = CMD_VENDOR_BASE;
-
-        if (command_id != CMD_SURVEY_GO ||
-            gateway_command_extract_id(
-                anchor_pending_command_execution.payload,
-                anchor_pending_command_execution.payload_len,
-                &pending_command_id) != PROTO_OK) {
-            return -EBUSY;
-        }
-        if (pending_command_id == CMD_SURVEY_GO) {
-            struct survey_round_go pending_go = {0};
-
-            if (survey_round_go_from_tlvs(
-                    anchor_pending_command_execution.payload,
-                    anchor_pending_command_execution.payload_len,
-                    &pending_go) != PROTO_OK ||
-                incoming_go.operation_generation <=
-                    pending_go.operation_generation) {
-                return -ESTALE;
-            }
-        } else if (anchor_deferred_command_execution.active) {
-            return -EBUSY;
-        }
-
-        previous = anchor_pending_command_execution;
-        preempted_previous = true;
-        if (pending_command_id != CMD_SURVEY_GO) {
-            anchor_deferred_command_execution = previous;
-            parked_previous = true;
-        }
-        memset(&anchor_pending_command_execution,
-               0,
-               sizeof(anchor_pending_command_execution));
+        return -EBUSY;
     }
 
     anchor_pending_command_execution.command = *packet;
@@ -3469,22 +3403,6 @@ static int anchor_schedule_broadcast_command_execution(
         memset(&anchor_pending_command_execution,
                0,
                sizeof(anchor_pending_command_execution));
-        if (preempted_previous) {
-            anchor_pending_command_execution = previous;
-            if (parked_previous) {
-                memset(&anchor_deferred_command_execution,
-                       0,
-                       sizeof(anchor_deferred_command_execution));
-            }
-            (void)anchor_command_execute_reschedule(
-                uptime_deadline_reached(
-                    k_uptime_get_32(),
-                    anchor_pending_command_execution.execute_at_ms) ?
-                    1u :
-                    uptime_ms_until_deadline(
-                        k_uptime_get_32(),
-                        anchor_pending_command_execution.execute_at_ms));
-        }
         return ret;
     }
     LOG_INF("anchor broadcast command execution scheduled: command_seq=%u delay_ms=%u",
@@ -3706,35 +3624,6 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
         return;
     }
 
-    if (command_id == CMD_SURVEY_GO) {
-        if (uptime_deadline_reached(now_ms,
-                                    pending.execute_deadline_ms)) {
-            LOG_WRN("anchor synchronized survey GO missed local execution window: command_seq=%u now_ms=%u execute_ms=%u deadline_ms=%u",
-                    options.command_seq,
-                    now_ms,
-                    pending.execute_at_ms,
-                    pending.execute_deadline_ms);
-            ret = anchor_commit_broadcast_command_replay(
-                &pending.command, &options, now_ms);
-            if (ret == 0) {
-                memset(&anchor_pending_command_execution,
-                       0,
-                       sizeof(anchor_pending_command_execution));
-                return;
-            }
-            anchor_pending_command_execution.terminal_without_execution = true;
-            (void)anchor_command_execute_reschedule(
-                COLLECTION_RETRY_ROUND_0_MS);
-            return;
-        }
-        if (!uptime_deadline_reached(now_ms, pending.execute_at_ms)) {
-            (void)anchor_command_execute_reschedule(
-                uptime_ms_until_deadline(now_ms,
-                                         pending.execute_at_ms));
-            return;
-        }
-    }
-
     if (options.collection_required &&
         anchor_collection_result_pending.active) {
         (void)anchor_command_execute_reschedule(
@@ -3742,7 +3631,7 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
         return;
     }
 
-    if (!options.collection_required && command_id != CMD_SURVEY_GO) {
+    if (!options.collection_required) {
         ret = anchor_commit_broadcast_command_replay(
             &pending.command, &options, now_ms);
         if (ret < 0) {
@@ -3786,19 +3675,6 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
         }
         return;
     }
-    if (command_id == CMD_SURVEY_GO) {
-        ret = anchor_commit_broadcast_command_replay(
-            &pending.command, &options, now_ms);
-        if (ret < 0) {
-            LOG_WRN("anchor delayed result replay commit deferred: command_seq=%u ret=%d",
-                    options.command_seq,
-                    ret);
-            anchor_pending_command_execution.side_effect_completed = true;
-            (void)anchor_command_execute_reschedule(
-                COLLECTION_RETRY_ROUND_0_MS);
-            return;
-        }
-    }
     if (options.collection_required) {
         /*
          * The durable collection-result owner retries this replay commit if
@@ -3819,31 +3695,8 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
 
 static void anchor_command_execute_work_handler(struct k_work *work)
 {
-    uint32_t delay_ms;
-    uint32_t now_ms;
-
     k_mutex_lock(&anchor_command_result_mutex, K_FOREVER);
     anchor_command_execute_work_handler_locked(work);
-    if (!anchor_pending_command_execution.active &&
-        anchor_deferred_command_execution.active) {
-        anchor_pending_command_execution =
-            anchor_deferred_command_execution;
-        memset(&anchor_deferred_command_execution,
-               0,
-               sizeof(anchor_deferred_command_execution));
-        now_ms = k_uptime_get_32();
-        delay_ms = uptime_deadline_reached(
-            now_ms,
-            anchor_pending_command_execution.execute_at_ms) ?
-            1u :
-            uptime_ms_until_deadline(
-                now_ms,
-                anchor_pending_command_execution.execute_at_ms);
-        (void)anchor_command_execute_reschedule(delay_ms);
-        LOG_INF("anchor resumed delayed broadcast after synchronized survey GO: command_seq=%u delay_ms=%u",
-                anchor_pending_command_execution.options.command_seq,
-                delay_ms);
-    }
     k_mutex_unlock(&anchor_command_result_mutex);
 }
 
@@ -3938,18 +3791,6 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                     (unsigned int)command_id,
                     command_options.command_seq);
             return 1;
-        }
-
-        if (command_id == CMD_SURVEY_GO &&
-            (command_options.execute_delay_ms == 0u ||
-             packet->message_age_ms >= command_options.execute_delay_ms)) {
-            LOG_WRN("anchor ignored late or immediate survey GO: command_seq=%u age_ms=%u delay_ms=%u",
-                    command_options.command_seq,
-                    packet->message_age_ms,
-                    command_options.execute_delay_ms);
-            ret = anchor_commit_broadcast_command_replay(
-                packet, &command_options, now_ms);
-            return ret == 0 ? 1 : 0;
         }
 
         if (command_options.collection_required &&

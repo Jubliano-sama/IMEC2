@@ -979,7 +979,11 @@ def main() -> None:
     parser.add_argument("--survey-id", type=lambda value: int(value, 0), default=0)
     parser.add_argument("--survey-duration-ms", type=int, default=1000)
     parser.add_argument("--discovery-slots", type=int, default=6)
-    parser.add_argument("--samples", type=int, default=1)
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+    )
     parser.add_argument("--notification-hold-s", type=float, default=0.0)
     parser.add_argument("--require-survey-success", action="store_true")
     parser.add_argument("--require-assignment-success", action="store_true")
@@ -1025,9 +1029,9 @@ def main() -> None:
         parser.error("assignment qualification requires 1..50 expected anchors")
     if args.route_refresh_timeout <= 0.0 or args.assignment_timeout <= 0.0:
         parser.error("qualification timeouts must be positive")
-    if not 1 <= args.samples <= SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
+    if args.samples != SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
         parser.error(
-            "--samples must be in 1.."
+            "--samples must be exactly "
             f"{SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT}"
         )
     if args.command_budget_ms is not None and not (

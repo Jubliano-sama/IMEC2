@@ -2059,7 +2059,7 @@ static uint32_t duplicate_session_identity(const struct proto_packet *packet,
         return proto_get_u32_le(value);
     }
     /*
-     * A receipt recovery preserves the old semantic collection session while
+     * A collection-EACK recovery preserves the old semantic collection session while
      * each bounded RF reconstruction needs a fresh attempt identity. Without
      * this TLV, a lost CLOSED EACK is suppressed for the full command replay
      * window when the sender retries through another relay.
@@ -2284,13 +2284,13 @@ static bool gateway_ack_history_applies(const struct mesh_relay *relay,
             */
            packet->msg_type != MSG_GATEWAY_ROUTE_REQ &&
            /*
-            * ACK_CONFIRM is an idempotent terminal proof whose authoritative
-            * replay state lives in the durable host-journal/receipt layer.
-            * Charging it to the volatile per-origin ACK history can reject a
+            * ACK_CONFIRM is an idempotent terminal proof. Do not charge it to
+            * the volatile per-origin ACK history, because that can reject a
             * valid late proof after reboot or when all origin partitions are
-            * occupied. Its normal duplicate cache entry is sufficient for
-            * same-boot ACK replay; after reset the application redelivers and
-            * validates the proof against durable state before committing it.
+            * occupied. Its normal duplicate-cache entry is sufficient for
+            * same-boot replay; after reset the normal RX/custody path handles
+            * the proof, with no gateway host journal or receipt ledger
+            * involved.
             */
            packet->msg_type != MSG_GATEWAY_ACK_CONFIRM;
 }

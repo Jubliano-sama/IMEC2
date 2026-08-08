@@ -31,6 +31,7 @@ struct dwm3000_range_request {
     uint8_t flags;
     uint32_t timeout_ms;
     uint16_t reply_delay_uus;
+    uint32_t click_timestamp_ms;
     /* Responder-side FINAL diagnostics; initiator RSL comes from its report. */
     bool capture_rsl;
     bool skip_responder_report;
@@ -40,6 +41,7 @@ struct dwm3000_range_request {
     bool send_anchor_diag;
     bool expect_anchor_diag_fragments;
     bool send_anchor_diag_fragments;
+    bool click_timestamp_present;
     uint8_t *anchor_full_cir;
     uint16_t anchor_full_cir_cap;
 };
@@ -49,6 +51,7 @@ struct dwm3000_range_result {
     uint64_t responder_id;
     uint32_t session_id;
     int64_t exchange_start_ms;
+    int64_t click_timestamp_ms;
     uint8_t seq;
     uint8_t round_index;
     uint8_t flags;
@@ -78,6 +81,7 @@ struct dwm3000_range_result {
     uint32_t clicker_diag_status_flags;
     uint32_t anchor_diag_status_flags;
     uint32_t clicker_diag_status_detect_latency_us;
+    uint16_t click_age_ms;
     bool rsl_sampled;
     bool cir_sampled;
     bool clicker_rx_diag_sampled;
@@ -90,6 +94,8 @@ struct dwm3000_range_result {
     bool clicker_diag_received;
     bool clicker_diag_dropped;
     bool clicker_diag_truncated;
+    bool click_timestamp_present;
+    bool click_age_saturated;
     bool exchange_started;
     enum range_status status;
 };

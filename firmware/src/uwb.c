@@ -238,8 +238,12 @@ int uwb_encode_poll(const struct uwb_range_header *header,
 {
     int ret;
 
-    if (out == NULL || written == NULL) {
+    if (header == NULL || out == NULL || written == NULL) {
         return PROTO_ERR_ARG;
+    }
+    if ((header->flags & FLAG_COUNT_AS_CLICK) != 0u) {
+        /* Normal clicks must use the extended first-frame age envelope. */
+        return PROTO_ERR_MALFORMED;
     }
     if (out_cap < UWB_POLL_LEN) {
         return PROTO_ERR_NO_SPACE;
@@ -254,11 +258,97 @@ int uwb_encode_poll(const struct uwb_range_header *header,
     return PROTO_OK;
 }
 
+int uwb_encode_click_poll(const struct uwb_range_header *header,
+                          uint32_t click_age_ms,
+                          uint8_t *out,
+                          size_t out_cap,
+                          size_t *written)
+{
+    uint8_t metadata_flags = UWB_POLL_METADATA_CLICK_AGE_PRESENT;
+    uint16_t wire_age_ms;
+    int ret;
+
+    if (header == NULL || out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if ((header->flags & FLAG_COUNT_AS_CLICK) == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (out_cap < UWB_CLICK_POLL_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    ret = encode_header(header, MSG_UWB_POLL, out);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (click_age_ms > UWB_CLICK_AGE_MAX_MS) {
+        wire_age_ms = UWB_CLICK_AGE_MAX_MS;
+        metadata_flags |= UWB_POLL_METADATA_CLICK_AGE_SATURATED;
+    } else {
+        wire_age_ms = (uint16_t)click_age_ms;
+    }
+    out[UWB_HEADER_LEN] = UWB_POLL_METADATA_VERSION_CLICK_AGE;
+    out[UWB_HEADER_LEN + 1u] = metadata_flags;
+    proto_put_u16_le(&out[UWB_HEADER_LEN + 2u], wire_age_ms);
+    *written = UWB_CLICK_POLL_LEN;
+    return PROTO_OK;
+}
+
 int uwb_decode_poll(const uint8_t *data,
                          size_t len,
                          struct uwb_range_header *header)
 {
-    return decode_header(data, len, UWB_POLL_LEN, MSG_UWB_POLL, header);
+    struct uwb_poll_frame frame;
+    int ret;
+
+    if (header == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = uwb_decode_poll_frame(data, len, &frame);
+    if (ret == PROTO_OK) {
+        *header = frame.header;
+    }
+    return ret;
+}
+
+int uwb_decode_poll_frame(const uint8_t *data,
+                          size_t len,
+                          struct uwb_poll_frame *frame)
+{
+    uint8_t allowed_flags = UWB_POLL_METADATA_CLICK_AGE_PRESENT |
+                            UWB_POLL_METADATA_CLICK_AGE_SATURATED;
+    bool click;
+    int ret;
+
+    if (data == NULL || frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    memset(frame, 0, sizeof(*frame));
+    if (len != UWB_POLL_LEN && len != UWB_CLICK_POLL_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+    ret = decode_header(data, len, len, MSG_UWB_POLL, &frame->header);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    click = (frame->header.flags & FLAG_COUNT_AS_CLICK) != 0u;
+    if (len == UWB_POLL_LEN) {
+        return click ? PROTO_ERR_MALFORMED : PROTO_OK;
+    }
+
+    frame->metadata_version = data[UWB_HEADER_LEN];
+    frame->metadata_flags = data[UWB_HEADER_LEN + 1u];
+    frame->click_age_ms = proto_get_u16_le(&data[UWB_HEADER_LEN + 2u]);
+    if (!click ||
+        frame->metadata_version != UWB_POLL_METADATA_VERSION_CLICK_AGE ||
+        (frame->metadata_flags & (uint8_t)~allowed_flags) != 0u ||
+        (frame->metadata_flags & UWB_POLL_METADATA_CLICK_AGE_PRESENT) == 0u ||
+        ((frame->metadata_flags & UWB_POLL_METADATA_CLICK_AGE_SATURATED) != 0u &&
+         frame->click_age_ms != UWB_CLICK_AGE_MAX_MS)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
 }
 
 int uwb_encode_response(const struct uwb_response_frame *frame,

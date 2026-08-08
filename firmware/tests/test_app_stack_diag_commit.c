@@ -16,6 +16,16 @@ void status_stack_diag_transaction_end(void);
 #define CONFIG_ISR_STACK_SIZE 320
 #define IMEC_BUILD_PRESET_NAME "mesh_gateway"
 #define IMEC_STACK_DIAG_BUILD_ID "test-build"
+#define APP_STACK_DIAG_NATIVE_TEST 1
+#define APPLICATION 0
+#define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+#define BUILD_ASSERT(condition, message) _Static_assert(condition, message)
+#define IS_ENABLED(config_macro) (config_macro == 1)
+#define SYS_INIT(init_fn, level, priority)                                  \
+    static int (*const zephyr_shim_init_##init_fn)(void)                    \
+        __attribute__((unused)) = (init_fn)
+
+uint32_t sys_rand32_get(void);
 
 #include "../app/src/app_stack_diag.c"
 

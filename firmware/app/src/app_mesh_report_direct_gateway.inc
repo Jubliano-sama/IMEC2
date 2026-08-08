@@ -291,7 +291,7 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
             *rf_sent = observation == NULL || observation->rf_started;
         }
         mesh_relay_note_tx_sent(&mesh_runtime, out, k_uptime_get_32());
-        app_mesh_paused_delivery_note_sent(&mesh_paused_delivery, out);
+        fw_delivery_loss_note_sent(&mesh_delivery_loss, out);
         (void)mesh_save_outbox_durable("single-ch9-send");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_CH9_TX_SINGLE_SEND_OK\n");
@@ -421,7 +421,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
     };
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
     struct mesh_outbound *queued = &report_tx_worker_scratch;
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     uint32_t batch_id;
     uint32_t reserve_ms = MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS;
     uint32_t slot_ms;
@@ -437,7 +437,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
     int ret;
 
     /*
-     * Direct batching has no durable per-fragment ACK owner yet. It also
+     * Direct batching has no independent per-fragment ACK owner yet. It also
      * shares candidate storage with the mutually exclusive pending-ACK bank,
      * so entering this path would overwrite unsent candidates as soon as the
      * first ACK wait starts. Keep the implementation compile-visible for its
@@ -501,7 +501,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=coord n=%u state=%s q=%u\n",
                                     candidate_count,
-                                    app_mesh_coordinator_state_name(
+                                    fw_radio_activity_state_name(
                                         coordinator_decision.state),
                                     k_msgq_num_used_get(&report_tx_msgq));
             }
@@ -794,7 +794,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
         mesh_relay_note_tx_sent(&mesh_runtime,
                                 &report_tx_batch_candidates[i],
                                 k_uptime_get_32());
-        app_mesh_paused_delivery_note_sent(&mesh_paused_delivery,
+        fw_delivery_loss_note_sent(&mesh_delivery_loss,
                                            &report_tx_batch_candidates[i]);
         if (mesh_ch9_tx_pending_track_sent(&report_tx_batch_candidates[i],
                                            deadline_ms)) {

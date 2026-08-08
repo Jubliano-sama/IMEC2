@@ -291,7 +291,7 @@ static bool remove_item(struct gateway_ble_stream_state *state, uint8_t index)
     uint16_t removed_offset;
     uint16_t removed_len;
     size_t tail_len;
-    bool removed_journal_owner;
+    bool removed_host_custody_owner;
 
     if (state == NULL || index >= state->count) {
         return false;
@@ -311,7 +311,7 @@ static bool remove_item(struct gateway_ble_stream_state *state, uint8_t index)
     tail_len = (size_t)state->pool_used -
                (size_t)removed_offset -
                (size_t)removed_len;
-    removed_journal_owner = state->items[index].journal_owner;
+    removed_host_custody_owner = state->items[index].host_custody_owner;
     memmove(&state->record_pool[removed_offset],
             &state->record_pool[removed_offset + removed_len],
             tail_len);
@@ -325,11 +325,8 @@ static bool remove_item(struct gateway_ble_stream_state *state, uint8_t index)
         state->items[i] = state->items[i + 1u];
     }
     state->count--;
-    if (removed_journal_owner) {
-        memset(state->journal_payload_digest,
-               0,
-               sizeof(state->journal_payload_digest));
-        state->journal_payload_digest_valid = false;
+    if (removed_host_custody_owner) {
+        state->host_custody_source_payload_active = false;
     }
     return true;
 }
@@ -547,8 +544,8 @@ static int build_record(const struct proto_packet *packet,
         return -EINVAL;
     }
     if (record != NULL && copy_len > 0u) {
-        /* The startup journal restore may use an in-pool staging tail whose
-         * bytes overlap the final record destination. */
+        /* The payload may overlap the final record destination when the
+         * caller builds a record in-place. */
         memmove(&record[offset], payload, copy_len);
     }
     item->len = (uint16_t)(offset + copy_len);
@@ -575,9 +572,6 @@ static int enqueue_packet(struct gateway_ble_stream_state *state,
 
     if (state == NULL || packet == NULL) {
         return -EINVAL;
-    }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
     }
     state->diagnostics.enqueue_attempts++;
     packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
@@ -630,6 +624,7 @@ static int enqueue_packet(struct gateway_ble_stream_state *state,
         return ret;
     }
     item.retain_until_sent = retain_until_sent;
+    item.host_custody_owner = retain_until_sent;
     item.offset = state->pool_used;
     state->pool_used += item.len;
     state->items[state->count] = item;
@@ -677,205 +672,6 @@ int gateway_ble_stream_enqueue_retained_packet(
                           true);
 }
 
-static int enqueue_staged_packet_with_journal_digest(
-    struct gateway_ble_stream_state *state,
-    const struct proto_packet *packet,
-    size_t payload_len,
-    uint32_t received_at_ms,
-    uint32_t now_ms,
-    bool ble_ready,
-    const uint8_t journal_payload_digest[SEMANTIC_DIGEST_SHA256_LEN])
-{
-    enum gateway_ble_stream_class packet_class;
-    struct gateway_ble_stream_item item;
-    size_t staging_offset;
-    size_t destination_offset;
-    uint8_t *destination_payload;
-    int ret;
-
-    if (state == NULL || packet == NULL ||
-        journal_payload_digest == NULL ||
-        !state->restore_staging_active) {
-        return -EINVAL;
-    }
-    if (state->journal_payload_digest_valid) {
-        return -EBUSY;
-    }
-    if (payload_len > GATEWAY_BLE_STREAM_PAYLOAD_MAX_LEN) {
-        note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
-        return -EMSGSIZE;
-    }
-    staging_offset = state->restore_staging_offset;
-    if (staging_offset > sizeof(state->record_pool) ||
-        payload_len > sizeof(state->record_pool) - staging_offset) {
-        return -EINVAL;
-    }
-    /* The staging tail must remain outside the used prefix.  Removing a
-     * lower-priority item can only shorten that prefix, so the source stays
-     * stable while queue pressure is resolved below. */
-    if (state->pool_used > staging_offset || state->reservation_active) {
-        return -EAGAIN;
-    }
-
-    state->diagnostics.enqueue_attempts++;
-    packet_class = gateway_ble_stream_classify_packet(packet->msg_type,
-                                                      packet->flags);
-    if (!gateway_ble_should_stream_packet(packet->msg_type,
-                                          packet->flags,
-                                          packet_class)) {
-        return 0;
-    }
-
-    ret = build_record(packet,
-                       &state->record_pool[staging_offset],
-                       payload_len,
-                       packet_class,
-                       received_at_ms,
-                       now_ms,
-                       NULL,
-                       0u,
-                       &item);
-    if (ret == -EMSGSIZE) {
-        note_drop(state, packet->msg_type, GATEWAY_BLE_STREAM_DROP_TOO_LARGE);
-        return ret;
-    }
-    if (ret < 0) {
-        return ret;
-    }
-
-    while (!queue_capacity_available(state, item.len) &&
-           drop_one_lower_priority(state, item.priority)) {
-    }
-    if (!queue_capacity_available(state, item.len)) {
-        note_drop(state,
-                  packet->msg_type,
-                  ble_ready ? GATEWAY_BLE_STREAM_DROP_QUEUE_FULL :
-                              GATEWAY_BLE_STREAM_DROP_NOT_READY);
-        return ble_ready ? -ENOSPC : -ENOTCONN;
-    }
-
-    destination_offset = state->pool_used;
-    destination_payload = &state->record_pool[
-        destination_offset + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN];
-    /* Move the complete payload before writing the destination header.  A
-     * plain memcpy/header-first build would destroy bytes when the 958-byte
-     * tail overlaps the record being appended. */
-    memmove(destination_payload,
-            &state->record_pool[staging_offset],
-            payload_len);
-    ret = build_record(packet,
-                       destination_payload,
-                       payload_len,
-                       packet_class,
-                       received_at_ms,
-                       now_ms,
-                       &state->record_pool[destination_offset],
-                       sizeof(state->record_pool) - destination_offset,
-                       &item);
-    if (ret < 0) {
-        return ret;
-    }
-    item.offset = (uint16_t)destination_offset;
-    item.retain_until_sent = true;
-    item.journal_owner = true;
-    state->pool_used += item.len;
-    state->items[state->count] = item;
-    state->count++;
-    memcpy(state->journal_payload_digest,
-           journal_payload_digest,
-           sizeof(state->journal_payload_digest));
-    state->journal_payload_digest_valid = true;
-    if (state->count > state->diagnostics.max_queue_depth_observed) {
-        state->diagnostics.max_queue_depth_observed = state->count;
-    }
-    return 1;
-}
-
-int gateway_ble_stream_enqueue_staged_packet(
-    struct gateway_ble_stream_state *state,
-    const struct proto_packet *packet,
-    size_t payload_len,
-    uint32_t received_at_ms,
-    uint32_t now_ms,
-    bool ble_ready)
-{
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    size_t staging_offset;
-
-    if (state == NULL || !state->restore_staging_active) {
-        return -EINVAL;
-    }
-    staging_offset = state->restore_staging_offset;
-    if (staging_offset > sizeof(state->record_pool) ||
-        payload_len > sizeof(state->record_pool) - staging_offset ||
-        !semantic_digest_sha256(&state->record_pool[staging_offset],
-                                payload_len,
-                                payload_digest)) {
-        return -EINVAL;
-    }
-    return enqueue_staged_packet_with_journal_digest(
-        state,
-        packet,
-        payload_len,
-        received_at_ms,
-        now_ms,
-        ble_ready,
-        payload_digest);
-}
-
-int gateway_ble_stream_enqueue_staged_bundle_projection(
-    struct gateway_ble_stream_state *state,
-    const struct proto_packet *packet,
-    size_t raw_payload_len,
-    uint8_t accepted_record_mask,
-    uint32_t received_at_ms,
-    uint32_t now_ms,
-    bool ble_ready)
-{
-    uint8_t raw_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    size_t projected_payload_len = 0u;
-    size_t staging_offset;
-    int ret;
-
-    if (state == NULL || packet == NULL ||
-        !state->restore_staging_active ||
-        packet->msg_type != MSG_RESULT_BUNDLE ||
-        accepted_record_mask == 0u) {
-        return -EINVAL;
-    }
-    staging_offset = state->restore_staging_offset;
-    if (staging_offset > sizeof(state->record_pool) ||
-        raw_payload_len > sizeof(state->record_pool) - staging_offset) {
-        return -EINVAL;
-    }
-    if (state->journal_payload_digest_valid) {
-        return -EBUSY;
-    }
-    if (!semantic_digest_sha256(&state->record_pool[staging_offset],
-                                raw_payload_len,
-                                raw_payload_digest)) {
-        return -EINVAL;
-    }
-    ret = gateway_collection_project_bundle_payload(
-        &state->record_pool[staging_offset],
-        raw_payload_len,
-        accepted_record_mask,
-        &state->record_pool[staging_offset],
-        sizeof(state->record_pool) - staging_offset,
-        &projected_payload_len);
-    if (ret != PROTO_OK) {
-        return ret == PROTO_ERR_NO_SPACE ? -EMSGSIZE : -EBADMSG;
-    }
-    return enqueue_staged_packet_with_journal_digest(
-        state,
-        packet,
-        projected_payload_len,
-        received_at_ms,
-        now_ms,
-        ble_ready,
-        raw_payload_digest);
-}
-
 int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
                                       const struct proto_packet *packet,
                                       const uint8_t *payload,
@@ -891,9 +687,6 @@ int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
     if (state == NULL || packet == NULL ||
         (payload == NULL && payload_len != 0u)) {
         return -EINVAL;
-    }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
     }
     state->diagnostics.enqueue_attempts++;
     if (state->reservation_active) {
@@ -972,13 +765,10 @@ int gateway_ble_stream_commit_reservation(
         (payload == NULL && payload_len != 0u)) {
         return -EINVAL;
     }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
-    }
     if (!state->reservation_active) {
         return -ENOENT;
     }
-    if (state->journal_payload_digest_valid) {
+    if (state->host_custody_source_payload_active) {
         return -EBUSY;
     }
     reserved = reservation_item_const(state);
@@ -1031,14 +821,11 @@ int gateway_ble_stream_commit_reservation(
     insert_index = state->count;
     item.offset = state->pool_used;
     item.retain_until_sent = true;
-    item.journal_owner = true;
+    item.host_custody_owner = true;
     state->pool_used += item.len;
     state->items[insert_index] = item;
     state->count++;
-    memcpy(state->journal_payload_digest,
-           state->reservation_payload_digest,
-           sizeof(state->journal_payload_digest));
-    state->journal_payload_digest_valid = true;
+    state->host_custody_source_payload_active = true;
     state->reservation_active = false;
     state->reservation_payload_len = 0u;
     memset(state->reservation_payload_digest,
@@ -1075,13 +862,10 @@ int gateway_ble_stream_commit_bundle_projection_reservation(
         accepted_record_mask == 0u) {
         return -EINVAL;
     }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
-    }
     if (!state->reservation_active) {
         return -ENOENT;
     }
-    if (state->journal_payload_digest_valid) {
+    if (state->host_custody_source_payload_active) {
         return -EBUSY;
     }
     reserved = reservation_item_const(state);
@@ -1136,14 +920,11 @@ int gateway_ble_stream_commit_bundle_projection_reservation(
     insert_index = state->count;
     item.offset = (uint16_t)destination_offset;
     item.retain_until_sent = true;
-    item.journal_owner = true;
+    item.host_custody_owner = true;
     state->pool_used += item.len;
     state->items[insert_index] = item;
     state->count++;
-    memcpy(state->journal_payload_digest,
-           state->reservation_payload_digest,
-           sizeof(state->journal_payload_digest));
-    state->journal_payload_digest_valid = true;
+    state->host_custody_source_payload_active = true;
     state->reservation_active = false;
     state->reservation_payload_len = 0u;
     memset(state->reservation_payload_digest,
@@ -1184,9 +965,6 @@ unsigned int gateway_ble_stream_drain(struct gateway_ble_stream_state *state,
     if (state == NULL || send_fn == NULL || max_records == 0u) {
         return 0u;
     }
-    if (state->restore_staging_active) {
-        return 0u;
-    }
     if (!ble_ready) {
         if (state->count > 0u) {
             state->diagnostics.oldest_queued_age_ms =
@@ -1221,9 +999,6 @@ int gateway_ble_stream_peek(const struct gateway_ble_stream_state *state,
 {
     if (state == NULL || record == NULL || record_len == NULL) {
         return -EINVAL;
-    }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
     }
     if (state->count == 0u) {
         return -ENOENT;
@@ -1268,9 +1043,6 @@ int gateway_ble_stream_begin_send_view(struct gateway_ble_stream_state *state,
     if (state == NULL || record == NULL || record_len == NULL) {
         return -EINVAL;
     }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
-    }
     if (state->count == 0u) {
         return -ENOENT;
     }
@@ -1293,13 +1065,65 @@ void gateway_ble_stream_cancel_send(struct gateway_ble_stream_state *state)
     }
 }
 
+int gateway_ble_stream_mark_host_notified(
+    struct gateway_ble_stream_state *state)
+{
+    if (state == NULL) {
+        return -EINVAL;
+    }
+    if (state->count == 0u) {
+        return -ENOENT;
+    }
+    if (!state->items[0].retain_until_sent) {
+        return -EPERM;
+    }
+    if (state->head_send_phase != GATEWAY_BLE_STREAM_HEAD_SENDING) {
+        return state->head_send_phase ==
+                       GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED ||
+                       state->head_send_phase ==
+                       GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED ?
+               -EALREADY : -EAGAIN;
+    }
+    state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED;
+    return 0;
+}
+
+int gateway_ble_stream_rewind_host_notification(
+    struct gateway_ble_stream_state *state)
+{
+    if (state == NULL || state->count == 0u) {
+        return -ENOENT;
+    }
+    if (state->head_send_phase != GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED) {
+        return state->head_send_phase ==
+                       GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED ?
+               -EALREADY : -EAGAIN;
+    }
+    state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_IDLE;
+    return 0;
+}
+
+int gateway_ble_stream_accept_host_receipt(
+    struct gateway_ble_stream_state *state)
+{
+    if (state == NULL || state->count == 0u) {
+        return -ENOENT;
+    }
+    if (state->head_send_phase != GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED) {
+        return state->head_send_phase ==
+                       GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED ?
+               -EALREADY : -EAGAIN;
+    }
+    state->head_send_phase = GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED;
+    return 0;
+}
+
 void gateway_ble_stream_mark_sent(struct gateway_ble_stream_state *state,
                                   uint32_t now_ms)
 {
     struct gateway_ble_stream_item *item;
 
-    if (state == NULL || state->count == 0u ||
-        state->restore_staging_active) {
+    if (state == NULL || state->count == 0u) {
         return;
     }
 
@@ -1340,36 +1164,9 @@ int gateway_ble_stream_head_packet(const struct gateway_ble_stream_state *state,
     if (state == NULL || packet == NULL) {
         return -EINVAL;
     }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
-    }
     if (state->count == 0u) {
         return -ENOENT;
     }
     *packet = state->items[0].packet;
-    return 0;
-}
-
-int gateway_ble_stream_head_journal_identity(
-    const struct gateway_ble_stream_state *state,
-    struct proto_packet *packet,
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN])
-{
-    if (state == NULL || packet == NULL || payload_digest == NULL) {
-        return -EINVAL;
-    }
-    if (state->restore_staging_active) {
-        return -EAGAIN;
-    }
-    if (state->count == 0u || !state->items[0].journal_owner) {
-        return -ENOENT;
-    }
-    if (!state->journal_payload_digest_valid) {
-        return -EBADMSG;
-    }
-    *packet = state->items[0].packet;
-    memcpy(payload_digest,
-           state->journal_payload_digest,
-           SEMANTIC_DIGEST_SHA256_LEN);
     return 0;
 }

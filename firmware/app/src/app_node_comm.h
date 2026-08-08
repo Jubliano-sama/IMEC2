@@ -9,11 +9,11 @@
 #include "protocol.h"
 
 /*
- * Four immutable survey samples (or stress datagrams) plus one slot that
+ * Five immutable survey samples (or stress datagrams) plus one slot that
  * ordinary reliable uplinks cannot consume.  Survey execution reserves its
- * complete four-record burst before taking the radio.
+ * complete five-record burst before taking the radio.
  */
-#define APP_NODE_COMM_MAX_DELIVERIES 5u
+#define APP_NODE_COMM_MAX_DELIVERIES 6u
 #define APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES 1u
 #define APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY \
     (APP_NODE_COMM_MAX_DELIVERIES - \

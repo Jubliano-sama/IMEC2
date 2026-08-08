@@ -87,43 +87,26 @@ static int build_operation(struct transit_operation *operation,
                            uint32_t session_id,
                            uint16_t seq)
 {
-    const struct command_result_id result_id = {
-        .gateway_id = GATEWAY_ID,
-        .gateway_epoch = (uint16_t)ROUTE_EPOCH,
-        .command_seq = session_id,
-        .node_id = CHILD_ID,
-        .node_boot_counter = 3u,
-        .result_seq = seq,
-    };
     int ret;
 
     memset(operation, 0, sizeof(*operation));
-    ret = command_result_id_append_tlvs(operation->payload,
-                                        sizeof(operation->payload),
-                                        &operation->payload_len,
-                                        &result_id);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = mesh_append_command_result(operation->payload,
-                                     sizeof(operation->payload),
-                                     &operation->payload_len,
-                                     CMD_GET_STATUS,
-                                     COMMAND_OK,
-                                     0u);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = mesh_init_command_result(&operation->packet,
-                                   CHILD_ID,
-                                   GATEWAY_ID,
-                                   session_id,
-                                   seq,
-                                   (uint8_t)operation->payload_len,
-                                   false);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
+    /*
+     * Command results now require collection identity and use the result
+     * bundle/EACK path.  These scenarios exercise the independent transit
+     * gateway-ACK handoff, so use a valid diagnostic mesh-data packet whose
+     * source custody still follows that path.
+     */
+    operation->payload[0] = 0x5au;
+    operation->payload_len = 1u;
+    operation->packet.msg_type = MSG_MESH_DATA;
+    operation->packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    operation->packet.src_id = CHILD_ID;
+    operation->packet.dst_id = GATEWAY_ID;
+    operation->packet.session_id = session_id;
+    operation->packet.seq = seq;
+    operation->packet.ttl = MESH_DEFAULT_TTL;
+    operation->packet.payload_len = (uint8_t)operation->payload_len;
+    operation->packet.message_age_ms = 0u;
     ret = mesh_append_requested_seq(operation->gateway_ack_payload,
                                     sizeof(operation->gateway_ack_payload),
                                     &operation->gateway_ack_payload_len,

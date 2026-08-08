@@ -125,7 +125,10 @@ class GatewayCommandSourceInvariantTests(unittest.TestCase):
                 if child.func.attr == "_submit_gateway_command":
                     orchestrated_handlers.add(node.name)
 
-        self.assertEqual(direct_senders, ["_dispatch_gateway_command"])
+        self.assertEqual(
+            direct_senders,
+            ["_dispatch_gateway_command", "_maybe_send_gateway_host_receipt"],
+        )
         self.assertTrue(
             {"_send_discovery", "_send_here_i_am", "_send_assign_discovery_slots"}
             <= orchestrated_handlers

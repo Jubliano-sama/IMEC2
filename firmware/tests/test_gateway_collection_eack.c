@@ -511,66 +511,6 @@ static void test_prepare_builds_exact_eack_without_starting_transport(void)
     assert(decoded.packet_sequence == collection.eack_sequence);
 }
 
-static void test_receipt_recovery_builds_closed_fresh_attempt(void)
-{
-    const struct app_gateway_collection_recovery_eack_input input = {
-        .gateway_id = GATEWAY_ID_TEST,
-        .gateway_epoch = GATEWAY_EPOCH_TEST,
-        .command_seq = COMMAND_SEQ_TEST,
-        .collection_epoch_id = COLLECTION_EPOCH_TEST,
-        .packet_src_id = UINT64_C(0x10000000000000aa),
-        .recovery_attempt_id = UINT32_C(0x12340055),
-        .packet_seq = UINT16_C(0x3301),
-        .payload_len = UINT16_C(173),
-        .payload_digest = {0x5a},
-    };
-    struct mesh_outbound outbound = {0};
-    struct gateway_collection_eack decoded = {0};
-    struct gateway_collection_recovery_identity identity = {0};
-    uint32_t recovery_attempt_id = 0u;
-
-    assert(app_gateway_collection_recovery_eack_prepare(
-               &outbound, &input) == 0);
-    assert(gateway_collection_eack_packet_validate(
-               &outbound.packet,
-               outbound.payload,
-               outbound.payload_len,
-               &decoded) == PROTO_OK);
-    assert(decoded.gateway_id == input.gateway_id);
-    assert(decoded.gateway_epoch == input.gateway_epoch);
-    assert(decoded.command_seq == input.command_seq);
-    assert(decoded.collection_epoch_id == input.collection_epoch_id);
-    assert(decoded.expected_count == 1u);
-    assert(decoded.received_count == 1u);
-    assert(!decoded.collection_open);
-    assert(outbound.packet.seq != 0u);
-    assert(outbound.packet.seq == decoded.packet_sequence);
-    assert(gateway_collection_eack_recovery_attempt_id(
-               outbound.payload,
-               outbound.payload_len,
-               &recovery_attempt_id) == PROTO_OK);
-    assert(recovery_attempt_id == input.recovery_attempt_id);
-    assert(gateway_collection_eack_recovery_identity(
-               outbound.payload,
-               outbound.payload_len,
-               &identity) == PROTO_OK);
-    assert(identity.packet_src_id == input.packet_src_id);
-    assert(identity.packet_seq == input.packet_seq);
-    assert(identity.payload_len == input.payload_len);
-    assert(memcmp(identity.payload_digest,
-                  input.payload_digest,
-                  sizeof(identity.payload_digest)) == 0);
-
-    assert(app_gateway_collection_recovery_eack_prepare(
-               &outbound,
-               &(struct app_gateway_collection_recovery_eack_input) {
-                   .gateway_id = GATEWAY_ID_TEST,
-                   .gateway_epoch = GATEWAY_EPOCH_TEST,
-                   .command_seq = COMMAND_SEQ_TEST,
-                   .collection_epoch_id = COLLECTION_EPOCH_TEST,
-               }) == -EINVAL);
-}
-
 int main(void)
 {
     test_strict_roster_missing_list_uses_current_channel9_first();
@@ -578,6 +518,5 @@ int main(void)
     test_failed_lane_rounds_reach_alternate_then_c5();
     test_prebuilt_retry_preserves_payload_but_reselects_return_lane();
     test_prepare_builds_exact_eack_without_starting_transport();
-    test_receipt_recovery_builds_closed_fresh_attempt();
     return 0;
 }

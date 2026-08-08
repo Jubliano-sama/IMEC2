@@ -17,17 +17,16 @@ struct producer_record {
     struct proto_packet packet;
     uint8_t payload[TEST_PAYLOAD_LEN];
     uint16_t ack_count;
-    uint16_t host_count;
+    uint16_t gui_notification_count;
+    uint16_t gui_receipt_count;
+    uint16_t retired_count;
     bool source_owned;
 };
 
 struct gateway_flow_model {
     struct gateway_ble_stream_state stream;
-    struct proto_packet journal_packet;
-    uint8_t journal_payload[TEST_PAYLOAD_LEN];
-    uint16_t semantic_accept_count;
+    uint16_t semantic_apply_count;
     uint16_t busy_count;
-    bool journal_valid;
 };
 
 static struct producer_record records[SURVEY_PAIR_RESULT_MAX_BURST_RECORDS];
@@ -54,33 +53,65 @@ static bool packet_identity_equal(const struct proto_packet *left,
            left->dst_id == right->dst_id &&
            left->session_id == right->session_id &&
            left->seq == right->seq &&
+           left->ttl == right->ttl &&
            left->payload_len == right->payload_len;
 }
 
-static bool journal_matches(const struct gateway_flow_model *gateway,
-                            const struct producer_record *record)
+static bool gateway_ram_record_matches(
+    const struct gateway_flow_model *gateway,
+    const struct producer_record *record)
 {
-    return gateway->journal_valid &&
-           packet_identity_equal(&gateway->journal_packet, &record->packet) &&
-           memcmp(gateway->journal_payload,
+    struct proto_packet head = {0};
+    const uint8_t *encoded = NULL;
+    size_t encoded_len = 0u;
+
+    return gateway != NULL && record != NULL &&
+           gateway_ble_stream_depth(&gateway->stream) == 1u &&
+           gateway_ble_stream_head_packet(&gateway->stream, &head) == 0 &&
+           packet_identity_equal(&head, &record->packet) &&
+           gateway_ble_stream_peek(&gateway->stream,
+                                   &encoded,
+                                   &encoded_len) == 0 &&
+           encoded != NULL &&
+           encoded_len == GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
+                              record->packet.payload_len &&
+           memcmp(&encoded[GATEWAY_BLE_STREAM_RECORD_HEADER_LEN],
                   record->payload,
-                  sizeof(record->payload)) == 0;
+                  record->packet.payload_len) == 0;
 }
 
-static int gateway_try_accept(struct gateway_flow_model *gateway,
-                              struct producer_record *record,
-                              uint32_t now_ms)
+static size_t copy_gateway_ram_record(
+    const struct gateway_flow_model *gateway,
+    uint8_t *destination,
+    size_t destination_cap)
+{
+    const uint8_t *encoded = NULL;
+    size_t encoded_len = 0u;
+
+    CHECK(gateway_ble_stream_peek(&gateway->stream,
+                                  &encoded,
+                                  &encoded_len) == 0);
+    CHECK(encoded != NULL && encoded_len <= destination_cap);
+    memcpy(destination, encoded, encoded_len);
+    return encoded_len;
+}
+
+/* Admit one source packet into the bounded gateway RAM stream. Admission is
+ * deliberately not semantic acceptance: the source still owns the packet
+ * until the exact GUI receipt is accepted. */
+static int gateway_accept_source(struct gateway_flow_model *gateway,
+                                 struct producer_record *record,
+                                 uint32_t now_ms)
 {
     int ret;
 
-    if (gateway->journal_valid) {
-        if (!journal_matches(gateway, record)) {
-            gateway->busy_count++;
-            return -EBUSY;
+    if (gateway->stream.count > 0u) {
+        if (gateway_ram_record_matches(gateway, record)) {
+            /* An exact source retry sees its existing RAM record. */
+            return 0;
         }
-        record->ack_count++;
-        record->source_owned = false;
-        return 0;
+        gateway->busy_count++;
+        return -EBUSY;
     }
 
     ret = gateway_ble_stream_reserve_packet(&gateway->stream,
@@ -93,71 +124,86 @@ static int gateway_try_accept(struct gateway_flow_model *gateway,
     if (ret != 1) {
         return ret;
     }
-    gateway->journal_packet = record->packet;
-    memcpy(gateway->journal_payload,
-           record->payload,
-           sizeof(gateway->journal_payload));
-    gateway->journal_valid = true;
-    gateway->semantic_accept_count++;
     ret = gateway_ble_stream_commit_reservation(&gateway->stream,
                                                 &record->packet,
                                                 record->payload,
                                                 sizeof(record->payload));
-    if (ret != 1) {
+    CHECK(ret == 1);
+    return 1;
+}
+
+/* Model the notification-complete callback. The stream remains in RAM and
+ * becomes HOST_NOTIFIED; only a later exact GUI receipt may advance it. */
+static void gateway_notify_gui(struct gateway_flow_model *gateway,
+                               struct producer_record *record)
+{
+    const uint8_t *encoded = NULL;
+    size_t encoded_len = 0u;
+
+    CHECK(gateway_ram_record_matches(gateway, record));
+    CHECK(gateway_ble_stream_begin_send_view(&gateway->stream,
+                                             &encoded,
+                                             &encoded_len) == 0);
+    CHECK(encoded != NULL &&
+              encoded_len == GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
+                                  sizeof(record->payload));
+    /* app_gateway_ble marks this phase when all ATT chunks complete. */
+    CHECK(gateway_ble_stream_mark_host_notified(&gateway->stream) == 0);
+    record->gui_notification_count++;
+}
+
+static int gateway_accept_gui_receipt(struct gateway_flow_model *gateway,
+                                      struct producer_record *record)
+{
+    int ret;
+
+    if (!gateway_ram_record_matches(gateway, record)) {
+        return -ESTALE;
+    }
+    ret = gateway_ble_stream_accept_host_receipt(&gateway->stream);
+    if (ret != 0) {
         return ret;
     }
+
+    /* These are all receipt-gated side effects. */
+    gateway->semantic_apply_count++;
+    record->gui_receipt_count++;
     record->ack_count++;
     record->source_owned = false;
     return 0;
 }
 
-static void gateway_reset_restore(struct gateway_flow_model *gateway,
-                                  uint32_t now_ms)
+static int gateway_retire_after_receipt(struct gateway_flow_model *gateway,
+                                        struct producer_record *record,
+                                        uint32_t now_ms)
 {
-    struct gateway_ble_stream_state restored;
-    int ret;
-
-    gateway_ble_stream_init(&restored);
-    if (gateway->journal_valid) {
-        ret = gateway_ble_stream_enqueue_retained_packet(
-            &restored,
-            &gateway->journal_packet,
-            gateway->journal_payload,
-            sizeof(gateway->journal_payload),
-            now_ms,
-            now_ms,
-            false);
-        CHECK(ret == 1);
+    if (!gateway_ram_record_matches(gateway, record)) {
+        return -ESTALE;
     }
-    gateway->stream = restored;
+    if (gateway->stream.head_send_phase !=
+        GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED) {
+        return -EAGAIN;
+    }
+
+    gateway_ble_stream_mark_sent(&gateway->stream, now_ms);
+    record->retired_count++;
+    return 0;
 }
 
-static void gateway_notify_and_retire(struct gateway_flow_model *gateway,
-                                      uint32_t now_ms)
+static void gateway_disconnect_before_receipt(
+    struct gateway_flow_model *gateway)
 {
-    struct proto_packet head = {0};
-    const uint8_t *record = NULL;
-    size_t record_len = 0u;
-    size_t record_index;
+    CHECK(gateway->stream.head_send_phase ==
+          GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED);
+    CHECK(gateway_ble_stream_rewind_host_notification(&gateway->stream) == 0);
+    CHECK(gateway->stream.head_send_phase == GATEWAY_BLE_STREAM_HEAD_IDLE);
+}
 
-    CHECK(gateway->journal_valid);
-    CHECK(gateway_ble_stream_depth(&gateway->stream) == 1u);
-    CHECK(gateway_ble_stream_head_packet(&gateway->stream, &head) == 0);
-    CHECK(packet_identity_equal(&head, &gateway->journal_packet));
-    CHECK(gateway_ble_stream_begin_send_view(&gateway->stream,
-                                             &record,
-                                             &record_len) == 0);
-    CHECK(record != NULL);
-    CHECK(record_len >= GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
-                            sizeof(gateway->journal_payload));
-    record_index = (size_t)(gateway->journal_packet.seq - 1u);
-    CHECK(record_index < SURVEY_PAIR_RESULT_MAX_BURST_RECORDS);
-    records[record_index].host_count++;
-    gateway_ble_stream_mark_sent(&gateway->stream, now_ms);
-    CHECK(gateway_ble_stream_depth(&gateway->stream) == 0u);
-    gateway->journal_valid = false;
-    memset(&gateway->journal_packet, 0, sizeof(gateway->journal_packet));
-    memset(gateway->journal_payload, 0, sizeof(gateway->journal_payload));
+/* RAM custody is intentionally lost across reset. No record survives in flash;
+ * the still-owning source must retry and reconstruct the stream item. */
+static void gateway_reset(struct gateway_flow_model *gateway)
+{
+    gateway_ble_stream_init(&gateway->stream);
 }
 
 static void initialize_burst(void)
@@ -178,17 +224,24 @@ static void initialize_burst(void)
         proto_put_u32_le(&records[i].payload[4],
                          UINT32_C(0x5a5a0000) | (uint32_t)i);
         records[i].ack_count = 0u;
-        records[i].host_count = 0u;
+        records[i].gui_notification_count = 0u;
+        records[i].gui_receipt_count = 0u;
+        records[i].retired_count = 0u;
         records[i].source_owned = true;
     }
 }
 
-static void run_maximum_burst_reset_and_backpressure(void)
+static void run_maximum_burst_ram_receipt_flow(void)
 {
     struct gateway_flow_model gateway = {0};
+    struct producer_record conflicting = {0};
+    uint8_t first_encoded[GATEWAY_BLE_STREAM_RECORD_MAX_LEN] = {0};
+    uint8_t retry_encoded[GATEWAY_BLE_STREAM_RECORD_MAX_LEN] = {0};
+    size_t first_encoded_len;
+    size_t retry_encoded_len;
     uint32_t now_ms = 0u;
 
-    CHECK(SURVEY_PAIR_RESULT_MAX_BURST_RECORDS == 200u);
+    CHECK(SURVEY_PAIR_RESULT_MAX_BURST_RECORDS == 250u);
     CHECK(SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS ==
           (SURVEY_PAIR_RESULT_MAX_BURST_RECORDS *
                SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS) +
@@ -196,65 +249,133 @@ static void run_maximum_burst_reset_and_backpressure(void)
     initialize_burst();
     gateway_ble_stream_init(&gateway.stream);
 
-    CHECK(gateway_try_accept(&gateway, &records[0], now_ms) == 0);
-    CHECK(gateway.semantic_accept_count == 1u);
-    CHECK(!records[0].source_owned);
+    CHECK(gateway_accept_source(&gateway, &records[0], now_ms) == 1);
+    CHECK(gateway.semantic_apply_count == 0u);
+    CHECK(records[0].source_owned && records[0].ack_count == 0u);
 
-    /*
-     * A disconnected host retains the first exact journal owner. Every
-     * different producer remains unacknowledged and unchanged at its source.
-     */
+    /* A duplicate source retry is idempotent while the exact RAM item lives. */
+    CHECK(gateway_accept_source(&gateway, &records[0], now_ms) == 0);
+    CHECK(gateway.semantic_apply_count == 0u);
+    CHECK(records[0].source_owned && records[0].ack_count == 0u);
+    conflicting = records[0];
+    conflicting.payload[0] ^= 0xffu;
+    CHECK(gateway_accept_source(&gateway, &conflicting, now_ms) == -EBUSY);
+    CHECK(gateway.semantic_apply_count == 0u);
+
+    /* Every different source remains owner-held behind the one RAM item. */
     for (size_t i = 1u; i < SURVEY_PAIR_RESULT_MAX_BURST_RECORDS; i++) {
-        CHECK(gateway_try_accept(&gateway, &records[i], now_ms) == -EBUSY);
+        CHECK(gateway_accept_source(&gateway, &records[i], now_ms) == -EBUSY);
         CHECK(records[i].source_owned);
         CHECK(records[i].ack_count == 0u);
     }
-    CHECK(gateway.semantic_accept_count == 1u);
+    CHECK(gateway.semantic_apply_count == 0u);
 
-    /*
-     * Reset restores the exact committed head. Its retry is ACK-sticky but
-     * cannot append another host record or repeat the semantic mutation.
-     */
-    gateway_reset_restore(&gateway, now_ms);
+    gateway_notify_gui(&gateway, &records[0]);
+    CHECK(records[0].gui_notification_count == 1u);
+    CHECK(records[0].source_owned && records[0].ack_count == 0u);
+    CHECK(gateway.semantic_apply_count == 0u);
+    first_encoded_len = copy_gateway_ram_record(&gateway,
+                                                first_encoded,
+                                                sizeof(first_encoded));
+
+    /* Retirement before receipt is rejected and leaves source custody intact. */
+    CHECK(gateway_retire_after_receipt(&gateway, &records[0], now_ms) ==
+          -EAGAIN);
     CHECK(gateway_ble_stream_depth(&gateway.stream) == 1u);
-    CHECK(gateway_try_accept(&gateway, &records[0], now_ms) == 0);
-    CHECK(gateway.semantic_accept_count == 1u);
-    CHECK(records[0].ack_count == 2u);
+    CHECK(records[0].source_owned);
 
+    /* Disconnect rewinds the phase and resends the same bounded RAM bytes. */
+    gateway_disconnect_before_receipt(&gateway);
     now_ms += TEST_DISCONNECT_MS;
-    gateway_notify_and_retire(&gateway, now_ms);
+    gateway_notify_gui(&gateway, &records[0]);
+    retry_encoded_len = copy_gateway_ram_record(&gateway,
+                                                retry_encoded,
+                                                sizeof(retry_encoded));
+    CHECK(retry_encoded_len == first_encoded_len);
+    CHECK(memcmp(first_encoded, retry_encoded, first_encoded_len) == 0);
+    CHECK(records[0].gui_notification_count == 2u);
+    CHECK(records[0].source_owned && records[0].ack_count == 0u);
+
+    /* Reset drops the RAM item. The source retry reconstructs it from custody. */
+    gateway_reset(&gateway);
+    CHECK(gateway_ble_stream_depth(&gateway.stream) == 0u);
+    CHECK(records[0].source_owned && records[0].ack_count == 0u);
+    CHECK(gateway.semantic_apply_count == 0u);
+    CHECK(gateway_accept_source(&gateway, &records[0], now_ms) == 1);
+    CHECK(gateway.semantic_apply_count == 0u);
+
+    gateway_notify_gui(&gateway, &records[0]);
+    CHECK(records[0].gui_notification_count == 3u);
+    CHECK(records[0].source_owned && records[0].ack_count == 0u);
+    CHECK(gateway_retire_after_receipt(&gateway, &records[0], now_ms) ==
+          -EAGAIN);
+    CHECK(gateway_accept_gui_receipt(&gateway, &records[0]) == 0);
+    CHECK(gateway.semantic_apply_count == 1u);
+    CHECK(records[0].gui_receipt_count == 1u);
+    CHECK(records[0].ack_count == 1u);
+    CHECK(!records[0].source_owned);
+
+    /* A duplicate source frame cannot reapply an already receipt-gated item. */
+    CHECK(gateway_accept_source(&gateway, &records[0], now_ms) == 0);
+    CHECK(gateway.semantic_apply_count == 1u);
+    CHECK(records[0].ack_count == 1u);
+
+    /* A duplicate GUI receipt is harmless and cannot reapply or re-ACK. */
+    CHECK(gateway_accept_gui_receipt(&gateway, &records[0]) == -EALREADY);
+    CHECK(gateway.semantic_apply_count == 1u);
+    CHECK(records[0].gui_receipt_count == 1u);
+    CHECK(records[0].ack_count == 1u);
+    CHECK(gateway_retire_after_receipt(&gateway, &records[0], now_ms) == 0);
+    CHECK(records[0].retired_count == 1u);
+    CHECK(gateway_ble_stream_depth(&gateway.stream) == 0u);
 
     for (size_t i = 1u; i < SURVEY_PAIR_RESULT_MAX_BURST_RECORDS; i++) {
-        CHECK(gateway_try_accept(&gateway, &records[i], now_ms) == 0);
-        CHECK(gateway.semantic_accept_count == i + 1u);
+        now_ms += SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS;
+        CHECK(gateway_accept_source(&gateway, &records[i], now_ms) == 1);
+        CHECK(gateway.semantic_apply_count == i);
+        CHECK(records[i].source_owned && records[i].ack_count == 0u);
+
         if (i + 1u < SURVEY_PAIR_RESULT_MAX_BURST_RECORDS) {
-            CHECK(gateway_try_accept(&gateway,
-                                     &records[i + 1u],
-                                     now_ms) == -EBUSY);
+            CHECK(gateway_accept_source(&gateway,
+                                        &records[i + 1u],
+                                        now_ms) == -EBUSY);
             CHECK(records[i + 1u].source_owned);
             CHECK(records[i + 1u].ack_count == 0u);
         }
-        now_ms += SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS;
-        gateway_notify_and_retire(&gateway, now_ms);
+
+        gateway_notify_gui(&gateway, &records[i]);
+        CHECK(records[i].source_owned && records[i].ack_count == 0u);
+        CHECK(gateway.semantic_apply_count == i);
+        CHECK(gateway_retire_after_receipt(&gateway, &records[i], now_ms) ==
+              -EAGAIN);
+        CHECK(gateway_accept_gui_receipt(&gateway, &records[i]) == 0);
+        CHECK(gateway.semantic_apply_count == i + 1u);
+        CHECK(records[i].gui_receipt_count == 1u);
+        CHECK(records[i].ack_count == 1u);
+        CHECK(!records[i].source_owned);
+        CHECK(gateway_retire_after_receipt(&gateway, &records[i], now_ms) ==
+              0);
+        CHECK(records[i].retired_count == 1u);
     }
 
     CHECK(now_ms < SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS);
-    CHECK(gateway.semantic_accept_count ==
+    CHECK(gateway.semantic_apply_count ==
           SURVEY_PAIR_RESULT_MAX_BURST_RECORDS);
-    CHECK(gateway.busy_count >=
-          (2u * (SURVEY_PAIR_RESULT_MAX_BURST_RECORDS - 1u)) - 1u);
-    CHECK(!gateway.journal_valid);
+    CHECK(gateway.busy_count ==
+          2u * (SURVEY_PAIR_RESULT_MAX_BURST_RECORDS - 1u));
     CHECK(gateway_ble_stream_depth(&gateway.stream) == 0u);
     for (size_t i = 0u; i < SURVEY_PAIR_RESULT_MAX_BURST_RECORDS; i++) {
         CHECK(!records[i].source_owned);
-        CHECK(records[i].ack_count >= 1u);
-        CHECK(records[i].host_count == 1u);
+        CHECK(records[i].ack_count == 1u);
+        CHECK(records[i].gui_receipt_count == 1u);
+        CHECK(records[i].gui_notification_count == (i == 0u ? 3u : 1u));
+        CHECK(records[i].retired_count == 1u);
     }
 }
 
 int main(void)
 {
-    run_maximum_burst_reset_and_backpressure();
+    run_maximum_burst_ram_receipt_flow();
     puts("PASS gateway_survey_host_flow_control");
     return EXIT_SUCCESS;
 }

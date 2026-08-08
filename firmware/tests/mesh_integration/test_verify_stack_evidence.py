@@ -591,7 +591,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         build = verifier.BuildEvidence(self.root, preset="mesh_anchor")
         required = verifier._required_threads(build, policy)
 
-        self.assertEqual(required["anchor_uwb_scan"], 12288)
+        self.assertEqual(required["anchor_uwb_scan"], 6144)
         rows = {
             name: (size - verifier._required_free(size),
                    verifier._required_free(size), size)
@@ -755,6 +755,34 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             unattributed,
         )
         self.assertEqual(3, evidence.attributed_usage_count)
+
+    def test_unique_inlined_cross_file_intermediary_preserves_ownership(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("main.c"), 1, "main", 64, "static"),
+            verifier.StackUsage(Path("service.c"), 1, "service_leaf", 64,
+                                "static"),
+        ]
+        graph = {
+            ("main.c", "main"): {"service_init"},
+            # GCC may inline this public cross-file initializer completely, so
+            # it remains in the IPA graph but has no linked stack-usage row.
+            ("service.c", "service_init"): {"service_leaf"},
+            ("service.c", "service_leaf"): set(),
+        }
+
+        verifier._attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            graph,
+            {("main.c", "main"): {"main"}},
+            self.frame_limit,
+        )
+
+        self.assertEqual([], evidence.issues)
+        self.assertEqual(2, evidence.attributed_usage_count)
 
     def test_reviewed_opaque_abi_boundaries_have_only_exact_owners(self) -> None:
         roots = verifier.load_thread_roots(POLICY_PATH)
@@ -1043,6 +1071,41 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertIn("app_stack_workload_diag_gateway_control_sample", gateway)
         self.assertIn("app_stack_workload_diag_ble_admit_with_pressure", ble)
         self.assertIn("app_stack_workload_diag_ble_terminal_with_pressure", ble)
+
+    def test_gateway_fifo_handoff_crosses_an_async_stack_boundary(self) -> None:
+        gateway = read_composed_source(
+            REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
+        )
+        signature = "static void gateway_host_command_submit_next_queued(void)\n{"
+        start = gateway.index(signature)
+        end = gateway.index(
+            "\nstatic size_t gateway_host_command_cancel_pending_surveys", start
+        )
+        body = gateway[start:end]
+
+        self.assertEqual(1, body.count("gateway_host_command_submit_next_queued"))
+        self.assertNotIn("gateway_host_command_submit_priority(", body)
+        self.assertIn(
+            "k_work_reschedule(&gateway_host_command_retry_work, K_NO_WAIT)",
+            body,
+        )
+
+    def test_spi_crc_register_read_does_not_reenter_transfer_engine(self) -> None:
+        driver = (
+            REPO_ROOT /
+            "dwm3000 examples and sdk" /
+            "decadriver" /
+            "deca_device.c"
+        ).read_text(encoding="utf-8")
+        start = driver.index("void dwt_xfer3000\n(")
+        end = driver.index("} // end dwt_xfer3000()", start)
+        body = driver[start:end]
+
+        self.assertNotIn("dwcrc8 = dwt_read8bitoffsetreg(", body)
+        self.assertIn(
+            "readfromspi(sizeof(crc_header), crc_header,",
+            body,
+        )
 
     def test_rejects_self_attestation_marker_fabrication_missing_samples_and_replay(self) -> None:
         policy = self.policies["mesh_clicker"]

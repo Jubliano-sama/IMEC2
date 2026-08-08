@@ -43,7 +43,6 @@ LEGACY_TRANSPORT_CLIENTS = {
     "app_mesh_c5_priority.h",
     "app_mesh_ch9_ack.h",
     "app_mesh_collection_deferral.h",
-    "app_mesh_coordinator.h",
     "app_mesh_flood.h",
     "app_mesh_local_delivery.h",
     "app_mesh_persistence.h",
@@ -388,8 +387,8 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN PACKET_EXT_MAX_PAYLOAD_LEN",
             header,
         )
-        self.assertIn("#define APP_NODE_COMM_MAX_DELIVERIES 5u", header)
-        self.assertIn("NODE_COMM_MAX_REQUESTS=5", cmake)
+        self.assertIn("#define APP_NODE_COMM_MAX_DELIVERIES 6u", header)
+        self.assertIn("NODE_COMM_MAX_REQUESTS=6", cmake)
 
         queue_definition = report[
             report.index("K_THREAD_STACK_DEFINE(mesh_route_work_q_stack") - 60 :

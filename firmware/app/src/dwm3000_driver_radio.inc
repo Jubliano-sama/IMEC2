@@ -1479,16 +1479,18 @@ static size_t payload_len_without_fcs(size_t frame_len)
 }
 
 static int decode_poll_frame(const uint8_t *buffer, size_t frame_len,
-                             struct uwb_range_header *header)
+                             struct uwb_poll_frame *poll)
 {
     int ret;
 
-    ret = uwb_decode_poll(buffer, frame_len, header);
+    ret = uwb_decode_poll_frame(buffer, frame_len, poll);
     if (ret == PROTO_OK) {
         return 0;
     }
 
-    ret = uwb_decode_poll(buffer, payload_len_without_fcs(frame_len), header);
+    ret = uwb_decode_poll_frame(buffer,
+                                payload_len_without_fcs(frame_len),
+                                poll);
     return ret == PROTO_OK ? 0 : -EBADMSG;
 }
 

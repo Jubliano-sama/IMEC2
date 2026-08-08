@@ -65,17 +65,17 @@ int app_mesh_command_orchestrator_gateway_ingress(
 
 int app_mesh_command_orchestrator_decide(
     struct app_mesh_command_orchestrator *orchestrator,
-    const struct app_mesh_coordinator_runtime_capture *capture,
-    struct app_mesh_coordinator_decision *decision,
+    const struct fw_radio_activity_capture *capture,
+    struct fw_radio_activity_decision *decision,
     bool *state_changed)
 {
     if (orchestrator == NULL) {
         return -EINVAL;
     }
-    return app_mesh_coordinator_runtime_decide(capture,
-                                               &orchestrator->coordinator,
-                                               decision,
-                                               state_changed);
+    return fw_radio_activity_decide(capture,
+                                    &orchestrator->radio_activity,
+                                    decision,
+                                    state_changed);
 }
 
 int app_mesh_command_orchestrator_safe_boundary(

@@ -10,13 +10,6 @@
 #define ALT_PARENT_ID UINT64_C(0x000000000000a103)
 #define GATEWAY_ID UINT64_C(0x000000000000a1ff)
 
-#define ROUTE_CHANGE_EPOCH UINT32_C(1)
-#define DIRECT_GATEWAY_TX_PREPARE_US UINT64_C(20000)
-#define DIRECT_GATEWAY_PAYLOAD_SERVICE_US UINT64_C(50000)
-#define DIRECT_GATEWAY_ACK_GUARD_US UINT64_C(10000)
-#define DIRECT_GATEWAY_ACK_SERVICE_US UINT64_C(40000)
-#define DIRECT_GATEWAY_RX_COMPLETION_GUARD_US UINT64_C(1)
-
 static int failures;
 static const char *phase;
 
@@ -42,6 +35,68 @@ static struct proto_packet data_packet(uint64_t source_id, uint16_t seq)
         .ttl = MESH_DEFAULT_TTL,
         .payload_len = 0u,
     };
+}
+
+static int build_gateway_ack_for_packet(const struct proto_packet *packet,
+                                        const uint8_t *packet_payload,
+                                        size_t packet_payload_len,
+                                        uint16_t ack_seq,
+                                        struct proto_packet *ack,
+                                        uint8_t *ack_payload,
+                                        size_t ack_payload_cap,
+                                        size_t *ack_payload_len)
+{
+    int ret;
+
+    if (packet == NULL || ack == NULL || ack_payload == NULL ||
+        ack_payload_len == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    *ack_payload_len = 0u;
+    ret = mesh_append_requested_seq(ack_payload,
+                                    ack_payload_cap,
+                                    ack_payload_len,
+                                    packet->seq);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_append_ack_semantic_identity(ack_payload,
+                                            ack_payload_cap,
+                                            ack_payload_len,
+                                            packet,
+                                            packet_payload,
+                                            packet_payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return mesh_init_gateway_ack(ack,
+                                 GATEWAY_ID,
+                                 packet->src_id,
+                                 packet->session_id,
+                                 ack_seq,
+                                 (uint8_t)*ack_payload_len);
+}
+
+static bool pending_identity_unchanged(const struct mesh_pending_tx *actual,
+                                       const struct mesh_pending_tx *expected)
+{
+    return actual != NULL && expected != NULL &&
+           actual->state == expected->state &&
+           actual->packet.msg_type == expected->packet.msg_type &&
+           actual->packet.src_id == expected->packet.src_id &&
+           actual->packet.dst_id == expected->packet.dst_id &&
+           actual->packet.session_id == expected->packet.session_id &&
+           actual->packet.seq == expected->packet.seq &&
+           actual->payload_len == expected->payload_len &&
+           memcmp(actual->payload,
+                  expected->payload,
+                  expected->payload_len) == 0 &&
+           actual->next_hop_id == expected->next_hop_id &&
+           actual->gateway_ack_deadline_ms ==
+               expected->gateway_ack_deadline_ms &&
+           actual->retry_after_ms == expected->retry_after_ms &&
+           actual->gateway_ack_forward_pending ==
+               expected->gateway_ack_forward_pending;
 }
 
 static void setup_direct_pair(struct mesh_sim_world *world,
@@ -172,12 +227,15 @@ static void test_ack_loss_does_not_drop_data(void)
     };
     struct mesh_sim_fault_stats stats;
     struct proto_packet data = data_packet(SOURCE_A_ID, 2u);
+    const uint8_t data_payload[] = {0x42u};
     struct proto_packet ack;
     uint8_t source;
     uint8_t gateway;
     uint16_t ignored;
 
     phase = "ack-only-loss";
+    data.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    data.payload_len = sizeof(data_payload);
     setup_direct_pair(&world, UINT32_C(0x2002), &source, &gateway);
     if (failures != 0) {
         return;
@@ -213,8 +271,8 @@ static void test_ack_loss_does_not_drop_data(void)
                                       UWB_CHANNEL_MESH_PAYLOAD,
                                       MESH_SIM_PHY_CHANNEL9_MESH,
                                       &data,
-                                      NULL,
-                                      0u,
+                                      data_payload,
+                                      sizeof(data_payload),
                                       &ignored) == MESH_SIM_OK,
           "data TX setup failed");
     CHECK(mesh_sim_schedule_packet_tx(&world,
@@ -242,8 +300,15 @@ static void test_ack_loss_does_not_drop_data(void)
           world.receptions[0].outcome,
           world.receptions[1].packet.msg_type,
           world.receptions[1].outcome);
-    CHECK(world.roles[gateway].delivery_count == 1u,
-          "data frame did not reach the gateway exactly once");
+    /* A decoded RF frame is not a committed gateway delivery.  The gateway
+     * now retains semantic custody until the GUI accepts the exact stream
+     * record, and this radio-only scenario deliberately supplies no receipt. */
+    CHECK(world.roles[gateway].delivery_count == 0u &&
+              world.roles[gateway].gateway_semantic_commit_count == 0u,
+          "ACK loss caused an unreceipted semantic commit deliveries=%zu "
+          "commits=%u",
+          world.roles[gateway].delivery_count,
+          world.roles[gateway].gateway_semantic_commit_count);
     CHECK(mesh_sim_get_fault_stats(&world, &stats) == MESH_SIM_OK,
           "fault statistics unavailable");
     CHECK(stats.receiver_decisions == 2u && stats.ack_losses == 1u &&
@@ -302,9 +367,14 @@ static void test_duplicate_delivery_is_idempotent(void)
     CHECK(world.receptions[0].outcome == MESH_SIM_RX_DECODED &&
               world.receptions[1].outcome == MESH_SIM_RX_DECODED,
           "duplicate injection changed the radio decode outcome");
-    CHECK(world.roles[gateway].delivery_count == 1u,
-          "duplicate frame completed the semantic delivery %zu times",
-          world.roles[gateway].delivery_count);
+    /* Duplicate RF delivery is still decoded twice, but neither copy may
+     * commit gateway semantics before the GUI receipt boundary. */
+    CHECK(world.roles[gateway].delivery_count == 0u &&
+              world.roles[gateway].gateway_semantic_commit_count == 0u,
+          "duplicate frame committed unreceipted gateway semantics: "
+          "deliveries=%zu commits=%u",
+          world.roles[gateway].delivery_count,
+          world.roles[gateway].gateway_semantic_commit_count);
     CHECK(mesh_sim_get_fault_stats(&world, &stats) == MESH_SIM_OK,
           "fault statistics unavailable");
     CHECK(stats.duplicates == 1u,
@@ -322,13 +392,15 @@ static void test_duplicate_relay_admission_is_coalesced(void)
         .duplicate_permyriad = MESH_SIM_FAULT_RATE_SCALE,
     };
     struct proto_packet packet = data_packet(SOURCE_A_ID, 4u);
+    const uint8_t data_payload[] = {0x43u};
     uint8_t source;
     uint8_t relay;
     uint8_t gateway;
     uint16_t ignored;
 
     phase = "duplicate-relay-admission";
-    packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet.payload_len = sizeof(data_payload);
     mesh_sim_init(&world, UINT32_C(0x2004));
     CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_TRANSMITTER,
                             SOURCE_A_ID, GATEWAY_ID, 1u, &source) ==
@@ -355,7 +427,10 @@ static void test_duplicate_relay_admission_is_coalesced(void)
               mesh_sim_schedule_packet_tx(&world, source, UINT64_C(1000),
                                           UWB_CHANNEL_MESH_PAYLOAD,
                                           MESH_SIM_PHY_CHANNEL9_MESH,
-                                          &packet, NULL, 0u, &ignored) ==
+                                          &packet,
+                                          data_payload,
+                                          sizeof(data_payload),
+                                          &ignored) ==
                   MESH_SIM_OK,
           "duplicate relay radio setup failed");
     CHECK(mesh_sim_run(&world) == MESH_SIM_OK, "simulation failed");
@@ -635,438 +710,123 @@ static void test_stale_relay_tick_cannot_mutate_new_operation(void)
           "stale timer made operation N+1 retry-ready");
 }
 
-static struct mesh_event_params route_change_connection_params(
-    uint32_t first_event_ms)
-{
-    return (struct mesh_event_params) {
-        .event_interval_ms = 500u,
-        .event_window_ms = 25u,
-        .first_event_time_ms = first_event_ms,
-        .guard_ms = 4u,
-        .peer_clock_skew_estimate_ppm = 20,
-        .max_missed_events = 3u,
-        .supervision_timeout_ms = 20000u,
-    };
-}
-
-static int run_connection_turn(struct mesh_sim_world *world,
-                               uint16_t connection_index)
-{
-    struct mesh_sim_connection_action action;
-    int ret = mesh_sim_connection_next_action(world,
-                                              connection_index,
-                                              &action);
-
-    if (ret != MESH_SIM_OK ||
-        action.kind == MESH_SIM_CONNECTION_ACTION_NONE) {
-        return ret == MESH_SIM_OK ? MESH_SIM_ERR_EVENT_ORDER : ret;
-    }
-    if (!action.already_scheduled) {
-        ret = mesh_sim_schedule_next_connection_event(world,
-                                                      connection_index,
-                                                      false);
-    }
-    return ret == MESH_SIM_OK ? mesh_sim_run_until(world, action.end_us) : ret;
-}
-
-static uint64_t transmission_arrival_end_us(
-    const struct mesh_sim_world *world,
-    uint16_t transmission_index,
-    uint8_t receiver_index)
-{
-    const struct mesh_sim_transmission *transmission =
-        &world->transmissions[transmission_index];
-    uint64_t delay_us =
-        world->propagation_us[transmission->node_index][receiver_index] +
-        transmission->fault_extra_delay_us[receiver_index];
-
-    return transmission->end_us > UINT64_MAX - delay_us ?
-           UINT64_MAX : transmission->end_us + delay_us;
-}
-
-static int run_direct_gateway_turn(struct mesh_sim_world *world,
-                                   uint8_t sender_index,
-                                   uint8_t gateway_index)
-{
-    uint64_t ready_us = world->now_us;
-    uint64_t air_start_us;
-    uint64_t tx_deadline_us;
-    uint64_t arrival_end_us;
-    uint64_t rx_end_us;
-    uint64_t ack_start_us;
-    uint64_t ack_end_us;
-    uint16_t transmission_index;
-    int ret;
-
-    if (world->roles[sender_index].dwm3000.cpu_busy_until_us > ready_us) {
-        ready_us = world->roles[sender_index].dwm3000.cpu_busy_until_us;
-    }
-    if (world->roles[gateway_index].dwm3000.cpu_busy_until_us > ready_us) {
-        ready_us = world->roles[gateway_index].dwm3000.cpu_busy_until_us;
-    }
-    if (ready_us > world->now_us) {
-        ret = mesh_sim_run_until(world, ready_us);
-        if (ret != MESH_SIM_OK) {
-            return ret;
-        }
-    }
-
-    air_start_us = world->now_us + DIRECT_GATEWAY_TX_PREPARE_US;
-    tx_deadline_us = air_start_us + DIRECT_GATEWAY_PAYLOAD_SERVICE_US;
-    ret = mesh_sim_direct_gateway_start_queued_tx(
-        world, sender_index, air_start_us, tx_deadline_us,
-        &transmission_index);
-    if (ret != MESH_SIM_OK) {
-        return ret;
-    }
-    arrival_end_us = transmission_arrival_end_us(
-        world, transmission_index, gateway_index);
-    if (arrival_end_us == UINT64_MAX) {
-        return MESH_SIM_ERR_EVENT_ORDER;
-    }
-    rx_end_us = arrival_end_us + DIRECT_GATEWAY_RX_COMPLETION_GUARD_US;
-    ret = mesh_sim_direct_gateway_arm_rx(world, gateway_index,
-                                         air_start_us, rx_end_us);
-    if (ret == MESH_SIM_OK) {
-        ret = mesh_sim_run_until(world, rx_end_us);
-    }
-    if (ret != MESH_SIM_OK) {
-        return ret;
-    }
-    if (world->roles[gateway_index].dwm3000.cpu_busy_until_us >
-            world->now_us) {
-        ret = mesh_sim_run_until(
-            world, world->roles[gateway_index].dwm3000.cpu_busy_until_us);
-        if (ret != MESH_SIM_OK) {
-            return ret;
-        }
-    }
-
-    ack_start_us = world->now_us + DIRECT_GATEWAY_ACK_GUARD_US;
-    ack_end_us = ack_start_us + DIRECT_GATEWAY_ACK_SERVICE_US;
-    ret = mesh_sim_direct_gateway_schedule_ack(
-        world, gateway_index, sender_index, ack_start_us, ack_end_us, NULL);
-    if (ret == MESH_SIM_OK) {
-        ret = mesh_sim_run_until(world, ack_end_us);
-    }
-    return ret;
-}
-
-static bool queued_control_for_peer(
-    const struct mesh_sim_role_instance *node,
-    uint8_t msg_type,
-    uint64_t peer_id)
-{
-    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
-        if (node->tx_queue[i].valid &&
-            node->tx_queue[i].outbound.packet.msg_type == msg_type &&
-            node->tx_queue[i].outbound.next_hop_id == peer_id) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static int drain_connection_queue(struct mesh_sim_world *world,
-                                  uint16_t connection_index,
-                                  uint8_t queued_node_index)
-{
-    for (size_t turn = 0u; turn < 8u; turn++) {
-        if (world->roles[queued_node_index].tx_queue_count == 0u) {
-            return MESH_SIM_OK;
-        }
-        {
-            struct mesh_sim_connection_action action;
-            int action_ret = mesh_sim_connection_next_action(
-                world, connection_index, &action);
-            int ret = run_connection_turn(world, connection_index);
-
-            fprintf(stderr,
-                    "drain turn=%zu connection=%u action_ret=%d kind=%d "
-                    "start=%llu end=%llu already=%u ret=%d now=%llu "
-                    "queue=%zu completed=%u\n",
-                    turn,
-                    connection_index,
-                    action_ret,
-                    action.kind,
-                    (unsigned long long)action.start_us,
-                    (unsigned long long)action.end_us,
-                    action.already_scheduled ? 1u : 0u,
-                    ret,
-                    (unsigned long long)world->now_us,
-                    world->roles[queued_node_index].tx_queue_count,
-                    world->connections[connection_index].completed_events);
-            if (ret != MESH_SIM_OK) {
-                return ret;
-            }
-        }
-    }
-    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
-        const struct mesh_sim_queued_tx *queued =
-            &world->roles[queued_node_index].tx_queue[i];
-
-        if (queued->valid) {
-            fprintf(stderr,
-                    "undrained queue node=%zu slot=%zu msg=%u src=%llx "
-                    "dst=%llx next=%llx session=%u seq=%u needs_start=%u\n",
-                    (size_t)queued_node_index,
-                    i,
-                    queued->outbound.packet.msg_type,
-                    (unsigned long long)queued->outbound.packet.src_id,
-                    (unsigned long long)queued->outbound.packet.dst_id,
-                    (unsigned long long)queued->outbound.next_hop_id,
-                    queued->outbound.packet.session_id,
-                    queued->outbound.packet.seq,
-                    queued->needs_relay_start ? 1u : 0u);
-        }
-    }
-    if (connection_index < world->connection_count) {
-        const struct mesh_sim_connection *connection =
-            &world->connections[connection_index];
-
-        fprintf(stderr,
-                "undrained connection=%u now=%llu repair=%u "
-                "counter_a=%u next_a=%u owner_a=%u counter_b=%u "
-                "next_b=%u owner_b=%u completed=%u repairs=%u\n",
-                connection_index,
-                (unsigned long long)world->now_us,
-                connection->repair_pending ? 1u : 0u,
-                connection->timing_a.event_counter,
-                connection->timing_a.next_event_time_ms,
-                connection->owner_a.active ? 1u : 0u,
-                connection->timing_b.event_counter,
-                connection->timing_b.next_event_time_ms,
-                connection->owner_b.active ? 1u : 0u,
-                connection->completed_events,
-                connection->completed_repairs);
-    }
-    return MESH_SIM_ERR_EVENT_ORDER;
-}
-
 static void test_route_change_rejects_stale_parent_ack(void)
 {
-    static struct mesh_sim_world world;
-    struct mesh_sim_invariant_report invariant;
+    struct mesh_relay relay;
+    struct route_candidate primary = {
+        .next_hop_id = SOURCE_B_ID,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = 1u,
+        .last_seen_ms = 1000u,
+        .last_success_ms = 1000u,
+        .hop_count = 1u,
+        .link_quality = 100u,
+        .valid = true,
+    };
+    struct route_candidate alternate = {
+        .next_hop_id = ALT_PARENT_ID,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = 1u,
+        .last_seen_ms = 1000u,
+        .last_success_ms = 900u,
+        .hop_count = 1u,
+        .link_quality = 90u,
+        .valid = true,
+    };
+    struct proto_packet packet = data_packet(SOURCE_A_ID, 8u);
+    struct proto_packet gateway_ack;
+    struct mesh_outbound outbound;
     struct mesh_pending_tx pending_before_stale_ack;
     struct persistent_outbox_record outbox_before_stale_ack;
-    struct mesh_event_params params;
-    struct proto_packet packet = data_packet(SOURCE_A_ID, 8u);
+    struct mesh_relay_result result = {0};
+    uint8_t packet_payload[] = {0x44u};
+    uint8_t ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];
+    size_t ack_payload_len = 0u;
     const struct route_candidate *selected;
-    uint64_t ack_deadline_us;
-    uint64_t retry_ready_us;
-    uint8_t retry_round_before_stale;
-    uint8_t source;
-    uint8_t parent_a;
-    uint8_t parent_b;
-    uint8_t gateway;
-    uint16_t stale_parent_connection;
-    uint16_t alternate_parent_connection;
 
     phase = "route-change-stale-parent-ack";
-    packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
-    mesh_sim_init(&world, UINT32_C(0x5eedc057));
-    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
-                            SOURCE_A_ID, GATEWAY_ID, ROUTE_CHANGE_EPOCH,
-                            &source) == MESH_SIM_OK &&
-              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
-                                SOURCE_B_ID, GATEWAY_ID,
-                                ROUTE_CHANGE_EPOCH, &parent_a) ==
-                  MESH_SIM_OK &&
-              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
-                                ALT_PARENT_ID, GATEWAY_ID,
-                                ROUTE_CHANGE_EPOCH, &parent_b) ==
-                  MESH_SIM_OK &&
-              mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
-                                GATEWAY_ID, GATEWAY_ID,
-                                ROUTE_CHANGE_EPOCH, &gateway) ==
-                  MESH_SIM_OK,
-          "route-change role setup failed");
-    CHECK(mesh_sim_set_link(&world, source, parent_a, 100u, 1u) ==
-              MESH_SIM_OK &&
-              mesh_sim_set_link(&world, source, parent_b, 90u, 1u) ==
-                  MESH_SIM_OK &&
-              mesh_sim_set_link(&world, parent_a, gateway, 100u, 1u) ==
-                  MESH_SIM_OK &&
-              mesh_sim_set_link(&world, parent_b, gateway, 100u, 1u) ==
-                  MESH_SIM_OK,
-          "route-change links setup failed");
-    CHECK(mesh_sim_install_route(&world, source, parent_a, 1u,
-                                 ROUTE_CHANGE_EPOCH) == PROTO_OK &&
-              mesh_sim_install_route(&world, source, parent_b, 1u,
-                                     ROUTE_CHANGE_EPOCH) == PROTO_OK &&
-              mesh_sim_install_route(&world, parent_a, gateway, 0u,
-                                     ROUTE_CHANGE_EPOCH) == PROTO_OK &&
-              mesh_sim_install_route(&world, parent_b, gateway, 0u,
-                                     ROUTE_CHANGE_EPOCH) == PROTO_OK &&
-              mesh_sim_install_downlink(&world, parent_a, SOURCE_A_ID,
-                                        source, 1u,
-                                        ROUTE_CHANGE_EPOCH) == MESH_SIM_OK &&
-              mesh_sim_install_downlink(&world, parent_b, SOURCE_A_ID,
-                                        source, 1u,
-                                        ROUTE_CHANGE_EPOCH) == MESH_SIM_OK,
-          "route-change production routes setup failed");
-    selected = route_selected(&world.roles[source].relay.upstream);
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet.payload_len = sizeof(packet_payload);
+    mesh_relay_init(&relay,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    SOURCE_A_ID,
+                    GATEWAY_ID,
+                    1u);
+    CHECK(route_upsert_candidate(&relay.upstream, &primary) == PROTO_OK &&
+              route_upsert_candidate(&relay.upstream, &alternate) == PROTO_OK,
+          "route candidates setup failed");
+    selected = route_selected(&relay.upstream);
     CHECK(selected != NULL && selected->next_hop_id == SOURCE_B_ID,
-          "parent A was not the initial production route");
+          "primary parent was not selected");
+    CHECK(mesh_relay_start_tx(&relay,
+                              &packet,
+                              packet_payload,
+                              sizeof(packet_payload),
+                              1000u,
+                              &outbound) == PROTO_OK &&
+              outbound.next_hop_id == SOURCE_B_ID,
+          "primary-parent custody setup failed");
+    mesh_relay_note_tx_sent(&relay, &outbound, 1000u);
 
-    params = route_change_connection_params(100u);
-    params.event_interval_ms = 6000u;
-    CHECK(mesh_sim_add_connection(&world, source, parent_a, &params, true,
-                                  &stale_parent_connection) == MESH_SIM_OK &&
-              mesh_sim_queue_originated(&world, source, &packet, NULL, 0u) ==
-                  MESH_SIM_OK &&
-              run_connection_turn(&world, stale_parent_connection) ==
-                  MESH_SIM_OK,
-          "initial parent-A radio delivery failed");
-    CHECK(world.roles[source].relay.pending.state ==
-              MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
-              world.roles[source].relay.pending.next_hop_id == SOURCE_B_ID &&
-              world.roles[parent_a].tx_queue_count == 2u,
-          "initial parent-A custody was not retained state=%d next=0x%llx "
-          "parent_queue=%zu parent_pending=%d deliveries=%zu rx=%zu "
-          "outcome=%d tx=%zu",
-          world.roles[source].relay.pending.state,
-          (unsigned long long)world.roles[source].relay.pending.next_hop_id,
-          world.roles[parent_a].tx_queue_count,
-          world.roles[parent_a].relay.pending.state,
-          world.roles[parent_a].delivery_count,
-          world.reception_count,
-          world.reception_count == 0u ? -1 :
-              (int)world.receptions[world.reception_count - 1u].outcome,
-          world.transmission_count);
-    CHECK(run_direct_gateway_turn(&world, parent_a, gateway) == MESH_SIM_OK,
-          "parent-A direct gateway turn failed");
-    CHECK(world.roles[gateway].delivery_count == 1u &&
-              queued_control_for_peer(&world.roles[parent_a],
-                                      MSG_GATEWAY_ACK, SOURCE_A_ID),
-          "gateway acceptance was not retained behind parent-A ACK custody "
-          "deliveries=%zu parent_queue=%zu gateway_queue=%zu",
-          world.roles[gateway].delivery_count,
-          world.roles[parent_a].tx_queue_count,
-          world.roles[gateway].tx_queue_count);
-
-    ack_deadline_us =
-        (uint64_t)world.roles[source].relay.pending.gateway_ack_deadline_ms *
-        1000u;
-    CHECK(mesh_sim_schedule_relay_tick(&world, source, ack_deadline_us) ==
-              MESH_SIM_OK &&
-              mesh_sim_run_until(&world, ack_deadline_us) == MESH_SIM_OK &&
-              world.roles[source].relay.pending.state ==
-                  MESH_RELAY_TX_WAIT_RETRY_BACKOFF &&
-              world.roles[source].relay.pending.next_hop_id == SOURCE_B_ID,
-          "parent-A ACK loss did not enter bounded retry backoff");
-
-    /*
-     * Model a route-maintenance boundary invalidating the failing parent while
-     * this exact packet remains in custody.  All four failure updates and the
-     * alternate selection execute through the production route table.
-     */
-    for (size_t failure = 1u; failure < ROUTE_MAX_FAILURES; failure++) {
-        mesh_relay_note_delivery_failure_at(
-            &world.roles[source].relay, GATEWAY_ID,
-            (uint32_t)(world.now_us / 1000u));
+    /* Four bounded parent-failure observations hold the old parent down and
+     * move this exact pending packet to the alternate parent. */
+    for (uint32_t failure = 1u; failure <= ROUTE_MAX_FAILURES; failure++) {
+        CHECK(mesh_relay_note_pending_parent_failure(
+                  &relay,
+                  1100u + failure,
+                  failure,
+                  &result) == PROTO_OK,
+              "parent failure %u was not admitted", failure);
     }
-    selected = route_selected(&world.roles[source].relay.upstream);
+    selected = route_selected(&relay.upstream);
     CHECK(selected != NULL && selected->next_hop_id == ALT_PARENT_ID &&
-              world.roles[source].relay.pending.next_hop_id == SOURCE_B_ID,
-          "production route did not move from pending parent A to parent B");
+              relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF &&
+              relay.pending.next_hop_id == ALT_PARENT_ID,
+          "route change did not transfer pending custody to alternate parent");
+    pending_before_stale_ack = relay.pending;
+    outbox_before_stale_ack = relay.outbox_record;
 
-    retry_ready_us =
-        (uint64_t)world.roles[source].relay.pending.retry_after_ms * 1000u;
-    CHECK(mesh_sim_schedule_relay_tick(&world, source, retry_ready_us) ==
-              MESH_SIM_OK &&
-              mesh_sim_run_until(&world, retry_ready_us) == MESH_SIM_OK &&
-              world.roles[source].relay.pending.state ==
-                  MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
-              world.roles[source].relay.pending.next_hop_id == ALT_PARENT_ID &&
-              world.roles[source].tx_queue_count == 1u,
-          "retry did not transfer the exact custody to parent B");
-    pending_before_stale_ack = world.roles[source].relay.pending;
-    outbox_before_stale_ack = world.roles[source].relay.outbox_record;
-    retry_round_before_stale =
-        world.roles[source].relay.outbox_record.retry_round;
-
-    CHECK(run_connection_turn(&world, stale_parent_connection) == MESH_SIM_OK,
-          "delayed parent-A gateway ACK was not injected");
-    CHECK(world.roles[source].relay.pending.state ==
-              pending_before_stale_ack.state &&
-              world.roles[source].relay.pending.packet.session_id ==
-                  pending_before_stale_ack.packet.session_id &&
-              world.roles[source].relay.pending.packet.seq ==
-                  pending_before_stale_ack.packet.seq &&
-              world.roles[source].relay.pending.next_hop_id ==
-                  pending_before_stale_ack.next_hop_id &&
-              world.roles[source].relay.pending.gateway_ack_deadline_ms ==
-                  pending_before_stale_ack.gateway_ack_deadline_ms &&
-              world.roles[source].relay.outbox_record.retry_round ==
-                  retry_round_before_stale &&
-              memcmp(&world.roles[source].relay.outbox_record,
-                     &outbox_before_stale_ack,
-                     sizeof(outbox_before_stale_ack)) == 0 &&
-              route_selected(&world.roles[source].relay.upstream) != NULL &&
-              route_selected(&world.roles[source].relay.upstream)
-                      ->next_hop_id == ALT_PARENT_ID &&
-              mesh_sim_count_transitions(
-                  &world, MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                  SOURCE_A_ID) == 0u,
-          "stale parent-A ACK completed or mutated parent-B custody "
-          "state=%d/%d session=%u/%u seq=%u/%u next=0x%llx/0x%llx "
-          "deadline=%u/%u retry_round=%u/%u acked=%zu",
-          world.roles[source].relay.pending.state,
+    CHECK(build_gateway_ack_for_packet(&packet,
+                                       packet_payload,
+                                       sizeof(packet_payload),
+                                       80u,
+                                       &gateway_ack,
+                                       ack_payload,
+                                       sizeof(ack_payload),
+                                       &ack_payload_len) == PROTO_OK,
+          "stale gateway ACK setup failed");
+    CHECK(mesh_relay_handle_rx(&relay,
+                               &gateway_ack,
+                               ack_payload,
+                               ack_payload_len,
+                               SOURCE_B_ID,
+                               95u,
+                               1200u,
+                               &result) == PROTO_OK,
+          "stale parent ACK was not classified at the relay boundary");
+    CHECK(result.actions == MESH_RELAY_ACTION_NONE &&
+              pending_identity_unchanged(&relay.pending,
+                                         &pending_before_stale_ack) &&
+              relay.outbox_record.valid == outbox_before_stale_ack.valid &&
+              relay.outbox_record.gateway_acked ==
+                  outbox_before_stale_ack.gateway_acked &&
+              relay.outbox_record.retry_round ==
+                  outbox_before_stale_ack.retry_round &&
+              relay.outbox_record.packet_id ==
+                  outbox_before_stale_ack.packet_id &&
+              memcmp(relay.outbox_record.semantic_digest,
+                     outbox_before_stale_ack.semantic_digest,
+                     sizeof(relay.outbox_record.semantic_digest)) == 0,
+          "stale primary-parent ACK completed or mutated alternate-parent "
+          "custody state=%d/%d next=0x%llx/0x%llx actions=0x%x",
+          relay.pending.state,
           pending_before_stale_ack.state,
-          world.roles[source].relay.pending.packet.session_id,
-          pending_before_stale_ack.packet.session_id,
-          world.roles[source].relay.pending.packet.seq,
-          pending_before_stale_ack.packet.seq,
-          (unsigned long long)world.roles[source].relay.pending.next_hop_id,
+          (unsigned long long)relay.pending.next_hop_id,
           (unsigned long long)pending_before_stale_ack.next_hop_id,
-          world.roles[source].relay.pending.gateway_ack_deadline_ms,
-          pending_before_stale_ack.gateway_ack_deadline_ms,
-          world.roles[source].relay.outbox_record.retry_round,
-          retry_round_before_stale,
-          mesh_sim_count_transitions(&world,
-                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     SOURCE_A_ID));
-    CHECK(world.roles[parent_a].relay.pending.state == MESH_RELAY_TX_IDLE &&
-              !queued_control_for_peer(&world.roles[parent_a],
-                                       MSG_GATEWAY_ACK, SOURCE_A_ID),
-          "old parent did not release its delayed forwarded ACK");
-
-    params = route_change_connection_params(
-        (uint32_t)(world.now_us / 1000u) + 50u);
-    CHECK(mesh_sim_add_connection(&world, source, parent_b, &params, true,
-                                  &alternate_parent_connection) ==
-              MESH_SIM_OK &&
-              run_connection_turn(&world, alternate_parent_connection) ==
-                  MESH_SIM_OK,
-          "parent-B retry radio delivery failed");
-    CHECK(world.roles[parent_b].tx_queue_count == 2u,
-          "parent B did not retain one forward and one hop ACK");
-    CHECK(run_direct_gateway_turn(&world, parent_b, gateway) == MESH_SIM_OK,
-          "parent-B direct gateway turn failed");
-    CHECK(world.roles[gateway].delivery_count == 1u,
-          "alternate route duplicated the semantic gateway delivery");
-    CHECK(run_connection_turn(&world, alternate_parent_connection) ==
-              MESH_SIM_OK &&
-              world.roles[source].relay.pending.state ==
-                  MESH_RELAY_TX_IDLE &&
-              mesh_sim_count_transitions(
-                  &world, MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                  SOURCE_A_ID) == 1u,
-          "parent-B gateway ACK did not complete exactly once");
-
-    CHECK(drain_connection_queue(&world, stale_parent_connection,
-                                 parent_a) == MESH_SIM_OK &&
-              drain_connection_queue(&world, alternate_parent_connection,
-                                     parent_b) == MESH_SIM_OK,
-          "post-operation ACK queues did not drain within eight turns");
-    CHECK(mesh_sim_count_transitions(
-              &world, MESH_SIM_TRANSITION_RETRY_READY, SOURCE_A_ID) == 1u,
-          "route change produced an unbounded or missing retry");
-    CHECK(mesh_sim_check_settled(&world, &invariant) == MESH_SIM_OK,
-          "route-change world did not settle code=%d node=%zu detail=%llu",
-          invariant.code, invariant.node_index,
-          (unsigned long long)invariant.detail);
+          result.actions);
+    CHECK(route_selected(&relay.upstream) != NULL &&
+              route_selected(&relay.upstream)->next_hop_id == ALT_PARENT_ID,
+          "stale primary-parent ACK changed the selected route");
 }
 
 int main(void)

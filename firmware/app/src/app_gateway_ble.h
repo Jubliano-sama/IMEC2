@@ -19,18 +19,6 @@ struct gateway_ble_status {
 
 enum gateway_ble_stream_reservation_result {
     GATEWAY_BLE_STREAM_RESERVATION_ACQUIRED = 1,
-    /*
-     * The exact host-output journal is already terminal. Its restored or
-     * same-boot stream record owns delivery, so the caller must not commit or
-     * cancel the stream singleton as though it acquired a new reservation.
-     */
-    GATEWAY_BLE_STREAM_RESERVATION_JOURNAL_TERMINAL = 2,
-    /*
-     * A compact durable receipt proves that this exact raw packet already
-     * reached terminal host notification. No stream/journal slot is owned;
-     * the caller may commit duplicate transport acceptance and re-ACK it.
-     */
-    GATEWAY_BLE_STREAM_RESERVATION_RECEIPT_TERMINAL = 3,
 };
 
 int gateway_ble_init(void);
@@ -70,12 +58,16 @@ int gateway_ble_commit_stream_reservation_projection(
     size_t raw_payload_len,
     uint8_t accepted_record_mask);
 void gateway_ble_cancel_stream_reservation(void);
+/* Complete the retained host item only after its mesh ACK/EACK action owns a
+ * mesh/radio retry path. */
+int gateway_ble_finish_host_delivery(const struct proto_packet *packet);
 /*
- * A failed NVS write/readback can leave a terminal journal phase durable even
- * though the caller observed an error. Block new semantic admission until the
- * exact journal owner has been classified and restored into host-output RAM.
+ * Consume a serial host receipt.  Return 1 when the frame is a host receipt
+ * (accepted or rejected), 0 when it is an ordinary frame, and a negative
+ * errno only for a decoded host receipt that failed validation.
  */
-void gateway_ble_require_host_journal_restore(const char *reason);
+int gateway_ble_accept_host_receipt_frame(const uint8_t *frame,
+                                          size_t frame_len);
 /*
  * Validate the complete command/collection semantic transition without
  * mutating its durable or protocol-visible state. The mesh RX owner must
@@ -102,13 +94,6 @@ int gateway_finalize_semantic_delivery(
     uint8_t received_radio_channel,
     const struct mesh_event_plan *current_channel9_plan,
     int semantic_acceptance);
-int gateway_accept_collection_receipt_redrive(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t previous_hop_id,
-    uint8_t received_radio_channel,
-    const struct mesh_event_plan *current_channel9_plan);
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics);
 int gateway_observe_command_event(struct gateway_command_event *event,
                                   bool terminal);

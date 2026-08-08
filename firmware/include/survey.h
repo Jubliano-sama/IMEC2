@@ -21,7 +21,7 @@ extern "C" {
  * cross-role contract: gateways must not admit work that mesh anchors cannot
  * execute without an explicit delivery outcome.
  */
-#define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 4u
+#define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 5u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_DEFAULT_TTL 4u
 #define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 600000u
@@ -35,17 +35,20 @@ extern "C" {
 #define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
 /*
- * Gateway host output deliberately has one checksummed NVS journal owner.
- * A different survey record is therefore flow-controlled at the gateway and
- * remains in exact producer custody until the current host record retires.
+ * Gateway host output deliberately has one bounded in-RAM owner, not an NVS
+ * journal. A different survey record is therefore flow-controlled at the
+ * gateway and remains in exact producer custody until the current item has
+ * received its GUI receipt and the mesh ACK handoff owns the remaining work.
  * Size the gateway observation and one mesh-attempt planning horizon for the
- * largest legal synchronized burst: 50 endpoints can each emit four sample
+ * largest legal synchronized burst: 50 endpoints can each emit five sample
  * records. The 500 ms accounting interval is conservative for one bounded
- * pair-result record on the 30 ms BLE link; the remaining 20 s covers reset
- * restoration, notification retry, scheduling jitter, and the last ACK
- * handoff. This horizon never authorizes deleting an unconfirmed source
- * record: anchors retain their bounded NVS slots until exact gateway proof,
- * and backpressure prevents a later survey from overwriting them.
+ * pair-result record on the 30 ms BLE link; the remaining 20 s covers
+ * notification/receipt retry, scheduling jitter, and the last ACK handoff.
+ * This horizon never authorizes deleting an unconfirmed source
+ * record: anchors retain their bounded, anchor-local NVS slots until exact
+ * gateway proof, and backpressure prevents a later survey from overwriting
+ * them. A gateway reset does not restore the host item; source custody stays
+ * upstream for retry.
  */
 #define SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS 500u
 #define SURVEY_PAIR_RESULT_MAX_BURST_RECORDS \
@@ -64,10 +67,10 @@ extern "C" {
 #define SURVEY_PAIR_INITIATOR_TIMEOUT_MS 150u
 #define SURVEY_PAIR_START_SKEW_MARGIN_MS 1000u
 /*
- * START transport may take many seconds across the mesh, but matching round
- * GO gives both endpoints one shared execution time. The channel-5 RX window
- * therefore covers only local scheduling skew plus one DS-TWR attempt; it
- * must never inherit a multi-hop command-result timeout.
+ * START transport may take many seconds across the mesh, so the two START
+ * controls carry one shared future execution time. The channel-5 RX window
+ * covers only local scheduling skew plus one DS-TWR attempt; it must never
+ * inherit a multi-hop command-result timeout.
  */
 #define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
     (SURVEY_PAIR_START_SKEW_MARGIN_MS + SURVEY_PAIR_INITIATOR_TIMEOUT_MS)
@@ -125,7 +128,7 @@ extern "C" {
  * One synchronized batch consumes one nonzero round generation. In the
  * automatic path every planned pair can run once and rerun at most twice.
  * Each reporter participates in at most one pair per batch and can emit at
- * most four sample identities, so source/session/sequence remains injective.
+ * most five sample identities, so source/session/sequence remains injective.
  */
 #define SURVEY_PAIR_RESULT_MAX_BATCH_COUNT \
     (SURVEY_GATEWAY_MAX_PAIRS * (SURVEY_GATEWAY_PAIR_MAX_RERUNS + 1u))
@@ -134,8 +137,8 @@ extern "C" {
      SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
 _Static_assert(SURVEY_PAIR_RESULT_MAX_BATCH_COUNT == 450u,
                "automatic survey must remain bounded to 450 pair batches");
-_Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX == 1800u,
-               "automatic survey pair-result identity space must remain 1800");
+_Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX == 2250u,
+               "automatic survey pair-result identity space must remain 2250");
 _Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
                "survey pair-result transport sequence must fit uint16_t");
 #define SURVEY_DISCOVERY_MAX_SLOT_COUNT 50u
@@ -153,7 +156,8 @@ _Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
 /*
  * These bounds size gateway observation and one mesh-attempt planning window
  * for the legal 50-report burst. They never authorize deletion at the anchor:
- * an unconfirmed discovery report remains in its exact source journal, and
+ * an unconfirmed discovery report remains in its exact anchor-local source
+ * journal, and
  * later discovery generations are backpressured until gateway proof arrives.
  */
 #define SURVEY_DISCOVERY_REPORT_FLOW_CONTROL_GUARD_MS 5000u
@@ -169,10 +173,10 @@ _Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
 #define SURVEY_DISCOVERY_REPORT_RETRY_INITIAL_MS 50u
 #define SURVEY_DISCOVERY_REPORT_RETRY_MAX_MS 500u
 
-_Static_assert(SURVEY_PAIR_RESULT_MAX_BURST_RECORDS == 200u,
-               "maximum synchronized survey burst must remain 200 records");
-_Static_assert(SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS == 120000u,
-               "survey pair-result flow-control horizon must remain 120 s");
+_Static_assert(SURVEY_PAIR_RESULT_MAX_BURST_RECORDS == 250u,
+               "maximum synchronized survey burst must remain 250 records");
+_Static_assert(SURVEY_PAIR_RESULT_CUSTODY_HORIZON_MS == 145000u,
+               "survey pair-result flow-control horizon must remain 145 s");
 _Static_assert(SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS == 30000u,
                "survey discovery flow-control horizon must remain 30 s");
 _Static_assert(SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u >=

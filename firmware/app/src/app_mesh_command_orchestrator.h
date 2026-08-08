@@ -2,7 +2,7 @@
 #define APP_MESH_COMMAND_ORCHESTRATOR_H
 
 #include "app_gateway_command_ingress.h"
-#include "app_mesh_coordinator_runtime.h"
+#include "firmware_state_machines.h"
 #include "app_mesh_flood.h"
 #include "app_mesh_gateway_command_flow.h"
 
@@ -15,7 +15,7 @@
  * owns the final work-queue, DWM and GATT boundaries.
  */
 struct app_mesh_command_orchestrator {
-    struct app_mesh_coordinator_runtime_state coordinator;
+    struct fw_radio_activity_runtime radio_activity;
     struct app_mesh_gateway_command_anchor_state anchor;
     struct app_mesh_gateway_command_flow gateway_flow;
     struct app_gateway_command_ingress_item admitted;
@@ -50,8 +50,8 @@ int app_mesh_command_orchestrator_gateway_ingress(
 
 int app_mesh_command_orchestrator_decide(
     struct app_mesh_command_orchestrator *orchestrator,
-    const struct app_mesh_coordinator_runtime_capture *capture,
-    struct app_mesh_coordinator_decision *decision,
+    const struct fw_radio_activity_capture *capture,
+    struct fw_radio_activity_decision *decision,
     bool *state_changed);
 
 int app_mesh_command_orchestrator_safe_boundary(

@@ -1,13 +1,10 @@
 #include "survey_round_control.h"
 
-#include "mesh_radio_timing.h"
-#include "mesh_relay.h"
 #include "survey.h"
 
 #include <assert.h>
 #include <string.h>
 
-#define GATEWAY_ID 0x1111222233334444ull
 #define SURVEY_ID 0xAABBCCDDu
 #define ROUND_ID 0x1234u
 #define OPERATION_GENERATION UINT64_C(0x00000002A1B2C3D4)
@@ -19,7 +16,7 @@ static void test_round_id_optional_parser_and_encoding(void)
     uint16_t round_id = UINT16_MAX;
 
     assert(TLV_SURVEY_ROUND_ID == 0xAFu);
-    assert(CMD_SURVEY_GO == 0x0105u);
+    assert(CMD_SURVEY_GO_RETIRED_ID == 0x0105u);
     assert(survey_round_id_extract_tlv(payload,
                                        payload_len,
                                        &round_id) == PROTO_OK);
@@ -37,126 +34,6 @@ static void test_round_id_optional_parser_and_encoding(void)
                                       &payload_len,
                                       SURVEY_LEGACY_ROUND_ID) ==
            PROTO_ERR_MALFORMED);
-}
-
-static void test_go_payload_round_trip_and_parser_rejections(void)
-{
-    const struct survey_round_go go = {
-        .operation_generation = OPERATION_GENERATION,
-        .round_commitment = {0x11u, 0x22u, 0x33u, 0x44u},
-        .survey_id = SURVEY_ID,
-        .round_id = ROUND_ID,
-    };
-    struct survey_round_go decoded = {0};
-    const uint8_t *round_value = NULL;
-    uint8_t round_len = 0u;
-    uint8_t payload[96] = {0};
-    size_t payload_len = 0u;
-
-    assert(survey_round_go_append_tlvs(payload,
-                                       sizeof(payload),
-                                       &payload_len,
-                                       &go) == PROTO_OK);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_OK);
-    assert(decoded.survey_id == go.survey_id);
-    assert(decoded.round_id == go.round_id);
-    assert(decoded.operation_generation == go.operation_generation);
-    assert(memcmp(decoded.round_commitment,
-                  go.round_commitment,
-                  sizeof(decoded.round_commitment)) == 0);
-
-    payload[2u] = (uint8_t)(CMD_SURVEY_START_PAIR & 0xffu);
-    payload[3u] = (uint8_t)(CMD_SURVEY_START_PAIR >> 8);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_ERR_MALFORMED);
-    payload[2u] = (uint8_t)(CMD_SURVEY_GO & 0xffu);
-    payload[3u] = (uint8_t)(CMD_SURVEY_GO >> 8);
-    assert(tlv_find_unique(payload,
-                           payload_len,
-                           TLV_SURVEY_ROUND_ID,
-                           &round_value,
-                           &round_len) == PROTO_OK);
-    assert(round_len == sizeof(uint16_t));
-    ((uint8_t *)round_value)[0] = 0u;
-    ((uint8_t *)round_value)[1] = 0u;
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_ERR_MALFORMED);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len - 1u,
-                                     &decoded) == PROTO_ERR_MALFORMED);
-}
-
-static void test_go_parser_rejects_conflicting_singletons(void)
-{
-    const struct survey_round_go go = {
-        .operation_generation = OPERATION_GENERATION,
-        .round_commitment = {0x55u},
-        .survey_id = SURVEY_ID,
-        .round_id = ROUND_ID,
-    };
-    struct survey_round_go decoded;
-    uint8_t payload[128];
-    size_t payload_len = 0u;
-
-    assert(survey_round_go_append_tlvs(payload,
-                                       sizeof(payload),
-                                       &payload_len,
-                                       &go) == PROTO_OK);
-    assert(tlv_append_u32(payload,
-                          sizeof(payload),
-                          &payload_len,
-                          TLV_SURVEY_ID,
-                          SURVEY_ID + 1u) == PROTO_OK);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_ERR_MALFORMED);
-
-    payload_len = 0u;
-    assert(survey_round_go_append_tlvs(payload,
-                                       sizeof(payload),
-                                       &payload_len,
-                                       &go) == PROTO_OK);
-    assert(tlv_append_u16(payload,
-                          sizeof(payload),
-                          &payload_len,
-                          TLV_SURVEY_ROUND_ID,
-                          ROUND_ID + 1u) == PROTO_OK);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_ERR_MALFORMED);
-
-    payload_len = 0u;
-    assert(survey_round_go_append_tlvs(payload,
-                                       sizeof(payload),
-                                       &payload_len,
-                                       &go) == PROTO_OK);
-    assert(tlv_append_u64(payload,
-                          sizeof(payload),
-                          &payload_len,
-                          TLV_SURVEY_OPERATION_GENERATION,
-                          OPERATION_GENERATION + 1u) == PROTO_OK);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_ERR_MALFORMED);
-
-    payload_len = 0u;
-    assert(survey_round_go_append_tlvs(payload,
-                                       sizeof(payload),
-                                       &payload_len,
-                                       &go) == PROTO_OK);
-    assert(tlv_append_bytes(payload,
-                            sizeof(payload),
-                            &payload_len,
-                            TLV_SURVEY_ROUND_COMMITMENT,
-                            go.round_commitment,
-                            sizeof(go.round_commitment)) == PROTO_OK);
-    assert(survey_round_go_from_tlvs(payload,
-                                     payload_len,
-                                     &decoded) == PROTO_ERR_MALFORMED);
 }
 
 static void assert_commitment_changed(
@@ -178,6 +55,12 @@ static void assert_commitment_changed(
 
 static void test_round_commitment_binds_complete_plan(void)
 {
+    static const uint8_t expected_baseline[SEMANTIC_DIGEST_SHA256_LEN] = {
+        0x9Bu, 0x20u, 0xD4u, 0x53u, 0x69u, 0x4Eu, 0xDEu, 0xC3u,
+        0xC1u, 0xCAu, 0x9Bu, 0xA1u, 0xEAu, 0x7Bu, 0x51u, 0x8Fu,
+        0xC9u, 0x4Fu, 0x01u, 0x2Bu, 0x38u, 0x39u, 0x0Du, 0xF0u,
+        0xE2u, 0x01u, 0xC1u, 0x99u, 0xF5u, 0x0Fu, 0x2Cu, 0xEAu,
+    };
     const struct survey_round_plan_identity base_identity = {
         .operation_generation = OPERATION_GENERATION,
         .survey_id = SURVEY_ID,
@@ -196,7 +79,7 @@ static void test_round_commitment_binds_complete_plan(void)
                 .survey_id = SURVEY_ID,
                 .initiator_id = UINT64_C(0x101),
                 .responder_id = UINT64_C(0x202),
-                .sample_count = 3u,
+                .sample_count = 5u,
             },
             .lane_index = 0u,
             .plan_pair_index = 4u,
@@ -229,6 +112,9 @@ static void test_round_commitment_binds_complete_plan(void)
                                            2u,
                                            repeated) == PROTO_OK);
     assert(memcmp(baseline, repeated, sizeof(baseline)) == 0);
+    assert(memcmp(baseline,
+                  expected_baseline,
+                  sizeof(baseline)) == 0);
 
 #define MUTATE_IDENTITY(field, value)                                      \
     do {                                                                   \
@@ -320,106 +206,20 @@ static void test_manual_pair_commitment_binds_generation_and_pair(void)
     assert(memcmp(baseline, other, sizeof(baseline)) != 0);
 }
 
-static void test_go_packet_initializer(void)
+static void test_start_release_reserves_both_control_horizons(void)
 {
-    struct proto_packet packet;
-    struct proto_packet unchanged;
-
-    memset(&packet, 0xa5, sizeof(packet));
-    assert(survey_round_go_init_packet(&packet,
-                                       GATEWAY_ID,
-                                       SURVEY_ID,
-                                       7u,
-                                       16u) == PROTO_OK);
-    assert(packet.msg_type == MSG_COMMAND);
-    assert(packet.flags == 0u);
-    assert(packet.src_id == GATEWAY_ID);
-    assert(packet.dst_id == 0u);
-    assert(packet.session_id == SURVEY_ID);
-    assert(packet.seq == 7u);
-    assert(packet.ttl == FLOOD_EPOCH_GLOBAL_TTL);
-    assert(packet.payload_len == 16u);
-    assert(packet.message_age_ms == 0u);
-
-    memset(&packet, 0xa5, sizeof(packet));
-    assert(survey_round_go_init_packet(&packet,
-                                       GATEWAY_ID,
-                                       SURVEY_ID,
-                                       UINT16_MAX,
-                                       16u) == PROTO_OK);
-    assert(packet.seq == UINT16_MAX);
-    assert(packet.dst_id == MESH_BROADCAST_ID);
-    assert(packet.message_age_ms == 0u);
-
-    assert(survey_round_go_init_packet(NULL,
-                                       GATEWAY_ID,
-                                       SURVEY_ID,
-                                       1u,
-                                       0u) == PROTO_ERR_ARG);
-    assert(survey_round_go_init_packet(&packet,
-                                       0u,
-                                       SURVEY_ID,
-                                       1u,
-                                       0u) == PROTO_ERR_MALFORMED);
-    assert(survey_round_go_init_packet(&packet,
-                                       GATEWAY_ID,
-                                       0u,
-                                       1u,
-                                       0u) == PROTO_ERR_MALFORMED);
-    memset(&packet, 0xa5, sizeof(packet));
-    unchanged = packet;
-    assert(survey_round_go_init_packet(&packet,
-                                       GATEWAY_ID,
-                                       SURVEY_ID,
-                                       0u,
-                                       0u) == PROTO_ERR_MALFORMED);
-    assert(memcmp(&packet, &unchanged, sizeof(packet)) == 0);
-}
-
-static void test_go_execute_delay_scales_by_complete_forward_horizon(void)
-{
-    assert(survey_round_go_execute_delay_ms(0u) ==
-           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
-    assert(survey_round_go_execute_delay_ms(1u) ==
-           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
-    assert(survey_round_go_execute_delay_ms(2u) ==
-           2u * SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
-    assert(survey_round_go_execute_delay_ms(3u) ==
-           3u * SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
-}
-
-static void test_go_execute_delay_covers_first_receiver_forward(void)
-{
-    const uint32_t first_receiver_forward_horizon_ms =
-        FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS +
-        MESH_RADIO_WAKE_TRAIN_MS +
-        FLOOD_RELAY_BURST_MS +
-        FLOOD_POST_ROOT_GUARD_MS;
-
-    /*
-     * Local GO delivery happens after the relay core has synchronously built
-     * and sent the first broadcast forward. Even a directly reached anchor
-     * must therefore retain enough GO delay for that complete worst case.
-     */
-    assert(SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS >=
-           first_receiver_forward_horizon_ms);
-    assert(SURVEY_ROUND_GO_BASE_EXECUTE_DELAY_MS >=
-           SURVEY_ROUND_GO_PER_HOP_EXECUTE_DELAY_MS);
-    assert(survey_round_go_execute_delay_ms(0u) >=
-           first_receiver_forward_horizon_ms);
-    assert(survey_round_go_execute_delay_ms(1u) >=
-           first_receiver_forward_horizon_ms);
+    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS ==
+           2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +
+               SURVEY_PAIR_START_SKEW_MARGIN_MS);
+    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
+           SURVEY_PAIR_PREPARED_LEASE_MS);
 }
 
 int main(void)
 {
     test_round_id_optional_parser_and_encoding();
-    test_go_payload_round_trip_and_parser_rejections();
-    test_go_parser_rejects_conflicting_singletons();
     test_round_commitment_binds_complete_plan();
     test_manual_pair_commitment_binds_generation_and_pair();
-    test_go_packet_initializer();
-    test_go_execute_delay_scales_by_complete_forward_horizon();
-    test_go_execute_delay_covers_first_receiver_forward();
+    test_start_release_reserves_both_control_horizons();
     return 0;
 }

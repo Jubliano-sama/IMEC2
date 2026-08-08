@@ -58,12 +58,11 @@ enum gateway_ble_stream_drop_reason {
 enum gateway_ble_stream_head_phase {
     GATEWAY_BLE_STREAM_HEAD_IDLE = 0,
     GATEWAY_BLE_STREAM_HEAD_SENDING = 1,
-    /*
-     * Every ATT chunk reached the host, but the durable journal has not yet
-     * recorded NOTIFIED.  Disconnect/reset cancellation must retain this
-     * phase so the flash transition can finish outside the Bluetooth thread.
-     */
+    /* Every ATT chunk reached the host; wait for the GUI's exact receipt. */
     GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED = 2,
+    /* The GUI receipt matched the exact stored record; mesh ACK handoff owns
+     * the remaining custody and the record must not be resent on disconnect. */
+    GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED = 3,
 };
 
 struct gateway_ble_stream_diagnostics {
@@ -86,7 +85,7 @@ struct gateway_ble_stream_item {
     uint8_t packet_type;
     uint8_t priority;
     bool retain_until_sent;
-    bool journal_owner;
+    bool host_custody_owner;
     uint32_t queued_at_ms;
     uint32_t received_at_ms;
     struct proto_packet packet;
@@ -99,17 +98,12 @@ struct gateway_ble_stream_state {
     uint16_t pool_used;
     uint16_t reservation_payload_len;
     uint8_t reservation_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t journal_payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t count;
     uint8_t head_send_phase;
     bool reservation_active;
-    bool journal_payload_digest_valid;
-    /* Startup host-journal restore borrows only the unused pool tail; its
-     * packet identity remains stack-local so a full queue cannot be aliased.
-     * While active, queue mutation and send completion are paused so flash I/O
-     * cannot race the staged payload. */
-    bool restore_staging_active;
-    uint16_t restore_staging_offset;
+    /* A semantic source item owns one host-custody payload boundary until
+     * mesh ACK handoff and exact GUI receipt completion retire it. */
+    bool host_custody_source_payload_active;
     struct gateway_ble_stream_diagnostics diagnostics;
 };
 
@@ -154,27 +148,6 @@ int gateway_ble_stream_enqueue_retained_packet(
     uint32_t received_at_ms,
     uint32_t now_ms,
     bool ble_ready);
-/*
- * Commit a packet whose payload was read into the state-owned restore tail.
- * The payload and destination record may overlap, so this path moves the
- * bytes before writing the record header.  It is valid only while
- * restore_staging_active is held by the caller.
- */
-int gateway_ble_stream_enqueue_staged_packet(
-    struct gateway_ble_stream_state *state,
-    const struct proto_packet *packet,
-    size_t payload_len,
-    uint32_t received_at_ms,
-    uint32_t now_ms,
-    bool ble_ready);
-int gateway_ble_stream_enqueue_staged_bundle_projection(
-    struct gateway_ble_stream_state *state,
-    const struct proto_packet *packet,
-    size_t raw_payload_len,
-    uint8_t accepted_record_mask,
-    uint32_t received_at_ms,
-    uint32_t now_ms,
-    bool ble_ready);
 int gateway_ble_stream_reserve_packet(struct gateway_ble_stream_state *state,
                                       const struct proto_packet *packet,
                                       const uint8_t *payload,
@@ -212,6 +185,15 @@ int gateway_ble_stream_begin_send_view(struct gateway_ble_stream_state *state,
                                        const uint8_t **record,
                                        size_t *record_len);
 void gateway_ble_stream_cancel_send(struct gateway_ble_stream_state *state);
+/* Move a retained head from SENDING to HOST_NOTIFIED after ATT completion. */
+int gateway_ble_stream_mark_host_notified(
+    struct gateway_ble_stream_state *state);
+/* Rewind only an unreceipted host notification so the exact record can resend. */
+int gateway_ble_stream_rewind_host_notification(
+    struct gateway_ble_stream_state *state);
+/* Accept the exact host receipt boundary; only HOST_NOTIFIED may advance. */
+int gateway_ble_stream_accept_host_receipt(
+    struct gateway_ble_stream_state *state);
 void gateway_ble_stream_mark_sent(struct gateway_ble_stream_state *state,
                                   uint32_t now_ms);
 void gateway_ble_stream_get_diagnostics(
@@ -221,10 +203,6 @@ void gateway_ble_stream_get_diagnostics(
 uint8_t gateway_ble_stream_depth(const struct gateway_ble_stream_state *state);
 int gateway_ble_stream_head_packet(const struct gateway_ble_stream_state *state,
                                    struct proto_packet *packet);
-int gateway_ble_stream_head_journal_identity(
-    const struct gateway_ble_stream_state *state,
-    struct proto_packet *packet,
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN]);
 uint32_t gateway_ble_recovery_backoff_ms(uint8_t retry_round,
                                          uint32_t random_value);
 void gateway_ble_direct_queue_init(

@@ -79,10 +79,10 @@ uint32_t mesh_relay_outbox_expiry_s_for_packet(
     uint32_t requested_s = 0u;
 
     /*
-     * Once the source has durably replaced an original report with its
-     * ACK-confirm, the gateway's notified journal can only be released by
-     * this exact proof.  Expiring it would permanently strand the gateway
-     * while also discarding the source's only terminal handshake.
+     * Once the source replaces an original report with its ACK-confirm, the
+     * gateway's retained delivery owner can only be released by this exact
+     * proof. Expiring it would permanently strand the gateway while also
+     * discarding the source's only terminal handshake.
      */
     if (packet->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
         return UINT32_MAX;
@@ -1633,8 +1633,8 @@ static bool pending_requires_gateway_ack_confirm(
     }
 
     /*
-     * Collection traffic has its own durable end-to-end EACK.  Its ordinary
-     * gateway ACK means only "gateway journal accepted", so converting on
+     * Collection traffic has its own durable end-to-end EACK. Its ordinary
+     * gateway ACK means only "gateway collection state accepted", so converting on
      * that intermediate ACK would bypass roster/retry completion.
      */
     if (pending->packet.msg_type == MSG_RESULT_BUNDLE ||
@@ -1788,7 +1788,7 @@ static int handle_local_ack(struct mesh_relay *relay,
             }
             /*
              * This is only phase one.  Keep the original transit packet and
-             * persistent outbox live until the app proves that this exact ACK
+             * retained outbox live until the app proves that this exact ACK
              * physically reached its child-directed transmit path.
              */
             pending_refresh_age(&relay->pending, now_ms);
@@ -2214,11 +2214,8 @@ static bool command_packet_envelope_valid(
         return false;
     }
     if (packet->dst_id == MESH_BROADCAST_ID) {
-        /*
-         * Survey GO intentionally binds the header session to the durable
-         * operation generation rather than command_seq, so the latter remains
-         * the broadcast application identity without requiring equality here.
-         */
+        /* Broadcast commands carry their application identity in the command
+         * sequence TLV, so their header session is not required to match it. */
         return options.flood_required &&
                command_flood_broadcast_valid(payload, payload_len);
     }
@@ -2402,11 +2399,11 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         }
 
         /*
-         * A durable receipt proves one immutable redriven packet, not every
-         * sender sharing its collection.  Match the complete packet owner and
-         * payload identity before releasing custody.  This also gives bundled
-         * relay packets an exact terminal path after the volatile transaction
-         * has disappeared at the gateway.
+         * A durable collection-EACK receipt proves one immutable redriven
+         * packet, not every sender sharing its collection. Match the complete
+         * packet owner and payload identity before releasing custody. This also
+         * gives bundled relay packets an exact terminal path after the volatile
+         * transaction has disappeared at the gateway.
          */
         if (eack.gateway_id != pending_gateway_id ||
             eack.gateway_epoch != pending_gateway_epoch ||

@@ -2173,7 +2173,7 @@ static void mesh_wait_until_ms(uint32_t target_ms)
 static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
 {
     struct mesh_outbound waiting;
-    struct app_mesh_paused_delivery_store_result store_result;
+    struct fw_delivery_loss_store_result store_result;
 
     if (!mesh_tx_can_wait_for_route(out)) {
         return;
@@ -2184,7 +2184,7 @@ static void mesh_store_route_waiting_tx(const struct mesh_outbound *out)
         waiting.queued_at_ms = k_uptime_get_32();
         waiting.queued_at_valid = true;
     }
-    app_mesh_paused_delivery_note_store(&mesh_paused_delivery,
+    fw_delivery_loss_note_store(&mesh_delivery_loss,
                                         mesh_route_waiting_tx_valid,
                                         &mesh_route_waiting_tx,
                                         &waiting,
@@ -2302,13 +2302,13 @@ static bool mesh_try_repair_selected_parent_event(
 
 static void mesh_drop_route_waiting_tx(const char *reason)
 {
-    struct app_mesh_paused_delivery_store_result drop_result;
+    struct fw_delivery_loss_store_result drop_result;
 
     if (!mesh_route_waiting_tx_valid) {
         return;
     }
 
-    app_mesh_paused_delivery_note_drop(&mesh_paused_delivery, &drop_result);
+    fw_delivery_loss_note_drop(&mesh_delivery_loss, &drop_result);
 
     LOG_WRN("mesh route waiting packet dropped: reason=%s msg=0x%02x dst=0x%016llx seq=%u attempts=%u lost=%u",
             reason == NULL ? "drop" : reason,
@@ -2352,11 +2352,11 @@ static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *t
         return tx_ret;
     }
     /*
-     * RF completed and relay core plus NVS now own the exact packet.  A
-     * missed immediate ACK is not an ownership rollback to the volatile
-     * report queue: the normal relay timeout state machine performs route
-     * failure accounting, retry backoff, and discovery while preserving this
-     * durable owner.  Returning success here means "custody transferred",
+     * RF completed and the relay core now owns the exact packet in its
+     * retained in-RAM custody state. A missed immediate ACK is not an ownership
+     * rollback to the volatile report queue: the normal relay timeout state
+     * machine performs route failure accounting, retry backoff, and discovery
+     * while preserving this retained owner. Returning success means "custody transferred",
      * not "gateway ACK observed".
      */
     if (!mesh_relay_tx_active(&mesh_runtime)) {
@@ -2521,7 +2521,7 @@ static void mesh_try_route_waiting_tx(void)
     struct app_mesh_tx_handoff_result handoff_result;
     struct app_mesh_route_ready_handoff_result route_ready_result;
     struct app_mesh_route_wait_tx_decision wait_decision;
-    struct app_mesh_coordinator_decision coordinator_decision;
+    struct fw_radio_activity_decision coordinator_decision;
     struct app_mesh_route_wait_tx_state wait_state = {
         .channel9_retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
         .busy_retry_delay_ms = REPORT_TX_RETRY_DELAY_MS,
@@ -2543,7 +2543,7 @@ static void mesh_try_route_waiting_tx(void)
     if (!coordinator_decision.route_wait_allowed) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ROUTE_WAIT_COORD_DEFER state=%s reason=%s q=%u\n",
-                                app_mesh_coordinator_state_name(
+                                fw_radio_activity_state_name(
                                     coordinator_decision.state),
                                 coordinator_decision.reason == NULL ? "none" :
                                 coordinator_decision.reason,
@@ -3196,7 +3196,7 @@ send_prepared:
     }
 
     mesh_relay_note_tx_sent(&mesh_runtime, &tx, k_uptime_get_32());
-    app_mesh_paused_delivery_note_sent(&mesh_paused_delivery, &tx);
+    fw_delivery_loss_note_sent(&mesh_delivery_loss, &tx);
     (void)mesh_save_outbox_durable("tracked-send");
     if (channel9_success_pending) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {

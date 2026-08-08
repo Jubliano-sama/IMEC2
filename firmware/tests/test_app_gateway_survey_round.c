@@ -2,7 +2,6 @@
 #include "survey_pair_lease.h"
 
 #include <assert.h>
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -67,7 +66,7 @@ static void dispatch_current_batch(struct app_gateway_survey_round *round)
     size_t stage_index = 0u;
     size_t previous_lane = SIZE_MAX;
 
-    while (!app_gateway_survey_round_go_needed(round)) {
+    while (round->phase == APP_GATEWAY_SURVEY_ROUND_DISPATCHING) {
         struct app_gateway_survey_round_control control;
 
         assert(app_gateway_survey_round_current_control(round, &control) ==
@@ -87,7 +86,7 @@ static void dispatch_current_batch(struct app_gateway_survey_round *round)
                            control.pair.operation_generation)) == PROTO_OK);
         stage_index++;
     }
-    assert(app_gateway_survey_round_go_needed(round));
+    assert(round->phase == APP_GATEWAY_SURVEY_ROUND_OBSERVING);
 }
 
 static void test_round_commitment(
@@ -129,10 +128,6 @@ static void test_maximum_25_sparse_pairs_serialize_and_complete(void)
                    SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
         }
         dispatch_current_batch(&round);
-        assert(survey_pair_round_lane_armed(
-            app_gateway_survey_round_lane(&round, 0u)));
-        assert(app_gateway_survey_round_mark_observing_after_go(&round) ==
-               PROTO_OK);
         assert(app_gateway_survey_round_lane(&round, 0u)->state ==
                SURVEY_PAIR_ROUND_LANE_OBSERVING);
         assert(app_gateway_survey_round_finalize_lane(
@@ -171,8 +166,6 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
                                            2u,
                                            1u) == PROTO_OK);
     dispatch_current_batch(&round);
-    assert(app_gateway_survey_round_mark_observing_after_go(&round) ==
-           PROTO_OK);
 
     sample = (struct survey_sample) {
         .pair = failed_pair,
@@ -227,8 +220,6 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
            failed_pair.initiator_id);
     assert(app_gateway_survey_round_lane(&round, 0u)->reruns_started == 1u);
     dispatch_current_batch(&round);
-    assert(app_gateway_survey_round_mark_observing_after_go(&round) ==
-           PROTO_OK);
     assert(app_gateway_survey_round_finalize_lane(
                &round,
                0u,
@@ -242,7 +233,7 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
     assert(round.runtime.completed_failure_count == 1u);
 }
 
-static void test_control_failure_skips_only_one_lane_before_go(void)
+static void test_control_failure_skips_only_one_lane(void)
 {
     struct survey_gateway_context context;
     struct app_gateway_survey_round round;
@@ -266,9 +257,6 @@ static void test_control_failure_skips_only_one_lane_before_go(void)
     assert(round.runtime.lanes[0].state ==
            SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED);
     dispatch_current_batch(&round);
-    assert(app_gateway_survey_round_go_needed(&round));
-    assert(app_gateway_survey_round_mark_observing_after_go(&round) ==
-           PROTO_OK);
     assert(round.runtime.lanes[0].state ==
            SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED);
     assert(round.runtime.lanes[1].state ==
@@ -344,7 +332,7 @@ static void test_cleanup_completed_batch_advance_stress(void)
     }
 }
 
-static void test_partial_go_cleans_both_leases_before_rerun_commitment(void)
+static void test_partial_start_cleans_both_leases_before_rerun_commitment(void)
 {
     struct survey_gateway_context context;
     struct app_gateway_survey_round round;
@@ -389,27 +377,18 @@ static void test_partial_go_cleans_both_leases_before_rerun_commitment(void)
                &responder_lease, &pair, old_round_id, old_commitment,
                &prepare_id, 10u, SURVEY_PAIR_PREPARED_LEASE_MS) ==
            SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round_bound(
+    assert(survey_pair_lease_start_round_bound_at(
                &initiator_lease, &pair, old_round_id, old_commitment,
-               &start_id, 11u) == SURVEY_PAIR_LEASE_ACCEPTED);
-    assert(survey_pair_lease_start_round_bound(
+               &start_id, 11u, 12u) == SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_start_round_bound_at(
                &responder_lease, &pair, old_round_id, old_commitment,
-               &start_id, 11u) == SURVEY_PAIR_LEASE_ACCEPTED);
+               &start_id, 11u, 12u) == SURVEY_PAIR_LEASE_ACCEPTED);
     assert(survey_pair_lease_release_start(&initiator_lease, &start_id));
-    assert(survey_pair_lease_release_start(&responder_lease, &start_id));
 
     /*
-     * Only the initiator receives GO. It runs, times out, and retires while
-     * the responder keeps the old commitment in START_PENDING.
+     * Only the initiator's START result reaches gateway confirmation. It runs
+     * and retires while the responder keeps the old START in custody.
      */
-    assert(survey_pair_lease_go_until_bound(
-               &initiator_lease,
-               pair.operation_generation,
-               pair.survey_id,
-               old_round_id,
-               old_commitment,
-               12u,
-               1012u) == SURVEY_PAIR_LEASE_ACCEPTED);
     assert(survey_pair_lease_ready_snapshot(&initiator_lease, NULL));
     assert(survey_pair_lease_mark_running_at(
                &initiator_lease, 12u, NULL, NULL));
@@ -417,8 +396,6 @@ static void test_partial_go_cleans_both_leases_before_rerun_commitment(void)
     assert(initiator_lease.phase == SURVEY_PAIR_LEASE_IDLE);
     assert(responder_lease.phase == SURVEY_PAIR_LEASE_START_PENDING);
 
-    assert(app_gateway_survey_round_mark_observing_after_go(&round) ==
-           PROTO_OK);
     assert(app_gateway_survey_round_finalize_lane(
                &round,
                0u,
@@ -604,42 +581,6 @@ static void test_termination_rejects_unowned_active_pair_atomically(void)
     assert(lane_index == SIZE_MAX);
 }
 
-static void test_go_submission_retry_policy_covers_transient_admission(void)
-{
-    for (int error = -4096; error <= 4096; error++) {
-        const bool expected =
-            error == -EAGAIN || error == -EBUSY ||
-            error == -ENOSPC || error == -ESHUTDOWN;
-
-        assert(app_gateway_survey_round_go_submit_retryable(error) ==
-               expected);
-    }
-}
-
-static void test_go_terminal_retry_requires_zero_rf_attempts(void)
-{
-    for (enum node_comm_terminal_reason reason =
-             NODE_COMM_TERMINAL_DELIVERED;
-         reason <= NODE_COMM_TERMINAL_CANCELLED;
-         reason++) {
-        const bool retryable_reason =
-            reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ||
-            reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ||
-            reason == NODE_COMM_TERMINAL_CANCELLED;
-
-        assert(app_gateway_survey_round_go_terminal_retryable(reason, 0u) ==
-               retryable_reason);
-        assert(!app_gateway_survey_round_go_terminal_retryable(reason, 1u));
-        assert(!app_gateway_survey_round_go_terminal_retryable(
-            reason, UINT8_MAX));
-    }
-    assert(!app_gateway_survey_round_go_terminal_retryable(
-        (enum node_comm_terminal_reason)-1, 0u));
-    assert(!app_gateway_survey_round_go_terminal_retryable(
-        (enum node_comm_terminal_reason)(NODE_COMM_TERMINAL_CANCELLED + 1),
-        0u));
-}
-
 static void test_sample_conflict_is_rejected_without_round_mutation(void)
 {
     struct survey_gateway_context context;
@@ -658,8 +599,6 @@ static void test_sample_conflict_is_rejected_without_round_mutation(void)
     assert(app_gateway_survey_round_begin(
                &round, &context, 1u, 0u) == PROTO_OK);
     dispatch_current_batch(&round);
-    assert(app_gateway_survey_round_mark_observing_after_go(&round) ==
-           PROTO_OK);
     round.runtime.batch_sequence = 7u;
     pair = &app_gateway_survey_round_lane(&round, 0u)->pair;
     sample = (struct survey_sample) {
@@ -727,13 +666,11 @@ static void test_sample_conflict_is_rejected_without_round_mutation(void)
 
 int main(void)
 {
-    test_go_submission_retry_policy_covers_transient_admission();
-    test_go_terminal_retry_requires_zero_rf_attempts();
     test_maximum_25_sparse_pairs_serialize_and_complete();
     test_one_lane_failure_rerun_does_not_disturb_peer();
-    test_control_failure_skips_only_one_lane_before_go();
+    test_control_failure_skips_only_one_lane();
     test_cleanup_completed_batch_advance_stress();
-    test_partial_go_cleans_both_leases_before_rerun_commitment();
+    test_partial_start_cleans_both_leases_before_rerun_commitment();
     test_termination_retains_all_25_lane_cleanup_masks();
     test_termination_rejects_unowned_active_pair_atomically();
     test_sample_conflict_is_rejected_without_round_mutation();

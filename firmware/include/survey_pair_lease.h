@@ -41,11 +41,8 @@ struct survey_pair_lease {
     struct survey_pair_control_id start_id;
     struct survey_pair_control_id last_accepted_id;
     uint32_t prepared_deadline_ms;
-    /*
-     * Closed local RF-start deadline carried by a synchronized GO. Zero is a
-     * valid wrapped deadline; go_released is the independent armed state.
-     */
-    uint32_t go_execution_deadline_ms;
+    /* Closed local RF-start instant carried by START; zero may be wrapped. */
+    uint32_t start_execution_deadline_ms;
     uint64_t last_accepted_operation_generation;
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint16_t round_id;
@@ -56,11 +53,7 @@ struct survey_pair_lease {
     bool round_commitment_valid;
     /* Exact START command-result delivery has reached gateway confirmation. */
     bool start_released;
-    /*
-     * Matching nonzero-round GO and its execution deadline are armed; legacy
-     * round zero needs no GO.
-     */
-    bool go_released;
+    bool start_execution_armed;
 };
 
 /* Reset is the only operation that intentionally forgets accepted command IDs. */
@@ -118,44 +111,14 @@ enum survey_pair_lease_decision survey_pair_lease_start_round_bound(
     const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
     const struct survey_pair_control_id *control_id,
     uint32_t now_ms);
-
-/*
- * A GO releases only the matching nonzero survey round. Repeated or late GO
- * calls are harmless and never release a different prepared pair.
- */
-enum survey_pair_lease_decision survey_pair_lease_go(
+enum survey_pair_lease_decision survey_pair_lease_start_round_bound_at(
     struct survey_pair_lease *lease,
-    uint32_t survey_id,
-    uint16_t round_id,
-    uint32_t now_ms);
-enum survey_pair_lease_decision survey_pair_lease_go_until(
-    struct survey_pair_lease *lease,
-    uint32_t survey_id,
-    uint16_t round_id,
-    uint32_t now_ms,
-    uint32_t execution_deadline_ms);
-enum survey_pair_lease_decision survey_pair_lease_go_until_bound(
-    struct survey_pair_lease *lease,
-    uint64_t operation_generation,
-    uint32_t survey_id,
+    const struct survey_pair *pair,
     uint16_t round_id,
     const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
+    const struct survey_pair_control_id *control_id,
     uint32_t now_ms,
     uint32_t execution_deadline_ms);
-/*
- * Roll back only a newly accepted matching GO when the local work queue
- * refuses execution admission.  This keeps an exact retransmission eligible
- * to release the same round; it cannot affect a running or different round.
- */
-bool survey_pair_lease_revoke_go(struct survey_pair_lease *lease,
-                                 uint32_t survey_id,
-                                 uint16_t round_id);
-bool survey_pair_lease_revoke_go_bound(
-    struct survey_pair_lease *lease,
-    uint64_t operation_generation,
-    uint32_t survey_id,
-    uint16_t round_id,
-    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN]);
 
 bool survey_pair_lease_pending_snapshot(const struct survey_pair_lease *lease,
                                         struct survey_pair *pair);
@@ -164,6 +127,9 @@ bool survey_pair_lease_release_start(
     const struct survey_pair_control_id *control_id);
 bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
                                       struct survey_pair *pair);
+uint32_t survey_pair_lease_execution_remaining_ms(
+    const struct survey_pair_lease *lease,
+    uint32_t now_ms);
 /*
  * Atomically claims the ready lease for RF execution and snapshots its exact
  * pair and synchronized-round generation. Either output may be NULL.

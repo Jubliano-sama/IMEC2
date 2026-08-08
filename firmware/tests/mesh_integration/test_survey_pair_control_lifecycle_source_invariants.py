@@ -432,84 +432,66 @@ started = manual_terminal.index(
     "gateway_manual_survey_pair_state.started_mask |= target_mask",
     start_case,
 )
-arm_go = manual_terminal.index(
-    "gateway_manual_survey_pair_arm_go_after_settle()", started
+arm_start = manual_terminal.index(
+    "gateway_manual_survey_pair_arm_start_release()", started
 )
-abort_case = manual_terminal.index("case CMD_SURVEY_ABORT:", arm_go)
-assert start_case < started < arm_go < abort_case, (
-    "only an accepted START terminal may contribute to the common GO barrier"
+abort_case = manual_terminal.index("case CMD_SURVEY_ABORT:", arm_start)
+assert start_case < started < arm_start < abort_case, (
+    "only an accepted START terminal may contribute to the synchronized "
+    "START release"
 )
 
-manual_arm_go = function_body(
-    ANCHOR, "gateway_manual_survey_pair_arm_go_after_settle"
+manual_arm_start = function_body(
+    ANCHOR, "gateway_manual_survey_pair_arm_start_release"
 )
-both_started = manual_arm_go.index(
+both_started = manual_arm_start.index(
     "gateway_manual_survey_pair_state.started_mask != both_endpoints"
 )
-nonzero_round = manual_arm_go.index(
+nonzero_round = manual_arm_start.index(
     "gateway_manual_survey_pair_state.round_id ==", both_started
 )
-go_due = manual_arm_go.index(
-    "gateway_manual_survey_pair_state.go_due_ms =", nonzero_round
+release_started = manual_arm_start.index(
+    "gateway_manual_survey_pair_state.start_release_started_at_ms =",
+    nonzero_round,
 )
-settle = manual_arm_go.index(
-    "SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS", go_due
-)
-settle_schedule = manual_arm_go.index(
-    "gateway_survey_work_reschedule(", settle
-)
-assert both_started < nonzero_round < go_due < settle < settle_schedule, (
-    "both START results must complete before one continuous 3000 ms "
-    "response-ACK settle interval arms the common GO"
-)
-
-manual_go = function_body(
-    ANCHOR, "gateway_manual_survey_pair_service_go"
-)
-go_both_started = manual_go.index(
-    "gateway_manual_survey_pair_state.started_mask != both_endpoints"
-)
-go_due_reached = manual_go.index(
-    "uptime_deadline_reached(", go_both_started
-)
-go_due_wait = manual_go.index(
-    "uptime_ms_until_deadline(", go_due_reached
-)
-max_hop_delay = manual_go.index(
-    "survey_round_go_execute_delay_ms(FLOOD_EPOCH_GLOBAL_TTL)", go_due_wait
-)
-go_round = manual_go.index(
-    "go.round_id = gateway_manual_survey_pair_state.round_id",
-    max_hop_delay,
-)
-go_commitment = manual_go.index(
-    "gateway_manual_survey_pair_state.round_commitment", go_round
-)
-shared_build = manual_go.index(
-    "gateway_survey_build_go(", go_commitment
-)
-go_submit = manual_go.index(
-    "app_node_comm_submit_delivery(", shared_build
+release_armed = manual_arm_start.index(
+    "gateway_manual_survey_pair_state.start_release_armed = true",
+    release_started,
 )
 assert (
-    go_both_started < go_due_reached < go_due_wait < max_hop_delay < go_round <
-    go_commitment < shared_build < go_submit
+    both_started < nonzero_round < release_started < release_armed
 ), (
-    "manual ranging must use an explicit wrap-safe reached gate before the "
-    "one-millisecond-clamped duration helper, then build one broadcast GO "
-    "with conservative max-hop delay and the retained round binding"
+    "both START results must complete before the manual pair records one "
+    "future synchronized START release"
 )
 
 manual_match = function_body(
     ANCHOR, "gateway_manual_survey_pair_matches_sample"
 )
 assert "!manual->cleanup_requested" in manual_match
-assert "manual->go_rf_started" in manual_match
+assert "manual->start_release_armed" in manual_match
 assert "manual->round_id != SURVEY_LEGACY_ROUND_ID" in manual_match
 assert "sample, &manual->pair, manual->round_id" in manual_match, (
-    "manual results must remain inadmissible until their exact common GO "
-    "has physically started"
+    "manual results must retain their exact round binding"
 )
+
+manual_preflight = function_body(
+    ANCHOR, "gateway_manual_survey_pair_preflight_sample"
+)
+assert "start_release_started_at_ms +" in manual_preflight
+assert "SURVEY_ROUND_START_EXECUTE_DELAY_MS" in manual_preflight
+assert "uptime_deadline_reached(" in manual_preflight, (
+    "manual results must remain inadmissible until the synchronized START "
+    "release instant"
+)
+
+for retired_runtime_symbol in (
+    "CMD_SURVEY_GO",
+    "survey_round_go_",
+    "gateway_manual_survey_pair_service_go",
+    "go_rf_started",
+):
+    assert retired_runtime_symbol not in ANCHOR
 
 manual_cleanup = function_body(
     ANCHOR, "gateway_manual_survey_pair_begin_cleanup"

@@ -34,7 +34,7 @@ struct handler_fixture {
     uint32_t poll_rx_ts_32;
     uint32_t resp_tx_ts_32;
     uint32_t final_rx_ts_32;
-    uint8_t poll_bytes[UWB_POLL_LEN];
+    uint8_t poll_bytes[UWB_CLICK_POLL_LEN];
     uint8_t final_bytes[UWB_FINAL_LEN];
     size_t poll_len;
     size_t final_len;
@@ -73,11 +73,12 @@ static bool build_fixture(struct handler_fixture *fixture)
         .initiator_id = TEST_CLICKER,
         .responder_id = TEST_ANCHOR,
     };
-    ret = uwb_encode_poll(&fixture->poll,
-                          fixture->poll_bytes,
-                          sizeof(fixture->poll_bytes),
-                          &fixture->poll_len);
-    CHECK(ret == PROTO_OK && fixture->poll_len == UWB_POLL_LEN,
+    ret = uwb_encode_click_poll(&fixture->poll,
+                                321u,
+                                fixture->poll_bytes,
+                                sizeof(fixture->poll_bytes),
+                                &fixture->poll_len);
+    CHECK(ret == PROTO_OK && fixture->poll_len == UWB_CLICK_POLL_LEN,
           "POLL build failed ret=%d len=%zu", ret, fixture->poll_len);
 
     fixture->poll_rx_ts_32 = 200000u;
@@ -124,6 +125,8 @@ static bool evaluate_fixture(const struct handler_fixture *fixture,
               result->exchange_started && evaluation->final_received &&
               evaluation->final_valid &&
               evaluation->timing_valid &&
+              result->click_age_ms == 321u &&
+              !result->click_age_saturated &&
               evaluation->poll_to_resp_uus == fixture->request.reply_delay_uus &&
               evaluation->resp_to_final_uus == fixture->request.reply_delay_uus,
           "valid exchange rejected ret=%d status=%u poll=%u final=%u timing=%u/%u",
@@ -183,7 +186,7 @@ static bool test_timeout_and_malformed_frames(void)
     struct handler_fixture fixture;
     struct dwm3000_range_result result;
     struct dwm3000_driver_exchange_evaluation evaluation;
-    uint8_t malformed_poll[UWB_POLL_LEN];
+    uint8_t malformed_poll[UWB_CLICK_POLL_LEN];
     uint8_t malformed_final[UWB_FINAL_LEN];
     int ret;
 
@@ -233,10 +236,10 @@ static bool test_wrong_target_timing_and_fcs(void)
     struct handler_fixture fixture;
     struct dwm3000_range_result result;
     struct dwm3000_driver_exchange_evaluation evaluation;
-    uint8_t wrong_target[UWB_POLL_LEN];
+    uint8_t wrong_target[UWB_CLICK_POLL_LEN];
     uint8_t bad_timing[UWB_FINAL_LEN];
     uint8_t negative_distance_final[UWB_FINAL_LEN];
-    uint8_t poll_with_fcs[UWB_POLL_LEN + UWB_PHY_FCS_LEN];
+    uint8_t poll_with_fcs[UWB_CLICK_POLL_LEN + UWB_PHY_FCS_LEN];
     uint8_t final_with_fcs[UWB_FINAL_LEN + UWB_PHY_FCS_LEN];
     struct uwb_range_header wrong_header;
     struct dwm3000_range_request wrong_local_request;
@@ -250,10 +253,11 @@ static bool test_wrong_target_timing_and_fcs(void)
     wrong_header.responder_id = UINT64_C(0xc400000000000004);
     wrong_header.responder_short_addr =
         uwb_session_short_addr_from_id(wrong_header.responder_id);
-    CHECK(uwb_encode_poll(&wrong_header,
-                          wrong_target,
-                          sizeof(wrong_target),
-                          &length) == PROTO_OK,
+    CHECK(uwb_encode_click_poll(&wrong_header,
+                                321u,
+                                wrong_target,
+                                sizeof(wrong_target),
+                                &length) == PROTO_OK,
           "wrong-target POLL build failed");
     ret = dwm3000_driver_test_evaluate_exchange(
         TEST_ANCHOR, &fixture.request, wrong_target, length,

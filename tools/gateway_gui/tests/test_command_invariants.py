@@ -124,18 +124,18 @@ class SurveyParameterPartitionProperties(unittest.TestCase):
 
     def test_generated_boundary_partitions_have_specific_validation_reasons(self):
         base = dict(host_id=1, gateway_id=2, session_id=3, seq=4,
-                    survey_id=5, duration_ms=250, discovery_slot_count=6, sample_count=1)
+                    survey_id=5, duration_ms=250, discovery_slot_count=6, sample_count=5)
         partitions = {
             "survey ID": ("survey_id", (0, 0x1_0000_0000)),
             "duration": ("duration_ms", (0, 0x1_0000_0000)),
             "discovery slot count": ("discovery_slot_count", (0, 51)),
-            "sample count": ("sample_count", (0, 5)),
+            "sample count": ("sample_count", (0, 1, 4, 6)),
         }
         for phrase, (field, invalid_values) in partitions.items():
             for value in invalid_values:
                 with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, phrase):
                     build_anchor_discovery_command(**(base | {field: value}))
-        for slots, samples in itertools.product((1, 6, 50), (1, 2, 4)):
+        for slots, samples in itertools.product((1, 6, 50), (5,)):
             command = build_anchor_discovery_command(**(base | {
                 "discovery_slot_count": slots, "sample_count": samples}))
             self.assertGreater(len(command.packet.payload), 0)
