@@ -8,6 +8,13 @@ from source_text import read_composed_source
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 
+assert re.search(
+    r"#define\s+DWM3000_PHY_RX_PAC\s+DWT_PAC32\b", DRIVER
+), "the production channel-5 PHY default must use the documented PAC32"
+assert re.search(
+    r"#define\s+DWM3000_PHY_SFD_TIMEOUT\s+4073\b", DRIVER
+), "the production channel-5 PHY default must use the documented SFD timeout"
+
 
 def function_body(name: str) -> str:
     match = re.search(rf"\b{name}\s*\([^;]*?\)\s*\{{", DRIVER, re.DOTALL)

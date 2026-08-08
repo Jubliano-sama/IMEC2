@@ -280,7 +280,8 @@ static void build_range_record(void)
     ret = report_init_range_packet(&record->packet,
                                    TEST_ANCHOR_ID,
                                    TEST_GATEWAY_ID,
-                                   TEST_EVENT_SEQ,
+                                   proto_click_report_session_id(
+                                       TEST_CLICKER_ID, TEST_EVENT_SEQ),
                                    UINT16_C(0x2101),
                                    FLAG_COUNT_AS_CLICK,
                                    (uint16_t)record->payload_len);
@@ -327,7 +328,7 @@ static void build_cir_record(enum test_record_index record_index,
         &record->packet,
         TEST_ANCHOR_ID,
         TEST_GATEWAY_ID,
-        TEST_EVENT_SEQ,
+        proto_click_report_session_id(TEST_CLICKER_ID, TEST_EVENT_SEQ),
         (uint16_t)(UINT16_C(0x2101) + (uint16_t)record_index),
         FLAG_DIAGNOSTIC,
         (uint16_t)record->payload_len);

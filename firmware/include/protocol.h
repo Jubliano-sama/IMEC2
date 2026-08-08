@@ -605,6 +605,15 @@ uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len);
 uint16_t proto_crc16_ccitt_false_update(uint16_t crc,
                                         const uint8_t *data,
                                         size_t len);
+/*
+ * Compact one semantic click identity into the 32-bit transport-session
+ * field. The event sequence remains clicker-local; including the full
+ * clicker ID separates equal counters on different clickers in normal relay,
+ * gateway, and host deduplication. The semantic digest makes a rare 32-bit
+ * projection collision fail closed. Invalid zero inputs return zero.
+ */
+uint32_t proto_click_report_session_id(uint64_t clicker_id,
+                                       uint32_t event_seq);
 bool proto_packet_msg_type_allowed_over_uwb(uint8_t msg_type);
 
 size_t proto_packet_header_len(uint16_t payload_len);

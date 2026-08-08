@@ -2218,10 +2218,6 @@ int app_clicker_run_normal_click(void)
                 if (ret < 0) {
                     return ret;
                 }
-                ret = clicker_runtime_expect_effect(FW_EFFECT_CLICK_CLEANUP);
-                if (ret < 0) {
-                    return ret;
-                }
                 return range_ret;
             }
         }
@@ -3059,7 +3055,7 @@ uint8_t app_clicker_debug_min_anchor_count(void)
 
 uint8_t app_clicker_debug_max_anchor_count(void)
 {
-    return UWB_RANGE_SCHEDULE_MAX_ANCHORS;
+    return UWB_NORMAL_CLICK_MAX_ANCHORS;
 }
 
 uint8_t app_clicker_debug_samples_per_anchor(void)

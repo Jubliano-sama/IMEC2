@@ -55,6 +55,8 @@ The first frame of every normal-click DS-TWR exchange is an extended POLL carryi
 
 One logical packet has one custody owner. The communication service owns routing, retries, ACKs, and terminal state. Pre-RF deferral consumes no attempt; an actual RF start does.
 
+Normal deployments are expected to run continuously; frequent firmware restarts are not an operating assumption or a recovery mechanism. A restart requirement alone does not justify putting retry state, packet custody, duplicate history, click counters, or other hot state in persistent storage.
+
 Hop ACK transfers custody to the next anchor; gateway ACK proves final acceptance. Relay ACKs use the sender’s next channel 9 transmit window, with gateway ACK ahead of hop ACK. One slot may carry several packets and one multi-packet ACK.
 
 Direct-to-gateway traffic is batched. The sender reserves reply time, sends only what fits, marks the final packet, then switches to channel 9 receive. The gateway returns one batch ACK after the final marker. Missing entries retry in a later channel 9 window, without a new wake train while the connection remains alive.

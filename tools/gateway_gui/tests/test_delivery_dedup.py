@@ -20,6 +20,7 @@ from tools.gateway_gui.protocol import (
     MSG_SURVEY_DISCOVERY_REPORT,
     MSG_SURVEY_PAIR_RESULT,
     Packet,
+    click_report_session_id,
 )
 
 
@@ -75,6 +76,31 @@ def host_packet(
 
 
 class GatewayPacketDeduplicatorTests(unittest.TestCase):
+    def test_clicker_identity_namespaces_same_anchor_event_and_fragment(self) -> None:
+        cache = GatewayPacketDeduplicator(max_entries=4)
+        event_seq = 7
+        first_session = click_report_session_id(0xAAAABBBBCCCCDDDD, event_seq)
+        second_session = click_report_session_id(0xAAAABBBBCCCCDDDE, event_seq)
+        first = click_packet(
+            payload=b"first-clicker",
+            src_id=0x5555666677778888,
+            session_id=first_session,
+            seq=3,
+        )
+        second = click_packet(
+            payload=b"second-clicker",
+            src_id=first.src_id,
+            session_id=second_session,
+            seq=first.seq,
+        )
+
+        self.assertNotEqual(first_session, second_session)
+        self.assertEqual(cache.observe(first).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(second).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(first).disposition, PacketDisposition.DUPLICATE)
+        self.assertEqual(cache.observe(second).disposition, PacketDisposition.DUPLICATE)
+        self.assertEqual(cache.size, 2)
+
     def test_exact_replay_is_suppressed_even_when_transport_age_changes(self) -> None:
         cache = GatewayPacketDeduplicator(max_entries=4)
         original = click_packet(age_ms=10)

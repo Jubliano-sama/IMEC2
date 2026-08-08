@@ -32,6 +32,7 @@ from tools.gateway_gui.protocol import (
     TLV_UWB_CIR_TOTAL_BYTES,
     Packet,
     append_tlv,
+    click_report_session_id,
     crc16_ccitt_false,
     encode_cobs_packet,
     parse_cobs_packet,
@@ -118,7 +119,7 @@ def fragment_packet(
         flags=FLAG_DIAGNOSTIC,
         src_id=anchor_id,
         dst_id=0x9999AAAABBBBCCCC,
-        session_id=event_seq,
+        session_id=click_report_session_id(clicker_id, event_seq),
         seq=fragment_index + 1,
         ttl=4,
         payload=bytes(payload),
@@ -139,7 +140,7 @@ def non_cir_diagnostic_fragment_packet() -> Packet:
         flags=FLAG_DIAGNOSTIC,
         src_id=ANCHOR_ID,
         dst_id=0x9999AAAABBBBCCCC,
-        session_id=EVENT_SEQ,
+        session_id=click_report_session_id(CLICKER_ID, EVENT_SEQ),
         seq=1,
         ttl=4,
         payload=bytes(payload),
@@ -165,7 +166,9 @@ def truncated_first_fragment_packet() -> Packet:
     record[8] = MSG_CLICK_REPORT
     record[9] = FLAG_DIAGNOSTIC
     record[10:12] = (1).to_bytes(2, "little")
-    record[12:16] = EVENT_SEQ.to_bytes(4, "little")
+    record[12:16] = click_report_session_id(CLICKER_ID, EVENT_SEQ).to_bytes(
+        4, "little"
+    )
     record[16:24] = ANCHOR_ID.to_bytes(8, "little")
     record[24:32] = (0x9999AAAABBBBCCCC).to_bytes(8, "little")
     record[36:38] = len(payload).to_bytes(2, "little")

@@ -9,6 +9,28 @@ static void test_crc_known_vector(void)
     assert(proto_crc16_ccitt_false(data, 9u) == 0x29B1u);
 }
 
+static void test_click_report_transport_session_identity(void)
+{
+    const uint64_t first_clicker = UINT64_C(0xaaaabbbbccccdddd);
+    const uint64_t second_clicker = UINT64_C(0xaaaabbbbccccddde);
+    const uint32_t event_seq = UINT32_C(7);
+    const uint32_t first_session =
+        proto_click_report_session_id(first_clicker, event_seq);
+    const uint32_t second_session =
+        proto_click_report_session_id(second_clicker, event_seq);
+
+    /* Fixed vectors keep the C and Python implementations byte-for-byte tied. */
+    assert(proto_click_report_session_id(
+               UINT64_C(0x1111222233334444), UINT32_C(0x11223344)) ==
+           UINT32_C(0x1bcf6ce5));
+    assert(first_session == UINT32_C(0xb0cac892));
+    assert(second_session == UINT32_C(0x598766a9));
+    assert(first_session != second_session);
+    assert(proto_click_report_session_id(first_clicker, event_seq) ==
+           first_session);
+    assert(first_session != 0u && second_session != 0u);
+}
+
 static void test_tlv_and_packet_round_trip(void)
 {
     uint8_t payload[64];
@@ -1334,6 +1356,7 @@ static void test_operation_policy_tlv_registration(void)
 int main(void)
 {
     test_crc_known_vector();
+    test_click_report_transport_session_identity();
     test_tlv_and_packet_round_trip();
     test_decode_rejects_bad_crc();
     test_extended_packet_round_trip();

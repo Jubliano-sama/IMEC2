@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
+import tools.gateway_gui.app as gateway_app
 from tools.gateway_gui.app import DEFAULT_COMMAND_BUDGET_TEXT, GatewayGui
 from tools.gateway_gui.cir_reassembly import CirReassembler
 from tools.gateway_gui.command_orchestration import (
@@ -30,6 +31,7 @@ from tools.gateway_gui.protocol import (
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
+    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
     TLV_COMMAND_STATUS,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
@@ -101,6 +103,12 @@ def assignment_phase_packet(phase: int, epoch: int):
 
 
 class AppModelTests(unittest.TestCase):
+    def test_app_binds_the_survey_sample_default_used_during_construction(self) -> None:
+        self.assertEqual(
+            gateway_app.SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+            SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+        )
+
     @staticmethod
     def set_default_policy_variables(
         gui: GatewayGui, *, expected_anchors: str = ""

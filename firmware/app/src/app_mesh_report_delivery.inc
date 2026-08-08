@@ -765,7 +765,8 @@ static bool anchor_range_report_packet_identity_matches(
            (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
            packet->src_id == control->anchor_id &&
            packet->dst_id == control->gateway_id &&
-           packet->session_id == control->event_seq &&
+           packet->session_id == proto_click_report_session_id(
+               control->clicker_id, control->event_seq) &&
            packet->seq == control->fragments[fragment_index].seq;
 }
 

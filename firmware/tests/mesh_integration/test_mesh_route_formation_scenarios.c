@@ -750,7 +750,9 @@ static int build_unseeded_click(struct proto_packet *packet,
     ret = report_init_click_packet(packet,
                                    anchor_id,
                                    GATEWAY_ID,
-                                   UNSEEDED_CLICK_SESSION,
+                                   proto_click_report_session_id(
+                                       fields.clicker_id,
+                                       fields.event_seq),
                                    1u,
                                    (uint8_t)length);
     if (ret != PROTO_OK) {

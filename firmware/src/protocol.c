@@ -2,6 +2,9 @@
 
 #include <string.h>
 
+#define CLICK_REPORT_IDENTITY_FNV_OFFSET UINT32_C(2166136261)
+#define CLICK_REPORT_IDENTITY_FNV_PRIME UINT32_C(16777619)
+
 uint16_t proto_crc16_ccitt_false(const uint8_t *data, size_t len)
 {
     return proto_crc16_ccitt_false_update(UINT16_C(0xFFFF), data, len);
@@ -27,6 +30,26 @@ uint16_t proto_crc16_ccitt_false_update(uint16_t crc,
     }
 
     return crc;
+}
+
+uint32_t proto_click_report_session_id(uint64_t clicker_id,
+                                       uint32_t event_seq)
+{
+    uint32_t hash = CLICK_REPORT_IDENTITY_FNV_OFFSET;
+
+    if (clicker_id == 0u || event_seq == 0u) {
+        return 0u;
+    }
+    /* FNV-1a over the canonical little-endian wire representation. */
+    for (uint8_t shift = 0u; shift < 64u; shift += 8u) {
+        hash ^= (uint8_t)(clicker_id >> shift);
+        hash *= CLICK_REPORT_IDENTITY_FNV_PRIME;
+    }
+    for (uint8_t shift = 0u; shift < 32u; shift += 8u) {
+        hash ^= (uint8_t)(event_seq >> shift);
+        hash *= CLICK_REPORT_IDENTITY_FNV_PRIME;
+    }
+    return hash == 0u ? 1u : hash;
 }
 
 uint16_t proto_get_u16_le(const uint8_t *data)

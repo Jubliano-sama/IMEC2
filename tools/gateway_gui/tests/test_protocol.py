@@ -80,6 +80,7 @@ from tools.gateway_gui.protocol import (
     build_assign_discovery_slots_command,
     build_here_i_am_command,
     build_gateway_host_receipt,
+    click_report_session_id,
     click_samples,
     crc16_ccitt_false,
     decode_gateway_host_receipt_identity,
@@ -221,7 +222,9 @@ def stream_record(
     record[8] = msg_type
     record[9] = packet_flags
     record[10:12] = (0x1234).to_bytes(2, "little")
-    record[12:16] = (0x11223344).to_bytes(4, "little")
+    record[12:16] = click_report_session_id(
+        0x1111222233334444, 0x11223344
+    ).to_bytes(4, "little")
     record[16:24] = (0x5555666677778888).to_bytes(8, "little")
     record[24:32] = (0x9999AAAABBBBCCCC).to_bytes(8, "little")
     record[32:36] = (17).to_bytes(4, "little")
@@ -265,6 +268,20 @@ def extended_stream_payload() -> bytes:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_click_report_transport_session_matches_firmware_vectors(self) -> None:
+        self.assertEqual(
+            click_report_session_id(0x1111222233334444, 0x11223344),
+            0x1BCF6CE5,
+        )
+        first = click_report_session_id(0xAAAABBBBCCCCDDDD, 7)
+        second = click_report_session_id(0xAAAABBBBCCCCDDDE, 7)
+        self.assertEqual(first, 0xB0CAC892)
+        self.assertEqual(second, 0x598766A9)
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, click_report_session_id(0xAAAABBBBCCCCDDDD, 7))
+        self.assertNotEqual(first, 0)
+        self.assertNotEqual(second, 0)
+
     def test_cobs_packet_round_trip_decodes_envelope_and_all_tlvs(self) -> None:
         payload = click_payload()
         frame = encode_cobs_packet(

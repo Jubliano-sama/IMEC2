@@ -8,6 +8,7 @@ import math
 from .protocol import (
     MSG_CLICK_REPORT,
     Packet,
+    click_report_session_id,
     TLV_ANCHOR_ID,
     TLV_CLICKER_ID,
     TLV_DIAG_FRAGMENT_COUNT,
@@ -330,9 +331,13 @@ class CirReassembler:
                 f"packet source {packet.src_id:#018x} does not match ANCHOR_ID "
                 f"{fragment.key.anchor_id:#018x}"
             )
-        if packet.session_id != fragment.key.event_seq:
+        expected_session_id = click_report_session_id(
+            fragment.key.clicker_id, fragment.key.event_seq
+        )
+        if packet.session_id != expected_session_id:
             errors.append(
-                f"packet session {packet.session_id} does not match EVENT_SEQ {fragment.key.event_seq}"
+                f"packet session {packet.session_id} does not bind CLICKER_ID "
+                f"{fragment.key.clicker_id:#018x} and EVENT_SEQ {fragment.key.event_seq}"
             )
         if fragment.fragment_count != CIR_FRAGMENT_COUNT:
             errors.append(

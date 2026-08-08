@@ -1346,6 +1346,30 @@ static void test_claim_phase_sweep(void)
     }
 }
 
+static void test_maintained_normal_click_phy_and_capacity_contract(void)
+{
+    const struct dwm3000_phy_timing *wake =
+        dwm3000_timing_phy_profile(DWM3000_TIMING_PHY_CH5_WAKE);
+    const struct dwm3000_phy_timing *range =
+        dwm3000_timing_phy_profile(DWM3000_TIMING_PHY_CH5_RANGE);
+
+    CHECK(wake != NULL && range != NULL,
+          "production channel-5 PHY profiles are unavailable");
+    if (wake != NULL && range != NULL) {
+        CHECK(wake->pac_symbols == 32u && range->pac_symbols == 32u,
+              "production channel-5 PHY must use PAC32");
+        CHECK(wake->sfd_timeout_symbols == 4073u &&
+                  range->sfd_timeout_symbols == 4073u,
+              "production channel-5 PHY must use the documented 4073-symbol SFD timeout");
+    }
+    CHECK(UWB_NORMAL_CLICK_MAX_ANCHORS == 4u,
+          "normal click schedules must cap selection at four anchors");
+    CHECK(UWB_RANGE_SCHEDULE_MAX_ANCHORS == 8u,
+          "the generic schedule wire capacity must remain eight anchors");
+    CHECK(UWB_NORMAL_CLICK_MAX_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+          "normal click capacity must fit the generic schedule frame");
+}
+
 int main(void)
 {
     CHECK(SCAN_PERIOD_US == UINT64_C(380000),
@@ -1355,6 +1379,7 @@ int main(void)
     CHECK(dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,
                                          UWB_WAKE_CLAIM_LEN) > 0u,
           "wake claim airtime unavailable");
+    test_maintained_normal_click_phy_and_capacity_contract();
     test_survey_phase_sweep_and_old_defect_sensitivity();
     test_claim_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();

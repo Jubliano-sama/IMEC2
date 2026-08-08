@@ -385,6 +385,12 @@ assert (
 assert "clicker_runtime_abort_click" in normal[
     success_with_error:success_with_error_end
 ]
+assert normal[
+    success_with_error:success_with_error_end
+].count("clicker_runtime_abort_click") == 1
+assert "clicker_runtime_expect_effect(FW_EFFECT_CLICK_CLEANUP)" not in normal[
+    success_with_error:success_with_error_end
+], "the abort helper already consumes the one cleanup effect"
 assert "return range_ret;" in normal[
     success_with_error:success_with_error_end
 ]
