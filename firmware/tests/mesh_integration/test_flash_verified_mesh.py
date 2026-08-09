@@ -191,6 +191,14 @@ class VerifiedFlashTests(unittest.TestCase):
             "--stage-only",
         ]
 
+    @staticmethod
+    def _reject_args(build: Path) -> list[str]:
+        return [
+            "--build-dir", str(build),
+            "--probe-id", "TEST-PROBE",
+            "--reject-staged-candidate",
+        ]
+
     def _stage(self, build: Path) -> int:
         return flash.main(self._stage_args(build))
 
@@ -313,6 +321,29 @@ class VerifiedFlashTests(unittest.TestCase):
                              for call in self.target.calls))
         self.assertFalse(any(call[:2] == [str(self.pyocd), "commander"]
                              for call in self.target.calls))
+
+    def test_failed_candidate_must_be_explicitly_rejected_before_restage(self) -> None:
+        build, _ = self._valid()
+        self.assertEqual(0, self._stage(build))
+        self.target.calls.clear()
+
+        self.assertEqual(0, flash.main(self._reject_args(build)))
+        self.assertEqual(self.target.candidate, self.target.target)
+        self.assertFalse(self.journal.exists())
+        self.assertFalse(self.ledger.exists())
+        self.assertFalse(any(call and call[0] == str(self.west)
+                             for call in self.target.calls))
+        rejection_read = next(
+            call for call in self.target.calls
+            if any("rejection-readback.bin" in item for item in call)
+        )
+        self.assertIn("reset", rejection_read)
+
+        self.target.calls.clear()
+        self.assertEqual(0, self._stage(build))
+        self.assertTrue(self.journal.exists())
+        self.assertTrue(any(call and call[0] == str(self.west)
+                            for call in self.target.calls))
 
     def test_promotion_without_staged_candidate_is_read_only(self) -> None:
         build, _ = self._valid()
@@ -651,8 +682,15 @@ class VerifiedFlashTests(unittest.TestCase):
             "--build-dir", "x", "--probe-id", "x", "--stage-only",
         ])
         self.assertTrue(staged.stage_only)
+        rejected = flash.parse_args([
+            "--build-dir", "x", "--probe-id", "x",
+            "--reject-staged-candidate",
+        ])
+        self.assertTrue(rejected.reject_staged_candidate)
         with self.assertRaises(SystemExit):
             flash.parse_args([*base, "--stage-only"])
+        with self.assertRaises(SystemExit):
+            flash.parse_args([*base, "--reject-staged-candidate"])
         for option in (
             "--frequency", "--policy-header", "--west", "--pyocd",
             "--command", "--output-dir", "--duration-seconds",

@@ -1435,6 +1435,18 @@ bool gateway_command_result_validation_complete(
         if ((entry->token_state & UINT32_C(0x7fffffff)) == token &&
             (entry->token_state & UINT32_C(0x80000000)) == 0u) {
             entry->timestamp_ms = received_at_ms;
+            /*
+             * The armed expiry only bounds the blocking radio receive.  Once
+             * a frame exists, semantic validation can legitimately include
+             * bounded queueing and the exact GUI-receipt custody round trip.
+             * Give the completed lease the same processing budget as a lease
+             * acquired from an already-decoded result; retaining the short RX
+             * expiry makes the command timeout win while valid result bytes
+             * are still owned by the gateway.
+             */
+            entry->expires_at_ms =
+                received_at_ms +
+                GATEWAY_COMMAND_RESULT_VALIDATION_MAX_HOLD_MS;
             entry->token_state |= UINT32_C(0x80000000);
             return true;
         }

@@ -3248,6 +3248,74 @@ test_terminal_waits_for_confirmed_backend_release_after_cancel_failure(void)
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
 }
 
+static void test_caller_owned_terminal_event_has_bounded_watchdog_grace(void)
+{
+    struct mesh_outbound abandoned = reliable_uplink_envelope(177u);
+    struct mesh_outbound consumed = reliable_uplink_envelope(178u);
+    struct node_comm_terminal_event event;
+    const uint64_t abandoned_terminal_ms = 100u;
+    const uint64_t consumed_terminal_ms = 200u;
+    uint32_t handle = 0u;
+
+    reset_fixture();
+    atomic_store(&fake_now_ms, (int64_t)abandoned_terminal_ms);
+    try_uplink_confirmed[0] = true;
+    assert(app_node_comm_submit_delivery(
+        &abandoned,
+        NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        60000u,
+        1770u,
+        &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(cancel_uplink_calls == 1u);
+    assert(app_node_comm_peek_delivery_event_for(handle, &event));
+    assert(event.terminal_at_ms == abandoned_terminal_ms);
+    assert(watchdog_stop_calls == 0u);
+
+    atomic_store(
+        &fake_now_ms,
+        (int64_t)(abandoned_terminal_ms +
+                  APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS - 1u));
+    (void)app_node_comm_pending_delivery_count();
+    assert(watchdog_stop_calls == 0u);
+
+    atomic_store(
+        &fake_now_ms,
+        (int64_t)(abandoned_terminal_ms +
+                  APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS));
+    (void)app_node_comm_pending_delivery_count();
+    assert(watchdog_stop_calls == 1u);
+    atomic_store(
+        &fake_now_ms,
+        (int64_t)(abandoned_terminal_ms +
+                  APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS + 1000u));
+    (void)app_node_comm_pending_delivery_count();
+    assert(watchdog_stop_calls == 1u);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+
+    reset_fixture();
+    atomic_store(&fake_now_ms, (int64_t)consumed_terminal_ms);
+    try_uplink_confirmed[0] = true;
+    assert(app_node_comm_submit_delivery(
+        &consumed,
+        NODE_COMM_PROFILE_RELIABLE_UPLINK,
+        60000u,
+        1780u,
+        &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(cancel_uplink_calls == 1u);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.terminal_at_ms == consumed_terminal_ms);
+    assert(watchdog_stop_calls == 0u);
+
+    atomic_store(
+        &fake_now_ms,
+        (int64_t)(consumed_terminal_ms +
+                  APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS));
+    (void)app_node_comm_pending_delivery_count();
+    assert(watchdog_stop_calls == 0u);
+}
+
 static void test_unpublished_external_backend_attempt_fails_closed(void)
 {
     struct mesh_outbound envelope = reliable_uplink_envelope(176u);
@@ -4265,6 +4333,7 @@ int main(void)
     test_foreign_workqueue_cancel_waits_for_exact_route_owned_completion();
     test_reliable_uplink_synchronous_and_late_confirmations_are_bounded();
     test_terminal_waits_for_confirmed_backend_release_after_cancel_failure();
+    test_caller_owned_terminal_event_has_bounded_watchdog_grace();
     test_unpublished_external_backend_attempt_fails_closed();
     test_reliable_uplink_failure_preserves_reason_and_releases_owner();
     test_single_flight_wait_preserves_priority_and_fifo();

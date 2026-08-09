@@ -1005,6 +1005,7 @@ static int mesh_reschedule_owned_work(struct k_work_delayable *work,
 static int mesh_submit_owned_work(struct k_work *work, const char *owner);
 static bool mesh_transport_paused(void);
 static int mesh_transport_radio_start(const char *owner);
+static bool mesh_rx_handoff_control_active(void);
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
 static void mesh_persistence_retry_work_handler(struct k_work *work);
 static void mesh_node_comm_cancel_work_handler(struct k_work *work);

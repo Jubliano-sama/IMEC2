@@ -101,6 +101,72 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         self.assertIn("struct app_mesh_flood_progress", self.flood_header)
         self.assertIn("uint8_t next_opportunity", self.flood_header)
 
+    def test_route_refresh_owns_gateway_rx_control_through_every_rf_exit(self):
+        worker = function_body(self.refresh, "refresh_work_handler")
+        begin = function_body(self.report, "mesh_route_refresh_begin_radio_control")
+        end = function_body(self.report, "mesh_route_refresh_end_radio_control")
+
+        self.assertIn("int (*begin_radio_control)(void *ctx)", self.header)
+        self.assertIn("void (*end_radio_control)(void *ctx)", self.header)
+        self.assertIn(
+            ".begin_radio_control = mesh_route_refresh_begin_radio_control",
+            self.report,
+        )
+        self.assertIn(
+            ".end_radio_control = mesh_route_refresh_end_radio_control",
+            self.report,
+        )
+
+        self.assertIn("mesh_rx_handoff_begin_control(&abort_scan)", begin)
+        self.assertIn("mesh_stop_role_scan()", begin)
+        self.assertIn("mesh_rx_handoff_wait_for_control()", begin)
+        wait_failure = begin.index("if (ret < 0)")
+        wait_failure_end = begin.index("return ret;", wait_failure)
+        self.assertIn(
+            "mesh_rx_handoff_end_control()",
+            begin[wait_failure:wait_failure_end],
+        )
+        self.assertIn("mesh_rx_handoff_end_control()", end)
+
+        self.assertEqual(1, worker.count("config->begin_radio_control("))
+        self.assertEqual(1, worker.count("config->end_radio_control("))
+        acquire = worker.index("ret = config->begin_radio_control(config->ctx)")
+        acquired = worker.index("radio_control_started = true", acquire)
+        stop_scan = worker.index("config->stop_role_scan(config->ctx)", acquired)
+        wake = worker.index("config->send_wake(config->ctx", stop_scan)
+        flood = worker.index("app_mesh_flood_send_bounded_resume(", wake)
+        finish = worker.index("\nfinish:", flood)
+        self.assertLess(acquire, acquired)
+        self.assertLess(acquired, stop_scan)
+        self.assertLess(stop_scan, wake)
+        self.assertLess(wake, flood)
+        self.assertLess(flood, finish)
+        self.assertIn("if (ret < 0)", worker[acquire:acquired])
+        self.assertIn("goto finish;", worker[acquire:acquired])
+
+        owned_rf_region = worker[acquired:finish]
+        self.assertNotIn(
+            "return;",
+            owned_rf_region,
+            "an acquired route-refresh control handoff must exit through cleanup",
+        )
+        pause_checks = owned_rf_region.split(
+            "refresh_operation_pause_requested()"
+        )[1:]
+        self.assertGreaterEqual(len(pause_checks), 2)
+        for pause_exit in pause_checks:
+            self.assertIn("goto finish;", pause_exit[:500])
+
+        cleanup = worker[finish:]
+        release = cleanup.index(
+            "config->end_radio_control(config->ctx)"
+        )
+        restart = cleanup.index("config->restart_role_scan(config->ctx)")
+        state_lock = cleanup.index("app_node_comm_sync_lock()")
+        self.assertIn("radio_control_started", cleanup[:release])
+        self.assertLess(release, restart)
+        self.assertLess(release, state_lock)
+
     def test_protocol_clients_use_public_route_refresh_facade(self):
         request = function_body(
             self.adapter, "app_node_comm_request_route_refresh"

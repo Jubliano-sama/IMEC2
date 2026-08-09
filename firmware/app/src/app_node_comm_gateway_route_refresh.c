@@ -539,6 +539,7 @@ static void refresh_work_handler(struct k_work *work)
     struct mesh_outbound outbound;
     const struct app_node_comm_gateway_route_refresh_config *config;
     bool allowed;
+    bool radio_control_started = false;
     bool policy_running;
     bool restart_scan = false;
     bool resume_pending = false;
@@ -606,6 +607,13 @@ static void refresh_work_handler(struct k_work *work)
     ret = refresh_prepare_outer(&operation, now_ms, &outbound);
     if (ret < 0) {
         goto finish;
+    }
+    if (config->begin_radio_control != NULL) {
+        ret = config->begin_radio_control(config->ctx);
+        if (ret < 0) {
+            goto finish;
+        }
+        radio_control_started = true;
     }
     if (config->stop_role_scan != NULL) {
         config->stop_role_scan(config->ctx);
@@ -685,6 +693,9 @@ static void refresh_work_handler(struct k_work *work)
     ret = operation.outer_sent ? 0 : (ret < 0 ? ret : -EAGAIN);
 
 finish:
+    if (radio_control_started && config->end_radio_control != NULL) {
+        config->end_radio_control(config->ctx);
+    }
     if (restart_scan && config->restart_role_scan != NULL) {
         config->restart_role_scan(config->ctx);
     }

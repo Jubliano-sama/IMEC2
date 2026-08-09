@@ -2961,7 +2961,9 @@ static struct survey_gateway_drive_state gateway_survey_drive_state(
         .auto_running = gateway_survey_auto.running,
         .auto_waiting = gateway_survey_auto.waiting,
         .pair_observation_active =
-            gateway_survey_pair_observation_active,
+            gateway_survey_pair_observation_active ||
+            gateway_survey_round.phase ==
+                APP_GATEWAY_SURVEY_ROUND_OBSERVING,
         .round_drive_ready =
             gateway_survey_round.phase ==
                 APP_GATEWAY_SURVEY_ROUND_DISPATCHING ||

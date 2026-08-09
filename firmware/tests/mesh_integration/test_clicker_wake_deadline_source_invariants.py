@@ -24,6 +24,7 @@ MESH_TRANSPORT = (
 GATEWAY_CONTROL = (
     ROOT / "app/src/app_anchor_gateway_control.inc"
 ).read_text()
+ANCHOR_INIT = (ROOT / "app/src/app_anchor_init.inc").read_text()
 POLICY_TEST = (ROOT / "tests/test_app_wake_train_politeness.c").read_text()
 
 
@@ -299,6 +300,78 @@ assert MESH_TRANSPORT.count("DWM3000_RECEIVE_ABORT_MESH_CONTROL") >= 2
 assert "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY" in GATEWAY_CONTROL
 assert "DWM3000_RECEIVE_ABORT_NODE_COMM" not in MESH_ARBITRATION
 assert "DWM3000_RECEIVE_ABORT_MESH_CONTROL" not in MESH_ARBITRATION
+
+# The gateway's continuous Channel-9 coordinator owner must stand down as
+# soon as an explicit RX control handoff exists, including the interval while
+# the old scan is still aborting. Otherwise the coordinator immediately
+# reclaims gateway RX and prevents the priority Channel-5 command from running.
+control_active = source_function_body(
+    MESH_COORDINATION, "mesh_rx_handoff_control_active"
+)
+assert "k_spin_lock(&mesh_rx_handoff_lock)" in control_active
+assert (
+    "app_mesh_rx_handoff_control_active(&mesh_rx_handoff)" in control_active
+)
+assert "k_spin_unlock(&mesh_rx_handoff_lock" in control_active
+
+coordinator = source_function_body(
+    MESH_COORDINATION, "mesh_coordinator_decide_now"
+)
+assert re.search(
+    r"\.gateway_continuous_ch9\s*=\s*mesh_gateway_route_test_role\s*\(\s*\)"
+    r"\s*&&\s*!mesh_rx_handoff_control_active\s*\(\s*\)",
+    coordinator,
+), (
+    "an explicit RX control handoff must suppress the gateway's continuous "
+    "Channel-9 coordinator capture"
+)
+
+# Every work item admitted through the gateway-priority arbiter owns its
+# level-triggered receive-abort bit until the scheduled handler reaches the
+# safe boundary. Derive this list from the submit sites so a future internal
+# priority handler cannot silently omit the matching release.
+gateway_priority_work_items = set(re.findall(
+    r"\bmesh_gateway_command_priority_submit\s*\(\s*&([A-Za-z0-9_]+)\s*\)",
+    GATEWAY_CONTROL,
+))
+assert gateway_priority_work_items, "no gateway-priority work submitters found"
+for work_item in gateway_priority_work_items:
+    init_matches = re.findall(
+        rf"\bk_work_init_delayable\s*\(\s*&{re.escape(work_item)}\s*,\s*"
+        r"([A-Za-z0-9_]+)\s*\)",
+        ANCHOR_INIT,
+    )
+    assert len(init_matches) == 1, (
+        f"gateway-priority work {work_item} must have one handler initializer"
+    )
+    handler_name = init_matches[0]
+    handler = source_function_body(GATEWAY_CONTROL, handler_name)
+    release = handler.find(
+        "dwm3000_driver_clear_receive_abort(\n"
+        "        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY)"
+    )
+    assert release >= 0, (
+        f"{handler_name} retains the gateway-priority receive-abort owner"
+    )
+
+    explicit_boundary = handler.find(
+        "app_mesh_command_orchestrator_mark_safe_boundary("
+    )
+    if explicit_boundary >= 0:
+        assert explicit_boundary < release
+        assert "return;" not in handler[explicit_boundary:release]
+        continue
+
+    entry = handler.index("ARG_UNUSED(work);") + len("ARG_UNUSED(work);")
+    first_stateful_call = re.search(
+        r"\b(?:gateway_[A-Za-z0-9_]+|k_(?:mutex|msgq)_[A-Za-z0-9_]+)\s*\(",
+        handler[entry:],
+    )
+    assert first_stateful_call is not None
+    assert release < entry + first_stateful_call.start(), (
+        f"{handler_name} must release the gateway-priority abort owner at "
+        "its safe-boundary entry"
+    )
 
 main = source_function_body(MAIN, "main")
 port_init = main.index("ret = dwm3000_port_init()")

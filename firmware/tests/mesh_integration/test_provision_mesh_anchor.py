@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import dataclasses
 import importlib.util
 import re
@@ -30,7 +31,18 @@ provision = _load(
     "provision_mesh_anchor_test",
     REPO_ROOT / "firmware" / "scripts" / "provision_mesh_anchor.py",
 )
-from tools.gateway_gui.protocol import encode_cobs_packet, parse_cobs_packet
+from tools.gateway_gui.protocol import (
+    FLAG_GATEWAY_ACK_REQUIRED,
+    MSG_COMMAND_RESULT,
+    MSG_GATEWAY_COMMAND_EVENT,
+    Packet,
+    build_gateway_host_receipt,
+    encode_cobs_packet,
+    parse_cobs_packet,
+)
+
+
+GATEWAY_ID = 0xAABBCCDDEEFF0011
 
 
 def command_event(
@@ -132,6 +144,30 @@ def pair_packet(
         ttl=4,
         payload=payload,
     ))
+
+
+def gateway_delivery_packet(
+    sequence: int,
+    *,
+    transport: str = "gateway-stream-v1",
+    msg_type: int = MSG_COMMAND_RESULT,
+) -> Packet:
+    return Packet(
+        transport=transport,
+        raw_transport=f"gateway-record-{sequence}".encode(),
+        raw_packet=None,
+        msg_type=msg_type,
+        flags=FLAG_GATEWAY_ACK_REQUIRED,
+        src_id=0x1020304050607080,
+        dst_id=GATEWAY_ID,
+        session_id=0x11223344,
+        seq=sequence,
+        ttl=None,
+        age_ms=10,
+        age_kind="gateway_queue_age_ms",
+        payload=f"payload-{sequence}".encode(),
+        tlvs=(),
+    )
 
 
 def successful_events() -> list[object]:
@@ -722,7 +758,7 @@ class FakeBleakClient:
 
     async def read_gatt_char(self, _uuid: object) -> bytes:
         self.operations.append(("read_identity", None))
-        return (0xAABBCCDDEEFF0011).to_bytes(8, "little")
+        return GATEWAY_ID.to_bytes(8, "little")
 
     async def write_gatt_char(
         self, _characteristic: object, data: bytes, *, response: bool
@@ -871,6 +907,133 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         )
         write = next(value for name, value in FakeBleakClient.operations if name == "write")
         self.assertTrue(write[1])
+
+    async def test_receipts_only_exact_receiptable_gateway_stream_packets(self) -> None:
+        receiptable = gateway_delivery_packet(7)
+        command_event_packet = gateway_delivery_packet(
+            8, msg_type=MSG_GATEWAY_COMMAND_EVENT
+        )
+        non_stream = gateway_delivery_packet(
+            9, transport="cobs-shared-packet"
+        )
+        FakeDecoder.packets = [receiptable, command_event_packet, non_stream]
+        FakeBleakClient.notification_count = len(FakeDecoder.packets)
+        expected = build_gateway_host_receipt(
+            receiptable,
+            host_id=1,
+            gateway_id=GATEWAY_ID,
+        )
+
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(
+                provision,
+                "decode_gateway_command_event",
+                return_value=command_event(12, event_sequence=8),
+            ),
+            mock.patch("builtins.print"),
+        ):
+            await provision.run(
+                args(
+                    command="monitor",
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+
+        writes = [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+        self.assertEqual([expected.frame], writes)
+
+    async def test_concurrent_notifications_serialize_exact_receipt_writes(self) -> None:
+        packets = [gateway_delivery_packet(21), gateway_delivery_packet(22)]
+        FakeDecoder.packets = packets
+
+        class ConcurrentNotificationClient(FakeBleakClient):
+            notification_count = len(packets)
+            active_writes = 0
+            max_active_writes = 0
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, **kwargs)
+                self.services = types.SimpleNamespace(
+                    get_characteristic=lambda _uuid: types.SimpleNamespace(
+                        max_write_without_response_size=20
+                    )
+                )
+
+            async def start_notify(self, _uuid: object, callback: object) -> None:
+                self.notify_enabled = True
+                self.notify_callback = callback
+                self.operations.append(("start_notify", None))
+
+                async def invoke_notification() -> None:
+                    callback(None, bytearray(b"notification"))
+                    await asyncio.sleep(0)
+
+                await asyncio.gather(*(
+                    invoke_notification()
+                    for _ in range(self.notification_count)
+                ))
+
+            async def write_gatt_char(
+                self,
+                _characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                assert response
+                type(self).active_writes += 1
+                type(self).max_active_writes = max(
+                    type(self).max_active_writes,
+                    type(self).active_writes,
+                )
+                self.operations.append(("write", (bytes(data), self.notify_enabled)))
+                await asyncio.sleep(0)
+                type(self).active_writes -= 1
+
+        expected_frames = [
+            build_gateway_host_receipt(
+                packet,
+                host_id=1,
+                gateway_id=GATEWAY_ID,
+            ).frame
+            for packet in packets
+        ]
+        expected_chunks = [
+            frame[offset : offset + 20]
+            for frame in expected_frames
+            for offset in range(0, len(frame), 20)
+        ]
+        with (
+            mock.patch.object(
+                provision, "BleakClient", ConcurrentNotificationClient
+            ),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch("builtins.print"),
+        ):
+            await provision.run(
+                args(
+                    command="monitor",
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+
+        writes = [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+        self.assertEqual(expected_chunks, writes)
+        self.assertEqual(1, ConcurrentNotificationClient.max_active_writes)
 
     async def test_decode_error_fails_immediately_after_notifications_enable(self) -> None:
         FakeDecoder.errors = ["bad stream CRC"]

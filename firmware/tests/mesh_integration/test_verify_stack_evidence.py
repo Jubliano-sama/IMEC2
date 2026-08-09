@@ -18,6 +18,7 @@ from source_text import read_composed_source
 REPO_ROOT = Path(__file__).resolve().parents[3]
 VERIFIER_PATH = REPO_ROOT / "firmware" / "scripts" / "verify_stack_evidence.py"
 POLICY_PATH = REPO_ROOT / "firmware" / "include" / "stack_budget.h"
+GATEWAY_CONFIG_PATH = REPO_ROOT / "firmware" / "app" / "prj-gateway.conf"
 SPEC = importlib.util.spec_from_file_location("verify_stack_evidence", VERIFIER_PATH)
 assert SPEC is not None and SPEC.loader is not None
 verifier = importlib.util.module_from_spec(SPEC)
@@ -591,7 +592,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         build = verifier.BuildEvidence(self.root, preset="mesh_anchor")
         required = verifier._required_threads(build, policy)
 
-        self.assertEqual(required["anchor_uwb_scan"], 6144)
+        self.assertEqual(required["anchor_uwb_scan"], 6912)
         rows = {
             name: (size - verifier._required_free(size),
                    verifier._required_free(size), size)
@@ -609,6 +610,13 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
     def test_gateway_runtime_model_uses_only_live_exact_workqueues(self) -> None:
         policy = self.policies["mesh_gateway"]
+        gateway_config = verifier.parse_kconfig(GATEWAY_CONFIG_PATH)
+
+        self.assertGreaterEqual(policy.bt_rx_bytes, 1536)
+        self.assertEqual(
+            policy.bt_rx_bytes,
+            gateway_config["CONFIG_BT_RX_STACK_SIZE"],
+        )
         build = verifier.verify_build(
             self._write_build(policy), self.policies, self.frame_limit
         )
@@ -620,7 +628,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertNotIn("BT RX", required)
         self.assertEqual(4288, required["sysworkq"])
         self.assertEqual(8192, required["mesh_route"])
-        self.assertEqual(1088, required["BT RX WQ"])
+        self.assertEqual(policy.bt_rx_bytes, required["BT RX WQ"])
+        self.assertGreaterEqual(required["BT RX WQ"], 1536)
         self.assertEqual(1344, required["BT LW WQ"])
 
         rows = {
@@ -631,9 +640,27 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             }), size)
             for name, size in required.items()
         }
-        rows["BT RX WQ"] = (828, 260, 1088)
+        observed_used = 1064
+        corrected_size = required["BT RX WQ"]
+        corrected_free = corrected_size - observed_used
+        self.assertGreaterEqual(
+            corrected_free,
+            verifier._required_free(corrected_size, service=True),
+        )
+        rows["BT RX WQ"] = (
+            observed_used,
+            corrected_free,
+            corrected_size,
+        )
         self.assertEqual([], verifier._check_sample_rows(rows, policy, build))
-        rows["BT RX WQ"] = (828, 196, 1024)
+
+        old_size = 1088
+        old_free = old_size - observed_used
+        self.assertLess(
+            old_free,
+            verifier._required_free(old_size, service=True),
+        )
+        rows["BT RX WQ"] = (observed_used, old_free, old_size)
         issues = verifier._check_sample_rows(rows, policy, build)
         self.assertTrue(any("BT RX WQ differs" in issue for issue in issues),
                         issues)

@@ -3746,6 +3746,36 @@ void mesh_gateway_host_receipt_ready(void)
     }
 }
 
+static int mesh_gateway_classify_post_receipt_semantic_result(
+    const struct mesh_rx_pending *pending,
+    int preflight_acceptance,
+    int semantic_ret)
+{
+    enum command_id command_id;
+
+    /*
+     * ACCEPT_NEW is produced only after the ordinary command result has been
+     * fully decoded and matched to the then-live command owner.  The GUI may
+     * return its exact receipt after that volatile owner times out or finishes
+     * cleanup.  In that one race the later mutating pass returns -ENOENT: the
+     * raw result is already in host custody, and retrying cannot recreate its
+     * retired semantic owner.  Retire source custody without replaying survey
+     * side effects.  Every other error remains fail-closed and retryable.
+     */
+    if (pending == NULL ||
+        pending->packet.msg_type != MSG_COMMAND_RESULT ||
+        preflight_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_NEW ||
+        semantic_ret != -ENOENT ||
+        gateway_command_extract_id(pending->payload,
+                                   pending->payload_len,
+                                   &command_id) != PROTO_OK ||
+        (command_id != CMD_SURVEY_PREPARE_PAIR &&
+         command_id != CMD_SURVEY_START_PAIR)) {
+        return semantic_ret;
+    }
+    return APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW;
+}
+
 static int mesh_complete_gateway_host_delivery_locked(void)
 {
     struct mesh_rx_pending *pending = &mesh_rx_work_pending;
@@ -3771,6 +3801,15 @@ static int mesh_complete_gateway_host_delivery_locked(void)
             gateway_command_result_validation_release_reserved(
                 validation_token);
             pending->result_validation_token = 0u;
+            ret = mesh_gateway_classify_post_receipt_semantic_result(
+                pending, semantic_ret, ret);
+            if (ret == APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW) {
+                status_debug_printf(
+                    "DBG_GATEWAY_HOST_RESULT_RECOVERED_RAW src=0x%016llx session=%u seq=%u\n",
+                    (unsigned long long)pending->packet.src_id,
+                    pending->packet.session_id,
+                    pending->packet.seq);
+            }
             if (ret < 0) {
                 LOG_WRN("gateway host-delivery semantic acceptance retained: msg=0x%02x src=0x%016llx ret=%d",
                         pending->packet.msg_type,
@@ -4214,7 +4253,17 @@ gateway_semantic_result_ready:
                 } else if (stream_reservation_acquired) {
                     /* Keep the pure preflight result with the raw pending
                      * packet. Semantic mutation, gateway ACK, and collection
-                     * EACK all stay behind the exact GUI receipt. */
+                     * EACK all stay behind the exact GUI receipt. Arm that
+                     * owner before commit makes the record visible: the BLE
+                     * callback and host can otherwise return a valid receipt
+                     * before mesh custody exists to retain it. */
+                    mesh_gateway_host_delivery_semantic_acceptance = semantic_ret;
+                    atomic_clear(&mesh_gateway_host_receipt_received_state);
+                    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
+                    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
+                    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
+                    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
+                    atomic_set(&mesh_gateway_host_delivery_pending_state, 1);
                     ret = gateway_ble_commit_stream_reservation_projection(
                         &pending->packet,
                         pending->payload,
@@ -4224,19 +4273,19 @@ gateway_semantic_result_ready:
                         if (stream_reservation_acquired) {
                             gateway_ble_cancel_stream_reservation();
                         }
+                        atomic_clear(&mesh_gateway_host_delivery_pending_state);
+                        atomic_clear(&mesh_gateway_host_receipt_received_state);
+                        atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
+                        atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
+                        atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
+                        atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
+                        mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
                         LOG_ERR("gateway semantic BLE custody commit failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
                                 pending->packet.msg_type,
                                 (unsigned long long)pending->packet.src_id,
                                 ret);
                         goto mesh_rx_item_cleanup;
                     }
-                    mesh_gateway_host_delivery_semantic_acceptance = semantic_ret;
-                    atomic_clear(&mesh_gateway_host_receipt_received_state);
-                    atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
-                    atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
-                    atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
-                    atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
-                    atomic_set(&mesh_gateway_host_delivery_pending_state, 1);
                 } else if (semantic_ret ==
                                APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
                            !internal_control) {

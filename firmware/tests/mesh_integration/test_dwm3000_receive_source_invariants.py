@@ -353,6 +353,15 @@ deadline_program = send_range_frame[
         "if (absolute_deadline_ms != 0u)"
     ))
 ]
+deadline_tx_lead = re.search(
+    r"#define\s+DWM3000_DEADLINE_TX_LEAD_UUS\s+(\d+)u\b",
+    DRIVER,
+)
+assert deadline_tx_lead is not None
+assert int(deadline_tx_lead.group(1)) >= 5000, (
+    "on-target gateway follow-up TX requires at least 5000 us of DW3000 "
+    "delayed-start headroom"
+)
 assert "DWM3000_DEADLINE_TX_LEAD_UUS" in deadline_program
 assert "DWM3000_UUS_TO_DWT_TIME" in deadline_program, (
     "absolute host deadlines must use a hardware-scheduled DW3000 TX target"

@@ -86,6 +86,7 @@ static struct app_node_comm_durable_attempt_ops
 static size_t node_comm_durable_attempt_owner_count;
 static uint32_t node_comm_next_reservation_token;
 static uint32_t node_comm_next_backend_release_request_token;
+static bool node_comm_terminal_owner_watchdog_reported;
 
 #define NODE_COMM_LIFECYCLE_RECOVERY_POLL_MS 10u
 #define NODE_COMM_LIFECYCLE_RECOVERY_TIMEOUT_MS 1000u
@@ -113,6 +114,10 @@ _Static_assert(APP_NODE_COMM_LARGE_CONTROL_PAYLOAD_MAX_LEN ==
 _Static_assert(NODE_COMM_BACKEND_PUBLICATION_GUARD_MS >
                    ROUTE_GATEWAY_ACK_TIMEOUT_MS,
                "backend publication guard must cover gateway ACK wait");
+_Static_assert(APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS > 0u &&
+                   APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS <
+                       APP_WATCHDOG_PROGRESS_LEASE_MS,
+               "terminal owner grace must fit inside watchdog progress lease");
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
 _Static_assert(APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ==
                    UWB_MESH_MAX_PAYLOAD_LEN,
@@ -784,6 +789,50 @@ static void app_node_comm_reconcile_terminal_backends_locked(void)
     }
 }
 
+static void app_node_comm_guard_caller_terminal_owners_locked(
+    uint64_t now_ms)
+{
+    if (node_comm_terminal_owner_watchdog_reported) {
+        return;
+    }
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+        struct node_comm_terminal_event terminal;
+
+        if (!record->occupied || record->auto_reap_terminal ||
+            record->backend_attempt_outstanding ||
+            node_comm_delivery_backend_active_handle == record->handle ||
+            !app_node_comm_terminal_backend_released(record) ||
+            !node_comm_peek_terminal_event_for(&node_comm_policy,
+                                               record->handle,
+                                               &terminal) ||
+            now_ms < terminal.terminal_at_ms ||
+            now_ms - terminal.terminal_at_ms <
+                APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS) {
+            continue;
+        }
+
+        node_comm_terminal_owner_watchdog_reported = true;
+        status_debug_printf(
+            "DBG_NODE_COMM_TERMINAL_OWNER_STALLED handle=%u profile=%u reason=%u terminal_at=%llu now=%llu\n",
+            record->handle,
+            (unsigned int)record->profile,
+            (unsigned int)terminal.reason,
+            (unsigned long long)terminal.terminal_at_ms,
+            (unsigned long long)now_ms);
+        /*
+         * The facade cannot guess whether the missing owner still has a
+         * durable commit or side effect to publish.  Preserve the record and
+         * stop feeds; reboot recovery restores durable source custody, while
+         * deleting or auto-reaping here could acknowledge work that the
+         * owner never committed.
+         */
+        app_watchdog_stop_feeding();
+        return;
+    }
+}
+
 static size_t app_node_comm_service_policy_locked(uint64_t now_ms)
 {
     size_t terminalized;
@@ -792,6 +841,7 @@ static size_t app_node_comm_service_policy_locked(uint64_t now_ms)
     terminalized = node_comm_service(&node_comm_policy, now_ms);
 
     app_node_comm_reconcile_terminal_backends_locked();
+    app_node_comm_guard_caller_terminal_owners_locked(now_ms);
     return terminalized;
 }
 
@@ -1402,6 +1452,7 @@ int app_node_comm_init(const app_node_comm_callbacks *callbacks)
     node_comm_reliable_uplink_inflight_handle = 0u;
     node_comm_next_reservation_token = 0u;
     node_comm_next_backend_release_request_token = 0u;
+    node_comm_terminal_owner_watchdog_reported = false;
     node_comm_lifecycle_recovery_deadline_ms = 0u;
     k_work_init_delayable(&node_comm_lifecycle_watchdog_work,
                           app_node_comm_lifecycle_watchdog_handler);

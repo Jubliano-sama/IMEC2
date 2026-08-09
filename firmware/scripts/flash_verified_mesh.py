@@ -3,7 +3,8 @@
 
 ``--stage-only`` performs the one permitted target write and leaves a durable
 qualification journal.  A later invocation with ``--hardware-manifest``
-promotes that already-running image without programming it again.
+promotes that already-running image without programming it again.  A failed
+candidate must be explicitly rejected before another image can be staged.
 """
 
 from __future__ import annotations
@@ -341,7 +342,7 @@ def _load_journal(probe_id: str) -> dict[str, object] | None:
     }
     allowed_states = {
         "prepared", "staging", "staged", "awaiting_qualification",
-        "promotion_intent", "committed",
+        "promotion_intent", "committed", "rejected",
     }
     if (not isinstance(data, dict) or set(data) < required
             or data.get("schema") != TRANSACTION_SCHEMA
@@ -622,6 +623,36 @@ def _stage_for_qualification(build: verifier.BuildEvidence, build_dir: Path,
         raise
 
 
+def _reject_staged_candidate(data: dict[str, object], build_dir: Path,
+                             probe_id: str) -> None:
+    if data.get("state") != "awaiting_qualification":
+        raise TransactionError("selected probe has no staged candidate awaiting qualification")
+    if data.get("build_dir") != str(build_dir.resolve()):
+        raise TransactionError("staged candidate build directory differs from the rejection request")
+
+    _assert_artifacts_unchanged(data, build_dir)
+    _probe_is_visible(probe_id)
+    backup = Path(str(data["backup_path"]))
+    readback = backup.parent / "rejection-readback.bin"
+    try:
+        _read_target_flash(probe_id, readback, reset_after=True)
+        if not _code_sectors_match(
+            readback,
+            data["code_sector_sha256"],  # type: ignore[arg-type]
+        ):
+            raise TransactionError(
+                "current target code sectors differ from the staged candidate"
+            )
+    finally:
+        readback.unlink(missing_ok=True)
+
+    data["state"] = "rejected"
+    data["rejection_reason"] = "qualification_failed"
+    _write_journal(data)
+    _checkpoint("rejection_durable")
+    _cleanup_transaction(data)
+
+
 def _journal_matches_candidate(
     data: dict[str, object],
     build: verifier.BuildEvidence,
@@ -728,10 +759,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--hardware-manifest", type=Path)
     parser.add_argument("--probe-id", required=True)
     parser.add_argument("--stage-only", action="store_true")
+    parser.add_argument("--reject-staged-candidate", action="store_true")
     args = parser.parse_args(argv)
-    if args.stage_only and args.hardware_manifest is not None:
-        parser.error("--stage-only cannot be combined with --hardware-manifest")
-    if not args.stage_only and args.hardware_manifest is None:
+    if sum((args.stage_only,
+            args.reject_staged_candidate,
+            args.hardware_manifest is not None)) != 1:
+        parser.error(
+            "select exactly one of --stage-only, --hardware-manifest, or "
+            "--reject-staged-candidate"
+        )
+    if not args.stage_only and not args.reject_staged_candidate and \
+            args.hardware_manifest is None:
         parser.error("promotion requires --hardware-manifest")
     return args
 
@@ -761,6 +799,14 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  {issue}", file=sys.stderr)
                     return 1
                 _stage_for_qualification(build, args.build_dir, args.probe_id)
+                return 0
+
+            if args.reject_staged_candidate:
+                if data is None:
+                    raise TransactionError(
+                        "selected probe has no staged candidate awaiting qualification"
+                    )
+                _reject_staged_candidate(data, args.build_dir, args.probe_id)
                 return 0
 
             if recovery == "committed":

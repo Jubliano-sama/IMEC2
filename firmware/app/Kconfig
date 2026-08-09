@@ -198,6 +198,16 @@ endmenu
 
 menu "IMEC bench diagnostics"
 
+config IMEC_WATCHDOG_BYPASS
+    bool "Bypass watchdog resets during bench diagnostics"
+    depends on WATCHDOG
+    help
+      Do not start a fresh hardware watchdog and ignore application requests
+      to stop feeding. If a watchdog was already started before this image
+      booted, it cannot be disabled in hardware, so feed every inherited
+      reload request unconditionally. Production mesh presets leave this off;
+      it is intended only for supervised bench data collection.
+
 config IMEC_STACK_DIAGNOSTICS
     bool "Emit typed RTT stack workload samples"
     depends on THREAD_MONITOR && THREAD_STACK_INFO && INIT_STACKS && USE_SEGGER_RTT

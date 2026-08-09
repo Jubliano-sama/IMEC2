@@ -138,18 +138,22 @@ static void test_control_handoff_aborts_active_scan_and_blocks_rearm(void)
     bool abort_scan = false;
 
     app_mesh_rx_handoff_reset(&state);
+    assert(!app_mesh_rx_handoff_control_active(&state));
     assert(app_mesh_rx_handoff_try_begin_scan(&state));
     assert(app_mesh_rx_handoff_begin_control(&state, &abort_scan));
     assert(abort_scan);
+    assert(app_mesh_rx_handoff_control_active(&state));
     assert(!app_mesh_rx_handoff_scan_rearm_allowed(&state));
     assert(!app_mesh_rx_handoff_try_begin_scan(&state));
     assert(!app_mesh_rx_handoff_control_ready(&state));
 
     app_mesh_rx_handoff_end_scan(&state);
+    assert(app_mesh_rx_handoff_control_active(&state));
     assert(app_mesh_rx_handoff_control_ready(&state));
     assert(!app_mesh_rx_handoff_try_begin_scan(&state));
 
     app_mesh_rx_handoff_end_control(&state);
+    assert(!app_mesh_rx_handoff_control_active(&state));
     assert(app_mesh_rx_handoff_scan_rearm_allowed(&state));
     assert(app_mesh_rx_handoff_try_begin_scan(&state));
 }

@@ -66,6 +66,8 @@ set(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD OFF CACHE BOOL "Enable continuous syn
 set(IMEC_STACK_DIAGNOSTICS_BUILD OFF CACHE BOOL "Enable exact-preset RTT stack diagnostics")
 set(IMEC_STACK_STRESS_BUILD OFF CACHE BOOL
     "Enable opt-in stack canaries and retained fatal context for an exact production mesh preset")
+set(IMEC_WATCHDOG_BYPASS_BUILD OFF CACHE BOOL
+    "Disable watchdog reset policy for supervised bench captures")
 set(IMEC_DEPLOYABLE_MESH_PRESET OFF)
 set(IMEC_USE_HARDWARE_ANCHOR_ID OFF)
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
@@ -246,6 +248,15 @@ if(IMEC_STACK_STRESS_BUILD)
     endif()
     list(APPEND EXTRA_CONF_FILE
         "${CMAKE_CURRENT_LIST_DIR}/conf/mesh-stack-stress.conf")
+endif()
+
+if(IMEC_WATCHDOG_BYPASS_BUILD)
+    if(NOT IMEC_DEPLOYABLE_MESH_PRESET)
+        message(FATAL_ERROR
+            "IMEC_WATCHDOG_BYPASS_BUILD requires mesh_clicker, mesh_anchor, or mesh_gateway")
+    endif()
+    list(APPEND EXTRA_CONF_FILE
+        "${CMAKE_CURRENT_LIST_DIR}/conf/watchdog-bypass.conf")
 endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})

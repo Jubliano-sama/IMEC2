@@ -31,10 +31,12 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
+    build_gateway_host_receipt,
     build_here_i_am_command,
     build_survey_abort_command,
     decode_gateway_identity,
 )
+from tools.gateway_gui.delivery_dedup import is_host_delivery_packet  # noqa: E402
 from tools.gateway_gui.command_telemetry import (  # noqa: E402
     GatewayCommandEvent,
     decode_gateway_command_event,
@@ -625,6 +627,9 @@ Qualification = SurveyQualification | AssignmentQualification | RouteRefreshQual
 
 async def run(args: argparse.Namespace) -> Qualification | None:
     decoder = GatewayReceiveBuffer()
+    write_lock = asyncio.Lock()
+    receipt_tasks: set[asyncio.Task[None]] = set()
+    receipt_in_flight: set[object] = set()
     command_budget_ms = getattr(args, "command_budget_ms", None)
     received = 0
     decode_errors: list[str] = []
@@ -632,6 +637,82 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     qualification: Qualification | None = None
     qualification_done = asyncio.Event()
     transport_failed = asyncio.Event()
+
+    async def send_gateway_frame(
+        client: BleakClient,
+        characteristic: object,
+        frame: bytes,
+        *,
+        chunk_size: int,
+    ) -> None:
+        """Keep every serial frame contiguous across asynchronous BLE writers."""
+        async with write_lock:
+            for offset in range(0, len(frame), chunk_size):
+                await client.write_gatt_char(
+                    characteristic,
+                    frame[offset : offset + chunk_size],
+                    response=True,
+                )
+
+    def schedule_host_receipt(
+        packet: Packet,
+        *,
+        client: BleakClient,
+        characteristic: object,
+        gateway_id: int,
+        chunk_size: int,
+    ) -> None:
+        """Release firmware custody only after this tool accepted an exact record."""
+        if (
+            packet.msg_type == MSG_GATEWAY_COMMAND_EVENT
+            or getattr(packet, "transport", None) != "gateway-stream-v1"
+            or not is_host_delivery_packet(packet)
+        ):
+            return
+        try:
+            receipt = build_gateway_host_receipt(
+                packet,
+                host_id=args.host_id,
+                gateway_id=gateway_id,
+            )
+        except (TypeError, ValueError) as exc:
+            decode_errors.append(f"host receipt construction failed: {exc}")
+            qualification_done.set()
+            transport_failed.set()
+            return
+        if receipt.identity in receipt_in_flight:
+            return
+        receipt_in_flight.add(receipt.identity)
+
+        async def write_receipt() -> None:
+            try:
+                await send_gateway_frame(
+                    client,
+                    characteristic,
+                    receipt.frame,
+                    chunk_size=chunk_size,
+                )
+                print(
+                    "BLE_HOST_RECEIPT "
+                    f"type=0x{receipt.identity.original_msg_type:02x} "
+                    f"src=0x{receipt.identity.src_id:016x} "
+                    f"session={receipt.identity.session_id} "
+                    f"seq={receipt.identity.seq}",
+                    flush=True,
+                )
+            except Exception as exc:
+                disconnect_errors.append(
+                    "gateway host receipt write failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                qualification_done.set()
+                transport_failed.set()
+            finally:
+                receipt_in_flight.discard(receipt.identity)
+
+        task = asyncio.create_task(write_receipt())
+        receipt_tasks.add(task)
+        task.add_done_callback(receipt_tasks.discard)
 
     def on_notify(_sender: object, data: bytearray) -> None:
         nonlocal received, qualification
@@ -667,6 +748,13 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
                 if qualification is not None and qualification.observe(event):
                     qualification_done.set()
+            schedule_host_receipt(
+                packet,
+                client=client,
+                characteristic=characteristic,
+                gateway_id=gateway_id,
+                chunk_size=chunk_size,
+            )
 
     def on_disconnect(_client: object) -> None:
         disconnect_errors.append("gateway disconnected during active command or monitoring")
@@ -751,13 +839,13 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"session={identity} frame={command.frame.hex()}",
                 flush=True,
             )
-            for offset in range(0, len(command.frame), chunk_size):
-                await client.write_gatt_char(
-                    characteristic,
-                    command.frame[offset : offset + chunk_size],
-                    response=True,
-                )
-                raise_transport_errors(command_name)
+            await send_gateway_frame(
+                client,
+                characteristic,
+                command.frame,
+                chunk_size=chunk_size,
+            )
+            raise_transport_errors(command_name)
 
         if args.command == "monitor":
             print(
@@ -951,6 +1039,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             )
         elif args.command != "qualify-reachability":
             await await_transport_duration(args.duration, args.command)
+        while receipt_tasks:
+            await asyncio.gather(*tuple(receipt_tasks))
         raise_transport_errors("BLE session")
         print(f"BLE_COMPLETE packets={received}", flush=True)
     return qualification

@@ -302,15 +302,15 @@ BUILD_ASSERT(SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u >=
              SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS,
              "survey outbox expiry must cover direct delivery and ACK repair");
 #if IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)
-#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 6144u
+#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 6912u
 #else
 #define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 8192u
 #endif
 /*
  * Hardware measured 4080 bytes in the restored-survey direct-ACK path, while
- * exact compiler graph analysis bounds the synchronous mesh-anchor chain
- * below 4 KiB. Keep survey radio work on the existing anchor UWB queue: 6 KiB
- * retains more than the required 20% margin without reserving dead SRAM.
+ * the current exact compiler graph bounds the synchronous mesh-anchor chain
+ * at 5524 bytes. Keep survey radio work on the existing anchor UWB queue:
+ * 6912 bytes retains the required 20% margin and the 10 KiB static RAM reserve.
  */
 #define ANCHOR_SURVEY_WORKQUEUE_HARDWARE_WATERMARK_BYTES 4080u
 BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=

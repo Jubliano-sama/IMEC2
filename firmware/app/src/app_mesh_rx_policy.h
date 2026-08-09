@@ -52,6 +52,8 @@ bool app_mesh_rx_handoff_try_begin_scan(
 void app_mesh_rx_handoff_end_scan(struct app_mesh_rx_handoff_state *state);
 bool app_mesh_rx_handoff_control_ready(
     const struct app_mesh_rx_handoff_state *state);
+bool app_mesh_rx_handoff_control_active(
+    const struct app_mesh_rx_handoff_state *state);
 void app_mesh_rx_handoff_end_control(struct app_mesh_rx_handoff_state *state);
 bool app_mesh_rx_handoff_scan_rearm_allowed(
     const struct app_mesh_rx_handoff_state *state);

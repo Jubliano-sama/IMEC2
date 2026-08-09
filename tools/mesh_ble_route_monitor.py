@@ -9,12 +9,28 @@ import contextlib
 import dataclasses
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from typing import Callable
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
+
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.gateway_gui.delivery_dedup import is_host_delivery_packet  # noqa: E402
+from tools.gateway_gui.protocol import (  # noqa: E402
+    GATEWAY_IDENTITY_UUID,
+    MSG_GATEWAY_COMMAND_EVENT,
+    PACKET_RX_UUID,
+    build_gateway_host_receipt,
+    decode_gateway_identity,
+    parse_stream_record as parse_gateway_stream_record,
+)
 
 try:
     from bleak.backends.bluezdbus import defs as bluez_defs
@@ -633,10 +649,71 @@ async def run(args: argparse.Namespace) -> int:
     start_unix_ns = time.time_ns()
     done = asyncio.Event()
     rx_buffer = bytearray()
+    receipt_tasks: set[asyncio.Task[None]] = set()
+    receipt_in_flight: set[object] = set()
+    receipt_write_lock = asyncio.Lock()
+    gateway_id = 0
+    packet_rx_characteristic: object | None = None
+    receipt_chunk_size = 20
     if args.jsonl_file:
         jsonl_fd = os.open(args.jsonl_file,
                            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
                            0o644)
+
+    def schedule_host_receipt(record: bytes) -> None:
+        if gateway_client is None or packet_rx_characteristic is None:
+            return
+        try:
+            delivery_packet = parse_gateway_stream_record(record)
+            if (
+                delivery_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT
+                or not is_host_delivery_packet(delivery_packet)
+            ):
+                return
+            receipt = build_gateway_host_receipt(
+                delivery_packet,
+                host_id=args.host_id,
+                gateway_id=gateway_id,
+            )
+        except (TypeError, ValueError) as exc:
+            stats.capture_errors += 1
+            print(f"receipt_error {exc}", file=sys.stderr, flush=True)
+            return
+        if receipt.identity in receipt_in_flight:
+            return
+        receipt_in_flight.add(receipt.identity)
+
+        async def write_receipt() -> None:
+            try:
+                async with receipt_write_lock:
+                    for offset in range(0, len(receipt.frame), receipt_chunk_size):
+                        await gateway_client.write_gatt_char(
+                            packet_rx_characteristic,
+                            receipt.frame[offset:offset + receipt_chunk_size],
+                            response=True,
+                        )
+                if args.verbose:
+                    print(
+                        "host_receipt "
+                        f"msg=0x{receipt.identity.original_msg_type:02x} "
+                        f"src={format_id64(receipt.identity.src_id)} "
+                        f"session={receipt.identity.session_id} "
+                        f"seq={receipt.identity.seq}",
+                        flush=True,
+                    )
+            except Exception as exc:
+                stats.capture_errors += 1
+                print(
+                    f"receipt_error {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            finally:
+                receipt_in_flight.discard(receipt.identity)
+
+        task = asyncio.create_task(write_receipt())
+        receipt_tasks.add(task)
+        task.add_done_callback(receipt_tasks.discard)
 
     def on_packet(_sender: object, data: bytearray) -> None:
         rx_buffer.extend(bytes(data))
@@ -696,12 +773,16 @@ async def run(args: argparse.Namespace) -> int:
                 start_unix_ns + int(observed_s * 1_000_000_000))
             if args.jsonl:
                 print(json.dumps(record, sort_keys=True), flush=True)
+            receipt_allowed = True
             if jsonl_fd is not None:
                 try:
                     append_jsonl_record(jsonl_fd, record, args.jsonl_fsync)
                 except OSError as exc:
                     stats.capture_errors += 1
                     print(f"capture_error {exc}", file=sys.stderr, flush=True)
+                    receipt_allowed = False
+            if receipt_allowed and parser is parse_stream_record:
+                schedule_host_receipt(frame)
             if args.count and stats.synthetic_seen >= args.count:
                 done.set()
 
@@ -717,6 +798,21 @@ async def run(args: argparse.Namespace) -> int:
             timeout=args.connect_timeout + 1.0,
         )
         print(f"attached gateway={args.gateway} address={gateway.address}", flush=True)
+        gateway_id = decode_gateway_identity(
+            bytes(await gateway_client.read_gatt_char(GATEWAY_IDENTITY_UUID))
+        )
+        packet_rx_characteristic = gateway_client.services.get_characteristic(
+            PACKET_RX_UUID
+        )
+        if packet_rx_characteristic is None:
+            raise RuntimeError("gateway packet RX characteristic is unavailable")
+        receipt_chunk_size = max(
+            1,
+            min(
+                int(packet_rx_characteristic.max_write_without_response_size or 20),
+                244,
+            ),
+        )
         await start_notify_bounded(gateway_client, PACKET_TX_UUID, on_packet, args.connect_timeout, "gateway packet")
 
         if args.duration_s is None and args.count is None:
@@ -727,6 +823,8 @@ async def run(args: argparse.Namespace) -> int:
         else:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(done.wait(), timeout=args.duration_s)
+        while receipt_tasks:
+            await asyncio.gather(*tuple(receipt_tasks))
     finally:
         if gateway_client is not None:
             with contextlib.suppress(Exception):
@@ -760,6 +858,8 @@ def main() -> int:
     )
     parser.add_argument("--gateway", default="IMEC Mesh Test Gateway",
                         help="gateway BLE name or address")
+    parser.add_argument("--host-id", type=lambda value: int(value, 0), default=1,
+                        help="non-zero host ID used for exact gateway custody receipts")
     parser.add_argument("--scan-timeout", type=float, default=6.0,
                         help="BLE scan timeout per lookup")
     parser.add_argument("--connect-timeout", type=float, default=8.0,

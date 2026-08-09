@@ -926,6 +926,47 @@ static void test_d_minus_one_duplicate_validation_rearms_ack_settle(void)
         &settle, settle.deadline_ms));
 }
 
+static void test_completed_validation_uses_full_processing_hold_across_wrap(void)
+{
+    struct gateway_command_result_validation_leases leases = {0};
+    const uint32_t armed_at_ms = UINT32_MAX - 20u;
+    const uint32_t initial_expires_at_ms = armed_at_ms + 30u;
+    const uint32_t received_at_ms = initial_expires_at_ms - 1u;
+    const uint32_t interval_deadline_ms = received_at_ms + 12u;
+    const uint32_t completed_expires_at_ms =
+        received_at_ms + GATEWAY_COMMAND_RESULT_VALIDATION_MAX_HOLD_MS;
+    uint32_t token = 0u;
+
+    /* The RX lease is deliberately short and wraps through zero.  Once RF
+     * completion transfers it to semantic processing, that old deadline must
+     * not expire valid custody while a host receipt is still outstanding. */
+    assert(gateway_command_result_validation_arm(
+               &leases,
+               armed_at_ms,
+               initial_expires_at_ms,
+               &token) == PROTO_OK);
+    assert(gateway_command_result_validation_complete(
+        &leases, token, received_at_ms));
+    assert(gateway_command_result_validation_check_interval(
+               &leases,
+               armed_at_ms,
+               interval_deadline_ms,
+               initial_expires_at_ms) ==
+           GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED);
+    assert(gateway_command_result_validation_check_interval(
+               &leases,
+               armed_at_ms,
+               interval_deadline_ms,
+               completed_expires_at_ms - 1u) ==
+           GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED);
+    assert(gateway_command_result_validation_check_interval(
+               &leases,
+               armed_at_ms,
+               interval_deadline_ms,
+               completed_expires_at_ms) ==
+           GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED);
+}
+
 static void test_dense_pair_plan_is_rejected_before_partial_remote_state(void)
 {
     assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS == 12000u);
@@ -972,6 +1013,7 @@ int main(void)
     test_cleanup_deadline_is_frozen_and_retirement_admits_next_pair();
     test_d_minus_one_result_decides_before_failed_delivery_terminal();
     test_d_minus_one_duplicate_validation_rearms_ack_settle();
+    test_completed_validation_uses_full_processing_hold_across_wrap();
     test_dense_pair_plan_is_rejected_before_partial_remote_state();
     puts("survey gateway transaction tests passed");
     return 0;

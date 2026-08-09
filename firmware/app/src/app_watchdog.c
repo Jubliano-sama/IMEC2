@@ -38,6 +38,7 @@ static atomic_t clicker_action_active_generation;
 static atomic_t clicker_action_progress_generation;
 static atomic_t clicker_action_progress_ms;
 static atomic_t feeding_stopped;
+static atomic_t bypass_stop_reported;
 static uint32_t startup_grace_until_ms;
 static bool stale_reported;
 static int8_t zephyr_watchdog_channel = -1;
@@ -45,6 +46,7 @@ static uint8_t inherited_reload_request_mask;
 static struct app_watchdog_health watchdog_health;
 
 static void watchdog_timer_handler(struct k_timer *timer);
+static void watchdog_bypass_feed(void);
 
 static uint32_t lease_age_ms(uint32_t now_ms, atomic_t *lease)
 {
@@ -125,6 +127,10 @@ static void watchdog_timer_handler(struct k_timer *timer)
 
     ARG_UNUSED(timer);
 
+    if (IS_ENABLED(CONFIG_IMEC_WATCHDOG_BYPASS)) {
+        watchdog_bypass_feed();
+        return;
+    }
     if (atomic_get(&feeding_stopped) != 0 ||
         (zephyr_watchdog_channel < 0 &&
          inherited_reload_request_mask == 0u)) {
@@ -201,6 +207,17 @@ static void watchdog_timer_handler(struct k_timer *timer)
     }
 }
 
+static void watchdog_bypass_feed(void)
+{
+    if (inherited_reload_request_mask == 0u ||
+        feed_inherited_watchdog(true) == 0u) {
+        return;
+    }
+    if (watchdog_health.feeds < UINT32_MAX) {
+        watchdog_health.feeds++;
+    }
+}
+
 int app_watchdog_init(void)
 {
     const struct wdt_timeout_cfg timeout = {
@@ -228,6 +245,7 @@ int app_watchdog_init(void)
     atomic_clear(&clicker_action_progress_generation);
     atomic_set(&clicker_action_progress_ms, (atomic_val_t)now_ms);
     atomic_clear(&feeding_stopped);
+    atomic_clear(&bypass_stop_reported);
     stale_reported = false;
     startup_grace_until_ms = now_ms + APP_WATCHDOG_STARTUP_GRACE_MS;
     zephyr_watchdog_channel = -1;
@@ -247,6 +265,37 @@ int app_watchdog_init(void)
                             watchdog_health.reset_cause,
                             ret);
         return ret;
+    }
+    if (IS_ENABLED(CONFIG_IMEC_WATCHDOG_BYPASS)) {
+        inherited_crv = 0u;
+        if (adoption.mode == WATCHDOG_ADOPTION_INHERITED) {
+            inherited_reload_request_mask =
+                (uint8_t)adoption.reload_request_mask;
+            inherited_crv = nrf_wdt_reload_value_get(NRF_WDT0);
+            if (feed_inherited_watchdog(true) !=
+                adoption.reload_request_count) {
+                watchdog_health.init_error = -EIO;
+                inherited_reload_request_mask = 0u;
+                return -EIO;
+            }
+            watchdog_health.feeds = 1u;
+            k_timer_init(&watchdog_timer, watchdog_timer_handler, NULL);
+            k_timer_start(&watchdog_timer,
+                          K_MSEC(APP_WATCHDOG_CHECK_MS),
+                          K_MSEC(APP_WATCHDOG_CHECK_MS));
+        }
+        status_debug_printf(
+            "DBG_WATCHDOG_BOOT mode=bypass running=%u rr=0x%02x count=%u immediate=%u crv=%u reset=0x%08x err=0\n",
+            hardware_running ? 1u : 0u,
+            (unsigned int)inherited_reload_request_mask,
+            (unsigned int)adoption.reload_request_count,
+            adoption.mode == WATCHDOG_ADOPTION_INHERITED ? 1u : 0u,
+            inherited_crv,
+            watchdog_health.reset_cause);
+        LOG_WRN("watchdog reset policy bypassed for supervised bench capture: inherited=%u rr_mask=0x%02x",
+                hardware_running ? 1u : 0u,
+                (unsigned int)inherited_reload_request_mask);
+        return 0;
     }
     if (adoption.mode == WATCHDOG_ADOPTION_INHERITED) {
         inherited_reload_request_mask =
@@ -362,6 +411,14 @@ bool app_watchdog_clicker_action_end(uint32_t generation)
 
 void app_watchdog_stop_feeding(void)
 {
+    if (IS_ENABLED(CONFIG_IMEC_WATCHDOG_BYPASS)) {
+        if (atomic_cas(&bypass_stop_reported, 0, 1)) {
+            status_debug_printf(
+                "DBG_WATCHDOG_BYPASS_STOP_IGNORED uptime=%u\n",
+                k_uptime_get_32());
+        }
+        return;
+    }
     atomic_set(&feeding_stopped, 1);
 }
 

@@ -238,7 +238,9 @@ assert "gateway_survey_transaction.active_started_at_ms" in delivery_service[
 
 worker = function_body(ANCHOR, "gateway_survey_work_handler")
 service = worker.index("gateway_survey_service_active_delivery()")
-resume = worker.index("if (gateway_survey_finish_pending", service)
+resume = worker.index(
+    "if (gateway_survey_active && gateway_survey_finish_pending", service
+)
 terminal_gate = worker.index("request_delivery_terminal", resume)
 resume_status = worker.index(
     "gateway_survey_finish_pending_status", terminal_gate
@@ -264,6 +266,21 @@ cleanup_service = worker.index("gateway_survey_service_cleanup()", resume)
 assert resume_return < cleanup_service, (
     "the exact deferred terminal outcome must replay before normal survey work"
 )
+inactive_gate = worker.index("if (!gateway_survey_active)", resume_return)
+inactive_cleanup = worker.index(
+    "gateway_survey_service_cleanup()", inactive_gate
+)
+inactive_out = worker.index("goto out;", inactive_cleanup)
+drive_label = worker.index("\nout:", inactive_out)
+schedule_drive = worker.index("gateway_survey_schedule_drive()", drive_label)
+assert (
+    resume_return < inactive_gate < inactive_cleanup < inactive_out <
+    drive_label < schedule_drive
+), (
+    "an inactive survey with retained finish/cleanup debt must service cleanup "
+    "and retain its drive owner"
+)
+assert cleanup_service == inactive_cleanup
 
 finish_cleanup = function_body(
     ANCHOR, "gateway_survey_finish_cleanup_if_complete"

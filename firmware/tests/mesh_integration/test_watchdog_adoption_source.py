@@ -26,6 +26,9 @@ SURVEY_RUNTIME = (
 ).read_text()
 SURVEY_HEADER = (ROOT / "include" / "survey.h").read_text()
 WATCHDOG_HEADER = (ROOT / "app" / "src" / "app_watchdog.h").read_text()
+KCONFIG = (ROOT / "app" / "Kconfig").read_text()
+CMAKE = (ROOT / "app" / "CMakeLists.txt").read_text()
+BYPASS_CONF = (ROOT / "app" / "conf" / "watchdog-bypass.conf").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -172,6 +175,30 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             self.require(f"DBG_WATCHDOG_BOOT mode={mode}")
         self.require("immediate=1")
         self.require("rr=0x%02x")
+
+    def test_opt_in_bench_bypass_never_arms_fresh_watchdog(self) -> None:
+        init = function_body(SOURCE, "app_watchdog_init")
+        bypass = init.index("IS_ENABLED(CONFIG_IMEC_WATCHDOG_BYPASS)")
+        bypass_end = braced_statement_end(init, bypass)
+        setup = init.index("wdt_setup(watchdog_device", bypass)
+        bypass_body = init[bypass:bypass_end]
+
+        self.assertIn("WATCHDOG_ADOPTION_INHERITED", bypass_body)
+        self.assertIn("feed_inherited_watchdog(true)", bypass_body)
+        self.assertIn("return 0;", bypass_body)
+        self.assertNotIn("wdt_install_timeout", bypass_body)
+        self.assertIn("DBG_WATCHDOG_BOOT mode=bypass", bypass_body)
+        self.assertLess(bypass_end, setup)
+
+        stop = function_body(SOURCE, "app_watchdog_stop_feeding")
+        self.assertLess(
+            stop.index("IS_ENABLED(CONFIG_IMEC_WATCHDOG_BYPASS)"),
+            stop.index("atomic_set(&feeding_stopped, 1)"),
+        )
+        self.assertIn("DBG_WATCHDOG_BYPASS_STOP_IGNORED", stop)
+        self.assertIn("config IMEC_WATCHDOG_BYPASS", KCONFIG)
+        self.assertIn("CONFIG_IMEC_WATCHDOG_BYPASS=y", BYPASS_CONF)
+        self.assertIn("IMEC_WATCHDOG_BYPASS_BUILD", CMAKE)
 
     def test_reset_cause_is_captured_before_hardware_latches_are_cleared(self) -> None:
         capture = SOURCE.find("hwinfo_get_reset_cause(&watchdog_health.reset_cause)")

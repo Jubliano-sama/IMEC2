@@ -394,7 +394,8 @@ static void mesh_coordinator_decide_now(
                                               relay_tx_active),
         .ch9_ack_send_pending =
             app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table),
-        .gateway_continuous_ch9 = mesh_gateway_route_test_role(),
+        .gateway_continuous_ch9 = mesh_gateway_route_test_role() &&
+                                  !mesh_rx_handoff_control_active(),
     };
     bool state_changed;
     int ret;
@@ -3043,6 +3044,15 @@ static bool mesh_rx_handoff_control_ready(void)
 
     k_spin_unlock(&mesh_rx_handoff_lock, key);
     return ready;
+}
+
+static bool mesh_rx_handoff_control_active(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
+    bool active = app_mesh_rx_handoff_control_active(&mesh_rx_handoff);
+
+    k_spin_unlock(&mesh_rx_handoff_lock, key);
+    return active;
 }
 
 static void mesh_rx_handoff_end_control(void)

@@ -44,6 +44,8 @@ struct app_node_comm_gateway_route_refresh_config {
     void (*note_sent)(const struct mesh_outbound *out,
                       uint32_t now_ms,
                       void *ctx);
+    int (*begin_radio_control)(void *ctx);
+    void (*end_radio_control)(void *ctx);
     void (*stop_role_scan)(void *ctx);
     void (*restart_role_scan)(void *ctx);
     void (*clear_response_priority)(void *ctx);

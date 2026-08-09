@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import importlib.util
 import contextlib
 import io
@@ -32,6 +33,16 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+from tools.gateway_gui.protocol import (  # noqa: E402
+    FLAG_DIAGNOSTIC,
+    FLAG_GATEWAY_ACK_REQUIRED,
+    GATEWAY_IDENTITY_UUID,
+    PACKET_RX_UUID,
+    build_gateway_host_receipt,
+    parse_stream_record as parse_gateway_stream_record,
+)
+
 MODULE_PATH = ROOT / "tools" / "mesh_ble_route_monitor.py"
 SPEC = importlib.util.spec_from_file_location("mesh_ble_route_monitor", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -59,7 +70,12 @@ def synthetic_packet(source_id: int, packet_id: int, *, event_seq: int | None = 
     )
 
 
-def synthetic_stream_record(source_id: int, packet_id: int) -> bytes:
+def synthetic_stream_record(
+    source_id: int,
+    packet_id: int,
+    *,
+    flags: int = 0,
+) -> bytes:
     payload = bytes((0x59, 4)) + packet_id.to_bytes(4, "little")
     record = bytearray(monitor.GATEWAY_STREAM_RECORD_HEADER_LEN + len(payload))
     record[0:2] = monitor.GATEWAY_STREAM_MAGIC.to_bytes(2, "little")
@@ -67,6 +83,7 @@ def synthetic_stream_record(source_id: int, packet_id: int) -> bytes:
     record[3] = monitor.GATEWAY_STREAM_RECORD_HEADER_LEN
     record[4] = monitor.GATEWAY_STREAM_RECORD_PACKET
     record[8] = 0x30
+    record[9] = flags
     record[10:12] = (packet_id & 0xFFFF).to_bytes(2, "little")
     record[12:16] = (packet_id + 100).to_bytes(4, "little")
     record[16:24] = source_id.to_bytes(8, "little")
@@ -178,9 +195,20 @@ class MonitorExitStatusTests(unittest.IsolatedAsyncioTestCase):
         class FakeClient:
             def __init__(self, _target, timeout):
                 self.timeout = timeout
+                self.services = types.SimpleNamespace(
+                    get_characteristic=lambda uuid: (
+                        types.SimpleNamespace(max_write_without_response_size=244)
+                        if uuid == PACKET_RX_UUID else None
+                    )
+                )
 
             async def connect(self, **_kwargs):
                 return True
+
+            async def read_gatt_char(self, uuid: object) -> bytes:
+                if uuid != GATEWAY_IDENTITY_UUID:
+                    raise AssertionError(f"unexpected read characteristic {uuid}")
+                return (0x9000).to_bytes(8, "little")
 
             async def start_notify(self, _uuid, callback):
                 callback(None, bytearray(record))
@@ -199,8 +227,9 @@ class MonitorExitStatusTests(unittest.IsolatedAsyncioTestCase):
             include_all_mesh_data=False,
             jsonl_fsync=False,
             count=1,
-            duration_s=None,
+            duration_s=0.001,
             jsonl=False,
+            host_id=1,
         )
         gateway = monitor.ResolvedDevice(address="00:11:22:33:44:55")
 
@@ -220,6 +249,94 @@ class MonitorExitStatusTests(unittest.IsolatedAsyncioTestCase):
                 status = await monitor.run(args)
 
         self.assertEqual(status, 1)
+
+    async def test_receipts_exact_receiptable_gateway_stream_mesh_data(self):
+        gateway_id = 0x9000
+        host_id = 1
+        record = synthetic_stream_record(
+            0xA1,
+            7,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        )
+        expected = build_gateway_host_receipt(
+            parse_gateway_stream_record(record),
+            host_id=host_id,
+            gateway_id=gateway_id,
+        )
+
+        rx_characteristic = types.SimpleNamespace(
+            max_write_without_response_size=244
+        )
+        writes: list[tuple[object, bytes, bool]] = []
+
+        class FakeClient:
+            def __init__(self, _target, timeout):
+                self.timeout = timeout
+                self.services = types.SimpleNamespace(
+                    get_characteristic=lambda uuid: (
+                        rx_characteristic if uuid == PACKET_RX_UUID else None
+                    )
+                )
+
+            async def connect(self, **_kwargs):
+                return True
+
+            async def read_gatt_char(self, uuid: object) -> bytes:
+                if uuid != GATEWAY_IDENTITY_UUID:
+                    raise AssertionError(f"unexpected read characteristic {uuid}")
+                return gateway_id.to_bytes(8, "little")
+
+            async def start_notify(self, _uuid, callback):
+                callback(None, bytearray(record))
+
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                writes.append((characteristic, bytes(data), response))
+                await asyncio.sleep(0)
+
+            async def disconnect(self):
+                return None
+
+        args = types.SimpleNamespace(
+            list_devices=False,
+            scan_timeout=0.01,
+            gateway="gateway-test",
+            no_service_filter=False,
+            jsonl_file=None,
+            connect_timeout=0.1,
+            verbose=False,
+            include_all_mesh_data=False,
+            jsonl_fsync=False,
+            count=1,
+            duration_s=None,
+            jsonl=False,
+            host_id=host_id,
+        )
+        gateway = monitor.ResolvedDevice(address="00:11:22:33:44:55")
+
+        with mock.patch.object(
+                monitor,
+                "find_device",
+                new=mock.AsyncMock(return_value=gateway)), \
+                mock.patch.object(monitor, "BleakClient", FakeClient), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            status = await monitor.run(args)
+
+        self.assertEqual(status, 0)
+        self.assertTrue(writes, "receiptable gateway-stream mesh data needs a host receipt")
+        self.assertTrue(all(response for _characteristic, _data, response in writes))
+        self.assertTrue(all(
+            characteristic is rx_characteristic or characteristic == PACKET_RX_UUID
+            for characteristic, _data, _response in writes
+        ))
+        self.assertEqual(b"".join(data for _characteristic, data, _response in writes),
+                         expected.frame)
 
 
 if __name__ == "__main__":

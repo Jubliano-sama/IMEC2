@@ -30,6 +30,14 @@
 #endif
 #define APP_NODE_COMM_LARGE_CONTROL_PAYLOAD_MAX_LEN PACKET_EXT_MAX_PAYLOAD_LEN
 #define APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS 120000u
+/*
+ * A caller that requests a delivery handle owns its terminal event.  Losing
+ * that owner's work item must not leave bounded communication capacity pinned
+ * forever.  This grace is intentionally much longer than every normal owner
+ * poll interval, but shorter than the watchdog progress lease so the system
+ * recovers while durable source custody is still authoritative.
+ */
+#define APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS 30000u
 
 struct app_mesh_report_callbacks;
 struct mesh_delivery_health;

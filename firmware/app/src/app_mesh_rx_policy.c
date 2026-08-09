@@ -160,6 +160,12 @@ bool app_mesh_rx_handoff_control_ready(
            !state->scan_radio_active;
 }
 
+bool app_mesh_rx_handoff_control_active(
+    const struct app_mesh_rx_handoff_state *state)
+{
+    return state != NULL && state->control_active;
+}
+
 void app_mesh_rx_handoff_end_control(struct app_mesh_rx_handoff_state *state)
 {
     if (state != NULL) {

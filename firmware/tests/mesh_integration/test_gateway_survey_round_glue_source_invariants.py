@@ -131,6 +131,31 @@ assert_ordered(
     "gateway_survey_schedule_drive()",
 )
 
+# Once the last START result settles, the parallel round has no serial-auto
+# wait bit to keep the worker alive.  Its OBSERVING phase must therefore feed
+# the same bounded observation-poll policy as the legacy single-pair owner.
+drive_state = function_body(SURVEY, "gateway_survey_drive_state")
+observation_mapping = drive_state[
+    drive_state.index(".pair_observation_active =") :
+    drive_state.index(".round_drive_ready =")
+]
+assert "gateway_survey_pair_observation_active" in observation_mapping
+assert "gateway_survey_round.phase" in observation_mapping
+assert "APP_GATEWAY_SURVEY_ROUND_OBSERVING" in observation_mapping
+
+# Observation waiting is a deadline poll, never an immediate self-resubmit.
+drive_schedule = function_body(SURVEY, "gateway_survey_schedule_drive")
+poll_wait_start = drive_schedule.index(
+    "action == SURVEY_GATEWAY_DRIVE_POLL_WAIT"
+)
+poll_wait_end = drive_schedule.index(
+    "action == SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY",
+    poll_wait_start,
+)
+poll_wait_branch = drive_schedule[poll_wait_start:poll_wait_end]
+assert "GATEWAY_SURVEY_TRANSACTION_POLL_MS" in poll_wait_branch
+assert "gateway_survey_work_reschedule(0u)" not in poll_wait_branch
+
 # Failed controls own cleanup only for their lane, and final observation cannot
 # erase cleanup debt before both endpoint outcomes settle.
 failure = function_body(ROUND, "app_gateway_survey_round_note_control_failure")

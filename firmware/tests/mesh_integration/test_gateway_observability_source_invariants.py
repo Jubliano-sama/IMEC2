@@ -15,6 +15,9 @@ MAIN = (ROOT / "app/src/main.c").read_text(encoding="utf-8")
 SURVEY = (ROOT / "app/src/app_gateway_survey_observability.c").read_text(
     encoding="utf-8"
 )
+GATEWAY_COMMAND = (ROOT / "src/gateway_command.c").read_text(
+    encoding="utf-8"
+)
 
 
 def function_body(source: str, name: str) -> str:
@@ -198,6 +201,108 @@ assert handle.index("gateway_ble_accept_host_receipt_frame") < handle.index(
 delivery = (ROOT / "app/src/app_mesh_report_delivery.inc").read_text(
     encoding="utf-8"
 )
+
+# A PREPARE/START result can outlive the volatile survey operation that owned
+# it: preflight may admit the exact result and expose it to the host, then
+# survey cleanup can retire the owner before the exact host receipt arrives.
+# At that point -ENOENT is terminal stale-survey evidence, not a reason to pin
+# the singleton gateway delivery forever.  Keep that recovery deliberately
+# narrower than the generic semantic-error path.
+complete_host_delivery = function_body(
+    delivery, "mesh_complete_gateway_host_delivery_locked"
+)
+semantic_dispatch = complete_host_delivery.index(
+    "ret = mesh_gateway_accept_semantic_delivery(pending)"
+)
+semantic_failure_gate = complete_host_delivery.index(
+    "if (ret < 0)", semantic_dispatch
+)
+classifier_match = re.search(
+    r"ret\s*=\s*(mesh_gateway_[A-Za-z0-9_]*post_receipt[A-Za-z0-9_]*)"
+    r"\s*\(\s*pending\s*,\s*semantic_ret\s*,\s*ret\s*\)\s*;",
+    complete_host_delivery[semantic_dispatch:semantic_failure_gate],
+)
+assert classifier_match is not None, (
+    "post-receipt semantic completion needs an explicit narrow classifier "
+    "before the generic retry gate"
+)
+classifier_name = classifier_match.group(1)
+classifier = function_body(delivery, classifier_name)
+
+for required in (
+    "preflight_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_NEW",
+    "semantic_ret != -ENOENT",
+    "pending->packet.msg_type != MSG_COMMAND_RESULT",
+    "gateway_command_extract_id(pending->payload",
+    "pending->payload_len",
+    "&command_id) != PROTO_OK",
+    "CMD_SURVEY_PREPARE_PAIR",
+    "CMD_SURVEY_START_PAIR",
+    "APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW",
+):
+    assert required in classifier, (
+        "stale post-receipt recovery must require -ENOENT and an exact "
+        f"survey PREPARE/START command-result identity: missing {required}"
+    )
+assert classifier.count("APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW") == 1
+assert classifier.count("return semantic_ret;") == 1, (
+    "non-ENOENT errors and non-survey command results must retain their "
+    "original semantic failure"
+)
+
+# The shared extractor is the parser boundary used above.  Pin its unique,
+# exact-width decode so a duplicate or malformed command-ID TLV cannot enter
+# the stale-survey recovery lane merely because one copy names PREPARE/START.
+extract_command_id = function_body(GATEWAY_COMMAND, "gateway_command_extract_id")
+for required in (
+    "tlv_find_unique(payload, payload_len, TLV_COMMAND_ID",
+    "value_len != sizeof(uint16_t)",
+    "proto_get_u16_le(value)",
+):
+    assert required in extract_command_id, (
+        "post-receipt stale-survey recovery depends on a unique, exact-width "
+        f"command-ID parser: missing {required}"
+    )
+
+classifier_call = complete_host_delivery.index(
+    classifier_match.group(0), semantic_dispatch, semantic_failure_gate
+)
+semantic_commit = complete_host_delivery.index(
+    "semantic_ret = ret", classifier_call
+)
+semantic_accepted = complete_host_delivery.index(
+    "atomic_set(&mesh_gateway_host_delivery_semantic_accepted_state, 1)",
+    semantic_commit,
+)
+assert (
+    semantic_dispatch
+    < classifier_call
+    < semantic_failure_gate
+    < semantic_commit
+    < semantic_accepted
+), "terminal stale-survey recovery must escape the semantic retry loop"
+
+semantic_finalize = complete_host_delivery.index(
+    "gateway_finalize_semantic_delivery", semantic_accepted
+)
+relay_commit = complete_host_delivery.index(
+    "mesh_relay_commit_gateway_delivery", semantic_finalize
+)
+ack_handoff = complete_host_delivery.index(
+    "mesh_handle_result_actions", relay_commit
+)
+ble_retire = complete_host_delivery.index(
+    "gateway_ble_finish_host_delivery", ack_handoff
+)
+assert (
+    "semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW"
+    in complete_host_delivery[semantic_accepted:semantic_finalize]
+)
+assert semantic_finalize < relay_commit < ack_handoff < ble_retire, (
+    "recovered stale survey results must skip semantic mutation but still "
+    "commit relay delivery, hand off the gateway ACK, and release BLE custody"
+)
+
 drain = function_body(delivery, "mesh_drain_rx_queue_locked")
 redrive_gate = drain.index(
     "semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE"
@@ -206,6 +311,60 @@ redrive_condition = drain.rfind("if (semantic_ret < 0", 0, redrive_gate)
 host_ready = drain.index("host_custody_ready = true", redrive_condition)
 stream_reserve = drain.index("gateway_ble_reserve_stream_packet", host_ready)
 assert redrive_condition < host_ready < stream_reserve
+
+# Committing a stream reservation exposes the retained record to the BLE
+# worker and, transitively, to a host receipt callback.  Arm every piece of
+# delivery custody before that boundary so an immediate exact receipt cannot
+# be mistaken for a receipt without a pending mesh owner.
+stream_custody_branch = drain.rfind(
+    "} else if (stream_reservation_acquired)", 0, len(drain)
+)
+stream_commit = drain.index(
+    "gateway_ble_commit_stream_reservation_projection(",
+    stream_custody_branch,
+)
+semantic_arm = drain.index(
+    "mesh_gateway_host_delivery_semantic_acceptance = semantic_ret",
+    stream_custody_branch,
+    stream_commit,
+)
+pending_arm = drain.index(
+    "atomic_set(&mesh_gateway_host_delivery_pending_state, 1)",
+    semantic_arm,
+    stream_commit,
+)
+delivery_phase_states = (
+    "mesh_gateway_host_receipt_received_state",
+    "mesh_gateway_host_delivery_semantic_accepted_state",
+    "mesh_gateway_host_delivery_semantic_finalized_state",
+    "mesh_gateway_host_delivery_relay_committed_state",
+    "mesh_gateway_host_delivery_ack_handoff_state",
+)
+for state in delivery_phase_states:
+    phase_clear = drain.index(
+        f"atomic_clear(&{state})",
+        semantic_arm,
+        pending_arm,
+    )
+    assert semantic_arm < phase_clear < pending_arm < stream_commit
+
+commit_failure = drain.index("if (ret != 1)", stream_commit)
+next_delivery_case = drain.index(
+    "} else if (semantic_ret ==",
+    commit_failure,
+)
+commit_rollback = drain[commit_failure:next_delivery_case]
+for rollback in (
+    "gateway_ble_cancel_stream_reservation()",
+    "atomic_clear(&mesh_gateway_host_delivery_pending_state)",
+    *(f"atomic_clear(&{state})" for state in delivery_phase_states),
+    "mesh_gateway_host_delivery_semantic_acceptance = -EINVAL",
+):
+    assert rollback in commit_rollback, (
+        "a failed BLE stream commit must completely release pre-armed host "
+        f"custody: missing {rollback}"
+    )
+
 no_host = drain[drain.index("if (!stream_reservation_acquired)", redrive_gate) :]
 assert no_host.index("gateway_finalize_semantic_delivery") < no_host.index(
     "mesh_relay_commit_gateway_delivery"

@@ -2025,6 +2025,15 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
 
     ARG_UNUSED(work);
 
+    /*
+     * This work is admitted only after the gateway-priority arbiter observes
+     * the receive boundary.  Release its level-triggered abort owner before
+     * the work submits the node-communication flood; otherwise every radio
+     * attempt sees the stale priority abort and defers before RF starts.
+     */
+    dwm3000_driver_clear_receive_abort(
+        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
+
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
 #define GATEWAY_ASSIGNMENT_PUBLISH_RETURN() do {                             \
         k_mutex_unlock(&gateway_discovery_assignment_mutex);                 \
@@ -2770,7 +2779,7 @@ static void gateway_survey_work_handler(struct k_work *work)
     }
 #if DEVICE_ROLE == ROLE_GATEWAY
     gateway_survey_service_active_delivery();
-    if (gateway_survey_finish_pending &&
+    if (gateway_survey_active && gateway_survey_finish_pending &&
         (gateway_survey_transaction.active.state == NODE_TRANSACTION_EMPTY ||
          gateway_survey_transaction.active.request_delivery_terminal)) {
         enum command_status finish_status =
@@ -4426,6 +4435,8 @@ static void gateway_host_abort_route_work_handler(struct k_work *work)
     struct gateway_host_abort_item item;
 
     ARG_UNUSED(work);
+    dwm3000_driver_clear_receive_abort(
+        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     (void)gateway_host_command_cancel_pending_surveys();
     while (k_msgq_get(&gateway_host_abort_msgq, &item, K_NO_WAIT) == 0) {
         int ret;

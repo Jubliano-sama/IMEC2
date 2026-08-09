@@ -2385,6 +2385,42 @@ static void mesh_route_refresh_note_sent(const struct mesh_outbound *out,
     mesh_relay_note_tx_sent(&mesh_runtime, out, now_ms);
 }
 
+static int mesh_route_refresh_begin_radio_control(void *ctx)
+{
+    bool abort_scan = false;
+    int ret;
+
+    ARG_UNUSED(ctx);
+    if (!mesh_gateway_route_test_role()) {
+        return 0;
+    }
+    if (!mesh_rx_handoff_begin_control(&abort_scan)) {
+        return -EBUSY;
+    }
+    mesh_stop_role_scan();
+    if (abort_scan) {
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    }
+    ret = mesh_rx_handoff_wait_for_control();
+    if (ret < 0) {
+        mesh_rx_handoff_end_control();
+        mesh_restart_role_scan();
+        return ret;
+    }
+    status_debug_printf("DBG_ROUTE_REFRESH_RX_HANDOFF_READY abort=%u\n",
+                        abort_scan ? 1u : 0u);
+    return 0;
+}
+
+static void mesh_route_refresh_end_radio_control(void *ctx)
+{
+    ARG_UNUSED(ctx);
+    if (mesh_gateway_route_test_role()) {
+        mesh_rx_handoff_end_control();
+    }
+}
+
 static void mesh_route_refresh_stop_scan(void *ctx)
 {
     ARG_UNUSED(ctx);
@@ -2493,6 +2529,8 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
             .build = mesh_route_refresh_build,
             .send_wake = mesh_route_refresh_send_wake,
             .note_sent = mesh_route_refresh_note_sent,
+            .begin_radio_control = mesh_route_refresh_begin_radio_control,
+            .end_radio_control = mesh_route_refresh_end_radio_control,
             .stop_role_scan = mesh_route_refresh_stop_scan,
             .restart_role_scan = mesh_route_refresh_restart_scan,
             .clear_response_priority = mesh_route_refresh_clear_response,
