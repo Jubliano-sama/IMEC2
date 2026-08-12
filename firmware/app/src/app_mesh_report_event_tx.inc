@@ -1776,6 +1776,20 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         }
 
         owner = mesh_event_owner_for_peer(previous_hop_id);
+        had_active_timing = mesh_find_active_channel9_timing(
+            previous_hop_id, now_ms, &active_timing);
+        if (owner != NULL && owner->active && !had_active_timing) {
+            /*
+             * Timing is the lifetime authority for an installed event owner.
+             * A failed replacement can clear the timing after owner mutation,
+             * leaving an active owner that lazy timing expiry can no longer
+             * see. Retire that unbacked owner before proposal classification;
+             * its retained session history still rejects delayed old work.
+             * ACCEPT retry preserves a predecessor only while its installed
+             * timing remains the peer's lifetime authority.
+             */
+            mesh_event_owner_abandon_peer(previous_hop_id);
+        }
         installed_reciprocal_window =
             mesh_event_local_proposal_window_matches(owner, now_ms);
         reciprocal_local_proposal_proven =
@@ -1842,9 +1856,6 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             return false;
         }
         mesh_event_timing_set_local_first_slot_tx(&timing, false);
-        had_active_timing = mesh_find_active_channel9_timing(previous_hop_id,
-                                                             now_ms,
-                                                             &active_timing);
         if (had_active_timing) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_EVENT_PROPOSE_REPLACE_ACTIVE now=%u old=%u new=%u old_cnt=%u new_cnt=%u\n",

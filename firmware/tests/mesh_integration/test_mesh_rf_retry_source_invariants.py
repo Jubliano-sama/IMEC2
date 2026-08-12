@@ -1678,6 +1678,12 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         expire = handler.index("mesh_expire_channel9_timings", proposal)
         nonce = handler.index("mesh_event_owner_proposal_boot_nonce", proposal)
         owner_lookup = handler.index("mesh_event_owner_for_peer", nonce)
+        active_timing = handler.index(
+            "had_active_timing = mesh_find_active_channel9_timing", owner_lookup
+        )
+        orphan_retire = handler.index(
+            "mesh_event_owner_abandon_peer(previous_hop_id)", active_timing
+        )
         classify = handler.index(
             "mesh_event_owner_registry_classify_proposal", proposal
         )
@@ -1685,20 +1691,21 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "owner_decision != MESH_EVENT_OWNER_APPLY", classify
         )
         duplicate = handler.index("mesh_event_accept_duplicate", reject)
-        active_lookup = handler.index(
-            "mesh_find_active_channel9_timing", reject
-        )
-        reserve = handler.index("app_mesh_c5_event_accept_reservation", active_lookup)
+        reserve = handler.index("app_mesh_c5_event_accept_reservation", duplicate)
         prepare_accept = handler.index("mesh_prepare_event_control_record", reserve)
 
         self.assertLess(expire, nonce)
         self.assertLess(nonce, owner_lookup)
-        self.assertLess(owner_lookup, classify)
+        self.assertLess(owner_lookup, active_timing)
+        self.assertLess(active_timing, orphan_retire)
+        self.assertLess(orphan_retire, classify)
+        orphan_guard = handler[active_timing:orphan_retire]
+        self.assertIn("owner != NULL && owner->active", orphan_guard)
+        self.assertIn("!had_active_timing", orphan_guard)
         self.assertLess(classify, reject)
         self.assertLess(reject, duplicate)
-        self.assertIn("return true", handler[reject:active_lookup])
-        self.assertLess(reject, active_lookup)
-        self.assertLess(active_lookup, reserve)
+        self.assertIn("return true", handler[reject:reserve])
+        self.assertLess(duplicate, reserve)
         self.assertLess(reserve, prepare_accept)
 
     def test_timing_expiry_retires_owner_before_erasing_timing(self):

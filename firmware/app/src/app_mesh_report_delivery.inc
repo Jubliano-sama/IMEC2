@@ -4783,16 +4783,6 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 (unsigned long long)pending->previous_hop_id,
                 result->actions,
                 result->status);
-#if DEVICE_ROLE == ROLE_GATEWAY
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-            pending->packet.msg_type == MSG_CLICK_REPORT) {
-            status_debug_printf("DBG_GW_CLK_H s=%llx q=%u a=%x t=%d\n",
-                                (unsigned long long)pending->packet.src_id,
-                                pending->packet.seq,
-                                result->actions,
-                                result->status);
-        }
-#endif
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             (pending->packet.msg_type == MSG_ROUTE_REQ ||
              pending->packet.msg_type == MSG_GATEWAY_ROUTE_ADV ||
