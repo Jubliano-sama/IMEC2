@@ -3,6 +3,7 @@
 #include "app_gateway_command_observability.h"
 #include "app_mesh_flood.h"
 #include "app_mesh_rx_policy.h"
+#include "discovery_assignment.h"
 #include "gateway_command.h"
 #include "mesh_relay.h"
 #include "mesh_sim.h"
@@ -50,9 +51,10 @@ static struct operation_policy_set complete_route_operation_policy(void)
     policy.discovery_present = true;
     policy.pair_present = true;
     policy.assignment.expected_anchor_count = 50u;
-    policy.assignment.operation_budget_ms = 300000u;
+    policy.assignment.operation_budget_ms =
+        DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(750u);
     policy.assignment.response_spread_ms = 750u;
-    policy.discovery.start_delay_ms = 9000u;
+    policy.discovery.start_delay_ms = 60000u;
     policy.discovery.slot_ms = 75u;
     policy.discovery.slot_count = 10u;
     policy.discovery.round_count = 2u;
@@ -1477,8 +1479,7 @@ static void test_deterministic_roles_forward_initiator_start_through_responder(v
         .valid = true,
     };
     struct survey_gateway_context survey_context;
-    struct survey_gateway_auto_context auto_context;
-    struct survey_gateway_auto_action action = {0};
+    struct survey_pair planned_pair = {0};
     struct gateway_command_pending pending = {0};
     struct mesh_outbound control = {0};
     struct flood_ctx relay_flood = {
@@ -1505,8 +1506,6 @@ static void test_deterministic_roles_forward_initiator_start_through_responder(v
     struct app_mesh_flood_ops child_ops = relay_ops;
     struct app_mesh_flood_result flood_result;
     struct survey_pair forwarded_pair = {0};
-    bool launched = false;
-    bool skipped = false;
     uint8_t gateway_index;
     uint8_t relay_index;
     uint8_t deep_index;
@@ -1534,68 +1533,19 @@ static void test_deterministic_roles_forward_initiator_start_through_responder(v
               &relay_hint) == PROTO_OK);
     CHECK(survey_gateway_plan_pairs(&survey_context) == PROTO_OK);
     CHECK(survey_context.pair_count == 1u);
-    {
-        struct survey_pair planned;
-
-        CHECK(survey_gateway_pair_at(
-                  &survey_context, 0u, &planned) == PROTO_OK);
-        CHECK(planned.initiator_id == deep_id);
-        CHECK(planned.responder_id == relay_id);
-    }
-    CHECK(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
-
-    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
-                                           &action) == PROTO_OK);
-    CHECK(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
-    CHECK(action.target_id == deep_id);
-    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    CHECK(survey_gateway_auto_note_result(
-              &auto_context, action.command_id, action.target_id,
-              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
-          PROTO_OK);
-    CHECK(!launched && !skipped);
-
-    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
-                                           &action) == PROTO_OK);
-    CHECK(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER);
-    CHECK(action.target_id == relay_id);
-    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    CHECK(survey_gateway_auto_note_result(
-              &auto_context, action.command_id, action.target_id,
-              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
-          PROTO_OK);
-    CHECK(!launched && !skipped);
-
-    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
-                                           &action) == PROTO_OK);
-    CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_RESPONDER);
-    CHECK(action.target_id == relay_id);
-    CHECK(action.pair.initiator_id == deep_id);
-    CHECK(action.pair.responder_id == relay_id);
-    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    CHECK(survey_gateway_auto_note_result(
-              &auto_context, action.command_id, action.target_id,
-              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
-          PROTO_OK);
-    CHECK(!launched && !skipped);
-
-    CHECK(survey_gateway_auto_next_action(&auto_context, &survey_context,
-                                           &action) == PROTO_OK);
-    CHECK(action.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR);
-    CHECK(action.target_id == deep_id);
-    CHECK(action.pair.initiator_id == deep_id);
-    CHECK(action.pair.responder_id == relay_id);
-    CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-
+    CHECK(survey_gateway_pair_at(
+              &survey_context, 0u, &planned_pair) == PROTO_OK);
+    CHECK(planned_pair.initiator_id == deep_id);
+    CHECK(planned_pair.responder_id == relay_id);
     CHECK(mesh_append_command_id(control.payload, sizeof(control.payload),
                                   &payload_len,
                                   CMD_SURVEY_START_PAIR) == PROTO_OK);
     CHECK(survey_append_pair_tlvs(control.payload, sizeof(control.payload),
-                                  &payload_len, &action.pair) == PROTO_OK);
+                                  &payload_len, &planned_pair) == PROTO_OK);
     control.packet.msg_type = MSG_COMMAND;
     control.packet.src_id = GATEWAY_ID;
-    control.packet.dst_id = action.target_id;
-    control.packet.session_id = action.pair.survey_id;
+    control.packet.dst_id = planned_pair.initiator_id;
+    control.packet.session_id = planned_pair.survey_id;
     control.packet.seq = 74u;
     control.packet.ttl = MESH_DEFAULT_TTL;
     control.packet.payload_len = (uint16_t)payload_len;
@@ -1630,11 +1580,6 @@ static void test_deterministic_roles_forward_initiator_start_through_responder(v
     CHECK(child_flood.command_results == 1u);
     CHECK(!pending.active);
 
-    CHECK(survey_gateway_auto_note_result(
-              &auto_context, action.command_id, action.target_id,
-              action.pair.survey_id, COMMAND_OK, &launched, &skipped) ==
-          PROTO_OK);
-    CHECK(launched && !skipped);
     CHECK(relay_flood.forwards == 1u && child_flood.deliveries == 1u);
 }
 

@@ -11,6 +11,7 @@ import tools.gateway_gui.app as gateway_app
 from tools.gateway_gui.app import DEFAULT_COMMAND_BUDGET_TEXT, GatewayGui
 from tools.gateway_gui.cir_reassembly import CirReassembler
 from tools.gateway_gui.command_orchestration import (
+    GATEWAY_COMMAND_COMPLETION_GUARD_S,
     GatewayCommandDispatch,
     GatewayCommandOrchestrator,
     GatewayCommandPlan,
@@ -36,12 +37,18 @@ from tools.gateway_gui.protocol import (
     TLV_COMMAND_STATUS,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
     TLV_DISCOVERY_ASSIGNMENT_PHASE,
+    TLV_EXPECTED_NODE_COUNT,
     TLV_OPERATION_POLICY,
     TLV_REASON,
     append_tlv,
     encode_cobs_packet,
     parse_cobs_packet,
+    parse_stream_record,
     parse_tlvs,
+)
+from tools.gateway_gui.tests.test_protocol import (
+    gateway_assignment_event_payload,
+    stream_record,
 )
 
 
@@ -114,14 +121,18 @@ class AppModelTests(unittest.TestCase):
         gui: GatewayGui, *, expected_anchors: str = ""
     ) -> None:
         gui.assignment_expected_anchors_text = FakeVariable(expected_anchors)  # type: ignore[assignment]
-        gui.assignment_budget_text = FakeVariable("235209")  # type: ignore[assignment]
+        gui.assignment_budget_text = FakeVariable(
+            str(gateway_app.ASSIGNMENT_DEFAULT_BUDGET_MS)
+        )  # type: ignore[assignment]
         gui.assignment_response_spread_text = FakeVariable("1000")  # type: ignore[assignment]
-        gui.discovery_start_delay_text = FakeVariable("6000")  # type: ignore[assignment]
+        gui.discovery_start_delay_text = FakeVariable("60000")  # type: ignore[assignment]
         gui.discovery_slot_ms_text = FakeVariable("40")  # type: ignore[assignment]
         gui.discovery_slots_text = FakeVariable("6")  # type: ignore[assignment]
         gui.discovery_round_count_text = FakeVariable("4")  # type: ignore[assignment]
         gui.duration_text = FakeVariable("250")  # type: ignore[assignment]
-        gui.discovery_budget_text = FakeVariable("600000")  # type: ignore[assignment]
+        gui.discovery_budget_text = FakeVariable(
+            str(gateway_app.DISCOVERY_DEFAULT_BUDGET_MS)
+        )  # type: ignore[assignment]
         gui.pair_max_reruns_text = FakeVariable("2")  # type: ignore[assignment]
         gui.pair_max_parallel_text = FakeVariable("auto (25)")  # type: ignore[assignment]
 
@@ -422,6 +433,66 @@ class AppModelTests(unittest.TestCase):
             for call in gui._append_log.call_args_list
         ))
 
+    def test_command_event_semantic_replay_receipts_without_reapplying_gui_state(
+        self,
+    ) -> None:
+        gateway_id = 0x9999AAAABBBBCCCC
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.gateway_id = gateway_id
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.packet_counter = 0
+        gui.packet_by_iid = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.cir_reassembler = Mock()
+        gui.cir_reassembler.ingest.return_value = None
+        gui.packet_tree = Mock()
+        gui.packet_tree.get_children.return_value = ()
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_observe_diagnostic_packet"] = Mock()
+        gui.__dict__["_packet_summary"] = Mock(return_value="command event")
+        gui.__dict__["_diagnostic_packet_tags"] = Mock(return_value=())
+        gui.__dict__["_register_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_forget_diagnostic_packet_row"] = Mock()
+        gui.__dict__["_observe_gateway_id"] = Mock()
+        gui.__dict__["_refresh_selected_cir"] = Mock()
+
+        def command_event(event_sequence: int, *, attempt: int, replay: bool) -> Packet:
+            payload = bytearray(
+                gateway_assignment_event_payload(event_sequence=event_sequence)
+            )
+            payload[4] = 0x04 if replay else 0
+            payload[5] = attempt
+            return parse_stream_record(
+                stream_record(
+                    bytes(payload),
+                    msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                    packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                    packet_src_id=gateway_id,
+                    packet_dst_id=gateway_id,
+                    packet_session_id=event_sequence,
+                    packet_seq=event_sequence & 0xFFFF,
+                )
+            )
+
+        canonical = command_event(0x10203040, attempt=0, replay=False)
+        replay = command_event(0x50607080, attempt=0, replay=True)
+        with patch(
+            "tools.gateway_gui.app.build_gateway_host_receipt",
+            return_value=SimpleNamespace(frame=b"command-event-receipt"),
+        ) as builder:
+            gui._add_packet(canonical)
+            gui._add_packet(replay)
+
+        gui._observe_diagnostic_packet.assert_called_once_with(
+            canonical, received_at=None
+        )
+        self.assertEqual(gui.packet_tree.insert.call_count, 1)
+        self.assertEqual(builder.call_count, 2)
+        self.assertEqual(gui.transport.send_frame.call_count, 2)
+
     def test_unknown_gatt_identity_uses_stream_destination_for_receipt_scope(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.gateway_id = None
@@ -690,7 +761,7 @@ class AppModelTests(unittest.TestCase):
         gui.survey_id_text = FakeVariable("100")  # type: ignore[assignment]
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
-        self.set_default_policy_variables(gui)
+        self.set_default_policy_variables(gui, expected_anchors="2")
         gui.sample_count_text = FakeVariable("5")  # type: ignore[assignment]
         gui.status_text = FakeVariable()  # type: ignore[assignment]
         gui.transport = Mock()
@@ -742,7 +813,11 @@ class AppModelTests(unittest.TestCase):
             value.raw for value in parse_cobs_packet(target.frame).tlvs
             if value.type_id == TLV_OPERATION_POLICY
         )
-        self.assertEqual(target_policy, preflight_policy)
+        self.assertEqual(target_policy, preflight_policy[1:])
+        self.assertEqual(
+            parse_cobs_packet(target.frame).value(TLV_EXPECTED_NODE_COUNT),
+            2,
+        )
         gui.geometry_model.begin_survey.assert_called_once_with(
             101,
             host_session_id=target.session_id,
@@ -781,17 +856,18 @@ class AppModelTests(unittest.TestCase):
             value.raw for value in parse_cobs_packet(plan.preflight.frame).tlvs
             if value.type_id == TLV_OPERATION_POLICY
         )
-        self.assertEqual(len(target_policy), 3)
-        self.assertEqual(target_policy, preflight_policy)
+        self.assertEqual(len(target_policy), 1)
+        self.assertEqual(target_policy, preflight_policy[:1])
         self.assertEqual(
             plan.target.timeout_s,
-            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0 + 2.0,
+            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0
+            + GATEWAY_COMMAND_COMPLETION_GUARD_S,
         )
         self.assertEqual(
             plan.target.status_text,
             "Enumerating 5 expected anchors and assigning discovery slots...",
         )
-        self.assertEqual(plan.preflight.timeout_s, 122.0)
+        self.assertEqual(plan.preflight.timeout_s, 125.0)
 
     def test_assignment_unknown_roster_explains_full_horizon(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
@@ -949,16 +1025,18 @@ class AppModelTests(unittest.TestCase):
         self.assertIsNone(gui._command_budget_ms())
         self.assertEqual(
             gui._command_timeout_s(None),
-            GATEWAY_COMMAND_BUDGET_MAX_MS / 1000.0 + 2.0,
+            GATEWAY_COMMAND_BUDGET_MAX_MS / 1000.0
+            + GATEWAY_COMMAND_COMPLETION_GUARD_S,
         )
         self.assertEqual(
             gui._command_timeout_s(
                 None,
                 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
             ),
-            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0 + 2.0,
+            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS / 1000.0
+            + GATEWAY_COMMAND_COMPLETION_GUARD_S,
         )
-        self.assertEqual(gui._command_timeout_s(20000), 22.0)
+        self.assertEqual(gui._command_timeout_s(20000), 25.0)
 
     def test_manual_survey_id_mode_honors_exact_entry(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)

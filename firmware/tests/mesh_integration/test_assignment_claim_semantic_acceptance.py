@@ -16,6 +16,9 @@ RELAY = (ROOT / "src/mesh_relay.c").read_text(encoding="utf-8")
 DISCOVERY_ASSIGNMENT = (
     ROOT / "src/discovery_assignment.c"
 ).read_text(encoding="utf-8")
+DISCOVERY_ASSIGNMENT_HEADER = (
+    ROOT / "include/discovery_assignment.h"
+).read_text(encoding="utf-8")
 
 
 def function_body(source: str, name: str) -> str:
@@ -49,6 +52,61 @@ def has_owned_return(fragment: str, value: str) -> bool:
 
 
 class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
+    def test_table_ack_window_owns_the_shared_fast_retry_contract(self):
+        self.assertRegex(
+            DISCOVERY_ASSIGNMENT_HEADER,
+            r"#define\s+DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES\s+3u\b",
+        )
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS",
+            DISCOVERY_ASSIGNMENT_HEADER,
+        )
+        self.assertIn(
+            "discovery_assignment_table_collection_window_ms",
+            DISCOVERY_ASSIGNMENT_HEADER,
+        )
+        self.assertNotRegex(
+            ANCHOR,
+            r"#define\s+ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES\b",
+            "anchor and gateway cannot maintain independent retry horizons",
+        )
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES",
+            ANCHOR,
+        )
+
+        window = function_body(
+            ANCHOR, "gateway_discovery_assignment_window_ms_locked"
+        )
+        stage = window.index("GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS")
+        table_window = window.index(
+            "discovery_assignment_table_collection_window_ms(", stage
+        )
+        claim_return = window.index(
+            "gateway_command_budget_weighted_window_ms(", table_window
+        )
+        table_return = window.index(
+            "gateway_command_budget_window_ms(", table_window
+        )
+        self.assertLess(stage, table_window)
+        self.assertLess(table_window, claim_return)
+        self.assertLess(table_window, table_return)
+
+        required_budget = re.search(
+            r"#define\s+DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS"
+            r"\(response_spread_ms\)\s*\\(?P<body>.*?)"
+            r"#define\s+DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS",
+            DISCOVERY_ASSIGNMENT_HEADER,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(required_budget)
+        for required in (
+            "DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES",
+            "DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS",
+        ):
+            with self.subTest(required_budget_term=required):
+                self.assertIn(required, required_budget.group("body"))
+
     def test_claim_handler_exposes_owned_tristate_contract(self):
         self.assertRegex(
             ANCHOR_HEADER,
@@ -180,19 +238,26 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
 
     def test_valid_and_duplicate_claims_and_table_acks_are_distinguished(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
-        ack_start = claim.index(
-            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)"
-        )
-        duplicate_start = claim.index("if (anchor_index != SIZE_MAX)", ack_start)
         capacity_start = claim.index(
             "gateway_discovery_assignment_state.claim_count >=",
-            ack_start,
         )
+        lookup = claim.index("for (size_t i = 0u")
+        validation_start = claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)", lookup
+        )
+        reserve = claim.index(
+            "mesh_relay_reserve_gateway_ack_candidate(", capacity_start
+        )
+        ack_start = claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)", reserve
+        )
+        duplicate_start = claim.index("if (anchor_index != SIZE_MAX)", ack_start)
         insertion_start = claim.index(
             "gateway_discovery_assignment_state.anchor_ids[",
             duplicate_start,
         )
         ack = claim[ack_start:duplicate_start]
+        validation = claim[validation_start:capacity_start]
         duplicate = claim[duplicate_start:insertion_start]
         capacity_and_insert = claim[capacity_start:]
 
@@ -201,13 +266,23 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "table_command_seq",
             "table_commitment",
             "anchor_index == SIZE_MAX",
+        ):
+            with self.subTest(ack_validation_required=required):
+                self.assertIn(required, validation)
+        for required in (
             "ack_mask |=",
+            "APP_GATEWAY_SEMANTIC_ACCEPT_NEW",
             "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE",
-            "GATEWAY_ASSIGNMENT_RETURN(-EAGAIN)",
         ):
             with self.subTest(ack_required=required):
                 self.assertIn(required, ack)
         self.assertIn("APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE", ack)
+        first_ack = ack.index("ack_mask |=")
+        new_accept = ack.index(
+            "APP_GATEWAY_SEMANTIC_ACCEPT_NEW", first_ack
+        )
+        self.assertLess(first_ack, new_accept)
+        self.assertNotIn("GATEWAY_ASSIGNMENT_RETURN(-EAGAIN)", ack)
         self.assertIn(
             "discovery_assignment_ack_quorum_settle_should_arm(",
             ack,
@@ -447,10 +522,46 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertLess(reserve, hop_mutation)
         self.assertLess(reserve, ack_mutation)
         self.assertLess(reserve, roster_mutation)
+        reserve_guard_start = claim.rfind("if (", capacity_gate, reserve)
+        reserve_guard = claim[reserve_guard_start:reserve]
+        self.assertNotIn("anchor_index == SIZE_MAX", reserve_guard)
+        self.assertNotIn("prior_anchor_count", reserve_guard)
         self.assertIn(
             "GATEWAY_ASSIGNMENT_RETURN(mesh_errno_from_proto(ret))",
             claim[reserve:hop_mutation],
         )
+
+    def test_active_table_ack_commit_is_terminal_before_full_quorum(self):
+        claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
+        capacity = claim.index(
+            "gateway_discovery_assignment_state.claim_count >="
+        )
+        reserve = claim.index(
+            "mesh_relay_reserve_gateway_ack_candidate(", capacity
+        )
+        ack_start = claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)", reserve
+        )
+        ack_end = claim.index("if (anchor_index != SIZE_MAX)", ack_start)
+        ack = claim[ack_start:ack_end]
+        mutation = ack.index("ack_mask |=")
+        duplicate = ack.index("ack_mask &")
+        new_accept = ack.index("APP_GATEWAY_SEMANTIC_ACCEPT_NEW", mutation)
+
+        self.assertLess(reserve, ack_start)
+        self.assertLess(duplicate, mutation)
+        self.assertLess(mutation, new_accept)
+        self.assertIn("APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE", ack)
+        self.assertNotIn("missing_ack_count", ack[new_accept:])
+
+        drain = function_body(REPORT, "mesh_drain_rx_queue_locked")
+        semantic = drain.index("mesh_gateway_accept_semantic_delivery")
+        rejected = drain.index("if (semantic_ret < 0)", semantic)
+        commit = drain.index("mesh_relay_commit_gateway_delivery", rejected)
+        actions = drain.index("mesh_handle_result_actions", commit)
+        self.assertLess(semantic, rejected)
+        self.assertLess(rejected, commit)
+        self.assertLess(commit, actions)
 
     def test_transport_preflight_cannot_bind_an_assignment_candidate(self):
         preflight = function_body(RELAY, "gateway_ack_history_can_accept")
@@ -469,33 +580,67 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
 
     def test_new_enumeration_reconciles_only_after_prior_owners_are_terminal(self):
         start = function_body(ANCHOR, "gateway_start_discovery_assignment")
+        publication = start.index(
+            "gateway_assignment_publication_pending()"
+        )
+        diagnostics = start.index(
+            "app_gateway_assignment_publisher_get_diagnostics(", publication
+        )
         inactive = start.index(
-            "gateway_discovery_assignment_state.active"
+            "gateway_discovery_assignment_state.active", diagnostics
         )
         publisher = start.index("publisher_diag.active", inactive)
-        publication = start.index(
-            "gateway_assignment_publication_pending()", publisher
+        operation_claim = start.index(
+            "gateway_operation_owner_claim(", publisher
         )
         roster = start.index(
             "gateway_get_registered_membership_roster_with_slots(",
-            publication,
+            operation_claim,
         )
         reconcile = start.index(
             "mesh_relay_reconcile_gateway_ack_membership(", roster
         )
-        reserve_epoch = start.index(
-            "gateway_discovery_assignment_reserve_epoch(", reconcile
+        claim_identity = start.index(
+            "claim_command_seq = gateway_next_broadcast_command_seq()",
+            reconcile,
+        )
+        zero_guard = start.index(
+            "if (claim_command_seq == 0u)", claim_identity
+        )
+        assignment_epoch = start.index(
+            "reserved_epoch = claim_command_seq", zero_guard
+        )
+        policy_commit = start.index(
+            "app_operation_policy_commit_prepared(&policy_candidate)",
+            assignment_epoch,
+        )
+        epoch_publish = start.index(
+            "gateway_discovery_assignment_state.epoch = reserved_epoch",
+            policy_commit,
+        )
+        claim_publish = start.index(
+            "gateway_discovery_assignment_state.claim_command_seq =",
+            epoch_publish,
         )
         activate = start.index(
-            "gateway_discovery_assignment_state.active = true", reserve_epoch
+            "gateway_discovery_assignment_state.active = true",
+            claim_publish,
         )
 
+        self.assertLess(publication, diagnostics)
+        self.assertLess(diagnostics, inactive)
         self.assertLess(inactive, publisher)
-        self.assertLess(publisher, publication)
-        self.assertLess(publication, roster)
+        self.assertLess(publisher, operation_claim)
+        self.assertLess(operation_claim, roster)
         self.assertLess(roster, reconcile)
-        self.assertLess(reconcile, reserve_epoch)
-        self.assertLess(reserve_epoch, activate)
+        self.assertLess(reconcile, claim_identity)
+        self.assertLess(claim_identity, zero_guard)
+        self.assertLess(zero_guard, assignment_epoch)
+        self.assertLess(claim_identity, assignment_epoch)
+        self.assertLess(assignment_epoch, policy_commit)
+        self.assertLess(policy_commit, epoch_publish)
+        self.assertLess(epoch_publish, claim_publish)
+        self.assertLess(claim_publish, activate)
 
     def test_active_enumeration_isolates_only_nonassignment_sources(self):
         admission = function_body(
@@ -624,6 +769,46 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             service.count("claim_collection_deadline_ms ="),
             1,
             "claim collection horizon must be frozen once per delivered phase",
+        )
+
+    def test_expected_claim_settle_preempts_the_long_response_window(self):
+        finalize = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_finalize_work_handler",
+        )
+        round_open = finalize.index(
+            "if (gateway_discovery_assignment_state.round_open)"
+        )
+        quorum = finalize.index(
+            "gateway_discovery_assignment_expected_claims_complete_locked()",
+            round_open,
+        )
+        remaining = finalize.index(
+            "gateway_discovery_assignment_claim_ack_settle_remaining_locked(",
+            quorum,
+        )
+        settle_schedule = finalize.index('"expected-claim-settle"', remaining)
+        validation_boundary = finalize.index(
+            "gateway_discovery_assignment_boundary_ready_locked(",
+            settle_schedule,
+        )
+        response_window = finalize.index(
+            ".response_window_deadline_valid", validation_boundary
+        )
+
+        self.assertLess(round_open, quorum)
+        self.assertLess(quorum, remaining)
+        self.assertLess(remaining, settle_schedule)
+        self.assertLess(settle_schedule, validation_boundary)
+        self.assertLess(validation_boundary, response_window)
+        self.assertIn(
+            ".claim_ack_settle_deadline_ms",
+            finalize[validation_boundary:response_window],
+        )
+        self.assertIn(
+            "else if (gateway_discovery_assignment_state",
+            finalize[settle_schedule:response_window],
+            "the generic response window can still mask completed quorum",
         )
 
     def test_only_owned_acceptance_reaches_the_gateway_ack_gate(self):

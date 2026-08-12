@@ -305,10 +305,10 @@ def event(stage: int, sequence: int, *, slot: int = 255, terminal: bool = False,
     return decode_gateway_command_event(bytes(raw), valid_statuses=set(COMMAND_STATUS_NAMES))
 
 
-def operation_policy_suffix(profile: OperationPolicyProfile) -> str:
+def operation_policy_suffix(values: tuple[bytes, ...]) -> str:
     return "".join(
         bytes((TLV_OPERATION_POLICY, len(value))).hex() + value.hex()
-        for value in profile.encoded_values()
+        for value in values
     )
 
 
@@ -329,7 +329,15 @@ def main() -> None:
     profile = OperationPolicyProfile(
         assignment=AssignmentOperationPolicy(expected_anchor_count=5)
     )
-    policy_suffix = operation_policy_suffix(profile)
+    assignment_budget_hex = profile.assignment.operation_budget_ms.to_bytes(
+        4, "little"
+    ).hex()
+    assert profile.assignment.operation_budget_ms == 751_204
+    assert assignment_budget_hex == "64760b00"
+    policy_values = profile.encoded_values()
+    full_policy_suffix = operation_policy_suffix(policy_values)
+    assignment_policy_suffix = operation_policy_suffix(policy_values[:1])
+    survey_policy_suffix = operation_policy_suffix(policy_values[1:])
     policy_enumeration = build_assign_discovery_slots_command(
         host_id=HOST,
         gateway_id=GATEWAY,
@@ -340,7 +348,8 @@ def main() -> None:
         operation_policy=profile,
     )
     expected_enumeration_payload = (
-        "1002040178020500ab04c9960300" + policy_suffix
+        "1002040178020500ab04" + assignment_budget_hex
+        + assignment_policy_suffix
     )
     policy_enumeration_parsed = firmware_parse(oracle, policy_enumeration.frame)
     assert "command_id=260" in policy_enumeration_parsed
@@ -356,7 +365,7 @@ def main() -> None:
     )
     policy_route_parsed = firmware_parse(oracle, policy_route.frame)
     assert "command_id=12" in policy_route_parsed
-    assert f"payload=10020c00{policy_suffix}" in policy_route_parsed
+    assert f"payload=10020c00{full_policy_suffix}" in policy_route_parsed
 
     policy_survey = build_anchor_discovery_command(
         host_id=HOST,
@@ -373,7 +382,7 @@ def main() -> None:
     )
     expected_survey_payload = (
         "100200011504070000001a04fa0000000f0205004c0106"
-        "78020500ab04c0270900" + policy_suffix
+        "78020500ab04a0bb0d00" + survey_policy_suffix
     )
     policy_survey_parsed = firmware_parse(oracle, policy_survey.frame)
     assert "command_id=256" in policy_survey_parsed

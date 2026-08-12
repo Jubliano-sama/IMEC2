@@ -15,6 +15,17 @@ extern "C" {
 #define GATEWAY_MEMBERSHIP_MAX_NODES GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP
 #define GATEWAY_MEMBERSHIP_SNAPSHOT_VERSION 4u
 #define GATEWAY_MEMBERSHIP_SNAPSHOT_MAGIC UINT32_C(0x474D5334)
+/*
+ * Durable state must never copy this ABI-sensitive structure directly to
+ * flash.  This versioned byte codec covers only its semantic fields and
+ * reconstructs the in-memory checksum on restore.
+ */
+#define GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_VERSION 1u
+#define GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE \
+    (2u * GATEWAY_MEMBERSHIP_MAX_NODES * sizeof(uint64_t) + \
+     sizeof(struct discovery_assignment_table_commitment) + \
+     3u * sizeof(uint64_t) + 4u * sizeof(uint32_t) + \
+     5u * sizeof(uint16_t) + 8u)
 
 struct gateway_membership_roster {
     /*
@@ -102,13 +113,6 @@ int gateway_membership_set_roster_explicit_slots(
     const uint64_t *node_ids,
     const uint8_t *slots,
     size_t node_count);
-bool gateway_membership_contains_node_id(const struct gateway_membership_roster *roster,
-                                         uint16_t membership_epoch,
-                                         uint64_t node_id);
-int gateway_membership_lookup_node_index(const struct gateway_membership_roster *roster,
-                                         uint16_t membership_epoch,
-                                         uint64_t node_id,
-                                         size_t *index);
 int gateway_membership_export_node_ids_preserve_order(
     const struct gateway_membership_roster *roster,
     uint16_t membership_epoch,
@@ -122,9 +126,6 @@ int gateway_membership_export_node_ids_with_slots(
     uint8_t *out_slots,
     size_t out_cap,
     size_t *out_count);
-int gateway_membership_export_snapshot(
-    const struct gateway_membership_roster *roster,
-    struct gateway_membership_snapshot *snapshot);
 int gateway_membership_export_assignment_snapshot(
     const struct gateway_membership_roster *roster,
     uint32_t assignment_epoch,
@@ -138,12 +139,31 @@ int gateway_membership_restore_snapshot(
 int gateway_membership_snapshot_get_publication(
     const struct gateway_membership_snapshot *snapshot,
     struct gateway_membership_publication *publication);
-bool gateway_membership_snapshot_proves_assignment(
+/*
+ * Canonical semantic codec for the durable gateway-assignment journal.  The
+ * wire record omits ABI padding plus the derived snapshot magic/checksum, and
+ * decode validates every reconstructed field before returning it.
+ */
+int gateway_membership_snapshot_encode(
     const struct gateway_membership_snapshot *snapshot,
-    uint32_t assignment_epoch,
-    uint32_t table_seq,
-    const struct discovery_assignment_table_commitment *table_commitment,
-    uint64_t node_id);
+    uint8_t *wire,
+    size_t wire_cap);
+int gateway_membership_snapshot_decode(
+    const uint8_t *wire,
+    size_t wire_len,
+    struct gateway_membership_snapshot *snapshot);
+/* Compare only normalized semantic fields, never ABI padding or checksum. */
+bool gateway_membership_snapshot_semantically_equal(
+    const struct gateway_membership_snapshot *left,
+    const struct gateway_membership_snapshot *right);
+/*
+ * Produce the post-host-receipt form of a committed assignment.  It retains
+ * the sparse roster and assignment proof while removing the only replay debt
+ * (the pending host publication).
+ */
+int gateway_membership_snapshot_retire_publication(
+    const struct gateway_membership_snapshot *pending,
+    struct gateway_membership_snapshot *retired);
 
 #ifdef __cplusplus
 }

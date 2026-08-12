@@ -371,9 +371,10 @@ sequenceDiagram
     GW->>R: START responder with future delay
     GW->>I: START initiator with future delay
     Note over I,R: Subtract packet age and calculate one start time
-    I->>R: Five DS-TWR samples
-    R->>R: Calculate median
-    R-->>GW: Reliable pair result
+    I->>R: Five DS-TWR exchanges
+    R-->>GW: Five reliable raw sample results
+    GW-->>GUI: Host-retained sample records
+    GUI->>GUI: Calculate median
 ```
 
 The anchor-side pair flow can remain `IDLE -> PREPARED -> ARMED -> WAIT_START -> RANGE -> COMPLETE/RESULT_OWNED`. A late command returns `MISSED_DEADLINE` instead of starting immediately. A failed pair repeats the complete PREPARE and START sequence, with at most two reruns. An incomplete graph is published as partial.

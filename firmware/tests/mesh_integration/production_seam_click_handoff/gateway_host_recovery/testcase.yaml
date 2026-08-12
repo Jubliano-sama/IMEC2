@@ -1,0 +1,13 @@
+tests:
+  imec2.production_seam.gateway_host_recovery:
+    tags:
+      - mesh_integration
+      - hardware_models
+      - production_seam
+      - gateway
+      - custody
+      - recovery
+    platform_allow:
+      - native_sim/native/64
+    integration_platforms:
+      - native_sim/native/64

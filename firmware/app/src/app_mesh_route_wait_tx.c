@@ -16,6 +16,29 @@ bool app_mesh_route_wait_tx_may_store(
     return owner == APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC;
 }
 
+bool app_mesh_route_wait_tx_clear_matches(
+    enum app_mesh_route_wait_tx_owner active_owner,
+    const struct proto_packet *active_packet,
+    const uint8_t active_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    enum app_mesh_route_wait_tx_owner expected_owner,
+    const struct proto_packet *expected_packet,
+    const uint8_t expected_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    return active_packet != NULL && expected_packet != NULL &&
+           active_digest != NULL && expected_digest != NULL &&
+           active_owner == expected_owner &&
+           active_packet->msg_type == expected_packet->msg_type &&
+           active_packet->flags == expected_packet->flags &&
+           active_packet->src_id == expected_packet->src_id &&
+           active_packet->dst_id == expected_packet->dst_id &&
+           active_packet->session_id == expected_packet->session_id &&
+           active_packet->seq == expected_packet->seq &&
+           active_packet->payload_len == expected_packet->payload_len &&
+           semantic_digest_equal(active_digest,
+                                 expected_digest,
+                                 SEMANTIC_DIGEST_SHA256_LEN);
+}
+
 void app_mesh_route_retry_identity_select(
     enum app_mesh_route_wait_tx_owner owner,
     const struct proto_packet *packet,
@@ -32,12 +55,14 @@ void app_mesh_route_retry_identity_select(
         packet->src_id == 0u || packet->session_id == 0u) {
         return;
     }
-    if (owner == APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL &&
-        (generation == 0u || generation != packet->session_id)) {
+    if (owner == APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL &&
+        generation == 0u) {
         return;
     }
     identity->mode = APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY;
-    identity->survey_id = packet->session_id;
+    identity->survey_id =
+        owner == APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL ?
+            generation : packet->session_id;
 }
 
 void app_mesh_route_wait_tx_decide(

@@ -196,6 +196,7 @@ static void test_radio_activity_priority_and_transition_trace(void)
                                     &decision, &changed) == 0);
     assert(changed);
     assert(decision.state == FW_RADIO_ACTIVITY_MESH_TX);
+    assert(decision.c5_tx_allowed);
     assert(!decision.uwb_rx_allowed);
 
     capture.click_active = true;
@@ -204,6 +205,7 @@ static void test_radio_activity_priority_and_transition_trace(void)
     assert(changed);
     assert(decision.state == FW_RADIO_ACTIVITY_CLICK);
     assert(!decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
     assert(!decision.route_wait_allowed);
     assert(!decision.report_tx_allowed);
     assert(!decision.uwb_rx_allowed);
@@ -224,6 +226,7 @@ static void test_gateway_continuous_rx_blocks_competing_work(void)
     assert(changed);
     assert(decision.state == FW_RADIO_ACTIVITY_GATEWAY_RX);
     assert(!decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
     assert(!decision.route_wait_allowed);
     assert(!decision.report_tx_allowed);
     assert(decision.uwb_rx_allowed);
@@ -241,9 +244,127 @@ static void test_gateway_continuous_rx_blocks_competing_work(void)
     assert(!changed);
     assert(decision.state == FW_RADIO_ACTIVITY_GATEWAY_RX);
     assert(!decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
     assert(!decision.route_wait_allowed);
     assert(!decision.report_tx_allowed);
     assert(decision.uwb_rx_allowed);
+}
+
+static void test_ch9_ack_custody_allows_rx_but_blocks_channel5_tx(void)
+{
+    struct fw_radio_activity_capture capture = {
+        .ch9_ack_wait_active = true,
+    };
+    struct fw_radio_activity_runtime runtime;
+    struct fw_radio_activity_decision decision;
+    bool changed = false;
+
+    fw_radio_activity_runtime_init(&runtime);
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(changed);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(strcmp(decision.reason, "ch9-ack-wait") == 0);
+
+    capture.ch9_ack_wait_active = false;
+    capture.ch9_ack_send_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!changed);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(strcmp(decision.reason, "ch9-ack-send") == 0);
+
+    capture.ch9_ack_send_pending = false;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(changed);
+    assert(decision.state == FW_RADIO_ACTIVITY_IDLE);
+    assert(decision.mesh_work_allowed);
+    assert(decision.c5_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+
+    capture.ch9_ack_receive_eligible = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(changed);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(decision.c5_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(strcmp(decision.reason, "ch9-ack-rx-eligible") == 0);
+}
+
+static void test_causal_c5_response_only_overrides_queued_rx_work(void)
+{
+    struct fw_radio_activity_capture capture = {
+        .rx_queue_used = 1u,
+        .c5_tx_intent = FW_C5_TX_INTENT_CAUSAL_RESPONSE,
+    };
+    struct fw_radio_activity_runtime runtime;
+    struct fw_radio_activity_decision decision;
+    bool changed = false;
+
+    /* The response was created by the queued frame itself, so queue occupancy
+     * cannot veto that exact response and leave both sides waiting forever. */
+    fw_radio_activity_runtime_init(&runtime);
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(changed);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(decision.c5_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(!decision.route_wait_allowed);
+    assert(!decision.report_tx_allowed);
+    assert(strcmp(decision.reason, "mesh-rx-causal-response") == 0);
+
+    /* The default intent remains blocked, so unrelated Channel-5 producers
+     * cannot borrow the synchronous-response exception. */
+    capture.c5_tx_intent = FW_C5_TX_INTENT_BACKGROUND;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!changed);
+    assert(!decision.c5_tx_allowed);
+    assert(strcmp(decision.reason, "mesh-rx") == 0);
+
+    /* A typed response overrides queue occupancy only. Every real owner and
+     * higher-priority lane still wins when it is present in the same capture. */
+    capture.c5_tx_intent = FW_C5_TX_INTENT_CAUSAL_RESPONSE;
+    capture.ch9_ack_wait_active = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.ch9_ack_wait_active = false;
+
+    capture.ch9_ack_send_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.ch9_ack_send_pending = false;
+
+    capture.click_active = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.click_active = false;
+
+    capture.survey_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.survey_pending = false;
+
+    capture.gateway_continuous_ch9 = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.gateway_continuous_ch9 = false;
 }
 
 static void test_radio_cancel_failure_enters_recovery(void)
@@ -1182,6 +1303,8 @@ int main(void)
     test_radio_handoff_freezes_generation_after_safe_boundary();
     test_radio_activity_priority_and_transition_trace();
     test_gateway_continuous_rx_blocks_competing_work();
+    test_ch9_ack_custody_allows_rx_but_blocks_channel5_tx();
+    test_causal_c5_response_only_overrides_queued_rx_work();
     test_radio_cancel_failure_enters_recovery();
     test_radio_recovery_completion_promotes_pending_after_report();
     test_radio_recovery_exhaustion_reports_both_owners();

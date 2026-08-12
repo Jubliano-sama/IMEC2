@@ -7,58 +7,38 @@
 #include <stdint.h>
 
 struct app_mesh_click_preempt_ops {
-    /* Legacy fallback; save_deferred_outbox is the custody-preserving path. */
-    int (*save_outbox)(void *ctx);
-    int (*save_deferred_outbox)(void *ctx);
-    int (*clear_outbox)(void *ctx);
-    int (*stage_click_handoff)(void *ctx,
-                               const struct mesh_outbound *outbound);
-    int (*commit_click_handoff)(void *ctx,
+    /*
+     * The local-click callback owns the whole queue/relay transaction.  It
+     * returns only after the new queue owner exists and the matching live
+     * relay record has been released, or after it has left both untouched.
+     */
+    int (*transfer_local_click)(void *ctx,
                                 const struct mesh_outbound *outbound);
-    int (*rollback_click_handoff)(void *ctx,
-                                  const struct mesh_outbound *outbound);
-    int (*cancel_timeout)(void *ctx);
+    /* Pause the active relay in-place without replacing it with a flag. */
+    int (*defer_active_tx)(void *ctx);
     int (*schedule_timeout)(void *ctx);
-    int (*requeue_click_report)(void *ctx,
-                                const struct mesh_outbound *outbound);
-    int (*discard_requeued_click_report)(void *ctx,
-                                         const struct mesh_outbound *outbound);
-    int (*cancel_active_tx)(void *ctx);
+    /* A retained retry owner without a timer must fail closed. */
+    void (*fail_stop)(void *ctx);
     void *ctx;
 };
 
 enum app_mesh_click_preempt_owner {
     APP_MESH_CLICK_PREEMPT_OWNER_NONE = 0,
     APP_MESH_CLICK_PREEMPT_OWNER_ACTIVE_RUNTIME,
-    APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_OUTBOX,
-    APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_HANDOFF,
+    APP_MESH_CLICK_PREEMPT_OWNER_DEFERRED_RUNTIME,
     APP_MESH_CLICK_PREEMPT_OWNER_CLICK_REPORT,
 };
 
 struct app_mesh_click_preempt_result {
-    bool outbox_saved;
-    bool outbox_cleared;
-    bool click_handoff_staged;
-    bool click_handoff_committed;
-    bool click_handoff_rollback_failed;
-    bool timeout_cancelled;
+    bool local_click_transferred;
+    bool active_tx_deferred;
     bool timeout_scheduled;
-    bool click_report_requeued;
-    bool click_report_requeue_discarded;
-    bool click_report_requeue_failed;
-    bool active_tx_cancelled;
+    bool fail_stop_requested;
     bool transaction_committed;
     enum app_mesh_click_preempt_owner custody_owner;
-    int save_outbox_ret;
-    int clear_outbox_ret;
-    int stage_click_handoff_ret;
-    int commit_click_handoff_ret;
-    int rollback_click_handoff_ret;
-    int cancel_timeout_ret;
+    int local_click_transfer_ret;
+    int defer_active_tx_ret;
     int schedule_timeout_ret;
-    int click_report_requeue_ret;
-    int discard_requeued_click_report_ret;
-    int cancel_active_tx_ret;
 };
 
 struct app_mesh_queue_remove_ops {
@@ -116,8 +96,7 @@ int app_mesh_apply_click_preempt_plan(
     struct app_mesh_click_preempt_result *result);
 bool app_mesh_tx_timeout_work_needed(bool relay_active,
                                      bool channel9_tx_active,
-                                     bool result_bundle_pending,
-                                     bool deferred_outbox_pending);
+                                     bool result_bundle_pending);
 int app_mesh_queue_remove_first(
     const struct app_mesh_queue_remove_ops *ops,
     const struct mesh_outbound *target,

@@ -14,46 +14,26 @@ _Static_assert(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
 
 enum fixture_owner {
     FIXTURE_OWNER_ACTIVE = 0,
-    FIXTURE_OWNER_DURABLE,
+    FIXTURE_OWNER_DEFERRED_ACTIVE,
     FIXTURE_OWNER_CLICK_REPORT,
-    FIXTURE_OWNER_HANDOFF,
-};
-
-enum fixture_handoff_phase {
-    FIXTURE_HANDOFF_NONE = 0,
-    FIXTURE_HANDOFF_STAGED,
-    FIXTURE_HANDOFF_COMMITTED,
 };
 
 struct preempt_fixture {
     enum fixture_owner owner;
     bool active_present;
-    bool durable_staged;
-    bool deferred_staged;
-    bool click_report_staged;
-    struct mesh_outbound deferred_packet;
-    struct mesh_outbound expected_packet;
-    bool deferred_packet_valid;
-    enum fixture_handoff_phase handoff_phase;
-    uint8_t save_calls;
+    bool click_report_present;
+    bool retry_scheduled;
+    struct mesh_outbound click_report;
+    uint8_t transfer_calls;
+    uint8_t defer_calls;
     uint8_t schedule_calls;
-    uint8_t requeue_calls;
-    uint8_t discard_calls;
-    uint8_t cancel_timeout_calls;
-    uint8_t clear_calls;
-    uint8_t stage_calls;
-    uint8_t commit_calls;
-    uint8_t rollback_calls;
-    uint8_t cancel_active_calls;
-    int save_ret;
+    uint8_t fail_stop_calls;
+    uint8_t next_order;
+    uint8_t defer_order;
+    uint8_t schedule_order;
+    int transfer_ret;
+    int defer_ret;
     int schedule_ret;
-    int requeue_ret;
-    int cancel_timeout_ret;
-    int clear_ret;
-    int stage_ret;
-    int commit_ret;
-    int rollback_ret;
-    int cancel_active_ret;
 };
 
 struct queue_remove_fixture {
@@ -178,28 +158,35 @@ static struct queue_remove_fixture queue_remove_fixture(void)
     return fixture;
 }
 
-static int save_outbox(void *ctx)
+static int transfer_local_click(void *ctx, const struct mesh_outbound *outbound)
 {
     struct preempt_fixture *fixture = ctx;
 
-    fixture->save_calls++;
-    if (fixture->save_ret == 0) {
-        fixture->durable_staged = true;
+    assert(outbound != NULL);
+    fixture->transfer_calls++;
+    if (fixture->transfer_ret < 0) {
+        return fixture->transfer_ret;
     }
-    return fixture->save_ret;
+    assert(fixture->active_present);
+    fixture->click_report = *outbound;
+    fixture->active_present = false;
+    fixture->click_report_present = true;
+    fixture->owner = FIXTURE_OWNER_CLICK_REPORT;
+    return 0;
 }
 
-static int save_deferred_outbox(void *ctx)
+static int defer_active_tx(void *ctx)
 {
     struct preempt_fixture *fixture = ctx;
 
-    fixture->save_calls++;
-    if (fixture->save_ret == 0) {
-        fixture->deferred_staged = true;
-        fixture->deferred_packet = fixture->expected_packet;
-        fixture->deferred_packet_valid = true;
+    fixture->defer_calls++;
+    fixture->defer_order = ++fixture->next_order;
+    if (fixture->defer_ret < 0) {
+        return fixture->defer_ret;
     }
-    return fixture->save_ret;
+    assert(fixture->active_present);
+    fixture->owner = FIXTURE_OWNER_DEFERRED_ACTIVE;
+    return 0;
 }
 
 static int schedule_timeout(void *ctx)
@@ -207,124 +194,26 @@ static int schedule_timeout(void *ctx)
     struct preempt_fixture *fixture = ctx;
 
     fixture->schedule_calls++;
-    return fixture->schedule_ret;
-}
-
-static int requeue_click_report(void *ctx, const struct mesh_outbound *outbound)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    fixture->requeue_calls++;
-    if (fixture->requeue_ret == 0) {
-        fixture->click_report_staged = true;
+    fixture->schedule_order = ++fixture->next_order;
+    if (fixture->schedule_ret < 0) {
+        return fixture->schedule_ret;
     }
-    return fixture->requeue_ret;
-}
-
-static int discard_requeued_click_report(void *ctx,
-                                         const struct mesh_outbound *outbound)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    fixture->discard_calls++;
-    fixture->click_report_staged = false;
+    fixture->retry_scheduled = true;
     return 0;
 }
 
-static int cancel_timeout(void *ctx)
+static void fail_stop(void *ctx)
 {
-    struct preempt_fixture *fixture = ctx;
-
-    fixture->cancel_timeout_calls++;
-    return fixture->cancel_timeout_ret;
-}
-
-static int clear_outbox(void *ctx)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    fixture->clear_calls++;
-    if (fixture->clear_ret == 0) {
-        fixture->durable_staged = false;
-    }
-    return fixture->clear_ret;
-}
-
-static int stage_click_handoff(void *ctx, const struct mesh_outbound *outbound)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    fixture->stage_calls++;
-    if (fixture->stage_ret == 0) {
-        fixture->handoff_phase = FIXTURE_HANDOFF_STAGED;
-    }
-    return fixture->stage_ret;
-}
-
-static int commit_click_handoff(void *ctx, const struct mesh_outbound *outbound)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    fixture->commit_calls++;
-    if (fixture->commit_ret == 0) {
-        assert(fixture->handoff_phase == FIXTURE_HANDOFF_STAGED);
-        fixture->handoff_phase = FIXTURE_HANDOFF_COMMITTED;
-        fixture->owner = FIXTURE_OWNER_HANDOFF;
-    }
-    return fixture->commit_ret;
-}
-
-static int rollback_click_handoff(void *ctx, const struct mesh_outbound *outbound)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    fixture->rollback_calls++;
-    if (fixture->rollback_ret == 0) {
-        fixture->handoff_phase = FIXTURE_HANDOFF_NONE;
-        if (fixture->active_present) {
-            fixture->owner = FIXTURE_OWNER_ACTIVE;
-        }
-    }
-    return fixture->rollback_ret;
-}
-
-static int cancel_active_tx(void *ctx)
-{
-    struct preempt_fixture *fixture = ctx;
-
-    fixture->cancel_active_calls++;
-    if (fixture->cancel_active_ret < 0) {
-        return fixture->cancel_active_ret;
-    }
-    assert(fixture->active_present);
-    assert(fixture->durable_staged || fixture->deferred_staged ||
-           fixture->click_report_staged ||
-           fixture->handoff_phase == FIXTURE_HANDOFF_STAGED ||
-           fixture->handoff_phase == FIXTURE_HANDOFF_COMMITTED);
-    fixture->active_present = false;
-    fixture->owner = fixture->click_report_staged ?
-        FIXTURE_OWNER_CLICK_REPORT : FIXTURE_OWNER_DURABLE;
-    return 0;
+    ((struct preempt_fixture *)ctx)->fail_stop_calls++;
 }
 
 static struct app_mesh_click_preempt_ops ops_for(struct preempt_fixture *fixture)
 {
     return (struct app_mesh_click_preempt_ops) {
-        .save_outbox = save_outbox,
+        .transfer_local_click = transfer_local_click,
+        .defer_active_tx = defer_active_tx,
         .schedule_timeout = schedule_timeout,
-        .requeue_click_report = requeue_click_report,
-        .discard_requeued_click_report = discard_requeued_click_report,
-        .cancel_timeout = cancel_timeout,
-        .clear_outbox = clear_outbox,
-        .stage_click_handoff = stage_click_handoff,
-        .commit_click_handoff = commit_click_handoff,
-        .rollback_click_handoff = rollback_click_handoff,
-        .cancel_active_tx = cancel_active_tx,
+        .fail_stop = fail_stop,
         .ctx = fixture,
     };
 }
@@ -338,26 +227,6 @@ static int apply_plan(const struct mesh_click_preempt_plan *plan,
     return app_mesh_apply_click_preempt_plan(plan, &ops, result);
 }
 
-static struct mesh_click_preempt_plan durable_plan(void)
-{
-    return (struct mesh_click_preempt_plan) {
-        .save_outbox = true,
-        .schedule_timeout = true,
-        .cancel_active_tx = true,
-    };
-}
-
-static struct mesh_click_preempt_plan click_report_plan(void)
-{
-    return (struct mesh_click_preempt_plan) {
-        .requeue_click_report = true,
-        .cancel_timeout = true,
-        .clear_outbox = true,
-        .cancel_active_tx = true,
-        .click_report.packet.msg_type = MSG_CLICK_REPORT,
-    };
-}
-
 static struct preempt_fixture active_fixture(void)
 {
     return (struct preempt_fixture) {
@@ -366,206 +235,99 @@ static struct preempt_fixture active_fixture(void)
     };
 }
 
-static void assert_one_real_owner(const struct preempt_fixture *fixture,
-                                  const struct app_mesh_click_preempt_result *result)
+static void assert_one_owner(const struct preempt_fixture *fixture)
 {
     assert((fixture->active_present ? 1u : 0u) +
-           (fixture->owner == FIXTURE_OWNER_DURABLE ? 1u : 0u) +
-           (fixture->owner == FIXTURE_OWNER_CLICK_REPORT ? 1u : 0u) +
-           (fixture->owner == FIXTURE_OWNER_HANDOFF ? 1u : 0u) == 1u);
-    assert(result->custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_ACTIVE_RUNTIME ||
-           result->custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_OUTBOX ||
-           result->custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_HANDOFF ||
-           result->custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_CLICK_REPORT);
+           (fixture->click_report_present ? 1u : 0u) == 1u);
 }
 
-static void test_fallible_preparation_preserves_active_custody(void)
+static void test_local_transfer_is_one_fallible_operation(void)
 {
+    const struct mesh_click_preempt_plan plan = {
+        .transfer_local_click = true,
+        .click_report = {
+            .packet = {.msg_type = MSG_CLICK_REPORT, .seq = 7u},
+        },
+    };
     struct app_mesh_click_preempt_result result;
     struct preempt_fixture fixture = active_fixture();
-    struct mesh_click_preempt_plan plan = durable_plan();
+
+    fixture.transfer_ret = -ENOSPC;
+    assert(apply_plan(&plan, &fixture, &result) == -ENOSPC);
+    assert(fixture.transfer_calls == 1u && fixture.schedule_calls == 0u);
+    assert(fixture.active_present && !fixture.click_report_present);
+    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_ACTIVE_RUNTIME);
+    assert(!result.local_click_transferred);
+
+    fixture = active_fixture();
+    assert(apply_plan(&plan, &fixture, &result) == 0);
+    assert(fixture.transfer_calls == 1u && fixture.schedule_calls == 0u);
+    assert(!fixture.active_present && fixture.click_report_present);
+    assert(fixture.click_report.packet.seq == 7u);
+    assert(result.local_click_transferred && result.transaction_committed);
+    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_CLICK_REPORT);
+    assert_one_owner(&fixture);
+}
+
+static void test_retained_relay_schedules_only_after_deferral(void)
+{
+    const struct mesh_click_preempt_plan plan = {
+        .defer_active_tx = true,
+        .schedule_timeout = true,
+    };
+    struct app_mesh_click_preempt_result result;
+    struct preempt_fixture fixture = active_fixture();
+
+    assert(apply_plan(&plan, &fixture, &result) == 0);
+    assert(fixture.active_present && !fixture.click_report_present);
+    assert(fixture.defer_calls == 1u && fixture.schedule_calls == 1u);
+    assert(fixture.defer_order == 1u && fixture.schedule_order == 2u);
+    assert(fixture.retry_scheduled);
+    assert(result.active_tx_deferred && result.timeout_scheduled);
+    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DEFERRED_RUNTIME);
+    assert_one_owner(&fixture);
+}
+
+static void test_retained_relay_scheduler_failure_fails_closed(void)
+{
+    const struct mesh_click_preempt_plan plan = {
+        .defer_active_tx = true,
+        .schedule_timeout = true,
+    };
+    struct app_mesh_click_preempt_result result;
+    struct preempt_fixture fixture = active_fixture();
 
     fixture.schedule_ret = -EIO;
     assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.schedule_calls == 1u && fixture.save_calls == 0u);
-    assert(fixture.cancel_active_calls == 0u);
-    assert_one_real_owner(&fixture, &result);
-
-    fixture = active_fixture();
-    fixture.save_ret = -EIO;
-    assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.schedule_calls == 1u && fixture.save_calls == 1u);
-    assert(fixture.cancel_active_calls == 0u);
-    assert_one_real_owner(&fixture, &result);
-
-    fixture = active_fixture();
-    plan = click_report_plan();
-    fixture.clear_ret = -EIO;
-    assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.clear_calls == 1u && fixture.requeue_calls == 1u);
-    assert(fixture.stage_calls == 1u && fixture.commit_calls == 1u);
-    assert(fixture.cancel_active_calls == 1u);
-    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_HANDOFF);
-    assert_one_real_owner(&fixture, &result);
-
-    fixture = active_fixture();
-    fixture.cancel_timeout_ret = -EIO;
-    assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.clear_calls == 0u && fixture.cancel_timeout_calls == 1u);
-    assert(fixture.requeue_calls == 0u && fixture.cancel_active_calls == 0u);
-    assert_one_real_owner(&fixture, &result);
-
-    fixture = active_fixture();
-    fixture.commit_ret = -EIO;
-    assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.stage_calls == 1u && fixture.commit_calls == 1u);
-    assert(fixture.rollback_calls == 1u);
-    assert(fixture.cancel_active_calls == 0u);
-    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_ACTIVE_RUNTIME);
-    assert_one_real_owner(&fixture, &result);
-
-    fixture = active_fixture();
-    fixture.requeue_ret = -ENOSPC;
-    assert(apply_plan(&plan, &fixture, &result) == -ENOSPC);
-    assert(fixture.requeue_calls == 1u && fixture.cancel_active_calls == 1u);
-    assert(fixture.handoff_phase == FIXTURE_HANDOFF_COMMITTED);
-    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_HANDOFF);
-    assert_one_real_owner(&fixture, &result);
+    assert(fixture.active_present && !fixture.click_report_present);
+    assert(fixture.defer_calls == 1u && fixture.schedule_calls == 1u);
+    assert(fixture.fail_stop_calls == 1u);
+    assert(result.active_tx_deferred && !result.timeout_scheduled);
+    assert(result.fail_stop_requested);
+    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DEFERRED_RUNTIME);
+    assert_one_owner(&fixture);
 }
 
-static void test_post_cancel_failure_rolls_back_staged_handoff(void)
+static void test_invalid_mixed_plan_is_rejected_without_callbacks(void)
 {
-    struct app_mesh_click_preempt_result result;
-    struct preempt_fixture fixture = active_fixture();
-    const struct mesh_click_preempt_plan plan = click_report_plan();
-
-    fixture.cancel_active_ret = -EIO;
-    assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.requeue_calls == 0u && fixture.cancel_active_calls == 1u);
-    assert(fixture.rollback_calls == 1u);
-    assert(!result.click_handoff_rollback_failed);
-    assert(fixture.handoff_phase == FIXTURE_HANDOFF_NONE);
-    assert_one_real_owner(&fixture, &result);
-}
-
-static void test_failed_cancel_and_rollback_keeps_recovery_journal_authoritative(void)
-{
-    struct app_mesh_click_preempt_result result;
-    struct preempt_fixture fixture = active_fixture();
-    const struct mesh_click_preempt_plan plan = click_report_plan();
-
-    fixture.cancel_active_ret = -EIO;
-    fixture.rollback_ret = -ENOSPC;
-    assert(apply_plan(&plan, &fixture, &result) == -EIO);
-    assert(fixture.stage_calls == 1u && fixture.rollback_calls == 1u);
-    assert(result.click_handoff_rollback_failed);
-    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_HANDOFF);
-    assert(fixture.handoff_phase == FIXTURE_HANDOFF_COMMITTED);
-}
-
-static void test_reset_recovery_has_one_logical_owner_at_every_handoff_phase(void)
-{
-    const enum fixture_handoff_phase phases[] = {
-        FIXTURE_HANDOFF_NONE,
-        FIXTURE_HANDOFF_STAGED,
-        FIXTURE_HANDOFF_COMMITTED,
+    const struct mesh_click_preempt_plan plan = {
+        .transfer_local_click = true,
+        .defer_active_tx = true,
     };
-
-    for (size_t i = 0u; i < sizeof(phases) / sizeof(phases[0]); ++i) {
-        struct preempt_fixture fixture = active_fixture();
-
-        fixture.handoff_phase = phases[i];
-        fixture.active_present = false; /* Reset discards volatile runtime ownership. */
-        if (phases[i] != FIXTURE_HANDOFF_NONE) {
-            fixture.owner = FIXTURE_OWNER_HANDOFF;
-        } else {
-            fixture.owner = FIXTURE_OWNER_DURABLE;
-        }
-        assert((fixture.owner == FIXTURE_OWNER_DURABLE ? 1u : 0u) +
-               (fixture.owner == FIXTURE_OWNER_HANDOFF ? 1u : 0u) == 1u);
-    }
-}
-
-static void test_durable_handoff_survives_restart_after_commit(void)
-{
     struct app_mesh_click_preempt_result result;
     struct preempt_fixture fixture = active_fixture();
-    const struct mesh_click_preempt_plan plan = durable_plan();
 
-    assert(apply_plan(&plan, &fixture, &result) == 0);
-    assert(result.transaction_committed);
-    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_OUTBOX);
-    assert(!fixture.active_present && fixture.durable_staged);
-    /* A restart can only restore the committed durable owner. */
-    assert(fixture.owner == FIXTURE_OWNER_DURABLE);
-    assert_one_real_owner(&fixture, &result);
+    assert(apply_plan(&plan, &fixture, &result) == -EINVAL);
+    assert(fixture.transfer_calls == 0u && fixture.defer_calls == 0u);
+    assert_one_owner(&fixture);
 }
 
-static void test_deferred_transit_survives_local_click_outbox_lifecycle(void)
+static void test_timeout_work_predicate_remains_conservative(void)
 {
-    struct app_mesh_click_preempt_result result;
-    struct preempt_fixture fixture = active_fixture();
-    struct app_mesh_click_preempt_ops ops = ops_for(&fixture);
-    const struct mesh_click_preempt_plan plan = durable_plan();
-    struct mesh_outbound restored;
-
-    fixture.expected_packet.packet.msg_type = MSG_CLICK_REPORT;
-    fixture.expected_packet.packet.src_id = UINT64_C(0xB001);
-    fixture.expected_packet.packet.dst_id = UINT64_C(0x9000);
-    fixture.expected_packet.packet.session_id = 0x44556677u;
-    fixture.expected_packet.packet.seq = 0x1234u;
-    fixture.expected_packet.packet.ttl = MESH_GATEWAY_ACK_TTL;
-    fixture.expected_packet.payload_len = 3u;
-    fixture.expected_packet.packet.payload_len = 3u;
-    fixture.expected_packet.payload[0] = 0xa1u;
-    fixture.expected_packet.payload[1] = 0xb2u;
-    fixture.expected_packet.payload[2] = 0xc3u;
-    ops.save_deferred_outbox = save_deferred_outbox;
-
-    /* The exact transit identity is committed to its dedicated handoff slot. */
-    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == 0);
-    assert(result.outbox_saved);
-    assert(fixture.deferred_staged);
-    assert(fixture.deferred_packet_valid);
-    assert(!fixture.active_present);
-    assert(fixture.owner == FIXTURE_OWNER_DURABLE);
-
-    /* A later local click may use and retire the ordinary active-outbox slot. */
-    fixture.active_present = true;
-    fixture.owner = FIXTURE_OWNER_ACTIVE;
-    fixture.durable_staged = true;
-    fixture.durable_staged = false; /* local click gateway ACK */
-    fixture.active_present = false;
-    fixture.owner = FIXTURE_OWNER_DURABLE;
-    assert(fixture.deferred_staged);
-    assert(fixture.deferred_packet_valid);
-
-    /* Same-boot restore consumes only the deferred copy and preserves identity. */
-    restored = fixture.deferred_packet;
-    fixture.deferred_staged = false;
-    fixture.deferred_packet_valid = false;
-    fixture.active_present = true;
-    fixture.owner = FIXTURE_OWNER_ACTIVE;
-    assert(restored.packet.msg_type == MSG_CLICK_REPORT);
-    assert(restored.packet.src_id == UINT64_C(0xB001));
-    assert(restored.packet.session_id == 0x44556677u);
-    assert(restored.packet.seq == 0x1234u);
-    assert(restored.payload_len == 3u);
-    assert(memcmp(restored.payload,
-                  fixture.expected_packet.payload,
-                  restored.payload_len) == 0);
-    assert(!fixture.deferred_staged);
-    assert(fixture.active_present);
-}
-
-static void test_deferred_outbox_keeps_timeout_work_owned_after_local_ack(void)
-{
-    /* This is the production scheduler predicate used after gateway ACK. */
-    assert(!app_mesh_tx_timeout_work_needed(false, false, false, false));
-    assert(app_mesh_tx_timeout_work_needed(false, false, false, true));
-    assert(app_mesh_tx_timeout_work_needed(true, false, false, false));
-    assert(app_mesh_tx_timeout_work_needed(false, true, false, false));
-    assert(app_mesh_tx_timeout_work_needed(false, false, true, false));
+    assert(!app_mesh_tx_timeout_work_needed(false, false, false));
+    assert(app_mesh_tx_timeout_work_needed(true, false, false));
+    assert(app_mesh_tx_timeout_work_needed(false, true, false));
+    assert(app_mesh_tx_timeout_work_needed(false, false, true));
 }
 
 static void test_queue_remove_rotates_once_and_preserves_relative_order(void)
@@ -759,13 +521,11 @@ static void test_queue_recovery_reserve_never_replaces_existing_custody(void)
 
 int main(void)
 {
-    test_fallible_preparation_preserves_active_custody();
-    test_post_cancel_failure_rolls_back_staged_handoff();
-    test_failed_cancel_and_rollback_keeps_recovery_journal_authoritative();
-    test_reset_recovery_has_one_logical_owner_at_every_handoff_phase();
-    test_durable_handoff_survives_restart_after_commit();
-    test_deferred_transit_survives_local_click_outbox_lifecycle();
-    test_deferred_outbox_keeps_timeout_work_owned_after_local_ack();
+    test_local_transfer_is_one_fallible_operation();
+    test_retained_relay_schedules_only_after_deferral();
+    test_retained_relay_scheduler_failure_fails_closed();
+    test_invalid_mixed_plan_is_rejected_without_callbacks();
+    test_timeout_work_predicate_remains_conservative();
     test_queue_remove_rotates_once_and_preserves_relative_order();
     test_queue_remove_absent_target_preserves_order();
     test_queue_remove_reports_get_and_put_failures();

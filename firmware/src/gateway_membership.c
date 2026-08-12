@@ -2,6 +2,51 @@
 
 #include <string.h>
 
+static void gateway_membership_put_u16(uint8_t *dst, uint16_t value)
+{
+    dst[0] = (uint8_t)value;
+    dst[1] = (uint8_t)(value >> 8);
+}
+
+static void gateway_membership_put_u32(uint8_t *dst, uint32_t value)
+{
+    for (size_t index = 0u; index < sizeof(value); index++) {
+        dst[index] = (uint8_t)(value >> (8u * index));
+    }
+}
+
+static void gateway_membership_put_u64(uint8_t *dst, uint64_t value)
+{
+    for (size_t index = 0u; index < sizeof(value); index++) {
+        dst[index] = (uint8_t)(value >> (8u * index));
+    }
+}
+
+static uint16_t gateway_membership_get_u16(const uint8_t *src)
+{
+    return (uint16_t)src[0] | ((uint16_t)src[1] << 8);
+}
+
+static uint32_t gateway_membership_get_u32(const uint8_t *src)
+{
+    uint32_t value = 0u;
+
+    for (size_t index = 0u; index < sizeof(value); index++) {
+        value |= (uint32_t)src[index] << (8u * index);
+    }
+    return value;
+}
+
+static uint64_t gateway_membership_get_u64(const uint8_t *src)
+{
+    uint64_t value = 0u;
+
+    for (size_t index = 0u; index < sizeof(value); index++) {
+        value |= (uint64_t)src[index] << (8u * index);
+    }
+    return value;
+}
+
 static uint16_t gateway_membership_snapshot_checksum(
     const struct gateway_membership_snapshot *snapshot)
 {
@@ -436,6 +481,234 @@ static int validate_snapshot(const struct gateway_membership_snapshot *snapshot,
     return PROTO_OK;
 }
 
+int gateway_membership_snapshot_encode(
+    const struct gateway_membership_snapshot *snapshot,
+    uint8_t *wire,
+    size_t wire_cap)
+{
+    size_t offset = 0u;
+
+    if (snapshot == NULL || wire == NULL ||
+        wire_cap < GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE ||
+        validate_snapshot(snapshot, NULL) != PROTO_OK) {
+        return PROTO_ERR_ARG;
+    }
+
+    wire[offset++] = GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_VERSION;
+    for (size_t slot = 0u; slot < GATEWAY_MEMBERSHIP_MAX_NODES; slot++) {
+        gateway_membership_put_u64(&wire[offset], snapshot->node_ids[slot]);
+        offset += sizeof(snapshot->node_ids[slot]);
+    }
+    for (size_t slot = 0u; slot < GATEWAY_MEMBERSHIP_MAX_NODES; slot++) {
+        gateway_membership_put_u64(
+            &wire[offset], snapshot->publication_claimed_node_ids[slot]);
+        offset += sizeof(snapshot->publication_claimed_node_ids[slot]);
+    }
+    memcpy(&wire[offset],
+           snapshot->assignment_table_commitment.bytes,
+           sizeof(snapshot->assignment_table_commitment.bytes));
+    offset += sizeof(snapshot->assignment_table_commitment.bytes);
+    gateway_membership_put_u64(&wire[offset],
+                                snapshot->publication_host_src_id);
+    offset += sizeof(snapshot->publication_host_src_id);
+    gateway_membership_put_u64(&wire[offset],
+                                snapshot->publication_host_dst_id);
+    offset += sizeof(snapshot->publication_host_dst_id);
+    gateway_membership_put_u64(&wire[offset],
+                                snapshot->publication_acknowledged_mask);
+    offset += sizeof(snapshot->publication_acknowledged_mask);
+    gateway_membership_put_u32(&wire[offset], snapshot->assignment_epoch);
+    offset += sizeof(snapshot->assignment_epoch);
+    gateway_membership_put_u32(&wire[offset], snapshot->assignment_table_seq);
+    offset += sizeof(snapshot->assignment_table_seq);
+    gateway_membership_put_u32(&wire[offset],
+                                snapshot->publication_host_session_id);
+    offset += sizeof(snapshot->publication_host_session_id);
+    gateway_membership_put_u32(&wire[offset],
+                                snapshot->publication_host_message_age_ms);
+    offset += sizeof(snapshot->publication_host_message_age_ms);
+    gateway_membership_put_u16(&wire[offset], snapshot->membership_epoch);
+    offset += sizeof(snapshot->membership_epoch);
+    gateway_membership_put_u16(&wire[offset], snapshot->publication_host_seq);
+    offset += sizeof(snapshot->publication_host_seq);
+    gateway_membership_put_u16(&wire[offset],
+                                snapshot->publication_host_payload_len);
+    offset += sizeof(snapshot->publication_host_payload_len);
+    gateway_membership_put_u16(&wire[offset],
+                                snapshot->publication_event_gateway_epoch);
+    offset += sizeof(snapshot->publication_event_gateway_epoch);
+    gateway_membership_put_u16(&wire[offset],
+                                snapshot->publication_duplicate_count);
+    offset += sizeof(snapshot->publication_duplicate_count);
+    wire[offset++] = snapshot->node_count;
+    wire[offset++] = snapshot->slot_span;
+    wire[offset++] = snapshot->valid;
+    wire[offset++] = snapshot->assignment_proof_valid;
+    wire[offset++] = snapshot->publication_host_flags;
+    wire[offset++] = snapshot->publication_host_ttl;
+    wire[offset++] = snapshot->publication_table_round;
+
+    return offset == GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE ?
+               PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
+int gateway_membership_snapshot_decode(
+    const uint8_t *wire,
+    size_t wire_len,
+    struct gateway_membership_snapshot *snapshot)
+{
+    size_t offset = 0u;
+
+    if (wire == NULL || snapshot == NULL ||
+        wire_len != GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE ||
+        wire[offset++] != GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_VERSION) {
+        return PROTO_ERR_ARG;
+    }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    for (size_t slot = 0u; slot < GATEWAY_MEMBERSHIP_MAX_NODES; slot++) {
+        snapshot->node_ids[slot] = gateway_membership_get_u64(&wire[offset]);
+        offset += sizeof(snapshot->node_ids[slot]);
+    }
+    for (size_t slot = 0u; slot < GATEWAY_MEMBERSHIP_MAX_NODES; slot++) {
+        snapshot->publication_claimed_node_ids[slot] =
+            gateway_membership_get_u64(&wire[offset]);
+        offset += sizeof(snapshot->publication_claimed_node_ids[slot]);
+    }
+    memcpy(snapshot->assignment_table_commitment.bytes,
+           &wire[offset],
+           sizeof(snapshot->assignment_table_commitment.bytes));
+    offset += sizeof(snapshot->assignment_table_commitment.bytes);
+    snapshot->publication_host_src_id =
+        gateway_membership_get_u64(&wire[offset]);
+    offset += sizeof(snapshot->publication_host_src_id);
+    snapshot->publication_host_dst_id =
+        gateway_membership_get_u64(&wire[offset]);
+    offset += sizeof(snapshot->publication_host_dst_id);
+    snapshot->publication_acknowledged_mask =
+        gateway_membership_get_u64(&wire[offset]);
+    offset += sizeof(snapshot->publication_acknowledged_mask);
+    snapshot->assignment_epoch = gateway_membership_get_u32(&wire[offset]);
+    offset += sizeof(snapshot->assignment_epoch);
+    snapshot->assignment_table_seq = gateway_membership_get_u32(&wire[offset]);
+    offset += sizeof(snapshot->assignment_table_seq);
+    snapshot->publication_host_session_id =
+        gateway_membership_get_u32(&wire[offset]);
+    offset += sizeof(snapshot->publication_host_session_id);
+    snapshot->publication_host_message_age_ms =
+        gateway_membership_get_u32(&wire[offset]);
+    offset += sizeof(snapshot->publication_host_message_age_ms);
+    snapshot->membership_epoch = gateway_membership_get_u16(&wire[offset]);
+    offset += sizeof(snapshot->membership_epoch);
+    snapshot->publication_host_seq = gateway_membership_get_u16(&wire[offset]);
+    offset += sizeof(snapshot->publication_host_seq);
+    snapshot->publication_host_payload_len =
+        gateway_membership_get_u16(&wire[offset]);
+    offset += sizeof(snapshot->publication_host_payload_len);
+    snapshot->publication_event_gateway_epoch =
+        gateway_membership_get_u16(&wire[offset]);
+    offset += sizeof(snapshot->publication_event_gateway_epoch);
+    snapshot->publication_duplicate_count =
+        gateway_membership_get_u16(&wire[offset]);
+    offset += sizeof(snapshot->publication_duplicate_count);
+    snapshot->node_count = wire[offset++];
+    snapshot->slot_span = wire[offset++];
+    snapshot->valid = wire[offset++];
+    snapshot->assignment_proof_valid = wire[offset++];
+    snapshot->publication_host_flags = wire[offset++];
+    snapshot->publication_host_ttl = wire[offset++];
+    snapshot->publication_table_round = wire[offset++];
+
+    if (offset != GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return PROTO_ERR_MALFORMED;
+    }
+    gateway_membership_snapshot_finalize(snapshot);
+    if (validate_snapshot(snapshot, NULL) != PROTO_OK) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
+bool gateway_membership_snapshot_semantically_equal(
+    const struct gateway_membership_snapshot *left,
+    const struct gateway_membership_snapshot *right)
+{
+    return left != NULL && right != NULL &&
+           validate_snapshot(left, NULL) == PROTO_OK &&
+           validate_snapshot(right, NULL) == PROTO_OK &&
+           memcmp(left->node_ids,
+                  right->node_ids,
+                  sizeof(left->node_ids)) == 0 &&
+           memcmp(left->publication_claimed_node_ids,
+                  right->publication_claimed_node_ids,
+                  sizeof(left->publication_claimed_node_ids)) == 0 &&
+           memcmp(left->assignment_table_commitment.bytes,
+                  right->assignment_table_commitment.bytes,
+                  sizeof(left->assignment_table_commitment.bytes)) == 0 &&
+           left->publication_host_src_id == right->publication_host_src_id &&
+           left->publication_host_dst_id == right->publication_host_dst_id &&
+           left->publication_acknowledged_mask ==
+               right->publication_acknowledged_mask &&
+           left->assignment_epoch == right->assignment_epoch &&
+           left->assignment_table_seq == right->assignment_table_seq &&
+           left->publication_host_session_id ==
+               right->publication_host_session_id &&
+           left->publication_host_message_age_ms ==
+               right->publication_host_message_age_ms &&
+           left->membership_epoch == right->membership_epoch &&
+           left->publication_host_seq == right->publication_host_seq &&
+           left->publication_host_payload_len ==
+               right->publication_host_payload_len &&
+           left->publication_event_gateway_epoch ==
+               right->publication_event_gateway_epoch &&
+           left->publication_duplicate_count ==
+               right->publication_duplicate_count &&
+           left->node_count == right->node_count &&
+           left->slot_span == right->slot_span &&
+           left->valid == right->valid &&
+           left->assignment_proof_valid == right->assignment_proof_valid &&
+           left->publication_host_flags == right->publication_host_flags &&
+           left->publication_host_ttl == right->publication_host_ttl &&
+           left->publication_table_round == right->publication_table_round;
+}
+
+int gateway_membership_snapshot_retire_publication(
+    const struct gateway_membership_snapshot *pending,
+    struct gateway_membership_snapshot *retired)
+{
+    if (pending == NULL || retired == NULL ||
+        validate_snapshot(pending, NULL) != PROTO_OK) {
+        return PROTO_ERR_ARG;
+    }
+    /* validate_snapshot() already proves every nonzero table round pending. */
+    if (pending->publication_table_round == 0u) {
+        return PROTO_ERR_STALE;
+    }
+
+    *retired = *pending;
+    memset(retired->publication_claimed_node_ids,
+           0,
+           sizeof(retired->publication_claimed_node_ids));
+    retired->publication_host_src_id = 0u;
+    retired->publication_host_dst_id = 0u;
+    retired->publication_acknowledged_mask = 0u;
+    retired->publication_host_session_id = 0u;
+    retired->publication_host_message_age_ms = 0u;
+    retired->publication_host_seq = 0u;
+    retired->publication_host_payload_len = 0u;
+    retired->publication_event_gateway_epoch = 0u;
+    retired->publication_duplicate_count = 0u;
+    retired->publication_host_flags = 0u;
+    retired->publication_host_ttl = 0u;
+    retired->publication_table_round = 0u;
+    gateway_membership_snapshot_finalize(retired);
+
+    return validate_snapshot(retired, NULL) == PROTO_OK ?
+               PROTO_OK : PROTO_ERR_MALFORMED;
+}
+
 void gateway_membership_clear(struct gateway_membership_roster *roster)
 {
     if (roster == NULL) {
@@ -524,49 +797,6 @@ int gateway_membership_set_roster_explicit_slots(
     return PROTO_OK;
 }
 
-int gateway_membership_lookup_node_index(
-    const struct gateway_membership_roster *roster,
-    uint16_t membership_epoch,
-    uint64_t node_id,
-    size_t *index)
-{
-    int ret;
-
-    if (index == NULL || node_id == 0u || membership_epoch == 0u) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = validate_roster(roster);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (roster->membership_epoch != membership_epoch) {
-        return PROTO_ERR_STALE;
-    }
-
-    for (size_t slot = 0u; slot < roster->slot_span; slot++) {
-        if (roster->node_ids[slot] == node_id) {
-            *index = slot;
-            return PROTO_OK;
-        }
-    }
-
-    return PROTO_ERR_NOT_FOUND;
-}
-
-bool gateway_membership_contains_node_id(
-    const struct gateway_membership_roster *roster,
-    uint16_t membership_epoch,
-    uint64_t node_id)
-{
-    size_t index = 0u;
-
-    return gateway_membership_lookup_node_index(roster,
-                                                membership_epoch,
-                                                node_id,
-                                                &index) == PROTO_OK;
-}
-
 int gateway_membership_export_node_ids_preserve_order(
     const struct gateway_membership_roster *roster,
     uint16_t membership_epoch,
@@ -647,33 +877,6 @@ int gateway_membership_export_node_ids_with_slots(
     return PROTO_OK;
 }
 
-int gateway_membership_export_snapshot(
-    const struct gateway_membership_roster *roster,
-    struct gateway_membership_snapshot *snapshot)
-{
-    int ret;
-
-    if (snapshot == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = validate_roster(roster);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-
-    memset(snapshot, 0, sizeof(*snapshot));
-    memcpy(snapshot->node_ids,
-           roster->node_ids,
-           sizeof(snapshot->node_ids));
-    snapshot->membership_epoch = roster->membership_epoch;
-    snapshot->node_count = roster->node_count;
-    snapshot->slot_span = roster->slot_span;
-    snapshot->valid = 1u;
-    gateway_membership_snapshot_finalize(snapshot);
-    return PROTO_OK;
-}
-
 int gateway_membership_export_assignment_snapshot(
     const struct gateway_membership_roster *roster,
     uint32_t assignment_epoch,
@@ -689,10 +892,21 @@ int gateway_membership_export_assignment_snapshot(
         gateway_membership_commitment_is_zero(table_commitment)) {
         return PROTO_ERR_ARG;
     }
-    ret = gateway_membership_export_snapshot(roster, snapshot);
+    if (snapshot == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = validate_roster(roster);
     if (ret != PROTO_OK) {
         return ret;
     }
+    memset(snapshot, 0, sizeof(*snapshot));
+    memcpy(snapshot->node_ids,
+           roster->node_ids,
+           sizeof(snapshot->node_ids));
+    snapshot->membership_epoch = roster->membership_epoch;
+    snapshot->node_count = roster->node_count;
+    snapshot->slot_span = roster->slot_span;
+    snapshot->valid = 1u;
     snapshot->assignment_epoch = assignment_epoch;
     snapshot->assignment_table_seq = table_seq;
     snapshot->assignment_table_commitment = *table_commitment;
@@ -752,29 +966,4 @@ int gateway_membership_snapshot_get_publication(
         return PROTO_ERR_NOT_FOUND;
     }
     return ret;
-}
-
-bool gateway_membership_snapshot_proves_assignment(
-    const struct gateway_membership_snapshot *snapshot,
-    uint32_t assignment_epoch,
-    uint32_t table_seq,
-    const struct discovery_assignment_table_commitment *table_commitment,
-    uint64_t node_id)
-{
-    if (node_id == 0u || table_commitment == NULL ||
-        validate_snapshot(snapshot, NULL) != PROTO_OK ||
-        snapshot->assignment_proof_valid == 0u ||
-        snapshot->assignment_epoch != assignment_epoch ||
-        snapshot->assignment_table_seq != table_seq ||
-        !discovery_assignment_table_commitment_equal(
-            &snapshot->assignment_table_commitment,
-            table_commitment)) {
-        return false;
-    }
-    for (size_t slot = 0u; slot < snapshot->slot_span; slot++) {
-        if (snapshot->node_ids[slot] == node_id) {
-            return true;
-        }
-    }
-    return false;
 }

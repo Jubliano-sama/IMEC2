@@ -534,27 +534,14 @@ static int direct_gateway_queue_index(const struct runner *runner)
         runner->nodes[runner->path_node_count - 1u]];
     for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
         const struct mesh_sim_queued_tx *candidate = &sender->tx_queue[i];
-        const struct mesh_pending_tx *pending = &sender->relay.pending;
-        bool pending_identity;
 
         if (!candidate->valid ||
             candidate->outbound.next_hop_id != GATEWAY_ID) {
             continue;
         }
-        pending_identity =
-            candidate->outbound.packet.msg_type == pending->packet.msg_type &&
-            candidate->outbound.packet.src_id == pending->packet.src_id &&
-            candidate->outbound.packet.dst_id == pending->packet.dst_id &&
-            candidate->outbound.packet.session_id == pending->packet.session_id &&
-            candidate->outbound.packet.seq == pending->packet.seq;
-        if (mesh_relay_tx_active(&sender->relay) &&
-            (candidate->needs_relay_start ||
-             (!pending_identity &&
-              candidate->outbound.packet.msg_type != MSG_MESH_HOP_ACK &&
-              candidate->outbound.packet.msg_type != MSG_GATEWAY_ACK &&
-              candidate->outbound.packet.msg_type != MSG_ROUTE_REPLY_ACK &&
-              candidate->outbound.packet.msg_type !=
-                  MSG_GATEWAY_COLLECTION_EACK))) {
+        if (!mesh_sim_relay_queue_entry_runnable(sender,
+                                                 candidate,
+                                                 GATEWAY_ID)) {
             continue;
         }
         if (best == SIZE_MAX || candidate->priority >

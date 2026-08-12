@@ -26,22 +26,13 @@
 
 struct click_preempt_fixture {
     struct mesh_relay *relay;
-    uint8_t save_calls;
-    uint8_t clear_calls;
-    uint8_t cancel_calls;
+    uint8_t transfer_calls;
+    uint8_t defer_calls;
     uint8_t schedule_calls;
-    uint8_t requeue_calls;
-    uint8_t stage_calls;
-    uint8_t commit_calls;
-    uint8_t rollback_calls;
-    int save_ret;
-    int clear_ret;
-    int cancel_ret;
+    uint8_t fail_stop_calls;
+    int transfer_ret;
+    int defer_ret;
     int schedule_ret;
-    int requeue_ret;
-    int stage_ret;
-    int commit_ret;
-    int rollback_ret;
     struct mesh_outbound requeued;
 };
 
@@ -74,11 +65,14 @@ static uint8_t receive_abort_requests;
 static uint8_t receive_abort_clears;
 static struct k_work_delayable *shim_priority_target_work;
 static int shim_retry_work_reschedule_result;
+static struct k_work_delayable *shim_last_rescheduled_work;
+static int shim_last_rescheduled_timeout;
 
 void zephyr_shim_note_work_reschedule(struct k_work_delayable *work,
                                       int timeout)
 {
-    (void)timeout;
+    shim_last_rescheduled_work = work;
+    shim_last_rescheduled_timeout = timeout;
     if (shim_priority_target_work != NULL &&
         work != shim_priority_target_work) {
         work->reschedule_result = shim_retry_work_reschedule_result;
@@ -211,55 +205,34 @@ static struct mesh_outbound pending_hop_ack(uint16_t acknowledged_seq)
     return ack;
 }
 
-static int save_outbox(void *ctx)
-{
-    struct click_preempt_fixture *fixture = ctx;
-
-    fixture->save_calls++;
-    return fixture->save_ret;
-}
-
-static int clear_outbox(void *ctx)
-{
-    struct click_preempt_fixture *fixture = ctx;
-
-    fixture->clear_calls++;
-    return fixture->clear_ret;
-}
-
-static int stage_click_handoff(void *ctx, const struct mesh_outbound *outbound)
+static int transfer_local_click(void *ctx, const struct mesh_outbound *outbound)
 {
     struct click_preempt_fixture *fixture = ctx;
 
     assert(outbound != NULL);
-    fixture->stage_calls++;
-    return fixture->stage_ret;
+    fixture->transfer_calls++;
+    if (fixture->transfer_ret < 0) {
+        return fixture->transfer_ret;
+    }
+    if (fixture->relay == NULL ||
+        mesh_relay_cancel_tx_if_matches(fixture->relay, outbound) != PROTO_OK) {
+        return -ESTALE;
+    }
+    fixture->requeued = *outbound;
+    return 0;
 }
 
-static int commit_click_handoff(void *ctx, const struct mesh_outbound *outbound)
+static int defer_active_tx(void *ctx)
 {
     struct click_preempt_fixture *fixture = ctx;
 
-    assert(outbound != NULL);
-    fixture->commit_calls++;
-    return fixture->commit_ret;
-}
-
-static int rollback_click_handoff(void *ctx, const struct mesh_outbound *outbound)
-{
-    struct click_preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    fixture->rollback_calls++;
-    return fixture->rollback_ret;
-}
-
-static int cancel_timeout(void *ctx)
-{
-    struct click_preempt_fixture *fixture = ctx;
-
-    fixture->cancel_calls++;
-    return fixture->cancel_ret;
+    fixture->defer_calls++;
+    if (fixture->defer_ret < 0) {
+        return fixture->defer_ret;
+    }
+    return fixture->relay != NULL &&
+           mesh_relay_defer_tx(fixture->relay, 1010u, UINT32_C(0x12345678)) ?
+           0 : -EINVAL;
 }
 
 static int schedule_timeout(void *ctx)
@@ -270,34 +243,9 @@ static int schedule_timeout(void *ctx)
     return fixture->schedule_ret;
 }
 
-static int requeue_click_report(void *ctx, const struct mesh_outbound *outbound)
+static void fail_stop(void *ctx)
 {
-    struct click_preempt_fixture *fixture = ctx;
-
-    fixture->requeue_calls++;
-    fixture->requeued = *outbound;
-    return fixture->requeue_ret;
-}
-
-static int discard_requeued_click_report(void *ctx,
-                                         const struct mesh_outbound *outbound)
-{
-    struct click_preempt_fixture *fixture = ctx;
-
-    assert(outbound != NULL);
-    memset(&fixture->requeued, 0, sizeof(fixture->requeued));
-    return 0;
-}
-
-static int cancel_active_tx(void *ctx)
-{
-    struct click_preempt_fixture *fixture = ctx;
-
-    if (fixture->relay == NULL) {
-        return -EINVAL;
-    }
-    mesh_relay_cancel_tx(fixture->relay);
-    return 0;
+    ((struct click_preempt_fixture *)ctx)->fail_stop_calls++;
 }
 
 static int ingress_admit(void *ctx, struct app_gateway_command_ingress_item *item)
@@ -596,6 +544,43 @@ static void test_gateway_command_aborts_receive_before_priority_scheduling(void)
     assert(receive_abort_clears == 0u);
 }
 
+static void test_gateway_safe_boundary_pulls_delayed_owner_to_now(void)
+{
+    struct k_work_delayable command_work = {
+        /* Positive means Zephyr replaced an already-pending deadline. */
+        .reschedule_result = 1,
+        .reschedule_calls = 1u,
+    };
+    struct k_work_delayable unrelated_work = {
+        .reschedule_calls = 3u,
+    };
+    struct k_work_q priority_work_queue = {0};
+    const struct app_mesh_arbitration_zephyr_gateway_ops ops = {
+        .gateway_role = true,
+        .priority_work_queue = &priority_work_queue,
+    };
+
+    receive_abort_requests = 0u;
+    receive_abort_clears = 0u;
+    shim_last_rescheduled_work = NULL;
+    shim_last_rescheduled_timeout = -1;
+
+    assert(app_mesh_arbitration_zephyr_gateway_command_submit(
+               &ops, &command_work) == 0);
+    assert(receive_abort_requests == 1u);
+    assert(command_work.reschedule_calls == 1u);
+
+    assert(app_mesh_arbitration_zephyr_gateway_receive_abort_observed() == 0);
+    assert(command_work.reschedule_calls == 2u);
+    assert(command_work.last_queue == &priority_work_queue);
+    assert(shim_last_rescheduled_work == &command_work);
+    assert(shim_last_rescheduled_timeout == K_NO_WAIT);
+
+    /* An exact wake cannot move a different delayable owner. */
+    assert(unrelated_work.reschedule_calls == 3u);
+    assert(unrelated_work.last_queue == NULL);
+}
+
 static void test_gateway_priority_contention_retires_only_frozen_generation(void)
 {
     struct k_work_delayable command_work = {
@@ -771,10 +756,12 @@ static void test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_resu
                                                        gateway_safe_boundary_schedule,
                                                        &fixture) == -EAGAIN);
     fixture.ranging_active = false;
+    fixture.work.reschedule_result = 1;
     assert(app_mesh_command_orchestrator_safe_boundary(&fixture.orchestrator,
                                                        false,
                                                        gateway_safe_boundary_schedule,
                                                        &fixture) == 0);
+    assert(fixture.orchestrator.safe_boundary_observed);
     assert(fixture.work.reschedule_calls == 1u);
     assert(fixture.work.last_queue == &fixture.priority_work_queue);
 
@@ -977,16 +964,10 @@ static void test_click_claim_requeues_one_local_report_without_corruption(void)
     struct mesh_click_preempt_plan after_preempt;
     struct click_preempt_fixture fixture = {0};
     const struct app_mesh_click_preempt_ops ops = {
-        .save_outbox = save_outbox,
-        .clear_outbox = clear_outbox,
-        .stage_click_handoff = stage_click_handoff,
-        .commit_click_handoff = commit_click_handoff,
-        .rollback_click_handoff = rollback_click_handoff,
-        .cancel_timeout = cancel_timeout,
+        .transfer_local_click = transfer_local_click,
+        .defer_active_tx = defer_active_tx,
         .schedule_timeout = schedule_timeout,
-        .requeue_click_report = requeue_click_report,
-        .discard_requeued_click_report = discard_requeued_click_report,
-        .cancel_active_tx = cancel_active_tx,
+        .fail_stop = fail_stop,
         .ctx = &fixture,
     };
     struct app_mesh_click_preempt_result result;
@@ -1023,24 +1004,15 @@ static void test_click_claim_requeues_one_local_report_without_corruption(void)
                                          ANCHOR_ID,
                                          1010u,
                                          &plan) == PROTO_OK);
-    assert(plan.requeue_click_report);
-    assert(plan.clear_outbox);
-    assert(plan.cancel_timeout);
-    assert(!plan.save_outbox);
+    assert(plan.transfer_local_click);
+    assert(!plan.defer_active_tx);
     assert(!plan.schedule_timeout);
     assert(mesh_relay_tx_active(&relay));
     assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == 0);
-    assert(result.outbox_cleared);
-    assert(result.timeout_cancelled);
-    assert(result.click_report_requeued);
-    assert(result.active_tx_cancelled);
-    assert(!result.click_report_requeue_failed);
+    assert(result.local_click_transferred);
     assert(result.transaction_committed);
-    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_DURABLE_HANDOFF);
-    assert(fixture.clear_calls == 1u);
-    assert(fixture.cancel_calls == 1u);
-    assert(fixture.requeue_calls == 1u);
-    assert(fixture.stage_calls == 1u && fixture.commit_calls == 1u);
+    assert(result.custody_owner == APP_MESH_CLICK_PREEMPT_OWNER_CLICK_REPORT);
+    assert(fixture.transfer_calls == 1u);
     assert(fixture.requeued.packet.msg_type == MSG_CLICK_REPORT);
     assert(fixture.requeued.packet.src_id == ANCHOR_ID);
     assert(fixture.requeued.packet.seq == 9u);
@@ -1052,9 +1024,9 @@ static void test_click_claim_requeues_one_local_report_without_corruption(void)
                                          ANCHOR_ID,
                                          1020u,
                                          &after_preempt) == PROTO_OK);
-    assert(!after_preempt.requeue_click_report);
+    assert(!after_preempt.transfer_local_click);
     assert(app_mesh_apply_click_preempt_plan(&after_preempt, &ops, &result) == 0);
-    assert(fixture.requeue_calls == 1u);
+    assert(fixture.transfer_calls == 1u);
 }
 
 static void test_click_preemption_custody_failures_are_explicit(void)
@@ -1064,71 +1036,44 @@ static void test_click_preemption_custody_failures_are_explicit(void)
     struct app_mesh_click_preempt_result result;
     struct click_preempt_fixture fixture;
     struct app_mesh_click_preempt_ops ops = {
-        .save_outbox = save_outbox,
-        .clear_outbox = clear_outbox,
-        .stage_click_handoff = stage_click_handoff,
-        .commit_click_handoff = commit_click_handoff,
-        .rollback_click_handoff = rollback_click_handoff,
-        .cancel_timeout = cancel_timeout,
+        .transfer_local_click = transfer_local_click,
+        .defer_active_tx = defer_active_tx,
         .schedule_timeout = schedule_timeout,
-        .requeue_click_report = requeue_click_report,
-        .discard_requeued_click_report = discard_requeued_click_report,
-        .cancel_active_tx = cancel_active_tx,
+        .fail_stop = fail_stop,
         .ctx = &fixture,
     };
 
     memset(&fixture, 0, sizeof(fixture));
-    fixture.save_ret = -EIO;
     plan = (struct mesh_click_preempt_plan) {
-        .save_outbox = true,
+        .defer_active_tx = true,
         .schedule_timeout = true,
     };
-    assert(plan.save_outbox && plan.schedule_timeout);
+    assert(plan.defer_active_tx && plan.schedule_timeout);
+    fixture.defer_ret = -EIO;
     assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -EIO);
-    assert(!result.outbox_saved);
-    assert(result.timeout_scheduled);
-    assert(fixture.schedule_calls == 1u);
+    assert(!result.active_tx_deferred);
+    assert(fixture.schedule_calls == 0u);
 
     memset(&fixture, 0, sizeof(fixture));
-    fixture.schedule_ret = -EIO;
-    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -EIO);
-    assert(!result.outbox_saved);
-    assert(!result.timeout_scheduled);
-
-    memset(&fixture, 0, sizeof(fixture));
-    fixture.requeue_ret = -ENOSPC;
-    start_gateway_bound_tx(&relay, MSG_CLICK_REPORT, ANCHOR_ID, 73u, NULL, 0u);
+    start_gateway_bound_tx(&relay, MSG_ANCHOR_HEARTBEAT, ANCHOR_ID, 73u, NULL, 0u);
     fixture.relay = &relay;
-    assert(mesh_prepare_click_preemption(&relay, ANCHOR_ID, 2020u, &plan) ==
-           PROTO_OK);
-    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -ENOSPC);
-    assert(result.click_report_requeue_failed);
-    assert(fixture.cancel_calls == 1u);
-    assert(fixture.clear_calls == 0u);
-    assert(fixture.stage_calls == 1u && fixture.commit_calls == 1u);
+    fixture.schedule_ret = -EIO;
+    assert(mesh_prepare_click_preemption(&relay, ANCHOR_ID, 2020u, &plan) == PROTO_OK);
+    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -EIO);
+    assert(result.active_tx_deferred && !result.timeout_scheduled);
+    assert(result.fail_stop_requested && fixture.fail_stop_calls == 1u);
+    assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
 
     memset(&fixture, 0, sizeof(fixture));
-    fixture.cancel_ret = -EIO;
     start_gateway_bound_tx(&relay, MSG_CLICK_REPORT, ANCHOR_ID, 74u, NULL, 0u);
     fixture.relay = &relay;
+    fixture.transfer_ret = -ENOSPC;
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_ID, 2030u, &plan) ==
            PROTO_OK);
-    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -EIO);
-    assert(!result.click_report_requeued);
-    assert(!result.timeout_cancelled);
-    assert(fixture.clear_calls == 0u);
-    assert(fixture.rollback_calls == 0u);
-
-    memset(&fixture, 0, sizeof(fixture));
-    fixture.clear_ret = -EIO;
-    start_gateway_bound_tx(&relay, MSG_CLICK_REPORT, ANCHOR_ID, 75u, NULL, 0u);
-    fixture.relay = &relay;
-    assert(mesh_prepare_click_preemption(&relay, ANCHOR_ID, 2040u, &plan) ==
-           PROTO_OK);
-    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -EIO);
-    assert(result.click_report_requeued);
-    assert(result.timeout_cancelled);
-    assert(!result.outbox_cleared);
+    assert(app_mesh_apply_click_preempt_plan(&plan, &ops, &result) == -ENOSPC);
+    assert(!result.local_click_transferred && mesh_relay_tx_active(&relay));
+    assert(fixture.transfer_calls == 1u);
 }
 
 static void test_ch9_ack_wait_and_send_keep_receive_open(void)
@@ -1169,6 +1114,7 @@ static void test_ch9_ack_wait_and_send_keep_receive_open(void)
     assert(state_changed);
     assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
     assert(decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
     assert(decision.uwb_rx_allowed);
     assert(!decision.route_wait_allowed);
     assert(!decision.report_tx_allowed);
@@ -1180,10 +1126,23 @@ static void test_ch9_ack_wait_and_send_keep_receive_open(void)
                                     &decision, &state_changed) == 0);
     assert(!state_changed);
     assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(!decision.c5_tx_allowed);
     assert(decision.uwb_rx_allowed);
     assert(!decision.route_wait_allowed);
     assert(!decision.report_tx_allowed);
     assert(strcmp(decision.reason, "ch9-ack-wait") == 0);
+
+    capture.ch9_ack_wait_active = false;
+    capture.ch9_ack_receive_eligible = true;
+    assert(fw_radio_activity_decide(&capture, &runtime_state,
+                                    &decision, &state_changed) == 0);
+    assert(!state_changed);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.mesh_work_allowed);
+    assert(decision.c5_tx_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(strcmp(decision.reason, "ch9-ack-rx-eligible") == 0);
 }
 
 static void test_paused_delivery_attaches_one_loss_tlv_until_sent(void)
@@ -1264,6 +1223,38 @@ static void test_click_survey_and_transit_order_defers_command_during_ranging(vo
 
     assert(app_mesh_c5_flood_should_defer(&flood_state));
     assert(!app_mesh_c5_gateway_rx_should_yield_to_response(&flood_state));
+}
+
+static void test_future_survey_timer_does_not_claim_current_radio(void)
+{
+    struct fw_radio_activity_capture capture = {
+        .report_queue_used = 1u,
+        /* A synchronized discovery exists, but its RF worker is not due. */
+        .survey_pending = false,
+    };
+    struct fw_radio_activity_runtime runtime_state;
+    struct fw_radio_activity_decision decision;
+    struct app_mesh_c5_flood_priority_state flood_state = {
+        .survey_busy = false,
+    };
+    bool state_changed = false;
+
+    fw_radio_activity_runtime_init(&runtime_state);
+    assert(fw_radio_activity_decide(&capture, &runtime_state,
+                                    &decision, &state_changed) == 0);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_TX);
+    assert(decision.c5_tx_allowed);
+    assert(!app_mesh_c5_flood_should_defer(&flood_state));
+
+    /* Once the due worker takes the discovery, the same policy input must
+     * fence every competing Channel-5 producer through radio release. */
+    capture.survey_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime_state,
+                                    &decision, &state_changed) == 0);
+    assert(decision.state == FW_RADIO_ACTIVITY_SURVEY);
+    assert(!decision.c5_tx_allowed);
+    flood_state.survey_busy = true;
+    assert(app_mesh_c5_flood_should_defer(&flood_state));
 }
 
 static void test_retired_survey_go_is_rejected_without_admission(void)
@@ -1453,6 +1444,7 @@ static void test_broadcast_transport_retry_requires_explicit_semantic_commit(voi
 int main(void)
 {
     test_gateway_command_aborts_receive_before_priority_scheduling();
+    test_gateway_safe_boundary_pulls_delayed_owner_to_now();
     test_gateway_priority_contention_retires_only_frozen_generation();
     test_gateway_priority_retry_owner_rejection_cannot_orphan_generation();
     test_gateway_ble_ingress_waits_for_safe_boundary_then_preserves_result_identity();
@@ -1463,6 +1455,7 @@ int main(void)
     test_ch9_ack_wait_and_send_keep_receive_open();
     test_paused_delivery_attaches_one_loss_tlv_until_sent();
     test_click_survey_and_transit_order_defers_command_during_ranging();
+    test_future_survey_timer_does_not_claim_current_radio();
     test_retired_survey_go_is_rejected_without_admission();
     test_broadcast_transport_retry_requires_explicit_semantic_commit();
     return 0;

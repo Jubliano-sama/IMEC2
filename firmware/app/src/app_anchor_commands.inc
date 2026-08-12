@@ -6,6 +6,92 @@ static uint32_t anchor_discovery_ack_liveness_generation;
 
 static struct app_mesh_discovery_assignment_snapshot
     anchor_ram_discovery_assignment_snapshot;
+static bool anchor_discovery_assignment_restore_complete;
+static bool anchor_startup_heartbeat_pending;
+
+#define ANCHOR_ASSIGNMENT_COMMISSIONING_BURST 4u
+#define ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS UINT64_C(86400000)
+#if DEVICE_ROLE == ROLE_ANCHOR
+/*
+ * This RAM admission guard allows four distinct TABLE identities after each
+ * boot, then one per uptime day. A reboot intentionally grants a fresh
+ * commissioning burst, so this is a fail-closed hot-path bound rather than a
+ * power-cycle-independent NVS endurance guarantee.
+ */
+static uint32_t anchor_assignment_next_reassign_uptime_day;
+static uint32_t anchor_assignment_last_admitted_epoch;
+static uint32_t anchor_assignment_last_admitted_table_seq;
+static uint8_t anchor_assignment_commissioning_remaining;
+#endif
+
+static int anchor_restore_live_discovery_assignment_snapshot(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot);
+
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+static void anchor_assignment_snapshot_to_durable(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot,
+    struct app_durable_state_anchor_assignment *assignment)
+{
+    memset(assignment, 0, sizeof(*assignment));
+    assignment->table_commitment = snapshot->table_commitment;
+    assignment->pending_table_commitment =
+        snapshot->pending_table_commitment;
+    assignment->epoch = snapshot->epoch;
+    assignment->table_command_seq = snapshot->table_command_seq;
+    assignment->pending_epoch = snapshot->pending_epoch;
+    assignment->pending_table_command_seq =
+        snapshot->pending_table_command_seq;
+    memcpy(assignment->retired_epochs,
+           snapshot->retired_epochs,
+           sizeof(assignment->retired_epochs));
+    assignment->table_packet_seq = snapshot->table_packet_seq;
+    assignment->response_spread_ms = snapshot->response_spread_ms;
+    assignment->slot = snapshot->slot;
+    assignment->slot_count = snapshot->slot_count;
+    assignment->provisioned = snapshot->provisioned;
+    assignment->retired_epoch_count = snapshot->retired_epoch_count;
+    assignment->ordered_epoch_valid = snapshot->ordered_epoch_valid;
+    assignment->ack_pending = snapshot->ack_pending;
+    assignment->pending_slot = snapshot->pending_slot;
+    assignment->pending_slot_count = snapshot->pending_slot_count;
+    assignment->pending_valid = snapshot->pending_valid;
+}
+
+static void anchor_assignment_durable_to_snapshot(
+    const struct app_durable_state_anchor_assignment *assignment,
+    struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->local_id = DEVICE_ID;
+    snapshot->gateway_id = GATEWAY_ID;
+    snapshot->table_commitment = assignment->table_commitment;
+    snapshot->pending_table_commitment =
+        assignment->pending_table_commitment;
+    snapshot->epoch = assignment->epoch;
+    snapshot->table_command_seq = assignment->table_command_seq;
+    snapshot->pending_epoch = assignment->pending_epoch;
+    snapshot->pending_table_command_seq =
+        assignment->pending_table_command_seq;
+    memcpy(snapshot->retired_epochs,
+           assignment->retired_epochs,
+           sizeof(snapshot->retired_epochs));
+    snapshot->table_packet_seq = assignment->table_packet_seq;
+    snapshot->response_spread_ms = assignment->response_spread_ms;
+    snapshot->size = sizeof(*snapshot);
+    snapshot->version = APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION;
+    snapshot->slot = assignment->slot;
+    snapshot->slot_count = assignment->slot_count;
+    snapshot->provisioned = assignment->provisioned;
+    snapshot->valid = 1u;
+    snapshot->retired_epoch_count = assignment->retired_epoch_count;
+    snapshot->ordered_epoch_valid = assignment->ordered_epoch_valid;
+    snapshot->ack_pending = assignment->ack_pending;
+    snapshot->pending_slot = assignment->pending_slot;
+    snapshot->pending_slot_count = assignment->pending_slot_count;
+    snapshot->pending_valid = assignment->pending_valid;
+    snapshot->ack_retry_round = 0u;
+}
+#endif
 
 static int anchor_restore_discovery_assignment_ram(
     struct app_mesh_discovery_assignment_snapshot *out)
@@ -17,7 +103,30 @@ static int anchor_restore_discovery_assignment_ram(
     return 0;
 }
 
-static int anchor_save_discovery_assignment_ram(
+static int anchor_save_discovery_assignment_semantic(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot)
+{
+    struct app_durable_state_anchor_assignment assignment;
+    int ret;
+
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    anchor_assignment_snapshot_to_durable(snapshot, &assignment);
+    ret = app_durable_state_save_anchor_assignment(GATEWAY_ID, &assignment);
+    if (ret < 0) {
+        return ret;
+    }
+#else
+    ARG_UNUSED(assignment);
+    ret = 0;
+#endif
+    anchor_ram_discovery_assignment_snapshot = *snapshot;
+    return ret;
+}
+
+static int anchor_save_discovery_assignment_retry_ram(
     const struct app_mesh_discovery_assignment_snapshot *snapshot)
 {
     if (snapshot == NULL) {
@@ -27,11 +136,108 @@ static int anchor_save_discovery_assignment_ram(
     return 0;
 }
 
-static int anchor_clear_discovery_assignment_ram(void)
+static int anchor_clear_discovery_assignment_semantic(void)
 {
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    int ret = app_durable_state_delete_anchor_assignment(GATEWAY_ID);
+
+    if (ret < 0) {
+        return ret;
+    }
+#endif
     memset(&anchor_ram_discovery_assignment_snapshot, 0,
            sizeof(anchor_ram_discovery_assignment_snapshot));
     return 0;
+}
+
+static int anchor_restore_discovery_assignment_durable(void)
+{
+    struct app_durable_state_anchor_assignment assignment;
+    struct app_mesh_discovery_assignment_snapshot snapshot;
+    int ret;
+
+    if (anchor_discovery_assignment_restore_complete) {
+        return 0;
+    }
+    local_anchor_reset_discovery_assignment();
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    ret = app_durable_state_restore_anchor_assignment(GATEWAY_ID,
+                                                      &assignment);
+    if (ret < 0) {
+        return ret;
+    }
+    if (ret == 0) {
+        memset(&anchor_ram_discovery_assignment_snapshot,
+               0,
+               sizeof(anchor_ram_discovery_assignment_snapshot));
+        anchor_discovery_assignment_restore_complete = true;
+        return 0;
+    }
+    anchor_assignment_durable_to_snapshot(&assignment, &snapshot);
+    ret = anchor_restore_live_discovery_assignment_snapshot(&snapshot);
+    if (ret != PROTO_OK) {
+        return -EILSEQ;
+    }
+    anchor_ram_discovery_assignment_snapshot = snapshot;
+    anchor_discovery_assignment_restore_complete = true;
+    LOG_INF("anchor discovery assignment restored: state=%s epoch=%u generation=%u slot=%u slot_count=%u pending_epoch=%u pending_generation=%u pending_slot=%u",
+            snapshot.ack_pending != 0u ? "ACK_PENDING" :
+            snapshot.provisioned != 0u ? "PROVISIONED" : "UNPROVISIONED",
+            snapshot.epoch,
+            snapshot.table_command_seq,
+            snapshot.slot,
+            snapshot.slot_count,
+            snapshot.pending_epoch,
+            snapshot.pending_table_command_seq,
+            snapshot.pending_slot);
+    return 0;
+#else
+    ARG_UNUSED(assignment);
+    ARG_UNUSED(snapshot);
+    anchor_discovery_assignment_restore_complete = true;
+    return 0;
+#endif
+}
+
+static int anchor_admit_discovery_assignment_semantic_change(
+    uint32_t epoch,
+    uint32_t table_seq)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    uint64_t now_ms;
+    uint32_t now_day;
+
+    if (epoch == 0u || table_seq == 0u) {
+        return -EINVAL;
+    }
+    if (anchor_assignment_last_admitted_epoch == epoch &&
+        anchor_assignment_last_admitted_table_seq == table_seq) {
+        return 0;
+    }
+    now_ms = (uint64_t)k_uptime_get();
+    now_day = (uint32_t)(now_ms /
+                         ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS);
+    if (anchor_assignment_next_reassign_uptime_day == 0u) {
+        anchor_assignment_commissioning_remaining =
+            ANCHOR_ASSIGNMENT_COMMISSIONING_BURST;
+        anchor_assignment_next_reassign_uptime_day = now_day + 1u;
+    }
+    if (anchor_assignment_commissioning_remaining != 0u) {
+        anchor_assignment_commissioning_remaining--;
+    } else if (now_day >=
+               anchor_assignment_next_reassign_uptime_day) {
+        anchor_assignment_next_reassign_uptime_day = now_day + 1u;
+    } else {
+        return -EAGAIN;
+    }
+    anchor_assignment_last_admitted_epoch = epoch;
+    anchor_assignment_last_admitted_table_seq = table_seq;
+    return 0;
+#else
+    ARG_UNUSED(epoch);
+    ARG_UNUSED(table_seq);
+    return -ENOTSUP;
+#endif
 }
 
 static int anchor_checked_work_reschedule(struct k_work_delayable *work,
@@ -47,6 +253,27 @@ static int anchor_checked_work_reschedule(struct k_work_delayable *work,
         app_watchdog_stop_feeding();
     }
     return ret;
+}
+
+static int anchor_ram_owner_work_reschedule(struct k_work_delayable *work,
+                                            k_timeout_t delay,
+                                            const char *source)
+{
+    int system_ret = k_work_reschedule(work, delay);
+    int owner_ret;
+
+    if (system_ret >= 0) {
+        return system_ret;
+    }
+    owner_ret = mesh_route_owner_work_reschedule_timeout(work, delay);
+    if (owner_ret < 0) {
+        LOG_ERR("anchor RAM owner scheduling failed on both queues: source=%s system_ret=%d owner_ret=%d",
+                source == NULL ? "unknown" : source,
+                system_ret,
+                owner_ret);
+        app_watchdog_stop_feeding();
+    }
+    return owner_ret;
 }
 
 static bool anchor_discovery_assignment_required(void)
@@ -141,18 +368,17 @@ static int anchor_enter_low_power(enum app_radio_low_power_mode mode,
     return final_ret;
 }
 
-static uint32_t anchor_collection_node_boot_id(void)
+static int anchor_collection_node_boot_id(uint32_t *boot_id)
 {
-    if (anchor_collection_node_boot_counter == 0u) {
-        anchor_collection_node_boot_counter = sys_rand32_get();
-        if (anchor_collection_node_boot_counter == 0u) {
-            anchor_collection_node_boot_counter = k_uptime_get_32();
-        }
-        if (anchor_collection_node_boot_counter == 0u) {
-            anchor_collection_node_boot_counter = 1u;
-        }
+    if (boot_id == NULL) {
+        return -EINVAL;
     }
-    return anchor_collection_node_boot_counter;
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    return app_durable_state_boot_incarnation(boot_id);
+#else
+    *boot_id = 0u;
+    return -ENOTSUP;
+#endif
 }
 
 static uint16_t anchor_next_collection_result_seq(void)
@@ -208,7 +434,7 @@ static int anchor_submit_command_result(
     uint8_t reason,
     const struct command_result_id *collection_result_id,
     uint32_t collection_epoch_id,
-    uint32_t protocol_reservation_token,
+    const struct app_node_comm_reservation_lease *protocol_reservation,
     uint32_t *delivery_handle_out)
 {
     struct mesh_outbound outbound = {0};
@@ -220,6 +446,7 @@ static int anchor_submit_command_result(
     size_t payload_len = 0u;
     uint32_t session_id;
     uint16_t seq;
+    bool auto_reap_with_handle;
     bool diagnostic;
     int ret;
 
@@ -281,24 +508,44 @@ static int anchor_submit_command_result(
         command_id == CMD_SURVEY_PREPARE_PAIR ||
         command_id == CMD_SURVEY_START_PAIR ?
             SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS :
+        command_id == CMD_SURVEY_ABORT ?
+            SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS :
             GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
     absolute_deadline_ms = UINT64_MAX - now_ms <
                            result_timeout_ms ?
                            UINT64_MAX :
                            now_ms + result_timeout_ms;
     client_token = ((uint32_t)command_id << 16) | seq;
-    ret = protocol_reservation_token == 0u ?
-        app_node_comm_submit_protocol_response(
-            &outbound,
-            absolute_deadline_ms,
-            client_token,
-            delivery_handle_out == NULL ? NULL : &delivery_handle) :
-        app_node_comm_commit_protocol_response(
-            protocol_reservation_token,
-            &outbound,
-            absolute_deadline_ms,
-            client_token,
-            delivery_handle_out == NULL ? NULL : &delivery_handle);
+    auto_reap_with_handle =
+        command_id == CMD_SURVEY_START_PAIR &&
+        status == COMMAND_OK && delivery_handle_out != NULL;
+    if (protocol_reservation == NULL) {
+        ret = auto_reap_with_handle ?
+            app_node_comm_submit_protocol_response_auto_reap(
+                &outbound,
+                absolute_deadline_ms,
+                client_token,
+                &delivery_handle) :
+            app_node_comm_submit_protocol_response(
+                &outbound,
+                absolute_deadline_ms,
+                client_token,
+                delivery_handle_out == NULL ? NULL : &delivery_handle);
+    } else {
+        ret = auto_reap_with_handle ?
+            app_node_comm_commit_protocol_response_auto_reap(
+                protocol_reservation,
+                &outbound,
+                absolute_deadline_ms,
+                client_token,
+                &delivery_handle) :
+            app_node_comm_commit_protocol_response(
+                protocol_reservation,
+                &outbound,
+                absolute_deadline_ms,
+                client_token,
+                delivery_handle_out == NULL ? NULL : &delivery_handle);
+    }
     if (ret == 0) {
         if (delivery_handle_out != NULL) {
             *delivery_handle_out = delivery_handle;
@@ -320,7 +567,7 @@ static int anchor_send_command_result(const struct proto_packet *command,
                                         reason,
                                         collection_result_id,
                                         collection_epoch_id,
-                                        0u,
+                                        NULL,
                                         NULL);
 }
 
@@ -360,7 +607,10 @@ static uint32_t anchor_discovery_response_delay_ms(
     uint32_t delay_ms = DISCOVERY_ASSIGNMENT_RETRY_BASE_MS;
 
     if (pending == NULL ||
-        discovery_assignment_response_delay_ms(pending->response_spread_ms,
+        discovery_assignment_response_delay_ms(pending->slot,
+                                               pending->slot_count,
+                                               pending->hop_count,
+                                               pending->response_spread_ms,
                                                pending->attempt,
                                                sys_rand32_get(),
                                                &delay_ms) != PROTO_OK) {
@@ -375,8 +625,8 @@ static uint32_t anchor_discovery_ack_low_duty_retry_delay_ms(
 {
     uint32_t delay_ms = ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_BASE_MS;
     uint8_t low_duty_round =
-        terminal_retry_count > ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES ?
-        terminal_retry_count - ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES :
+        terminal_retry_count > DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES ?
+        terminal_retry_count - DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES :
         0u;
 
     for (uint8_t i = 0u; i < low_duty_round; i++) {
@@ -621,6 +871,31 @@ static void anchor_discovery_ack_refresh_attempt_deadline_locked(
         discovery_assignment_response_deadline_ms(
             now_ms,
             (uint32_t)delay_ms,
+        anchor_discovery_claim_pending.hop_count);
+}
+
+static void anchor_discovery_terminal_retry_refresh_deadline_locked(
+    uint64_t not_before_ms)
+{
+    uint64_t now_ms = (uint64_t)k_uptime_get();
+    uint64_t delay_ms = not_before_ms > now_ms ?
+                        not_before_ms - now_ms : 0u;
+
+    if (anchor_discovery_claim_pending.phase !=
+            DISCOVERY_ASSIGNMENT_PHASE_ACK &&
+        (anchor_discovery_claim_pending.phase !=
+             DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
+         anchor_discovery_claim_pending.terminal_retry_count >
+             DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES)) {
+        return;
+    }
+    if (delay_ms > UINT32_MAX) {
+        delay_ms = UINT32_MAX;
+    }
+    anchor_discovery_claim_pending.absolute_deadline_ms =
+        discovery_assignment_response_deadline_ms(
+            now_ms,
+            (uint32_t)delay_ms,
             anchor_discovery_claim_pending.hop_count);
 }
 
@@ -745,7 +1020,7 @@ static int anchor_promote_discovery_assignment_after_ack_locked(
     snapshot.pending_slot_count = 0u;
     snapshot.pending_valid = 0u;
     snapshot.ack_retry_round = 0u;
-    ret = anchor_save_discovery_assignment_ram(&snapshot);
+    ret = anchor_save_discovery_assignment_semantic(&snapshot);
     if (ret < 0) {
         return ret;
     }
@@ -839,7 +1114,7 @@ static int anchor_persist_discovery_assignment_ack_retry_round(
         return 0;
     }
     snapshot.ack_retry_round = retry_round;
-    return anchor_save_discovery_assignment_ram(&snapshot);
+    return anchor_save_discovery_assignment_retry_ram(&snapshot);
 }
 
 static void anchor_discovery_assignment_service_ack_promotion(
@@ -847,6 +1122,7 @@ static void anchor_discovery_assignment_service_ack_promotion(
 {
     uint32_t retry_ms = 0u;
     uint8_t attempt = 0u;
+    bool fail_closed = false;
     bool retryable;
     int schedule_ret = 0;
     int ret;
@@ -855,8 +1131,9 @@ static void anchor_discovery_assignment_service_ack_promotion(
         return;
     }
     ret = anchor_promote_discovery_assignment_after_ack(pending);
-    retryable = ret == -EIO || ret == -EAGAIN || ret == -ENOSPC ||
-                ret == -EBUSY || ret == -ENODEV || ret == -ENOMEM;
+    retryable = ret == -EIO || ret == -ETIMEDOUT || ret == -EINTR ||
+                ret == -EAGAIN || ret == -ENOSPC || ret == -EBUSY ||
+                ret == -ENODEV || ret == -ENOMEM;
     k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
     if (anchor_discovery_claim_pending.active &&
         anchor_discovery_claim_pending.generation == pending->generation &&
@@ -875,13 +1152,22 @@ static void anchor_discovery_assignment_service_ack_promotion(
                 pending->generation,
                 (uint64_t)k_uptime_get() + retry_ms);
             if (schedule_ret < 0) {
-                anchor_discovery_claim_pending.active = false;
+                fail_closed = true;
             }
         } else {
-            anchor_discovery_claim_pending.active = false;
+            /*
+             * Corrupt, stale-schema, or identity-mismatched evidence cannot
+             * be repaired by another write. Retain exact promotion custody
+             * and force reset/recovery instead of silently exposing the old
+             * live slot after its TABLE ACK was already delivered.
+             */
+            fail_closed = true;
         }
     }
     k_mutex_unlock(&anchor_discovery_claim_mutex);
+    if (fail_closed) {
+        app_watchdog_stop_feeding();
+    }
     if (ret < 0) {
         LOG_ERR("anchor TABLE ACK durable promotion %s: epoch=%u ret=%d delay=%u attempt=%u schedule_ret=%d",
                 retryable ? "retry" : "rejected",
@@ -947,7 +1233,7 @@ static int anchor_retire_superseded_discovery_ack(
         snapshot.pending_slot_count = 0u;
         snapshot.pending_valid = 0u;
         snapshot.ack_retry_round = 0u;
-        ret = anchor_save_discovery_assignment_ram(&snapshot);
+        ret = anchor_save_discovery_assignment_semantic(&snapshot);
     } else {
         /*
          * A first-assignment candidate has no finalized identity, so a
@@ -955,7 +1241,7 @@ static int anchor_retire_superseded_discovery_ack(
          * through the checked path instead of pretending an empty snapshot was
          * committed.
          */
-        ret = anchor_clear_discovery_assignment_ram();
+        ret = anchor_clear_discovery_assignment_semantic();
         if (ret == 0) {
             memset(&snapshot, 0, sizeof(snapshot));
         }
@@ -1072,17 +1358,23 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
         }
 
         /*
-         * Each node-communication handle is bounded, but durable TABLE ACK
-         * custody is not discarded when one handle expires. A fresh handle
-         * and deadline are created until exact delivery, supersession, or an
-         * explicit cancellation wins the generation race.
+         * Each node-communication handle is bounded. A CLAIM gets two fresh
+         * handles so the finite route/timing/forwarded-ACK repair horizon
+         * cannot outlive its exact local owner. TABLE ACK
+         * custody keeps its existing durable retry policy. Supersession and
+         * explicit cancellation always win the generation race.
          */
-        retry = pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK &&
-                event.reason != NODE_COMM_TERMINAL_CANCELLED;
+        retry = event.reason != NODE_COMM_TERMINAL_CANCELLED &&
+                event.reason != NODE_COMM_TERMINAL_DELIVERED &&
+                (pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK ||
+                 (pending.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
+                  pending.terminal_retry_count <
+                      DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES));
         if (retry) {
-            low_duty_retry =
+            low_duty_retry = pending.phase ==
+                                 DISCOVERY_ASSIGNMENT_PHASE_ACK &&
                 pending.terminal_retry_count >=
-                    ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES;
+                    DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES;
             retry_ms = low_duty_retry ?
                 anchor_discovery_ack_low_duty_retry_delay_ms(
                     pending.terminal_retry_count, sys_rand32_get()) :
@@ -1108,12 +1400,14 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
             attempt = anchor_discovery_claim_pending.attempt;
             retry_not_before_ms =
                 (uint64_t)k_uptime_get() + retry_ms;
-            anchor_discovery_ack_refresh_attempt_deadline_locked(
+            anchor_discovery_terminal_retry_refresh_deadline_locked(
                 retry_not_before_ms);
-            persistence_ret =
-                anchor_persist_discovery_assignment_ack_retry_round(
-                    &pending,
-                    anchor_discovery_claim_pending.terminal_retry_count);
+            if (pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+                persistence_ret =
+                    anchor_persist_discovery_assignment_ack_retry_round(
+                        &pending,
+                        anchor_discovery_claim_pending.terminal_retry_count);
+            }
             schedule_ret = anchor_discovery_claim_reschedule_locked(
                 pending.generation,
                 retry_not_before_ms);
@@ -1554,7 +1848,7 @@ static int anchor_schedule_discovery_response(
     delay_ms =
         phase == DISCOVERY_ASSIGNMENT_PHASE_ACK &&
         restored_ack_retry_round >=
-            ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES ?
+            DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES ?
         anchor_discovery_ack_low_duty_retry_delay_ms(
             restored_ack_retry_round, sys_rand32_get()) :
         anchor_discovery_response_delay_ms(
@@ -1649,6 +1943,10 @@ static int anchor_resume_pending_discovery_assignment_ack(
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return 0;
     }
+    ret = anchor_restore_discovery_assignment_durable();
+    if (ret < 0) {
+        return ret;
+    }
     ret = anchor_restore_discovery_assignment_ram(&snapshot);
     if (ret < 0) {
         return ret;
@@ -1663,7 +1961,7 @@ static int anchor_resume_pending_discovery_assignment_ack(
     }
     if (explicit_table_replay && snapshot.ack_retry_round != 0u) {
         snapshot.ack_retry_round = 0u;
-        ret = anchor_save_discovery_assignment_ram(&snapshot);
+        ret = anchor_save_discovery_assignment_retry_ram(&snapshot);
         if (ret < 0) {
             return ret;
         }
@@ -1695,6 +1993,14 @@ static void anchor_collection_result_clear(void)
     memset(&anchor_collection_result_pending, 0, sizeof(anchor_collection_result_pending));
 }
 
+static void anchor_collection_result_start_ram_owner(void)
+{
+    k_mutex_lock(&anchor_command_result_mutex, K_FOREVER);
+    anchor_collection_result_clear();
+    anchor_collection_result_seq = 0u;
+    k_mutex_unlock(&anchor_command_result_mutex);
+}
+
 static bool anchor_collection_result_has_collection_identity(
     const struct anchor_collection_result_pending *pending)
 {
@@ -1706,12 +2012,6 @@ static bool anchor_collection_result_has_collection_identity(
            pending->result_id.result_seq != 0u;
 }
 
-static int anchor_collection_result_clear_durable(void *context)
-{
-    ARG_UNUSED(context);
-    return 0;
-}
-
 static bool anchor_collection_result_take_terminal(
     uint32_t delivery_handle,
     struct node_comm_terminal_event *event_out,
@@ -1721,13 +2021,14 @@ static bool anchor_collection_result_take_terminal(
     return app_node_comm_take_delivery_event_for(delivery_handle, event_out);
 }
 
-static void anchor_collection_result_apply_actions(
+static int anchor_collection_result_apply_actions(
     const struct anchor_collection_result_pending *pending)
 {
     uint8_t actions;
+    int ret;
 
     if (pending == NULL) {
-        return;
+        return -EINVAL;
     }
     actions = anchor_command_completion_actions(
         pending->status,
@@ -1735,76 +2036,36 @@ static void anchor_collection_result_apply_actions(
         pending->reboot_after_result);
     if ((actions &
          APP_ANCHOR_COMMAND_COMPLETION_FORCE_REDISCOVERY) != 0u) {
-        anchor_force_rediscovery_from_command();
+        ret = anchor_force_rediscovery_from_command();
+        if (ret < 0) {
+            return ret;
+        }
     }
     if ((actions & APP_ANCHOR_COMMAND_COMPLETION_REBOOT) != 0u) {
-        anchor_schedule_reboot_after_command_result();
+        ret = anchor_schedule_reboot_after_command_result();
+        if (ret < 0) {
+            return ret;
+        }
     }
+    return 0;
 }
 
-static int anchor_collection_result_persist(uint32_t delay_ms)
+static int anchor_collection_result_retry(const char *source)
 {
-    ARG_UNUSED(delay_ms);
+    uint32_t retry_ms = discovery_assignment_retry_backoff_ms(
+        anchor_collection_result_pending.retry_round,
+        sys_rand32_get());
 
     if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_collection_result_pending.active) {
         return -EINVAL;
     }
-    return 0;
-}
-
-static void anchor_collection_result_retry(const char *source)
-{
-    uint32_t retry_ms = discovery_assignment_retry_backoff_ms(
-        anchor_collection_result_pending.persistence_retry_round,
-        sys_rand32_get());
-    int persist_ret;
-
-    if (anchor_collection_result_pending.persistence_retry_round <
-        UINT8_MAX) {
-        anchor_collection_result_pending.persistence_retry_round++;
+    if (anchor_collection_result_pending.retry_round < UINT8_MAX) {
+        anchor_collection_result_pending.retry_round++;
     }
-    persist_ret = anchor_collection_result_persist(retry_ms);
-    if (persist_ret < 0) {
-        anchor_collection_result_pending.persistence_dirty = true;
-        LOG_WRN("anchor command result retry persistence failed: cmd=0x%04x ret=%d",
-                (unsigned int)anchor_collection_result_pending.command_id,
-                persist_ret);
-    } else {
-        anchor_collection_result_pending.persistence_dirty = false;
-    }
-    (void)anchor_checked_work_reschedule(
+    return anchor_ram_owner_work_reschedule(
         &anchor_collection_result_work,
         K_MSEC(retry_ms),
         source);
-}
-
-static int anchor_collection_result_restore_locked(void)
-{
-    if (DEVICE_ROLE != ROLE_ANCHOR || anchor_collection_result_pending.active) {
-        return -EBUSY;
-    }
-    anchor_collection_result_restore_complete = true;
-    return 0;
-}
-
-static int anchor_collection_result_restore(void)
-{
-    int ret;
-
-    if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return -ENOTSUP;
-    }
-    k_mutex_lock(&anchor_command_result_mutex, K_FOREVER);
-    ret = anchor_collection_result_restore_locked();
-    if (ret == -ENOENT || ret == -ENOTSUP) {
-        /*
-         * These are definitive no-durable-owner outcomes accepted by startup,
-         * so later command admission may begin with a fresh boot identity.
-         */
-        anchor_collection_result_restore_complete = true;
-    }
-    k_mutex_unlock(&anchor_command_result_mutex);
-    return ret;
 }
 
 static void anchor_collection_result_work_handler_locked(struct k_work *work)
@@ -1813,6 +2074,8 @@ static void anchor_collection_result_work_handler_locked(struct k_work *work)
     struct node_comm_terminal_event event;
     struct node_comm_terminal_event taken_event;
     const struct command_result_id *collection_result_id;
+    uint32_t delivery_handle = 0u;
+    int schedule_ret;
     int ret;
 
     ARG_UNUSED(work);
@@ -1821,113 +2084,95 @@ static void anchor_collection_result_work_handler_locked(struct k_work *work)
         return;
     }
 
-    if (anchor_collection_result_pending.persistence_dirty) {
-        uint32_t retry_ms;
-
-        ret = anchor_collection_result_persist(1u);
+    if (anchor_collection_result_pending.result_confirmed) {
+        pending = anchor_collection_result_pending;
+        ret = anchor_collection_result_apply_actions(&pending);
         if (ret < 0) {
-            retry_ms = discovery_assignment_retry_backoff_ms(
-                anchor_collection_result_pending.persistence_retry_round,
-                sys_rand32_get());
-            if (anchor_collection_result_pending.persistence_retry_round < UINT8_MAX) {
-                anchor_collection_result_pending.persistence_retry_round++;
-            }
-            LOG_WRN("anchor collection result persistence retry: ret=%d round=%u delay_ms=%u",
+            LOG_ERR("anchor confirmed command-result action transfer deferred: cmd=0x%04x ret=%d round=%u",
+                    (unsigned int)pending.command_id,
                     ret,
-                    anchor_collection_result_pending.persistence_retry_round,
-                    retry_ms);
-            (void)anchor_checked_work_reschedule(
-                &anchor_collection_result_work,
-                K_MSEC(retry_ms),
-                "collection-result-persistence-retry");
+                    anchor_collection_result_pending.retry_round);
+            (void)anchor_collection_result_retry(
+                "command-result-action-transfer-retry");
             return;
         }
-        anchor_collection_result_pending.persistence_dirty = false;
-        anchor_collection_result_pending.persistence_retry_round = 0u;
+        anchor_collection_result_clear();
+        LOG_INF("anchor confirmed command-result action ownership transferred: cmd=0x%04x",
+                (unsigned int)pending.command_id);
+        return;
     }
+
     ret = anchor_commit_pending_collection_command_replay();
     if (ret < 0) {
-        uint32_t retry_ms = discovery_assignment_retry_backoff_ms(
-            anchor_collection_result_pending.persistence_retry_round,
-            sys_rand32_get());
-
-        if (anchor_collection_result_pending.persistence_retry_round <
-            UINT8_MAX) {
-            anchor_collection_result_pending.persistence_retry_round++;
-        }
-        LOG_WRN("anchor collection result replay commit retry: ret=%d round=%u delay_ms=%u",
+        LOG_WRN("anchor collection result replay commit retry: ret=%d round=%u",
                 ret,
-                anchor_collection_result_pending.persistence_retry_round,
-                retry_ms);
-        (void)anchor_checked_work_reschedule(
-            &anchor_collection_result_work,
-            K_MSEC(retry_ms),
-            "collection-result-replay-retry");
+                anchor_collection_result_pending.retry_round);
+        (void)anchor_collection_result_retry(
+                "collection-result-replay-retry");
         return;
     }
 
     if (anchor_collection_result_pending.delivery_handle != 0u) {
-        uint32_t delivery_handle =
-            anchor_collection_result_pending.delivery_handle;
+        delivery_handle = anchor_collection_result_pending.delivery_handle;
 
         if (!app_node_comm_peek_delivery_event_for(delivery_handle, &event)) {
-            (void)anchor_checked_work_reschedule(
+            (void)anchor_ram_owner_work_reschedule(
                 &anchor_collection_result_work,
                 K_MSEC(ANCHOR_COMMAND_DELIVERY_POLL_MS),
                 "command-result-terminal-poll");
             return;
         }
-        ret = app_anchor_command_completion_commit_terminal(
+        ret = app_anchor_command_completion_take_terminal_exact(
             delivery_handle,
             &event,
-            anchor_collection_result_clear_durable,
             anchor_collection_result_take_terminal,
             NULL,
             &taken_event);
         if (ret < 0) {
-            /*
-             * A delivered terminal may have cleared NVS before an unexpected
-             * exact-take race. Restore the same result/action owner before
-             * retrying so reset cannot lose the side effect.
-             */
-            if (event.reason == NODE_COMM_TERMINAL_DELIVERED &&
-                anchor_collection_result_persist(
-                    ANCHOR_COMMAND_DELIVERY_POLL_MS) < 0) {
-                anchor_collection_result_pending.persistence_dirty = true;
-            }
             if (ret == -EPROTO) {
                 /*
                  * The exact terminal was consumed before its immutable
-                 * metadata mismatch was detected. The durable snapshot is
-                 * still authoritative, but this handle can never become
-                 * terminal again.
+                 * metadata mismatch was detected. The RAM owner remains
+                 * authoritative, but this handle can never become terminal
+                 * again.
                  */
                 anchor_collection_result_pending.delivery_handle = 0u;
             }
-            LOG_WRN("anchor command result terminal commit deferred: cmd=0x%04x handle=%u ret=%d",
+            LOG_WRN("anchor command result exact terminal take deferred: cmd=0x%04x handle=%u ret=%d",
                     (unsigned int)anchor_collection_result_pending.command_id,
                     delivery_handle,
                     ret);
-            anchor_collection_result_retry(
-                "command-result-terminal-commit-retry");
+            (void)anchor_collection_result_retry(
+                "command-result-terminal-take-retry");
             return;
         }
         if (ret == 0) {
-            LOG_WRN("anchor command result delivery failed; retaining exact durable result: cmd=0x%04x handle=%u reason=%u attempts=%u",
+            LOG_WRN("anchor command result delivery failed; retaining exact RAM result: cmd=0x%04x handle=%u reason=%u attempts=%u",
                     (unsigned int)anchor_collection_result_pending.command_id,
                     delivery_handle,
                     (unsigned int)taken_event.reason,
                     taken_event.attempts_started);
             anchor_collection_result_pending.delivery_handle = 0u;
-            anchor_collection_result_retry(
+            (void)anchor_collection_result_retry(
                 "command-result-terminal-resubmit");
             return;
         }
 
         pending = anchor_collection_result_pending;
+        anchor_collection_result_pending.delivery_handle = 0u;
+        anchor_collection_result_pending.result_confirmed = true;
+        ret = anchor_collection_result_apply_actions(&pending);
+        if (ret < 0) {
+            LOG_ERR("anchor command result confirmed but action transfer failed: cmd=0x%04x handle=%u ret=%d",
+                    (unsigned int)pending.command_id,
+                    delivery_handle,
+                    ret);
+            (void)anchor_collection_result_retry(
+                "command-result-action-transfer-retry");
+            return;
+        }
         anchor_collection_result_clear();
-        anchor_collection_result_apply_actions(&pending);
-        LOG_INF("anchor command result gateway-confirmed: cmd=0x%04x handle=%u attempts=%u",
+        LOG_INF("anchor command result gateway-confirmed and action transferred: cmd=0x%04x handle=%u attempts=%u",
                 (unsigned int)pending.command_id,
                 delivery_handle,
                 taken_event.attempts_started);
@@ -1945,26 +2190,34 @@ static void anchor_collection_result_work_handler_locked(struct k_work *work)
         pending.reason,
         collection_result_id,
         pending.collection_epoch_id,
-        0u,
-        &anchor_collection_result_pending.delivery_handle);
+        NULL,
+        &delivery_handle);
     if (ret < 0) {
         LOG_WRN("anchor collection command result TX failed: cmd=0x%04x status=%u ret=%d",
                 (unsigned int)pending.command_id,
                 pending.status,
                 ret);
-        anchor_collection_result_pending.delivery_handle = 0u;
-        anchor_collection_result_retry("command-result-submit-retry");
+        (void)anchor_collection_result_retry("command-result-submit-retry");
         return;
     }
-    (void)anchor_checked_work_reschedule(
+    anchor_collection_result_pending.delivery_handle = delivery_handle;
+    anchor_collection_result_pending.retry_round = 0u;
+    schedule_ret = anchor_ram_owner_work_reschedule(
         &anchor_collection_result_work,
         K_MSEC(ANCHOR_COMMAND_DELIVERY_POLL_MS),
         "command-result-terminal-owner");
-    LOG_INF("anchor command result submitted with durable terminal custody: cmd=0x%04x status=%u reason=%u handle=%u",
+    if (schedule_ret < 0) {
+        LOG_ERR("anchor command result terminal polling admission failed: cmd=0x%04x handle=%u ret=%d",
+                (unsigned int)pending.command_id,
+                delivery_handle,
+                schedule_ret);
+        return;
+    }
+    LOG_INF("anchor command result submitted with RAM terminal custody: cmd=0x%04x status=%u reason=%u handle=%u",
             (unsigned int)pending.command_id,
             pending.status,
             pending.reason,
-            anchor_collection_result_pending.delivery_handle);
+            delivery_handle);
 }
 
 static void anchor_collection_result_work_handler(struct k_work *work)
@@ -1983,6 +2236,7 @@ static int anchor_schedule_collection_command_result(
     bool force_rediscovery_after_result,
     bool reboot_after_result)
 {
+    uint32_t node_boot_counter = 0u;
     uint32_t now_ms;
     uint32_t due_ms;
     uint32_t delay_ms;
@@ -1992,14 +2246,15 @@ static int anchor_schedule_collection_command_result(
     if (command == NULL || options == NULL || !options->collection_required) {
         return -EINVAL;
     }
-    if (!anchor_collection_result_restore_complete) {
-        return -EAGAIN;
-    }
     if (anchor_collection_result_pending.active) {
         LOG_WRN("anchor collection command result already pending: cmd=0x%04x new=0x%04x",
                 (unsigned int)anchor_collection_result_pending.command_id,
                 (unsigned int)command_id);
         return -EBUSY;
+    }
+    ret = anchor_collection_node_boot_id(&node_boot_counter);
+    if (ret < 0) {
+        return ret;
     }
 
     now_ms = k_uptime_get_32();
@@ -2013,10 +2268,10 @@ static int anchor_schedule_collection_command_result(
         delay_ms = 1u;
     }
 
-    anchor_collection_result_pending.command = *command;
-    memset(&anchor_collection_result_pending.result_id,
+    memset(&anchor_collection_result_pending,
            0,
-           sizeof(anchor_collection_result_pending.result_id));
+           sizeof(anchor_collection_result_pending));
+    anchor_collection_result_pending.command = *command;
     anchor_collection_result_pending.collection_epoch_id = options->collection_epoch_id;
     anchor_collection_result_pending.result_id.gateway_id = GATEWAY_ID;
     anchor_collection_result_pending.result_id.gateway_epoch =
@@ -2024,7 +2279,7 @@ static int anchor_schedule_collection_command_result(
     anchor_collection_result_pending.result_id.command_seq = options->command_seq;
     anchor_collection_result_pending.result_id.node_id = DEVICE_ID;
     anchor_collection_result_pending.result_id.node_boot_counter =
-        anchor_collection_node_boot_id();
+        node_boot_counter;
     anchor_collection_result_pending.result_id.result_seq =
         anchor_next_collection_result_seq();
     anchor_collection_result_pending.delivery_handle = 0u;
@@ -2035,31 +2290,24 @@ static int anchor_schedule_collection_command_result(
         force_rediscovery_after_result;
     anchor_collection_result_pending.reboot_after_result = reboot_after_result;
     anchor_collection_result_pending.active = true;
-    anchor_collection_result_pending.persistence_dirty = true;
-    anchor_collection_result_pending.persistence_retry_round = 0u;
-    ret = anchor_collection_result_persist(delay_ms);
-    if (ret == 0) {
-        anchor_collection_result_pending.persistence_dirty = false;
-    }
-    schedule_ret = anchor_checked_work_reschedule(
+    schedule_ret = anchor_ram_owner_work_reschedule(
         &anchor_collection_result_work,
         K_MSEC(delay_ms),
         "collection-result-admission");
     if (schedule_ret < 0) {
         /*
-         * Once NVS owns the exact result and actions, a scheduling failure is
-         * recovered by the watchdog/reset restore path. Reporting rejection
-         * here would let the gateway replay a command whose side effect has
-         * already been accepted.
+         * Keep the exact RAM owner so an immediate replay can rearm it, but do
+         * not report acceptance without a live work owner. The checked helper
+         * also stops watchdog feeding if no replay arrives.
          */
-        return ret == 0 ? 0 : schedule_ret;
+        return schedule_ret;
     }
 
     LOG_INF("anchor collection command result scheduled: cmd=0x%04x due_ms=%u delay_ms=%u",
             (unsigned int)command_id,
             due_ms,
             delay_ms);
-    return ret;
+    return 0;
 }
 
 static bool anchor_direct_action_result_matches(
@@ -2087,18 +2335,15 @@ static int anchor_admit_direct_action_result(
     enum command_status status,
     uint8_t reason,
     uint8_t completion_actions,
-    uint32_t protocol_reservation_token)
+    const struct app_node_comm_reservation_lease *protocol_reservation)
 {
     uint32_t delivery_handle = 0u;
-    int persist_ret;
+    int schedule_ret;
     int ret;
 
     if (command == NULL || completion_actions == 0u ||
-        protocol_reservation_token == 0u) {
+        protocol_reservation == NULL || protocol_reservation->token == 0u) {
         return -EINVAL;
-    }
-    if (!anchor_collection_result_restore_complete) {
-        return -EAGAIN;
     }
     if (anchor_collection_result_pending.active) {
         return -EBUSY;
@@ -2117,18 +2362,6 @@ static int anchor_admit_direct_action_result(
     anchor_collection_result_pending.reboot_after_result =
         (completion_actions & APP_ANCHOR_COMMAND_COMPLETION_REBOOT) != 0u;
     anchor_collection_result_pending.active = true;
-    anchor_collection_result_pending.persistence_dirty = true;
-
-    persist_ret = anchor_collection_result_persist(1u);
-    if (persist_ret < 0) {
-        (void)app_node_comm_cancel_protocol_response_reservation(
-            protocol_reservation_token);
-        anchor_collection_result_retry(
-            "direct-command-result-persistence-retry");
-        return anchor_collection_result_pending.persistence_dirty ?
-            persist_ret : 0;
-    }
-    anchor_collection_result_pending.persistence_dirty = false;
 
     ret = anchor_submit_command_result(
         command,
@@ -2137,31 +2370,26 @@ static int anchor_admit_direct_action_result(
         reason,
         NULL,
         0u,
-        protocol_reservation_token,
+        protocol_reservation,
         &delivery_handle);
     if (ret < 0) {
         (void)app_node_comm_cancel_protocol_response_reservation(
-            protocol_reservation_token);
-        anchor_collection_result_retry(
+            protocol_reservation);
+        (void)anchor_collection_result_retry(
             "direct-command-result-submit-retry");
         /*
-         * Durable custody is authoritative now. The exact command must not
-         * be reported unhandled merely because its first transport admission
-         * failed.
+         * The RAM owner allows an exact replay to reconcile this command, but
+         * failed transport admission is not safe acceptance.
          */
-        return 0;
+        return ret;
     }
 
     anchor_collection_result_pending.delivery_handle = delivery_handle;
-    (void)anchor_checked_work_reschedule(
+    schedule_ret = anchor_ram_owner_work_reschedule(
         &anchor_collection_result_work,
         K_MSEC(ANCHOR_COMMAND_DELIVERY_POLL_MS),
         "direct-command-result-terminal-owner");
-    /*
-     * Scheduling failure is fail-closed through the watchdog and the durable
-     * snapshot restores the exact result after reset.
-     */
-    return 0;
+    return schedule_ret < 0 ? schedule_ret : 0;
 }
 
 static void anchor_reboot_work_handler(struct k_work *work)
@@ -2177,7 +2405,7 @@ static void anchor_reboot_work_handler(struct k_work *work)
     now_ms = k_uptime_get_32();
     if (mesh_relay_tx_active(&mesh_runtime) &&
         !uptime_deadline_reached(now_ms, anchor_reboot_deadline_ms)) {
-        (void)anchor_checked_work_reschedule(
+        (void)anchor_ram_owner_work_reschedule(
             &anchor_reboot_work,
             K_MSEC(ANCHOR_REBOOT_RESULT_POLL_MS),
             "post-result-reboot-poll");
@@ -2189,15 +2417,15 @@ static void anchor_reboot_work_handler(struct k_work *work)
     sys_reboot(SYS_REBOOT_COLD);
 }
 
-static void anchor_schedule_reboot_after_command_result(void)
+static int anchor_schedule_reboot_after_command_result(void)
 {
     if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return;
+        return -ENOTSUP;
     }
 
     anchor_reboot_pending = true;
     anchor_reboot_deadline_ms = k_uptime_get_32() + ANCHOR_REBOOT_RESULT_MAX_WAIT_MS;
-    (void)anchor_checked_work_reschedule(
+    return anchor_ram_owner_work_reschedule(
         &anchor_reboot_work,
         K_MSEC(ANCHOR_REBOOT_RESULT_DRAIN_MS),
         "post-result-reboot");
@@ -2217,12 +2445,22 @@ static int anchor_send_heartbeat(void)
     struct mesh_outbound outbound = {0};
     uint64_t absolute_deadline_ms;
     uint64_t now_ms;
+    uint32_t boot_incarnation = 0u;
     size_t payload_len = 0u;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return -EINVAL;
     }
+
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    ret = app_durable_state_boot_incarnation(&boot_incarnation);
+    if (ret < 0) {
+        return ret;
+    }
+#else
+    boot_incarnation = nonzero_uptime_session_id();
+#endif
 
     ret = append_anchor_status_tlvs(outbound.payload, sizeof(outbound.payload), &payload_len);
     if (ret == PROTO_OK) {
@@ -2237,7 +2475,7 @@ static int anchor_send_heartbeat(void)
     ret = report_init_anchor_heartbeat_packet(&outbound.packet,
                                               DEVICE_ID,
                                               GATEWAY_ID,
-                                              nonzero_uptime_session_id(),
+                                              boot_incarnation,
                                               anchor_next_heartbeat_seq(),
                                               (uint8_t)payload_len);
     if (ret != PROTO_OK) {
@@ -2256,14 +2494,26 @@ static int anchor_send_heartbeat(void)
         NULL);
 }
 
-static void anchor_heartbeat_schedule(uint32_t delay_ms)
+static int anchor_heartbeat_schedule(uint32_t delay_ms)
 {
-    if (DEVICE_ROLE == ROLE_ANCHOR && anchor_heartbeat_enabled) {
-        (void)anchor_checked_work_reschedule(
-            &anchor_heartbeat_work,
-            K_MSEC(delay_ms),
-            "heartbeat");
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        (!anchor_heartbeat_enabled && !anchor_startup_heartbeat_pending)) {
+        return -EALREADY;
     }
+    return anchor_ram_owner_work_reschedule(
+        &anchor_heartbeat_work,
+        K_MSEC(delay_ms),
+        anchor_startup_heartbeat_pending ?
+            "startup-heartbeat" : "heartbeat");
+}
+
+static void anchor_heartbeat_request_startup(void)
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR) {
+        return;
+    }
+    anchor_startup_heartbeat_pending = true;
+    (void)anchor_heartbeat_schedule(0u);
 }
 
 static void anchor_heartbeat_work_handler(struct k_work *work)
@@ -2272,27 +2522,37 @@ static void anchor_heartbeat_work_handler(struct k_work *work)
 
     ARG_UNUSED(work);
 
-    if (DEVICE_ROLE != ROLE_ANCHOR || !anchor_heartbeat_enabled) {
+    if (DEVICE_ROLE != ROLE_ANCHOR ||
+        (!anchor_heartbeat_enabled && !anchor_startup_heartbeat_pending)) {
         return;
     }
     if (anchor_uwb_window_active() ||
-        app_anchor_survey_runtime_discovery_is_pending() ||
+        app_anchor_survey_runtime_radio_active() ||
         mesh_relay_tx_active(&mesh_runtime)) {
-        anchor_heartbeat_schedule(REPORT_TX_RETRY_DELAY_MS);
+        (void)anchor_heartbeat_schedule(REPORT_TX_RETRY_DELAY_MS);
         return;
     }
 
     ret = anchor_send_heartbeat();
     if (ret < 0) {
-        LOG_WRN("anchor heartbeat TX failed: ret=%d interval_ms=%u", ret,
-                anchor_heartbeat_interval_ms);
-    } else {
-        LOG_INF("anchor heartbeat queued: interval_ms=%u seq=%u",
+        LOG_WRN("anchor heartbeat TX failed: ret=%d interval_ms=%u startup=%u",
+                ret,
                 anchor_heartbeat_interval_ms,
-                anchor_heartbeat_seq);
+                anchor_startup_heartbeat_pending ? 1u : 0u);
+        (void)anchor_heartbeat_schedule(
+            anchor_startup_heartbeat_pending ?
+                REPORT_TX_RETRY_DELAY_MS : anchor_heartbeat_interval_ms);
+        return;
     }
 
-    anchor_heartbeat_schedule(anchor_heartbeat_interval_ms);
+    LOG_INF("anchor heartbeat queued: interval_ms=%u seq=%u startup=%u",
+            anchor_heartbeat_interval_ms,
+            anchor_heartbeat_seq,
+            anchor_startup_heartbeat_pending ? 1u : 0u);
+    anchor_startup_heartbeat_pending = false;
+    if (anchor_heartbeat_enabled) {
+        (void)anchor_heartbeat_schedule(anchor_heartbeat_interval_ms);
+    }
 }
 
 static int anchor_start_heartbeat_from_command(const uint8_t *payload,
@@ -2322,14 +2582,18 @@ static int anchor_start_heartbeat_from_command(const uint8_t *payload,
 
     anchor_heartbeat_interval_ms = interval_ms;
     anchor_heartbeat_enabled = true;
-    anchor_heartbeat_schedule(anchor_heartbeat_interval_ms);
+    (void)anchor_heartbeat_schedule(
+        anchor_startup_heartbeat_pending ? 0u :
+            anchor_heartbeat_interval_ms);
     return 0;
 }
 
 static void anchor_stop_heartbeat(void)
 {
     anchor_heartbeat_enabled = false;
-    (void)k_work_cancel_delayable(&anchor_heartbeat_work);
+    if (!anchor_startup_heartbeat_pending) {
+        (void)k_work_cancel_delayable(&anchor_heartbeat_work);
+    }
 }
 
 static int command_find_u8_tlv(const uint8_t *payload,
@@ -2564,18 +2828,19 @@ static void anchor_clear_route_from_command(void)
     LOG_INF("anchor route command cleared upstream route state");
 }
 
-static void anchor_force_rediscovery_from_command(void)
+static int anchor_force_rediscovery_from_command(void)
 {
     int ret;
 
     mesh_relay_clear_routes_preserve_epoch(&mesh_runtime);
     ret = app_node_comm_schedule_path_refresh(GATEWAY_ID,
                                               "forced-rediscovery");
-    if (ret < 0 && ret != -EAGAIN) {
+    if (ret < 0) {
         LOG_WRN("anchor forced rediscovery request failed: ret=%d", ret);
-    } else {
-        LOG_INF("anchor forced rediscovery requested");
+        return ret;
     }
+    LOG_INF("anchor forced rediscovery requested");
+    return 0;
 }
 
 static int anchor_set_scan_duty_from_command(const uint8_t *payload,
@@ -2709,6 +2974,7 @@ static int anchor_apply_discovery_assignment_command(
     struct gateway_command_options assignment_options = {0};
     enum discovery_assignment_phase phase = 0;
     enum app_discovery_assignment_table_decision table_decision;
+    bool table_matches_persisted_pending;
     uint32_t epoch = 0u;
     struct discovery_assignment_table_commitment table_commitment = {0};
     size_t entry_count = 0u;
@@ -2836,6 +3102,28 @@ static int anchor_apply_discovery_assignment_command(
     }
     table_decision = local_anchor_discovery_assignment_preview_table(
         epoch, packet->session_id, &table_commitment);
+    table_matches_persisted_pending =
+        snapshot.valid && snapshot.pending_valid != 0u &&
+        snapshot.pending_epoch == epoch &&
+        snapshot.pending_table_command_seq == packet->session_id &&
+        discovery_assignment_table_commitment_equal(
+            &snapshot.pending_table_commitment, &table_commitment);
+    if ((table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY ||
+         table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) &&
+        !table_matches_persisted_pending) {
+        ret = anchor_admit_discovery_assignment_semantic_change(
+            epoch, packet->session_id);
+        if (ret < 0) {
+            LOG_WRN("anchor assignment change admission rate-limited: epoch=%u generation=%u ret=%d burst=%u interval_ms=%llu",
+                    epoch,
+                    packet->session_id,
+                    ret,
+                    (unsigned int)ANCHOR_ASSIGNMENT_COMMISSIONING_BURST,
+                    (unsigned long long)
+                        ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS);
+            return ret;
+        }
+    }
     if ((table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY ||
          table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) &&
         snapshot.valid && snapshot.pending_valid != 0u &&
@@ -2882,8 +3170,18 @@ static int anchor_apply_discovery_assignment_command(
             }
         }
     }
-    table_decision = local_anchor_discovery_assignment_note_table(
+    /*
+     * Preview again after an older pending ACK was settled. APPLY is kept as
+     * a pure preview until the exact pending record is durable below; the
+     * remaining decisions do not create assignment custody and may update
+     * the live policy immediately.
+     */
+    table_decision = local_anchor_discovery_assignment_preview_table(
         epoch, packet->session_id, &table_commitment);
+    if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
+        table_decision = local_anchor_discovery_assignment_note_table(
+            epoch, packet->session_id, &table_commitment);
+    }
     if (table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_INVALID) {
         return -EINVAL;
     }
@@ -3042,7 +3340,7 @@ static int anchor_apply_discovery_assignment_command(
                        sizeof(snapshot.retired_epochs));
                 snapshot.retired_epoch_count = 0u;
             }
-            ret = anchor_save_discovery_assignment_ram(&snapshot);
+            ret = anchor_save_discovery_assignment_semantic(&snapshot);
             if (ret < 0) {
                 int rollback_ret =
                     anchor_restore_live_discovery_assignment_snapshot(
@@ -3060,6 +3358,13 @@ static int anchor_apply_discovery_assignment_command(
                 anchor_rearm_discovery_ack_after_table_rollback(
                     &original_snapshot);
                 return ret;
+            }
+            table_decision = local_anchor_discovery_assignment_note_table(
+                epoch, packet->session_id, &table_commitment);
+            if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
+                ret = anchor_restore_live_discovery_assignment_snapshot(
+                    &snapshot);
+                return ret == PROTO_OK ? -ESTALE : -EILSEQ;
             }
         }
         app_operation_policy_commit_prepared(&policy_candidate);
@@ -3138,7 +3443,7 @@ static int anchor_apply_discovery_assignment_command(
                    sizeof(snapshot.retired_epochs));
             snapshot.retired_epoch_count = 0u;
         }
-        ret = anchor_save_discovery_assignment_ram(&snapshot);
+        ret = anchor_save_discovery_assignment_semantic(&snapshot);
         if (ret < 0) {
             int rollback_ret =
                 anchor_restore_live_discovery_assignment_snapshot(
@@ -3152,6 +3457,13 @@ static int anchor_apply_discovery_assignment_command(
             anchor_rearm_discovery_ack_after_table_rollback(
                 &original_snapshot);
             return ret;
+        }
+        table_decision = local_anchor_discovery_assignment_note_table(
+            epoch, packet->session_id, &table_commitment);
+        if (table_decision != APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY) {
+            ret = anchor_restore_live_discovery_assignment_snapshot(
+                &snapshot);
+            return ret == PROTO_OK ? -ESTALE : -EILSEQ;
         }
     }
     /*
@@ -3278,11 +3590,17 @@ static int anchor_execute_command_side_effects(const struct proto_packet *packet
                 pair.operation_generation != 0u &&
                 packet->session_id == survey_operation_session_id(
                     pair.operation_generation)) {
-                (void)app_anchor_survey_runtime_abort_pair_matching_round(
+                round_ret =
+                    app_anchor_survey_runtime_abort_pair_matching_round(
                     &pair,
                     packet->session_id,
                     round_id,
                     round_commitment);
+                if (round_ret < 0) {
+                    *status = COMMAND_INTERNAL_ERROR;
+                    *reason = (uint8_t)(-round_ret);
+                    ret = round_ret;
+                }
             } else {
                 *status = COMMAND_MALFORMED_PAYLOAD;
                 *reason = (uint8_t)(
@@ -3329,10 +3647,16 @@ static int anchor_finish_broadcast_command(
                 status,
                 reason);
         if (force_rediscovery_after_result && status == COMMAND_OK) {
-            anchor_force_rediscovery_from_command();
+            ret = anchor_force_rediscovery_from_command();
+            if (ret < 0) {
+                return ret;
+            }
         }
         if (reboot_after_result && status == COMMAND_OK) {
-            anchor_schedule_reboot_after_command_result();
+            ret = anchor_schedule_reboot_after_command_result();
+            if (ret < 0) {
+                return ret;
+            }
         }
         return 0;
     }
@@ -3361,19 +3685,47 @@ static int anchor_finish_broadcast_command(
 
 static int anchor_command_execute_reschedule(uint32_t delay_ms);
 
+static uint32_t anchor_broadcast_command_schedule_delay_ms(
+    enum command_id command_id,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t execution_remaining_ms)
+{
+    struct survey_pair pair = {0};
+
+    if (command_id != CMD_SURVEY_START_PAIR || payload == NULL ||
+        execution_remaining_ms < SURVEY_PAIR_START_SKEW_MARGIN_MS ||
+        survey_extract_pair_tlvs(payload, payload_len, &pair) != PROTO_OK ||
+        pair.responder_id != DEVICE_ID) {
+        return execution_remaining_ms;
+    }
+
+    /*
+     * The responder owns the left side of the shared start-skew window: it
+     * opens RX one margin before the immutable initiator timestamp. The
+     * embedded execute delay and packet age still derive the same shared
+     * deadline at both endpoints.
+     */
+    return execution_remaining_ms - SURVEY_PAIR_START_SKEW_MARGIN_MS;
+}
+
 static int anchor_schedule_broadcast_command_execution(
     const struct proto_packet *packet,
     const uint8_t *payload,
     size_t payload_len,
+    enum command_id command_id,
     const struct gateway_command_options *options,
     uint32_t delay_ms)
 {
+    uint32_t schedule_delay_ms;
     int ret;
 
     if (packet == NULL || payload == NULL || options == NULL ||
         payload_len > sizeof(anchor_pending_command_execution.payload)) {
         return -EINVAL;
     }
+    schedule_delay_ms = anchor_broadcast_command_schedule_delay_ms(
+        command_id, payload, payload_len, delay_ms);
     if (anchor_pending_command_execution.active) {
         return -EBUSY;
     }
@@ -3391,22 +3743,23 @@ static int anchor_schedule_broadcast_command_execution(
     anchor_pending_command_execution.payload_len = (uint16_t)payload_len;
     anchor_pending_command_execution.received_at_ms = k_uptime_get_32();
     anchor_pending_command_execution.execute_at_ms =
-        anchor_pending_command_execution.received_at_ms + delay_ms;
+        anchor_pending_command_execution.received_at_ms + schedule_delay_ms;
     anchor_pending_command_execution.execute_deadline_ms =
-        anchor_pending_command_execution.execute_at_ms +
+        anchor_pending_command_execution.received_at_ms + delay_ms +
         SURVEY_PAIR_START_SKEW_MARGIN_MS;
     anchor_pending_command_execution.active = true;
     ret = mesh_route_work_reschedule(
         &anchor_command_execute_work,
-        delay_ms == 0u ? 1u : delay_ms);
+        schedule_delay_ms == 0u ? 1u : schedule_delay_ms);
     if (ret < 0) {
         memset(&anchor_pending_command_execution,
                0,
                sizeof(anchor_pending_command_execution));
         return ret;
     }
-    LOG_INF("anchor broadcast command execution scheduled: command_seq=%u delay_ms=%u",
+    LOG_INF("anchor broadcast command execution scheduled: command_seq=%u delay_ms=%u execute_remaining_ms=%u",
             options->command_seq,
+            schedule_delay_ms,
             delay_ms);
     return 0;
 }
@@ -3459,28 +3812,18 @@ static int anchor_reconcile_pending_command_result(void)
     if (!anchor_collection_result_pending.active) {
         return -ENOENT;
     }
-    if (anchor_collection_result_pending.persistence_dirty) {
-        ret = anchor_collection_result_persist(1u);
-        if (ret < 0) {
-            return ret;
-        }
-        anchor_collection_result_pending.persistence_dirty = false;
-        anchor_collection_result_pending.persistence_retry_round = 0u;
-    }
-    ret = anchor_commit_pending_collection_command_replay();
-    if (ret < 0) {
-        return ret;
-    }
-    ret = anchor_checked_work_reschedule(
+    ret = anchor_ram_owner_work_reschedule(
         &anchor_collection_result_work,
         K_NO_WAIT,
         "pending-command-result-reconcile");
+    if (ret < 0) {
+        return ret;
+    }
     /*
-     * A durable owner survives a failed acceleration handoff and is restored
-     * after the scheduler helper forces watchdog recovery.
+     * Publish replay only after the RAM owner has a live work handoff. If the
+     * replay commit fails, the scheduled owner retries the exact same commit.
      */
-    return ret < 0 && anchor_collection_result_pending.persistence_dirty ?
-        ret : 0;
+    return anchor_commit_pending_collection_command_replay();
 }
 
 static bool anchor_broadcast_command_targets_local(
@@ -3655,10 +3998,10 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
             anchor_collection_result_matches_broadcast_command(
                 &pending.command, &options, command_id)) {
             /*
-             * Result persistence may fail after the exact result owner has
-             * already been installed.  That owner retries persistence and
-             * commits replay; retaining the execution owner would run the
-             * side effect a second time after the result slot drains.
+             * The exact RAM result owner has already been installed and will
+             * retry its work handoff or force watchdog recovery. Retaining the
+             * execution owner would run the side effect a second time after
+             * the result slot drains.
              */
             memset(&anchor_pending_command_execution,
                    0,
@@ -3677,8 +4020,8 @@ static void anchor_command_execute_work_handler_locked(struct k_work *work)
     }
     if (options.collection_required) {
         /*
-         * The durable collection-result owner retries this replay commit if
-         * it fails here, so execution ownership may retire safely.
+         * The live collection-result owner retries this replay commit if it
+         * fails here, so execution ownership may retire safely.
          */
         ret = anchor_commit_broadcast_command_replay(
             &pending.command, &options, now_ms);
@@ -3700,6 +4043,27 @@ static void anchor_command_execute_work_handler(struct k_work *work)
     k_mutex_unlock(&anchor_command_result_mutex);
 }
 
+/*
+ * Command session, transport sequence, and command ID are the immutable
+ * semantic origin of one local result. A redrive of that command therefore
+ * coalesces only with its own short-lived reservation, while a successor has
+ * a distinct owner generation even before it receives a delivery handle.
+ */
+static uint64_t anchor_command_result_owner_generation(
+    const struct proto_packet *command,
+    enum command_id command_id)
+{
+    uint64_t generation;
+
+    if (command == NULL) {
+        return 0u;
+    }
+    generation = ((uint64_t)command->session_id << 32) |
+                 ((uint64_t)command->seq << 16) |
+                 (uint16_t)command_id;
+    return generation == 0u ? 1u : generation;
+}
+
 static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                                               const uint8_t *payload,
                                               size_t payload_len)
@@ -3714,7 +4078,7 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
     bool expired;
     bool duplicate;
     uint32_t delivery_handle = 0u;
-    uint32_t protocol_reservation_token = 0u;
+    struct app_node_comm_reservation_lease protocol_reservation = {0};
     uint32_t delay_ms;
     uint32_t now_ms;
     uint8_t completion_actions;
@@ -3823,6 +4187,7 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
             ret = anchor_schedule_broadcast_command_execution(packet,
                                                               payload,
                                                               payload_len,
+                                                              command_id,
                                                               &command_options,
                                                               delay_ms);
             if (ret < 0) {
@@ -3850,7 +4215,9 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
             return 0;
         }
 
-        if (!command_options.collection_required) {
+        if (!command_options.collection_required &&
+            command_id != CMD_REBOOT &&
+            command_id != CMD_FORCE_REDISCOVERY) {
             ret = anchor_commit_broadcast_command_replay(
                 packet, &command_options, now_ms);
             if (ret < 0) {
@@ -3866,7 +4233,10 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                                               command_id,
                                               &command_options,
                                               0u);
-        if (ret == 0 && command_options.collection_required) {
+        if (ret == 0 &&
+            (command_options.collection_required ||
+             command_id == CMD_REBOOT ||
+             command_id == CMD_FORCE_REDISCOVERY)) {
             ret = anchor_commit_broadcast_command_replay(
                 packet, &command_options, now_ms);
         }
@@ -3879,7 +4249,8 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
     }
 
     ret = app_node_comm_reserve_protocol_response(
-        &protocol_reservation_token);
+        anchor_command_result_owner_generation(packet, command_id),
+        &protocol_reservation);
     if (ret < 0) {
         LOG_WRN("anchor command deferred for result reservation: cmd=0x%04x ret=%d",
                 (unsigned int)command_id,
@@ -3902,8 +4273,8 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
     if (completion_actions != 0u) {
         if (anchor_collection_result_pending.active) {
             (void)app_node_comm_cancel_protocol_response_reservation(
-                protocol_reservation_token);
-            LOG_WRN("anchor deferred action-bearing command behind durable result owner: cmd=0x%04x",
+                &protocol_reservation);
+            LOG_WRN("anchor deferred action-bearing command behind RAM result owner: cmd=0x%04x",
                     (unsigned int)command_id);
             return 0;
         }
@@ -3913,14 +4284,14 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
             status,
             reason,
             completion_actions,
-            protocol_reservation_token);
+            &protocol_reservation);
         if (ret < 0) {
-            LOG_WRN("anchor direct action result durable admission deferred: cmd=0x%04x ret=%d",
+            LOG_WRN("anchor direct action result RAM admission deferred: cmd=0x%04x ret=%d",
                     (unsigned int)command_id,
                     ret);
             return 0;
         }
-        LOG_INF("anchor action-bearing command accepted with durable result custody: cmd=0x%04x",
+        LOG_INF("anchor action-bearing command accepted with RAM result custody: cmd=0x%04x",
                 (unsigned int)command_id);
         return 1;
     }
@@ -3932,12 +4303,12 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                                        reason,
                                        NULL,
                                        0u,
-                                       protocol_reservation_token,
+                                       &protocol_reservation,
                                        wait_for_delivery_completion ?
                                            &delivery_handle : NULL);
     if (ret < 0) {
         (void)app_node_comm_cancel_protocol_response_reservation(
-            protocol_reservation_token);
+            &protocol_reservation);
         LOG_WRN("anchor command result TX failed: cmd=0x%04x status=%u ret=%d",
                 (unsigned int)command_id,
                 status,

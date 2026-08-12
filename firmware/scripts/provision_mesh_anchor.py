@@ -18,28 +18,44 @@ sys.path.insert(0, str(ROOT))
 
 from tools.gateway_gui.protocol import (  # noqa: E402
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+    DecodeError,
     GATEWAY_COMMAND_BUDGET_MAX_MS,
     GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_IDENTITY_UUID,
+    MSG_ANCHOR_HEARTBEAT,
     GatewayReceiveBuffer,
+    MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
+    MSG_SURVEY_DISCOVERY_REPORT,
+    MSG_SURVEY_PAIR_RESULT,
     Packet,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
     SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+    TLV_COMMAND_ID,
     build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_gateway_host_receipt,
     build_here_i_am_command,
     build_survey_abort_command,
     decode_gateway_identity,
+    validate_survey_discovery_report,
 )
 from tools.gateway_gui.delivery_dedup import is_host_delivery_packet  # noqa: E402
+from tools.gateway_gui.operation_policy import (  # noqa: E402
+    DISCOVERY_DEFAULT_ROUND_COUNT,
+    DISCOVERY_DEFAULT_SLOT_MS,
+    DISCOVERY_DEFAULT_START_DELAY_MS,
+    discovery_required_budget_ms,
+)
 from tools.gateway_gui.command_telemetry import (  # noqa: E402
     GatewayCommandEvent,
     decode_gateway_command_event,
+)
+from tools.gateway_gui.command_orchestration import (  # noqa: E402
+    GATEWAY_COMMAND_COMPLETION_GUARD_S,
 )
 from tools.gateway_gui.anchor_geometry import solve_anchor_layout  # noqa: E402
 from tools.gateway_gui.diagnostic_models import SurveyGeometryModel  # noqa: E402
@@ -59,12 +75,46 @@ GATEWAY_COMMAND_STAGE_PAIR_SUCCESS = 10
 GATEWAY_COMMAND_STAGE_PAIR_FAILURE = 11
 GATEWAY_COMMAND_STAGE_TERMINAL = 12
 CMD_SURVEY_REACHABILITY = 0x0100
+CMD_SURVEY_PREPARE_PAIR = 0x0101
 CMD_SURVEY_START_PAIR = 0x0102
+CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_FORCE_REDISCOVERY = 0x000C
 DISCOVERY_SLOT_UNAVAILABLE = 0xFF
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
-QUALIFICATION_TIMEOUT_GUARD_S = 5.0
+SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S = 5.0
+SURVEY_TERMINAL_DRAIN_MAX_S = 90.0
+
+
+def _survey_custody_record_retained(packet: Packet) -> bool:
+    """Retain the closed survey set even when it predates this host command."""
+    if packet.msg_type == MSG_ANCHOR_HEARTBEAT:
+        # Heartbeats are diagnostic topology records. The receive buffer has
+        # already checked their stream framing/CRC, and retaining the exact
+        # packet here lets this provisioning host release a stale BLE head.
+        return True
+    if packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT:
+        validate_survey_discovery_report(packet)
+        return True
+    if packet.msg_type == MSG_SURVEY_PAIR_RESULT:
+        return True
+    if packet.msg_type != MSG_COMMAND_RESULT:
+        return False
+    command_ids = tuple(
+        tlv
+        for tlv in packet.tlvs
+        if tlv.type_id == TLV_COMMAND_ID
+    )
+    if len(command_ids) != 1 or command_ids[0].decode_error is not None:
+        return False
+    return command_ids[0].decoded in (
+        CMD_FORCE_REDISCOVERY,
+        CMD_ASSIGN_DISCOVERY_SLOTS,
+        CMD_SURVEY_REACHABILITY,
+        CMD_SURVEY_PREPARE_PAIR,
+        CMD_SURVEY_START_PAIR,
+        CMD_SURVEY_ABORT,
+    )
 
 
 def _same_event(left: GatewayCommandEvent, right: GatewayCommandEvent) -> bool:
@@ -132,7 +182,8 @@ def _qualification_timeout_s(
     """Keep the host alive through the firmware deadline plus delivery guard."""
     return max(
         requested_timeout_s,
-        effective_command_budget_ms / 1000.0 + QUALIFICATION_TIMEOUT_GUARD_S,
+        effective_command_budget_ms / 1000.0
+        + GATEWAY_COMMAND_COMPLETION_GUARD_S,
     )
 
 
@@ -535,8 +586,8 @@ class SurveyQualification:
             return True
         return False
 
-    def observe_packet(self, packet: Packet) -> None:
-        self.geometry_model.observe_pair_packet(packet)
+    def observe_packet(self, packet: Packet) -> bool:
+        return self.geometry_model.observe_pair_packet(packet) is not None
 
     def validate(self) -> None:
         terminal = self.terminal_event
@@ -630,6 +681,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     write_lock = asyncio.Lock()
     receipt_tasks: set[asyncio.Task[None]] = set()
     receipt_in_flight: set[object] = set()
+    accepted_host_records: dict[object, Packet] = {}
+    survey_custody_activity = asyncio.Event()
     command_budget_ms = getattr(args, "command_budget_ms", None)
     received = 0
     decode_errors: list[str] = []
@@ -651,37 +704,39 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 await client.write_gatt_char(
                     characteristic,
                     frame[offset : offset + chunk_size],
-                    response=True,
+                    response=False,
                 )
 
     def schedule_host_receipt(
         packet: Packet,
         *,
+        accepted: bool,
         client: BleakClient,
         characteristic: object,
         gateway_id: int,
         chunk_size: int,
-    ) -> None:
+    ) -> bool:
         """Release firmware custody only after this tool accepted an exact record."""
         if (
-            packet.msg_type == MSG_GATEWAY_COMMAND_EVENT
+            not accepted
             or getattr(packet, "transport", None) != "gateway-stream-v1"
             or not is_host_delivery_packet(packet)
         ):
-            return
+            return False
         try:
             receipt = build_gateway_host_receipt(
                 packet,
                 host_id=args.host_id,
                 gateway_id=gateway_id,
             )
-        except (TypeError, ValueError) as exc:
+        except (DecodeError, TypeError, ValueError) as exc:
             decode_errors.append(f"host receipt construction failed: {exc}")
             qualification_done.set()
             transport_failed.set()
-            return
+            return False
         if receipt.identity in receipt_in_flight:
-            return
+            return True
+        accepted_host_records[receipt.identity] = packet
         receipt_in_flight.add(receipt.identity)
 
         async def write_receipt() -> None:
@@ -713,6 +768,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         task = asyncio.create_task(write_receipt())
         receipt_tasks.add(task)
         task.add_done_callback(receipt_tasks.discard)
+        return True
 
     def on_notify(_sender: object, data: bytearray) -> None:
         nonlocal received, qualification
@@ -725,6 +781,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             qualification_done.set()
             transport_failed.set()
         for packet in result.packets:
+            accepted_for_receipt = False
             received += 1
             print(
                 f"BLE_PACKET type=0x{packet.msg_type:02x} src=0x{packet.src_id:016x} "
@@ -734,6 +791,15 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             )
             if isinstance(qualification, SurveyQualification):
                 qualification.observe_packet(packet)
+            try:
+                accepted_for_receipt = _survey_custody_record_retained(packet)
+            except DecodeError as exc:
+                message = str(exc)
+                print(f"BLE_DECODE_ERROR {message}", flush=True)
+                decode_errors.append(message)
+                qualification_done.set()
+                transport_failed.set()
+                continue
             if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
                 try:
                     event = decode_gateway_command_event(
@@ -745,16 +811,22 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     qualification_done.set()
                     transport_failed.set()
                     continue
+                accepted_for_receipt = (
+                    getattr(packet, "flags", 0) != 0
+                    and is_host_delivery_packet(packet)
+                )
                 print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
                 if qualification is not None and qualification.observe(event):
                     qualification_done.set()
-            schedule_host_receipt(
+            if schedule_host_receipt(
                 packet,
+                accepted=accepted_for_receipt,
                 client=client,
                 characteristic=characteristic,
                 gateway_id=gateway_id,
                 chunk_size=chunk_size,
-            )
+            ):
+                survey_custody_activity.set()
 
     def on_disconnect(_client: object) -> None:
         disconnect_errors.append("gateway disconnected during active command or monitoring")
@@ -788,6 +860,36 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"{label} qualification timed out after {timeout_s:.1f}s"
             ) from exc
         raise_transport_errors(f"{label} qualification")
+        if isinstance(current, SurveyQualification):
+            quiet_s = max(
+                float(getattr(args, "survey_terminal_drain_quiet_s", 0.0)),
+                float(args.notification_hold_s),
+            )
+            if quiet_s > 0.0:
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + SURVEY_TERMINAL_DRAIN_MAX_S
+
+                # Legacy firmware can publish its terminal event before the
+                # last reliable cleanup result reaches the BLE head. Keep the
+                # exact-record receipt path alive until it has been quiet for
+                # one configured interval, but retain an absolute bound so a
+                # noisy peer cannot keep this command attached forever.
+                survey_custody_activity.clear()
+                while True:
+                    remaining_s = deadline - loop.time()
+                    if remaining_s <= 0.0:
+                        break
+                    try:
+                        await asyncio.wait_for(
+                            survey_custody_activity.wait(),
+                            timeout=min(quiet_s, remaining_s),
+                        )
+                    except asyncio.TimeoutError:
+                        break
+                    survey_custody_activity.clear()
+                while receipt_tasks:
+                    await asyncio.gather(*tuple(receipt_tasks))
+                raise_transport_errors(f"{label} terminal drain")
         current.validate()
 
     async with BleakClient(
@@ -1075,6 +1177,15 @@ def main() -> None:
         default=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     )
     parser.add_argument("--notification-hold-s", type=float, default=0.0)
+    parser.add_argument(
+        "--survey-terminal-drain-quiet-s",
+        type=float,
+        default=SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S,
+        help=(
+            "post-terminal quiet interval used to receipt delayed retained "
+            "survey records before disconnect"
+        ),
+    )
     parser.add_argument("--require-survey-success", action="store_true")
     parser.add_argument("--require-assignment-success", action="store_true")
     parser.add_argument("--expected-anchors", type=int, default=3)
@@ -1095,6 +1206,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.notification_hold_s < 0.0:
         parser.error("--notification-hold-s must be non-negative")
+    if args.survey_terminal_drain_quiet_s < 0.0:
+        parser.error("--survey-terminal-drain-quiet-s must be non-negative")
     if args.require_survey_success and args.command != "survey":
         parser.error("--require-survey-success requires --command survey")
     if args.require_survey_success and args.repeat != 1:
@@ -1143,6 +1256,19 @@ def main() -> None:
             "assignment --command-budget-ms must be at least "
             f"{DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS}"
         )
+    if args.command == "survey" and args.command_budget_ms is not None:
+        required_survey_budget_ms = discovery_required_budget_ms(
+            DISCOVERY_DEFAULT_START_DELAY_MS,
+            DISCOVERY_DEFAULT_SLOT_MS,
+            args.discovery_slots,
+            DISCOVERY_DEFAULT_ROUND_COUNT,
+            args.survey_duration_ms,
+        )
+        if args.command_budget_ms < required_survey_budget_ms:
+            parser.error(
+                "survey --command-budget-ms must cover the selected discovery "
+                f"policy: minimum {required_survey_budget_ms}"
+            )
     for value, name in (
         (args.expected_direct_anchors, "--expected-direct-anchors"),
         (args.expected_multihop_anchors, "--expected-multihop-anchors"),

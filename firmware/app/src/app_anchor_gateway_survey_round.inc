@@ -13,32 +13,13 @@ static void gateway_survey_round_reset(void)
     memset(&gateway_survey_start_release,
            0,
            sizeof(gateway_survey_start_release));
-    app_gateway_survey_event_runtime_init(
-        &gateway_survey_event_runtime);
-    gateway_survey_round_observation_started_at_ms = 0u;
+    survey_gateway_observation_origin_reset(
+        &gateway_survey_round_observation_origin);
     gateway_survey_round_observation_deadline_ms = 0u;
+    gateway_survey_work_cancel_owner(
+        SURVEY_GATEWAY_DUE_ROUND_OBSERVATION);
     gateway_survey_round_cleanup_lane_index = 0u;
     gateway_survey_round_cleanup_lane_valid = false;
-}
-
-static void gateway_survey_round_sync_auto(void)
-{
-    struct app_gateway_survey_round_control control;
-    const struct survey_pair_round_lane *lane;
-
-    (void)survey_gateway_auto_begin(&gateway_survey_auto);
-    if (app_gateway_survey_round_current_control(&gateway_survey_round,
-                                                 &control) != PROTO_OK) {
-        return;
-    }
-    lane = app_gateway_survey_round_lane(&gateway_survey_round,
-                                         control.lane_index);
-    gateway_survey_auto.running = true;
-    gateway_survey_auto.waiting = false;
-    gateway_survey_auto.pair = control.pair;
-    gateway_survey_auto.stage = control.stage;
-    gateway_survey_auto.pair_reruns_started =
-        lane == NULL ? 0u : lane->reruns_started;
 }
 
 static int gateway_survey_round_start(void)
@@ -47,40 +28,16 @@ static int gateway_survey_round_start(void)
 
     /*
      * The route-owner worker must freeze and validate the final plan before
-     * entering the concurrent driver.  This is also the boundary at which
-     * this event seam begins: discovery and report collection have already
-     * completed in their existing owner, so no historical events are replayed
-     * here.  Failing closed prevents a caller from creating remote PREPARE
-     * state through the old planner shortcut.
+     * entering the concurrent driver. Discovery and report collection have
+     * already completed in their existing owner, so this starts only the
+     * authoritative pair-round owner after that plan is frozen.
      */
     if (!gateway_survey_context.pairs_planned ||
         !gateway_survey_topology_accounted) {
         return PROTO_ERR_MALFORMED;
     }
-    if (!app_gateway_survey_event_runtime_active(
-            &gateway_survey_event_runtime)) {
-        ret = gateway_survey_state_result_to_proto(
-            app_gateway_survey_event_runtime_begin_selection(
-                &gateway_survey_event_runtime,
-                gateway_survey_context.operation_generation,
-                (uint64_t)k_uptime_get()));
-        if (ret != PROTO_OK) {
-            return ret;
-        }
-    } else if (app_gateway_survey_event_runtime_state(
-                   &gateway_survey_event_runtime) != FW_SURVEY_SELECT_PAIRS) {
-        return PROTO_ERR_STALE;
-    }
     if (gateway_survey_context.pair_count == 0u) {
-        ret = gateway_survey_state_event(FW_EVENT_NO_PAIR_AVAILABLE, 0u);
-        if (ret != PROTO_OK) {
-            return ret;
-        }
         return PROTO_ERR_NOT_FOUND;
-    }
-    ret = gateway_survey_state_event(FW_EVENT_PAIR_AVAILABLE, 0u);
-    if (ret != PROTO_OK) {
-        return ret;
     }
     ret = app_gateway_survey_round_begin(&gateway_survey_round,
                                          &gateway_survey_context,
@@ -89,7 +46,6 @@ static int gateway_survey_round_start(void)
     if (ret != PROTO_OK) {
         return ret;
     }
-    gateway_survey_round_sync_auto();
     GATEWAY_SURVEY_VERBOSE_LOG("gateway concurrent survey starting: survey=%u reports=%u pairs=%u planned_rounds=%u first_batch=%u parallel_cap=%u reruns=%u",
             gateway_survey_context.survey_id,
             (unsigned int)gateway_survey_context.report_count,
@@ -102,28 +58,6 @@ static int gateway_survey_round_start(void)
     return PROTO_OK;
 }
 
-static uint32_t gateway_survey_round_longest_run_ms(void)
-{
-    uint32_t longest_ms = 0u;
-
-    for (size_t i = 0u;
-         i < app_gateway_survey_round_lane_count(&gateway_survey_round);
-         i++) {
-        const struct survey_pair_round_lane *lane =
-            app_gateway_survey_round_lane(&gateway_survey_round, i);
-        uint32_t run_ms;
-
-        if (lane == NULL) {
-            continue;
-        }
-        run_ms = gateway_survey_pair_run_delay_ms(&lane->pair);
-        if (run_ms > longest_ms) {
-            longest_ms = run_ms;
-        }
-    }
-    return longest_ms;
-}
-
 static int gateway_survey_round_commitment(
     uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN])
 {
@@ -133,8 +67,9 @@ static int gateway_survey_round_commitment(
         app_gateway_survey_round_lane_count(&gateway_survey_round);
     const uint32_t execute_delay_ms =
         SURVEY_ROUND_START_EXECUTE_DELAY_MS;
-    const uint32_t longest_run_ms =
-        gateway_survey_round_longest_run_ms();
+    const uint32_t observation_window_ms =
+        gateway_survey_operation_deadline_ms -
+        gateway_survey_operation_started_at_ms;
     struct survey_round_plan_identity identity = {
         .operation_generation =
             gateway_survey_context.operation_generation,
@@ -142,8 +77,7 @@ static int gateway_survey_round_commitment(
         .operation_session_id = survey_operation_session_id(
             gateway_survey_context.operation_generation),
         .execute_delay_ms = execute_delay_ms,
-        .observation_window_ms =
-            longest_run_ms + SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS,
+        .observation_window_ms = observation_window_ms,
         .round_id = gateway_survey_round.runtime.batch_sequence,
         .max_parallel_pairs = gateway_survey_max_parallel_pairs,
         .max_reruns = gateway_survey_max_pair_reruns,
@@ -151,8 +85,7 @@ static int gateway_survey_round_commitment(
 
     if (commitment == NULL || lane_count == 0u ||
         lane_count > ARRAY_SIZE(entries) ||
-        UINT32_MAX - longest_run_ms <
-            SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS) {
+        observation_window_ms == 0u) {
         return PROTO_ERR_MALFORMED;
     }
     memset(entries, 0, sizeof(entries));
@@ -184,18 +117,19 @@ static int gateway_survey_round_note_sample(uint64_t reporter_id,
     bool accepted_new = false;
     int ret;
 
-    if (!gateway_survey_round_active()) {
+    if (!gateway_survey_round_active() ||
+        !gateway_survey_round_observation_origin.valid) {
         return -ESTALE;
     }
     if (!gateway_survey_receive_in_interval(
             received_at_ms,
-            gateway_survey_round_observation_started_at_ms,
+            gateway_survey_round_observation_origin.started_at_ms,
             gateway_survey_round_observation_deadline_ms)) {
         LOG_WRN("gateway survey round sample rejected outside receive interval: survey=%u reporter=0x%016llx received=%llu start=%u deadline=%u",
                 sample == NULL ? 0u : sample->pair.survey_id,
                 (unsigned long long)reporter_id,
                 (unsigned long long)received_at_ms,
-                gateway_survey_round_observation_started_at_ms,
+                gateway_survey_round_observation_origin.started_at_ms,
                 gateway_survey_round_observation_deadline_ms);
         return -ESTALE;
     }
@@ -217,19 +151,27 @@ static int gateway_survey_round_note_sample(uint64_t reporter_id,
         const struct survey_pair_round_lane *lane =
             app_gateway_survey_round_lane(&gateway_survey_round, lane_index);
 
-        if (survey_pair_round_lane_preferred_results_complete(lane)) {
-            (void)gateway_survey_work_reschedule(0u);
+        /* Once every sample slot has either a usable result or exact
+         * responder-side failure evidence, waiting for the operation-wide
+         * deadline cannot improve this attempt. Drive cleanup/rerun now;
+         * genuinely absent samples retain the relaxed observation window. */
+        if (survey_pair_round_lane_preferred_results_complete(lane) ||
+            survey_pair_round_lane_missing_samples_all_unusable(lane)) {
+            (void)gateway_survey_work_schedule(
+                SURVEY_GATEWAY_DUE_ROUND_OBSERVATION, 0u);
         }
     }
     return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
 
 static bool gateway_survey_round_emit_lane_terminal(
+    size_t lane_index,
     const struct survey_pair_round_lane *lane,
     bool success)
 {
     struct gateway_command_event event;
     uint16_t observed_count;
+    int ret;
 
     if (lane == NULL) {
         return false;
@@ -242,6 +184,18 @@ static bool gateway_survey_round_emit_lane_terminal(
         CMD_SURVEY_START_PAIR,
         &gateway_survey_host_command,
         gateway_survey_context.survey_id);
+    ret = app_gateway_survey_round_outcome_event_seed(
+        &gateway_survey_round, lane_index, &event.event_seq);
+    if (ret != PROTO_OK) {
+        LOG_ERR("gateway survey outcome retry owned by another lane: lane=%u ret=%d",
+                (unsigned int)lane_index,
+                ret);
+        app_watchdog_stop_feeding();
+        (void)gateway_survey_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return false;
+    }
     event.status = success ? COMMAND_OK : COMMAND_TIMEOUT;
     event.reason = success ? GATEWAY_COMMAND_EVENT_REASON_NONE :
         (lane->initiator_unusable_mask != 0u ||
@@ -258,8 +212,43 @@ static bool gateway_survey_round_emit_lane_terminal(
     event.failure_count = (uint16_t)(gateway_survey_pair_failure_count +
                                     (success ? 0u : 1u));
     event.duplicate_count = gateway_survey_duplicate_count;
-    if (gateway_survey_observe_with_custody(&event, false) < 0) {
-        (void)gateway_survey_work_reschedule(GATEWAY_BLE_TX_RETRY_MS);
+    ret = gateway_survey_observe_with_custody(&event, false);
+    if (ret < 0) {
+        if (event.event_seq != 0u &&
+            app_gateway_survey_round_outcome_event_retain(
+                &gateway_survey_round,
+                lane_index,
+                event.event_seq) != PROTO_OK) {
+            LOG_ERR("gateway survey outcome identity changed during retry: lane=%u seq=%u",
+                    (unsigned int)lane_index,
+                    event.event_seq);
+            app_watchdog_stop_feeding();
+            (void)gateway_survey_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return false;
+        }
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_BOUNDARY_POLL, GATEWAY_BLE_TX_RETRY_MS);
+        return false;
+    }
+    if (event.event_seq == 0u) {
+        LOG_ERR("gateway survey outcome admitted without an event identity: lane=%u",
+                (unsigned int)lane_index);
+        app_watchdog_stop_feeding();
+        (void)gateway_survey_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return false;
+    }
+    if (app_gateway_survey_round_outcome_event_complete(
+            &gateway_survey_round, lane_index) != PROTO_OK) {
+        LOG_ERR("gateway survey outcome completion lost lane identity: lane=%u",
+                (unsigned int)lane_index);
+        app_watchdog_stop_feeding();
+        (void)gateway_survey_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return false;
     }
     if (success) {
@@ -330,7 +319,7 @@ static bool gateway_survey_round_retire_failed_control_lane(void)
         &gateway_survey_round,
         gateway_survey_round_cleanup_lane_index);
     if (lane == NULL) {
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return false;
@@ -339,7 +328,8 @@ static bool gateway_survey_round_retire_failed_control_lane(void)
         return true;
     }
     if (lane->state == SURVEY_PAIR_ROUND_LANE_FAILED &&
-        !gateway_survey_round_emit_lane_terminal(lane, false)) {
+        !gateway_survey_round_emit_lane_terminal(
+            gateway_survey_round_cleanup_lane_index, lane, false)) {
         return false;
     }
     gateway_survey_round_cleanup_lane_valid = false;
@@ -354,65 +344,47 @@ static bool gateway_survey_round_advance_completed_batch(void)
     if (!app_gateway_survey_round_batch_complete(&gateway_survey_round)) {
         return false;
     }
-    ret = gateway_survey_state_event(
-        app_gateway_survey_round_batch_has_result_evidence(
-            &gateway_survey_round) ? FW_EVENT_PAIR_RESULT_RECEIVED :
-                                      FW_EVENT_TIMER_EXPIRED,
-        0u);
-    if (ret == PROTO_OK) {
-        ret = gateway_survey_state_event(FW_EVENT_GRAPH_BUILT, 0u);
-    }
-    if (ret != PROTO_OK) {
-        gateway_survey_auto_finish_status(
-            COMMAND_INTERNAL_ERROR,
-            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-        return true;
-    }
     ret = app_gateway_survey_round_advance_batch(&gateway_survey_round,
                                                  &complete);
-    gateway_survey_round_observation_started_at_ms = 0u;
+    survey_gateway_observation_origin_reset(
+        &gateway_survey_round_observation_origin);
     gateway_survey_round_observation_deadline_ms = 0u;
+    gateway_survey_work_cancel_owner(
+        SURVEY_GATEWAY_DUE_ROUND_OBSERVATION);
     if (ret != PROTO_OK) {
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
     if (complete) {
-        ret = gateway_survey_state_event(FW_EVENT_NO_PAIR_AVAILABLE, 0u);
-        if (ret != PROTO_OK) {
-            gateway_survey_auto_finish_status(
-                COMMAND_INTERNAL_ERROR,
-                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-            return true;
-        }
-        gateway_survey_auto_finish();
+        gateway_survey_finish();
         return true;
     }
-    ret = gateway_survey_state_event(FW_EVENT_PAIR_AVAILABLE, 0u);
-    if (ret != PROTO_OK) {
-        gateway_survey_auto_finish_status(
-            COMMAND_INTERNAL_ERROR,
-            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-        return true;
-    }
-    gateway_survey_round_sync_auto();
-    (void)gateway_survey_work_reschedule(0u);
+    (void)gateway_survey_work_schedule(SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+                                       0u);
     return true;
 }
 
 static bool gateway_survey_round_finalize_observation(void)
 {
+    const uint32_t now_ms = k_uptime_get_32();
     const bool deadline = uptime_deadline_reached(
-        k_uptime_get_32(), gateway_survey_round_observation_deadline_ms);
+        now_ms, gateway_survey_round_observation_deadline_ms);
     const size_t lane_count = app_gateway_survey_round_lane_count(
         &gateway_survey_round);
     int ret;
 
+    if (!gateway_survey_round_observation_origin.valid) {
+        gateway_survey_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return true;
+    }
     if (deadline) {
         enum gateway_command_result_validation_check validation_check =
             gateway_protocol_validation_check_interval(
-                gateway_survey_round_observation_started_at_ms,
+                gateway_survey_round_observation_origin.started_at_ms,
                 gateway_survey_round_observation_deadline_ms);
 
         if (validation_check ==
@@ -421,7 +393,7 @@ static bool gateway_survey_round_finalize_observation(void)
         }
         if (validation_check ==
             GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED) {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
@@ -431,6 +403,7 @@ static bool gateway_survey_round_finalize_observation(void)
         const struct survey_pair_round_lane *lane =
             app_gateway_survey_round_lane(&gateway_survey_round, i);
         enum survey_pair_round_cleanup_outcome outcome;
+        bool all_missing_samples_unusable;
         bool final_failure;
 
         if (lane == NULL ||
@@ -438,7 +411,7 @@ static bool gateway_survey_round_finalize_observation(void)
             continue;
         }
         if (survey_pair_round_lane_preferred_results_complete(lane)) {
-            if (!gateway_survey_round_emit_lane_terminal(lane, true)) {
+            if (!gateway_survey_round_emit_lane_terminal(i, lane, true)) {
                 return false;
             }
             ret = app_gateway_survey_round_finalize_lane(
@@ -447,31 +420,16 @@ static bool gateway_survey_round_finalize_observation(void)
                 0u,
                 SURVEY_PAIR_ROUND_CLEANUP_SUCCESS);
             if (ret != PROTO_OK) {
-                gateway_survey_auto_finish_status(
+                gateway_survey_finish_status(
                     COMMAND_INTERNAL_ERROR,
                     GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
                 return true;
             }
             continue;
         }
-        if (!deadline) {
-            continue;
-        }
-        if (survey_pair_round_lane_results_complete(lane)) {
-            if (!gateway_survey_round_emit_lane_terminal(lane, true)) {
-                return false;
-            }
-            ret = app_gateway_survey_round_finalize_lane(
-                &gateway_survey_round,
-                i,
-                0u,
-                SURVEY_PAIR_ROUND_CLEANUP_SUCCESS);
-            if (ret != PROTO_OK) {
-                gateway_survey_auto_finish_status(
-                    COMMAND_INTERNAL_ERROR,
-                    GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-                return true;
-            }
+        all_missing_samples_unusable =
+            survey_pair_round_lane_missing_samples_all_unusable(lane);
+        if (!deadline && !all_missing_samples_unusable) {
             continue;
         }
         final_failure = lane->reruns_started >=
@@ -484,7 +442,7 @@ static bool gateway_survey_round_finalize_observation(void)
             SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
             outcome);
         if (ret != PROTO_OK) {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
@@ -494,7 +452,7 @@ static bool gateway_survey_round_finalize_observation(void)
     if (ret < 0) {
         LOG_ERR("gateway survey observation cleanup admission failed: ret=%d",
                 ret);
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
@@ -512,6 +470,11 @@ static void gateway_survey_round_fail_current_control(
 {
     uint8_t cleanup_mask = survey_gateway_transaction_cleanup_mask(
         &gateway_survey_transaction);
+    const uint32_t operation_session_id =
+        gateway_survey_context.operation_generation == 0u ?
+            gateway_survey_context.survey_id :
+            survey_operation_session_id(
+                gateway_survey_context.operation_generation);
     size_t lane_index = SIZE_MAX;
     int ret;
 
@@ -519,12 +482,12 @@ static void gateway_survey_round_fail_current_control(
         &gateway_survey_round,
         command_id,
         target_id,
-        gateway_survey_context.survey_id,
+        operation_session_id,
         cleanup_mask,
         SURVEY_PAIR_ROUND_CLEANUP_RETRY,
         &lane_index);
     if (ret != PROTO_OK) {
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return;
@@ -536,13 +499,15 @@ static void gateway_survey_round_fail_current_control(
     gateway_survey_round_cleanup_lane_index = lane_index;
     gateway_survey_round_cleanup_lane_valid = true;
     if (cleanup_mask == 0u) {
-        survey_gateway_transaction_pair_complete(
-            &gateway_survey_transaction,
-            true,
+        /*
+         * Zero cleanup debt can still leave an authoritative zero-RF terminal
+         * in ABANDONED. Retire that exact transaction before pair identity is
+         * released; otherwise the next control cannot load even though no
+         * remote cleanup is necessary.
+         */
+        gateway_survey_finish_cleanup_if_complete(
             (uint64_t)k_uptime_get());
     }
-    gateway_survey_auto.waiting = false;
-    gateway_survey_round_sync_auto();
 }
 
 static bool gateway_survey_round_note_control_result(
@@ -552,6 +517,11 @@ static bool gateway_survey_round_note_control_result(
     uint8_t reason)
 {
     struct app_gateway_survey_round_control control;
+    const uint32_t operation_session_id =
+        gateway_survey_context.operation_generation == 0u ?
+            gateway_survey_context.survey_id :
+            survey_operation_session_id(
+                gateway_survey_context.operation_generation);
     int ret;
 
     ARG_UNUSED(reason);
@@ -560,34 +530,103 @@ static bool gateway_survey_round_note_control_result(
                                                  &control) != PROTO_OK ||
         control.command_id != command_id ||
         control.target_id != command->dst_id ||
-        survey_operation_session_id(
-            control.pair.operation_generation) != command->session_id) {
+        operation_session_id != command->session_id) {
         return false;
     }
-    if (status != COMMAND_OK) {
+    ret = app_gateway_survey_round_capture_control_result(
+        &gateway_survey_round,
+        command_id,
+        command->dst_id,
+        &gateway_survey_transaction.active,
+        gateway_survey_transaction.active_started_at_ms,
+        status);
+    if (ret != PROTO_OK ||
+        survey_gateway_transaction_phase_complete(
+            &gateway_survey_transaction) < 0) {
+        gateway_survey_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return true;
+    }
+
+    /*
+     * The request-delivery handle is now retired, but the round retains the
+     * full semantic result identity. The ACK_CONFIRM callback must match that
+     * exact identity before this control may advance or begin cleanup.
+     */
+    return true;
+}
+
+static bool gateway_survey_round_apply_control_confirmation(void)
+{
+    struct app_gateway_survey_round_control control;
+    enum command_status status;
+    int ret;
+
+    ret = app_gateway_survey_round_control_confirmation_ready(
+        &gateway_survey_round, &control, &status);
+    if (ret == PROTO_ERR_BUSY) {
+        return false;
+    }
+    if (ret == -ETIMEDOUT) {
+        ret = app_gateway_survey_round_current_control(
+            &gateway_survey_round, &control);
+        app_gateway_survey_round_clear_control_confirmation(
+            &gateway_survey_round);
+        if (ret != PROTO_OK) {
+            gateway_survey_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
+        }
+        survey_gateway_transaction_require_cleanup(
+            &gateway_survey_transaction,
+            false,
+            (uint64_t)k_uptime_get());
         gateway_survey_round_fail_current_control(
-            command_id,
-            command->dst_id,
+            control.command_id,
+            control.target_id,
+            GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
+        gateway_survey_begin_cleanup();
+        return true;
+    }
+    if (ret != PROTO_OK) {
+        gateway_survey_finish_status(
+            COMMAND_INTERNAL_ERROR,
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return true;
+    }
+    if (status != COMMAND_OK) {
+        /* The confirmation is terminal proof, so retirement may now begin. */
+        app_gateway_survey_round_clear_control_confirmation(
+            &gateway_survey_round);
+        gateway_survey_round_fail_current_control(
+            control.command_id,
+            control.target_id,
             status == COMMAND_TIMEOUT ?
                 GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
                 GATEWAY_COMMAND_EVENT_REASON_RADIO);
         gateway_survey_begin_cleanup();
         return true;
     }
+
     ret = app_gateway_survey_round_note_control_success(
         &gateway_survey_round,
-        command_id,
-        command->dst_id,
-        command->session_id);
-    if (ret != PROTO_OK ||
-        survey_gateway_transaction_phase_complete(
-            &gateway_survey_transaction) < 0) {
-        gateway_survey_auto_finish_status(
+        control.command_id,
+        control.target_id,
+        control.pair.operation_generation == 0u ?
+            control.pair.survey_id :
+            survey_operation_session_id(
+                control.pair.operation_generation));
+    if (ret != PROTO_OK) {
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
-    if (control.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR) {
+    app_gateway_survey_round_clear_control_confirmation(
+        &gateway_survey_round);
+    if (control.stage == APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR) {
         const struct survey_pair_round_lane *lane =
             app_gateway_survey_round_lane(&gateway_survey_round,
                                           control.lane_index);
@@ -623,26 +662,12 @@ static bool gateway_survey_round_note_control_result(
                             gateway_survey_observability.boundary_pending ?
                                 1u : 0u);
         if (ret == -EBUSY) {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
         }
     }
-    gateway_survey_auto.waiting = false;
-    gateway_survey_round_sync_auto();
-    /*
-     * A successful command result is followed by a gateway ACK on Channel 9.
-     * Keep the next PREPARE or START wake train out of that exchange just
-     * as the serial survey path does. Without this ownership boundary the
-     * parallel-round driver can start the next control a few milliseconds
-     * after the result was decoded, preempting the ACK and leaving the prior
-     * target unable to receive the new control.
-     */
-    survey_gateway_response_ack_settle_note_result(
-        &gateway_survey_response_ack_settle,
-        (uint64_t)k_uptime_get(),
-        gateway_survey_operation_deadline_ms);
     gateway_survey_schedule_drive();
     return true;
 }
@@ -667,7 +692,7 @@ static void gateway_survey_round_note_cleanup_peer(uint8_t peer_mask)
             peer_mask);
     }
     if (ret != PROTO_OK) {
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return;
@@ -683,14 +708,14 @@ static void gateway_survey_round_note_cleanup_peer(uint8_t peer_mask)
         return;
     }
     if (!gateway_survey_round_retire_failed_control_lane()) {
-        (void)gateway_survey_work_reschedule(GATEWAY_BLE_TX_RETRY_MS);
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_BOUNDARY_POLL, GATEWAY_BLE_TX_RETRY_MS);
     }
 }
 
 static bool gateway_survey_round_drive(void)
 {
     struct app_gateway_survey_round_control control;
-    struct survey_gateway_auto_action action;
     int ret;
 
     if (!gateway_survey_round_retire_failed_control_lane()) {
@@ -699,15 +724,47 @@ static bool gateway_survey_round_drive(void)
     if (!gateway_survey_round_active()) {
         ret = gateway_survey_round_start();
         if (ret == PROTO_ERR_NOT_FOUND) {
-            gateway_survey_auto_finish();
+            gateway_survey_finish();
             return true;
         }
         if (ret != PROTO_OK) {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
         }
+    }
+    if (gateway_survey_round_apply_control_confirmation()) {
+        return true;
+    }
+    if (app_gateway_survey_round_control_confirmation_expired(
+            &gateway_survey_round,
+            (uint64_t)k_uptime_get())) {
+        ret = app_gateway_survey_round_current_control(&gateway_survey_round,
+                                                       &control);
+        app_gateway_survey_round_clear_control_confirmation(
+            &gateway_survey_round);
+        if (ret != PROTO_OK) {
+            gateway_survey_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
+        }
+        survey_gateway_transaction_require_cleanup(
+            &gateway_survey_transaction,
+            false,
+            (uint64_t)k_uptime_get());
+        gateway_survey_round_fail_current_control(
+            control.command_id,
+            control.target_id,
+            GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
+        gateway_survey_begin_cleanup();
+        return true;
+    }
+    if (app_gateway_survey_round_control_confirmation_pending(
+            &gateway_survey_round) ||
+        gateway_survey_control_inflight()) {
+        return true;
     }
     if (gateway_survey_cleanup_pending() ||
         gateway_survey_observability.boundary_pending) {
@@ -717,19 +774,12 @@ static bool gateway_survey_round_drive(void)
         ret = app_gateway_survey_round_current_control(&gateway_survey_round,
                                                        &control);
         if (ret != PROTO_OK) {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
         }
-        gateway_survey_round_sync_auto();
-        action = (struct survey_gateway_auto_action) {
-            .pair = control.pair,
-            .stage = control.stage,
-            .command_id = control.command_id,
-            .target_id = control.target_id,
-        };
-        ret = gateway_survey_auto_send_action(&action);
+        ret = gateway_survey_send_control(&control);
         if (ret < 0) {
             survey_gateway_transaction_require_cleanup(
                 &gateway_survey_transaction,
@@ -748,15 +798,6 @@ static bool gateway_survey_round_drive(void)
     if (gateway_survey_round.phase == APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
         uint32_t remaining_ms;
 
-        if (app_gateway_survey_event_runtime_state(
-                &gateway_survey_event_runtime) == FW_SURVEY_ARM_PAIRS &&
-            gateway_survey_state_event(FW_EVENT_PAIR_ARMED, 0u) !=
-                PROTO_OK) {
-            gateway_survey_auto_finish_status(
-                COMMAND_INTERNAL_ERROR,
-                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-            return true;
-        }
         if (gateway_survey_round_finalize_observation()) {
             return true;
         }
@@ -766,7 +807,8 @@ static bool gateway_survey_round_drive(void)
         if (remaining_ms == 0u || remaining_ms > GATEWAY_BLE_TX_RETRY_MS) {
             remaining_ms = GATEWAY_BLE_TX_RETRY_MS;
         }
-        (void)gateway_survey_work_reschedule(remaining_ms);
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_ROUND_OBSERVATION, remaining_ms);
         return true;
     }
     if (gateway_survey_round.phase ==

@@ -47,26 +47,18 @@ static bool delivery_pair_result_valid(const struct mesh_outbound *outbound)
 {
     struct proto_packet expected = {0};
     struct survey_sample sample = {0};
-    uint8_t canonical[SURVEY_SAMPLE_TLV_MAX_LEN];
-    size_t canonical_len = 0u;
 
-    if (survey_extract_sample_tlvs(outbound->payload,
-                                   outbound->payload_len,
-                                   &sample) != PROTO_OK ||
+    if (survey_pair_result_payload_validate(outbound->payload,
+                                            outbound->payload_len,
+                                            &sample) != PROTO_OK ||
         sample.pair.operation_generation == 0u ||
-        survey_append_sample_tlvs(canonical,
-                                  sizeof(canonical),
-                                  &canonical_len,
-                                  &sample) != PROTO_OK ||
-        canonical_len != outbound->payload_len ||
-        memcmp(canonical, outbound->payload, canonical_len) != 0 ||
         survey_init_result_packet_from_reporter(
             &expected,
             &sample,
             outbound->packet.src_id,
             outbound->packet.dst_id,
             outbound->packet.seq,
-            (uint8_t)canonical_len) != PROTO_OK) {
+            outbound->payload_len) != PROTO_OK) {
         return false;
     }
     return delivery_source_envelope_matches(&outbound->packet, &expected);
@@ -78,13 +70,16 @@ static bool delivery_discovery_report_valid(
     struct survey_reachability_entry
         entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
     struct proto_packet expected = {0};
+    const uint8_t *boot_raw = NULL;
     const uint8_t *status_raw = NULL;
     uint8_t canonical[SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN];
     uint64_t operation_generation = 0u;
     uint64_t anchor_id = 0u;
+    uint32_t boot_incarnation = 0u;
     uint32_t survey_id = 0u;
     size_t canonical_len = 0u;
     size_t entry_count = 0u;
+    uint8_t boot_len = 0u;
     uint8_t status_len = 0u;
     uint16_t status;
 
@@ -101,6 +96,13 @@ static bool delivery_discovery_report_valid(
             outbound->payload_len,
             &operation_generation) != PROTO_OK ||
         operation_generation == 0u ||
+        tlv_find_unique(outbound->payload,
+                        outbound->payload_len,
+                        TLV_NODE_BOOT_COUNTER,
+                        &boot_raw,
+                        &boot_len) != PROTO_OK ||
+        boot_len != sizeof(uint32_t) ||
+        (boot_incarnation = proto_get_u32_le(boot_raw)) == 0u ||
         tlv_find_unique(outbound->payload,
                         outbound->payload_len,
                         TLV_COMMAND_STATUS,
@@ -128,6 +130,11 @@ static bool delivery_discovery_report_valid(
             sizeof(canonical),
             &canonical_len,
             operation_generation) != PROTO_OK ||
+        tlv_append_u32(canonical,
+                       sizeof(canonical),
+                       &canonical_len,
+                       TLV_NODE_BOOT_COUNTER,
+                       boot_incarnation) != PROTO_OK ||
         tlv_append_u16(canonical,
                        sizeof(canonical),
                        &canonical_len,
@@ -141,6 +148,7 @@ static bool delivery_discovery_report_valid(
             outbound->packet.dst_id,
             survey_id,
             operation_generation,
+            boot_incarnation,
             outbound->packet.seq,
             (uint8_t)canonical_len) != PROTO_OK) {
         return false;
@@ -678,6 +686,24 @@ int app_mesh_local_delivery_cleanup_ack(
 
     if (!app_mesh_local_delivery_ack_committed(delivery)) {
         return -EINVAL;
+    }
+    if (delivery->ops.clear == NULL) {
+        return -ENOTSUP;
+    }
+    ret = delivery->ops.clear(delivery->ops.ctx);
+    if (ret == 0) {
+        memset(&delivery->snapshot, 0, sizeof(delivery->snapshot));
+    }
+    return ret;
+}
+
+int app_mesh_local_delivery_cancel(
+    struct app_mesh_local_delivery *delivery)
+{
+    int ret;
+
+    if (!app_mesh_local_delivery_occupied(delivery)) {
+        return -ENOENT;
     }
     if (delivery->ops.clear == NULL) {
         return -ENOTSUP;

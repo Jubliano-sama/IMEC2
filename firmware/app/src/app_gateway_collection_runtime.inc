@@ -1,23 +1,4 @@
 #line 1209 __BASE_FILE__
-static int gateway_persist_collection_state(const char *reason)
-{
-    ARG_UNUSED(reason);
-
-    if (!gateway_collection_tracking_active() ||
-        gateway_membership_restore_pending ||
-        gateway_collection_restore_pending ||
-        gateway_collection_clear_pending ||
-        gateway_eack_custody_clear_pending) {
-        return -ENOENT;
-    }
-
-    /* RAM-only build: the in-memory collection is always already authoritative,
-     * so the save is a no-op that merely records the accepted dirty round. */
-    gateway_collection_persistence_dirty = false;
-    gateway_persistence_retry_round = 0u;
-    return 0;
-}
-
 static bool gateway_collection_tracking_active(void)
 {
     return DEVICE_ROLE == ROLE_GATEWAY &&
@@ -28,27 +9,20 @@ static bool gateway_collection_tracking_active(void)
 
 static bool gateway_collection_work_pending(void)
 {
-    return gateway_eack_custody_clear_pending ||
+    return gateway_collection_recovery.host_custody_pending ||
+           gateway_collection_recovery.active ||
            gateway_membership_restore_pending ||
-           gateway_collection_restore_pending ||
-           gateway_membership_persistence_dirty ||
            gateway_membership_clear_pending ||
-           gateway_collection_clear_pending ||
            (gateway_collection_tracking_active() &&
            (gateway_collection_state.collection_open ||
             gateway_collection_state.eack_pending ||
             gateway_collection_eack_retry_state.active ||
-            gateway_collection_eack_round_dirty ||
-            gateway_collection_persistence_dirty));
+            gateway_collection_eack_round_dirty));
 }
 
 static void gateway_collection_rollback_failed_start(void)
 {
-    gateway_collection_persistence_dirty = false;
     gateway_collection_eack_round_dirty = false;
-    gateway_persistence_retry_round = 0u;
-    /* RAM-only build: there is no durable snapshot to fall back to, so a
-     * failed start reverts the in-memory collection to its idle state. */
     gateway_collection_clear(&gateway_collection_state);
 }
 
@@ -56,8 +30,7 @@ static void gateway_schedule_collection_eack_round(void)
 {
     int ret;
 
-    if (gateway_eack_custody_clear_pending ||
-        !gateway_collection_tracking_active() ||
+    if (!gateway_collection_tracking_active() ||
         !gateway_collection_state.eack_pending) {
         atomic_clear(&gateway_collection_eack_schedule_deferred);
         atomic_clear(&gateway_collection_eack_deferred_delay_ms);
@@ -92,12 +65,6 @@ static void gateway_schedule_collection_eack_retry(const char *reason,
 {
     uint32_t retry_delay_ms;
     int schedule_ret;
-
-    if (gateway_eack_custody_clear_pending) {
-        gateway_schedule_persistence_retry(
-            "eack-custody-clear-before-retry");
-        return;
-    }
 
     retry_delay_ms = app_gateway_eack_retry_note_failure(
         &gateway_collection_eack_retry_state,
@@ -311,18 +278,8 @@ static int gateway_send_collection_eack(const char *reason,
     if (!gateway_collection_tracking_active()) {
         return -ENOENT;
     }
-    if (gateway_eack_custody_clear_pending) {
-        return -EAGAIN;
-    }
     if (!gateway_collection_state.eack_pending) {
         return -EALREADY;
-    }
-    if (gateway_collection_persistence_dirty) {
-        /*
-         * An EACK is a durable acceptance statement.  Never put it on RF
-         * while the collection update it describes is still RAM-only.
-         */
-        return -EAGAIN;
     }
 
     ret = app_gateway_eack_retry_restore(
@@ -410,11 +367,6 @@ static void gateway_complete_collection_eack_round(
 {
     bool send_updated_round =
         used_frozen_snapshot && gateway_collection_eack_round_dirty;
-    uint32_t previous_retry_spread_ms =
-        gateway_collection_state.next_retry_spread_ms;
-    uint16_t previous_eack_sequence = gateway_collection_state.eack_sequence;
-    uint8_t previous_retry_round = gateway_collection_state.retry_round;
-    bool previous_eack_pending = gateway_collection_state.eack_pending;
     int ret;
 
     if (!used_frozen_snapshot) {
@@ -429,33 +381,13 @@ static void gateway_complete_collection_eack_round(
     }
     gateway_collection_state.eack_pending =
         gateway_collection_state.collection_open || send_updated_round;
-    ret = gateway_persist_collection_state(reason);
-    if (ret < 0) {
-        /*
-         * The previously persisted collection identity still owns the
-         * frozen EACK.  Roll RAM back to that identity and retry the exact
-         * datagram instead of exposing a half-committed next round.
-         */
-        gateway_collection_state.retry_round = previous_retry_round;
-        gateway_collection_state.eack_sequence = previous_eack_sequence;
-        gateway_collection_state.next_retry_spread_ms =
-            previous_retry_spread_ms;
-        gateway_collection_state.eack_pending = previous_eack_pending;
-        gateway_collection_persistence_dirty = false;
-        gateway_schedule_collection_eack_retry(reason, ret, 0u);
-        return;
-    }
 
     ret = app_gateway_eack_retry_commit_success(
         &gateway_collection_eack_retry_state);
     if (ret != PROTO_OK) {
-        LOG_ERR("gateway collection EACK RAM custody commit failed after durable round advance: ret=%d",
+        LOG_ERR("gateway collection EACK RAM custody commit failed after retry round advance: ret=%d",
                 ret);
         app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-    }
-    if (gateway_clear_eack_custody_or_defer(
-            "collection-eack-custody-clear") < 0) {
-        return;
     }
 
     if (send_updated_round) {
@@ -493,21 +425,12 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
     atomic_clear(&gateway_collection_eack_schedule_deferred);
     atomic_clear(&gateway_collection_eack_deferred_delay_ms);
 
-    if (gateway_eack_custody_clear_pending) {
-        gateway_schedule_persistence_retry(
-            "eack-custody-clear-before-work");
-        return;
-    }
     if (!gateway_collection_tracking_active()) {
         app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-        (void)gateway_clear_eack_custody_or_defer(
-            "inactive-collection-eack-custody-clear");
         return;
     }
     if (!gateway_collection_state.eack_pending) {
         app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-        (void)gateway_clear_eack_custody_or_defer(
-            "settled-collection-eack-custody-clear");
         return;
     }
 
@@ -527,29 +450,12 @@ static void gateway_collection_eack_work_handler(struct k_work *work)
                                            used_frozen_snapshot);
 }
 
-static int gateway_accept_collection_record(
-    const char *reason,
-    bool collection_changed)
+static void gateway_accept_collection_record(bool collection_changed)
 {
     bool reopened = !gateway_collection_state.eack_pending;
-    int ret;
 
     if (reopened) {
         gateway_collection_state.eack_pending = true;
-    }
-    if (collection_changed || reopened || gateway_collection_persistence_dirty) {
-        ret = gateway_persist_collection_state(reason);
-        if (ret < 0) {
-            if (collection_changed) {
-                /* RAM-only build: no durable rollback exists, just drop the
-                 * uncommitted in-memory update. */
-                gateway_collection_persistence_dirty = false;
-            } else if (reopened) {
-                gateway_collection_state.eack_pending = false;
-                gateway_collection_persistence_dirty = false;
-            }
-            return ret;
-        }
     }
 
     if (gateway_collection_eack_retry_state.active) {
@@ -561,8 +467,6 @@ static int gateway_accept_collection_record(
                 gateway_collection_state.collection_epoch_id,
                 gateway_collection_eack_retry_state.rf_retry.retry_round);
     }
-
-    return 0;
 }
 
 static int gateway_drive_collection_eack_after_record(
@@ -576,8 +480,7 @@ static int gateway_drive_collection_eack_after_record(
     int ret;
 
     if (!gateway_collection_tracking_active() ||
-        !gateway_collection_state.eack_pending ||
-        gateway_eack_custody_clear_pending) {
+        !gateway_collection_state.eack_pending) {
         return -ESTALE;
     }
     if (gateway_collection_eack_retry_state.active) {
@@ -599,7 +502,7 @@ static int gateway_drive_collection_eack_after_record(
                                                used_frozen_snapshot);
     }
 
-    /* The result itself is safely accepted once its collection is durable. */
+    /* The result itself is accepted into the sole RAM collection owner. */
     return 0;
 }
 
@@ -609,12 +512,9 @@ static int gateway_note_collection_result(const struct proto_packet *packet,
                                            uint64_t previous_hop_id)
 {
     bool duplicate = false;
-    int accept_ret;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
-        gateway_collection_clear_pending ||
-        gateway_eack_custody_clear_pending ||
         packet == NULL ||
         packet->msg_type != MSG_COMMAND_RESULT) {
         return -ENOENT;
@@ -639,13 +539,7 @@ static int gateway_note_collection_result(const struct proto_packet *packet,
             gateway_collection_state.received_count,
             gateway_collection_state.expected_count,
             duplicate ? 1u : 0u);
-    accept_ret = gateway_accept_collection_record(
-        duplicate ? "collection-eack-result-duplicate" :
-                    "collection-eack-result",
-        !duplicate);
-    if (accept_ret < 0) {
-        return accept_ret;
-    }
+    gateway_accept_collection_record(!duplicate);
     return duplicate ? APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE :
                        APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
 }
@@ -657,12 +551,9 @@ static int gateway_note_collection_bundle(const struct proto_packet *packet,
 {
     uint16_t accepted_count = 0u;
     uint16_t duplicate_count = 0u;
-    int accept_ret;
     int ret;
 
     if (!gateway_collection_tracking_active() ||
-        gateway_collection_clear_pending ||
-        gateway_eack_custody_clear_pending ||
         packet == NULL ||
         packet->msg_type != MSG_RESULT_BUNDLE) {
         return -ENOENT;
@@ -692,13 +583,7 @@ static int gateway_note_collection_bundle(const struct proto_packet *packet,
     if (accepted_count == 0u && duplicate_count == 0u) {
         return -EBADMSG;
     }
-    accept_ret = gateway_accept_collection_record(
-        accepted_count == 0u ? "collection-eack-bundle-duplicate" :
-                               "collection-eack-bundle",
-        accepted_count != 0u);
-    if (accept_ret < 0) {
-        return accept_ret;
-    }
+    gateway_accept_collection_record(accepted_count != 0u);
     return accepted_count == 0u ?
            APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE :
            APP_GATEWAY_SEMANTIC_ACCEPT_NEW;

@@ -21,6 +21,11 @@ from tools.gateway_gui.protocol import (
     MSG_SURVEY_PAIR_RESULT,
     Packet,
     click_report_session_id,
+    parse_stream_record,
+)
+from tools.gateway_gui.tests.test_protocol import (
+    gateway_assignment_event_payload,
+    stream_record,
 )
 
 
@@ -75,7 +80,84 @@ def host_packet(
     )
 
 
+def command_event_packet(
+    *,
+    event_sequence: int = 0x10203040,
+    stage: int = 6,
+    anchor_id: int = 0x5555666677778888,
+    discovery_slot: int = 4,
+    attempt: int = 0,
+    replay: bool = False,
+    previous_hop_id: int = 0,
+    lost_event_count: int = 0,
+    hop_count: int = 0,
+    status: int = 0,
+    progress_count: int = 1,
+    total_count: int = 1,
+    success_count: int = 1,
+    failure_count: int = 0,
+    packet_flags: int = FLAG_GATEWAY_ACK_REQUIRED,
+) -> Packet:
+    gateway_id = 0x9999AAAABBBBCCCC
+    payload = bytearray(
+        gateway_assignment_event_payload(
+            event_sequence=event_sequence,
+            stage=stage,
+            anchor_id=anchor_id,
+            discovery_slot=discovery_slot,
+            progress_count=progress_count,
+            total_count=total_count,
+            success_count=success_count,
+            failure_count=failure_count,
+        )
+    )
+    payload[4] = 0x04 if replay else 0
+    payload[5] = attempt
+    payload[6] = status
+    payload[56:64] = previous_hop_id.to_bytes(8, "little")
+    payload[74:76] = lost_event_count.to_bytes(2, "little")
+    payload[76] = hop_count
+    return parse_stream_record(
+        stream_record(
+            bytes(payload),
+            msg_type=MSG_GATEWAY_COMMAND_EVENT,
+            packet_flags=packet_flags,
+            packet_src_id=gateway_id,
+            packet_dst_id=gateway_id,
+            packet_session_id=event_sequence,
+            packet_seq=event_sequence & 0xFFFF,
+        )
+    )
+
+
 class GatewayPacketDeduplicatorTests(unittest.TestCase):
+    def test_survey_discovery_replay_domain_is_anchor_boot_incarnation(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0xAAA, max_entries=4)
+        operation_payload = b"same-operation-generation"
+        before_reboot = host_packet(
+            MSG_SURVEY_DISCOVERY_REPORT,
+            payload=operation_payload,
+            session_id=41,
+            seq=1,
+        )
+        after_reboot = replace(before_reboot, session_id=42)
+
+        self.assertEqual(
+            cache.observe(before_reboot).disposition, PacketDisposition.NEW
+        )
+        self.assertEqual(
+            cache.observe(after_reboot).disposition, PacketDisposition.NEW
+        )
+        self.assertEqual(
+            cache.observe(before_reboot).disposition,
+            PacketDisposition.DUPLICATE,
+        )
+        self.assertEqual(
+            cache.observe(after_reboot).disposition,
+            PacketDisposition.DUPLICATE,
+        )
+        self.assertEqual(cache.size, 2)
+
     def test_clicker_identity_namespaces_same_anchor_event_and_fragment(self) -> None:
         cache = GatewayPacketDeduplicator(max_entries=4)
         event_seq = 7
@@ -252,7 +334,7 @@ class GatewayPacketDeduplicatorTests(unittest.TestCase):
                 flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
                 seq=10,
             ),
-            host_packet(MSG_GATEWAY_COMMAND_EVENT, flags=0, seq=11),
+            command_event_packet(),
         )
 
         for packet in packets:
@@ -260,6 +342,180 @@ class GatewayPacketDeduplicatorTests(unittest.TestCase):
         for packet in packets:
             self.assertEqual(cache.observe(packet).disposition, PacketDisposition.DUPLICATE)
         self.assertEqual(cache.size, len(packets))
+
+    def test_command_event_replay_uses_semantic_identity_not_stream_sequence(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=4)
+        original = command_event_packet(event_sequence=0x10203040)
+        replay = command_event_packet(
+            event_sequence=0x50607080,
+            attempt=0,
+            replay=True,
+            previous_hop_id=0x44,
+            lost_event_count=9,
+            hop_count=3,
+        )
+
+        self.assertEqual(cache.observe(original).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(replay).disposition, PacketDisposition.DUPLICATE)
+        self.assertEqual(cache.size, 1)
+
+    def test_full_assignment_publisher_replay_batch_is_semantically_idempotent(
+        self,
+    ) -> None:
+        cache = GatewayPacketDeduplicator(
+            gateway_id=0x9999AAAABBBBCCCC, max_entries=8
+        )
+
+        def publisher_packet(
+            stage: int,
+            event_sequence: int,
+            *,
+            replay: bool,
+            anchor_id: int = 0,
+            discovery_slot: int = 0xFF,
+        ) -> Packet:
+            terminal = stage == 12
+            mapping = stage == 6
+            payload = bytearray(
+                gateway_assignment_event_payload(
+                    event_sequence=event_sequence,
+                    stage=stage,
+                    flags=(0x01 if terminal else 0x00)
+                    | (0x04 if replay else 0x00),
+                    anchor_id=anchor_id,
+                    discovery_slot=discovery_slot,
+                    progress_count=1 if mapping else 2,
+                    total_count=2,
+                    success_count=1 if mapping else 2,
+                    failure_count=0,
+                )
+            )
+            payload[5] = 7 if stage in (8, 12) else 0
+            return parse_stream_record(
+                stream_record(
+                    bytes(payload),
+                    msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                    packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                    packet_src_id=0x9999AAAABBBBCCCC,
+                    packet_dst_id=0x9999AAAABBBBCCCC,
+                    packet_session_id=event_sequence,
+                    packet_seq=event_sequence & 0xFFFF,
+                )
+            )
+
+        live = (
+            publisher_packet(
+                6, 0x10203041,
+                replay=False,
+                anchor_id=0x5100000000000001,
+                discovery_slot=0,
+            ),
+            publisher_packet(
+                6, 0x10203042,
+                replay=False,
+                anchor_id=0x5100000000000002,
+                discovery_slot=4,
+            ),
+            publisher_packet(7, 0x10203043, replay=False),
+            publisher_packet(8, 0x10203044, replay=False),
+            publisher_packet(12, 0x10203045, replay=False),
+        )
+        replay = (
+            publisher_packet(
+                6, 0x50607041,
+                replay=True,
+                anchor_id=0x5100000000000001,
+                discovery_slot=0,
+            ),
+            publisher_packet(
+                6, 0x50607042,
+                replay=True,
+                anchor_id=0x5100000000000002,
+                discovery_slot=4,
+            ),
+            publisher_packet(7, 0x50607043, replay=True),
+            publisher_packet(8, 0x50607044, replay=True),
+            publisher_packet(12, 0x50607045, replay=True),
+        )
+
+        for packet in live:
+            self.assertEqual(
+                cache.observe(packet).disposition, PacketDisposition.NEW
+            )
+        for packet in replay:
+            self.assertEqual(
+                cache.observe(packet).disposition, PacketDisposition.DUPLICATE
+            )
+        self.assertEqual(cache.size, len(live))
+
+    def test_command_event_stage_or_mapping_change_is_new_and_semantic_mutation_conflicts(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=8)
+        original = command_event_packet()
+        different_mapping = command_event_packet(
+            event_sequence=0x20304050,
+            anchor_id=0x5555666677779999,
+            discovery_slot=5,
+        )
+        conflicting_status = command_event_packet(
+            event_sequence=0x30405060,
+            status=5,
+        )
+
+        self.assertEqual(cache.observe(original).disposition, PacketDisposition.NEW)
+        self.assertEqual(
+            cache.observe(different_mapping).disposition, PacketDisposition.NEW
+        )
+        self.assertEqual(
+            cache.observe(conflicting_status).disposition,
+            PacketDisposition.CONFLICT,
+        )
+        self.assertEqual(cache.observe(original).disposition, PacketDisposition.DUPLICATE)
+
+    def test_live_command_retry_progress_is_best_effort_and_not_cached(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=8)
+        first_attempt = command_event_packet(
+            event_sequence=0x10203040,
+            stage=4,
+            attempt=1,
+            progress_count=1,
+            total_count=4,
+            success_count=0,
+            failure_count=0,
+            packet_flags=0,
+        )
+        second_attempt = command_event_packet(
+            event_sequence=0x20304050,
+            stage=4,
+            attempt=2,
+            progress_count=2,
+            total_count=4,
+            success_count=0,
+            failure_count=0,
+            packet_flags=0,
+        )
+
+        self.assertEqual(cache.observe(first_attempt).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(second_attempt).disposition, PacketDisposition.NEW)
+        self.assertEqual(
+            cache.observe(second_attempt).disposition,
+            PacketDisposition.NEW,
+        )
+        self.assertEqual(cache.size, 0)
+
+    def test_malformed_command_event_is_conflict_and_never_cached(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=4)
+        malformed = host_packet(
+            MSG_GATEWAY_COMMAND_EVENT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=0x9999AAAABBBBCCCC,
+            dst_id=0x9999AAAABBBBCCCC,
+        )
+
+        decision = cache.observe(malformed)
+        self.assertEqual(decision.disposition, PacketDisposition.CONFLICT)
+        self.assertIsNone(decision.identity)
+        self.assertFalse(decision.cached)
+        self.assertEqual(cache.size, 0)
 
     def test_best_effort_records_are_always_visible_and_uncached(self) -> None:
         cache = GatewayPacketDeduplicator(max_entries=4)

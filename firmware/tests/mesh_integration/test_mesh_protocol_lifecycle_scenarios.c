@@ -646,23 +646,33 @@ static int build_reach_report(uint64_t source_id, uint64_t peer_id,
             operation_generation);
     }
     if (ret == PROTO_OK) {
+        ret = tlv_append_u32(payload,
+                             UWB_MESH_MAX_PAYLOAD_LEN,
+                             payload_len,
+                             TLV_NODE_BOOT_COUNTER,
+                             1u);
+    }
+    if (ret == PROTO_OK) {
         ret = tlv_append_u16(payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len,
                              TLV_COMMAND_STATUS, COMMAND_OK);
     }
     return ret == PROTO_OK ?
            survey_init_discovery_report_packet(packet, source_id, GATEWAY_ID,
                                                survey_id, operation_generation,
-                                               seq, (uint8_t)*payload_len) : ret;
+                                               1u, seq,
+                                               (uint8_t)*payload_len) : ret;
 }
 
 static int note_reach_delivery(struct survey_gateway_context *context,
                                const struct mesh_sim_delivery *item)
 {
     struct survey_reachability_entry entries[2];
+    const uint8_t *boot_raw = NULL;
     uint32_t survey_id = 0u;
     uint64_t anchor_id = 0u;
     uint64_t operation_generation = 0u;
     size_t entry_count = 0u;
+    uint8_t boot_len = 0u;
     int ret = survey_extract_reach_report_tlvs(
         item->payload, item->payload_len, &survey_id, &anchor_id,
         entries, 2u, &entry_count);
@@ -670,11 +680,16 @@ static int note_reach_delivery(struct survey_gateway_context *context,
         ret = survey_operation_generation_extract_tlv(
             item->payload, item->payload_len, &operation_generation);
     }
+    if (ret == PROTO_OK) {
+        ret = tlv_find_unique(item->payload, item->payload_len,
+                              TLV_NODE_BOOT_COUNTER,
+                              &boot_raw, &boot_len);
+    }
     if (ret != PROTO_OK ||
+        boot_len != sizeof(uint32_t) ||
         item->packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
         item->packet.src_id != anchor_id ||
-        item->packet.session_id !=
-            survey_operation_session_id(operation_generation)) {
+        item->packet.session_id != proto_get_u32_le(boot_raw)) {
         return PROTO_ERR_MALFORMED;
     }
     return survey_gateway_note_reach_report(context, survey_id, anchor_id,
@@ -776,6 +791,11 @@ static int build_pair_result(const struct survey_pair *pair, uint16_t seq,
     };
     int ret = survey_append_sample_tlvs(payload, UWB_MESH_MAX_PAYLOAD_LEN,
                                         payload_len, &sample);
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u64(payload, UWB_MESH_MAX_PAYLOAD_LEN,
+                             payload_len, TLV_TIMESTAMP_MS,
+                             UINT64_C(123456));
+    }
     return ret == PROTO_OK ?
            survey_init_result_packet_from_reporter(
                packet, &sample, LEAF_ID, GATEWAY_ID, seq,
@@ -1147,6 +1167,7 @@ static bool run_lifecycle(void)
     struct fixture *fixture = &lifecycle.fixture;
     uint64_t delivery_retries = 0u;
     uint64_t confirm_retries = 0u;
+    size_t confirmed_history_count = 0u;
 
     memset(&lifecycle, 0, sizeof(lifecycle));
     CHECK(setup_forced_relay(fixture) == MESH_SIM_OK,
@@ -1161,6 +1182,25 @@ static bool run_lifecycle(void)
         !run_survey_transaction_phase()) {
         return false;
     }
+
+    for (size_t byte = 0u;
+         byte < MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES;
+         byte++) {
+        uint8_t bits = fixture->world.gateway_ack_store
+            .confirmed_identity_bits[byte];
+
+        while (bits != 0u) {
+            confirmed_history_count += bits & 1u;
+            bits >>= 1u;
+        }
+    }
+    CHECK(lifecycle.deliveries >
+              MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN &&
+          confirmed_history_count > 0u,
+          "ACK-confirm path did not mutate production history across "
+          "capacity progression deliveries=%zu confirmed=%zu",
+          lifecycle.deliveries,
+          confirmed_history_count);
 
     for (size_t i = 0u; i < fixture->world.transition_count; i++) {
         const struct mesh_sim_transition *transition =

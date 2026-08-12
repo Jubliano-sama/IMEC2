@@ -3,6 +3,8 @@
 
 #include "app_board.h"
 #include "app_click_event_sequence.h"
+#include "app_durable_state.h"
+#include "app_radio_guard.h"
 #include "app_radio_recovery.h"
 #include "app_config.h"
 #include "app_node_comm.h"
@@ -61,6 +63,22 @@ LOG_MODULE_REGISTER(app_clicker, LOG_LEVEL_DBG);
 #define CLICK_BUTTON_RECOVERY_REBOOT_DELAY_MS 1000u
 #define CLICKER_STATUS_LED_CONNECT_ATTEMPTS 2u
 #define CLICKER_STATUS_LED_CONNECT_RETRY_US 100u
+
+/*
+ * The serialized action worker holds each semantic-ID-consuming terminal
+ * action for STATUS_PASS_DURATION_MS. This leaves the standby refill's
+ * 1h+2h+4h+8h retry horizon inside the active half-block, even if a due
+ * attempt waits for one final terminal hold before it can run.
+ */
+#if defined(CONFIG_IMEC_DURABLE_STATE) && !defined(CONFIG_IMEC_ML_CLICKER) && \
+    DEVICE_ROLE == ROLE_CLICKER
+BUILD_ASSERT(
+    (uint64_t)(APP_DURABLE_STATE_CLICK_BLOCK_SIZE / 2u) *
+            (uint64_t)STATUS_PASS_DURATION_MS >
+        APP_CLICK_EVENT_SEQUENCE_PREFETCH_RETRY_HORIZON_MS +
+            (uint64_t)STATUS_PASS_DURATION_MS,
+    "click standby retry horizon must fit the serialized semantic-ID rate");
+#endif
 
 static const struct app_clicker_attempt_gate_config clicker_attempt_gate_config = {
     .wake_adv_ms = WAKE_ADV_MS,
@@ -265,6 +283,50 @@ static int clicker_sample_uwb_gate(struct uwb_clicker_session *session,
     return ret;
 }
 
+static int clicker_release_radio_to_standby(
+    struct radio_guard_uwb_lease *radio_lease,
+    const char *reason)
+{
+    int parking_ret;
+    int release_ret;
+
+    release_ret = radio_guard_uwb_release_begin(radio_lease);
+    if (release_ret < 0) {
+        LOG_ERR("clicker rejected stale UWB standby release: ret=%d",
+                release_ret);
+        return release_ret;
+    }
+    parking_ret = app_radio_standby_with_bounded_recovery(reason);
+    release_ret = radio_guard_uwb_release_finish(radio_lease, parking_ret);
+    if (release_ret < 0) {
+        LOG_ERR("clicker UWB standby release failed closed: ret=%d",
+                release_ret);
+    }
+    return release_ret;
+}
+
+static int clicker_release_radio_to_idle(
+    struct radio_guard_uwb_lease *radio_lease,
+    const char *reason)
+{
+    int parking_ret;
+    int release_ret;
+
+    release_ret = radio_guard_uwb_release_begin(radio_lease);
+    if (release_ret < 0) {
+        LOG_ERR("clicker rejected stale UWB idle release: ret=%d",
+                release_ret);
+        return release_ret;
+    }
+    parking_ret = app_radio_idle_with_bounded_recovery(reason);
+    release_ret = radio_guard_uwb_release_finish(radio_lease, parking_ret);
+    if (release_ret < 0) {
+        LOG_ERR("clicker UWB idle release failed closed: ret=%d",
+                release_ret);
+    }
+    return release_ret;
+}
+
 static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                     uint32_t event_seq,
                                     uint64_t priority_id,
@@ -274,6 +336,7 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
                                     uint32_t *ble_defer_wait_ms,
                                     const struct app_clicker_attempt_gate_config *config)
 {
+    struct radio_guard_uwb_lease radio_lease = {0};
     int64_t now_ms;
     int64_t deadline_ms;
     uint32_t phase_budget_ms;
@@ -323,7 +386,9 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         }
     }
 
-    ret = radio_guard_uwb_start("clicker politeness sniff");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                "clicker politeness sniff",
+                                &radio_lease);
     if (ret < 0) {
         if (ble_started) {
             app_clicker_ble_courtesy_stop();
@@ -332,18 +397,16 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
     }
     ret = dwm3000_driver_configure_range_mode();
     if (ret < 0) {
-        release_ret = app_radio_standby_with_bounded_recovery(
-            "politeness configure failure");
-        radio_guard_uwb_stop();
+        release_ret = clicker_release_radio_to_standby(
+            &radio_lease, "politeness configure failure");
         if (ble_started) {
             app_clicker_ble_courtesy_stop();
         }
         return release_ret < 0 ? release_ret : ret;
     }
     if (k_uptime_get() >= deadline_ms) {
-        release_ret = app_radio_standby_with_bounded_recovery(
-            "politeness deadline");
-        radio_guard_uwb_stop();
+        release_ret = clicker_release_radio_to_standby(
+            &radio_lease, "politeness deadline");
         if (ble_started) {
             app_clicker_ble_courtesy_stop();
         }
@@ -407,9 +470,8 @@ static int clicker_politeness_phase(struct uwb_clicker_session *session,
         }
     }
 
-    release_ret = app_radio_standby_with_bounded_recovery(
-        "politeness complete");
-    radio_guard_uwb_stop();
+    release_ret = clicker_release_radio_to_standby(
+        &radio_lease, "politeness complete");
     if (ble_started) {
         app_clicker_ble_courtesy_stop();
     }
@@ -682,6 +744,7 @@ static int clicker_send_wake_claim_train_until(
         clicker_wake_train_after_pre_tail_ms(config);
 
     while (polite_retry <= APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
+        struct radio_guard_uwb_lease radio_lease = {0};
         size_t frame_len = 0u;
         int64_t close_ms;
         uint16_t sent_count = 0u;
@@ -699,7 +762,9 @@ static int clicker_send_wake_claim_train_until(
             return -ETIMEDOUT;
         }
 
-        ret = radio_guard_uwb_start("clicker UWB WAKE_CLAIM train");
+        ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                    "clicker UWB WAKE_CLAIM train",
+                                    &radio_lease);
         if (ret < 0) {
             status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
             LOG_WRN("clicker UWB WAKE_CLAIM guard failed: ret=%d", ret);
@@ -835,13 +900,12 @@ static int clicker_send_wake_claim_train_until(
         }
 
 attempt_out:
-        release_ret = app_radio_standby_with_bounded_recovery(
-            "wake claim train");
-        radio_guard_uwb_stop();
+        release_ret = clicker_release_radio_to_standby(
+            &radio_lease, "wake claim train");
         if (release_ret < 0) {
             LOG_ERR("clicker wake train radio release failed: %d",
                     release_ret);
-            ret = release_ret;
+            return release_ret;
         }
         if (ret == -EAGAIN && c5_activity &&
             polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
@@ -981,6 +1045,7 @@ static int clicker_send_range_schedule_until(
     int64_t deadline_ms,
     int64_t *schedule_tx_ms)
 {
+    struct radio_guard_uwb_lease radio_lease = {0};
     uint8_t frame[UWB_RANGE_SCHEDULE_MAX_LEN];
     size_t frame_len = 0u;
     int64_t tx_complete_ms = -1;
@@ -999,7 +1064,9 @@ static int clicker_send_range_schedule_until(
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB RANGE_SCHEDULE");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                "clicker UWB RANGE_SCHEDULE",
+                                &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -1028,14 +1095,13 @@ static int clicker_send_range_schedule_until(
                     prep_ret);
             ret = prep_ret;
         }
-        release_ret = app_radio_idle_with_bounded_recovery(
-            "range schedule prepared");
+        release_ret = clicker_release_radio_to_idle(
+            &radio_lease, "range schedule prepared");
     } else {
-        release_ret = app_radio_standby_with_bounded_recovery(
-            "range schedule complete");
+        release_ret = clicker_release_radio_to_standby(
+            &radio_lease, "range schedule complete");
     }
-    radio_guard_uwb_stop();
-    if (ret >= 0 && release_ret < 0) {
+    if (release_ret < 0) {
         ret = release_ret;
     }
 
@@ -1057,6 +1123,7 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
                                    uint8_t reason,
                                    const struct app_clicker_range_tx_config *config)
 {
+    struct radio_guard_uwb_lease radio_lease = {0};
     struct uwb_range_release_frame release;
     uint8_t frame[UWB_RANGE_RELEASE_LEN];
     size_t frame_len = 0u;
@@ -1076,7 +1143,9 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
         return -EINVAL;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB RANGE_RELEASE");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                "clicker UWB RANGE_RELEASE",
+                                &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -1086,10 +1155,9 @@ int app_clicker_send_range_release(struct uwb_clicker_session *session,
                                         frame_len,
                                         config->control_tx_timeout_ms);
     }
-    release_ret = app_radio_standby_with_bounded_recovery(
-        "range release complete");
-    radio_guard_uwb_stop();
-    if (ret >= 0 && release_ret < 0) {
+    release_ret = clicker_release_radio_to_standby(
+        &radio_lease, "range release complete");
+    if (release_ret < 0) {
         ret = release_ret;
     }
 
@@ -1110,6 +1178,7 @@ static int clicker_discover_uwb_anchors_until(
     struct uwb_clicker_session *session,
     int64_t absolute_deadline_ms)
 {
+    struct radio_guard_uwb_lease radio_lease = {0};
     struct uwb_discover_frame discover;
     uint8_t frame[UWB_DISCOVERY_REPLY_LEN];
     size_t frame_len = 0u;
@@ -1149,7 +1218,9 @@ static int clicker_discover_uwb_anchors_until(
         return -ETIMEDOUT;
     }
 
-    ret = radio_guard_uwb_start("clicker UWB DISCOVER");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                "clicker UWB DISCOVER",
+                                &radio_lease);
     if (ret < 0) {
         return ret;
     }
@@ -1254,10 +1325,9 @@ static int clicker_discover_uwb_anchors_until(
             ret);
 
 out:
-    release_ret = app_radio_standby_with_bounded_recovery(
-        "discovery complete");
-    radio_guard_uwb_stop();
-    if (ret >= 0 && release_ret < 0) {
+    release_ret = clicker_release_radio_to_standby(
+        &radio_lease, "discovery complete");
+    if (release_ret < 0) {
         ret = release_ret;
     }
     if (ret < 0) {
@@ -1352,6 +1422,8 @@ static int clicker_collect_uwb_attempt_with_options_until(
                     release_ret,
                     session->candidate_count,
                     session->config.min_anchor_count);
+            (void)uwb_clicker_abort_attempt(session);
+            return release_ret;
         }
         (void)uwb_clicker_abort_attempt(session);
         return -ETIMEDOUT;
@@ -1450,15 +1522,15 @@ static int clicker_idle_scheduled_range_radio(void)
     return ret;
 }
 
-static int clicker_finish_scheduled_range_radio_burst(void)
+static int clicker_finish_scheduled_range_radio_burst(
+    struct radio_guard_uwb_lease *radio_lease)
 {
-    int ret = app_radio_standby_with_bounded_recovery(
-        "scheduled range burst");
+    int ret = clicker_release_radio_to_standby(
+        radio_lease, "scheduled range burst");
 
     if (ret < 0) {
         LOG_WRN("clicker DW3000 standby after scheduled burst failed: %d", ret);
     }
-    radio_guard_uwb_stop();
     return ret;
 }
 
@@ -1468,6 +1540,7 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                         int64_t click_deadline_ms,
                                         uint8_t *attempted_count)
 {
+    struct radio_guard_uwb_lease radio_lease = {0};
     size_t total_samples;
     int last_ret = -ETIMEDOUT;
     int finish_ret;
@@ -1478,7 +1551,9 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
         return -EINVAL;
     }
     total_samples = uwb_range_schedule_total_samples(schedule);
-    ret = radio_guard_uwb_start("clicker scheduled UWB range burst");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                "clicker scheduled UWB range burst",
+                                &radio_lease);
     if (ret < 0) {
         (void)uwb_clicker_abort_attempt(session);
         LOG_WRN("scheduled click DS-TWR burst not started: reason=radio_guard ret=%d attempt=%u",
@@ -1778,7 +1853,7 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
     if (last_ret < 0 && session->state == UWB_CLICKER_RANGING) {
         (void)uwb_clicker_abort_attempt(session);
     }
-    finish_ret = clicker_finish_scheduled_range_radio_burst();
+    finish_ret = clicker_finish_scheduled_range_radio_burst(&radio_lease);
     if (finish_ret < 0) {
         return finish_ret;
     }
@@ -1862,10 +1937,17 @@ static int clicker_runtime_prepare_retry(struct uwb_clicker_session *session,
                                          int64_t click_deadline_ms)
 {
     uint32_t required_retry_tail_ms;
+    int poison_error;
     int ret;
 
     if (session == NULL) {
         return -EINVAL;
+    }
+    if (!radio_guard_uwb_rearm_allowed()) {
+        poison_error = radio_guard_uwb_poison_error();
+        LOG_ERR("clicker retry suppressed after failed radio release: ret=%d",
+                poison_error);
+        return poison_error < 0 ? poison_error : -EIO;
     }
     if (session->attempt_index >= session->config.max_attempts) {
         ret = clicker_runtime_click_event(FW_EVENT_RETRY_EXHAUSTED);
@@ -1911,8 +1993,17 @@ static int clicker_runtime_retry_after_failure(
         .value = failure < 0 ? (uint32_t)(-(int64_t)failure) :
                               (uint32_t)failure,
     };
+    int poison_error;
     int ret;
 
+    if (!radio_guard_uwb_rearm_allowed()) {
+        poison_error = radio_guard_uwb_poison_error();
+        LOG_ERR("clicker radio-failure retry suppressed: ret=%d",
+                poison_error);
+        ret = clicker_runtime_abort_click();
+        return ret < 0 ? ret :
+               (poison_error < 0 ? poison_error : -EIO);
+    }
     ret = clicker_runtime_click_event_payload(FW_EVENT_RADIO_JOB_FAILED,
                                               &payload);
     if (ret < 0) {
@@ -2096,6 +2187,10 @@ int app_clicker_run_normal_click(void)
 
         ret = app_clicker_discover_uwb_anchors_until(&session,
                                                      click_deadline_ms);
+        if (ret < 0 && !radio_guard_uwb_rearm_allowed()) {
+            (void)clicker_runtime_abort_click();
+            return ret;
+        }
         payload.count = session.candidate_count;
         payload.value = session.config.min_anchor_count;
         /* Discovery timeout and malformed/no-reply outcomes remain bounded
@@ -2207,6 +2302,10 @@ int app_clicker_run_normal_click(void)
                                                         schedule_tx_ms,
                                                         click_deadline_ms,
                                                         &attempted_count);
+        if (range_ret < 0 && !radio_guard_uwb_rearm_allowed()) {
+            (void)clicker_runtime_abort_click();
+            return range_ret;
+        }
         if (range_ret == -ECANCELED) {
             (void)clicker_runtime_abort_click();
             return range_ret;
@@ -2351,6 +2450,7 @@ int app_clicker_run_uwb_diagnostic_click(uint32_t event_seq)
 
 static enum self_test_failure app_clicker_run_self_test(uint32_t event_seq)
 {
+    struct radio_guard_uwb_lease radio_lease = {0};
     uint32_t dev_id;
     enum self_test_failure radio_failure = SELF_TEST_FAILURE_DWM3000;
     int release_ret;
@@ -2358,7 +2458,9 @@ static enum self_test_failure app_clicker_run_self_test(uint32_t event_seq)
 
     LOG_INF("self-test started on UWB wake path");
 
-    ret = radio_guard_uwb_start("clicker self-test DWM probe");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_CLICKER,
+                                "clicker self-test DWM probe",
+                                &radio_lease);
     if (ret < 0) {
         LOG_ERR("self-test DWM3000 radio ownership unavailable: %d", ret);
         return SELF_TEST_FAILURE_DWM3000;
@@ -2399,9 +2501,8 @@ static enum self_test_failure app_clicker_run_self_test(uint32_t event_seq)
     radio_failure = SELF_TEST_FAILURE_NONE;
 
 self_test_radio_done:
-    release_ret = app_radio_standby_with_bounded_recovery(
-        "self-test DWM probe");
-    radio_guard_uwb_stop();
+    release_ret = clicker_release_radio_to_standby(
+        &radio_lease, "self-test DWM probe");
     if (release_ret < 0) {
         radio_failure = SELF_TEST_FAILURE_DWM3000;
     }
@@ -2921,7 +3022,9 @@ int app_clicker_init(const struct app_clicker_callbacks *callbacks)
     } else {
         clicker_callbacks = (struct app_clicker_callbacks){0};
     }
+#if DEVICE_ROLE == ROLE_CLICKER
     app_clicker_event_runtime_init(&clicker_event_runtime);
+#endif
     return 0;
 }
 
@@ -3731,6 +3834,12 @@ static void clicker_enter_systemon_retained_idle(void)
     if (ret < 0) {
         click_button_recovery_reset("retained_idle_wake", ret);
         return;
+    }
+    /* The FIFO wake is live before idle maintenance can touch storage. */
+    ret = app_click_event_sequence_maintain();
+    if (ret < 0) {
+        LOG_WRN("click event sequence standby unavailable in retained idle: %d",
+                ret);
     }
     LOG_INF("CLICKER_IDLE" " mode=system_on_retained wake_source=P0.%u button_irq=edge_to_active release_poll=1 local_command_poll=0 radio_retained=1 dwm_pins=%s",
             (unsigned int)CLICK_BUTTON_PIN_NUM,

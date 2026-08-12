@@ -417,8 +417,7 @@ int survey_pair_round_runtime_note_sample(
     }
     if (survey_sample_validate(sample) != PROTO_OK ||
         sample->sample_index >= SURVEY_PAIR_ROUND_RUNTIME_MAX_RESULT_SAMPLES ||
-        (reporter_id != sample->pair.initiator_id &&
-         reporter_id != sample->pair.responder_id)) {
+        reporter_id != sample->pair.responder_id) {
         return PROTO_ERR_MALFORMED;
     }
     for (uint8_t i = 0u; i < runtime->lane_count; i++) {
@@ -474,7 +473,7 @@ bool survey_pair_round_lane_results_complete(
             SURVEY_PAIR_ROUND_RUNTIME_MAX_RESULT_SAMPLES) {
         return false;
     }
-    return lane->usable_result_mask ==
+    return lane->responder_usable_mask ==
         survey_pair_round_expected_mask(lane->pair.sample_count);
 }
 

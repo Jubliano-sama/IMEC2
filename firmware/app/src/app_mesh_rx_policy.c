@@ -12,6 +12,21 @@ bool app_mesh_rx_policy_should_drop(bool mesh_route_test_transmitter,
            msg_type == MSG_GATEWAY_ROUTE_ADV;
 }
 
+bool app_mesh_rx_policy_postboot_route_adv_fresh(
+    uint8_t msg_type,
+    uint32_t message_age_ms,
+    uint64_t received_uptime_ms)
+{
+    /*
+     * Route ordering is intentionally RAM-only. Before a frame reaches the
+     * queue, its encoded age proves whether it could have originated during
+     * this boot: a packet older than the receiver's entire uptime necessarily
+     * crossed the reset boundary and must not reinstall pre-boot routing.
+     */
+    return msg_type != MSG_GATEWAY_ROUTE_ADV ||
+           (uint64_t)message_age_ms <= received_uptime_ms;
+}
+
 bool app_mesh_rx_policy_role_uses_uwb_rx(bool permanent_receiver_role,
                                          bool scheduled_receiver_enabled,
                                          bool channel9_schedule_installed)

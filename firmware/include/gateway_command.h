@@ -14,6 +14,8 @@ extern "C" {
 #endif
 
 #define GATEWAY_COMMAND_RESULT_TIMEOUT_MS 12000u
+#define GATEWAY_COMMAND_RESULT_ROUND_TRIP_TIMEOUT_MS \
+    (2u * GATEWAY_COMMAND_RESULT_TIMEOUT_MS)
 #define GATEWAY_COMMAND_BUDGET_MIN_MS 1000u
 #define GATEWAY_COMMAND_BUDGET_MAX_MS 900000u
 #define GATEWAY_COMMAND_BUDGET_RETRY_QUANTUM_MS 30000u
@@ -23,12 +25,8 @@ extern "C" {
 #define GATEWAY_COMMAND_RX_PERSISTED_MARKER UINT64_C(1)
 #define GATEWAY_COMMAND_RESULT_VALIDATION_LEASE_CAP 9u
 #define GATEWAY_COMMAND_RESULT_VALIDATION_MAX_HOLD_MS 5000u
-#define GATEWAY_COLLECTION_STATE_SNAPSHOT_VERSION 5u
-#define GATEWAY_COLLECTION_STATE_PERSISTENCE_VERSION 2u
 #define GATEWAY_COLLECTION_RESULT_ENTRY_SIZE 64u
-#define GATEWAY_COLLECTION_RESULT_SNAPSHOT_ENTRY_SIZE 80u
-#define GATEWAY_COLLECTION_STATE_SIZE 3648u
-#define GATEWAY_COLLECTION_STATE_SNAPSHOT_SIZE 4448u
+#define GATEWAY_COLLECTION_STATE_SIZE 3640u
 #define GATEWAY_COLLECTION_EACK_FIXED_PAYLOAD_LEN \
     PROTO_GATEWAY_COLLECTION_EACK_FIXED_PAYLOAD_LEN
 #define GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN \
@@ -149,14 +147,6 @@ struct gateway_collection_result_entry {
     bool valid;
 };
 
-struct gateway_collection_result_snapshot_entry {
-    struct command_result_id id;
-    uint64_t previous_hop_id;
-    uint8_t payload_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint16_t payload_len;
-    bool valid;
-};
-
 /*
  * Bit N describes record N in the immutable incoming result bundle.  A set
  * bit means that record was newly accepted by the collection transaction and
@@ -186,30 +176,6 @@ struct gateway_collection_state {
     uint16_t expected_node_id_count;
     struct gateway_collection_result_entry results[GATEWAY_COLLECTION_RESULT_CACHE_SIZE];
     uint64_t expected_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
-    uint8_t persistence_version;
-    bool persistence_valid;
-};
-
-struct gateway_collection_state_snapshot {
-    uint8_t version;
-    bool valid;
-    uint64_t gateway_id;
-    uint16_t gateway_epoch;
-    uint32_t command_seq;
-    uint32_t collection_epoch_id;
-    uint16_t membership_epoch;
-    uint16_t expected_count;
-    uint16_t received_count;
-    uint16_t result_count;
-    uint8_t retry_round;
-    uint16_t eack_sequence;
-    uint32_t next_retry_spread_ms;
-    bool collection_open;
-    bool eack_pending;
-    uint16_t expected_node_id_count;
-    struct gateway_collection_result_snapshot_entry
-        results[GATEWAY_COLLECTION_RESULT_CACHE_SIZE];
-    uint64_t expected_node_ids[GATEWAY_COMMAND_EXPECTED_NODE_ID_CAP];
 };
 
 struct gateway_collection_eack_custody_snapshot {
@@ -228,13 +194,8 @@ _Static_assert(sizeof(struct gateway_collection_state) == GATEWAY_COLLECTION_STA
                "live gateway collection state must retain its RAM budget");
 _Static_assert(offsetof(struct gateway_collection_state, expected_node_id_count) == 38u &&
                offsetof(struct gateway_collection_state, results) == 40u &&
-               offsetof(struct gateway_collection_state, expected_node_ids) == 3240u &&
-               offsetof(struct gateway_collection_state, persistence_version) == 3640u &&
-               offsetof(struct gateway_collection_state, persistence_valid) == 3641u,
+               offsetof(struct gateway_collection_state, expected_node_ids) == 3240u,
                "live gateway collection roster layout must remain bounded");
-_Static_assert(sizeof(struct gateway_collection_result_snapshot_entry) ==
-               GATEWAY_COLLECTION_RESULT_SNAPSHOT_ENTRY_SIZE,
-               "gateway collection result snapshot layout is persistent");
 _Static_assert(sizeof(struct command_result_id) == 32u &&
                offsetof(struct command_result_id, gateway_id) == 0u &&
                offsetof(struct command_result_id, gateway_epoch) == 8u &&
@@ -242,39 +203,7 @@ _Static_assert(sizeof(struct command_result_id) == 32u &&
                offsetof(struct command_result_id, node_id) == 16u &&
                offsetof(struct command_result_id, node_boot_counter) == 24u &&
                offsetof(struct command_result_id, result_seq) == 28u,
-               "gateway collection snapshot identity layout is persistent");
-_Static_assert(offsetof(struct gateway_collection_result_snapshot_entry, id) == 0u &&
-               offsetof(struct gateway_collection_result_snapshot_entry,
-                        previous_hop_id) == 32u &&
-               offsetof(struct gateway_collection_result_snapshot_entry,
-                        payload_digest) == 40u &&
-               offsetof(struct gateway_collection_result_snapshot_entry, payload_len) == 72u &&
-               offsetof(struct gateway_collection_result_snapshot_entry, valid) == 74u,
-               "gateway collection result snapshot offsets are persistent");
-_Static_assert(sizeof(struct gateway_collection_state_snapshot) ==
-               GATEWAY_COLLECTION_STATE_SNAPSHOT_SIZE,
-               "gateway collection snapshot layout is persistent");
-_Static_assert(offsetof(struct gateway_collection_state_snapshot, version) == 0u &&
-               offsetof(struct gateway_collection_state_snapshot, valid) == 1u &&
-               offsetof(struct gateway_collection_state_snapshot, gateway_id) == 8u &&
-               offsetof(struct gateway_collection_state_snapshot, gateway_epoch) == 16u &&
-               offsetof(struct gateway_collection_state_snapshot, command_seq) == 20u &&
-               offsetof(struct gateway_collection_state_snapshot, collection_epoch_id) == 24u &&
-               offsetof(struct gateway_collection_state_snapshot, membership_epoch) == 28u &&
-               offsetof(struct gateway_collection_state_snapshot, expected_count) == 30u &&
-               offsetof(struct gateway_collection_state_snapshot, received_count) == 32u &&
-               offsetof(struct gateway_collection_state_snapshot, result_count) == 34u &&
-               offsetof(struct gateway_collection_state_snapshot, retry_round) == 36u &&
-               offsetof(struct gateway_collection_state_snapshot, eack_sequence) == 38u &&
-               offsetof(struct gateway_collection_state_snapshot, next_retry_spread_ms) == 40u &&
-               offsetof(struct gateway_collection_state_snapshot, collection_open) == 44u &&
-               offsetof(struct gateway_collection_state_snapshot, eack_pending) == 45u &&
-               offsetof(struct gateway_collection_state_snapshot,
-                        expected_node_id_count) == 46u &&
-               offsetof(struct gateway_collection_state_snapshot, results) == 48u &&
-               offsetof(struct gateway_collection_state_snapshot,
-                        expected_node_ids) == 4048u,
-               "gateway collection snapshot offsets are persistent");
+               "gateway collection identity layout must remain bounded");
 _Static_assert(GATEWAY_COLLECTION_EACK_FIXED_PAYLOAD_LEN == 57u,
                "collection EACK fixed TLVs must retain their wire budget");
 _Static_assert(GATEWAY_COLLECTION_RESULT_CACHE_SIZE ==
@@ -285,14 +214,14 @@ _Static_assert(GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN == 557u &&
                "a maximum collection EACK must fit one extended packet");
 _Static_assert(sizeof(struct gateway_collection_eack_custody_snapshot) ==
                GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_SIZE,
-               "persisted collection EACK custody must remain compact");
+               "frozen RAM collection EACK custody must remain compact");
 _Static_assert(offsetof(struct gateway_collection_eack_custody_snapshot, packet) == 0u &&
                offsetof(struct gateway_collection_eack_custody_snapshot, payload) == 40u &&
                offsetof(struct gateway_collection_eack_custody_snapshot, version) == 597u &&
                offsetof(struct gateway_collection_eack_custody_snapshot, payload_len) == 598u &&
                offsetof(struct gateway_collection_eack_custody_snapshot, payload_crc) == 600u &&
                offsetof(struct gateway_collection_eack_custody_snapshot, valid) == 602u,
-               "persisted collection EACK custody offsets are stable");
+               "frozen RAM collection EACK custody offsets are stable");
 
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
@@ -487,9 +416,9 @@ int gateway_collection_record_result_from_hop(struct gateway_collection_state *c
 /*
  * Run the exact collection-result admission path without mutating collection.
  * A caller that serializes collection ownership may use a successful result as
- * the collection-state preflight for the matching record call.  Any durable
- * collection checkpoint is a separate protocol-state mechanism from the
- * volatile BLE host-delivery item.
+ * the collection-state preflight for the matching record call. Collection
+ * history and its host-delivery item are both RAM-only; reboot deliberately
+ * leaves the source retryable rather than claiming a checkpoint exists.
  */
 int gateway_collection_preflight_result_from_hop(
     const struct gateway_collection_state *collection,
@@ -548,12 +477,6 @@ bool gateway_collection_contains_result(const struct gateway_collection_state *c
 size_t gateway_collection_return_candidates(const struct gateway_collection_state *collection,
                                             uint64_t *out,
                                             size_t out_cap);
-int gateway_collection_export_snapshot(
-    const struct gateway_collection_state *collection,
-    struct gateway_collection_state_snapshot *snapshot);
-int gateway_collection_restore_snapshot(
-    struct gateway_collection_state *collection,
-    const struct gateway_collection_state_snapshot *snapshot);
 int gateway_collection_state_validate(
     const struct gateway_collection_state *collection);
 int gateway_collection_build_eack(const struct gateway_collection_state *collection,

@@ -1,4 +1,7 @@
 #line 1846 __BASE_FILE__
+#define GATEWAY_ACK_RECOVERY_AUTHORIZED 0x01u
+#define GATEWAY_ACK_RECOVERY_QUARANTINE 0x02u
+
 static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
 {
     return (int32_t)(now_ms - deadline_ms) >= 0;
@@ -78,14 +81,12 @@ uint32_t mesh_relay_outbox_expiry_s_for_packet(
     uint32_t expiry_s = COMMAND_RESULT_EXPIRY_DEFAULT_S;
     uint32_t requested_s = 0u;
 
-    /*
-     * Once the source replaces an original report with its ACK-confirm, the
-     * gateway's retained delivery owner can only be released by this exact
-     * proof. Expiring it would permanently strand the gateway while also
-     * discarding the source's only terminal handshake.
-     */
+    /* A source no longer replaces its original with ACK_CONFIRM. Any confirm
+     * that enters this generic outbox is therefore transit-only and cannot
+     * reconstruct the original after a gateway reset; keep that limitation
+     * explicit and bounded by the ordinary one-day terminal horizon. */
     if (packet->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
-        return UINT32_MAX;
+        return expiry_s;
     }
     if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
         packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
@@ -285,7 +286,7 @@ static void outbox_record_sync_age_from_pending(struct mesh_relay *relay,
 static void outbox_record_track_pending(struct mesh_relay *relay,
                                         uint32_t now_ms)
 {
-    struct persistent_outbox_record *record;
+    struct mesh_outbox_record *record;
     const struct mesh_pending_tx *pending;
 
     if (relay == NULL) {
@@ -493,6 +494,38 @@ static void outbox_record_mark_custody_accepted(struct mesh_relay *relay,
     relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
 }
 
+/*
+ * A retry transition keeps the exact live relay record authoritative.  A
+ * terminal record instead belongs to its exact cleanup owner and must never
+ * be converted back into RF retry custody by an unrelated preemption or
+ * parent-loss callback.
+ */
+static bool pending_state_retryable_for_deferral(
+    const struct mesh_pending_tx *pending)
+{
+    return pending != NULL &&
+           (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+            pending->state == MESH_RELAY_TX_WAIT_RESULT_GRANT ||
+            pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+}
+
+static bool pending_expired_for_deferral(const struct mesh_relay *relay,
+                                         uint32_t now_ms)
+{
+    uint64_t expiry_ms;
+
+    if (relay == NULL || !mesh_relay_tx_active(relay)) {
+        return true;
+    }
+
+    expiry_ms = (uint64_t)mesh_relay_outbox_expiry_s_for_packet(
+        &relay->pending.packet,
+        relay->pending.payload,
+        relay->pending.payload_len) * 1000u;
+    return (uint64_t)outbox_age_from_pending(&relay->pending, now_ms) >=
+           expiry_ms;
+}
+
 static bool preserve_pending_gateway_result(struct mesh_relay *relay,
                                             uint32_t now_ms,
                                             uint32_t random_value)
@@ -500,6 +533,8 @@ static bool preserve_pending_gateway_result(struct mesh_relay *relay,
     uint32_t retry_delay_ms;
 
     if (relay == NULL ||
+        !pending_state_retryable_for_deferral(&relay->pending) ||
+        pending_expired_for_deferral(relay, now_ms) ||
         (!pending_is_local_collection_result(relay, &relay->pending) &&
          !pending_is_forwarded_command_result(relay, &relay->pending) &&
          !pending_is_result_bundle(relay, &relay->pending) &&
@@ -529,7 +564,8 @@ static bool preserve_local_pending_after_parent_loss(struct mesh_relay *relay,
 {
     uint32_t retry_delay_ms;
 
-    if (relay == NULL) {
+    if (relay == NULL ||
+        !pending_state_retryable_for_deferral(&relay->pending)) {
         return false;
     }
     if (preserve_pending_gateway_result(relay, now_ms, random_value)) {
@@ -874,6 +910,12 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
                                 int *status)
 {
     const struct mesh_pending_tx *pending = &relay->pending;
+    struct proto_packet transient_confirm;
+    uint8_t transient_confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+    const struct proto_packet *acknowledged_packet = &pending->packet;
+    const uint8_t *acknowledged_payload = pending->payload;
+    size_t acknowledged_payload_len = pending->payload_len;
+    size_t transient_confirm_payload_len = 0u;
     bool ack_targets_local;
     bool ack_targets_transit_origin;
     bool contains = false;
@@ -889,7 +931,9 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
         packet->dst_id == pending->packet.src_id;
     if (pending->state == MESH_RELAY_TX_IDLE ||
         (!ack_targets_local && !ack_targets_transit_origin) ||
-        previous_hop_id != pending->next_hop_id) {
+        previous_hop_id != pending->next_hop_id ||
+        (pending->gateway_ack_recovery_flags &
+         GATEWAY_ACK_RECOVERY_QUARANTINE) != 0u) {
         return false;
     }
     if (packet->msg_type == MSG_MESH_HOP_ACK &&
@@ -900,12 +944,31 @@ static bool pending_ack_matches(const struct mesh_relay *relay,
         return false;
     }
 
+    if (pending->gateway_ack_confirm_pending) {
+        ret = mesh_relay_pending_gateway_ack_confirm_wire(
+            relay,
+            pending->queued_at_ms,
+            &transient_confirm,
+            transient_confirm_payload,
+            sizeof(transient_confirm_payload),
+            &transient_confirm_payload_len);
+        if (ret != PROTO_OK) {
+            if (status != NULL) {
+                *status = ret;
+            }
+            return false;
+        }
+        acknowledged_packet = &transient_confirm;
+        acknowledged_payload = transient_confirm_payload;
+        acknowledged_payload_len = transient_confirm_payload_len;
+    }
+
     ret = mesh_ack_payload_contains_packet(packet,
                                            payload,
                                            payload_len,
-                                           &pending->packet,
-                                           pending->payload,
-                                           pending->payload_len,
+                                           acknowledged_packet,
+                                           acknowledged_payload,
+                                           acknowledged_payload_len,
                                            &contains);
     if (ret != PROTO_OK) {
         if (status != NULL) {
@@ -953,7 +1016,6 @@ static int build_gateway_ack(struct mesh_relay *relay,
                              uint64_t previous_hop_id,
                              struct mesh_outbound *out)
 {
-    uint64_t next_hop_id = previous_hop_id;
     size_t ack_payload_len = 0u;
     int ret;
 
@@ -983,15 +1045,21 @@ static int build_gateway_ack(struct mesh_relay *relay,
         return ret;
     }
 
-    if (mesh_relay_select_next_hop(relay, packet->src_id, &next_hop_id) != PROTO_OK) {
-        next_hop_id = previous_hop_id;
-    }
-    if (!id_is_unicast(next_hop_id)) {
+    if (!id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id) {
         return PROTO_ERR_NOT_FOUND;
     }
 
     out->payload_len = (uint16_t)ack_payload_len;
-    out->next_hop_id = next_hop_id;
+    /*
+     * Return acceptance over the exact live reverse edge that delivered the
+     * packet.  A cached downlink can describe an older topology; preferring it
+     * here can strand the upstream relay's retained custody even though that
+     * relay has just proved a working path to the gateway.  The ACK's logical
+     * destination remains the original source while the physical next hop is
+     * the ingress peer that owns the corresponding transit record.
+     */
+    out->next_hop_id = previous_hop_id;
     return PROTO_OK;
 }
 
@@ -1620,7 +1688,21 @@ static int build_forward(const struct mesh_relay *relay,
                          size_t payload_len,
                          struct mesh_outbound *out);
 
-static bool pending_requires_gateway_ack_confirm(
+static uint32_t next_gateway_ack_forward_owner_generation(
+    struct mesh_relay *relay)
+{
+    if (relay == NULL) {
+        return 0u;
+    }
+
+    relay->next_handoff_owner_generation++;
+    if (relay->next_handoff_owner_generation == 0u) {
+        relay->next_handoff_owner_generation = 1u;
+    }
+    return relay->next_handoff_owner_generation;
+}
+
+static bool pending_can_generate_gateway_ack_confirm(
     const struct mesh_relay *relay,
     const struct mesh_pending_tx *pending)
 {
@@ -1633,7 +1715,7 @@ static bool pending_requires_gateway_ack_confirm(
     }
 
     /*
-     * Collection traffic has its own durable end-to-end EACK. Its ordinary
+     * Collection traffic has its own same-boot RAM end-to-end EACK. Its ordinary
      * gateway ACK means only "gateway collection state accepted", so converting on
      * that intermediate ACK would bypass roster/retry completion.
      */
@@ -1647,50 +1729,139 @@ static bool pending_requires_gateway_ack_confirm(
                (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC);
 }
 
+static bool pending_requires_gateway_ack_confirm(
+    const struct mesh_relay *relay,
+    const struct mesh_pending_tx *pending)
+{
+    return pending != NULL && !pending->gateway_ack_confirm_pending &&
+           pending_can_generate_gateway_ack_confirm(relay, pending);
+}
+
+int mesh_relay_pending_gateway_ack_confirm_wire(
+    const struct mesh_relay *relay,
+    uint32_t now_ms,
+    struct proto_packet *confirm_packet,
+    uint8_t *confirm_payload,
+    size_t confirm_payload_capacity,
+    size_t *confirm_payload_len)
+{
+    size_t payload_len = 0u;
+    int ret;
+
+    if (relay == NULL || confirm_packet == NULL || confirm_payload == NULL ||
+        confirm_payload_len == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    *confirm_payload_len = 0u;
+    if (!relay->pending.gateway_ack_confirm_pending ||
+        relay->pending.state == MESH_RELAY_TX_IDLE ||
+        !pending_can_generate_gateway_ack_confirm(relay, &relay->pending)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (confirm_payload_capacity < MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    ret = mesh_gateway_ack_confirm_payload_build(
+        &relay->pending.packet,
+        relay->pending.payload,
+        relay->pending.payload_len,
+        confirm_payload,
+        confirm_payload_capacity,
+        &payload_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = mesh_init_gateway_ack_confirm(confirm_packet,
+                                        relay->local_id,
+                                        relay->gateway_id,
+                                        relay->pending.packet.session_id,
+                                        relay->pending.packet.seq);
+    if (ret != PROTO_OK ||
+        payload_len != MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN) {
+        return ret != PROTO_OK ? ret : PROTO_ERR_MALFORMED;
+    }
+    confirm_packet->message_age_ms = packet_age_add(
+        0u, now_ms - relay->pending.gateway_ack_confirm_started_ms);
+    *confirm_payload_len = payload_len;
+    return PROTO_OK;
+}
+
+static bool pending_gateway_ack_confirm_recovery_due(
+    const struct mesh_relay *relay,
+    uint32_t now_ms)
+{
+    return relay != NULL && relay->pending.gateway_ack_confirm_pending &&
+           (relay->pending.gateway_ack_recovery_flags &
+            GATEWAY_ACK_RECOVERY_AUTHORIZED) != 0u &&
+           deadline_reached(
+               now_ms,
+               relay->pending.gateway_ack_confirm_started_ms +
+                   MESH_RELAY_GATEWAY_ACK_CONFIRM_REPLAY_MS);
+}
+
+static void pending_recover_original_after_gateway_ack_confirm(
+    struct mesh_relay *relay,
+    uint32_t now_ms)
+{
+    if (relay == NULL || !relay->pending.gateway_ack_confirm_pending) {
+        return;
+    }
+
+    pending_refresh_age(&relay->pending, now_ms);
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    relay->pending.gateway_ack_confirm_pending = false;
+    relay->pending.gateway_ack_recovery_flags |=
+        GATEWAY_ACK_RECOVERY_AUTHORIZED |
+        GATEWAY_ACK_RECOVERY_QUARANTINE;
+    relay->pending.gateway_ack_confirm_started_ms = 0u;
+    relay->pending.gateway_ack_deadline_ms = 0u;
+    relay->pending.retry_after_ms =
+        now_ms + MESH_RELAY_GATEWAY_ACK_RECOVERY_QUARANTINE_MS;
+    relay->pending.next_hop_id = 0u;
+    relay->pending.radio_channel =
+        mesh_relay_packet_requires_channel9_payload_event(
+            &relay->pending.packet) ?
+            UWB_CHANNEL_MESH_PAYLOAD : UWB_CHANNEL_WAKE_CONTACT;
+    relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+}
+
+static bool pending_recover_original_after_new_gateway_epoch(
+    struct mesh_relay *relay,
+    uint32_t now_ms)
+{
+    if (relay == NULL || !relay->pending.gateway_ack_confirm_pending ||
+        !route_epoch_strictly_newer(
+            relay->upstream.current_epoch,
+            relay->pending.gateway_ack_confirm_route_epoch)) {
+        return false;
+    }
+
+    relay->pending.gateway_ack_recovery_flags |=
+        GATEWAY_ACK_RECOVERY_AUTHORIZED;
+    pending_recover_original_after_gateway_ack_confirm(relay, now_ms);
+    return true;
+}
+
 static int pending_transition_to_gateway_ack_confirm(
     struct mesh_relay *relay,
     uint32_t now_ms)
 {
-    struct mesh_pending_tx original;
-    struct proto_packet confirm_packet;
-    uint8_t confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
-    size_t confirm_payload_len = 0u;
     uint64_t next_hop_id = 0u;
-    int ret;
 
     if (relay == NULL ||
         !pending_requires_gateway_ack_confirm(relay, &relay->pending)) {
         return PROTO_ERR_MALFORMED;
     }
 
-    original = relay->pending;
-    pending_refresh_age(&original, now_ms);
-    ret = mesh_gateway_ack_confirm_payload_build(
-        &original.packet,
-        original.payload,
-        original.payload_len,
-        confirm_payload,
-        sizeof(confirm_payload),
-        &confirm_payload_len);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    ret = mesh_init_gateway_ack_confirm(&confirm_packet,
-                                        relay->local_id,
-                                        relay->gateway_id,
-                                        original.packet.session_id,
-                                        original.packet.seq);
-    if (ret != PROTO_OK ||
-        confirm_payload_len != MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN) {
-        return ret != PROTO_OK ? ret : PROTO_ERR_MALFORMED;
-    }
-
     /*
-     * A route can disappear at the ACK boundary.  The durable confirm still
-     * takes ownership and later enters ordinary route discovery with a zero
-     * next hop; reverting to the original report after the gateway has
-     * notified the host would allow duplicate host delivery.
+     * A route can disappear at the ACK boundary. Keep the immutable original
+     * bytes as the sole source owner while a compact confirmation wire image
+     * is generated on demand. If the gateway lost its RAM history, bounded
+     * recovery replays these exact original bytes through host receipt again.
      */
+    pending_refresh_age(&relay->pending, now_ms);
+    outbox_record_sync_age_from_pending(relay, now_ms);
     (void)mesh_relay_expire_routes(relay, now_ms);
     if (mesh_relay_select_next_hop(relay,
                                    relay->gateway_id,
@@ -1698,20 +1869,19 @@ static int pending_transition_to_gateway_ack_confirm(
         next_hop_id = 0u;
     }
 
-    memset(&relay->pending, 0, sizeof(relay->pending));
-    relay->pending.packet = confirm_packet;
-    memcpy(relay->pending.payload, confirm_payload, confirm_payload_len);
-    relay->pending.payload_len = (uint16_t)confirm_payload_len;
-    relay->pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    relay->pending.gateway_ack_confirm_pending = true;
+    relay->pending.gateway_ack_recovery_flags &=
+        GATEWAY_ACK_RECOVERY_AUTHORIZED;
+    relay->pending.gateway_ack_confirm_started_ms = now_ms;
+    relay->pending.gateway_ack_confirm_route_epoch =
+        relay->upstream.current_epoch;
+    relay->pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
     relay->pending.next_hop_id = next_hop_id;
     relay->pending.retry_after_ms = now_ms + 1u;
-    relay->pending.queued_at_ms = now_ms;
+    relay->pending.gateway_ack_deadline_ms = 0u;
     relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
-    outbox_record_track_pending(relay, now_ms);
-    if (!relay->outbox_record.valid ||
-        relay->outbox_record.expiry_s != UINT32_MAX) {
-        relay->pending = original;
-        outbox_record_track_pending(relay, now_ms);
+    if (!relay->outbox_record.valid) {
+        relay->pending.gateway_ack_confirm_pending = false;
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
@@ -1784,6 +1954,10 @@ static int handle_local_ack(struct mesh_relay *relay,
             if (ret != PROTO_OK) {
                 result->status = ret;
                 result->actions |= MESH_RELAY_ACTION_DROP;
+                if (ret == PROTO_ERR_NOT_FOUND) {
+                    result->actions |=
+                        MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_ROUTE_REPAIR;
+                }
                 return ret;
             }
             /*
@@ -1793,6 +1967,22 @@ static int handle_local_ack(struct mesh_relay *relay,
              */
             pending_refresh_age(&relay->pending, now_ms);
             outbox_record_sync_age_from_pending(relay, now_ms);
+            if (!relay->pending.gateway_ack_forward_pending) {
+                relay->pending.gateway_ack_forward_previous_hop_id =
+                    previous_hop_id;
+                relay->pending.gateway_ack_forward_next_hop_id =
+                    result->forward.next_hop_id;
+                relay->pending.gateway_ack_forward_owner_generation =
+                    next_gateway_ack_forward_owner_generation(relay);
+            } else {
+                /* The first app admission may still own the old ACK bytes.
+                 * Retry with that handoff's identity so either the retained
+                 * first ACK or this rebuilt copy can complete it. */
+                result->forward.next_hop_id =
+                    relay->pending.gateway_ack_forward_next_hop_id;
+            }
+            result->forward.handoff_owner_generation =
+                relay->pending.gateway_ack_forward_owner_generation;
             relay->pending.state =
                 MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD;
             relay->pending.gateway_ack_forward_pending = true;
@@ -1802,12 +1992,10 @@ static int handle_local_ack(struct mesh_relay *relay,
                 MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING;
             return PROTO_OK;
         }
-        if (pending_is_gateway_ack_confirm(relay, &relay->pending)) {
-            /*
-             * The app must durably retire every producer-owned raw record
-             * before committing this compact tombstone.  Keep the pending
-             * confirm intact until mesh_relay_commit_gateway_ack_confirm_terminal().
-             */
+        if (relay->pending.gateway_ack_confirm_pending) {
+            /* The app must retire every exact producer-owned raw record before
+             * committing this compact proof. Keep the immutable original intact
+             * until mesh_relay_commit_gateway_ack_confirm_terminal(). */
             result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
             return PROTO_OK;
         }
@@ -1855,6 +2043,10 @@ int mesh_relay_commit_gateway_ack_confirm_terminal(
     uint32_t now_ms)
 {
     struct mesh_gateway_ack_confirm_identity identity;
+    struct proto_packet expected_confirm;
+    uint8_t expected_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+    size_t expected_payload_len = 0u;
+    int ret;
 
     if (relay == NULL || confirm_packet == NULL ||
         confirm_payload == NULL ||
@@ -1862,15 +2054,25 @@ int mesh_relay_commit_gateway_ack_confirm_terminal(
                                                confirm_payload,
                                                confirm_payload_len,
                                                &identity) != PROTO_OK ||
-        !pending_is_gateway_ack_confirm(relay, &relay->pending) ||
-        relay->pending.packet.msg_type != confirm_packet->msg_type ||
-        relay->pending.packet.flags != confirm_packet->flags ||
-        relay->pending.packet.src_id != confirm_packet->src_id ||
-        relay->pending.packet.dst_id != confirm_packet->dst_id ||
-        relay->pending.packet.session_id != confirm_packet->session_id ||
-        relay->pending.packet.seq != confirm_packet->seq ||
-        relay->pending.payload_len != confirm_payload_len ||
-        !semantic_digest_equal(relay->pending.payload,
+        !relay->pending.gateway_ack_confirm_pending) {
+        return PROTO_ERR_MALFORMED;
+    }
+    ret = mesh_relay_pending_gateway_ack_confirm_wire(
+        relay,
+        now_ms,
+        &expected_confirm,
+        expected_payload,
+        sizeof(expected_payload),
+        &expected_payload_len);
+    if (ret != PROTO_OK ||
+        expected_confirm.msg_type != confirm_packet->msg_type ||
+        expected_confirm.flags != confirm_packet->flags ||
+        expected_confirm.src_id != confirm_packet->src_id ||
+        expected_confirm.dst_id != confirm_packet->dst_id ||
+        expected_confirm.session_id != confirm_packet->session_id ||
+        expected_confirm.seq != confirm_packet->seq ||
+        expected_payload_len != confirm_payload_len ||
+        !semantic_digest_equal(expected_payload,
                                confirm_payload,
                                confirm_payload_len)) {
         return PROTO_ERR_MALFORMED;
@@ -1879,6 +2081,10 @@ int mesh_relay_commit_gateway_ack_confirm_terminal(
     mesh_relay_note_route_discovery_ready(relay,
                                           relay->pending.packet.dst_id);
     outbox_record_mark_gateway_acked(relay, now_ms);
+    relay->pending.gateway_ack_confirm_pending = false;
+    relay->pending.gateway_ack_recovery_flags = 0u;
+    relay->pending.gateway_ack_confirm_started_ms = 0u;
+    relay->pending.gateway_ack_confirm_route_epoch = 0u;
     relay->pending.state = MESH_RELAY_TX_IDLE;
     route_record_success_at(&relay->upstream, now_ms);
     return PROTO_OK;
@@ -1940,7 +2146,6 @@ int mesh_relay_commit_transit_gateway_ack_forward(
     uint32_t *actions)
 {
     bool contains = false;
-    uint64_t expected_next_hop_id = 0u;
     int ret;
 
     if (relay == NULL || forwarded_ack == NULL || actions == NULL) {
@@ -1959,14 +2164,18 @@ int mesh_relay_commit_transit_gateway_ack_forward(
         forwarded_ack->payload_len == 0u ||
         forwarded_ack->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
         !id_is_unicast(forwarded_ack->next_hop_id) ||
-        forwarded_ack->next_hop_id == relay->local_id) {
-        return PROTO_ERR_MALFORMED;
-    }
-    ret = mesh_relay_select_next_hop(relay,
-                                     relay->pending.packet.src_id,
-                                     &expected_next_hop_id);
-    if (ret != PROTO_OK ||
-        forwarded_ack->next_hop_id != expected_next_hop_id) {
+        forwarded_ack->next_hop_id == relay->local_id ||
+        !id_is_unicast(
+            relay->pending.gateway_ack_forward_previous_hop_id) ||
+        relay->pending.gateway_ack_forward_previous_hop_id ==
+            relay->local_id ||
+        !id_is_unicast(relay->pending.gateway_ack_forward_next_hop_id) ||
+        relay->pending.gateway_ack_forward_next_hop_id == relay->local_id ||
+        relay->pending.gateway_ack_forward_owner_generation == 0u ||
+        forwarded_ack->handoff_owner_generation !=
+            relay->pending.gateway_ack_forward_owner_generation ||
+        forwarded_ack->next_hop_id !=
+            relay->pending.gateway_ack_forward_next_hop_id) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -2225,7 +2434,7 @@ static bool command_packet_envelope_valid(
 /*
  * Gateway BLE prioritization consults FLAG_COUNT_AS_CLICK before msg_type.
  * Enforce every gateway-bound producer's exact flag shape before a forged
- * control/status packet can enter duplicate or durable delivery state as a
+ * control/status packet can enter duplicate or reliable delivery state as a
  * highest-priority click.
  */
 static bool gateway_bound_packet_flags_valid(
@@ -2324,6 +2533,7 @@ static bool collection_eack_rx_envelope_valid(
            packet->ttl < FLOOD_EPOCH_GLOBAL_TTL;
 }
 
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
 static int handle_collection_eack_for_pending(struct mesh_relay *relay,
                                               const uint8_t *payload,
                                               size_t payload_len,
@@ -2399,7 +2609,7 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
         }
 
         /*
-         * A durable collection-EACK receipt proves one immutable redriven
+         * A frozen same-boot collection-EACK receipt proves one immutable redriven
          * packet, not every sender sharing its collection. Match the complete
          * packet owner and payload identity before releasing custody. This also
          * gives bundled relay packets an exact terminal path after the volatile
@@ -2509,6 +2719,7 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
     }
     return PROTO_OK;
 }
+#endif
 
 /*
  * Dedicated survey controls are gateway-owned protocol messages, not generic
@@ -2673,19 +2884,6 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
         random_value);
     out->earliest_tx_valid = true;
     return PROTO_OK;
-}
-
-static bool local_delivery_needs_response(const struct mesh_relay *relay,
-                                          const struct proto_packet *packet)
-{
-    if (packet->dst_id != relay->local_id) {
-        return false;
-    }
-    if (relay->role == MESH_RELAY_ROLE_GATEWAY &&
-        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u) {
-        return true;
-    }
-    return relay->role == MESH_RELAY_ROLE_ANCHOR && packet->msg_type == MSG_COMMAND;
 }
 
 static int add_gateway_ack_action(struct mesh_relay *relay,

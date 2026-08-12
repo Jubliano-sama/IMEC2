@@ -34,6 +34,30 @@ WORKLOAD_END = "/* STACK_BUDGET_WORKLOAD_POLICY_END */"
 DEPLOYABLE_PRESETS = frozenset({
     "mesh_clicker", "mesh_anchor", "mesh_gateway",
 })
+WATCHDOG_BYPASS_BENCH_PRESETS = frozenset({"mesh_anchor_forcedhop"})
+DURABLE_STATE_PRESETS = DEPLOYABLE_PRESETS | WATCHDOG_BYPASS_BENCH_PRESETS
+DURABLE_STATE_REQUIRED_CONFIG = (
+    "CONFIG_FLASH",
+    "CONFIG_FLASH_MAP",
+    "CONFIG_FLASH_PAGE_LAYOUT",
+    "CONFIG_NVS",
+    "CONFIG_NVS_DATA_CRC",
+    "CONFIG_IMEC_DURABLE_STATE",
+)
+DURABLE_STATE_SECTOR_BYTES = 4096
+DURABLE_STATE_MIN_SECTORS = 2
+DURABLE_STATE_FLASH_LIMIT = 0x7A000
+DURABLE_STATE_MIN_FLASH_HEADROOM_BYTES = 0
+GATEWAY_FIT_REQUIRED_CONFIG = {
+    "CONFIG_ADC": False,
+    "CONFIG_BT_CTLR_ECDH": False,
+    "CONFIG_BT_CTLR_LE_ENC": False,
+    "CONFIG_BT_GATT_CACHING": False,
+    "CONFIG_BT_GATT_READ_MULTIPLE": False,
+    "CONFIG_BT_GATT_READ_MULT_VAR_LEN": False,
+    "CONFIG_BT_GATT_SERVICE_CHANGED": True,
+    "CONFIG_BT_CTLR_CRYPTO": True,
+}
 KNOWN_WORKLOADS = frozenset({
     "click_spam", "cir_handling", "relay_retry", "ble_backpressure",
     "click_activity", "anchor_survey_report", "gateway_report_ingress",
@@ -87,6 +111,31 @@ class StackUsage:
     function: str
     bytes_used: int
     qualifier: str
+    # GCC emits inline/header records into the .su file belonging to the
+    # compiling translation unit.  Keep that provenance instead of treating
+    # the header as an independent object; otherwise same-named platform
+    # helpers merge and their ownership becomes unverifiable.
+    translation_unit: str = ""
+    object_path: str = ""
+
+
+@dataclass(frozen=True)
+class CompileEdge:
+    output: Path
+    source: Path
+
+
+@dataclass(frozen=True)
+class ArchiveEdge:
+    output: Path
+    members: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class LinkedObject:
+    output: Path
+    source: Path
+    archive: Path | None = None
 
 
 @dataclass
@@ -287,7 +336,12 @@ def _expect(evidence: BuildEvidence, key: str, expected: Any) -> None:
         evidence.issues.append(f"generated {key}={evidence.config.get(key)!r}, expected {expected!r}")
 
 
-def _verify_config(evidence: BuildEvidence, policy: PresetPolicy) -> None:
+def _verify_config(
+    evidence: BuildEvidence,
+    policy: PresetPolicy,
+    *,
+    allow_watchdog_bypass: bool,
+) -> None:
     for field, key in {
         "main_bytes": "CONFIG_MAIN_STACK_SIZE",
         "system_workqueue_bytes": "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE",
@@ -309,9 +363,128 @@ def _verify_config(evidence: BuildEvidence, policy: PresetPolicy) -> None:
         _expect(evidence, "CONFIG_BT_HCI_TX_STACK_SIZE", policy.bt_hci_tx_bytes)
     if policy.bt_rx_bytes:
         _expect(evidence, "CONFIG_BT_RX_STACK_SIZE", policy.bt_rx_bytes)
+    if evidence.preset == "mesh_gateway":
+        for key, expected in GATEWAY_FIT_REQUIRED_CONFIG.items():
+            _expect_boolean(evidence, key, expected)
+    watchdog_bypass = (
+        evidence.config.get("CONFIG_IMEC_WATCHDOG_BYPASS") is True
+    )
+    if watchdog_bypass:
+        if policy.deployable and not allow_watchdog_bypass:
+            evidence.issues.append(
+                "generated CONFIG_IMEC_WATCHDOG_BYPASS=True is bench-only "
+                "and cannot qualify for production promotion"
+            )
+        elif (
+            not policy.deployable
+            and evidence.preset not in WATCHDOG_BYPASS_BENCH_PRESETS
+        ):
+            evidence.issues.append(
+                "generated CONFIG_IMEC_WATCHDOG_BYPASS=True is not allowed "
+                f"for preset {evidence.preset}"
+            )
     if policy.deployable:
         for key in ("CONFIG_IMEC_STACK_DIAGNOSTICS", "CONFIG_THREAD_MONITOR", "CONFIG_THREAD_NAME", "CONFIG_USE_SEGGER_RTT"):
             _expect(evidence, key, True)
+    if evidence.preset in DURABLE_STATE_PRESETS:
+        for key in DURABLE_STATE_REQUIRED_CONFIG:
+            _expect(evidence, key, True)
+        _expect(evidence, "CONFIG_FLASH_LOAD_SIZE", DURABLE_STATE_FLASH_LIMIT)
+
+
+def _verify_storage_partition(evidence: BuildEvidence) -> None:
+    if evidence.preset not in DURABLE_STATE_PRESETS:
+        return
+
+    path = evidence.build_dir / "zephyr" / "zephyr.dts"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        evidence.issues.append(f"generated devicetree is unreadable: {exc}")
+        return
+
+    node = re.search(
+        r"\bstorage_partition\s*:\s*[^\s{]+\s*\{(?P<body>.*?)^\s*\};",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if node is None:
+        evidence.issues.append("generated devicetree lacks storage_partition")
+        return
+
+    body = node.group("body")
+    status = re.search(r'\bstatus\s*=\s*"([^"]+)"\s*;', body)
+    if status is not None and status.group(1) != "okay":
+        evidence.issues.append(
+            f"generated storage_partition status is {status.group(1)!r}, expected 'okay'"
+        )
+
+    reg = re.search(r"\breg\s*=\s*<\s*([^>]+)\s*>\s*;", body)
+    if reg is None:
+        evidence.issues.append("generated storage_partition lacks a single reg range")
+        return
+    try:
+        cells = [int(value, 0) for value in reg.group(1).split()]
+    except ValueError:
+        cells = []
+    if len(cells) != 2:
+        evidence.issues.append("generated storage_partition reg is malformed")
+        return
+
+    address, size = cells
+    minimum_size = DURABLE_STATE_SECTOR_BYTES * DURABLE_STATE_MIN_SECTORS
+    if address % DURABLE_STATE_SECTOR_BYTES:
+        evidence.issues.append(
+            f"generated storage_partition address 0x{address:x} is not "
+            f"{DURABLE_STATE_SECTOR_BYTES}-byte aligned"
+        )
+    if size < minimum_size:
+        evidence.issues.append(
+            f"generated storage_partition size {size} is below {minimum_size}"
+        )
+    elif size % DURABLE_STATE_SECTOR_BYTES:
+        evidence.issues.append(
+            f"generated storage_partition size {size} is not a multiple of "
+            f"{DURABLE_STATE_SECTOR_BYTES}"
+        )
+
+    map_path = evidence.build_dir / "zephyr" / "zephyr.map"
+    try:
+        map_text = map_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        evidence.issues.append(f"linker map is unreadable for storage check: {exc}")
+        return
+    flash = re.search(
+        r"^FLASH\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)",
+        map_text,
+        re.MULTILINE,
+    )
+    used = re.search(
+        r"^\s*0x([0-9a-fA-F]+)\s+_flash_used\b",
+        map_text,
+        re.MULTILINE,
+    )
+    if flash is None or used is None:
+        evidence.issues.append(
+            "linker map lacks FLASH/_flash_used bounds for storage_partition"
+        )
+        return
+    code_start = int(flash.group(1), 16)
+    code_end = code_start + int(used.group(1), 16)
+    partition_end = address + size
+    if code_start < partition_end and address < code_end:
+        evidence.issues.append(
+            f"linked image [0x{code_start:x},0x{code_end:x}) overlaps "
+            f"storage_partition [0x{address:x},0x{partition_end:x})"
+        )
+    else:
+        headroom = address - code_end
+        if headroom < DURABLE_STATE_MIN_FLASH_HEADROOM_BYTES:
+            evidence.issues.append(
+                f"linked FLASH headroom {headroom} bytes below "
+                f"storage_partition is below required "
+                f"{DURABLE_STATE_MIN_FLASH_HEADROOM_BYTES} bytes"
+            )
 
 
 def _ram_map(path: Path) -> tuple[int, int, int, set[str]]:
@@ -336,30 +509,431 @@ def _ram_map(path: Path) -> tuple[int, int, int, set[str]]:
     return image_end - origin, size, origin + size - image_end, symbols
 
 
+def _ninja_logical_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    pending = ""
+    for physical in text.splitlines():
+        logical = pending + (physical.lstrip() if pending else physical)
+        trailing_dollars = len(logical) - len(logical.rstrip("$"))
+        if trailing_dollars % 2:
+            pending = logical[:-1]
+            continue
+        lines.append(logical)
+        pending = ""
+    if pending:
+        raise EvidenceError("unterminated Ninja line continuation")
+    return lines
+
+
+def _ninja_path_tokens(value: str) -> list[str]:
+    tokens: list[str] = []
+    token: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char in " \t":
+            if token:
+                tokens.append("".join(token))
+                token = []
+            index += 1
+            continue
+        if char != "$":
+            token.append(char)
+            index += 1
+            continue
+        if value.startswith("${cmake_ninja_workdir}", index):
+            # CMake emits a duplicate absolute-output spelling on link edges;
+            # the ordinary relative output is retained alongside it. Keep
+            # the variable token opaque so it cannot masquerade as a source
+            # path, while still allowing the final-link edge to be parsed.
+            token.append("${cmake_ninja_workdir}")
+            index += len("${cmake_ninja_workdir}")
+            continue
+        if index + 1 >= len(value) or value[index + 1] not in " $:":
+            raise EvidenceError(
+                f"unsupported Ninja path escape near {value[index:index + 16]!r}"
+            )
+        token.append(value[index + 1])
+        index += 2
+    if token:
+        tokens.append("".join(token))
+    return tokens
+
+
+def _ninja_build_parts(line: str) -> tuple[list[str], list[str]]:
+    body = line[len("build "):]
+    delimiter = None
+    index = 0
+    while index < len(body):
+        if body[index] == "$":
+            index += 2
+            continue
+        if body[index] == ":":
+            delimiter = index
+            break
+        index += 1
+    if delimiter is None:
+        raise EvidenceError("malformed Ninja build edge lacks ':'")
+    outputs = _ninja_path_tokens(body[:delimiter])
+    rule_and_inputs = _ninja_path_tokens(body[delimiter + 1:])
+    if not outputs or not rule_and_inputs:
+        raise EvidenceError("malformed Ninja build edge")
+    inputs: list[str] = []
+    for item in rule_and_inputs[1:]:
+        if item in {"|", "||", "|@"}:
+            break
+        inputs.append(item)
+    return outputs, inputs
+
+
 def _ninja_objects(path: Path) -> tuple[str, list[tuple[Path, Path]]]:
     text = path.read_text(encoding="utf-8", errors="replace")
-    objects = [
-        (Path(obj), Path(source))
-        for obj, source in re.findall(
-            r"^build\s+(\S+\.obj):[^\n]*?\s(\S+\.c)(?:\s|$)", text, re.MULTILINE
-        )
-        if "CMakeFiles/app.dir/" in obj
-    ]
+    objects: list[tuple[Path, Path]] = []
+    app_archive_members: set[Path] | None = None
+    for line in _ninja_logical_lines(text):
+        if not line.startswith("build "):
+            continue
+        if line.startswith("build app/libapp.a:"):
+            outputs, inputs = _ninja_build_parts(line)
+            if "app/libapp.a" in outputs:
+                if app_archive_members is not None:
+                    raise EvidenceError("build graph has multiple app/libapp.a edges")
+                app_archive_members = {
+                    Path(item) for item in inputs
+                    if item.endswith(".obj") and
+                    "CMakeFiles/app.dir/" in item
+                }
+        if "CMakeFiles/app.dir/" not in line or ".obj" not in line:
+            continue
+        outputs, inputs = _ninja_build_parts(line)
+        app_outputs = [
+            output for output in outputs
+            if output.endswith(".obj") and "CMakeFiles/app.dir/" in output
+        ]
+        if not app_outputs:
+            continue
+        sources = [item for item in inputs if item.endswith(".c")]
+        if len(sources) != 1:
+            raise EvidenceError(
+                "application Ninja compile edge must name exactly one C source: "
+                + ",".join(app_outputs)
+            )
+        objects.extend((Path(output), Path(sources[0]))
+                       for output in app_outputs)
     if not objects:
         raise EvidenceError("build graph has no application C objects")
+    if app_archive_members is None:
+        raise EvidenceError("build graph lacks app/libapp.a membership edge")
+    compiled_objects = {output for output, _source in objects}
+    if compiled_objects != app_archive_members:
+        missing = sorted(str(path) for path in app_archive_members - compiled_objects)
+        unexpected = sorted(str(path) for path in compiled_objects - app_archive_members)
+        raise EvidenceError(
+            "application Ninja compile edges differ from app/libapp.a members: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
     return text, objects
 
 
-def _parse_su(path: Path) -> list[StackUsage]:
+def _ninja_compile_edges(text: str) -> dict[Path, Path]:
+    """Return every C compile edge, including Zephyr and module targets.
+
+    The app-only parser above is intentionally kept as a compatibility seam
+    for the existing application archive checks.  Full stack closure uses
+    this independent graph so a platform object cannot disappear merely
+    because it is outside ``CMakeFiles/app.dir``.
+    """
+    edges: dict[Path, Path] = {}
+    for line in _ninja_logical_lines(text):
+        if not line.startswith("build "):
+            continue
+        raw_outputs, raw_inputs = _ninja_build_parts(line)
+        outputs = [Path(output) for output in raw_outputs]
+        inputs = [Path(input_path) for input_path in raw_inputs]
+        object_outputs = [
+            output for output in outputs
+            if output.suffix in {".obj", ".o"}
+        ]
+        if not object_outputs:
+            continue
+        sources = [source for source in inputs if source.suffix == ".c"]
+        if len(sources) != 1:
+            # Assembly and generated/object-only edges are outside ordinary C
+            # TU evidence. A C-looking edge without one source is ambiguous,
+            # so reject it rather than silently dropping its provenance.
+            if any(source.suffix in {".c", ".cc", ".cpp", ".cxx"}
+                   for source in inputs):
+                raise EvidenceError(
+                    "C Ninja compile edge must name exactly one C source: "
+                    + ",".join(str(output) for output in object_outputs)
+                )
+            continue
+        for output in object_outputs:
+            if output in edges and edges[output] != sources[0]:
+                raise EvidenceError(
+                    f"Ninja compile output has conflicting sources {output}"
+                )
+            edges[output] = sources[0]
+    if not edges:
+        raise EvidenceError("build graph has no C compile edges")
+    return edges
+
+
+def _ninja_archive_edges(text: str) -> dict[Path, ArchiveEdge]:
+    archives: dict[Path, ArchiveEdge] = {}
+    for line in _ninja_logical_lines(text):
+        if not line.startswith("build "):
+            continue
+        raw_outputs, raw_inputs = _ninja_build_parts(line)
+        outputs = [Path(output) for output in raw_outputs]
+        inputs = [Path(input_path) for input_path in raw_inputs]
+        archive_outputs = [output for output in outputs
+                           if output.suffix == ".a"]
+        if not archive_outputs:
+            continue
+        members = tuple(input_path for input_path in inputs
+                        if input_path.suffix in {".obj", ".o"})
+        for output in archive_outputs:
+            if output in archives:
+                raise EvidenceError(f"build graph has multiple archive edges {output}")
+            archives[output] = ArchiveEdge(output, members)
+    return archives
+
+
+def _ninja_final_link_inputs(text: str) -> tuple[set[Path], set[Path]]:
+    """Find the exact final ELF link edge and its archive/object inputs."""
+    matches: list[tuple[set[Path], set[Path]]] = []
+    for line in _ninja_logical_lines(text):
+        if not line.startswith("build "):
+            continue
+        body = line[len("build "):]
+        delimiter = None
+        index = 0
+        while index < len(body):
+            if body[index] == "$":
+                index += 2
+                continue
+            if body[index] == ":":
+                delimiter = index
+                break
+            index += 1
+        if delimiter is None:
+            raise EvidenceError("malformed final Ninja link edge")
+        outputs = [Path(output) for output in
+                   _ninja_path_tokens(body[:delimiter])]
+        # Archive inputs are commonly placed after Ninja's order-only `|`
+        # separator even though they are real linker inputs. The app parser
+        # intentionally stops at that separator; the final-link pass must
+        # retain every archive/object token and discard only separators.
+        all_items = _ninja_path_tokens(body[delimiter + 1:])
+        inputs = [Path(item) for item in all_items
+                  if item not in {"|", "||", "|@"}]
+        if Path("zephyr/zephyr.elf") not in outputs:
+            continue
+        archives = {item for item in inputs if item.suffix == ".a"}
+        objects = {item for item in inputs
+                   if item.suffix in {".obj", ".o"}}
+        matches.append((archives, objects))
+    if len(matches) != 1:
+        raise EvidenceError(
+            "build graph must contain exactly one final zephyr/zephyr.elf link edge"
+        )
+    return matches[0]
+
+
+def _map_archive_members(path: Path) -> list[tuple[Path, str]]:
+    """Read GNU ld's linked archive-member table from the final map."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    members: list[tuple[Path, str]] = []
+    pattern = re.compile(r"^(?P<archive>.+\.a)\((?P<member>[^()]+)\)")
+    in_archive_table = False
+    saw_member = False
+    for raw in text.splitlines():
+        if raw.startswith("Archive member included to satisfy reference by file"):
+            in_archive_table = True
+            continue
+        if not in_archive_table:
+            continue
+        # The section dump later in the map repeats archive(member) in every
+        # input-section row.  Only the initial archive-member table is linker
+        # extraction provenance; stop before the first blank separator.
+        if not raw.strip():
+            if saw_member:
+                break
+            continue
+        match = pattern.match(raw.strip())
+        if match is not None:
+            members.append((Path(match.group("archive")), match.group("member")))
+            saw_member = True
+    if not members:
+        raise EvidenceError("linker map lacks linked archive-member provenance")
+    return members
+
+
+def _ninja_path_key(path: Path) -> str:
+    return str(path.resolve()) if path.is_absolute() else path.as_posix()
+
+
+def _linked_application_objects(
+    build_dir: Path,
+    ninja_text: str,
+    app_objects: list[tuple[Path, Path]],
+) -> list[LinkedObject]:
+    """Prove the exact final ELF contains the complete application archive."""
+    app_archive = Path("app/libapp.a")
+    linked_archives, _linked_direct_objects = _ninja_final_link_inputs(
+        ninja_text
+    )
+    if app_archive not in linked_archives:
+        raise EvidenceError(
+            "final zephyr/zephyr.elf link does not contain app/libapp.a"
+        )
+
+    objects_by_member: dict[str, tuple[Path, Path]] = {}
+    for output, source in app_objects:
+        if output.name in objects_by_member:
+            raise EvidenceError(
+                "app/libapp.a has ambiguous duplicate object member "
+                f"{output.name}"
+            )
+        objects_by_member[output.name] = (output, source)
+
+    linked_members = {
+        member
+        for archive, member in _map_archive_members(
+            build_dir / "zephyr" / "zephyr.map"
+        )
+        if archive == app_archive
+    }
+    expected_members = set(objects_by_member)
+    if linked_members != expected_members:
+        missing = sorted(expected_members - linked_members)
+        unexpected = sorted(linked_members - expected_members)
+        raise EvidenceError(
+            "final linker map app/libapp.a members differ from Ninja archive: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    return [
+        LinkedObject(output, source, app_archive)
+        for output, source in app_objects
+    ]
+
+
+def _full_linked_objects(
+    build_dir: Path,
+    ninja_text: str,
+) -> list[LinkedObject]:
+    """Reconcile final-map members with every source-built C object.
+
+    The final map is the linker truth for archive extraction; Ninja is the
+    source/provenance truth. Both are required. This deliberately leaves
+    opaque prebuilt archive members for named ABI contracts instead of
+    pretending that a generic compiler reserve proves their stack use.
+    """
+    compile_edges = _ninja_compile_edges(ninja_text)
+    archive_edges = _ninja_archive_edges(ninja_text)
+    linked_archives, linked_direct_objects = _ninja_final_link_inputs(ninja_text)
+    map_members = _map_archive_members(build_dir / "zephyr" / "zephyr.map")
+
+    compile_by_key = {_ninja_path_key(output): (output, source)
+                      for output, source in compile_edges.items()}
+    archive_by_key = {_ninja_path_key(output): edge
+                      for output, edge in archive_edges.items()}
+    linked_archive_keys = {_ninja_path_key(path) for path in linked_archives}
+    result: list[LinkedObject] = []
+    seen: set[Path] = set()
+
+    def add_object(output: Path, source: Path, archive: Path | None) -> None:
+        if source.suffix != ".c":
+            return
+        if output in seen:
+            return
+        seen.add(output)
+        result.append(LinkedObject(output, source, archive))
+
+    for archive, member in map_members:
+        archive_key = _ninja_path_key(archive)
+        if archive_key not in linked_archive_keys:
+            if _is_implicit_toolchain_archive(archive):
+                # GCC/picolibc inject these archives through the driver/specs,
+                # so they have no ordinary Ninja archive edge. Their symbols
+                # are checked by the exact compiler/libc ABI contracts.
+                continue
+            raise EvidenceError(
+                f"linker map archive member is absent from final link: {archive}"
+            )
+        edge = archive_by_key.get(archive_key)
+        if edge is None:
+            # A member from an absolute/vendor archive has no source compile
+            # edge by design. Its call boundary is checked against an explicit
+            # ABI contract after the source-built graph is loaded.
+            continue
+        # This closure owns ordinary C TUs. Assembly members have no .su or
+        # IPA cgraph record and are covered by the linker/ABI boundary rather
+        # than silently being mistaken for a missing C compile edge.
+        member_stem = member[:-4] if member.endswith((".obj", ".o")) else member
+        if Path(member_stem).suffix.lower() in {".s", ".asm"}:
+            continue
+        candidates = [
+            output for output in edge.members
+            if output.name == member
+        ]
+        if len(candidates) != 1:
+            raise EvidenceError(
+                f"linker map member {archive}({member}) does not map to one "
+                f"Ninja archive member: {len(candidates)} matches"
+            )
+        output = candidates[0]
+        compiled = compile_by_key.get(_ninja_path_key(output))
+        if compiled is None:
+            raise EvidenceError(
+                f"linked C archive member lacks a Ninja compile edge: "
+                f"{archive}({member})"
+            )
+        _output, source = compiled
+        add_object(output, source, archive)
+
+    for output in linked_direct_objects:
+        compiled = compile_by_key.get(_ninja_path_key(output))
+        if compiled is None:
+            raise EvidenceError(
+                f"linked direct C object lacks a Ninja compile edge: {output}"
+            )
+        _output, source = compiled
+        add_object(output, source, None)
+
+    if not result:
+        raise EvidenceError("final link has no source-built C translation units")
+    return result
+
+
+def _parse_su(
+    path: Path,
+    *,
+    translation_unit: str = "",
+    object_path: Path | None = None,
+    allow_empty: bool = False,
+) -> list[StackUsage]:
     records: list[StackUsage] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if not text.strip():
+        if allow_empty:
+            return records
+        raise EvidenceError(f"empty compiler stack evidence {path}")
+    for line in text.splitlines():
         columns = line.split("\t")
         location = re.fullmatch(r"(.*):(\d+):(\d+):(.+)", columns[0]) if len(columns) >= 3 else None
         if location is None or not columns[1].isdigit():
             raise EvidenceError(f"malformed compiler stack row in {path}: {line!r}")
-        records.append(StackUsage(Path(location.group(1)), int(location.group(2)), location.group(4), int(columns[1]), ",".join(columns[2:])))
-    if not records:
-        raise EvidenceError(f"empty compiler stack evidence {path}")
+        records.append(StackUsage(
+            Path(location.group(1)),
+            int(location.group(2)),
+            location.group(4),
+            int(columns[1]),
+            ",".join(columns[2:]),
+            translation_unit,
+            str(object_path) if object_path is not None else "",
+        ))
     return records
 
 
@@ -368,6 +942,31 @@ def _resolve_compiler_source(path: Path) -> Path:
     if not path.is_absolute() and path.parts[:1] == ("WEST_TOPDIR",):
         return (REPO_ROOT.joinpath(*path.parts[1:])).resolve()
     return path.resolve()
+
+
+def _translation_unit_key(source: Path, object_path: Path) -> str:
+    """Return a stable, path-qualified identity for one compiled TU."""
+    try:
+        source_text = str(source.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        source_text = str(source.resolve())
+    return f"{source_text} [{object_path.as_posix()}]"
+
+
+def _is_inline_stack_source(path: Path, build_dir: Path) -> bool:
+    """Accept project/platform inline records while excluding host headers."""
+    if path.suffix not in {".h", ".inc"}:
+        return False
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    roots = (REPO_ROOT.resolve(), build_dir.resolve())
+    return any(root == resolved or root in resolved.parents for root in roots)
+
+
+def _record_source_key(record: StackUsage) -> str:
+    return record.translation_unit or record.source.name
 
 
 _GCC_CLONE_SUFFIX_RE = re.compile(
@@ -381,6 +980,70 @@ def _canonical_function(function: str) -> str:
 
 _CGRAPH_VARIABLE_PREFIX = "<variable>:"
 _CGRAPH_REFERENCE_PREFIX = "<reference>:"
+_CGRAPH_DATA_REFERENCE_PREFIX = "<data-reference>:"
+_CGRAPH_UNKNOWN_REFERENCE_PREFIX = "<unknown-reference>:"
+_CGRAPH_INDIRECT_CALL = "<indirect-call>"
+
+# These are deliberately named contracts, not a blanket allowance for every
+# missing call edge.  Compiler intrinsics and the small set of C-library
+# entrypoints below have no ordinary source TU in the exact linked image; all
+# other live unresolved calls remain verification failures.  Prebuilt vendor
+# symbols have no default contract: a future exception must be an exact,
+# map-proven per-symbol contract supplied by the caller.
+_COMPILER_ABI_PREFIXES = ("__builtin_", "__atomic_")
+_COMPILER_ABI_SYMBOLS = frozenset({
+    "__aeabi_memclr4", "__aeabi_memclr8", "__aeabi_memcpy4",
+    "__aeabi_memcpy8", "__aeabi_memset4", "__aeabi_memset8",
+    "__aeabi_uidiv", "__aeabi_uidivmod", "__aeabi_idiv", "__aeabi_idivmod",
+    "__aeabi_uldivmod", "__aeabi_ldivmod", "__gnu_thumb1_case_uqi",
+})
+_LIBC_ABI_SYMBOLS = frozenset({
+    "memcpy", "memmove", "memset", "memcmp", "strlen", "strcpy",
+    "strncpy", "strnlen", "strchr", "strcmp", "snprintf", "vsnprintf",
+    "__errno", "__errno_location",
+})
+_ZEPHYR_INLINE_ABI_SYMBOLS = frozenset({
+    "assert_post_action", "assert_print", "z_spin_lock_set_owner",
+    "z_spin_lock_valid", "z_spin_unlock_valid",
+})
+_ZEPHYR_METADATA_ABI_SYMBOLS = frozenset({"z_tls_current"})
+_ZEPHYR_METADATA_ABI_PREFIXES = ("__device_dts_ord_",)
+_IMPLICIT_TOOLCHAIN_ARCHIVES = frozenset({"libc.a", "libgcc.a"})
+
+
+def _abi_contract_reason(
+    symbol: str,
+    contracts: dict[str, str] | None = None,
+) -> str | None:
+    if contracts is not None and symbol in contracts:
+        return contracts[symbol]
+    if symbol in _COMPILER_ABI_SYMBOLS:
+        return "compiler ABI"
+    if any(symbol.startswith(prefix) for prefix in _COMPILER_ABI_PREFIXES):
+        return "compiler intrinsic ABI"
+    if symbol in _LIBC_ABI_SYMBOLS:
+        return "picolibc ABI"
+    if symbol in _ZEPHYR_INLINE_ABI_SYMBOLS:
+        return "Zephyr inline ABI"
+    if symbol in _ZEPHYR_METADATA_ABI_SYMBOLS:
+        return "Zephyr metadata ABI"
+    if any(symbol.startswith(prefix) for prefix in _ZEPHYR_METADATA_ABI_PREFIXES):
+        return "Zephyr device metadata ABI"
+    return None
+
+
+def _is_implicit_toolchain_archive(path: Path) -> bool:
+    """Recognize only the compiler's named libc/libgcc inputs.
+
+    Zephyr's final Ninja edge does not list the archives injected by
+    ``picolibc.specs`` and the compiler driver. Their map members are still
+    covered by exact libc/compiler symbol contracts; an arbitrary project
+    archive with the same basename must not receive that exemption.
+    """
+    if path.name not in _IMPLICIT_TOOLCHAIN_ARCHIVES:
+        return False
+    text = path.as_posix()
+    return "zephyr-sdk" in text or "/gcc/" in text or "/picolibc/" in text
 
 
 def _compiler_function_name_symbol(symbol: str) -> bool:
@@ -412,7 +1075,7 @@ def _owner_capacity(policy: PresetPolicy, owner: str) -> int:
         "system_workqueue": policy.system_workqueue_bytes,
         "clicker_action": 8192 if policy.preset == "mesh_clicker" else 0,
         "anchor_uwb_scan": (
-            6912 if policy.preset in {
+            7200 if policy.preset in {
                 "mesh_anchor", "mesh_anchor_forcedhop",
             } else 0
         ),
@@ -437,26 +1100,55 @@ def _cgraph_path(build_dir: Path, object_path: Path) -> Path:
 
 def _parse_cgraph(path: Path, source_name: str) -> dict[tuple[str, str], set[str]]:
     text = path.read_text(encoding="utf-8", errors="replace")
+    optimized_markers = list(re.finditer(
+        r"^Optimized Symbol table:\s*$", text, re.MULTILINE
+    ))
+    if not optimized_markers:
+        raise EvidenceError(
+            f"compiler call graph lacks an optimized symbol table {path}"
+        )
+    start = optimized_markers[-1].end()
+    end_marker = re.search(
+        r"^(?:Removing variables:|Final Symbol table:)\s*$",
+        text[start:],
+        re.MULTILINE,
+    )
+    end = start + end_marker.start() if end_marker is not None else len(text)
+    optimized = text[start:end]
+
     nodes: dict[tuple[str, str], set[str]] = {}
-    pattern = re.compile(r"^([^\s/]+)/\d+ \(([^)]+)\).*?(?=^[^\s/]+/\d+ \(|\Z)", re.MULTILINE | re.DOTALL)
-    for match in pattern.finditer(text):
+    pattern = re.compile(
+        r"^([^\s/]+)/(\d+) \(([^)]+)\).*?(?=^[^\s/]+/\d+ \(|\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    blocks = list(pattern.finditer(optimized))
+    kinds: dict[tuple[str, str], set[str]] = {}
+    for match in blocks:
+        type_match = re.search(
+            r"^  Type: (function|variable)(?:\s|$)",
+            match.group(0),
+            re.MULTILINE,
+        )
+        if type_match is not None:
+            kinds.setdefault((match.group(1), match.group(2)), set()).add(
+                type_match.group(1)
+            )
+
+    for match in blocks:
         block = match.group(0)
         function_definition = "Type: function definition analyzed" in block
-        immutable_variable = (
-            "Type: variable definition analyzed" in block and
-            re.search(r"^  Varpool flags:.*\bread-only\b", block, re.MULTILINE) is not None
-        )
-        if not function_definition and not immutable_variable:
+        variable_definition = "Type: variable definition analyzed" in block
+        if not function_definition and not variable_definition:
             continue
         symbol = _canonical_function(match.group(1))
-        if immutable_variable and _compiler_function_name_symbol(symbol):
+        if variable_definition and _compiler_function_name_symbol(symbol):
             # Every C function may own a distinct compiler-generated
             # `__func__` string with the same source-level symbol. Joining
             # those constants would invent call edges between unrelated work
             # queues; they can never contain a callback.
             continue
         node_symbol = (_CGRAPH_VARIABLE_PREFIX + symbol
-                       if immutable_variable else symbol)
+                       if variable_definition else symbol)
         # GCC may put IPA diagnostics immediately after an empty ``Calls:``
         # field.  ``\s`` also consumes newlines, which would turn a diagnostic
         # such as ``updating call of caller/7`` into an invented call edge.
@@ -467,28 +1159,154 @@ def _parse_cgraph(path: Path, source_name: str) -> dict[tuple[str, str], set[str
                 _canonical_function(target)
                 for target in re.findall(r"([^\s/]+)/\d+", calls.group(1))
             }
-        references = re.search(
-            r"^  References:[ \t]*(.*)$", block, re.MULTILINE
-        )
+        references = re.search(r"^  References:[ \t]*(.*)$", block,
+                               re.MULTILINE)
         if references is not None:
-            # Callback and ops tables are compiler variable nodes between the
-            # function which uses the table and its address-taken functions.
-            # Preserve every compiler-proved reference so ownership can cross
-            # that table without a source-wide fallback.
-            targets.update(
-                _CGRAPH_REFERENCE_PREFIX + canonical
-                for target in re.findall(r"([^\s/]+)/\d+", references.group(1))
-                if not _compiler_function_name_symbol(
-                    canonical := _canonical_function(target)
-                )
-            )
-        # GCC emits several IPA snapshots for one symbol.  Preserve every
-        # compiler-proved edge; later optimization snapshots may legitimately
-        # show an empty Calls line after inlining or cloning.
+            for target, target_id in re.findall(
+                r"([^\s/]+)/(\d+)(?:\s+\([^)]+\))?",
+                references.group(1),
+            ):
+                canonical = _canonical_function(target)
+                if _compiler_function_name_symbol(canonical):
+                    continue
+                target_kinds = kinds.get((target, target_id), set())
+                if target_kinds == {"function"}:
+                    targets.add(_CGRAPH_REFERENCE_PREFIX + canonical)
+                elif target_kinds == {"variable"}:
+                    # A symbol address/read is data unless GCC proves the
+                    # referenced node is a function. Keep the data edge so a
+                    # local application ops table can lead to its callbacks;
+                    # an external variable simply terminates at the platform
+                    # boundary later.
+                    targets.add(_CGRAPH_DATA_REFERENCE_PREFIX + canonical)
+                else:
+                    targets.add(
+                        _CGRAPH_UNKNOWN_REFERENCE_PREFIX + canonical
+                    )
+        if re.search(r"^   Indirect call", block, re.MULTILINE):
+            # GCC emits targetless function-pointer dispatch separately from
+            # References. Do not confuse ordinary data addresses with calls,
+            # and do not silently bless a real unresolved application call.
+            targets.add(_CGRAPH_INDIRECT_CALL)
         nodes.setdefault((source_name, node_symbol), set()).update(targets)
     if not nodes:
         raise EvidenceError(f"compiler call graph has no analyzed definitions {path}")
     return nodes
+
+
+def _cgraph_proves_empty_optimized_tu(path: Path) -> bool:
+    """Recognize a complete GCC dump whose optimized TU emits no code/data."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if "Initial Symbol table:" not in text or "Final Symbol table:" not in text:
+        return False
+    optimized_markers = list(re.finditer(
+        r"^Optimized Symbol table:\s*$", text, re.MULTILINE
+    ))
+    if not optimized_markers:
+        return False
+    start = optimized_markers[-1].end()
+    end_marker = re.search(
+        r"^(?:Removing variables:|Final Symbol table:)\s*$",
+        text[start:],
+        re.MULTILINE,
+    )
+    if end_marker is None:
+        return False
+    optimized = text[start:start + end_marker.start()]
+    administrative = {"Trivially needed variables:"}
+    return all(
+        not line.strip() or line.strip() in administrative
+        for line in optimized.splitlines()
+    )
+
+
+def _map_proves_no_live_text(
+    path: Path,
+    linked_object: LinkedObject,
+) -> bool:
+    """Prove that one linked source object contributes no allocated text."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    marker = "Linker script and memory map"
+    if text.count(marker) != 1:
+        return False
+    owner = (
+        f"{linked_object.archive.as_posix()}({linked_object.output.name})"
+        if linked_object.archive is not None
+        else linked_object.output.as_posix()
+    )
+    if owner not in text:
+        return False
+
+    live_lines = text.split(marker, 1)[1].splitlines()
+    for index, line in enumerate(live_lines):
+        if owner not in line:
+            continue
+        location = re.search(
+            r"0x[0-9a-fA-F]+\s+0x([0-9a-fA-F]+)\s+" +
+            re.escape(owner) + r"\s*$",
+            line,
+        )
+        if location is None:
+            continue
+        section = re.match(r"^\s+(\.[^\s]+)", line)
+        if section is None and index:
+            section = re.match(r"^\s+(\.[^\s]+)\s*$", live_lines[index - 1])
+        if section is None:
+            continue
+        name = section.group(1)
+        if (name == ".text" or name.startswith(".text.")) and int(
+            location.group(1), 16
+        ):
+            return False
+    return True
+
+
+def _parse_tu_compiler_evidence(
+    usage_path: Path,
+    graph_path: Path,
+    translation_unit: str,
+    object_path: Path,
+    *,
+    final_map_path: Path | None = None,
+    linked_object: LinkedObject | None = None,
+) -> tuple[
+    list[StackUsage],
+    dict[tuple[str, str], set[str]],
+    dict[tuple[str, str], set[str]],
+]:
+    """Parse one TU's frame and graph evidence with empty-data validation."""
+    usage_empty = not usage_path.read_text(
+        encoding="utf-8", errors="replace"
+    ).strip()
+    try:
+        graph = _parse_cgraph(graph_path, translation_unit)
+    except EvidenceError as exc:
+        if (
+            usage_empty
+            and "compiler call graph has no analyzed definitions" in str(exc)
+            and _cgraph_proves_empty_optimized_tu(graph_path)
+            and final_map_path is not None
+            and linked_object is not None
+            and _map_proves_no_live_text(final_map_path, linked_object)
+        ):
+            graph = {}
+        else:
+            raise
+    has_function_definition = any(
+        not node[1].startswith(_CGRAPH_VARIABLE_PREFIX)
+        for node in graph
+    )
+    records = _parse_su(
+        usage_path,
+        translation_unit=translation_unit,
+        object_path=object_path,
+        allow_empty=not has_function_definition,
+    )
+    synchronous = (
+        _parse_synchronous_cgraph(graph_path, translation_unit)
+        if graph else {}
+    )
+    return records, graph, synchronous
 
 
 def _parse_synchronous_cgraph(
@@ -517,8 +1335,14 @@ def _parse_synchronous_cgraph(
         r"^([^\s/]+)/\d+ \(([^)]+)\).*?(?=^[^\s/]+/\d+ \(|\Z)",
         re.MULTILINE | re.DOTALL,
     )
+    optimized_has_analyzed_definition = False
     for match in pattern.finditer(optimized):
         block = match.group(0)
+        if (
+            "Type: function definition analyzed" in block
+            or "Type: variable definition analyzed" in block
+        ):
+            optimized_has_analyzed_definition = True
         if "Type: function definition analyzed" not in block:
             continue
         symbol = match.group(1)
@@ -539,9 +1363,14 @@ def _parse_synchronous_cgraph(
                 targets.add(target_match.group(1))
         nodes.setdefault((source_name, symbol), set()).update(targets)
     if not nodes:
-        raise EvidenceError(
-            f"compiler optimized call graph has no analyzed definitions {path}"
-        )
+        if not optimized_has_analyzed_definition:
+            raise EvidenceError(
+                f"compiler optimized call graph has no analyzed definitions {path}"
+            )
+        # A generated data-only TU can have an optimized symbol table with
+        # only variable definitions. Its .su file is legitimately empty; the
+        # ordinary parser has already validated that the graph is non-empty.
+        return nodes
     return nodes
 
 
@@ -657,7 +1486,10 @@ def _validate_synchronous_stack_chains(
 ) -> None:
     linked_by_key: dict[tuple[str, str], list[StackUsage]] = {}
     for record in linked:
-        linked_by_key.setdefault((record.source.name, record.function), []).append(record)
+        linked_by_key.setdefault(
+            (_record_source_key(record), record.function),
+            [],
+        ).append(record)
     adjacency = _synchronous_cgraph(cgraphs, linked_by_key)
     synchronous_owners = {
         node: owners.get((node[0], _canonical_function(node[1])), set())
@@ -760,6 +1592,22 @@ def _validate_synchronous_stack_chains(
             )
 
 
+def _root_owners_for_node(
+    node: tuple[str, str],
+    roots: dict[tuple[str, str], set[str]],
+) -> set[str]:
+    """Match policy roots against a path-qualified compiler TU identity."""
+    owners: set[str] = set()
+    node_source = node[0].split(" [", 1)[0]
+    for (root_source, root_function), root_owners in roots.items():
+        if node[1] != _canonical_function(root_function):
+            continue
+        if (node[0] == root_source or
+                Path(node_source).name == Path(root_source).name):
+            owners.update(root_owners)
+    return owners
+
+
 def _attribute_linked_functions(
     evidence: BuildEvidence,
     policy: PresetPolicy,
@@ -768,17 +1616,30 @@ def _attribute_linked_functions(
     roots: dict[tuple[str, str], set[str]],
     frame_limit: int,
     synchronous_cgraphs: dict[tuple[str, str], set[str]] | None = None,
+    abi_contracts: dict[str, str] | None = None,
+    platform_symbols: set[str] | None = None,
 ) -> None:
     linked_by_key: dict[tuple[str, str], list[StackUsage]] = {}
     for record in linked:
-        linked_by_key.setdefault((record.source.name, _canonical_function(record.function)), []).append(record)
+        linked_by_key.setdefault(
+            (_record_source_key(record), _canonical_function(record.function)),
+            [],
+        ).append(record)
     graph_nodes = set(cgraphs)
     linked_by_function: dict[str, set[tuple[str, str]]] = {}
     for node in linked_by_key:
         linked_by_function.setdefault(node[1], set()).add(node)
     graph_by_function: dict[str, set[tuple[str, str]]] = {}
+    graph_by_variable: dict[str, set[tuple[str, str]]] = {}
     for node in graph_nodes:
-        if not node[1].startswith(_CGRAPH_VARIABLE_PREFIX):
+        symbol = (
+            node[1][len(_CGRAPH_VARIABLE_PREFIX):]
+            if node[1].startswith(_CGRAPH_VARIABLE_PREFIX)
+            else node[1]
+        )
+        if node[1].startswith(_CGRAPH_VARIABLE_PREFIX):
+            graph_by_variable.setdefault(symbol, set()).add(node)
+        else:
             graph_by_function.setdefault(node[1], set()).add(node)
     for node in linked_by_key:
         if node not in cgraphs:
@@ -786,7 +1647,12 @@ def _attribute_linked_functions(
 
     owners: dict[tuple[str, str], set[str]] = {node: set() for node in graph_nodes}
     for root, root_owners in roots.items():
-        if root not in graph_nodes:
+        root_nodes = [
+            node for node in graph_nodes
+            if node in linked_by_key and
+            root_owners <= _root_owners_for_node(node, {root: root_owners})
+        ]
+        if not root_nodes:
             continue
         for owner in root_owners:
             # Root annotations are shared across exact role builds. A service
@@ -794,7 +1660,7 @@ def _attribute_linked_functions(
             # preset and cannot authorize otherwise unowned linked code.
             if _owner_capacity(policy, owner) == 0:
                 continue
-            pending = [root]
+            pending = root_nodes[:]
             seen: set[tuple[str, str]] = set()
             while pending:
                 node = pending.pop()
@@ -803,26 +1669,55 @@ def _attribute_linked_functions(
                 seen.add(node)
                 owners[node].add(owner)
                 for target in cgraphs.get(node, set()):
-                    reference_edge = target.startswith(_CGRAPH_REFERENCE_PREFIX)
+                    if target == _CGRAPH_INDIRECT_CALL:
+                        # GCC cannot identify a target for a vtable/function-
+                        # pointer dispatch. It terminates the application
+                        # static graph here; exact typed workload captures own
+                        # the dynamic platform/interface stack beyond it.
+                        continue
+                    reference_edge = target.startswith(
+                        _CGRAPH_REFERENCE_PREFIX
+                    )
+                    data_edge = target.startswith(
+                        _CGRAPH_DATA_REFERENCE_PREFIX
+                    )
+                    unknown_edge = target.startswith(
+                        _CGRAPH_UNKNOWN_REFERENCE_PREFIX
+                    )
                     if reference_edge:
                         target = target[len(_CGRAPH_REFERENCE_PREFIX):]
+                    elif data_edge:
+                        target = target[len(_CGRAPH_DATA_REFERENCE_PREFIX):]
+                    elif unknown_edge:
+                        target = target[
+                            len(_CGRAPH_UNKNOWN_REFERENCE_PREFIX):
+                        ]
+                        evidence.issues.append(
+                            "unresolved live compiler symbol reference "
+                            f"owner={owner}: {node[0]}:{node[1]} -> {target}"
+                        )
+                        continue
                     # Prefer exact translation-unit definitions, including
                     # immutable callback/ops variables and non-linked compiler
                     # intermediates. Only an unresolved external name fans out
                     # to linked cross-object candidates. This stays
                     # conservative without joining unrelated static helpers or
                     # compiler constants which happen to share a name.
-                    local = []
+                    local: list[tuple[str, str]] = []
                     local_function = (node[0], target)
                     local_variable = (node[0], _CGRAPH_VARIABLE_PREFIX + target)
-                    if local_function in graph_nodes:
+                    if not data_edge and local_function in graph_nodes:
                         local.append(local_function)
-                    if local_variable in graph_nodes:
+                    if data_edge and local_variable in graph_nodes:
                         local.append(local_variable)
                     if local:
                         candidates = local
                     else:
-                        graph_candidates = graph_by_function.get(target, set())
+                        graph_candidates = (
+                            graph_by_variable.get(target, set())
+                            if data_edge else
+                            graph_by_function.get(target, set())
+                        )
                         # A cross-translation-unit callee may have been inlined
                         # and therefore have no surviving linker symbol or .su
                         # row of its own. Follow its compiler graph when the
@@ -830,15 +1725,45 @@ def _attribute_linked_functions(
                         # the inlined intermediary. Ambiguous same-name static
                         # definitions still fail closed unless the linker leaves
                         # an exact surviving candidate.
-                        if len(graph_candidates) == 1:
+                        if reference_edge or data_edge:
+                            # A data/callback reference may legitimately have
+                            # several compiler snapshots or a same-name
+                            # external definition; retaining all proved
+                            # candidates preserves custody without treating a
+                            # data symbol as an unresolved call.
+                            candidates = list(graph_candidates)
+                        elif len(graph_candidates) == 1:
                             candidates = list(graph_candidates)
                         else:
                             candidates = list(
                                 linked_by_function.get(target, ())
                             )
+                    resolved_candidates = bool(candidates)
                     if reference_edge:
-                        candidates = [candidate for candidate in candidates
-                                      if candidate not in roots]
+                        candidates = [
+                            candidate for candidate in candidates
+                            if not _root_owners_for_node(candidate, roots)
+                        ]
+                    if not candidates:
+                        reason = _abi_contract_reason(target, abi_contracts)
+                        platform_boundary = (
+                            platform_symbols is not None and
+                            target in platform_symbols
+                        )
+                        # Ordinary data references which do not resolve to an
+                        # application variable end at the platform/linker data
+                        # boundary. Function references and direct calls need
+                        # an exact linked symbol or named compiler ABI proof.
+                        if (not data_edge and reason is None and
+                                not platform_boundary and
+                                not (reference_edge and resolved_candidates)):
+                            edge_kind = (
+                                "indirect call" if reference_edge else "call"
+                            )
+                            evidence.issues.append(
+                                f"unresolved live compiler {edge_kind} "
+                                f"owner={owner}: {node[0]}:{node[1]} -> {target}"
+                            )
                     pending.extend(candidates)
     for node, records in linked_by_key.items():
         applicable = owners.get(node, set())
@@ -884,7 +1809,110 @@ def _build_graph_clean(build_dir: Path, cache: dict[str, str]) -> str | None:
     return None
 
 
-def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit: int) -> BuildEvidence:
+def _reachable_graph_nodes(
+    cgraphs: dict[tuple[str, str], set[str]],
+    seeds: set[tuple[str, str]],
+) -> set[tuple[str, str]]:
+    """Resolve conservative direct/callback reachability across TUs."""
+    nodes = set(cgraphs)
+    by_function: dict[str, set[tuple[str, str]]] = {}
+    by_variable: dict[str, set[tuple[str, str]]] = {}
+    for node in nodes:
+        symbol = (
+            node[1][len(_CGRAPH_VARIABLE_PREFIX):]
+            if node[1].startswith(_CGRAPH_VARIABLE_PREFIX)
+            else node[1]
+        )
+        if node[1].startswith(_CGRAPH_VARIABLE_PREFIX):
+            by_variable.setdefault(_canonical_function(symbol), set()).add(node)
+        else:
+            by_function.setdefault(_canonical_function(node[1]), set()).add(node)
+    reachable: set[tuple[str, str]] = set()
+    pending = list(seeds)
+    while pending:
+        node = pending.pop()
+        if node in reachable or node not in nodes:
+            continue
+        reachable.add(node)
+        for raw_target in cgraphs.get(node, set()):
+            if raw_target == _CGRAPH_INDIRECT_CALL or raw_target.startswith(
+                _CGRAPH_UNKNOWN_REFERENCE_PREFIX
+            ):
+                continue
+            reference = raw_target.startswith(_CGRAPH_REFERENCE_PREFIX)
+            data_reference = raw_target.startswith(
+                _CGRAPH_DATA_REFERENCE_PREFIX
+            )
+            if reference:
+                target = raw_target[len(_CGRAPH_REFERENCE_PREFIX):]
+            elif data_reference:
+                target = raw_target[len(_CGRAPH_DATA_REFERENCE_PREFIX):]
+            else:
+                target = raw_target
+            target = _canonical_function(target)
+            candidates = []
+            local = (node[0], target)
+            local_variable = (node[0], _CGRAPH_VARIABLE_PREFIX + target)
+            if not data_reference and local in nodes:
+                candidates.append(local)
+            if data_reference and local_variable in nodes:
+                candidates.append(local_variable)
+            if not candidates:
+                candidates.extend(
+                    by_variable.get(target, ()) if data_reference
+                    else by_function.get(target, ())
+                )
+            pending.extend(candidates)
+    return reachable
+
+
+def _select_live_records(
+    records_by_tu: dict[str, tuple[Path, list[StackUsage]]],
+    symbols: set[str],
+    cgraphs: dict[tuple[str, str], set[str]],
+    build_dir: Path,
+) -> list[StackUsage]:
+    """Keep linked C rows plus live inline/header rows with TU provenance."""
+    seeds: set[tuple[str, str]] = set()
+    primary: list[StackUsage] = []
+    for tu, (source_path, records) in records_by_tu.items():
+        source_resolved = _resolve_compiler_source(source_path)
+        for record in records:
+            record_source = _resolve_compiler_source(record.source)
+            is_primary = record_source == source_resolved
+            if is_primary:
+                primary.append(record)
+                if (record.function in symbols or
+                        _canonical_function(record.function) in symbols):
+                    seeds.add((tu, _canonical_function(record.function)))
+
+    reachable = _reachable_graph_nodes(cgraphs, seeds)
+    selected: list[StackUsage] = []
+    for tu, (source_path, records) in records_by_tu.items():
+        source_resolved = _resolve_compiler_source(source_path)
+        for record in records:
+            record_source = _resolve_compiler_source(record.source)
+            if record_source == source_resolved:
+                if (record.function in symbols or
+                        _canonical_function(record.function) in symbols):
+                    selected.append(record)
+                continue
+            if _is_inline_stack_source(
+                _resolve_compiler_source(record.source), build_dir
+            ):
+                node = (tu, _canonical_function(record.function))
+                if node in reachable:
+                    selected.append(record)
+    return selected
+
+
+def verify_build(
+    build_dir: Path,
+    policies: dict[str, PresetPolicy],
+    frame_limit: int,
+    *,
+    allow_watchdog_bypass: bool = False,
+) -> BuildEvidence:
     build_dir = build_dir.resolve()
     evidence = BuildEvidence(build_dir)
     try:
@@ -900,7 +1928,12 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
         if clean:
             evidence.issues.append(clean)
         evidence.config = parse_kconfig(build_dir / "zephyr" / ".config")
-        _verify_config(evidence, policy)
+        _verify_config(
+            evidence,
+            policy,
+            allow_watchdog_bypass=allow_watchdog_bypass,
+        )
+        _verify_storage_partition(evidence)
         evidence.ram_used, evidence.ram_size, evidence.ram_headroom, symbols = _ram_map(build_dir / "zephyr" / "zephyr.map")
         if evidence.config.get("CONFIG_SRAM_SIZE") != evidence.ram_size // 1024:
             evidence.issues.append("generated CONFIG_SRAM_SIZE differs from linker RAM")
@@ -911,52 +1944,60 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
         evidence.elf_sha256 = _sha256(evidence.elf_path)
         evidence.hex_sha256 = _sha256(evidence.hex_path)
         evidence.build_identity = extract_build_identity(evidence.elf_path)
-        ninja, objects = _ninja_objects(build_dir / "build.ninja")
-        evidence.app_object_count = len(objects)
+        ninja, app_objects = _ninja_objects(build_dir / "build.ninja")
+        evidence.app_object_count = len(app_objects)
         if "-fstack-usage" not in ninja:
             evidence.issues.append("build graph does not enable -fstack-usage")
+        if "-fdump-ipa-cgraph" not in ninja:
+            evidence.issues.append("build graph does not enable -fdump-ipa-cgraph")
+        linked_objects = _linked_application_objects(
+            build_dir, ninja, app_objects
+        )
         roots = load_thread_roots()
-        records: list[StackUsage] = []
+        records_by_tu: dict[str, tuple[Path, list[StackUsage]]] = {}
         cgraphs: dict[tuple[str, str], set[str]] = {}
         synchronous_cgraphs: dict[tuple[str, str], set[str]] = {}
-        for object_path, source_path in objects:
+        for linked_object in linked_objects:
+            object_path, source_path = linked_object.output, linked_object.source
             usage_path = (build_dir / object_path).with_suffix(".su")
             if not usage_path.is_file():
-                evidence.issues.append(f"missing compiler stack evidence {usage_path.relative_to(build_dir)}")
+                evidence.issues.append(
+                    f"missing compiler stack evidence {usage_path.relative_to(build_dir)}"
+                )
                 continue
             graph_path = _cgraph_path(build_dir, object_path)
             if not graph_path.is_file():
-                evidence.issues.append(f"missing compiler call graph {graph_path.relative_to(build_dir)}")
+                evidence.issues.append(
+                    f"missing compiler call graph {graph_path.relative_to(build_dir)}"
+                )
                 continue
             if source_path.is_file() and usage_path.stat().st_mtime + 0.001 < source_path.stat().st_mtime:
                 evidence.issues.append(f"stale compiler stack evidence for {source_path}")
             if source_path.is_file() and graph_path.stat().st_mtime + 0.001 < source_path.stat().st_mtime:
                 evidence.issues.append(f"stale compiler call graph for {source_path}")
-            # GCC includes inline header helpers in a translation unit's .su
-            # file.  The linked-app accounting domain is the object source
-            # itself; Zephyr header helpers belong to their own platform
-            # budgets and are not falsely treated as app symbols here.
-            source_records = _parse_su(usage_path)
-            try:
-                source_resolved = source_path.resolve()
-                records.extend(
-                    record for record in source_records
-                    if _resolve_compiler_source(record.source) == source_resolved
+            tu = _translation_unit_key(source_path, object_path)
+            source_records, source_cgraph, source_synchronous_cgraph = (
+                _parse_tu_compiler_evidence(
+                    usage_path,
+                    graph_path,
+                    tu,
+                    object_path,
+                    final_map_path=build_dir / "zephyr" / "zephyr.map",
+                    linked_object=linked_object,
                 )
-            except OSError as exc:
-                evidence.issues.append(f"cannot resolve application source {source_path}: {exc}")
-            cgraphs.update(_parse_cgraph(graph_path, source_path.name))
-            synchronous_cgraphs.update(
-                _parse_synchronous_cgraph(graph_path, source_path.name)
             )
-        linked = [
-            record for record in records
-            if record.function in symbols or
-            _canonical_function(record.function) in symbols
-        ]
+            records_by_tu[tu] = (source_path, source_records)
+            cgraphs.update(source_cgraph)
+            synchronous_cgraphs.update(source_synchronous_cgraph)
+        linked = _select_live_records(records_by_tu, symbols, cgraphs, build_dir)
         evidence.linked_usage_count = len(linked)
         if not linked:
-            evidence.issues.append("no linked application functions matched compiler evidence")
+            evidence.issues.append("no linked C functions matched compiler evidence")
+        application_functions = {
+            node[1] for node in cgraphs
+            if not node[1].startswith(_CGRAPH_VARIABLE_PREFIX)
+        }
+        platform_symbols = symbols - application_functions
         _attribute_linked_functions(
             evidence,
             policy,
@@ -965,6 +2006,7 @@ def verify_build(build_dir: Path, policies: dict[str, PresetPolicy], frame_limit
             roots,
             frame_limit,
             synchronous_cgraphs,
+            platform_symbols=platform_symbols,
         )
     except (OSError, EvidenceError, ValueError) as exc:
         evidence.issues.append(str(exc))
@@ -1008,7 +2050,9 @@ def _required_threads(build: BuildEvidence, policy: PresetPolicy) -> dict[str, i
         required["clicker_action"] = clicker_action_bytes
     anchor_uwb_scan_bytes = _owner_capacity(policy, "anchor_uwb_scan")
     if anchor_uwb_scan_bytes:
-        required["anchor_uwb_scan"] = anchor_uwb_scan_bytes
+        required["anchor_uwb_scan"] = _runtime_kernel_stack_size(
+            build, anchor_uwb_scan_bytes
+        )
     if policy.idle_bytes:
         required["idle"] = policy.idle_bytes
     if policy.log_processor_bytes:
@@ -1272,6 +2316,7 @@ def _load_hardware_manifest(path: Path, build: BuildEvidence, policy: PresetPoli
             raise EvidenceError("capture tool provenance does not match this repository")
         expected_command = [
             "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+            "-a", "0x20000410", "-s", "0x100",
             "-u", data["probe_id"], "--up-channel-id", "0",
         ]
         if provenance.get("rtt_command") != expected_command or provenance.get("tty_wrapper") != "script":

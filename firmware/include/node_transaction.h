@@ -96,6 +96,11 @@ int node_transaction_note_request_terminal(
     const struct node_comm_terminal_event *event,
     uint64_t now_ms,
     enum node_transaction_action *action);
+int node_transaction_note_request_redrive(
+    struct node_transaction *transaction,
+    const struct node_comm_terminal_event *event,
+    uint64_t now_ms,
+    enum node_transaction_action *action);
 int node_transaction_reconcile_result(
     struct node_transaction *transaction,
     const struct node_transaction_key *key,

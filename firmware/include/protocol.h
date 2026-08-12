@@ -26,6 +26,8 @@ extern "C" {
 #define PROTO_TLV_U16_ENCODED_LEN (PROTO_TLV_HEADER_LEN + 2u)
 #define PROTO_TLV_U32_ENCODED_LEN (PROTO_TLV_HEADER_LEN + 4u)
 #define PROTO_TLV_U64_ENCODED_LEN (PROTO_TLV_HEADER_LEN + 8u)
+#define PROTO_GATEWAY_LOCAL_COMMAND_RESULT_PAYLOAD_LEN \
+    ((2u * PROTO_TLV_U16_ENCODED_LEN) + PROTO_TLV_U8_ENCODED_LEN)
 #define COMMAND_RESULT_ID_TLV_BYTES \
     ((2u * PROTO_TLV_U64_ENCODED_LEN) + \
      (2u * PROTO_TLV_U32_ENCODED_LEN) + \
@@ -745,6 +747,11 @@ int gateway_host_receipt_identity_from_tlvs(
     const uint8_t *payload,
     size_t payload_len,
     struct gateway_host_receipt_identity *identity);
+/* Validate the exact self-addressed result made by gateway_command_build_result.
+ * The caller additionally binds its endpoints to the local DEVICE_ID. */
+bool gateway_local_command_result_valid(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len);
 int gateway_host_receipt_packet_validate(
     const struct proto_packet *packet,
     const uint8_t *payload,

@@ -32,6 +32,7 @@ static void radio_activity_decision_init(
     memset(decision, 0, sizeof(*decision));
     decision->state = FW_RADIO_ACTIVITY_IDLE;
     decision->mesh_work_allowed = true;
+    decision->c5_tx_allowed = true;
     decision->route_wait_allowed = true;
     decision->report_tx_allowed = true;
     decision->uwb_rx_allowed = true;
@@ -55,6 +56,7 @@ int fw_radio_activity_decide(
     if (capture->click_active) {
         decision->state = FW_RADIO_ACTIVITY_CLICK;
         decision->mesh_work_allowed = false;
+        decision->c5_tx_allowed = false;
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
         decision->uwb_rx_allowed = false;
@@ -62,6 +64,7 @@ int fw_radio_activity_decide(
     } else if (capture->survey_pending) {
         decision->state = FW_RADIO_ACTIVITY_SURVEY;
         decision->mesh_work_allowed = false;
+        decision->c5_tx_allowed = false;
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
         decision->uwb_rx_allowed = false;
@@ -74,18 +77,38 @@ int fw_radio_activity_decide(
          */
         decision->state = FW_RADIO_ACTIVITY_GATEWAY_RX;
         decision->mesh_work_allowed = false;
+        decision->c5_tx_allowed = false;
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
         decision->reason = "gateway-rx";
     } else if (capture->rx_queue_used > 0u ||
                capture->ch9_ack_send_pending ||
                capture->ch9_ack_wait_active) {
+        bool live_ack_owner = capture->ch9_ack_send_pending ||
+                              capture->ch9_ack_wait_active;
+
+        decision->state = FW_RADIO_ACTIVITY_MESH_RX;
+        /* The handler may owe an immediate response to the exact packet it
+         * just dequeued while unrelated RX records remain queued behind it.
+         * Queue depth alone cannot suppress that causal response, but a live
+         * ACK deadline/send owner still outranks every Channel-5 exchange. */
+        decision->c5_tx_allowed =
+            !live_ack_owner && capture->rx_queue_used > 0u &&
+            capture->c5_tx_intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE;
+        decision->route_wait_allowed = false;
+        decision->report_tx_allowed = false;
+        decision->reason = decision->c5_tx_allowed ?
+                           "mesh-rx-causal-response" :
+                           capture->rx_queue_used > 0u ? "mesh-rx" :
+                           (capture->ch9_ack_send_pending ?
+                                "ch9-ack-send" : "ch9-ack-wait");
+    } else if (capture->ch9_ack_receive_eligible) {
+        /* Retry backoff and forwarded-custody retention still accept a late
+         * ACK, but they do not own a live deadline that can veto Channel 5. */
         decision->state = FW_RADIO_ACTIVITY_MESH_RX;
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
-        decision->reason = capture->rx_queue_used > 0u ? "mesh-rx" :
-                           (capture->ch9_ack_send_pending ?
-                                "ch9-ack-send" : "ch9-ack-wait");
+        decision->reason = "ch9-ack-rx-eligible";
     } else if (capture->relay_tx_active ||
                capture->route_waiting_tx_active) {
         decision->state = FW_RADIO_ACTIVITY_MESH_TX;

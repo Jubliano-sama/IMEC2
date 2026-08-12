@@ -7,16 +7,13 @@
 #include <stdint.h>
 
 struct app_mesh_collection_deferral_ops {
-    int (*save_outbox)(struct mesh_relay *relay, uint32_t now_ms, void *ctx);
     int (*schedule_retry)(void *ctx);
     void *ctx;
 };
 
 struct app_mesh_collection_deferral_result {
     bool deferred;
-    bool outbox_saved;
     bool retry_scheduled;
-    int save_ret;
     int schedule_ret;
 };
 

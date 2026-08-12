@@ -56,11 +56,46 @@ def function_body(name: str) -> str:
     return source_function_body(CLICKER, name)
 
 
+# Every clicker owner releases the exact generation in two phases.  A stale
+# callback must return before it touches the hardware, while a physical park
+# failure must reach release_finish so the guard can poison and retain it.
+assert "radio_guard_uwb_start" not in CLICKER
+assert "radio_guard_uwb_stop" not in CLICKER
+for claim in re.finditer(r"radio_guard_uwb_claim\s*\(", CLICKER):
+    claim_end = CLICKER.index(");", claim.start())
+    assert "RADIO_GUARD_UWB_CLIENT_CLICKER" in CLICKER[
+        claim.start():claim_end
+    ]
+
+for release_helper, park_call in (
+    (
+        "clicker_release_radio_to_standby",
+        "app_radio_standby_with_bounded_recovery",
+    ),
+    (
+        "clicker_release_radio_to_idle",
+        "app_radio_idle_with_bounded_recovery",
+    ),
+):
+    release = function_body(release_helper)
+    begin = release.index("radio_guard_uwb_release_begin")
+    stale_failure = release.index("if (release_ret < 0)", begin)
+    stale_failure_end = braced_statement_end(release, stale_failure)
+    parking = release.index(park_call, stale_failure_end)
+    finish = release.index(
+        "radio_guard_uwb_release_finish(radio_lease, parking_ret)",
+        parking,
+    )
+    assert begin < stale_failure < stale_failure_end < parking < finish
+    assert "return release_ret;" in release[stale_failure:stale_failure_end]
+    assert park_call not in release[stale_failure:stale_failure_end]
+
+
 wake = function_body("clicker_send_wake_claim_train_until")
 tail = function_body("app_clicker_wake_train_opportunity_tail_ms")
 assert "post_wake_claimed_duration_ms" in tail
 admission = wake.index("app_wake_train_deadline_fits")
-radio = wake.index("radio_guard_uwb_start", admission)
+radio = wake.index("radio_guard_uwb_claim", admission)
 pre_sniff = wake.index("clicker_wake_train_sniff_activity", radio)
 post_configure_deadline = wake.index(
     "app_wake_train_deadline_fits", pre_sniff
@@ -70,6 +105,15 @@ post_sniff = wake.index(
 )
 backoff = wake.index("clicker_wake_train_backoff(", post_sniff)
 assert admission < radio < pre_sniff < post_configure_deadline < post_sniff < backoff
+wake_release = wake.index("clicker_release_radio_to_standby", post_sniff)
+wake_release_failure = wake.index("if (release_ret < 0)", wake_release)
+wake_release_failure_end = braced_statement_end(wake, wake_release_failure)
+assert "return release_ret;" in wake[
+    wake_release_failure:wake_release_failure_end
+]
+assert "continue;" not in wake[
+    wake_release_failure:wake_release_failure_end
+]
 
 sniff = function_body("clicker_wake_train_sniff_activity")
 sniff_configure = sniff.index("dwm3000_driver_configure_wake_mode")
@@ -86,11 +130,11 @@ assert "return -ETIMEDOUT" in backoff_body[:sleep]
 politeness = function_body("clicker_politeness_phase")
 clip_phase = politeness.index("app_wake_train_deadline_clip_delay")
 phase_deadline = politeness.index("deadline_ms = now_ms + phase_budget_ms")
-radio = politeness.index("radio_guard_uwb_start", phase_deadline)
+radio = politeness.index("radio_guard_uwb_claim", phase_deadline)
 configure = politeness.index("dwm3000_driver_configure_range_mode", radio)
 configure_failure = politeness.index("if (ret < 0)", configure)
 configure_recovery = politeness.index(
-    "app_radio_standby_with_bounded_recovery",
+    "clicker_release_radio_to_standby",
     configure_failure,
 )
 post_configure_deadline = politeness.index(
@@ -100,7 +144,7 @@ receive = politeness.index("clicker_sample_uwb_gate", post_configure_deadline)
 hard_receive_failure = politeness.index("if (ret < 0)", receive)
 hard_receive_break = politeness.index("break;", hard_receive_failure)
 radio_cleanup = politeness.index(
-    "app_radio_standby_with_bounded_recovery",
+    "clicker_release_radio_to_standby",
     hard_receive_break,
 )
 hard_receive_return = politeness.index("if (ret < 0)", radio_cleanup)
@@ -136,6 +180,18 @@ schedule = collect.index(
     "clicker_send_range_schedule_until", deadline_before_schedule
 )
 assert wake_until < discover_until < deadline_before_schedule < schedule
+insufficient_release = collect.index(
+    "app_clicker_send_range_release", discover_until
+)
+insufficient_release_failure = collect.index(
+    "if (release_ret < 0)", insufficient_release
+)
+insufficient_release_failure_end = braced_statement_end(
+    collect, insufficient_release_failure
+)
+assert "return release_ret;" in collect[
+    insufficient_release_failure:insufficient_release_failure_end
+]
 
 schedule_send = function_body("clicker_send_range_schedule_until")
 configure = schedule_send.index("dwm3000_driver_configure_wake_mode")
@@ -162,7 +218,7 @@ range_burst = function_body("app_clicker_range_scheduled_anchors")
 assert "int64_t schedule_tx_ms" in range_burst
 assert "schedule_tx_ms = k_uptime_get()" not in range_burst
 burst_radio = range_burst.index(
-    'radio_guard_uwb_start("clicker scheduled UWB range burst")'
+    "radio_guard_uwb_claim"
 )
 burst_radio_failure = range_burst.index("if (ret < 0)", burst_radio)
 burst_radio_failure_end = braced_statement_end(
@@ -171,7 +227,7 @@ burst_radio_failure_end = braced_statement_end(
 failed_burst_acquire = range_burst[
     burst_radio_failure:burst_radio_failure_end
 ]
-assert "radio_guard_uwb_stop" not in failed_burst_acquire
+assert "clicker_release_radio_to_standby" not in failed_burst_acquire
 assert "dwm3000_driver_standby" not in failed_burst_acquire
 
 burst_loop = range_burst.index(
@@ -215,9 +271,9 @@ assert (
     < burst_loop_end
 )
 assert "slot_deadline_budget_ms" in range_burst[target:exchange]
-assert range_burst.count("radio_guard_uwb_start") == 1
-assert "radio_guard_uwb_start" not in burst_loop_body
-assert "radio_guard_uwb_stop" not in burst_loop_body
+assert range_burst.count("radio_guard_uwb_claim") == 1
+assert "radio_guard_uwb_claim" not in burst_loop_body
+assert "clicker_release_radio_to_standby" not in burst_loop_body
 assert "last_ret = idle_ret;" in range_burst[idle_failure:idle_failure_end]
 assert "break;" in range_burst[idle_failure:idle_failure_end]
 assert "uwb_clicker_abort_attempt(session)" in range_burst[
@@ -229,26 +285,20 @@ assert "break;" in range_burst[cancel_failure:cancel_failure_end]
 # The scheduled owner covers every sample and parks the radio before the sole
 # release. Every post-acquisition loop exit converges on that cleanup.
 burst_cleanup = function_body("clicker_finish_scheduled_range_radio_burst")
-assert "radio_guard_uwb_start" not in burst_cleanup
-cleanup_standby = burst_cleanup.index(
-    "app_radio_standby_with_bounded_recovery"
-)
-cleanup_failure = burst_cleanup.index("if (ret < 0)", cleanup_standby)
+assert "radio_guard_uwb_claim" not in burst_cleanup
+cleanup_release = burst_cleanup.index("clicker_release_radio_to_standby")
+cleanup_failure = burst_cleanup.index("if (ret < 0)", cleanup_release)
 cleanup_failure_end = braced_statement_end(burst_cleanup, cleanup_failure)
-cleanup_release = burst_cleanup.index(
-    "radio_guard_uwb_stop", cleanup_failure_end
-)
 assert (
-    cleanup_standby
+    cleanup_release
     < cleanup_failure
     < cleanup_failure_end
-    < cleanup_release
 )
-assert burst_cleanup.count("radio_guard_uwb_stop") == 1
-assert "return ret;" in burst_cleanup[cleanup_release:]
+assert burst_cleanup.count("clicker_release_radio_to_standby") == 1
+assert "return ret;" in burst_cleanup[cleanup_failure_end:]
 
 finish_call = range_burst.index(
-    "finish_ret = clicker_finish_scheduled_range_radio_burst()",
+    "finish_ret = clicker_finish_scheduled_range_radio_burst(&radio_lease)",
     burst_loop_end,
 )
 state_abort = range_burst.index(
@@ -258,7 +308,7 @@ state_abort = range_burst.index(
 finish_failure = range_burst.index("if (finish_ret < 0)", finish_call)
 finish_failure_end = braced_statement_end(range_burst, finish_failure)
 assert range_burst.count(
-    "clicker_finish_scheduled_range_radio_burst()"
+    "clicker_finish_scheduled_range_radio_burst(&radio_lease)"
 ) == 1
 assert "return " not in range_burst[
     burst_radio_failure_end:finish_call
@@ -315,7 +365,29 @@ assert (
 assert "k_spin_unlock(&mesh_rx_handoff_lock" in control_active
 
 coordinator = source_function_body(
-    MESH_COORDINATION, "mesh_coordinator_decide_now"
+    MESH_COORDINATION, "mesh_coordinator_decide_for_c5_intent"
+)
+assert "app_mesh_ch9_core_pending_allows_rx(" in coordinator, (
+    "the coordinator must keep Channel-9 RX visible while retained custody "
+    "is between gateway-ACK attempts"
+)
+assert re.search(
+    r"\.ch9_ack_wait_active\s*=.*?"
+    r"app_mesh_ch9_core_ack_wait_active\s*\(",
+    coordinator,
+    re.DOTALL,
+), (
+    "the live ACK-owner predicate must block competing Channel-5 work only "
+    "while an ACK deadline or send owner is active"
+)
+assert re.search(
+    r"\.ch9_ack_receive_eligible\s*=.*?"
+    r"app_mesh_ch9_core_pending_allows_rx\s*\(",
+    coordinator,
+    re.DOTALL,
+), (
+    "retry-backoff custody must remain RX eligible without becoming a live "
+    "Channel-5 veto"
 )
 assert re.search(
     r"\.gateway_continuous_ch9\s*=\s*mesh_gateway_route_test_role\s*\(\s*\)"
@@ -353,14 +425,6 @@ for work_item in gateway_priority_work_items:
     assert release >= 0, (
         f"{handler_name} retains the gateway-priority receive-abort owner"
     )
-
-    explicit_boundary = handler.find(
-        "app_mesh_command_orchestrator_mark_safe_boundary("
-    )
-    if explicit_boundary >= 0:
-        assert explicit_boundary < release
-        assert "return;" not in handler[explicit_boundary:release]
-        continue
 
     entry = handler.index("ARG_UNUSED(work);") + len("ARG_UNUSED(work);")
     first_stateful_call = re.search(
@@ -426,6 +490,7 @@ assert (
 normal_cancel = normal.index("if (range_ret == -ECANCELED)", normal_range)
 normal_cancel_end = braced_statement_end(normal, normal_cancel)
 retry = function_body("clicker_runtime_prepare_retry")
+retry_rearm_gate = retry.index("if (!radio_guard_uwb_rearm_allowed())")
 retry_prepare = retry.index("uwb_clicker_prepare_retry")
 retry_tail = retry.index("app_clicker_wake_train_opportunity_tail_ms")
 retry_delay = retry.index("app_clicker_apply_retry_delay", retry_prepare)
@@ -467,8 +532,36 @@ assert "clicker_runtime_expect_effect(FW_EFFECT_CLICK_CLEANUP)" not in normal[
 assert "return range_ret;" in normal[
     success_with_error:success_with_error_end
 ]
-assert retry_prepare < retry_tail < retry_delay < retry_contention_delay
+assert retry_rearm_gate < retry_prepare < retry_tail < retry_delay < retry_contention_delay
 assert "required_retry_tail_ms" in retry[retry_tail:retry_contention_delay]
+
+retry_after_failure = function_body("clicker_runtime_retry_after_failure")
+failure_rearm_gate = retry_after_failure.index(
+    "if (!radio_guard_uwb_rearm_allowed())"
+)
+failure_event = retry_after_failure.index(
+    "clicker_runtime_click_event_payload", failure_rearm_gate
+)
+failure_timer = retry_after_failure.index(
+    "clicker_runtime_expect_effect(FW_EFFECT_START_TIMER)", failure_event
+)
+assert failure_rearm_gate < failure_event < failure_timer
+assert "clicker_runtime_abort_click" in retry_after_failure[
+    failure_rearm_gate:failure_event
+]
+
+discover_release_gate = normal.index(
+    "if (ret < 0 && !radio_guard_uwb_rearm_allowed())", normal_discover
+)
+discover_completion = normal.index(
+    "FW_EVENT_DISCOVERY_COMPLETED", discover_release_gate
+)
+range_release_gate = normal.index(
+    "if (range_ret < 0 && !radio_guard_uwb_rearm_allowed())", normal_range
+)
+range_completion = normal.index("FW_EVENT_RANGE_COMPLETED", range_release_gate)
+assert normal_discover < discover_release_gate < discover_completion
+assert normal_range < range_release_gate < range_completion
 
 # One logical click owns one generation across bounded retries, while RF
 # attempt accounting is emitted only after the wake sender reports real TX.
@@ -496,7 +589,7 @@ assert diagnostic_deadline < diagnostic_collect < diagnostic_deadline_argument
 assert "app_clicker_collect_uwb_attempt(&session" not in diagnostic
 
 self_test = function_body("app_clicker_run_self_test")
-self_test_acquire = self_test.index("radio_guard_uwb_start")
+self_test_acquire = self_test.index("radio_guard_uwb_claim")
 self_test_acquire_failure = self_test.index(
     "if (ret < 0)", self_test_acquire
 )
@@ -511,11 +604,11 @@ self_test_first_dwm = min(
         "dwm3000_port_hw_reset",
         "dwm3000_driver_probe",
         "dwm3000_port_set_fast_spi",
-        "app_radio_standby_with_bounded_recovery",
+        "clicker_release_radio_to_standby",
     )
 )
 self_test_release = self_test.index(
-    "radio_guard_uwb_stop", self_test_first_dwm
+    "clicker_release_radio_to_standby", self_test_first_dwm
 )
 self_test_diagnostic = self_test.index(
     "app_clicker_run_uwb_diagnostic_click", self_test_release
@@ -528,13 +621,13 @@ assert (
     < self_test_release
     < self_test_diagnostic
 )
-assert "radio_guard_uwb_stop" not in self_test[
+assert "clicker_release_radio_to_standby" not in self_test[
     self_test_acquire_failure:self_test_acquire_failure_end
 ]
 assert "return " not in self_test[
     self_test_acquire_failure_end:self_test_release
 ], "every post-acquisition self-test exit must pass through guard release"
-assert self_test.count("radio_guard_uwb_stop") == 1
+assert self_test.count("clicker_release_radio_to_standby") == 1
 
 radio_recovery = source_function_body(
     RADIO_RECOVERY,

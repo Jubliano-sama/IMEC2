@@ -11,6 +11,7 @@ int app_anchor_init(void)
      */
     return 0;
 #else
+#if DEVICE_ROLE == ROLE_ANCHOR
     const struct app_anchor_survey_runtime_ops runtime_ops = {
 #if DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
@@ -28,7 +29,7 @@ int app_anchor_init(void)
         .connected_radio_active = mesh_anchor_connected_radio_active,
         .active_owner_matches_outbound =
             mesh_report_active_owner_matches_outbound,
-        .resume_restored_outbox = mesh_report_resume_restored_outbox,
+        .wake_active_outbox = mesh_report_wake_active_outbox,
     };
     const struct app_anchor_survey_discovery_ops discovery_ops = {
         .abort_requested = app_anchor_survey_runtime_abort_requested,
@@ -36,12 +37,15 @@ int app_anchor_init(void)
         .preempt_radio = anchor_preempt_for_survey_discovery,
         .admit_start = app_anchor_survey_runtime_admit_discovery,
         .queue_start = app_anchor_survey_runtime_queue_discovery,
-        .schedule_work_ms = app_anchor_survey_runtime_schedule_ms,
+        .schedule_work_ms =
+            app_anchor_survey_runtime_schedule_discovery_custody_ms,
+        .boot_incarnation = app_durable_state_boot_incarnation,
         .next_sequence = app_anchor_survey_runtime_next_sequence,
-        .seed_sequence = app_anchor_survey_runtime_seed_sequence,
     };
+#endif
     int ret;
 
+#if DEVICE_ROLE == ROLE_ANCHOR
     ret = app_anchor_survey_runtime_init(&runtime_ops);
     if (ret < 0) {
         return ret;
@@ -49,11 +53,6 @@ int app_anchor_init(void)
     ret = app_anchor_survey_discovery_init(&discovery_ops);
     if (ret < 0) {
         return ret;
-    }
-#if DEVICE_ROLE == ROLE_GATEWAY
-    ret = gateway_broadcast_command_sequence_init();
-    if (ret < 0) {
-        LOG_ERR("gateway broadcast sequence reservation deferred: %d", ret);
     }
 #endif
     k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
@@ -80,16 +79,24 @@ int app_anchor_init(void)
     app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
         gateway_host_command_schedule_failed, NULL);
 #endif
+#if DEVICE_ROLE == ROLE_ANCHOR
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);
     k_work_init_delayable(&anchor_command_execute_work,
                           anchor_command_execute_work_handler);
     k_work_init_delayable(&anchor_discovery_claim_work,
                           anchor_discovery_claim_work_handler);
+#endif
 #if DEVICE_ROLE == ROLE_GATEWAY
+    app_gateway_survey_incarnation_tracker_init(
+        &gateway_survey_incarnation_tracker);
+    memset(&gateway_survey_incarnation_event,
+           0,
+           sizeof(gateway_survey_incarnation_event));
     {
         const struct app_gateway_assignment_publisher_ops publisher_ops = {
-            .emit_if_available = gateway_observe_command_event_if_available,
+            .emit_if_available = gateway_publish_assignment_event_if_available,
+            .reserve_event_seq = gateway_reserve_command_event_sequence,
             .batch_completed = gateway_complete_assignment_publication,
         };
 
@@ -165,9 +172,7 @@ int app_anchor_start_anchor_role(void)
         .wake_channel = UWB_WAKE_CHANNEL,
         .ranging_channel = UWB_RANGING_CHANNEL,
     };
-    int delivery_bind_ret = 0;
     int ret;
-    bool delivery_restored = false;
 
     mesh_relay_init(&mesh_runtime,
                     MESH_RELAY_ROLE_ANCHOR,
@@ -177,10 +182,6 @@ int app_anchor_start_anchor_role(void)
     ret = app_mesh_report_attach_anchor_downlink_store();
     if (ret < 0) {
         LOG_ERR("anchor downlink store attach failed: %d", ret);
-        return ret;
-    }
-    ret = app_anchor_survey_discovery_restore(&delivery_restored);
-    if (ret < 0) {
         return ret;
     }
     ret = uwb_anchor_session_init(&anchor_uwb_session, &anchor_config);
@@ -214,16 +215,13 @@ int app_anchor_start_anchor_role(void)
         return ret;
     }
     /*
-     * A restored relay outbox may already carry this exact result, but it
-     * cannot replace the durable post-result action owner. Restore and
-     * idempotently resubmit the exact result until one gateway-confirmed
-     * terminal commits both pieces together.
+     * Command-result and post-result action custody is intentionally RAM-only.
+     * Reset aborts an unconfirmed result and the gateway must redrive it under
+     * the new boot incarnation. If reset follows result confirmation, reset
+     * itself completes CMD_REBOOT and clears route state for
+     * CMD_FORCE_REDISCOVERY, so no false flash-backed action debt is required.
      */
-    ret = anchor_collection_result_restore();
-    if (ret < 0 && ret != -ENOENT && ret != -ENOTSUP) {
-        LOG_ERR("anchor collection result restore failed closed: %d", ret);
-        return ret;
-    }
+    anchor_collection_result_start_ram_owner();
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (gateway_ble_transport_enabled()) {
         status_debug_note("DBG_ANCHOR_BLE_INIT_BEGIN\n");
@@ -250,46 +248,43 @@ int app_anchor_start_anchor_role(void)
                        &anchor_uwb_scan_work_q_config);
     ret = app_anchor_survey_runtime_post_work_queue_start();
     if (ret < 0) {
-        LOG_ERR("anchor survey queue-ready restore kick failed: %d", ret);
+        LOG_ERR("anchor survey queue-ready publication failed: %d", ret);
         return ret;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_note("DBG_ANCHOR_CH5_SCAN_WQ_STARTED\n");
     }
 #endif
-    if (delivery_restored) {
-        delivery_bind_ret = app_anchor_survey_discovery_retry_report();
-        if (delivery_bind_ret < 0 && delivery_bind_ret != -EAGAIN) {
-            LOG_WRN("restored survey delivery bind deferred: %d",
-                    delivery_bind_ret);
-        }
-        app_anchor_survey_runtime_schedule_ms(0u);
-    }
-    if (!delivery_restored || delivery_bind_ret == 0) {
-        mesh_report_resume_restored_outbox("anchor-startup-owned");
-    } else {
-        status_debug_printf(
-            "DBG_OUTBOX_RESTORE_WAIT_SURVEY_OWNER ret=%d\n",
-            delivery_bind_ret);
-    }
     ret = anchor_start_uwb_scan();
     if (ret < 0) {
         LOG_ERR("anchor UWB scan unavailable: %d", ret);
         return ret;
     }
+    anchor_heartbeat_request_startup();
     return 0;
 #endif
 }
 
 int app_anchor_start_gateway_role(void)
 {
+    uint32_t boot_incarnation = 0u;
     int ret;
 
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    ret = app_durable_state_boot_incarnation(&boot_incarnation);
+    if (ret < 0) {
+        LOG_ERR("gateway boot incarnation unavailable: %d", ret);
+        return ret;
+    }
+#else
+    LOG_ERR("gateway role requires durable boot incarnation");
+    return -ENOTSUP;
+#endif
     mesh_relay_init(&mesh_runtime,
                     MESH_RELAY_ROLE_GATEWAY,
                     DEVICE_ID,
                     GATEWAY_ID,
-                    1u);
+                    boot_incarnation);
     ret = app_mesh_report_attach_gateway_ack_store();
     if (ret < 0) {
         LOG_ERR("gateway ACK store attach failed: %d", ret);

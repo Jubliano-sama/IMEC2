@@ -398,15 +398,18 @@ int app_mesh_ch9_ack_table_queue(
     return PROTO_OK;
 }
 
-int app_mesh_ch9_ack_table_queue_forwarded(
+static int ack_table_queue_forwarded_owned(
     struct app_mesh_ch9_ack_table *table,
     const struct mesh_outbound *ack,
+    enum app_mesh_ch9_ack_owner owner,
     enum app_mesh_ch9_ack_queue_result *result)
 {
     struct app_mesh_ch9_ack_batch *batch;
     bool replaced;
 
     if (table == NULL || !ack_template_supported(ack) ||
+        (owner != APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE &&
+         owner != APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD) ||
         ack->packet.msg_type != MSG_GATEWAY_ACK) {
         return PROTO_ERR_ARG;
     }
@@ -421,6 +424,9 @@ int app_mesh_ch9_ack_table_queue_forwarded(
         }
     } else if (ack_batch_is_forwarded_gateway_ack(batch)) {
         if (forwarded_ack_matches_exact(batch, ack)) {
+            if (owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE) {
+                batch->owner = APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE;
+            }
             ack_queue_result_set(result, APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
             return PROTO_OK;
         }
@@ -435,10 +441,29 @@ int app_mesh_ch9_ack_table_queue_forwarded(
     batch->count = 1u;
     batch->valid = true;
     batch->preserve_payload = true;
+    batch->owner = (uint8_t)owner;
     ack_queue_result_set(result,
                          replaced ? APP_MESH_CH9_ACK_QUEUE_REPLACED :
                                     APP_MESH_CH9_ACK_QUEUE_ADDED);
     return PROTO_OK;
+}
+
+int app_mesh_ch9_ack_table_queue_forwarded(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    enum app_mesh_ch9_ack_queue_result *result)
+{
+    return ack_table_queue_forwarded_owned(
+        table, ack, APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE, result);
+}
+
+int app_mesh_ch9_ack_table_queue_late_forwarded(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    enum app_mesh_ch9_ack_queue_result *result)
+{
+    return ack_table_queue_forwarded_owned(
+        table, ack, APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD, result);
 }
 
 int app_mesh_ch9_ack_table_build_peer(
@@ -830,6 +855,237 @@ bool app_mesh_ch9_core_pending_allows_rx(const struct mesh_pending_tx *pending,
             pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD) &&
            pending->radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
            pending->next_hop_id != 0u;
+}
+
+static bool c5_repair_pending_state_matches(
+    enum app_mesh_c5_tx_authorization kind,
+    const struct mesh_pending_tx *pending,
+    const struct app_mesh_ch9_ack_batch *batch,
+    uint64_t peer_id)
+{
+    if (kind == APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR) {
+        return (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+                pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
+               !pending->gateway_ack_forward_pending && batch == NULL;
+    }
+    if (kind != APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR) {
+        return false;
+    }
+    return (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD ||
+            pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
+           pending->gateway_ack_forward_pending && batch != NULL &&
+           batch->valid && batch->preserve_payload && batch->count > 0u &&
+           batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE &&
+           batch->peer_id == peer_id &&
+           batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK &&
+           batch->template_ack.packet.dst_id == peer_id &&
+           batch->template_ack.next_hop_id == peer_id;
+}
+
+static bool c5_late_gateway_ack_batch_matches(
+    const struct app_mesh_ch9_ack_batch *batch,
+    uint64_t peer_id)
+{
+    return batch != NULL && batch->valid && batch->preserve_payload &&
+           batch->count > 0u &&
+           batch->owner == APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD &&
+           batch->peer_id == peer_id &&
+           batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK &&
+           batch->template_ack.packet.dst_id == peer_id &&
+           batch->template_ack.next_hop_id == peer_id;
+}
+
+bool app_mesh_ch9_c5_repair_authorization_capture(
+    struct app_mesh_c5_tx_authorization_token *authorization,
+    enum app_mesh_c5_tx_authorization kind,
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    const struct app_mesh_ch9_ack_batch *batch,
+    uint64_t repair_peer_id)
+{
+    if (authorization == NULL) {
+        return false;
+    }
+    memset(authorization, 0, sizeof(*authorization));
+    if (kind == APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR) {
+        if (repair_peer_id == 0u ||
+            !c5_late_gateway_ack_batch_matches(batch, repair_peer_id) ||
+            !mesh_packet_semantic_digest(&batch->template_ack.packet,
+                                         batch->template_ack.payload,
+                                         batch->template_ack.payload_len,
+                                         authorization->retained_ack_digest)) {
+            return false;
+        }
+        authorization->kind = kind;
+        authorization->peer_id = repair_peer_id;
+        authorization->retained_ack_session_id =
+            batch->template_ack.packet.session_id;
+        authorization->retained_ack_seq = batch->template_ack.packet.seq;
+        authorization->retained_ack_valid = true;
+        authorization->valid = true;
+        return true;
+    }
+    if (!relay_tx_active || pending == NULL || repair_peer_id == 0u ||
+        pending->packet.src_id != repair_peer_id ||
+        pending->packet.payload_len != pending->payload_len ||
+        pending->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        !c5_repair_pending_state_matches(kind, pending, batch,
+                                         repair_peer_id) ||
+        !mesh_packet_semantic_digest(&pending->packet,
+                                     pending->payload,
+                                     pending->payload_len,
+                                     authorization->pending_digest)) {
+        return false;
+    }
+
+    authorization->kind = kind;
+    authorization->peer_id = repair_peer_id;
+    authorization->pending_session_id = pending->packet.session_id;
+    authorization->pending_seq = pending->packet.seq;
+    authorization->pending_msg_type = pending->packet.msg_type;
+    if (kind == APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR) {
+        if (!mesh_packet_semantic_digest(&batch->template_ack.packet,
+                                         batch->template_ack.payload,
+                                         batch->template_ack.payload_len,
+                                         authorization->retained_ack_digest)) {
+            memset(authorization, 0, sizeof(*authorization));
+            return false;
+        }
+        authorization->retained_ack_session_id =
+            batch->template_ack.packet.session_id;
+        authorization->retained_ack_seq = batch->template_ack.packet.seq;
+        authorization->retained_ack_valid = true;
+    }
+    authorization->valid = true;
+    return true;
+}
+
+bool app_mesh_ch9_c5_repair_owner_matches(
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    const struct app_mesh_ch9_ack_batch *batch)
+{
+    uint8_t pending_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t ack_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    if (authorization == NULL || !authorization->valid) {
+        return false;
+    }
+    if (authorization->kind ==
+        APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR) {
+        return authorization->retained_ack_valid &&
+               c5_late_gateway_ack_batch_matches(
+                   batch, authorization->peer_id) &&
+               batch->template_ack.packet.session_id ==
+                   authorization->retained_ack_session_id &&
+               batch->template_ack.packet.seq ==
+                   authorization->retained_ack_seq &&
+               mesh_packet_semantic_digest(&batch->template_ack.packet,
+                                           batch->template_ack.payload,
+                                           batch->template_ack.payload_len,
+                                           ack_digest) &&
+               semantic_digest_equal(ack_digest,
+                                     authorization->retained_ack_digest,
+                                     sizeof(ack_digest));
+    }
+    if (!relay_tx_active || pending == NULL ||
+        pending->packet.src_id != authorization->peer_id ||
+        pending->packet.session_id != authorization->pending_session_id ||
+        pending->packet.seq != authorization->pending_seq ||
+        pending->packet.msg_type != authorization->pending_msg_type ||
+        pending->packet.payload_len != pending->payload_len ||
+        !c5_repair_pending_state_matches(authorization->kind,
+                                         pending,
+                                         batch,
+                                         authorization->peer_id) ||
+        !mesh_packet_semantic_digest(&pending->packet,
+                                     pending->payload,
+                                     pending->payload_len,
+                                     pending_digest) ||
+        !semantic_digest_equal(pending_digest,
+                               authorization->pending_digest,
+                               sizeof(pending_digest))) {
+        return false;
+    }
+    if (!authorization->retained_ack_valid) {
+        return authorization->kind ==
+               APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR;
+    }
+    return batch != NULL &&
+           batch->template_ack.packet.session_id ==
+               authorization->retained_ack_session_id &&
+           batch->template_ack.packet.seq ==
+               authorization->retained_ack_seq &&
+           mesh_packet_semantic_digest(&batch->template_ack.packet,
+                                       batch->template_ack.payload,
+                                       batch->template_ack.payload_len,
+                                       ack_digest) &&
+           semantic_digest_equal(ack_digest,
+                                 authorization->retained_ack_digest,
+                                 sizeof(ack_digest));
+}
+
+bool app_mesh_c5_tx_authorization_token_equal(
+    const struct app_mesh_c5_tx_authorization_token *a,
+    const struct app_mesh_c5_tx_authorization_token *b)
+{
+    return a != NULL && b != NULL && a->valid && b->valid &&
+           a->kind == b->kind && a->peer_id == b->peer_id &&
+           a->pending_session_id == b->pending_session_id &&
+           a->pending_seq == b->pending_seq &&
+           a->pending_msg_type == b->pending_msg_type &&
+           semantic_digest_equal(a->pending_digest, b->pending_digest,
+                                 sizeof(a->pending_digest)) &&
+           a->retained_ack_valid == b->retained_ack_valid &&
+           (!a->retained_ack_valid ||
+            (a->retained_ack_session_id == b->retained_ack_session_id &&
+             a->retained_ack_seq == b->retained_ack_seq &&
+             semantic_digest_equal(a->retained_ack_digest,
+                                   b->retained_ack_digest,
+                                   sizeof(a->retained_ack_digest))));
+}
+
+bool app_mesh_ch9_c5_repair_allowed(
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    const struct app_mesh_ch9_ack_batch *batch,
+    const struct mesh_outbound *candidate)
+{
+    const uint8_t *target_value = NULL;
+    uint8_t target_len = 0u;
+
+    if (!app_mesh_ch9_c5_repair_owner_matches(authorization,
+                                               pending,
+                                               relay_tx_active,
+                                               batch) ||
+        candidate == NULL ||
+        candidate->radio_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        candidate->packet.payload_len != candidate->payload_len) {
+        return false;
+    }
+
+    if (authorization->kind ==
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR) {
+        return candidate->packet.msg_type == MSG_ROUTE_REQ &&
+               tlv_find_unique(candidate->payload,
+                               candidate->payload_len,
+                               TLV_RESPONDER_ID,
+                               &target_value,
+                               &target_len) == PROTO_OK &&
+               target_len == sizeof(uint64_t) &&
+               proto_get_u64_le(target_value) == authorization->peer_id;
+    }
+    return (authorization->kind ==
+                APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR ||
+            authorization->kind ==
+                APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR) &&
+           (candidate->packet.msg_type == MSG_MESH_EVENT_PROPOSE ||
+            candidate->packet.msg_type == MSG_MESH_EVENT_ACCEPT) &&
+           candidate->packet.dst_id == authorization->peer_id &&
+           candidate->next_hop_id == authorization->peer_id;
 }
 
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,

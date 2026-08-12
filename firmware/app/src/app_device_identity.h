@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-#ifndef IMEC_USE_HARDWARE_ANCHOR_ID
-#define IMEC_USE_HARDWARE_ANCHOR_ID 0
+#ifndef IMEC_USE_HARDWARE_DEVICE_ID
+#define IMEC_USE_HARDWARE_DEVICE_ID 0
 #endif
 
 int app_device_identity_init(void);

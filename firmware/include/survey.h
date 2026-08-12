@@ -2,6 +2,7 @@
 #define SURVEY_H
 
 #include "protocol.h"
+#include "node_comm.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,7 +25,7 @@ extern "C" {
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 5u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_DEFAULT_TTL 4u
-#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 600000u
+#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 900000u
 /*
  * A known reverse path gets a route-depth-aware natural control deadline.
  * The base covers one complete gateway-ACK custody/retry horizon; each
@@ -34,21 +35,30 @@ extern "C" {
 #define SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS 30000u
 #define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
+#define SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS 12000u
+#define SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS 3000u
+#define SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS                     \
+    (SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +                            \
+     ((SURVEY_DEFAULT_TTL - 1u) *                                    \
+      SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS))
 /*
  * Gateway host output deliberately has one bounded in-RAM owner, not an NVS
  * journal. A different survey record is therefore flow-controlled at the
  * gateway and remains in exact producer custody until the current item has
  * received its GUI receipt and the mesh ACK handoff owns the remaining work.
  * Size the gateway observation and one mesh-attempt planning horizon for the
- * largest legal synchronized burst: 50 endpoints can each emit five sample
- * records. The 500 ms accounting interval is conservative for one bounded
+ * conservative fleet envelope: any of 50 anchors may be a responder and one
+ * responder emits five sample records. A synchronized batch is smaller
+ * because an endpoint participates in at most one pair. The 500 ms accounting
+ * interval is conservative for one bounded
  * pair-result record on the 30 ms BLE link; the remaining 20 s covers
  * notification/receipt retry, scheduling jitter, and the last ACK handoff.
  * This horizon never authorizes deleting an unconfirmed source
- * record: anchors retain their bounded, anchor-local NVS slots until exact
- * gateway proof, and backpressure prevents a later survey from overwriting
- * them. A gateway reset does not restore the host item; source custody stays
- * upstream for retry.
+ * record: anchors retain bounded RAM slots until exact gateway proof, and
+ * backpressure prevents a later survey from overwriting them. A gateway reset
+ * does not restore the host item, but a still-running anchor retains its RAM
+ * source for retry. An anchor reset drops that source deliberately and its new
+ * boot incarnation terminates any affected old survey.
  */
 #define SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS 500u
 #define SURVEY_PAIR_RESULT_MAX_BURST_RECORDS \
@@ -74,10 +84,14 @@ extern "C" {
  */
 #define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
     (SURVEY_PAIR_START_SKEW_MARGIN_MS + SURVEY_PAIR_INITIATOR_TIMEOUT_MS)
-#define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS 30000u
+#define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS                         \
+    (2u * (SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS +              \
+           SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS))
 #define SURVEY_DISCOVERY_DELIVERY_TERMINAL_POLL_MS 5u
 #define SURVEY_DISCOVERY_OPERATION_TERMINAL_GUARD_MS 1u
-#define SURVEY_PAIR_PREPARED_LEASE_MS 660000u
+#define SURVEY_PAIR_PREPARED_LEASE_MS                                \
+    (SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS +                    \
+     SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS)
 #if SURVEY_PAIR_INITIATOR_TIMEOUT_MS >                                       \
     (UINT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS)
 #error "Survey pair responder window overflows uint32_t"
@@ -114,7 +128,7 @@ extern "C" {
 #define SURVEY_REACHABILITY_ENTRY_LEN 10u
 #define SURVEY_GATEWAY_MAX_PEERS_PER_REPORT 12u
 #define SURVEY_REACH_REPORT_MAX_PAYLOAD_LEN                              \
-    (PROTO_TLV_U32_ENCODED_LEN + 2u * PROTO_TLV_U64_ENCODED_LEN +      \
+    (2u * PROTO_TLV_U32_ENCODED_LEN + 2u * PROTO_TLV_U64_ENCODED_LEN + \
      PROTO_TLV_U16_ENCODED_LEN +                                        \
      SURVEY_GATEWAY_MAX_PEERS_PER_REPORT *                              \
          (PROTO_TLV_HEADER_LEN + SURVEY_REACHABILITY_ENTRY_LEN))
@@ -127,8 +141,8 @@ extern "C" {
 /*
  * One synchronized batch consumes one nonzero round generation. In the
  * automatic path every planned pair can run once and rerun at most twice.
- * Each reporter participates in at most one pair per batch and can emit at
- * most five sample identities, so source/session/sequence remains injective.
+ * Each responder participates in at most one pair per batch and emits at most
+ * five sample identities, so source/session/sequence remains injective.
  */
 #define SURVEY_PAIR_RESULT_MAX_BATCH_COUNT \
     (SURVEY_GATEWAY_MAX_PAIRS * (SURVEY_GATEWAY_PAIR_MAX_RERUNS + 1u))
@@ -150,15 +164,18 @@ _Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
 #define SURVEY_DISCOVERY_MIN_SLOT_MS 30u
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 60000u
+#define SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS \
+    NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS
 #define SURVEY_DISCOVERY_MAX_ROUND_COUNT 4u
 #define SURVEY_DISCOVERY_REPORT_MAX_BURST_RECORDS \
     SURVEY_GATEWAY_MAX_REPORTS
 /*
  * These bounds size gateway observation and one mesh-attempt planning window
  * for the legal 50-report burst. They never authorize deletion at the anchor:
- * an unconfirmed discovery report remains in its exact anchor-local source
- * journal, and
- * later discovery generations are backpressured until gateway proof arrives.
+ * an unconfirmed discovery report remains in its exact anchor-local RAM slot,
+ * and later discovery generations are backpressured until gateway proof
+ * arrives. Anchor reset drops the slot and the new boot incarnation
+ * invalidates the affected gateway operation.
  */
 #define SURVEY_DISCOVERY_REPORT_FLOW_CONTROL_GUARD_MS 5000u
 #define SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS \
@@ -378,38 +395,12 @@ struct survey_gateway_context {
     uint8_t node_count;
     uint8_t report_count;
     uint8_t pair_count;
-    uint8_t next_pair_index;
     bool pairs_planned;
     bool topology_complete;
 };
 
 _Static_assert(sizeof(struct survey_gateway_context) == 2720u,
                "gateway survey context must preserve the 7 KiB RAM recovery");
-
-enum survey_gateway_auto_stage {
-    SURVEY_GATEWAY_AUTO_IDLE = 0,
-    SURVEY_GATEWAY_AUTO_LOAD_PAIR,
-    SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR,
-    SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER,
-    SURVEY_GATEWAY_AUTO_START_RESPONDER,
-    SURVEY_GATEWAY_AUTO_START_INITIATOR,
-};
-
-struct survey_gateway_auto_context {
-    struct survey_pair pair;
-    enum survey_gateway_auto_stage stage;
-    uint8_t pair_reruns_started;
-    bool running;
-    bool waiting;
-};
-
-struct survey_gateway_auto_action {
-    struct survey_pair pair;
-    enum survey_gateway_auto_stage stage;
-    enum command_id command_id;
-    uint64_t target_id;
-    bool complete;
-};
 
 bool survey_sample_count_valid(uint16_t sample_count);
 int survey_pair_validate(const struct survey_pair *pair);
@@ -570,6 +561,8 @@ int survey_gateway_reach_report_compare(
     enum command_status report_status);
 uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl);
 uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count);
+uint32_t survey_pair_control_round_trip_timeout_ms(
+    uint8_t gateway_hop_count);
 uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count);
 uint64_t survey_discovery_report_deadline_ms(uint64_t now_ms,
                                              uint32_t eligible_tx_ms,
@@ -610,33 +603,6 @@ int survey_gateway_plan_pair_rounds(
 int survey_gateway_pair_at(const struct survey_gateway_context *context,
                            size_t pair_index,
                            struct survey_pair *pair);
-int survey_gateway_next_pair(struct survey_gateway_context *context,
-                             struct survey_pair *pair);
-int survey_gateway_auto_begin(struct survey_gateway_auto_context *context);
-int survey_gateway_auto_next_action(struct survey_gateway_auto_context *auto_context,
-                                    struct survey_gateway_context *gateway_context,
-                                    struct survey_gateway_auto_action *action);
-bool survey_gateway_auto_no_unstarted_pairs(
-    const struct survey_gateway_auto_context *auto_context,
-    const struct survey_gateway_context *gateway_context);
-int survey_gateway_auto_mark_waiting(struct survey_gateway_auto_context *context);
-bool survey_gateway_auto_command_matches(const struct survey_gateway_auto_context *context,
-                                         enum command_id command_id,
-                                         uint64_t target_id,
-                                         uint32_t operation_session_id);
-int survey_gateway_auto_retry_pending(struct survey_gateway_auto_context *context,
-                                      enum command_id command_id,
-                                      uint64_t target_id,
-                                      uint32_t operation_session_id);
-int survey_gateway_auto_rerun_pair(
-    struct survey_gateway_auto_context *context);
-int survey_gateway_auto_note_result(struct survey_gateway_auto_context *context,
-                                    enum command_id command_id,
-                                    uint64_t target_id,
-                                    uint32_t operation_session_id,
-                                    enum command_status status,
-                                    bool *pair_launched,
-                                    bool *pair_skipped);
 int survey_extract_reach_request_tlvs(const uint8_t *payload,
                                       size_t payload_len,
                                       uint32_t *survey_id,
@@ -719,6 +685,9 @@ int survey_append_sample_tlvs(uint8_t *payload,
 int survey_extract_sample_tlvs(const uint8_t *payload,
                                size_t payload_len,
                                struct survey_sample *sample);
+int survey_pair_result_payload_validate(const uint8_t *payload,
+                                        size_t payload_len,
+                                        struct survey_sample *sample);
 int survey_init_result_packet(struct proto_packet *packet,
                                    const struct survey_sample *sample,
                                    uint64_t gateway_id,
@@ -751,8 +720,16 @@ int survey_init_discovery_report_packet(struct proto_packet *packet,
                                         uint64_t gateway_id,
                                         uint32_t survey_id,
                                         uint64_t operation_generation,
+                                        uint32_t boot_incarnation,
                                         uint16_t seq,
                                         uint8_t payload_len);
+
+/*
+ * Discovery report sequence numbers are boot-local transport identity. They
+ * never wrap: zero reports exhaustion and requires a reboot to obtain a new
+ * durable boot incarnation before another discovery report can be emitted.
+ */
+uint16_t survey_discovery_sequence_next(uint16_t *sequence_state);
 int survey_init_pair_prepare_packet(struct proto_packet *packet,
                                     const struct survey_pair *pair,
                                     uint64_t gateway_id,

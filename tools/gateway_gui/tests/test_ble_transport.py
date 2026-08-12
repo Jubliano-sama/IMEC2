@@ -14,6 +14,7 @@ from tools.gateway_gui.protocol import (
     SERVICE_UUID,
     GatewayReceiveBuffer,
 )
+from tools.gateway_gui.tests.test_protocol import click_payload, stream_record
 
 
 class FakeServices:
@@ -90,6 +91,27 @@ class BlockingBleakClient(FakeBleakClient):
         self.is_connected = True
 
 
+class YieldingBleakClient(FakeBleakClient):
+    async def write_gatt_char(
+        self, characteristic: Any, data: bytes, *, response: bool
+    ) -> None:
+        await super().write_gatt_char(
+            characteristic, data, response=response
+        )
+        await asyncio.sleep(0)
+
+
+class ImmediateNotifyBleakClient(FakeBleakClient):
+    notification_payload = b""
+
+    async def start_notify(self, uuid: str, callback: Any) -> None:
+        await super().start_notify(uuid, callback)
+        if self.notification_payload:
+            # Bleak implementations may deliver an ATT notification inline
+            # before start_notify returns and before the client is published.
+            callback(self, bytearray(self.notification_payload))
+
+
 def transport_model(events: list[dict[str, Any]]) -> BleTransport:
     transport = BleTransport.__new__(BleTransport)
     transport._event_sink = events.append
@@ -97,6 +119,7 @@ def transport_model(events: list[dict[str, Any]]) -> BleTransport:
     transport._connecting_client = None
     transport._connection_generation = 0
     transport._decoder = GatewayReceiveBuffer()
+    transport._write_lock = None
     return transport
 
 
@@ -104,6 +127,7 @@ class BleTransportIdentityTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeBleakClient.instances.clear()
         FakeBleakClient.identity = 0xAABBCCDDEEFF0011.to_bytes(8, "little")
+        ImmediateNotifyBleakClient.notification_payload = b""
 
     def test_connect_reads_identity_before_subscribing_and_reporting_connected(self) -> None:
         events: list[dict[str, Any]] = []
@@ -121,6 +145,24 @@ class BleTransportIdentityTests(unittest.TestCase):
         self.assertEqual([event["kind"] for event in events], ["connection_state", "gateway_identity", "connection_state"])
         self.assertEqual(events[1]["gateway_id"], 0xAABBCCDDEEFF0011)
         self.assertEqual(events[2]["gateway_id"], 0xAABBCCDDEEFF0011)
+
+    def test_immediate_subscription_notification_is_bound_to_connecting_generation(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+        ImmediateNotifyBleakClient.notification_payload = stream_record(click_payload())
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(ble_transport, "BleakClient", ImmediateNotifyBleakClient),
+        ):
+            asyncio.run(transport._connect("AA:BB:CC:DD:EE:FF", 12.0))
+
+        self.assertEqual(
+            [event["kind"] for event in events],
+            ["connection_state", "gateway_identity", "packet", "connection_state"],
+        )
+        self.assertEqual(events[2]["packet"].transport, "gateway-stream-v1")
+        ImmediateNotifyBleakClient.notification_payload = b""
 
     def test_connect_rejects_invalid_identity_without_exposing_connected_state(self) -> None:
         events: list[dict[str, Any]] = []
@@ -246,6 +288,67 @@ class BleTransportIdentityTests(unittest.TestCase):
         self.assertEqual(events[0]["label"], "gateway host receipt")
         self.assertEqual(events[0]["raw"], frame)
         self.assertEqual(events[0]["byte_count"], len(frame))
+
+    def test_concurrent_frames_keep_all_att_chunks_contiguous(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+        client = YieldingBleakClient(
+            "AA:BB:CC:DD:EE:FF",
+            timeout=12.0,
+            disconnected_callback=lambda _client: None,
+        )
+        client.is_connected = True
+        transport._client = client
+        first = b"AAAABBBBCCCC"
+        second = b"111122223333"
+
+        async def exercise() -> None:
+            await asyncio.gather(
+                transport._send_frame(first, "first"),
+                transport._send_frame(second, "second"),
+            )
+
+        asyncio.run(exercise())
+
+        self.assertEqual(
+            [chunk for chunk, _response in client.writes],
+            [b"AAAA", b"BBBB", b"CCCC", b"1111", b"2222", b"3333"],
+        )
+        self.assertEqual(
+            [event["label"] for event in events if event["kind"] == "tx_written"],
+            ["first", "second"],
+        )
+
+    def test_queued_frame_rejects_reconnect_before_writer_lock(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+
+        async def exercise() -> tuple[FakeBleakClient, FakeBleakClient]:
+            await transport._connect("first", 12.0)
+            first = FakeBleakClient.instances[-1]
+            transport._write_lock = asyncio.Lock()
+            await transport._write_lock.acquire()
+            queued = asyncio.create_task(transport._send_frame(b"queued", "queued"))
+            # Let _send_frame capture the first client/generation and block on
+            # the lock before the connection is replaced.
+            await asyncio.sleep(0)
+
+            await transport._disconnect()
+            await transport._connect("second", 12.0)
+            second = FakeBleakClient.instances[-1]
+            transport._write_lock.release()
+            with self.assertRaisesRegex(RuntimeError, "connection changed"):
+                await queued
+            return first, second
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(ble_transport, "BleakClient", FakeBleakClient),
+        ):
+            first, second = asyncio.run(exercise())
+
+        self.assertEqual(first.writes, [])
+        self.assertEqual(second.writes, [])
 
 
 if __name__ == "__main__":

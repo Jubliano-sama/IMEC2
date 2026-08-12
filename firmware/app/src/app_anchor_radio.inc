@@ -1,4 +1,38 @@
+/*
+ * A mesh handoff reserves report custody before this anchor enters RF.  Later
+ * Channel-5 claims can still be arbitrated for an ordinary scan, but they
+ * must not replace an identity whose report reservation is already live.
+ */
+static bool anchor_claim_collection_candidate_allowed(
+    const struct uwb_anchor_epoch *epoch,
+    const struct uwb_wake_claim_frame *claim,
+    bool admitted_handoff_identity_frozen,
+    bool *same_epoch)
+{
+    bool matches;
+
+    if (epoch == NULL || claim == NULL) {
+        if (same_epoch != NULL) {
+            *same_epoch = false;
+        }
+        return false;
+    }
+
+    matches = uwb_anchor_epoch_matches(epoch,
+                                       claim->network_id,
+                                       claim->clicker_id,
+                                       claim->click_event_id,
+                                       claim->attempt_index,
+                                       claim->nonce);
+    if (same_epoch != NULL) {
+        *same_epoch = matches;
+    }
+    return !admitted_handoff_identity_frozen || matches;
+}
+
+#if !defined(APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY)
 #include "app_anchor_click_event_runtime.h"
+#include "app_node_comm.h"
 
 #line 6569 __BASE_FILE__
 #define SURVEY_PAIR_RESULT_TIMING_TLV_MAX_LEN                            \
@@ -17,7 +51,15 @@ static int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
-    int ret = k_work_reschedule_for_queue(&anchor_uwb_scan_work_q,
+    int ret;
+
+    if (!radio_guard_uwb_rearm_allowed()) {
+        ret = radio_guard_uwb_poison_error();
+        LOG_ERR("anchor channel-5 scan rearm suppressed while radio parking is poisoned: %d",
+                ret);
+        return ret < 0 ? ret : -EIO;
+    }
+    ret = k_work_reschedule_for_queue(&anchor_uwb_scan_work_q,
                                           &anchor_uwb_scan_work,
                                           K_MSEC(delay_ms));
 
@@ -52,7 +94,8 @@ static int anchor_queue_survey_sample_result(
     uint16_t round_id,
     uint16_t sample_index,
     uint64_t reporter_id,
-    uint32_t delivery_reservation_token,
+    const struct app_node_comm_reservation_lease *delivery_reservation,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
     const struct dwm3000_range_result *range_result)
 {
     struct mesh_outbound outbound = {0};
@@ -64,8 +107,10 @@ static int anchor_queue_survey_sample_result(
     int64_t sample_local_ms;
     int ret;
 
-    if (pair == NULL || reporter_id == 0u ||
-        delivery_reservation_token == 0u || range_result == NULL) {
+    if (pair == NULL || reporter_id == 0u || round_commitment == NULL ||
+        delivery_reservation == NULL || delivery_reservation->token == 0u ||
+        delivery_reservation->owner_generation != pair->operation_generation ||
+        range_result == NULL) {
         return -EINVAL;
     }
     ret = survey_pair_result_transport_sequence(round_id,
@@ -132,8 +177,9 @@ static int anchor_queue_survey_sample_result(
     }
     outbound.payload_len = (uint8_t)payload_len;
     return app_anchor_survey_result_delivery_stage_reserved(
-        delivery_reservation_token,
-        &outbound);
+        delivery_reservation,
+        &outbound,
+        round_commitment);
 }
 
 static bool anchor_relay_tx_active(void)
@@ -257,8 +303,9 @@ static void anchor_range_window_finalize(
 
 /*
  * The event runtime observes this worker's already-held radio lease.  It is
- * intentionally kept separate from radio_guard_uwb_start()/stop(): aborting
- * a protocol phase must never release the physical Channel-5 owner here.
+ * intentionally kept separate from the guard's claim/release transaction:
+ * aborting a protocol phase must never release the physical Channel-5 owner
+ * here.
  */
 static void anchor_click_event_abort_if_needed(const char *reason)
 {
@@ -717,7 +764,7 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
             *report_status = report_ret;
         }
         if (report_ret < 0) {
-            LOG_ERR("anchor accepted range could not obtain durable report ownership: event=%u ret=%d",
+            LOG_ERR("anchor accepted range could not obtain retained report ownership: event=%u ret=%d",
                     schedule->click_event_id,
                     report_ret);
         } else if ((schedule->flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) != 0u &&
@@ -935,6 +982,7 @@ static uint32_t anchor_run_clicker_pair_survey(
 static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_claim,
                                     uint8_t first_quality,
                                     int64_t first_rx_ms,
+                                    bool admitted_handoff_identity_frozen,
                                     uint32_t *retained_sleep_us,
                                     bool *deferred_mesh_rx_queued)
 {
@@ -960,6 +1008,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     bool discovery_uses_extended_phr;
     bool click_priority = false;
     uint32_t discovery_late_guard_ms;
+    uint32_t preempt_deadline_ms;
 
     if (first_claim == NULL) {
         return false;
@@ -1062,12 +1111,18 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             continue;
         }
 
-        same_epoch = uwb_anchor_epoch_matches(&anchor_uwb_session.epoch,
-                                              claim.network_id,
-                                              claim.clicker_id,
-                                              claim.click_event_id,
-                                              claim.attempt_index,
-                                              claim.nonce);
+        if (!anchor_claim_collection_candidate_allowed(
+                &anchor_uwb_session.epoch,
+                &claim,
+                admitted_handoff_identity_frozen,
+                &same_epoch)) {
+            LOG_DBG("anchor retained reserved UWB claim during collection: clicker=0x%016llx event_seq=%u attempt=%u priority=0x%016llx",
+                    (unsigned long long)claim.clicker_id,
+                    claim.click_event_id,
+                    claim.attempt_index,
+                    (unsigned long long)claim.priority_id);
+            continue;
+        }
         ret = uwb_anchor_accept_wake_claim(&anchor_uwb_session,
                                            &claim,
                                            k_uptime_get_32(),
@@ -1115,13 +1170,20 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
             anchor_uwb_session.epoch.attempt_index,
             (unsigned long long)anchor_uwb_session.epoch.priority_id,
             selected_decision);
+    /* Pass the physical discovery start itself; mesh preemption owns the
+     * one guard subtraction so every caller shares the same cutoff. */
+    discovery_start_ms =
+        (int64_t)selected_rx_ms + selected_claim.discovery_starts_in_ms;
+    preempt_deadline_ms = (uint32_t)discovery_start_ms;
     click_priority = app_mesh_c5_wake_claim_preempts_mesh(selected_claim.flags);
-    if (click_priority && mesh_preempt_for_click_event() < 0) {
+    anchor_click_window_set_active(click_priority);
+    if (click_priority &&
+        mesh_preempt_for_click_event_until(preempt_deadline_ms) < 0) {
+        anchor_click_window_set_active(false);
         LOG_ERR("anchor click claim deferred because mesh custody preemption failed");
         anchor_click_event_abort_if_needed("mesh-preemption");
         return false;
     }
-    anchor_click_window_set_active(click_priority);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_CLICK_WINDOW active=%u flags=0x%02x\n",
                             anchor_click_window_active() ? 1u : 0u,
@@ -1133,8 +1195,6 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     discovery_late_guard_ms = discovery_uses_extended_phr ?
                               MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS :
                               UWB_DISCOVERY_RX_LATE_GUARD_MS;
-    discovery_start_ms =
-        (int64_t)selected_rx_ms + selected_claim.discovery_starts_in_ms;
     discovery_deadline_ms = discovery_start_ms + discovery_late_guard_ms;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_DISC_WAIT now=%u start=%lld deadline=%lld guard=%u listen=%u phr=%s\n",
@@ -1556,9 +1616,9 @@ discovery_miss:
         if (range_report_ret < 0) {
             /*
              * The RF exchange happened, but this anchor did not complete the
-             * accepted click contract because it lacks confirmed durable
+             * accepted click contract because it lacks confirmed retained
              * ownership of the report. Keep the handler result truthful
-             * while the persistence boundary forces watchdog recovery.
+             * while the queue-admission boundary forces watchdog recovery.
              */
             anchor_click_event_abort_if_needed("range-report-retention");
             return false;
@@ -1569,11 +1629,57 @@ discovery_miss:
     }
     return true;
 }
+#endif /* !APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY */
+
+/*
+ * A queued click handoff has claimed the logical radio but has not touched
+ * the DWM3000 yet.  Release that lease through both phases if admission
+ * fails before RF starts; a stale release is an ownership violation and must
+ * not leave the scheduler running as if the click had never existed.
+ */
+static int anchor_release_unstarted_click_lease(
+    struct radio_guard_uwb_lease *radio_lease,
+    const char *reason)
+{
+    int ret;
+
+    if (radio_lease == NULL ||
+        radio_lease->client != RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK ||
+        radio_lease->generation == 0u) {
+        return -EINVAL;
+    }
+
+    ret = radio_guard_uwb_release_begin(radio_lease);
+    if (ret == 0) {
+        /* No DWM3000 operation has started for this handoff. */
+        ret = radio_guard_uwb_release_finish(radio_lease, 0);
+    }
+    if (ret < 0) {
+        LOG_ERR("anchor click handoff lease release failed before RF: reason=%s ret=%d",
+                reason == NULL ? "unknown" : reason,
+                ret);
+        app_watchdog_stop_feeding();
+    }
+    return ret;
+}
+
+/* A published handoff is priority ownership even before its worker starts. */
+static bool anchor_click_handoff_pending(void)
+{
+    k_spinlock_key_t key;
+    bool pending;
+
+    key = k_spin_lock(&anchor_pending_click_handoff_lock);
+    pending = anchor_pending_click_handoff.active;
+    k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+    return pending;
+}
 
 static bool anchor_run_mesh_click_wake_claim(
     const struct uwb_wake_claim_frame *claim,
     uint8_t link_quality,
-    int64_t received_at_ms)
+    int64_t received_at_ms,
+    struct radio_guard_uwb_lease *radio_lease)
 {
     uint32_t retained_sleep_us = 0u;
     uint32_t next_scan_delay_ms = anchor_uwb_scan_interval_ms;
@@ -1581,48 +1687,29 @@ static bool anchor_run_mesh_click_wake_claim(
     bool handled = false;
     int64_t uwb_window_start_ms = -1;
     int low_power_ret;
+    int release_ret;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || claim == NULL ||
-        !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
+        !app_mesh_c5_wake_claim_preempts_mesh(claim->flags) ||
+        radio_lease == NULL ||
+        radio_lease->client != RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK ||
+        radio_lease->generation == 0u) {
         LOG_ERR("invalid anchor click handoff request");
+        if (radio_lease != NULL && radio_lease->generation != 0u) {
+            (void)anchor_release_unstarted_click_lease(
+                radio_lease, "invalid-click-handoff");
+        }
         return false;
     }
 
     anchor_click_window_set_active(true);
     /*
-     * Admission held enough queue capacity while this work was pending.
-     * Release that provisional hold before preemption because preemption may
-     * need to requeue older durable click custody into the same queue.  Then
-     * reserve against the post-preemption state before starting any new RF
-     * work, so an older local report wins rather than being overwritten.
+     * The accepted handoff already committed click preemption and reserved
+     * the report batch before it queued this worker.  Holding that exact
+     * reservation through RF prevents a repair or report producer from
+     * taking the capacity between handoff and physical execution.
      */
-    mesh_range_report_batch_abort(claim->clicker_id,
-                                  claim->click_event_id,
-                                  claim->attempt_index);
-    if (mesh_preempt_for_click_event() < 0) {
-        anchor_click_window_set_active(false);
-        LOG_ERR("anchor click handoff deferred because mesh custody preemption failed");
-        return false;
-    }
-    ret = mesh_range_report_batch_reserve(claim->clicker_id,
-                                          claim->click_event_id,
-                                          claim->attempt_index);
-    if (ret < 0) {
-        anchor_click_window_set_active(false);
-        LOG_WRN("anchor click handoff deferred because post-preemption report capacity is unavailable: ret=%d",
-                ret);
-        report_tx_schedule(0u);
-        return false;
-    }
-    ret = radio_guard_uwb_start("anchor mesh click handoff");
-    if (ret < 0) {
-        LOG_ERR("anchor click handoff could not acquire UWB radio: ret=%d", ret);
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_GUARD_FAIL ret=%d\n", ret);
-        }
-        goto complete;
-    }
 
     anchor_set_uwb_busy(true);
     uwb_window_start_ms = k_uptime_get();
@@ -1645,6 +1732,7 @@ static bool anchor_run_mesh_click_wake_claim(
     handled = anchor_handle_uwb_claim(claim,
                                       link_quality,
                                       received_at_ms,
+                                      true,
                                       &retained_sleep_us,
                                       &deferred_mesh_rx_queued);
     if (handled) {
@@ -1652,16 +1740,26 @@ static bool anchor_run_mesh_click_wake_claim(
     }
 
 release_radio:
-    low_power_ret = anchor_enter_low_power(
-        app_radio_low_power_mode_for_connection(
-            mesh_anchor_connected_radio_active()),
-        "click-release");
-    if (low_power_ret < 0) {
+    release_ret = radio_guard_uwb_release_begin(radio_lease);
+    if (release_ret == 0) {
+        low_power_ret = anchor_enter_low_power(
+            app_radio_low_power_mode_for_connection(
+                mesh_anchor_connected_radio_active()),
+            "click-release");
+        release_ret = radio_guard_uwb_release_finish(radio_lease,
+                                                      low_power_ret);
+    }
+    if (release_ret < 0) {
         anchor_scan_recovery_gap_requested = true;
+        anchor_note_uwb_awake_since(uwb_window_start_ms, retained_sleep_us);
+        LOG_ERR("anchor click handoff radio release failed; retaining poisoned owner: %d",
+                release_ret);
+        return false;
     }
     anchor_note_uwb_awake_since(uwb_window_start_ms, retained_sleep_us);
-    radio_guard_uwb_stop();
     anchor_set_uwb_busy(false);
+
+    goto complete;
 
 complete:
     /* Preserve retained report custody; abort only non-terminal phases. */
@@ -1706,31 +1804,29 @@ static bool anchor_handle_mesh_click_wake_claim(
     ARG_UNUSED(received_at_ms);
     return false;
 #else
+    struct radio_guard_uwb_lease radio_lease = {0};
     k_spinlock_key_t key;
+    bool pending_matches;
     int ret;
+    int release_ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || claim == NULL ||
         !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
         return false;
     }
 
-    ret = mesh_range_report_batch_reserve(claim->clicker_id,
-                                          claim->click_event_id,
-                                          claim->attempt_index);
-    if (ret < 0) {
-        status_debug_printf("DBG_ANCHOR_CLICK_REPORT_CAPACITY_BUSY evt=%u attempt=%u ret=%d\n",
-                            claim->click_event_id,
-                            claim->attempt_index,
-                            ret);
-        return false;
-    }
-
+    /*
+     * Make accepted handoff identity visible before claiming the radio.  A
+     * duplicate or concurrent wake cannot replace this record while its
+     * ANCHOR_CLICK lease is being acquired or queued.
+     */
     key = k_spin_lock(&anchor_pending_click_handoff_lock);
     if (anchor_pending_click_handoff.active) {
         k_spin_unlock(&anchor_pending_click_handoff_lock, key);
         status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_ALREADY_PENDING evt=%u attempt=%u\n",
                             claim->click_event_id,
                             claim->attempt_index);
+        /* Keep the accepted click priority and identity intact. */
         return true;
     }
     anchor_pending_click_handoff.claim = *claim;
@@ -1738,6 +1834,72 @@ static bool anchor_handle_mesh_click_wake_claim(
     anchor_pending_click_handoff.received_at_ms = received_at_ms;
     anchor_pending_click_handoff.active = true;
     k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK,
+                                "anchor mesh click handoff",
+                                &radio_lease);
+    if (ret < 0) {
+        key = k_spin_lock(&anchor_pending_click_handoff_lock);
+        pending_matches = anchor_pending_click_handoff.active &&
+            anchor_pending_click_handoff.claim.clicker_id == claim->clicker_id &&
+            anchor_pending_click_handoff.claim.click_event_id == claim->click_event_id &&
+            anchor_pending_click_handoff.claim.attempt_index == claim->attempt_index &&
+            anchor_pending_click_handoff.radio_lease.generation == 0u;
+        if (pending_matches) {
+            memset(&anchor_pending_click_handoff, 0,
+                   sizeof(anchor_pending_click_handoff));
+        }
+        k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+        LOG_ERR("anchor click handoff could not reserve UWB lease: ret=%d", ret);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ANCHOR_CLICK_HANDOFF_GUARD_FAIL ret=%d\n", ret);
+        }
+        return false;
+    }
+
+    ret = mesh_range_report_batch_reserve(claim->clicker_id,
+                                          claim->click_event_id,
+                                          claim->attempt_index);
+    if (ret < 0) {
+        key = k_spin_lock(&anchor_pending_click_handoff_lock);
+        pending_matches = anchor_pending_click_handoff.active &&
+            anchor_pending_click_handoff.claim.clicker_id == claim->clicker_id &&
+            anchor_pending_click_handoff.claim.click_event_id == claim->click_event_id &&
+            anchor_pending_click_handoff.claim.attempt_index == claim->attempt_index &&
+            anchor_pending_click_handoff.radio_lease.generation == 0u;
+        if (pending_matches) {
+            memset(&anchor_pending_click_handoff, 0,
+                   sizeof(anchor_pending_click_handoff));
+        }
+        k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+        release_ret = anchor_release_unstarted_click_lease(
+            &radio_lease, "click-report-capacity");
+        status_debug_printf("DBG_ANCHOR_CLICK_REPORT_CAPACITY_BUSY evt=%u attempt=%u ret=%d release=%d\n",
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            ret,
+                            release_ret);
+        return false;
+    }
+
+    key = k_spin_lock(&anchor_pending_click_handoff_lock);
+    pending_matches = anchor_pending_click_handoff.active &&
+        anchor_pending_click_handoff.claim.clicker_id == claim->clicker_id &&
+        anchor_pending_click_handoff.claim.click_event_id == claim->click_event_id &&
+        anchor_pending_click_handoff.claim.attempt_index == claim->attempt_index &&
+        anchor_pending_click_handoff.radio_lease.generation == 0u;
+    if (pending_matches) {
+        anchor_pending_click_handoff.radio_lease = radio_lease;
+    }
+    k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+    if (!pending_matches) {
+        mesh_range_report_batch_abort(claim->clicker_id,
+                                      claim->click_event_id,
+                                      claim->attempt_index);
+        (void)anchor_release_unstarted_click_lease(
+            &radio_lease, "click-handoff-replaced");
+        return false;
+    }
 
     (void)k_work_cancel_delayable(&anchor_uwb_scan_work);
     ret = k_work_submit_to_queue(&anchor_uwb_scan_work_q,
@@ -1751,17 +1913,29 @@ static bool anchor_handle_mesh_click_wake_claim(
     }
 
     key = k_spin_lock(&anchor_pending_click_handoff_lock);
-    if (anchor_pending_click_handoff.active &&
+    pending_matches = anchor_pending_click_handoff.active &&
         anchor_pending_click_handoff.claim.clicker_id == claim->clicker_id &&
         anchor_pending_click_handoff.claim.click_event_id == claim->click_event_id &&
-        anchor_pending_click_handoff.claim.attempt_index == claim->attempt_index) {
-        anchor_pending_click_handoff.active = false;
+        anchor_pending_click_handoff.claim.attempt_index == claim->attempt_index &&
+        anchor_pending_click_handoff.radio_lease.generation ==
+            radio_lease.generation &&
+        anchor_pending_click_handoff.radio_lease.client == radio_lease.client;
+    if (pending_matches) {
+        radio_lease = anchor_pending_click_handoff.radio_lease;
+        memset(&anchor_pending_click_handoff, 0,
+               sizeof(anchor_pending_click_handoff));
     }
     k_spin_unlock(&anchor_pending_click_handoff_lock, key);
     mesh_range_report_batch_abort(claim->clicker_id,
                                   claim->click_event_id,
                                   claim->attempt_index);
-    LOG_ERR("anchor click handoff queue admission failed: ret=%d", ret);
+    release_ret = pending_matches ?
+        anchor_release_unstarted_click_lease(&radio_lease,
+                                             "click-handoff-queue") :
+        -ESTALE;
+    LOG_ERR("anchor click handoff queue admission failed: ret=%d release=%d",
+            ret,
+            release_ret);
     return false;
 #endif
 }
@@ -1770,12 +1944,12 @@ static void anchor_click_handoff_work_handler(struct k_work *work)
 {
     struct anchor_pending_click_handoff pending = {0};
     k_spinlock_key_t key;
+    uint32_t radio_generation;
 
     ARG_UNUSED(work);
     key = k_spin_lock(&anchor_pending_click_handoff_lock);
     if (anchor_pending_click_handoff.active) {
         pending = anchor_pending_click_handoff;
-        anchor_pending_click_handoff.active = false;
     }
     k_spin_unlock(&anchor_pending_click_handoff_lock, key);
 
@@ -1784,11 +1958,32 @@ static void anchor_click_handoff_work_handler(struct k_work *work)
         anchor_uwb_scan_schedule_ms(anchor_uwb_scan_interval_ms);
         return;
     }
+    radio_generation = pending.radio_lease.generation;
     (void)anchor_run_mesh_click_wake_claim(&pending.claim,
                                            pending.link_quality,
-                                           pending.received_at_ms);
+                                           pending.received_at_ms,
+                                           &pending.radio_lease);
+
+    /*
+     * Keep the handoff identity published until its exact lease has reached
+     * IDLE.  A route/repair worker that arrives while this workqueue item is
+     * running can then observe click priority instead of replacing it.
+     */
+    if (pending.radio_lease.generation == 0u) {
+        key = k_spin_lock(&anchor_pending_click_handoff_lock);
+        if (anchor_pending_click_handoff.active &&
+            anchor_pending_click_handoff.radio_lease.client ==
+                RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK &&
+            anchor_pending_click_handoff.radio_lease.generation ==
+                radio_generation) {
+            memset(&anchor_pending_click_handoff, 0,
+                   sizeof(anchor_pending_click_handoff));
+        }
+        k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+    }
 }
 
+#if !defined(APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY)
 static void anchor_uwb_scan_work_handler(struct k_work *work)
 {
     uint8_t *frame = anchor_uwb_scan_frame;
@@ -1810,6 +2005,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool route_waiting_active = false;
     bool relay_tx_active = false;
     bool mesh_rx_active = false;
+    bool ch9_ack_wait_active = false;
     bool ch9_rx_conflict = false;
     bool uwb_radio_busy = false;
     uint32_t ch9_retry_ms = 0u;
@@ -1819,7 +2015,10 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint32_t scan_rx_start_cycles = 0u;
     uint32_t scan_rx_elapsed_us = ANCHOR_UWB_SCAN_RX_US;
     uint32_t scan_extra_awake_us = 0u;
-    int low_power_ret;
+    struct radio_guard_uwb_lease radio_lease = {0};
+    /* A rejected/stale release must never qualify the scan as radio progress. */
+    int low_power_ret = -EIO;
+    int release_ret;
     int ret;
 
     ARG_UNUSED(work);
@@ -1830,6 +2029,16 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     if (DEVICE_ROLE != ROLE_ANCHOR) {
         return;
     }
+    if (radio_guard_uwb_poisoned()) {
+        LOG_ERR("anchor scan suppressed while radio parking is poisoned: %d",
+                radio_guard_uwb_poison_error());
+        return;
+    }
+    if (anchor_click_handoff_pending() || anchor_click_window_active()) {
+        /* A received click must keep priority until its lease is resolved. */
+        anchor_uwb_scan_schedule_ms(ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS);
+        return;
+    }
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
@@ -1837,16 +2046,22 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         mesh_rx_queue_depth = mesh_rx_pending_count();
         mesh_rx_response_busy = mesh_rx_response_active();
         mesh_rx_active = mesh_rx_response_busy;
+        ch9_ack_wait_active = mesh_report_ch9_ack_wait_active();
     }
     ch9_rx_conflict = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                       mesh_anchor_low_duty_scan_should_defer(&ch9_retry_ms);
     uwb_radio_busy = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                      radio_guard_uwb_busy();
+    /*
+     * Relay and route-wait records are passive custody between attempts.
+     * They must not suppress the Channel-5 contact scan needed to refresh a
+     * stale child timing. Actual RX/TX ownership is fenced below by the mesh
+     * response, Channel-9 horizon, and radio guard states.
+     */
     if (anchor_uwb_window_active() ||
-        app_anchor_survey_runtime_discovery_is_pending() ||
-        relay_tx_active ||
-        route_waiting_active ||
+        app_anchor_survey_runtime_radio_active() ||
         mesh_rx_active ||
+        ch9_ack_wait_active ||
         ch9_rx_conflict ||
         uwb_radio_busy) {
         uint32_t retry_ms = mesh_rx_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
@@ -1854,14 +2069,15 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                             ch9_rx_conflict ? ch9_retry_ms : blocked_retry_ms;
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ANCHOR_CH5_SCAN_BLOCKED win=%u survey=%u tx=%u wait=%u rx=%u rxq=%u rxr=%u ch9=%u rf=%u retry=%u interval=%u\n",
+            status_debug_printf("DBG_ANCHOR_CH5_SCAN_BLOCKED win=%u survey=%u tx=%u wait=%u rx=%u rxq=%u rxr=%u ack=%u ch9=%u rf=%u retry=%u interval=%u\n",
                                 anchor_uwb_window_active() ? 1u : 0u,
-                                app_anchor_survey_runtime_discovery_is_pending() ? 1u : 0u,
+                                app_anchor_survey_runtime_radio_active() ? 1u : 0u,
                                 relay_tx_active ? 1u : 0u,
                                 route_waiting_active ? 1u : 0u,
                                 mesh_rx_active ? 1u : 0u,
                                 mesh_rx_queue_depth,
                                 mesh_rx_response_busy ? 1u : 0u,
+                                ch9_ack_wait_active ? 1u : 0u,
                                 ch9_rx_conflict ? 1u : 0u,
                                 uwb_radio_busy ? 1u : 0u,
                                 retry_ms,
@@ -1871,7 +2087,9 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         return;
     }
 
-    ret = radio_guard_uwb_start("anchor low-duty UWB wake scan");
+    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN,
+                                "anchor low-duty UWB wake scan",
+                                &radio_lease);
     if (ret < 0) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && ret == -EBUSY) {
             blocked_retry_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
@@ -1886,7 +2104,6 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         return;
     }
     anchor_set_uwb_busy(true);
-    anchor_click_window_set_active(false);
     uwb_window_start_ms = k_uptime_get();
     frame_len = 0u;
     quality = 0u;
@@ -1997,6 +2214,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
             if (anchor_handle_uwb_claim(&claim,
                                         quality,
                                         k_uptime_get(),
+                                        false,
                                         &retained_sleep_us,
                                         &deferred_mesh_rx_queued)) {
                 handled_claim = true;
@@ -2066,21 +2284,29 @@ scan_complete:
     if (scan_rx_elapsed_us > ANCHOR_UWB_SCAN_RX_US) {
         scan_extra_awake_us = scan_rx_elapsed_us - ANCHOR_UWB_SCAN_RX_US;
     }
-    low_power_ret = anchor_enter_low_power(
-        app_radio_low_power_mode_for_connection(
-            mesh_anchor_connected_radio_active()),
-        "low-duty-scan-release");
-    if (low_power_ret < 0 && next_scan_delay_ms < REPORT_TX_RETRY_DELAY_MS) {
-        next_scan_delay_ms = REPORT_TX_RETRY_DELAY_MS;
+    release_ret = radio_guard_uwb_release_begin(&radio_lease);
+    if (release_ret == 0) {
+        low_power_ret = anchor_enter_low_power(
+            app_radio_low_power_mode_for_connection(
+                mesh_anchor_connected_radio_active()),
+            "low-duty-scan-release");
+        release_ret = radio_guard_uwb_release_finish(&radio_lease,
+                                                      low_power_ret);
     }
     anchor_note_uwb_awake_since(
         uwb_window_start_ms,
         u32_saturating_add(
             u32_saturating_add(ANCHOR_UWB_IDLE_SCAN_AWAKE_US, scan_extra_awake_us),
             retained_sleep_us));
-    radio_guard_uwb_stop();
+    if (release_ret < 0) {
+        LOG_ERR("anchor low-duty scan radio release failed; retaining poisoned owner: %d",
+                release_ret);
+        return;
+    }
     anchor_set_uwb_busy(false);
-    anchor_click_window_set_active(false);
+    if (!anchor_click_handoff_pending()) {
+        anchor_click_window_set_active(false);
+    }
     if (low_power_ret == 0 && rx_attempted &&
         (ret == 0 || ret == -ETIMEDOUT ||
          app_anchor_rx_failure_detected_preamble(rx_failure))) {
@@ -2226,8 +2452,9 @@ static int anchor_survey_delivery_transport_released(
 }
 
 static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
-    .anchor_survey_discovery_is_pending =
-        app_anchor_survey_runtime_discovery_is_pending,
+#if DEVICE_ROLE == ROLE_ANCHOR
+    .anchor_survey_radio_active =
+        app_anchor_survey_runtime_radio_active,
     .anchor_note_uwb_awake_since = anchor_note_uwb_awake_since,
     .anchor_handle_click_wake_claim = anchor_handle_mesh_click_wake_claim,
     .anchor_handle_local_command = anchor_handle_local_command,
@@ -2235,15 +2462,22 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
         app_anchor_survey_discovery_handle_start,
     .anchor_handle_survey_pair_prepare =
         app_anchor_survey_runtime_handle_pair_prepare,
-    .gateway_handle_survey_discovery_report = gateway_handle_survey_discovery_report,
     .anchor_survey_delivery_gateway_confirmed =
         anchor_survey_delivery_gateway_confirmed,
     .anchor_survey_delivery_transport_released =
         anchor_survey_delivery_transport_released,
+#endif
+#if DEVICE_ROLE == ROLE_GATEWAY
+    .gateway_handle_survey_discovery_report = gateway_handle_survey_discovery_report,
+    .gateway_note_anchor_boot_observation =
+        gateway_note_anchor_boot_observation,
+    .gateway_note_ack_confirm = gateway_note_survey_ack_confirm,
     .gateway_route_refresh_event = gateway_route_refresh_observe,
+#endif
 };
 
 const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void)
 {
     return &anchor_mesh_report_callbacks;
 }
+#endif /* !APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY */

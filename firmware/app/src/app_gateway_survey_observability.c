@@ -44,6 +44,34 @@ static struct gateway_command_event progress_event(
     return event;
 }
 
+static int emit_progress(
+    struct app_gateway_survey_observability_state *state,
+    const struct app_gateway_survey_observability_ops *ops,
+    struct gateway_command_event *event)
+{
+    uint32_t retained_event_seq;
+    int ret;
+
+    retained_event_seq = state->pending_event_seq;
+    event->event_seq = retained_event_seq;
+    ret = ops->emit_if_available(event, false, ops->ctx);
+    if (event->event_seq != 0u && retained_event_seq != 0u &&
+        event->event_seq != retained_event_seq) {
+        return -EIO;
+    }
+    if (ret < 0) {
+        if (event->event_seq != 0u) {
+            state->pending_event_seq = event->event_seq;
+        }
+        return ret;
+    }
+    if (event->event_seq == 0u) {
+        return -EIO;
+    }
+    state->pending_event_seq = 0u;
+    return ret;
+}
+
 void app_gateway_survey_observability_reset(
     struct app_gateway_survey_observability_state *state)
 {
@@ -95,7 +123,7 @@ int app_gateway_survey_observability_emit_collection_next(
                 ret == PROTO_OK ? reverse_hint.next_hop_id : 0u;
             event.progress_count = (uint16_t)(state->report_cursor + 1u);
             event.total_count = (uint16_t)survey->report_count;
-            ret = ops->emit_if_available(&event, false, ops->ctx);
+            ret = emit_progress(state, ops, &event);
             if (ret < 0) {
                 return ret;
             }
@@ -107,7 +135,7 @@ int app_gateway_survey_observability_emit_collection_next(
             duplicate_count);
         event.progress_count = (uint16_t)survey->report_count;
         event.total_count = event.progress_count;
-        ret = ops->emit_if_available(&event, false, ops->ctx);
+        ret = emit_progress(state, ops, &event);
         if (ret < 0) {
             return ret;
         }
@@ -119,7 +147,7 @@ int app_gateway_survey_observability_emit_collection_next(
             base_event, GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY,
             duplicate_count);
         event.total_count = (uint16_t)survey->pair_count;
-        ret = ops->emit_if_available(&event, false, ops->ctx);
+        ret = emit_progress(state, ops, &event);
         if (ret < 0) {
             return ret;
         }

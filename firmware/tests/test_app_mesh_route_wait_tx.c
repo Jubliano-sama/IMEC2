@@ -1,4 +1,5 @@
 #include "app_mesh_route_wait_tx.h"
+#include "mesh.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -120,12 +121,131 @@ static void test_other_failure_schedules_busy_retry(void)
     assert(decision.delay_ms == BUSY_RETRY_MS);
 }
 
-static void test_durable_owner_cannot_overwrite_generic_wait_slot(void)
+static void test_retained_owner_cannot_overwrite_generic_wait_slot(void)
 {
     assert(app_mesh_route_wait_tx_may_store(
         APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC));
     assert(!app_mesh_route_wait_tx_may_store(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL));
+        APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL));
+}
+
+static struct proto_packet route_wait_command_packet(void)
+{
+    const struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = UINT64_C(0x0102030405060708),
+        .dst_id = UINT64_C(0x1112131415161718),
+        .session_id = UINT32_C(0x21222324),
+        .seq = UINT16_C(0x3132),
+        .ttl = 8u,
+        .payload_len = 37u,
+        .message_age_ms = 5u,
+    };
+
+    return packet;
+}
+
+static void test_clear_requires_exact_owner_and_immutable_packet_identity(void)
+{
+    const struct proto_packet active = route_wait_command_packet();
+    const uint8_t active_payload[37] = {0x11u, 0x22u, 0x33u};
+    uint8_t active_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    struct proto_packet expected = active;
+
+    assert(mesh_packet_semantic_digest(&active,
+                                       active_payload,
+                                       sizeof(active_payload),
+                                       active_digest));
+    expected.ttl--;
+    expected.message_age_ms += 100u;
+    assert(app_mesh_route_wait_tx_clear_matches(
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        active_digest,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &expected,
+        active_digest));
+
+    assert(!app_mesh_route_wait_tx_clear_matches(
+        APP_MESH_ROUTE_WAIT_TX_OWNER_TRANSIT_GATEWAY_ACK,
+        &active,
+        active_digest,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &expected,
+        active_digest));
+
+#define ASSERT_IMMUTABLE_MUTATION_REJECTED(field, value)                      \
+    do {                                                                       \
+        expected = active;                                                     \
+        expected.field = (value);                                              \
+        assert(!app_mesh_route_wait_tx_clear_matches(                          \
+            APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,                              \
+            &active,                                                           \
+            active_digest,                                                     \
+            APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,                              \
+            &expected,                                                         \
+            active_digest));                                                   \
+    } while (0)
+
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(msg_type, MSG_GATEWAY_ACK);
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(flags, 0u);
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(src_id, active.src_id + 1u);
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(dst_id, active.dst_id + 1u);
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(session_id, active.session_id + 1u);
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(seq, (uint16_t)(active.seq + 1u));
+    ASSERT_IMMUTABLE_MUTATION_REJECTED(payload_len,
+                                       (uint16_t)(active.payload_len + 1u));
+
+#undef ASSERT_IMMUTABLE_MUTATION_REJECTED
+
+    assert(!app_mesh_route_wait_tx_clear_matches(
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        NULL,
+        active_digest,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        active_digest));
+    assert(!app_mesh_route_wait_tx_clear_matches(
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        active_digest,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        NULL,
+        active_digest));
+    assert(!app_mesh_route_wait_tx_clear_matches(
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        NULL,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        active_digest));
+}
+
+static void test_clear_rejects_same_header_different_payload(void)
+{
+    const struct proto_packet active = route_wait_command_packet();
+    const uint8_t original_payload[37] = {0x11u, 0x22u, 0x33u};
+    uint8_t successor_payload[37] = {0x11u, 0x22u, 0x33u};
+    uint8_t original_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t successor_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    assert(mesh_packet_semantic_digest(&active,
+                                       original_payload,
+                                       sizeof(original_payload),
+                                       original_digest));
+    successor_payload[sizeof(successor_payload) - 1u] = 0x44u;
+    assert(mesh_packet_semantic_digest(&active,
+                                       successor_payload,
+                                       sizeof(successor_payload),
+                                       successor_digest));
+    assert(!app_mesh_route_wait_tx_clear_matches(
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        successor_digest,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
+        &active,
+        original_digest));
 }
 
 static struct proto_packet survey_report_packet(uint32_t survey_id)
@@ -139,20 +259,20 @@ static struct proto_packet survey_report_packet(uint32_t survey_id)
     return packet;
 }
 
-static void test_durable_survey_retry_identity_requires_matching_generation(void)
+static void test_retained_survey_retry_identity_uses_owner_generation(void)
 {
     const struct proto_packet packet = survey_report_packet(0x12345678u);
     struct app_mesh_route_retry_identity identity;
 
     app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL,
-        &packet, packet.session_id, &identity);
+        APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL,
+        &packet, 0x87654321u, &identity);
     assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY);
-    assert(identity.survey_id == packet.session_id);
+    assert(identity.survey_id == 0x87654321u);
 
     app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL,
-        &packet, packet.session_id + 1u, &identity);
+        APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL,
+        &packet, 0u, &identity);
     assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE);
     assert(identity.survey_id == 0u);
 }
@@ -193,8 +313,10 @@ int main(void)
     test_tx_timeout_schedules_slow_retry();
     test_busy_schedules_channel9_retry();
     test_other_failure_schedules_busy_retry();
-    test_durable_owner_cannot_overwrite_generic_wait_slot();
-    test_durable_survey_retry_identity_requires_matching_generation();
+    test_retained_owner_cannot_overwrite_generic_wait_slot();
+    test_clear_requires_exact_owner_and_immutable_packet_identity();
+    test_clear_rejects_same_header_different_payload();
+    test_retained_survey_retry_identity_uses_owner_generation();
     test_generic_retry_identity_preserves_existing_selection();
     return 0;
 }

@@ -519,6 +519,26 @@ uint32_t survey_pair_lease_execution_remaining_ms(
     return lease->start_execution_deadline_ms - now_ms;
 }
 
+uint32_t survey_pair_lease_execution_remaining_for_role_ms(
+    const struct survey_pair_lease *lease,
+    uint32_t now_ms,
+    bool as_responder)
+{
+    uint32_t role_start_ms;
+
+    if (!survey_pair_lease_ready_snapshot(lease, NULL)) {
+        return 0u;
+    }
+    role_start_ms = lease->start_execution_deadline_ms;
+    if (as_responder) {
+        role_start_ms -= SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    }
+    if (deadline_reached(now_ms, role_start_ms)) {
+        return 0u;
+    }
+    return role_start_ms - now_ms;
+}
+
 bool survey_pair_lease_mark_running(struct survey_pair_lease *lease,
                                     struct survey_pair *pair,
                                     uint16_t *round_id)
@@ -546,9 +566,42 @@ bool survey_pair_lease_mark_running_at(struct survey_pair_lease *lease,
                                        struct survey_pair *pair,
                                        uint16_t *round_id)
 {
+    return survey_pair_lease_mark_running_for_role_at(
+        lease, now_ms, false, pair, round_id);
+}
+
+bool survey_pair_lease_mark_running_for_role_at(
+    struct survey_pair_lease *lease,
+    uint32_t now_ms,
+    bool as_responder,
+    struct survey_pair *pair,
+    uint16_t *round_id)
+{
+    uint32_t latest_start_ms;
+    uint32_t role_start_ms;
+
     if (survey_pair_lease_expire(lease, now_ms) || lease == NULL ||
-        !lease->start_execution_armed ||
-        !deadline_reached(now_ms, lease->start_execution_deadline_ms)) {
+        !lease->start_execution_armed) {
+        return false;
+    }
+    role_start_ms = lease->start_execution_deadline_ms;
+    if (as_responder) {
+        role_start_ms -= SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    }
+    if (!deadline_reached(now_ms, role_start_ms)) {
+        return false;
+    }
+    latest_start_ms = lease->start_execution_deadline_ms +
+                      SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    if (deadline_reached(now_ms, latest_start_ms)) {
+        /*
+         * The shared RF instant is immutable. Once the responder window's
+         * skew allowance has elapsed, running this lease would create an
+         * unsynchronised exchange; retire it so the gateway can rerun the
+         * complete PREPARE/START sequence instead of waiting for the much
+         * longer prepared-lease timeout.
+         */
+        clear_active(lease);
         return false;
     }
     return survey_pair_lease_mark_running(lease, pair, round_id);

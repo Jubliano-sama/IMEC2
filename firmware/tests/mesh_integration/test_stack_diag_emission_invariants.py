@@ -5,6 +5,12 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = (ROOT / "app/src/app_stack_diag.c").read_text(encoding="utf-8")
+RECORD_HEADER = (ROOT / "app/src/app_stack_diag_record.h").read_text(
+    encoding="utf-8"
+)
+RECORD_TEST = (ROOT / "tests/test_app_stack_diag_record.c").read_text(
+    encoding="utf-8"
+)
 BOARD_SOURCE = (ROOT / "app/src/app_board.c").read_text(encoding="utf-8")
 WORKLOAD_SOURCE = (ROOT / "app/src/app_stack_workload_diag.c").read_text(
     encoding="utf-8"
@@ -22,16 +28,16 @@ CAPTURE = (ROOT / "scripts/capture_stack_evidence.py").read_text(
 )
 
 
-def function_body(name: str) -> str:
-    match = re.search(rf"\b{name}\s*\([^;]*?\)\s*\{{", SOURCE, re.DOTALL)
+def function_body(name: str, source: str = SOURCE) -> str:
+    match = re.search(rf"\b{name}\s*\([^;]*?\)\s*\{{", source, re.DOTALL)
     assert match is not None, f"missing function {name}"
-    brace = SOURCE.index("{", match.start())
+    brace = source.index("{", match.start())
     depth = 0
-    for index in range(brace, len(SOURCE)):
-        depth += SOURCE[index] == "{"
-        depth -= SOURCE[index] == "}"
+    for index in range(brace, len(source)):
+        depth += source[index] == "{"
+        depth -= source[index] == "}"
         if depth == 0:
-            return SOURCE[match.start() : index + 1]
+            return source[match.start() : index + 1]
     raise AssertionError(f"unterminated function {name}")
 
 
@@ -57,6 +63,24 @@ assert "mesh_route_test_fatal_stack_start" in MAIN
 assert "mesh_route_test_fatal_stack_size" in MAIN
 assert "char line[128]" not in SOURCE
 assert "static char stack_diag_record[APP_STACK_DIAG_RECORD_CAPACITY]" in SOURCE
+assert "#define APP_STACK_DIAG_MAX_FORMATTED_LENGTH 368u" in RECORD_HEADER
+assert "#define APP_STACK_DIAG_RECORD_CAPACITY 384u" in RECORD_HEADER
+assert (
+    "APP_STACK_DIAG_RECORD_CAPACITY <= "
+    "APP_STACK_DIAG_MAX_FORMATTED_LENGTH" in RECORD_HEADER
+)
+assert (
+    "length == APP_STACK_DIAG_MAX_FORMATTED_LENGTH" in RECORD_TEST
+)
+assert "(size_t)length + 1u <= sizeof(record)" in RECORD_TEST
+assert SOURCE.count("stack_diag_emit_record(") == 12
+assert SOURCE.count("DBG_STACK_RUN_END ") == 1
+assert (
+    "DBG_STACK_RUN_END epoch=%llu run=%u kind=%s owner=%s outcome=%s "
+    "queue=%u custody=%u credit=%u retry=%u drain=%u src=%llu dst=%llu "
+    "session=%u seq=%u type=%u samples=%u sequence=%u previous=%u "
+    "uptime=%u\\n" in SOURCE
+)
 assert "K_MUTEX_DEFINE(stack_diag_emit_mutex)" in SOURCE
 assert "DBG_STACK_EMIT_ERROR\\n" in SOURCE
 assert "return status_stack_diag_note(stack_diag_record);" in SOURCE
@@ -68,6 +92,45 @@ assert "stack_diag_transport_write(&status_stack_diag_transport" in BOARD_SOURCE
 assert "SEGGER_RTT_Write(0, data" in BOARD_SOURCE
 assert "line[len - 1u] = '\\n';" in BOARD_SOURCE
 assert "line[len++] = '\\n';" in BOARD_SOURCE
+
+main = function_body("main", MAIN)
+identity_print = function_body("mesh_node_identity_print", MAIN)
+identity_formats = re.findall(
+    r'status_debug_printf\(\s*"(mesh node identity:[^"]+)"',
+    identity_print,
+)
+assert identity_print.count("status_debug_printf(") == 2
+assert "printk(" not in identity_print
+assert len(identity_formats) == 2
+assert len(set(identity_formats)) == 1
+assert MAIN.count(identity_formats[0]) == len(identity_formats)
+assert main.count("mesh_node_identity_print();") == 3
+
+anchor_start = main.index("if (DEVICE_ROLE == ROLE_ANCHOR)")
+gateway_start = main.index("} else if (DEVICE_ROLE == ROLE_GATEWAY)", anchor_start)
+anchor = main[anchor_start:gateway_start]
+non_ml_anchor_start = anchor.index("#if !defined(CONFIG_IMEC_ML_ANCHOR)")
+ml_anchor_start = anchor.index(
+    '#else\n        LOG_INF("ML anchor full-duty',
+    non_ml_anchor_start,
+)
+non_ml_anchor = anchor[non_ml_anchor_start:ml_anchor_start]
+ml_anchor = anchor[ml_anchor_start:]
+assert re.search(
+    r"app_stack_diag_start\(\);\s*"
+    r"k_msleep\(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS\);\s*"
+    r"mesh_node_identity_print\(\);",
+    non_ml_anchor,
+)
+assert "mesh_node_identity_print();" not in ml_anchor
+
+gateway = main[gateway_start:]
+assert re.search(
+    r"app_stack_diag_start\(\);\s*"
+    r"k_msleep\(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS\);\s*"
+    r"mesh_node_identity_print\(\);",
+    gateway,
+)
 
 sample = function_body("app_stack_diag_sample")
 lock = sample.index("k_mutex_lock(&stack_diag_emit_mutex")

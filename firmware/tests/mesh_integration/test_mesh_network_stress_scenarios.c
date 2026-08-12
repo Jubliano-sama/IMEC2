@@ -256,6 +256,23 @@ static int fail_requirement(int line, const char *expression)
     } \
 } while (0)
 
+static int pending_gateway_ack_confirm_packet(
+    const struct mesh_sim_world *sim,
+    uint8_t node_index,
+    struct proto_packet *packet)
+{
+    uint8_t payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    return mesh_relay_pending_gateway_ack_confirm_wire(
+        &sim->roles[node_index].relay,
+        (uint32_t)(sim->now_us / 1000u),
+        packet,
+        payload,
+        sizeof(payload),
+        &payload_len);
+}
+
 static struct mesh_event_params connection_params(uint32_t first_event_ms,
                                                   uint32_t interval_ms)
 {
@@ -438,34 +455,9 @@ static bool queued_can_run_for_current_custody(
     const struct mesh_sim_role_instance *node,
     const struct mesh_sim_queued_tx *queued)
 {
-    const struct proto_packet *packet;
-    const struct proto_packet *pending;
-
-    if (node == NULL || queued == NULL || !queued->valid) {
-        return false;
-    }
-    if (node->relay.pending.state == MESH_RELAY_TX_IDLE) {
-        return true;
-    }
-    if (queued->needs_relay_start) {
-        return false;
-    }
-    packet = &queued->outbound.packet;
-    switch (packet->msg_type) {
-    case MSG_MESH_HOP_ACK:
-    case MSG_GATEWAY_ACK:
-    case MSG_ROUTE_REPLY_ACK:
-    case MSG_GATEWAY_COLLECTION_EACK:
-        return true;
-    default:
-        break;
-    }
-    pending = &node->relay.pending.packet;
-    return packet->msg_type == pending->msg_type &&
-           packet->src_id == pending->src_id &&
-           packet->dst_id == pending->dst_id &&
-           packet->session_id == pending->session_id &&
-           packet->seq == pending->seq;
+    return node != NULL && queued != NULL &&
+           mesh_sim_relay_queue_entry_runnable(
+               node, queued, queued->outbound.next_hop_id);
 }
 
 static const struct mesh_sim_queued_tx *best_runnable_queued_tx_for_peer(
@@ -2462,8 +2454,8 @@ static int test_four_origins_share_one_relay(void)
             CHECK(shared_relay_reservations_bounded(&world.roles[relay]));
             CHECK(world.roles[origins[i]].relay.pending.state !=
                   MESH_RELAY_TX_IDLE);
-            CHECK(world.roles[origins[i]].relay.pending.packet.msg_type ==
-                  MSG_GATEWAY_ACK_CONFIRM);
+            CHECK(world.roles[origins[i]].relay.pending
+                      .gateway_ack_confirm_pending);
             CHECK(mesh_sim_count_transitions(
                       &world,
                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
@@ -2896,9 +2888,10 @@ static int test_airtime_ack_loss_and_custody(void)
                                packet.session_id,
                                packet.seq));
     CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[origin].relay.pending.packet.msg_type ==
-          MSG_GATEWAY_ACK_CONFIRM);
-    confirm_packet = world.roles[origin].relay.pending.packet;
+    CHECK(world.roles[origin].relay.pending.gateway_ack_confirm_pending);
+    CHECK(pending_gateway_ack_confirm_packet(&world,
+                                             origin,
+                                             &confirm_packet) == PROTO_OK);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[origin].id) == 0u);

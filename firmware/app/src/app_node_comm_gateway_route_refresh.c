@@ -12,32 +12,17 @@
 #define ROUTE_REFRESH_RETRY_MAX_MS 5000u
 #define ROUTE_REFRESH_PROTOCOL_DEADLINE_MS \
     APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS
-
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE > 0u &&
-                   APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE <=
-                       UINT16_MAX &&
-                   APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE <
-                       UINT32_C(0x80000000),
-               "route-refresh reservation must fit local and RFC 1982 bounds");
-struct route_refresh_correlation {
-    uint32_t session_id;
-    uint16_t seq;
-    uint8_t flags;
-};
-
 struct route_refresh_state {
     const struct app_node_comm_gateway_route_refresh_config *config;
     struct mesh_gateway_route_adv_snapshot snapshot;
     struct app_mesh_flood_progress flood;
-    struct route_refresh_correlation correlation;
+    struct proto_packet correlation;
     uint32_t sequence;
-    uint32_t reserved_sequence_next;
     uint32_t due_ms;
     uint32_t response_due_ms;
     uint32_t absolute_deadline_ms;
     uint32_t paused_at_ms;
     uint32_t operation_generation;
-    uint16_t reserved_sequence_remaining;
     uint8_t retry_round;
     uint8_t outer_sent_count;
     uint8_t burst_index;
@@ -61,13 +46,11 @@ struct route_refresh_operation {
     struct app_mesh_flood_progress flood;
     uint32_t generation;
     uint32_t sequence;
-    uint32_t reserved_sequence_next;
     uint32_t response_due_ms;
     uint32_t absolute_deadline_ms;
     uint8_t outer_sent_count;
     uint8_t burst_index;
     uint8_t burst_count;
-    uint16_t reserved_sequence_remaining;
     bool wake_sent;
     bool outer_sent;
     bool absolute_deadline_valid;
@@ -95,48 +78,26 @@ static uint32_t refresh_wait_ms(uint32_t now_ms, uint32_t deadline_ms)
            deadline_ms - now_ms;
 }
 
-static uint32_t refresh_sequence_increment(uint32_t sequence)
-{
-    return sequence == UINT32_MAX ? 1u : sequence + 1u;
-}
-
 static int refresh_operation_next_sequence(
     struct route_refresh_operation *operation)
 {
-    uint32_t first_sequence = 0u;
+    uint32_t sequence = 0u;
     int ret;
 
     if (operation == NULL || operation->config == NULL) {
         return -EINVAL;
     }
-    if (operation->config->reserve_sequences == NULL) {
-        operation->sequence =
-            refresh_sequence_increment(operation->sequence);
-        return 0;
+    if (operation->config->next_sequence == NULL) {
+        return -ENOTSUP;
     }
-    if (operation->reserved_sequence_remaining == 0u) {
-        ret = operation->config->reserve_sequences(
-            operation->config->ctx,
-            APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE,
-            &first_sequence);
-        if (ret < 0) {
-            return ret;
-        }
-        if (first_sequence == 0u) {
-            return -EIO;
-        }
-        operation->sequence = first_sequence;
-        operation->reserved_sequence_next =
-            refresh_sequence_increment(first_sequence);
-        operation->reserved_sequence_remaining =
-            APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE - 1u;
-        return 0;
+    ret = operation->config->next_sequence(operation->config->ctx, &sequence);
+    if (ret < 0) {
+        return ret;
     }
-
-    operation->sequence = operation->reserved_sequence_next;
-    operation->reserved_sequence_next =
-        refresh_sequence_increment(operation->reserved_sequence_next);
-    operation->reserved_sequence_remaining--;
+    if (sequence == 0u) {
+        return -EILSEQ;
+    }
+    operation->sequence = sequence;
     return 0;
 }
 
@@ -256,11 +217,7 @@ static bool refresh_event_prepare_locked(
     *config_out = route_refresh.config;
     *event_out = (struct app_node_comm_route_refresh_event) {
         .kind = kind,
-        .correlation = {
-            .flags = route_refresh.correlation.flags,
-            .session_id = route_refresh.correlation.session_id,
-            .seq = route_refresh.correlation.seq,
-        },
+        .correlation = route_refresh.correlation,
         .gateway_sequence = route_refresh.sequence,
         .attempt = (uint8_t)(route_refresh.retry_round + 1u),
         .sent_count = sent_count,
@@ -288,11 +245,7 @@ static void refresh_complete(int result)
         route_refresh.config;
     struct app_node_comm_route_refresh_event event = {
         .kind = APP_NODE_COMM_ROUTE_REFRESH_COMPLETE,
-        .correlation = {
-            .flags = route_refresh.correlation.flags,
-            .session_id = route_refresh.correlation.session_id,
-            .seq = route_refresh.correlation.seq,
-        },
+        .correlation = route_refresh.correlation,
         .gateway_sequence = route_refresh.sequence,
         .attempt = (uint8_t)(route_refresh.retry_round + 1u),
         .sent_count = route_refresh.outer_sent_count,
@@ -494,10 +447,6 @@ static void refresh_operation_copy_locked(
     operation->flood = route_refresh.flood;
     operation->generation = route_refresh.operation_generation;
     operation->sequence = route_refresh.sequence;
-    operation->reserved_sequence_next =
-        route_refresh.reserved_sequence_next;
-    operation->reserved_sequence_remaining =
-        route_refresh.reserved_sequence_remaining;
     operation->response_due_ms = route_refresh.response_due_ms;
     operation->response_due_valid = route_refresh.response_due_valid;
     operation->absolute_deadline_ms = route_refresh.absolute_deadline_ms;
@@ -516,10 +465,6 @@ static void refresh_operation_commit_locked(
     route_refresh.snapshot = operation->snapshot;
     route_refresh.flood = operation->flood;
     route_refresh.sequence = operation->sequence;
-    route_refresh.reserved_sequence_next =
-        operation->reserved_sequence_next;
-    route_refresh.reserved_sequence_remaining =
-        operation->reserved_sequence_remaining;
     route_refresh.outer_sent_count = operation->outer_sent_count;
     route_refresh.burst_index = operation->burst_index;
     route_refresh.burst_count = operation->burst_count;
@@ -784,8 +729,7 @@ void app_node_comm_gateway_route_refresh_init(
     const struct app_node_comm_gateway_route_refresh_config *config,
     uint32_t sequence_seed)
 {
-    uint32_t sequence;
-
+    ARG_UNUSED(sequence_seed);
     if (app_node_comm_sync_lock() < 0) {
         return;
     }
@@ -794,22 +738,6 @@ void app_node_comm_gateway_route_refresh_init(
     route_refresh.config = config;
     k_work_init_delayable(&route_refresh_work, refresh_work_handler);
     app_node_comm_sync_unlock();
-
-    sequence = config == NULL || config->now_ms == NULL ? 0u :
-               config->now_ms(config->ctx);
-    sequence ^= sequence_seed;
-    if (config != NULL && config->random_u32 != NULL) {
-        sequence ^= config->random_u32(config->ctx);
-    }
-    if (sequence == 0u) {
-        sequence = 1u;
-    }
-    if (app_node_comm_sync_lock() == 0) {
-        if (route_refresh.config == config) {
-            route_refresh.sequence = sequence;
-        }
-        app_node_comm_sync_unlock();
-    }
 }
 
 static int route_refresh_request_bounded(
@@ -879,9 +807,7 @@ static int route_refresh_request_bounded(
         route_refresh.forced = true;
         route_refresh.correlated = correlation != NULL;
         if (correlation != NULL) {
-            route_refresh.correlation.flags = correlation->flags;
-            route_refresh.correlation.session_id = correlation->session_id;
-            route_refresh.correlation.seq = correlation->seq;
+            route_refresh.correlation = *correlation;
         } else {
             memset(&route_refresh.correlation, 0,
                    sizeof(route_refresh.correlation));

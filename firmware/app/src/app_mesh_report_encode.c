@@ -453,7 +453,6 @@ static int build_range_report_samples(uint64_t clicker_id,
     uint8_t encoded[PACKET_MAX_LEN];
     uint16_t sample_index = 0u;
     uint16_t packet_index = 0u;
-    int64_t persistence_deadline_ms;
     bool fragmented;
     int ret;
 
@@ -468,8 +467,6 @@ static int build_range_report_samples(uint64_t clicker_id,
         sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES) {
         return -EINVAL;
     }
-    persistence_deadline_ms =
-        k_uptime_get() + ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS;
     ret = mesh_range_report_batch_reserve(clicker_id,
                                           event_seq,
                                           attempt_index);
@@ -691,8 +688,7 @@ build_payload:
                                                      clicker_id,
                                                      event_seq,
                                                      attempt_index,
-                                                     final_fragment,
-                                                     persistence_deadline_ms);
+                                                     final_fragment);
             if (ret < 0) {
                 LOG_WRN("range report batch fragment could not be queued for mesh TX: %d",
                         ret);

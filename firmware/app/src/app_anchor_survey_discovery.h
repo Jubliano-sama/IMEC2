@@ -24,13 +24,12 @@ struct app_anchor_survey_discovery_ops {
                        uint32_t start_ms,
                        uint32_t delay_ms);
     int (*schedule_work_ms)(uint32_t delay_ms);
+    int (*boot_incarnation)(uint32_t *incarnation);
     uint16_t (*next_sequence)(void);
-    void (*seed_sequence)(uint16_t observed_sequence);
 };
 
 int app_anchor_survey_discovery_init(
     const struct app_anchor_survey_discovery_ops *ops);
-int app_anchor_survey_discovery_restore(bool *restored);
 void app_anchor_survey_discovery_handle_start(
     const struct proto_packet *packet,
     const uint8_t *payload,

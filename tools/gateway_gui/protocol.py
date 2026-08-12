@@ -12,8 +12,19 @@ import math
 from typing import Any, Callable
 
 from .operation_policy import (
+    ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+    DISCOVERY_DEFAULT_ROUND_COUNT,
+    DISCOVERY_DEFAULT_SLOT_MS,
+    DISCOVERY_DEFAULT_START_DELAY_MS,
     OperationPolicyProfile,
+    assignment_required_budget_ms,
     decode_operation_policy_value,
+    discovery_required_budget_ms,
+)
+from .command_telemetry import (
+    CommandTelemetryDecodeError,
+    GatewayCommandEvent,
+    decode_gateway_command_event,
 )
 
 
@@ -42,9 +53,9 @@ MESH_BROADCAST_ID = 0
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
 GATEWAY_COMMAND_BUDGET_MAX_MS = 900000
-DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 235209
+DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 751204
 ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
-SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 600000
+SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 900000
 SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 5
 
 MSG_CLICK_REPORT = 0x20
@@ -69,8 +80,22 @@ GATEWAY_HOST_RECEIPT_TLV_LEN = 2 + GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN
 FLAG_GATEWAY_ACK_REQUIRED = 0x04
 FLAG_DIAGNOSTIC = 0x10
 FLAG_COUNT_AS_CLICK = 0x20
+FLAG_ERROR = 0x40
+
+GATEWAY_COMMAND_EVENT_FLAG_TERMINAL = 0x01
+GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT = 0x02
+GATEWAY_COMMAND_EVENT_FLAG_REPLAY = 0x04
+GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE = 0x08
+GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED = 6
+GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE = 7
+GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY = 8
+GATEWAY_COMMAND_EVENT_STAGE_COMPLETE = 12
+GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE = 0xFF
+GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES = 50
 RANGE_REPORT_MAX_DISTANCE_SAMPLES = 96
 DETECTION_SOURCE_UWB_WAKE_CLAIM = 1
+SURVEY_GATEWAY_MAX_PEERS_PER_REPORT = 12
+SURVEY_REACHABILITY_ENTRY_LEN = 10
 
 _CLICK_REPORT_IDENTITY_FNV_OFFSET = 2166136261
 _CLICK_REPORT_IDENTITY_FNV_PRIME = 16777619
@@ -119,6 +144,7 @@ TLV_COMMAND_ID = 0x10
 TLV_COMMAND_STATUS = 0x11
 TLV_EXPECTED_NODE_COUNT = 0x78
 TLV_SURVEY_ID = 0x15
+TLV_REACHABILITY_ENTRY = 0x17
 TLV_DURATION_MS = 0x1A
 TLV_REASON = 0x1E
 TLV_RANGE_STATUS = 0x21
@@ -168,6 +194,7 @@ TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
 TLV_UWB_CIR_START_INDEX = 0x58
+TLV_NODE_BOOT_COUNTER = 0x6E
 TLV_DISCOVERY_ASSIGNMENT_PHASE = 0xA4
 TLV_DISCOVERY_ASSIGNMENT_EPOCH = 0xA5
 TLV_DISCOVERY_ASSIGNMENT_HASH = 0xA6
@@ -271,6 +298,11 @@ HOST_ONLY_MESSAGE_TYPES = {
     0x7F,
 }
 RF_SHARED_MESSAGE_TYPES = SHARED_MESSAGE_TYPES - HOST_ONLY_MESSAGE_TYPES
+# A command event is host-only and remains invalid on UWB, but it is a
+# receiptable gateway-stream record after the GUI commits its semantic model.
+HOST_RECEIPTABLE_MESSAGE_TYPES = RF_SHARED_MESSAGE_TYPES | {
+    MSG_GATEWAY_COMMAND_EVENT,
+}
 
 COMMAND_NAMES = {
     0x0001: "PING",
@@ -476,7 +508,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     0x14: TlvSpec("GATEWAY_ID", _scalar(8)),
     TLV_SURVEY_ID: TlvSpec("SURVEY_ID", _scalar(4)),
     0x16: TlvSpec("PEER_ID_LIST", _array(8)),
-    0x17: TlvSpec("REACHABILITY_ENTRY"),
+    TLV_REACHABILITY_ENTRY: TlvSpec("REACHABILITY_ENTRY"),
     0x18: TlvSpec("RANGE_FLAGS", _scalar(1)),
     0x19: TlvSpec("LED_PATTERN_ID", _scalar(1)),
     TLV_DURATION_MS: TlvSpec("DURATION_MS", _scalar(4)),
@@ -542,6 +574,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_DIAG_FRAGMENT_COUNT: TlvSpec("DIAG_FRAGMENT_COUNT", _scalar(2)),
     TLV_DIAG_SOURCE: TlvSpec("DIAG_SOURCE", _scalar(1)),
     TLV_UWB_CIR_START_INDEX: TlvSpec("UWB_CIR_START_INDEX", _scalar(2)),
+    TLV_NODE_BOOT_COUNTER: TlvSpec("NODE_BOOT_COUNTER", _scalar(4)),
     TLV_DISCOVERY_ASSIGNMENT_PHASE: TlvSpec("DISCOVERY_ASSIGNMENT_PHASE", _scalar(1)),
     TLV_DISCOVERY_ASSIGNMENT_EPOCH: TlvSpec("DISCOVERY_ASSIGNMENT_EPOCH", _scalar(4)),
     TLV_DISCOVERY_ASSIGNMENT_HASH: TlvSpec("DISCOVERY_ASSIGNMENT_HASH", _scalar(8)),
@@ -1202,6 +1235,157 @@ def validate_click_payload(packet: Packet, payload: bytes | None = None) -> None
 validate_click_report = validate_click_payload
 
 
+def validate_survey_discovery_report(
+    packet: Packet, payload: bytes | None = None
+) -> None:
+    """Validate one reliable discovery report before host acceptance.
+
+    The report's transport replay domain is the anchor boot incarnation in
+    ``packet.session_id``.  The survey operation generation remains an
+    independent mandatory payload value; equating the two would recreate the
+    asymmetric-reboot collision this identity split prevents.
+    """
+
+    if packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT:
+        raise DecodeError(
+            "survey discovery validator requires "
+            f"MSG_SURVEY_DISCOVERY_REPORT, got 0x{packet.msg_type:02x}"
+        )
+
+    payload_bytes = packet.payload if payload is None else payload
+    if not payload_bytes:
+        raise DecodeError("malformed survey discovery report: payload is empty")
+    tlvs = packet.tlvs if payload is None else parse_tlvs(payload_bytes)
+    if packet.stream_flags & GATEWAY_STREAM_FLAG_TRUNCATED or any(
+        tlv.truncated for tlv in tlvs
+    ):
+        raise DecodeError(
+            "malformed survey discovery report: truncated custody records "
+            "cannot be accepted"
+        )
+    if packet.flags != (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC):
+        raise DecodeError(
+            "malformed survey discovery report: exact gateway-ACK and "
+            "diagnostic flags are required"
+        )
+    if (
+        packet.src_id == 0
+        or packet.dst_id == 0
+        or packet.src_id == packet.dst_id
+        or packet.session_id == 0
+        or packet.seq == 0
+    ):
+        raise DecodeError(
+            "malformed survey discovery report: envelope identity must be "
+            "nonzero with distinct endpoints"
+        )
+
+    def values(type_id: int) -> list[TlvValue]:
+        return [tlv for tlv in tlvs if tlv.type_id == type_id]
+
+    required_specs = (
+        (TLV_SURVEY_ID, 4, "SURVEY_ID"),
+        (TLV_ANCHOR_ID, 8, "ANCHOR_ID"),
+        (TLV_SURVEY_OPERATION_GENERATION, 8, "SURVEY_OPERATION_GENERATION"),
+        (TLV_NODE_BOOT_COUNTER, 4, "NODE_BOOT_COUNTER"),
+        (TLV_COMMAND_STATUS, 2, "COMMAND_STATUS"),
+    )
+    required_values: dict[int, TlvValue] = {}
+    for type_id, width, name in required_specs:
+        occurrences = values(type_id)
+        if len(occurrences) != 1:
+            qualifier = "missing" if not occurrences else "duplicate"
+            raise DecodeError(
+                f"malformed survey discovery report: {qualifier} required "
+                f"{name} TLV"
+            )
+        value = occurrences[0]
+        if len(value.raw) != width:
+            raise DecodeError(
+                f"malformed survey discovery report: {name} TLV must be "
+                f"{width} bytes, got {len(value.raw)}"
+            )
+        required_values[type_id] = value
+
+    entries = values(TLV_REACHABILITY_ENTRY)
+    if len(entries) > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT:
+        raise DecodeError(
+            "malformed survey discovery report: too many reachability entries"
+        )
+    expected_types = (
+        [TLV_SURVEY_ID, TLV_ANCHOR_ID]
+        + [TLV_REACHABILITY_ENTRY] * len(entries)
+        + [
+            TLV_SURVEY_OPERATION_GENERATION,
+            TLV_NODE_BOOT_COUNTER,
+            TLV_COMMAND_STATUS,
+        ]
+    )
+    if [tlv.type_id for tlv in tlvs] != expected_types:
+        raise DecodeError(
+            "malformed survey discovery report: TLVs are not in canonical "
+            "producer order or contain an unsupported type"
+        )
+
+    survey_id = int.from_bytes(required_values[TLV_SURVEY_ID].raw, "little")
+    anchor_id = int.from_bytes(required_values[TLV_ANCHOR_ID].raw, "little")
+    operation_generation = int.from_bytes(
+        required_values[TLV_SURVEY_OPERATION_GENERATION].raw, "little"
+    )
+    boot_incarnation = int.from_bytes(
+        required_values[TLV_NODE_BOOT_COUNTER].raw, "little"
+    )
+    command_status = int.from_bytes(
+        required_values[TLV_COMMAND_STATUS].raw, "little"
+    )
+    if survey_id == 0:
+        raise DecodeError(
+            "malformed survey discovery report: SURVEY_ID must be nonzero"
+        )
+    if anchor_id == 0 or anchor_id != packet.src_id:
+        raise DecodeError(
+            "malformed survey discovery report: ANCHOR_ID must be nonzero "
+            "and equal packet source"
+        )
+    if operation_generation == 0 or operation_generation & 0xFFFFFFFF == 0:
+        raise DecodeError(
+            "malformed survey discovery report: operation generation must "
+            "have a nonzero transport projection"
+        )
+    if boot_incarnation == 0 or packet.session_id != boot_incarnation:
+        raise DecodeError(
+            "malformed survey discovery report: packet session must equal "
+            "the nonzero node boot counter"
+        )
+    if command_status not in COMMAND_STATUS_NAMES:
+        raise DecodeError(
+            "malformed survey discovery report: command status is invalid"
+        )
+
+    peer_ids: set[int] = set()
+    for entry in entries:
+        if len(entry.raw) != SURVEY_REACHABILITY_ENTRY_LEN:
+            raise DecodeError(
+                "malformed survey discovery report: reachability entry must "
+                f"be {SURVEY_REACHABILITY_ENTRY_LEN} bytes"
+            )
+        peer_id = int.from_bytes(entry.raw[:8], "little")
+        quality = entry.raw[9]
+        if (
+            peer_id == 0
+            or peer_id == anchor_id
+            or peer_id == packet.dst_id
+            or peer_id in peer_ids
+            or quality > 100
+        ):
+            raise DecodeError(
+                "malformed survey discovery report: reachability endpoints "
+                "must be unique, nonzero, distinct from anchor/gateway, and "
+                "have quality at most 100"
+            )
+        peer_ids.add(peer_id)
+
+
 def parse_shared_packet_bytes(
     raw: bytes,
     *,
@@ -1321,6 +1505,150 @@ def parse_stream_record(record: bytes) -> Packet:
     )
 
 
+def is_gateway_assignment_publisher_event(event: GatewayCommandEvent) -> bool:
+    """Return whether an event is one durable assignment-publication item.
+
+    Only this narrow producer domain carries an outer ACK-required envelope,
+    therefore only it can cross the GUI's receipt/durable-replay boundary.
+    Live command progress deliberately remains ordinary telemetry even when
+    it shares an enumeration stage number with a published mapping.
+    """
+
+    if (
+        event.command_kind != 1
+        or event.command_id != CMD_ASSIGN_DISCOVERY_SLOTS
+        or event.route_epoch == 0
+        or event.correlation_id == 0
+        or event.gateway_sequence == 0
+        or event.host_session_id == 0
+        or event.host_sequence == 0
+        or event.event_sequence == 0
+        or event.correlation_id != event.host_session_id
+        or event.flags
+        & ~(GATEWAY_COMMAND_EVENT_FLAG_TERMINAL | GATEWAY_COMMAND_EVENT_FLAG_REPLAY)
+    ):
+        return False
+
+    terminal = bool(event.flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL)
+    if event.stage == GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED:
+        return (
+            not terminal
+            and event.anchor_id != 0
+            and event.discovery_slot < GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES
+            and event.progress_count != 0
+            and event.total_count != 0
+            and event.success_count + event.failure_count == 1
+        )
+    if event.stage in (
+        GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE,
+        GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY,
+    ):
+        return (
+            not terminal
+            and event.anchor_id == 0
+            and event.pair_initiator_id == 0
+            and event.pair_responder_id == 0
+            and event.discovery_slot == GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE
+        )
+    return (
+        event.stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE
+        and terminal
+        and event.anchor_id == 0
+        and event.pair_initiator_id == 0
+        and event.pair_responder_id == 0
+        and event.discovery_slot == GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE
+    )
+
+
+def validate_gateway_command_event_packet(packet: Packet) -> GatewayCommandEvent:
+    """Validate one command event before it reaches GUI state.
+
+    All command observability is self-addressed and event-sequence bound, but
+    only publisher items carry the ACK-required outer marker. Generic queued,
+    progress, and early-terminal telemetry is valid with zero route/assignment
+    fields and remains best effort, so it cannot block a host custody head.
+    """
+
+    if packet.msg_type != MSG_GATEWAY_COMMAND_EVENT:
+        raise DecodeError(
+            "gateway command-event validator requires MSG_GATEWAY_COMMAND_EVENT"
+        )
+    if packet.transport != "gateway-stream-v1":
+        raise DecodeError("gateway command events require gateway stream transport")
+    if packet.flags not in (0, FLAG_GATEWAY_ACK_REQUIRED) or packet.stream_flags != 0:
+        raise DecodeError(
+            "gateway command event requires zero or publisher ACK-required envelope flags"
+        )
+    if (
+        packet.src_id == 0
+        or packet.dst_id == 0
+        or packet.src_id != packet.dst_id
+        or packet.session_id == 0
+        or packet.seq == 0
+    ):
+        raise DecodeError(
+            "gateway command event requires nonzero self-addressed stream identity"
+        )
+    try:
+        event = decode_gateway_command_event(
+            packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES)
+        )
+    except CommandTelemetryDecodeError as exc:
+        raise DecodeError(f"malformed gateway command event: {exc}") from exc
+
+    if (
+        event.command_id == 0
+        or event.event_sequence == 0
+        or event.event_sequence != packet.session_id
+        or (event.event_sequence & 0xFFFF) != packet.seq
+        or bool(event.flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL)
+        != (event.stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE)
+    ):
+        raise DecodeError("gateway command event identity/stage binding is invalid")
+    if packet.flags == FLAG_GATEWAY_ACK_REQUIRED and not is_gateway_assignment_publisher_event(event):
+        raise DecodeError(
+            "ACK-required gateway command event is not a durable assignment publisher item"
+        )
+    return event
+
+
+def validate_gateway_local_command_result_packet(packet: Packet) -> None:
+    """Validate the exact self-addressed result built by the gateway.
+
+    Mesh command results retain distinct endpoints and are validated by their
+    mesh owner. This local result is a short BLE-only acknowledgement of the
+    GUI command and must be canonical before the GUI can receipt it.
+    """
+
+    if (
+        packet.msg_type != MSG_COMMAND_RESULT
+        or packet.transport != "gateway-stream-v1"
+        or packet.stream_flags != 0
+        or packet.src_id == 0
+        or packet.src_id != packet.dst_id
+        or packet.session_id == 0
+        or packet.seq == 0
+        or packet.flags & FLAG_GATEWAY_ACK_REQUIRED == 0
+        or packet.flags
+        & ~(FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC | FLAG_ERROR)
+        or len(packet.payload) != 11
+    ):
+        raise DecodeError("gateway local command result envelope is invalid")
+    payload = packet.payload
+    if (
+        payload[0:2] != bytes((TLV_COMMAND_ID, 2))
+        or payload[4:6] != bytes((TLV_COMMAND_STATUS, 2))
+        or payload[8:10] != bytes((TLV_REASON, 1))
+    ):
+        raise DecodeError("gateway local command result TLVs are not canonical")
+    command_id = int.from_bytes(payload[2:4], "little")
+    command_status = int.from_bytes(payload[6:8], "little")
+    if command_id == 0 or command_status not in COMMAND_STATUS_NAMES:
+        raise DecodeError("gateway local command result has invalid command or status")
+    if (command_status == 0) != (packet.flags & FLAG_ERROR == 0):
+        raise DecodeError("gateway local command result error flag disagrees with status")
+
+
 class GatewayReceiveBuffer:
     """Reassembles packet notifications split at arbitrary ATT boundaries."""
 
@@ -1334,10 +1662,106 @@ class GatewayReceiveBuffer:
     def _append_packet(packets: list[Packet], packet: Packet) -> None:
         # Keep parse_shared_packet_bytes/parse_stream_record useful for raw
         # inspection, but make the live BLE receive boundary fail closed for
-        # semantically malformed click reports.
+        # reliable records whose host receipt commits semantic acceptance.
         if packet.msg_type == MSG_CLICK_REPORT:
             validate_click_payload(packet)
+        elif packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT:
+            validate_survey_discovery_report(packet)
+        elif packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
+            validate_gateway_command_event_packet(packet)
+        elif (
+            packet.msg_type == MSG_COMMAND_RESULT
+            and packet.src_id == packet.dst_id
+        ):
+            validate_gateway_local_command_result_packet(packet)
         packets.append(packet)
+
+    def _find_stream_record(self) -> tuple[int, int | None] | None:
+        """Find a plausible stream-v1 header in the buffered notification data.
+
+        Gateway stream records have no delimiter, so a dropped ATT prefix can
+        leave the buffer in the middle of a record and make a later retry look
+        like one oversized legacy COBS frame.  Scan for a fixed, versioned
+        header and require a matching payload CRC before treating a complete
+        candidate as a record.  A structurally valid but incomplete candidate
+        is returned with ``None`` as its length so the caller can retain it for
+        the next notification.
+        """
+
+        search_from = 0
+        partial: tuple[int, int | None] | None = None
+        while True:
+            offset = self._buffer.find(GATEWAY_STREAM_MAGIC_BYTES, search_from)
+            if offset < 0:
+                return partial
+            search_from = offset + 1
+            remaining = len(self._buffer) - offset
+
+            # Validate fields as they become available.  This keeps a random
+            # occurrence of ``GW`` inside a legacy COBS frame from pinning the
+            # decoder, while still retaining a split retry header.
+            if remaining >= 3 and self._buffer[offset + 2] != GATEWAY_STREAM_VERSION:
+                continue
+            if remaining >= 4 and self._buffer[offset + 3] != GATEWAY_STREAM_RECORD_HEADER_LEN:
+                continue
+            if remaining >= 5 and self._buffer[offset + 4] != GATEWAY_STREAM_RECORD_PACKET:
+                continue
+            if remaining >= 6 and self._buffer[offset + 5] > 6:
+                continue
+            if remaining < GATEWAY_STREAM_RECORD_HEADER_LEN:
+                if partial is None:
+                    partial = (offset, None)
+                continue
+
+            payload_len = int.from_bytes(
+                self._buffer[offset + 36:offset + 38], "little"
+            )
+            record_len = GATEWAY_STREAM_RECORD_HEADER_LEN + payload_len
+            if (
+                self._buffer[offset + 8] not in SHARED_MESSAGE_TYPES
+                or record_len > GATEWAY_STREAM_RECORD_MAX_LEN
+            ):
+                continue
+            if len(self._buffer) - offset < record_len:
+                if partial is None:
+                    partial = (offset, record_len)
+                continue
+
+            payload_start = offset + GATEWAY_STREAM_RECORD_HEADER_LEN
+            payload_end = offset + record_len
+            expected_crc = int.from_bytes(
+                self._buffer[offset + 38:offset + 40], "little"
+            )
+            actual_crc = crc16_ccitt_false(
+                bytes(self._buffer[payload_start:payload_end])
+            )
+            if expected_crc != actual_crc:
+                continue
+            return offset, record_len
+
+    def _consume_stream_record(
+        self,
+        candidate: tuple[int, int | None],
+        packets: list[Packet],
+        errors: list[str],
+    ) -> bool:
+        """Consume one stream candidate, returning whether more work is ready."""
+
+        offset, record_len = candidate
+        if offset:
+            # The bytes before a validated retry are an incomplete/dropped
+            # notification suffix.  They cannot be parsed independently, so
+            # discard only that prefix and retain the exact record boundary.
+            del self._buffer[:offset]
+        if record_len is None or len(self._buffer) < record_len:
+            return False
+        record = bytes(self._buffer[:record_len])
+        del self._buffer[:record_len]
+        try:
+            self._append_packet(packets, parse_stream_record(record))
+        except DecodeError as exc:
+            errors.append(f"gateway stream record decode failed: {exc}")
+        return True
 
     def feed(self, data: bytes) -> FeedResult:
         self._buffer.extend(data)
@@ -1345,42 +1769,33 @@ class GatewayReceiveBuffer:
         errors: list[str] = []
 
         while self._buffer:
+            stream_candidate = self._find_stream_record()
+            if stream_candidate is not None:
+                if not self._consume_stream_record(stream_candidate, packets, errors):
+                    break
+                continue
+
             stream_prefix = bytes(self._buffer[:2]) == GATEWAY_STREAM_MAGIC_BYTES
-            possible_stream_prefix = len(self._buffer) == 1 and self._buffer[0] == GATEWAY_STREAM_MAGIC_BYTES[0]
+            possible_stream_prefix = (
+                len(self._buffer) == 1
+                and self._buffer[0] == GATEWAY_STREAM_MAGIC_BYTES[0]
+            )
             if possible_stream_prefix:
                 break
             if stream_prefix:
-                if len(self._buffer) < GATEWAY_STREAM_RECORD_HEADER_LEN:
+                delimiter = self._buffer.find(0)
+                if delimiter < 0:
+                    errors.append(
+                        "invalid gateway stream header without a COBS delimiter; buffer reset"
+                    )
+                    self._buffer.clear()
                     break
-                header_len = self._buffer[3]
-                payload_len = int.from_bytes(self._buffer[36:38], "little")
-                record_len = header_len + payload_len
-                if (
-                    self._buffer[2] != GATEWAY_STREAM_VERSION
-                    or header_len != GATEWAY_STREAM_RECORD_HEADER_LEN
-                    or self._buffer[4] != GATEWAY_STREAM_RECORD_PACKET
-                    or record_len > GATEWAY_STREAM_RECORD_MAX_LEN
-                ):
-                    delimiter = self._buffer.find(0)
-                    if delimiter < 0:
-                        errors.append("invalid gateway stream header without a COBS delimiter; buffer reset")
-                        self._buffer.clear()
-                        break
-                    frame = bytes(self._buffer[:delimiter + 1])
-                    del self._buffer[:delimiter + 1]
-                    try:
-                        self._append_packet(packets, parse_cobs_packet(frame))
-                    except DecodeError as exc:
-                        errors.append(f"packet notification decode failed: {exc}")
-                    continue
-                if len(self._buffer) < record_len:
-                    break
-                record = bytes(self._buffer[:record_len])
-                del self._buffer[:record_len]
+                frame = bytes(self._buffer[:delimiter + 1])
+                del self._buffer[:delimiter + 1]
                 try:
-                    self._append_packet(packets, parse_stream_record(record))
+                    self._append_packet(packets, parse_cobs_packet(frame))
                 except DecodeError as exc:
-                    errors.append(f"gateway stream record decode failed: {exc}")
+                    errors.append(f"packet notification decode failed: {exc}")
                 continue
 
             delimiter = self._buffer.find(0)
@@ -1390,9 +1805,21 @@ class GatewayReceiveBuffer:
                     self._buffer.clear()
                 break
             frame = bytes(self._buffer[:delimiter + 1])
+            try:
+                packet = parse_cobs_packet(frame)
+            except DecodeError as exc:
+                # A dropped-prefix stream record can contain zero bytes, which
+                # look like COBS delimiters until the gateway retries its full
+                # GW/v1 record.  Discard each invalid delimited prefix: the
+                # stream scanner above will still find a later complete,
+                # CRC-valid GW record, while a corrupt legacy COBS frame can no
+                # longer pin every valid legacy frame that follows it.
+                del self._buffer[:delimiter + 1]
+                errors.append(f"COBS packet notification decode failed: {exc}")
+                continue
             del self._buffer[:delimiter + 1]
             try:
-                self._append_packet(packets, parse_cobs_packet(frame))
+                self._append_packet(packets, packet)
             except DecodeError as exc:
                 errors.append(f"COBS packet notification decode failed: {exc}")
 
@@ -1464,10 +1891,10 @@ def _validate_gateway_host_receipt_identity(
     *,
     error_type: type[Exception] = ValueError,
 ) -> None:
-    if identity.original_msg_type not in RF_SHARED_MESSAGE_TYPES:
+    if identity.original_msg_type not in HOST_RECEIPTABLE_MESSAGE_TYPES:
         raise error_type(
             f"host receipt original message type 0x{identity.original_msg_type:02x} "
-            "is not valid on an RF lane"
+            "is not a receiptable gateway-stream record"
         )
     for name, value, maximum in (
         ("original_msg_type", identity.original_msg_type, 0xFF),
@@ -1481,7 +1908,28 @@ def _validate_gateway_host_receipt_identity(
             raise error_type(f"{name} is outside its encoded range")
     if identity.src_id == 0 or identity.dst_id == 0:
         raise error_type("host receipt source and destination IDs must be non-zero")
-    if identity.src_id == identity.dst_id:
+    if identity.original_msg_type == MSG_GATEWAY_COMMAND_EVENT:
+        if identity.src_id != identity.dst_id:
+            raise error_type(
+                "gateway command-event host receipt must be self-addressed"
+            )
+        if identity.original_flags != FLAG_GATEWAY_ACK_REQUIRED:
+            raise error_type(
+                "gateway command-event host receipt requires ACK-required flags"
+            )
+    elif identity.original_msg_type == MSG_COMMAND_RESULT:
+        if (identity.original_flags & FLAG_GATEWAY_ACK_REQUIRED) == 0:
+            raise error_type(
+                "command-result host receipt requires ACK-required flags"
+            )
+        if identity.src_id == identity.dst_id:
+            if identity.original_flags & ~(
+                FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC | FLAG_ERROR
+            ):
+                raise error_type(
+                    "gateway-local command-result host receipt has invalid flags"
+                )
+    elif identity.src_id == identity.dst_id:
         raise error_type("host receipt source and destination IDs must differ")
     if identity.session_id == 0 or identity.seq == 0:
         raise error_type("host receipt session and sequence must be non-zero")
@@ -1567,6 +2015,13 @@ def build_gateway_host_receipt(
         raise ValueError("gateway ID must be a non-zero uint64")
     if host_id == gateway_id:
         raise ValueError("host and gateway IDs must differ")
+    if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
+        validate_gateway_command_event_packet(packet)
+    elif (
+        packet.msg_type == MSG_COMMAND_RESULT
+        and packet.src_id == packet.dst_id
+    ):
+        validate_gateway_local_command_result_packet(packet)
 
     identity = GatewayHostReceiptIdentity(
         original_msg_type=packet.msg_type,
@@ -1598,9 +2053,9 @@ def build_gateway_host_receipt(
 
 
 def append_operation_policy_tlvs(
-    payload: bytearray, profile: OperationPolicyProfile
+    payload: bytearray, values: tuple[bytes, ...]
 ) -> None:
-    for value in profile.encoded_values():
+    for value in values:
         append_tlv(payload, TLV_OPERATION_POLICY, value)
 
 
@@ -1671,6 +2126,19 @@ def build_anchor_discovery_command(
             f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
             f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
         )
+    if command_budget_ms is not None:
+        required_budget_ms = discovery_required_budget_ms(
+            DISCOVERY_DEFAULT_START_DELAY_MS,
+            DISCOVERY_DEFAULT_SLOT_MS,
+            discovery_slot_count,
+            DISCOVERY_DEFAULT_ROUND_COUNT,
+            duration_ms,
+        )
+        if command_budget_ms < required_budget_ms:
+            raise ValueError(
+                "command budget must cover the selected survey discovery "
+                f"policy: minimum {required_budget_ms} ms"
+            )
     if operation_policy is not None:
         discovery = operation_policy.discovery
         if duration_ms != discovery.report_grace_ms:
@@ -1701,7 +2169,13 @@ def build_anchor_discovery_command(
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     if operation_policy is not None:
-        append_operation_policy_tlvs(payload, operation_policy)
+        append_operation_policy_tlvs(
+            payload,
+            (
+                operation_policy.discovery.encode_value(),
+                operation_policy.pair.encode_value(),
+            ),
+        )
     return _build_command_frame(
         label="Anchor survey discovery",
         command_id=CMD_SURVEY_REACHABILITY,
@@ -1769,7 +2243,7 @@ def build_here_i_am_command(
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     if operation_policy is not None:
-        append_operation_policy_tlvs(payload, operation_policy)
+        append_operation_policy_tlvs(payload, operation_policy.encoded_values())
     return _build_command_frame(
         label="Here I Am route refresh",
         command_id=CMD_FORCE_REDISCOVERY,
@@ -1809,6 +2283,18 @@ def build_assign_discovery_slots_command(
         )
     if expected_anchor_count is not None and not 1 <= expected_anchor_count <= 50:
         raise ValueError("expected anchor count must be in 1..50")
+    if command_budget_ms is not None:
+        response_spread_ms = (
+            operation_policy.assignment.response_spread_ms
+            if operation_policy is not None
+            else ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
+        )
+        required_budget_ms = assignment_required_budget_ms(response_spread_ms)
+        if command_budget_ms < required_budget_ms:
+            raise ValueError(
+                "command budget must cover the selected assignment policy: "
+                f"minimum {required_budget_ms} ms"
+            )
     if operation_policy is not None:
         assignment = operation_policy.assignment
         policy_expected = assignment.expected_anchor_count
@@ -1831,7 +2317,10 @@ def build_assign_discovery_slots_command(
     if command_budget_ms is not None:
         append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
     if operation_policy is not None:
-        append_operation_policy_tlvs(payload, operation_policy)
+        append_operation_policy_tlvs(
+            payload,
+            (operation_policy.assignment.encode_value(),),
+        )
     return _build_command_frame(
         label="Assign discovery slots",
         command_id=CMD_ASSIGN_DISCOVERY_SLOTS,

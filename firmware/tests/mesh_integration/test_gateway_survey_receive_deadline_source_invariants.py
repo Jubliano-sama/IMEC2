@@ -48,16 +48,7 @@ def function_body(source: str, name: str) -> str:
 
 interval = function_body(SURVEY, "gateway_survey_receive_in_interval")
 assert "uint64_t received_at_ms" in interval
-assert "uint32_t received_at_32 = (uint32_t)received_at_ms" in interval
-start_check = interval.index(
-    "uptime_deadline_reached(received_at_32, started_at_ms)"
-)
-deadline_check = interval.index(
-    "!uptime_deadline_reached(received_at_32, deadline_ms)"
-)
-assert start_check < deadline_check, (
-    "survey admission must implement the closed-open [start, deadline) interval"
-)
+assert "survey_gateway_receive_in_interval(" in interval
 
 
 # The callback boundary must preserve the radio-captured timestamp all the way
@@ -78,6 +69,25 @@ pair_dispatch = gateway_accept[
     gateway_accept.index("survey_extract_reach_report_tlvs(")
 ]
 assert "received_at_ms" in pair_dispatch
+
+ack_callback = function_body(REPORT, "mesh_report_gateway_note_ack_confirm")
+assert "uint64_t first_received_at_ms" in ack_callback
+assert re.search(
+    r"gateway_note_ack_confirm\s*\([^;]*first_received_at_ms\s*\)",
+    ack_callback,
+    re.S,
+)
+ack_delivery = function_body(REPORT, "mesh_gateway_accept_semantic_delivery")
+ack_branch = ack_delivery[
+    ack_delivery.index("case MSG_GATEWAY_ACK_CONFIRM:") :
+    ack_delivery.index("case MSG_CLICK_REPORT:")
+]
+assert re.search(
+    r"mesh_report_gateway_note_ack_confirm\s*\("
+    r"[^;]*pending->first_received_at_ms\s*\)",
+    ack_branch,
+    re.S,
+)
 
 
 # Discovery uses the frozen safety deadline until known-count completion.  The
@@ -142,24 +152,17 @@ assert "COMMAND_INTERNAL_ERROR" in collection_finalize[
 # deadline-driven finalizer waits for an already-armed pre-D receive.
 pair_accept = function_body(ANCHOR, "gateway_note_survey_pair_result")
 assert "uint64_t received_at_ms" in pair_accept
-assert pair_accept.count("gateway_survey_receive_in_interval(") == 1
+assert "gateway_survey_receive_in_interval(" not in pair_accept
 assert re.search(
     r"gateway_survey_round_note_sample\s*\([^;]*received_at_ms\s*\)",
     pair_accept,
     re.S,
 )
-serial_finalize = function_body(
-    ANCHOR, "gateway_survey_finalize_pair_observation"
+assert re.search(
+    r"gateway_manual_survey_pair_note_sample\s*\([^;]*received_at_ms\s*\)",
+    pair_accept,
+    re.S,
 )
-for required in (
-    "gateway_protocol_validation_check_interval(",
-    "gateway_survey_pair_observation_started_at_ms",
-    "gateway_survey_pair_observation_deadline_ms",
-    "GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED",
-    "GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED",
-    "GATEWAY_SURVEY_PAIR_FINALIZE_VALIDATION_EXPIRED",
-):
-    assert required in serial_finalize
 
 round_accept = function_body(ROUND, "gateway_survey_round_note_sample")
 assert "uint64_t received_at_ms" in round_accept
@@ -169,7 +172,8 @@ round_finalize = function_body(
 )
 for required in (
     "gateway_protocol_validation_check_interval(",
-    "gateway_survey_round_observation_started_at_ms",
+    "gateway_survey_round_observation_origin.valid",
+    "gateway_survey_round_observation_origin.started_at_ms",
     "gateway_survey_round_observation_deadline_ms",
     "GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED",
     "GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED",
@@ -178,12 +182,43 @@ for required in (
     assert required in round_finalize
 
 
+# Result delivery is durable upstream and may legitimately spend most of the
+# command budget repairing a one-hop route. The gateway must not replace that
+# immutable operation horizon with the old BLE-service estimate or the short
+# physical ranging window while responder samples are still in custody.
+round_commitment = function_body(ROUND, "gateway_survey_round_commitment")
+assert (
+    "gateway_survey_operation_deadline_ms -" in round_commitment
+    and "gateway_survey_operation_started_at_ms" in round_commitment
+)
+assert "gateway_survey_round_longest_run_ms" not in ROUND
+
+round_start = function_body(SURVEY, "gateway_survey_send_start")
+round_observation = round_start[
+    round_start.index("survey_gateway_observation_origin_freeze(") :
+]
+assert (
+    "gateway_survey_round_observation_deadline_ms =\n"
+    "            gateway_survey_operation_deadline_ms;"
+    in round_observation
+)
+assert "SURVEY_PAIR_RESULT_DELIVERY_TIMEOUT_MS" not in round_observation
+
 survey_work = function_body(CONTROL, "gateway_survey_work_handler")
-assert "GATEWAY_SURVEY_PAIR_FINALIZE_VALIDATION_EXPIRED" in survey_work
 operation_gate = survey_work[
     survey_work.index("gateway_survey_operation_deadline_ms") :
     survey_work.index("gateway_survey_flush_boundary_event")
 ]
+timely_proof = operation_gate.index(
+    "app_gateway_survey_round_control_confirmation_received_in_interval("
+)
+apply_proof = operation_gate.index(
+    "gateway_survey_round_apply_control_confirmation()", timely_proof
+)
+validation_gate = operation_gate.index(
+    "gateway_protocol_validation_check_interval(", apply_proof
+)
+assert timely_proof < apply_proof < validation_gate
 for required in (
     "gateway_protocol_validation_check_interval(",
     "gateway_survey_operation_started_at_ms",
@@ -194,73 +229,27 @@ for required in (
     assert required in operation_gate
 
 
-# A duplicate PREPARE/START can be physically received at ACK-settle D-1 and
-# remain queued for semantic validation when the worker reaches D. The old
-# settle interval must remain authoritative until that receive either commits
-# the exact duplicate re-arm or leaves validation custody.
-settle_barrier = function_body(
-    SURVEY, "gateway_survey_response_ack_settle_blocks_progress"
+# An accepted parallel-round result may retire its delivery immediately, but
+# only the exact terminal ACK_CONFIRM may advance the next phase. This avoids
+# replacing the operation deadline with a three-second proxy wake.
+round_result = function_body(ROUND, "gateway_survey_round_note_control_result")
+capture = round_result.index("app_gateway_survey_round_capture_control_result(")
+retire = round_result.index(
+    "survey_gateway_transaction_phase_complete(", capture
 )
-settle_expiry = settle_barrier.index(
-    "survey_gateway_response_ack_settle_deadline_reached("
-)
-settle_validation = settle_barrier.index(
-    "gateway_protocol_validation_check_interval(", settle_expiry
-)
-settle_blocked = settle_barrier.index(
-    "GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED", settle_validation
-)
-settle_expired = settle_barrier.index(
-    "GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED", settle_blocked
-)
-settle_complete = settle_barrier.index(
-    "survey_gateway_response_ack_settle_complete(", settle_expired
-)
-assert (
-    settle_expiry < settle_validation < settle_blocked < settle_expired <
-    settle_complete
-), "settle expiry must preserve the causal receive barrier before phase advance"
-validation_interval = settle_barrier[settle_validation:settle_blocked]
-assert "gateway_survey_response_ack_settle.started_at_ms" in validation_interval
-assert "gateway_survey_response_ack_settle.deadline_ms" in validation_interval
-blocked_path = settle_barrier[settle_blocked:settle_expired]
-assert "gateway_survey_work_reschedule(" in blocked_path
-assert "return true;" in blocked_path
+assert capture < retire
+assert "response_ack_settle" not in round_result
+ack_confirm = function_body(SURVEY, "gateway_note_survey_ack_confirm")
+assert "uint64_t first_received_at_ms" in ack_confirm
+assert ".first_received_at_ms = first_received_at_ms" in ack_confirm
+assert "app_gateway_survey_round_note_control_ack_confirm(" in ack_confirm
+assert "gateway_survey_work_schedule(" in ack_confirm
+assert "SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u" in ack_confirm
 
-schedule_drive = function_body(SURVEY, "gateway_survey_schedule_drive")
-schedule_barrier = schedule_drive.index(
-    "gateway_survey_response_ack_settle_blocks_progress("
-)
-drive_decision = schedule_drive.index(
-    "survey_gateway_drive_action(&state)", schedule_barrier
-)
-assert schedule_barrier < drive_decision
-
-# Initial accepted results in both the serial and parallel-round paths must
-# clamp their settle wake to the immutable operation deadline. Otherwise a
-# result accepted at operation D-1 can replace the operation wake with D+2999.
-serial_result = function_body(
-    SURVEY, "gateway_survey_auto_note_command_result"
-)
-serial_settle = serial_result[
-    serial_result.index("survey_gateway_response_ack_settle_note_result(") :
-    serial_result.index("gateway_survey_schedule_drive()")
-]
-assert "gateway_survey_operation_deadline_ms" in serial_settle
-
-round_result = function_body(
-    ROUND, "gateway_survey_round_note_control_result"
-)
-round_settle = round_result[
-    round_result.index("survey_gateway_response_ack_settle_note_result(") :
-    round_result.index("gateway_survey_schedule_drive()")
-]
-assert "gateway_survey_operation_deadline_ms" in round_settle
-
-# The deadline worker must preserve operation timeout and pending boundary
-# ownership first, then run the settle barrier before cleanup, round dispatch,
-# or serial next-action progress. Delivery-terminal reconciliation may precede
-# the barrier because it cannot advance the phase and is needed by termination.
+# The deadline worker must service every immutable phase clock before a
+# boundary, settle interval, or operation confirmation can gate later protocol
+# progress. Delivery-terminal reconciliation may precede those clocks because
+# it cannot advance the phase and is needed by termination.
 worker_delivery = survey_work.index(
     "gateway_survey_service_active_delivery()"
 )
@@ -268,28 +257,31 @@ worker_active = survey_work.index("if (!gateway_survey_active)")
 worker_deadline = survey_work.index(
     "gateway_survey_operation_deadline_ms", worker_active
 )
-worker_boundary = survey_work.index(
-    "gateway_survey_flush_boundary_event()", worker_deadline
-)
-worker_barrier = survey_work.index(
-    "gateway_survey_response_ack_settle_blocks_progress(", worker_boundary
-)
 worker_cleanup = survey_work.index(
-    "gateway_survey_service_cleanup()", worker_barrier
+    "gateway_survey_service_cleanup()", worker_deadline
+)
+worker_collection = survey_work.index(
+    "gateway_survey_wait_for_discovery_collection()", worker_cleanup
+)
+worker_boundary = survey_work.index(
+    "gateway_survey_flush_boundary_event()", worker_collection
 )
 worker_round = survey_work.index(
-    "gateway_survey_round_drive()", worker_cleanup
-)
-worker_next_action = survey_work.index(
-    "survey_gateway_auto_next_action(", worker_round
+    "gateway_survey_round_drive()", worker_boundary
 )
 assert (
-    worker_delivery < worker_active < worker_deadline < worker_boundary <
-    worker_barrier < worker_cleanup <
-    worker_round < worker_next_action
+    worker_delivery < worker_active < worker_deadline < worker_cleanup <
+    worker_collection < worker_boundary < worker_round
 ), (
-    "the worker must preserve timeout and boundary ownership, then retain "
-    "D-1 receive custody before protocol progress"
+    "the worker must preserve timeout and immutable phase owners, then let "
+    "the round consume exact terminal proof before any successor control"
 )
+for retired in (
+    "gateway_survey_auto",
+    "survey_gateway_auto_next_action",
+    "survey_gateway_auto_",
+    "gateway_survey_finalize_pair_observation",
+):
+    assert retired not in survey_work
 
 print("gateway survey receive deadline source invariants passed")

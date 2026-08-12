@@ -20,12 +20,10 @@ typedef int (*app_node_comm_route_refresh_wake_fn)(void *ctx,
                                                    const char *reason);
 typedef int (*app_node_comm_route_refresh_schedule_fn)(
     void *ctx, struct k_work_delayable *work, uint32_t delay_ms);
-typedef int (*app_node_comm_route_refresh_reserve_sequences_fn)(
-    void *ctx, uint32_t count, uint32_t *first_sequence);
+typedef int (*app_node_comm_route_refresh_next_sequence_fn)(
+    void *ctx, uint32_t *sequence);
 typedef void (*app_node_comm_route_refresh_event_fn)(
     void *ctx, const struct app_node_comm_route_refresh_event *event);
-
-#define APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE 256u
 
 struct app_node_comm_gateway_route_refresh_config {
     bool gateway_role;
@@ -50,7 +48,7 @@ struct app_node_comm_gateway_route_refresh_config {
     void (*restart_role_scan)(void *ctx);
     void (*clear_response_priority)(void *ctx);
     app_node_comm_route_refresh_schedule_fn schedule;
-    app_node_comm_route_refresh_reserve_sequences_fn reserve_sequences;
+    app_node_comm_route_refresh_next_sequence_fn next_sequence;
     app_node_comm_route_refresh_event_fn observe;
     void *ctx;
 };

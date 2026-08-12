@@ -797,7 +797,9 @@ static int note_report_roundtrip(struct survey_gateway_context *context,
     uint32_t decoded_survey_id = 0u;
     uint64_t decoded_operation_generation = 0u;
     uint64_t decoded_anchor_id = 0u;
+    const uint8_t *boot_raw = NULL;
     const uint8_t *status_raw = NULL;
+    uint8_t boot_len = 0u;
     uint8_t status_len = 0u;
     int ret;
 
@@ -809,13 +811,20 @@ static int note_report_roundtrip(struct survey_gateway_context *context,
             payload, sizeof(payload), &payload_len, operation_generation);
     }
     if (ret == PROTO_OK) {
+        ret = tlv_append_u32(payload,
+                             sizeof(payload),
+                             &payload_len,
+                             TLV_NODE_BOOT_COUNTER,
+                             1u);
+    }
+    if (ret == PROTO_OK) {
         ret = tlv_append_u16(payload, sizeof(payload), &payload_len,
                              TLV_COMMAND_STATUS, COMMAND_OK);
     }
     if (ret == PROTO_OK) {
         ret = survey_init_discovery_report_packet(
             &packet, anchor_id, GATEWAY_ID, survey_id,
-            operation_generation, seq,
+            operation_generation, 1u, seq,
             (uint8_t)payload_len);
     }
     if (ret == PROTO_OK) {
@@ -844,11 +853,18 @@ static int note_report_roundtrip(struct survey_gateway_context *context,
                               &status_raw,
                               &status_len);
     }
+    if (ret == PROTO_OK) {
+        ret = tlv_find_unique(decoded_payload,
+                              decoded_payload_len,
+                              TLV_NODE_BOOT_COUNTER,
+                              &boot_raw,
+                              &boot_len);
+    }
     if (ret != PROTO_OK || decoded_packet.msg_type !=
             MSG_SURVEY_DISCOVERY_REPORT ||
         decoded_packet.src_id != decoded_anchor_id ||
-        decoded_packet.session_id !=
-            survey_operation_session_id(decoded_operation_generation) ||
+        boot_len != sizeof(uint32_t) ||
+        decoded_packet.session_id != proto_get_u32_le(boot_raw) ||
         status_len != sizeof(uint16_t) ||
         proto_get_u16_le(status_raw) != COMMAND_OK ||
         decoded_count != 1u) {

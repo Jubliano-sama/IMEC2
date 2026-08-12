@@ -1522,11 +1522,47 @@ static void test_rx_envelope_rejects_result_control_schema_and_addressing(void)
                UWB_CHANNEL_WAKE_CONTACT, false) == PROTO_ERR_MALFORMED);
 }
 
-static void test_survey_pair_result_rejects_reserved_range_status(void)
+static void append_survey_pair_result_extensions(uint8_t *payload,
+                                                 size_t payload_cap,
+                                                 size_t *payload_len,
+                                                 bool include_timing)
 {
-    const uint64_t gateway_id = UINT64_C(0x1000000000000001);
-    const uint64_t initiator_id = UINT64_C(0x2000000000000002);
-    struct survey_sample sample = {
+    uint8_t raw_timestamps[6u * sizeof(uint32_t)];
+
+    assert(tlv_append_u64(payload,
+                          payload_cap,
+                          payload_len,
+                          TLV_TIMESTAMP_MS,
+                          UINT64_C(0x0102030405060708)) == PROTO_OK);
+    if (!include_timing) {
+        return;
+    }
+    assert(tlv_append_i8(payload, payload_cap, payload_len,
+                         TLV_UWB_RSL_DBM, -73) == PROTO_OK);
+    assert(tlv_append_u16(payload, payload_cap, payload_len,
+                          TLV_UWB_CLOCK_OFFSET_RAW,
+                          UINT16_C(0xfedc)) == PROTO_OK);
+    assert(tlv_append_u16(payload, payload_cap, payload_len,
+                          TLV_CLICKER_CLOCK_OFFSET_RAW,
+                          UINT16_C(0x8123)) == PROTO_OK);
+    assert(tlv_append_i32(payload, payload_cap, payload_len,
+                          TLV_UWB_CARRIER_INTEGRATOR,
+                          INT32_C(-1234567)) == PROTO_OK);
+    for (size_t i = 0u; i < 6u; i++) {
+        proto_put_u32_le(&raw_timestamps[i * sizeof(uint32_t)],
+                         UINT32_C(0x10203040) + (uint32_t)i);
+    }
+    assert(tlv_append_bytes(payload,
+                            payload_cap,
+                            payload_len,
+                            TLV_UWB_RAW_TIMESTAMPS,
+                            raw_timestamps,
+                            sizeof(raw_timestamps)) == PROTO_OK);
+}
+
+static struct survey_sample mesh_survey_pair_sample(uint64_t initiator_id)
+{
+    const struct survey_sample sample = {
         .pair = {
             .operation_generation = UINT64_C(0x1122334400001234),
             .survey_id = UINT32_C(0x55667788),
@@ -1539,27 +1575,48 @@ static void test_survey_pair_result_rejects_reserved_range_status(void)
         .quality = 90u,
         .range_status = RANGE_OK,
     };
+
+    return sample;
+}
+
+static void init_mesh_survey_pair_packet(struct proto_packet *packet,
+                                         const struct survey_sample *sample,
+                                         uint64_t gateway_id,
+                                         size_t payload_len)
+{
+    assert(survey_init_result_packet_from_reporter(
+               packet,
+               sample,
+               sample->pair.responder_id,
+               gateway_id,
+               1u,
+               (uint8_t)payload_len) == PROTO_OK);
+}
+
+static void test_survey_pair_result_rejects_reserved_range_status(void)
+{
+    const uint64_t gateway_id = UINT64_C(0x1000000000000001);
+    const uint64_t initiator_id = UINT64_C(0x2000000000000002);
+    struct survey_sample sample = mesh_survey_pair_sample(initiator_id);
     struct proto_packet packet;
     const uint8_t *range_status_raw = NULL;
     uint8_t range_status_len = 0u;
-    uint8_t payload[96];
+    uint8_t payload[192];
     size_t payload_len = 0u;
 
     assert(survey_append_sample_tlvs(payload,
                                      sizeof(payload),
                                      &payload_len,
                                      &sample) == PROTO_OK);
-    assert(survey_init_result_packet_from_reporter(
-               &packet,
-               &sample,
-               initiator_id,
-               gateway_id,
-               1u,
-               (uint8_t)payload_len) == PROTO_OK);
+    append_survey_pair_result_extensions(payload,
+                                         sizeof(payload),
+                                         &payload_len,
+                                         false);
+    init_mesh_survey_pair_packet(&packet, &sample, gateway_id, payload_len);
     assert(mesh_packet_rx_semantics_validate(&packet,
                                              payload,
                                              payload_len,
-                                             initiator_id,
+                                             sample.pair.responder_id,
                                              gateway_id,
                                              gateway_id) == PROTO_OK);
     assert(tlv_find_unique(payload,
@@ -1573,7 +1630,236 @@ static void test_survey_pair_result_rejects_reserved_range_status(void)
     assert(mesh_packet_rx_semantics_validate(&packet,
                                              payload,
                                              payload_len,
-                                             initiator_id,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static void test_survey_pair_result_extension_schema_is_closed_at_ingress(void)
+{
+    const uint64_t gateway_id = UINT64_C(0x1000000000000001);
+    const uint64_t initiator_id = UINT64_C(0x2000000000000002);
+    const struct survey_sample sample = mesh_survey_pair_sample(initiator_id);
+    struct proto_packet packet;
+    uint8_t payload[192];
+    size_t core_len;
+    size_t payload_len = 0u;
+
+    assert(survey_append_sample_tlvs(payload, sizeof(payload), &payload_len,
+                                     &sample) == PROTO_OK);
+    core_len = payload_len;
+    append_survey_pair_result_extensions(payload, sizeof(payload),
+                                         &payload_len, true);
+    init_mesh_survey_pair_packet(&packet, &sample, gateway_id, payload_len);
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) == PROTO_OK);
+
+    payload_len = core_len;
+    append_survey_pair_result_extensions(payload, sizeof(payload),
+                                         &payload_len, false);
+    init_mesh_survey_pair_packet(&packet, &sample, gateway_id, payload_len);
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) == PROTO_OK);
+
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         UINT8_C(0x27), 1u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = core_len;
+    append_survey_pair_result_extensions(payload, sizeof(payload),
+                                         &payload_len, false);
+    assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
+                          TLV_TIMESTAMP_MS,
+                          UINT64_C(0x1112131415161718)) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = core_len;
+    append_survey_pair_result_extensions(payload, sizeof(payload),
+                                         &payload_len, false);
+    assert(tlv_append_i32(payload, sizeof(payload), &payload_len,
+                          TLV_UWB_CARRIER_INTEGRATOR, -91) == PROTO_OK);
+    assert(tlv_append_i8(payload, sizeof(payload), &payload_len,
+                         TLV_UWB_RSL_DBM, -81) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = core_len;
+    append_survey_pair_result_extensions(payload, sizeof(payload),
+                                         &payload_len, false);
+    payload[core_len + 1u] = sizeof(uint64_t) - 1u;
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             sample.pair.responder_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+}
+
+static size_t build_survey_discovery_report_payload(
+    uint8_t *payload,
+    size_t payload_cap,
+    uint64_t anchor_id,
+    uint64_t operation_generation,
+    bool include_boot_incarnation,
+    uint32_t boot_incarnation)
+{
+    const struct survey_reachability_entry entry = {
+        .peer_id = UINT64_C(0x3030303030303030),
+        .rssi_dbm = -71,
+        .quality = 83u,
+    };
+    size_t payload_len = 0u;
+
+    assert(survey_append_reach_report_tlvs(
+               payload,
+               payload_cap,
+               &payload_len,
+               17u,
+               anchor_id,
+               &entry,
+               1u) == PROTO_OK);
+    assert(survey_operation_generation_append_tlv(
+               payload,
+               payload_cap,
+               &payload_len,
+               operation_generation) == PROTO_OK);
+    if (include_boot_incarnation) {
+        assert(tlv_append_u32(payload,
+                              payload_cap,
+                              &payload_len,
+                              TLV_NODE_BOOT_COUNTER,
+                              boot_incarnation) == PROTO_OK);
+    }
+    assert(tlv_append_u16(payload,
+                          payload_cap,
+                          &payload_len,
+                          TLV_COMMAND_STATUS,
+                          COMMAND_OK) == PROTO_OK);
+    return payload_len;
+}
+
+static void test_survey_discovery_report_requires_one_nonzero_boot_incarnation(void)
+{
+    const uint64_t anchor_id = UINT64_C(0x1010101010101010);
+    const uint64_t gateway_id = UINT64_C(0x2020202020202020);
+    const uint64_t operation_generation = UINT64_C(0x0000000100000011);
+    uint8_t payload[PACKET_MAX_PAYLOAD_LEN] = {0};
+    struct proto_packet packet = {
+        .msg_type = MSG_SURVEY_DISCOVERY_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .ttl = MESH_DEFAULT_TTL,
+        .src_id = anchor_id,
+        .dst_id = gateway_id,
+        .session_id = 7u,
+        .seq = 1u,
+    };
+    size_t payload_len;
+
+    payload_len = build_survey_discovery_report_payload(
+        payload,
+        sizeof(payload),
+        anchor_id,
+        operation_generation,
+        true,
+        7u);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             anchor_id,
+                                             gateway_id,
+                                             gateway_id) == PROTO_OK);
+
+    packet.session_id = 8u;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             anchor_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+    packet.session_id = 7u;
+
+    payload_len = build_survey_discovery_report_payload(
+        payload,
+        sizeof(payload),
+        anchor_id,
+        operation_generation,
+        false,
+        0u);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             anchor_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = build_survey_discovery_report_payload(
+        payload,
+        sizeof(payload),
+        anchor_id,
+        operation_generation,
+        true,
+        0u);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             anchor_id,
+                                             gateway_id,
+                                             gateway_id) ==
+           PROTO_ERR_MALFORMED);
+
+    payload_len = build_survey_discovery_report_payload(
+        payload,
+        sizeof(payload),
+        anchor_id,
+        operation_generation,
+        true,
+        7u);
+    assert(tlv_append_u32(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_NODE_BOOT_COUNTER,
+                          8u) == PROTO_OK);
+    packet.payload_len = (uint16_t)payload_len;
+    assert(mesh_packet_rx_semantics_validate(&packet,
+                                             payload,
+                                             payload_len,
+                                             anchor_id,
                                              gateway_id,
                                              gateway_id) ==
            PROTO_ERR_MALFORMED);
@@ -1618,5 +1904,7 @@ int main(void)
     test_rx_envelope_rejects_noncanonical_gateway_route_and_event();
     test_rx_envelope_rejects_result_control_schema_and_addressing();
     test_survey_pair_result_rejects_reserved_range_status();
+    test_survey_pair_result_extension_schema_is_closed_at_ingress();
+    test_survey_discovery_report_requires_one_nonzero_boot_incarnation();
     return 0;
 }

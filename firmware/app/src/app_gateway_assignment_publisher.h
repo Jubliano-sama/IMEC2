@@ -2,7 +2,6 @@
 #define APP_GATEWAY_ASSIGNMENT_PUBLISHER_H
 
 #include "app_gateway_command_observability.h"
-#include "discovery_assignment.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -15,12 +14,17 @@ typedef int (*app_gateway_assignment_publisher_emit_fn)(
     struct gateway_command_event *event,
     bool terminal,
     void *ctx);
+/* Reserve a fresh host-stream identity without queueing or exposing it. */
+typedef int (*app_gateway_assignment_publisher_reserve_fn)(
+    struct gateway_command_event *event,
+    void *ctx);
 typedef int (*app_gateway_assignment_publisher_complete_fn)(
     const struct gateway_command_event *base_event,
     void *ctx);
 
 struct app_gateway_assignment_publisher_ops {
     app_gateway_assignment_publisher_emit_fn emit_if_available;
+    app_gateway_assignment_publisher_reserve_fn reserve_event_seq;
     app_gateway_assignment_publisher_complete_fn batch_completed;
     void *ctx;
 };
@@ -36,13 +40,6 @@ struct app_gateway_assignment_publisher_diagnostics {
 
 int app_gateway_assignment_publisher_init(
     const struct app_gateway_assignment_publisher_ops *ops);
-int app_gateway_assignment_publisher_stage_table(
-    const struct gateway_command_event *base_event,
-    const uint64_t *anchor_ids,
-    const uint8_t *slots,
-    size_t anchor_count,
-    uint64_t acknowledged_mask,
-    uint16_t duplicate_count);
 /*
  * Reserve the complete mapping without making any part visible to the host.
  * The caller may then perform its irreversible durable commit and either
@@ -55,26 +52,36 @@ int app_gateway_assignment_publisher_prepare_table(
     size_t anchor_count,
     uint64_t acknowledged_mask,
     uint16_t duplicate_count);
+/* Mark an exact prepared batch as a reset reconstruction before exposure.
+ * Every emitted mapping, aggregate, and terminal then carries REPLAY while
+ * retaining its original semantic fields. */
+int app_gateway_assignment_publisher_mark_prepared_replay(
+    const struct gateway_command_event *base_event);
+/* Return whether one fully materialized event belongs to the durable
+ * assignment-publication batch.  This is the sole domain allowed to acquire
+ * host-receipt custody; ordinary command observability remains best effort. */
+bool app_gateway_assignment_publisher_event_is_reliable(
+    const struct gateway_command_event *event);
 int app_gateway_assignment_publisher_commit_prepared_batch(
     const struct gateway_command_event *base_event);
 bool app_gateway_assignment_publisher_abort_prepared_batch(
     const struct gateway_command_event *base_event);
-int app_gateway_assignment_publisher_stage_sorted_ids(
-    const struct gateway_command_event *base_event,
-    const uint64_t *anchor_ids,
-    size_t anchor_count,
-    uint16_t duplicate_count);
 void app_gateway_assignment_publisher_stage_table_ready(
     const struct gateway_command_event *event);
 bool app_gateway_assignment_publisher_capture_terminal(
     const struct gateway_command_event *event);
 void app_gateway_assignment_publisher_pump(void);
 /*
- * Record one host-notified event without running transport or persistence
- * callbacks in the Bluetooth completion context. Returns true only when the
- * event advanced the active publication.
+ * Record one exact GUI-host-receipted publisher event without running
+ * persistence callbacks in the Bluetooth receipt context. ATT notification
+ * alone never advances the active publication. A positive return means this
+ * exact event advanced (or had already advanced at the retry boundary), zero
+ * means it belongs to another command stream, and a negative result means an
+ * active assignment publication rejected the identity. Callers must not
+ * retire BLE custody after a negative result.
  */
-bool app_gateway_assignment_publisher_note_sent(uint32_t event_seq);
+int app_gateway_assignment_publisher_note_host_receipt(
+    const struct gateway_command_event *event);
 /* True when owner work can emit or durably complete the active publication. */
 bool app_gateway_assignment_publisher_work_pending(void);
 /*

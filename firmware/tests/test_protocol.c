@@ -1221,6 +1221,7 @@ static void test_gateway_host_receipt_identity_round_trip_and_strictness(void)
     assert(PROTO_GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN == 56u);
     assert(PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES == 58u);
     assert(!proto_packet_msg_type_allowed_over_uwb(MSG_GATEWAY_HOST_RECEIPT));
+    assert(!proto_packet_msg_type_allowed_over_uwb(MSG_GATEWAY_COMMAND_EVENT));
     assert(gateway_host_receipt_identity_encode(&identity,
                                                 value,
                                                 sizeof(value),
@@ -1265,6 +1266,76 @@ static void test_gateway_host_receipt_identity_round_trip_and_strictness(void)
                                                 &decoded) == PROTO_OK);
 
     {
+        struct gateway_host_receipt_identity host_only = identity;
+
+        host_only.original_msg_type = MSG_GATEWAY_COMMAND_EVENT;
+        host_only.original_flags = FLAG_GATEWAY_ACK_REQUIRED;
+        host_only.dst_id = host_only.src_id;
+        assert(gateway_host_receipt_identity_encode(&host_only,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_OK);
+        assert(gateway_host_receipt_identity_decode(value,
+                                                    value_len,
+                                                    &decoded) == PROTO_OK);
+        assert(decoded.original_msg_type == MSG_GATEWAY_COMMAND_EVENT);
+        assert(decoded.original_flags == FLAG_GATEWAY_ACK_REQUIRED);
+
+        host_only.dst_id ^= UINT64_C(1);
+        assert(gateway_host_receipt_identity_encode(&host_only,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) ==
+               PROTO_ERR_MALFORMED);
+    }
+
+    {
+        struct gateway_host_receipt_identity local_result = identity;
+
+        local_result.original_msg_type = MSG_COMMAND_RESULT;
+        local_result.original_flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_ERROR;
+        local_result.dst_id = local_result.src_id;
+        assert(gateway_host_receipt_identity_encode(&local_result,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_OK);
+        assert(gateway_host_receipt_identity_decode(value,
+                                                    value_len,
+                                                    &decoded) == PROTO_OK);
+        assert(decoded.original_msg_type == MSG_COMMAND_RESULT);
+        assert(decoded.original_flags == local_result.original_flags);
+
+        /* A mesh-produced command result is a distinct-endpoint ACK-required
+         * record. The same message type is not implicitly gateway-local. */
+        local_result.dst_id ^= UINT64_C(1);
+        assert(gateway_host_receipt_identity_encode(&local_result,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_OK);
+        assert(gateway_host_receipt_identity_decode(value,
+                                                    value_len,
+                                                    &decoded) == PROTO_OK);
+
+        /* A self-addressed result is valid only for the narrow local result
+         * envelope.  Delivery/retry bits would cross-wire it with a mesh
+         * result, even though the endpoints happen to match. */
+        local_result.dst_id = local_result.src_id;
+        local_result.original_flags =
+            FLAG_GATEWAY_ACK_REQUIRED | FLAG_GATEWAY_ACK;
+        assert(gateway_host_receipt_identity_encode(&local_result,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) ==
+               PROTO_ERR_MALFORMED);
+        local_result.original_flags = FLAG_ERROR;
+        assert(gateway_host_receipt_identity_encode(&local_result,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) ==
+               PROTO_ERR_MALFORMED);
+    }
+
+    {
         uint8_t malformed[PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES + 2u];
 
         memcpy(malformed, payload, sizeof(payload));
@@ -1298,6 +1369,12 @@ static void test_gateway_host_receipt_identity_round_trip_and_strictness(void)
                                                     sizeof(value),
                                                     &value_len) == PROTO_ERR_MALFORMED);
         invalid = identity;
+        invalid.dst_id = invalid.src_id;
+        assert(gateway_host_receipt_identity_encode(&invalid,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_ERR_MALFORMED);
+        invalid = identity;
         invalid.original_msg_type = MSG_GATEWAY_HOST_RECEIPT;
         assert(gateway_host_receipt_identity_encode(&invalid,
                                                     value,
@@ -1309,6 +1386,12 @@ static void test_gateway_host_receipt_identity_round_trip_and_strictness(void)
                                                     value,
                                                     sizeof(value),
                                                     &value_len) == PROTO_ERR_MALFORMED);
+        invalid = identity;
+        invalid.seq = 0u;
+        assert(gateway_host_receipt_identity_encode(&invalid,
+                                                    value,
+                                                    sizeof(value),
+                                                    &value_len) == PROTO_ERR_MALFORMED);
     }
 
     packet.flags = FLAG_DIAGNOSTIC;
@@ -1316,6 +1399,48 @@ static void test_gateway_host_receipt_identity_round_trip_and_strictness(void)
                                                 payload,
                                                 payload_len,
                                                 &decoded) == PROTO_ERR_MALFORMED);
+}
+
+static void test_gateway_local_command_result_validation(void)
+{
+    uint8_t payload[PROTO_GATEWAY_LOCAL_COMMAND_RESULT_PAYLOAD_LEN] = {
+        TLV_COMMAND_ID, sizeof(uint16_t), 0x04u, 0x01u,
+        TLV_COMMAND_STATUS, sizeof(uint16_t), COMMAND_OK, 0u,
+        TLV_REASON, sizeof(uint8_t), 0u,
+    };
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND_RESULT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = UINT64_C(0xA1C1BEEFC0DE0001),
+        .dst_id = UINT64_C(0xA1C1BEEFC0DE0001),
+        .session_id = UINT32_C(0x10203040),
+        .seq = UINT16_C(0x1234),
+        .ttl = 1u,
+        .payload_len = sizeof(payload),
+    };
+
+    assert(gateway_local_command_result_valid(&packet, payload,
+                                              sizeof(payload)));
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_ERROR;
+    assert(!gateway_local_command_result_valid(&packet, payload,
+                                               sizeof(payload)));
+    payload[6] = COMMAND_TIMEOUT;
+    assert(gateway_local_command_result_valid(&packet, payload,
+                                              sizeof(payload)));
+    packet.flags |= FLAG_DIAGNOSTIC;
+    assert(gateway_local_command_result_valid(&packet, payload,
+                                              sizeof(payload)));
+    packet.flags |= FLAG_COUNT_AS_CLICK;
+    assert(!gateway_local_command_result_valid(&packet, payload,
+                                               sizeof(payload)));
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_ERROR;
+    packet.dst_id ^= UINT64_C(1);
+    assert(!gateway_local_command_result_valid(&packet, payload,
+                                               sizeof(payload)));
+    packet.dst_id = packet.src_id;
+    payload[4] = TLV_REASON;
+    assert(!gateway_local_command_result_valid(&packet, payload,
+                                               sizeof(payload)));
 }
 
 static void test_cobs_round_trip(void)
@@ -1372,6 +1497,7 @@ int main(void)
     test_report_validators_reject_schema_smuggling_and_mismatch();
     test_result_busy_disambiguates_alternate_from_correlation();
     test_gateway_host_receipt_identity_round_trip_and_strictness();
+    test_gateway_local_command_result_validation();
     test_cobs_round_trip();
     test_operation_policy_tlv_registration();
     return 0;

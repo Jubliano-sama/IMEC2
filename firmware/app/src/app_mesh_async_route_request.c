@@ -2,6 +2,50 @@
 
 #include <string.h>
 
+static bool c5_authorization_equal(
+    const struct app_mesh_c5_tx_authorization_token *left,
+    const struct app_mesh_c5_tx_authorization_token *right)
+{
+    return left != NULL && right != NULL && left->valid && right->valid &&
+           left->kind == right->kind && left->peer_id == right->peer_id &&
+           left->pending_session_id == right->pending_session_id &&
+           left->pending_seq == right->pending_seq &&
+           left->pending_msg_type == right->pending_msg_type &&
+           left->retained_ack_session_id == right->retained_ack_session_id &&
+           left->retained_ack_seq == right->retained_ack_seq &&
+           left->retained_ack_valid == right->retained_ack_valid &&
+           memcmp(left->pending_digest,
+                  right->pending_digest,
+                  sizeof(left->pending_digest)) == 0 &&
+           memcmp(left->retained_ack_digest,
+                  right->retained_ack_digest,
+                  sizeof(left->retained_ack_digest)) == 0;
+}
+
+static bool transfer_identity_valid(
+    const struct app_mesh_async_route_transfer_identity *transfer,
+    uint64_t target_id)
+{
+    return transfer != NULL &&
+           (transfer->owner_kind == APP_MESH_ASYNC_ROUTE_TRANSFER_ROUTE_WAIT ||
+            transfer->owner_kind == APP_MESH_ASYNC_ROUTE_TRANSFER_CORE_PENDING) &&
+           transfer->target_id == target_id &&
+           transfer->owner_generation != 0u &&
+           transfer->packet_seq != 0u;
+}
+
+static bool transfer_identity_equal(
+    const struct app_mesh_async_route_transfer_identity *left,
+    const struct app_mesh_async_route_transfer_identity *right)
+{
+    return left != NULL && right != NULL &&
+           left->target_id == right->target_id &&
+           left->owner_generation == right->owner_generation &&
+           left->packet_seq == right->packet_seq &&
+           left->msg_type == right->msg_type &&
+           left->owner_kind == right->owner_kind;
+}
+
 static bool attempt_matches(
     const struct app_mesh_async_route_request *request,
     const struct app_mesh_async_route_attempt *attempt)
@@ -24,7 +68,8 @@ bool app_mesh_async_route_request_submit(
     uint64_t target_id,
     const char *reason,
     uint32_t now_ms,
-    const struct app_mesh_async_route_transfer_identity *transfer)
+    const struct app_mesh_async_route_transfer_identity *transfer,
+    const struct app_mesh_c5_tx_authorization_token *c5_authorization)
 {
     const char *selected_reason = reason == NULL ? "async-route" : reason;
     size_t reason_len;
@@ -37,6 +82,28 @@ bool app_mesh_async_route_request_submit(
     if (reason_len >= sizeof(request->reason)) {
         return false;
     }
+    if (c5_authorization != NULL && c5_authorization->valid &&
+        c5_authorization->peer_id != target_id) {
+        return false;
+    }
+
+    if (request->pending && request->c5_authorization.valid) {
+        if (target_id == request->target_id &&
+            c5_authorization_equal(&request->c5_authorization,
+                                   c5_authorization)) {
+            return true;
+        }
+        return false;
+    }
+    if (request->pending &&
+        request->transfer.owner_kind != APP_MESH_ASYNC_ROUTE_TRANSFER_NONE) {
+        if (target_id == request->target_id &&
+            transfer_identity_valid(transfer, target_id) &&
+            transfer_identity_equal(&request->transfer, transfer)) {
+            return true;
+        }
+        return false;
+    }
 
     generation = request->generation + 1u;
     if (generation == 0u) {
@@ -46,11 +113,14 @@ bool app_mesh_async_route_request_submit(
     request->generation = generation;
     request->retry_at_ms = now_ms;
     memset(&request->transfer, 0, sizeof(request->transfer));
-    if (transfer != NULL && transfer->valid &&
-        transfer->target_id == target_id &&
-        transfer->owner_generation != 0u &&
-        transfer->packet_seq != 0u) {
+    if (transfer_identity_valid(transfer, target_id)) {
         request->transfer = *transfer;
+    }
+    memset(&request->c5_authorization, 0,
+           sizeof(request->c5_authorization));
+    if (c5_authorization != NULL && c5_authorization->valid &&
+        c5_authorization->peer_id == target_id) {
+        request->c5_authorization = *c5_authorization;
     }
     memcpy(request->reason, selected_reason, reason_len + 1u);
     request->retry_at_valid = true;
@@ -71,6 +141,7 @@ bool app_mesh_async_route_request_snapshot(
     attempt->target_id = request->target_id;
     attempt->generation = request->generation;
     attempt->transfer = request->transfer;
+    attempt->c5_authorization = request->c5_authorization;
     memcpy(attempt->reason, request->reason, sizeof(attempt->reason));
     attempt->reason[sizeof(attempt->reason) - 1u] = '\0';
     return true;
@@ -126,18 +197,21 @@ bool app_mesh_async_route_request_retry_delay_ms(
 
 bool app_mesh_async_route_request_transfer_matches(
     const struct app_mesh_async_route_attempt *attempt,
-    bool route_waiting_valid,
-    uint64_t route_waiting_target_id,
-    uint32_t route_waiting_owner_generation,
-    uint16_t route_waiting_packet_seq,
-    uint8_t route_waiting_msg_type)
+    uint8_t owner_kind,
+    bool owner_valid,
+    uint64_t owner_target_id,
+    uint32_t owner_generation,
+    uint16_t owner_packet_seq,
+    uint8_t owner_msg_type)
 {
-    return attempt != NULL && attempt->transfer.valid &&
-           route_waiting_valid &&
-           route_waiting_target_id == attempt->target_id &&
-           route_waiting_target_id == attempt->transfer.target_id &&
-           route_waiting_owner_generation ==
+    return attempt != NULL &&
+           attempt->transfer.owner_kind !=
+               APP_MESH_ASYNC_ROUTE_TRANSFER_NONE &&
+           attempt->transfer.owner_kind == owner_kind && owner_valid &&
+           owner_target_id == attempt->target_id &&
+           owner_target_id == attempt->transfer.target_id &&
+           owner_generation ==
                attempt->transfer.owner_generation &&
-           route_waiting_packet_seq == attempt->transfer.packet_seq &&
-           route_waiting_msg_type == attempt->transfer.msg_type;
+           owner_packet_seq == attempt->transfer.packet_seq &&
+           owner_msg_type == attempt->transfer.msg_type;
 }

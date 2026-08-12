@@ -238,11 +238,48 @@ int node_transaction_note_request_terminal(
         return 0;
     }
 
+    /*
+     * Once RF has started, a failed request-delivery owner cannot prove that
+     * the responder did not execute the request. Keep the semantic
+     * transaction alive until its later result deadline so an exact response
+     * can resolve that ambiguity. Explicit cancellation still starts cleanup
+     * immediately; zero-RF failures are handled above.
+     */
+    if (!zero_rf_authoritative &&
+        event->reason != NODE_COMM_TERMINAL_CANCELLED) {
+        node_transaction_set_action(transaction, action);
+        return 0;
+    }
+
     node_transaction_abandon(
         transaction,
         event->reason == NODE_COMM_TERMINAL_CANCELLED ?
             NODE_TRANSACTION_ABANDON_CANCELLED :
             NODE_TRANSACTION_ABANDON_DELIVERY_FAILED);
+    node_transaction_set_action(transaction, action);
+    return 0;
+}
+
+int node_transaction_note_request_redrive(
+    struct node_transaction *transaction,
+    const struct node_comm_terminal_event *event,
+    uint64_t now_ms,
+    enum node_transaction_action *action)
+{
+    if (transaction == NULL || event == NULL || action == NULL ||
+        transaction->state != NODE_TRANSACTION_ACTIVE ||
+        transaction->request_delivery_terminal ||
+        event->handle != transaction->request_delivery_handle ||
+        event->client_token != transaction->spec.client_token ||
+        event->reason != NODE_COMM_TERMINAL_DELIVERED ||
+        event->attempts_started == 0u ||
+        now_ms >= transaction->spec.absolute_deadline_ms) {
+        return -ESTALE;
+    }
+    if (event->attempts_started > transaction->request_attempts_started) {
+        transaction->request_attempts_started = event->attempts_started;
+    }
+    transaction->remote_side_effect_possible = true;
     node_transaction_set_action(transaction, action);
     return 0;
 }

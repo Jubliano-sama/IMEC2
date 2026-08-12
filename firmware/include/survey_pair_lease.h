@@ -51,7 +51,7 @@ struct survey_pair_lease {
     bool start_id_valid;
     bool last_accepted_id_valid;
     bool round_commitment_valid;
-    /* Exact START command-result delivery has reached gateway confirmation. */
+    /* Exact START was locally accepted and its status owns independent custody. */
     bool start_released;
     bool start_execution_armed;
 };
@@ -130,6 +130,10 @@ bool survey_pair_lease_ready_snapshot(const struct survey_pair_lease *lease,
 uint32_t survey_pair_lease_execution_remaining_ms(
     const struct survey_pair_lease *lease,
     uint32_t now_ms);
+uint32_t survey_pair_lease_execution_remaining_for_role_ms(
+    const struct survey_pair_lease *lease,
+    uint32_t now_ms,
+    bool as_responder);
 /*
  * Atomically claims the ready lease for RF execution and snapshots its exact
  * pair and synchronized-round generation. Either output may be NULL.
@@ -141,6 +145,12 @@ bool survey_pair_lease_mark_running_at(struct survey_pair_lease *lease,
                                        uint32_t now_ms,
                                        struct survey_pair *pair,
                                        uint16_t *round_id);
+bool survey_pair_lease_mark_running_for_role_at(
+    struct survey_pair_lease *lease,
+    uint32_t now_ms,
+    bool as_responder,
+    struct survey_pair *pair,
+    uint16_t *round_id);
 bool survey_pair_lease_finish(struct survey_pair_lease *lease);
 bool survey_pair_lease_abort(struct survey_pair_lease *lease);
 bool survey_pair_lease_abort_matching(struct survey_pair_lease *lease,

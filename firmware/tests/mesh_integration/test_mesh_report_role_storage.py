@@ -14,6 +14,7 @@ FIRMWARE_ROOT = Path(__file__).resolve().parents[2]
 REPORT_SOURCE = FIRMWARE_ROOT / "app" / "src" / "app_mesh_report.c"
 ANCHOR_SOURCE = FIRMWARE_ROOT / "app" / "src" / "app_anchor.c"
 CAPACITY_HEADER = FIRMWARE_ROOT / "include" / "mesh_capacity.h"
+RELAY_HEADER = FIRMWARE_ROOT / "include" / "mesh_relay.h"
 PENDING_SYMBOL = re.compile(r"\bmesh_ch9_tx_pending\b")
 ANCHOR_ROLE_GUARD = re.compile(r"DEVICE_ROLE\s*==\s*ROLE_ANCHOR")
 
@@ -95,6 +96,7 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         cls.report_source = read_composed_source(REPORT_SOURCE)
         cls.anchor_source = read_composed_source(ANCHOR_SOURCE)
         cls.capacity_header = CAPACITY_HEADER.read_text(encoding="utf-8")
+        cls.relay_header = RELAY_HEADER.read_text(encoding="utf-8")
 
     def test_pending_batch_is_anchor_compile_role_only(self) -> None:
         failures = _unguarded_pending_symbol_lines(self.report_source)
@@ -121,7 +123,19 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         self.assertNotIn("mesh_result_action_tx", self.report_source)
 
     def test_gateway_store_is_initialized_then_attached_after_relay_init(self) -> None:
-        self.assertIn("sizeof(mesh_gateway_ack_store) == 9432u", self.report_source)
+        self.assertIn("sizeof(mesh_gateway_ack_store) == 9456u", self.report_source)
+        self.assertIn(
+            "sizeof(struct mesh_gateway_ack_store) == 9456u",
+            self.relay_header,
+        )
+        self.assertRegex(
+            self.relay_header,
+            r"(?s)struct mesh_gateway_ack_store\s*\{.*?"
+            r"candidate_identity_bits\s*\[\s*"
+            r"MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES\s*\]\s*;.*?"
+            r"confirmed_identity_bits\s*\[\s*"
+            r"MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES\s*\]\s*;\s*\}",
+        )
         self.assertIn("mesh_gateway_ack_store_init(&mesh_gateway_ack_store)",
                       self.report_source)
         self.assertNotIn("struct mesh_gateway_ack_store", self.anchor_source)

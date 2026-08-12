@@ -3,6 +3,7 @@
 
 #include "app_device_identity.h"
 #include "app_mesh_direct_gateway_retry.h"
+#include "device_identity.h"
 #include "mesh_capacity.h"
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
@@ -47,19 +48,21 @@
 #define GATEWAY_BLE_HOST_COMMAND_UNUSED
 #endif
 
+#define LEGACY_FIXED_CLICKER_ID DEVICE_IDENTITY_LEGACY_FIXED_CLICKER_ID
+
 #ifndef GATEWAY_ID
-#define GATEWAY_ID 0x9999888877776666ull
+#define GATEWAY_ID DEVICE_IDENTITY_DEFAULT_GATEWAY_ID
 #endif
 
 #ifndef DEVICE_ID
-#if IMEC_USE_HARDWARE_ANCHOR_ID
+#if IMEC_USE_HARDWARE_DEVICE_ID
 #define DEVICE_ID app_device_id()
 #elif DEVICE_ROLE == ROLE_ANCHOR
 #define DEVICE_ID 0x2222222222222222ull
 #elif DEVICE_ROLE == ROLE_GATEWAY
 #define DEVICE_ID GATEWAY_ID
 #else
-#define DEVICE_ID 0x1111111111111111ull
+#define DEVICE_ID LEGACY_FIXED_CLICKER_ID
 #endif
 #endif
 
@@ -267,7 +270,8 @@
 #define ANCHOR_BATTERY_MV_UNKNOWN 0u
 #define SURVEY_REACH_MAX_ENTRIES 12u
 #define SURVEY_PAIR_SAMPLE_GAP_MS 10u
-#define SURVEY_DISCOVERY_START_DELAY_MS 6000u
+#define SURVEY_DISCOVERY_START_DELAY_MS \
+    OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS
 #define SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS 63u
 #define SURVEY_DISCOVERY_PHY_PREP_MARGIN_MS 40u
 #define SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS 103u
@@ -278,6 +282,11 @@ BUILD_ASSERT(SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS >=
 BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >=
              SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS,
              "default survey start delay must allow early PHY preparation");
+BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >
+             (SURVEY_DEFAULT_TTL + 1u) *
+                 SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
+                 SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS,
+             "survey start delay must leave an independent redrive wave before the full-path guard");
 #define SURVEY_DISCOVERY_SLOT_MS 40u
 #define SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT 6u
 #define SURVEY_RESULT_MESH_SLOT_MS \
@@ -302,15 +311,16 @@ BUILD_ASSERT(SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u >=
              SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS,
              "survey outbox expiry must cover direct delivery and ACK repair");
 #if IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)
-#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 6912u
+#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 7200u
 #else
 #define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 8192u
 #endif
 /*
- * Hardware measured 4080 bytes in the restored-survey direct-ACK path, while
- * the current exact compiler graph bounds the synchronous mesh-anchor chain
- * at 5524 bytes. Keep survey radio work on the existing anchor UWB queue:
- * 6912 bytes retains the required 20% margin and the 10 KiB static RAM reserve.
+ * Hardware measured 4080 bytes in the survey direct-ACK path, while
+ * the exact compiler graph also covers synchronous causal Channel-5 repair
+ * reached from this owner. Its 5756-byte compiler chain needs 1440 bytes of
+ * free stack at the 7200-byte aligned queue size, so keep survey radio work
+ * on this anchor UWB queue rather than borrowing another owner.
  */
 #define ANCHOR_SURVEY_WORKQUEUE_HARDWARE_WATERMARK_BYTES 4080u
 BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
@@ -320,13 +330,20 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
 #define MESH_TEST_WORKQUEUE_STACK_SIZE 8192u
 #define MESH_TEST_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
 #if IS_ENABLED(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
+/*
+ * The current clicker route owner reaches 5288 bytes synchronously; the
+ * verifier's 20% free-space rule requires 6620 bytes, so 6656 is the
+ * smallest 32-byte-aligned queue that clears the measured chain.
+ */
 #if DEVICE_ROLE == ROLE_CLICKER
-#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 6144u
+#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 6656u
 #elif DEVICE_ROLE == ROLE_GATEWAY
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8192u
 #else
-#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 9216u
+#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8576u
 #endif
+BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 6656u,
+             "mesh route worker needs the verified clicker stack floor");
 #define MESH_ROUTE_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
 #else
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 4096u

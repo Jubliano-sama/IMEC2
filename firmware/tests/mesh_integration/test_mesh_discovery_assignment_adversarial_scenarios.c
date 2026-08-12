@@ -241,9 +241,86 @@ static int gateway_accept_result(struct gateway_model *gateway,
     }
     if ((gateway->ack_mask & (UINT64_C(1) << index)) != 0u) {
         gateway->duplicate_acks++;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
     gateway->ack_mask |= UINT64_C(1) << index;
-    return 0;
+    return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
+}
+
+static bool test_multihop_table_acks_release_shared_relay_before_quorum(void)
+{
+    struct gateway_model gateway = {
+        .claim_ids = {ANCHOR_BASE, ANCHOR_BASE + 1u},
+        .claim_count = 2u,
+        .active = true,
+    };
+    struct proto_packet child_ack;
+    struct proto_packet relay_ack;
+    uint8_t child_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    uint8_t relay_payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t child_len = 0u;
+    size_t relay_len = 0u;
+    bool relay_custody_busy = false;
+    bool gateway_ack_emitted = false;
+
+    CHECK(build_result(ANCHOR_BASE + 1u,
+                       DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                       ASSIGNMENT_EPOCH,
+                       TABLE_SESSION,
+                       &child_ack,
+                       child_payload,
+                       &child_len),
+          "child table ACK build failed");
+    relay_custody_busy = true;
+    CHECK(gateway_accept_result(&gateway,
+                                &child_ack,
+                                child_payload,
+                                child_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                ASSIGNMENT_EPOCH,
+                                TABLE_SESSION) ==
+              APP_GATEWAY_SEMANTIC_ACCEPT_NEW,
+          "first child table ACK was not a new semantic delivery");
+    gateway_ack_emitted = true;
+    CHECK(gateway.ack_mask == (UINT64_C(1) << 1u),
+          "child ACK did not commit independently before quorum");
+    CHECK(gateway_ack_emitted && relay_custody_busy,
+          "gateway did not return transport ACK for partial quorum");
+    relay_custody_busy = false;
+
+    CHECK(build_result(ANCHOR_BASE,
+                       DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                       ASSIGNMENT_EPOCH,
+                       TABLE_SESSION,
+                       &relay_ack,
+                       relay_payload,
+                       &relay_len),
+          "relay table ACK build failed");
+    CHECK(!relay_custody_busy,
+          "child gateway ACK did not release the shared relay owner");
+    relay_custody_busy = true;
+    CHECK(gateway_accept_result(&gateway,
+                                &relay_ack,
+                                relay_payload,
+                                relay_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                ASSIGNMENT_EPOCH,
+                                TABLE_SESSION) ==
+              APP_GATEWAY_SEMANTIC_ACCEPT_NEW,
+          "relay's own table ACK was not admitted after child release");
+    CHECK(gateway.ack_mask == 3u,
+          "relay's own ACK did not complete the two-anchor quorum");
+
+    CHECK(gateway_accept_result(&gateway,
+                                &child_ack,
+                                child_payload,
+                                child_len,
+                                DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                ASSIGNMENT_EPOCH,
+                                TABLE_SESSION) ==
+              APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+          "exact child retry was not transport-ACKable as duplicate");
+    return true;
 }
 
 static size_t gateway_current_claim_response_count(
@@ -645,7 +722,8 @@ static bool run_workflow(size_t anchor_count)
                 CHECK(gateway_accept_result(
                           &gateway, &ack, ack_payload, ack_len,
                           DISCOVERY_ASSIGNMENT_PHASE_ACK,
-                          ASSIGNMENT_EPOCH, TABLE_SESSION) == 0,
+                          ASSIGNMENT_EPOCH, TABLE_SESSION) ==
+                              APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
                       "duplicate ack rejected count=%zu", anchor_count);
             }
         }
@@ -1098,7 +1176,8 @@ static bool test_gateway_semantic_acceptance_categories(void)
                                 payload_len,
                                 DISCOVERY_ASSIGNMENT_PHASE_ACK,
                                 ASSIGNMENT_EPOCH,
-                                TABLE_SESSION) == 0 &&
+                                TABLE_SESSION) ==
+              APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
               gateway.duplicate_acks == 1u,
           "duplicate valid table ACK was not idempotently accepted");
     packet.session_id--;
@@ -1455,6 +1534,44 @@ static bool test_explicit_budget_clips_current_window_without_division(void)
     CHECK(!app_discovery_assignment_table_retry_backoff_required(
               true, 1u, round_limit, round_limit),
           "terminal table round scheduled an extra retry");
+    return true;
+}
+
+static bool test_table_window_keeps_autonomous_fast_ack_retries_live(void)
+{
+    const uint8_t hop_count = 2u;
+    const uint32_t initial_window_ms =
+        discovery_assignment_collection_window_ms(
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, hop_count);
+    const uint32_t table_window_ms =
+        discovery_assignment_table_collection_window_ms(
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, hop_count);
+    const uint32_t custody_ms =
+        discovery_assignment_response_custody_ms(hop_count);
+    uint32_t elapsed_ms = initial_window_ms;
+
+    CHECK(table_window_ms > initial_window_ms,
+          "TABLE ACK retry window did not outlive the first handle");
+    for (uint8_t retry = 0u;
+         retry < DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES;
+         retry++) {
+        uint32_t retry_base_ms =
+            DISCOVERY_ASSIGNMENT_RETRY_BASE_MS << retry;
+        uint32_t max_backoff_ms =
+            discovery_assignment_retry_backoff_ms(
+                retry, retry_base_ms - 1u);
+
+        elapsed_ms += max_backoff_ms + custody_ms;
+        CHECK(elapsed_ms <= table_window_ms,
+              "fast TABLE ACK retry %u escaped gateway custody: elapsed=%u window=%u",
+              retry + 1u,
+              elapsed_ms,
+              table_window_ms);
+    }
+    CHECK(elapsed_ms == table_window_ms,
+          "TABLE retry horizon has unowned slack or missing time: elapsed=%u window=%u",
+          elapsed_ms,
+          table_window_ms);
     return true;
 }
 
@@ -2258,6 +2375,9 @@ int main(void)
 {
     static const size_t counts[] = {2u, 6u, 16u, 32u, 50u};
 
+    if (!test_multihop_table_acks_release_shared_relay_before_quorum()) {
+        return EXIT_FAILURE;
+    }
     for (size_t i = 0u; i < sizeof(counts) / sizeof(counts[0]); i++) {
         if (!run_workflow(counts[i])) {
             return EXIT_FAILURE;
@@ -2285,6 +2405,9 @@ int main(void)
         return EXIT_FAILURE;
     }
     if (!test_explicit_budget_clips_current_window_without_division()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_table_window_keeps_autonomous_fast_ack_retries_live()) {
         return EXIT_FAILURE;
     }
     if (!test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic()) {

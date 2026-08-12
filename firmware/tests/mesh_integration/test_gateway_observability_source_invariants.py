@@ -7,6 +7,7 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
+REPORT_RX = (ROOT / "app/src/app_mesh_report_rx.inc").read_text(encoding="utf-8")
 BLE = read_composed_source(ROOT / "app/src/app_gateway_ble.c")
 RESULT_RUNTIME = (ROOT / "app/src/app_gateway_result_runtime.inc").read_text(
     encoding="utf-8"
@@ -60,35 +61,31 @@ boundary_flush = survey_work.index(
 )
 active_gate = survey_work.index("if (!gateway_survey_active)")
 deadline_gate = survey_work.index("if (uptime_deadline_reached")
-deadline_exit = survey_work.index("goto out;", deadline_gate)
-deadline_close = survey_work.index("}", deadline_exit) + 1
-pair_finalize = survey_work.index("gateway_survey_finalize_pair_observation")
-assert active_gate < deadline_gate < boundary_flush, (
-    "pending boundaries must flush at the first safe point after the active "
-    "survey and operation-deadline checks"
+cleanup_service = survey_work.index(
+    "gateway_survey_service_cleanup()", deadline_gate
 )
-assert not survey_work[deadline_close:boundary_gate].strip(), (
-    "the boundary flush must immediately follow the operation-deadline gate"
+collection_owner = survey_work.index(
+    "gateway_survey_wait_for_discovery_collection()", cleanup_service
 )
-for external_wait_gate in (
-    "gateway_survey_wait_for_discovery_collection()",
-    "gateway_survey_cleanup_pending()",
-    "gateway_survey_response_ack_settle_blocks_progress(",
-    "if (gateway_survey_auto.waiting)",
-    "gateway_survey_round_drive()",
+round_drive = survey_work.index(
+    "gateway_survey_round_drive()", boundary_flush
+)
+assert (
+    active_gate < deadline_gate < cleanup_service < collection_owner <
+    boundary_flush < round_drive
+), (
+    "the immutable operation deadline, cleanup owner, collection owner, and "
+    "backpressured boundary must run before the round can expose a successor"
+)
+for retired_owner in (
+    "gateway_survey_auto",
+    "survey_gateway_auto_next_action",
+    "survey_gateway_auto_",
 ):
-    assert boundary_flush < survey_work.index(external_wait_gate), (
-        "a backpressured pair-start boundary must be flushed before external "
-        f"wait gate {external_wait_gate}"
+    assert retired_owner not in survey_work, (
+        "the gateway worker must read only the round and exact transaction "
+        f"owners; found retired mirror {retired_owner}"
     )
-assert boundary_flush < pair_finalize, (
-    "a pair result must not be finalized before its pending pair-start "
-    "boundary has custody"
-)
-assert boundary_flush < survey_work.index("survey_gateway_auto_next_action")
-assert pair_finalize < survey_work.index(
-    "survey_gateway_auto_next_action"
-)
 
 report_ingress = function_body(ANCHOR, "gateway_handle_survey_discovery_report")
 assert "GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED" not in report_ingress
@@ -189,6 +186,31 @@ assert "gateway_ble_stream_accept_host_receipt" in receipt
 assert receipt.index("gateway_ble_stream_accept_host_receipt") < receipt.index(
     "mesh_gateway_host_receipt_ready()"
 )
+command_event_finish = receipt.index(
+    "return gateway_command_event_finish_host_receipt(&head_packet)"
+)
+local_result_branch = receipt.index(
+    "local_command_result = gateway_local_command_result_packet("
+)
+malformed_local_result = receipt.index(
+    "if (self_addressed_command_result && !local_command_result)",
+    local_result_branch,
+)
+local_result_finish = receipt.index(
+    "gateway_ble_finish_host_delivery(&head_packet)", local_result_branch
+)
+mesh_completion = receipt.index("mesh_gateway_host_receipt_ready()")
+assert (
+    local_result_branch
+    < malformed_local_result
+    < command_event_finish
+    < local_result_finish
+    < mesh_completion
+), (
+    "self-addressed command results must fail closed before mesh completion, "
+    "while reliable publisher events and local results each retire their "
+    "own BLE custody before the distinct mesh-result branch"
+)
 finish = function_body(RESULT_RUNTIME, "gateway_ble_finish_host_delivery")
 assert "GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED" in finish
 assert "GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED" not in finish
@@ -202,12 +224,23 @@ delivery = (ROOT / "app/src/app_mesh_report_delivery.inc").read_text(
     encoding="utf-8"
 )
 
-# A PREPARE/START result can outlive the volatile survey operation that owned
+# A host-gated gateway delivery can complete long after the RF turn and after
+# route maintenance has changed the downlink cache.  The immutable queued RX
+# item must retain the physical ingress peer, and both immediate and delayed
+# commit paths must pass that exact peer back to the relay ACK builder.
+queue_rx = function_body(REPORT_RX, "mesh_queue_from_frame_at_internal")
+capture_previous_hop = queue_rx.index(
+    "pending.previous_hop_id = context.previous_hop_id"
+)
+enqueue_rx = queue_rx.index("k_msgq_put(&mesh_rx_msgq", capture_previous_hop)
+assert capture_previous_hop < enqueue_rx
+
+# A survey result/report can outlive the volatile survey operation that owned
 # it: preflight may admit the exact result and expose it to the host, then
 # survey cleanup can retire the owner before the exact host receipt arrives.
-# At that point -ENOENT is terminal stale-survey evidence, not a reason to pin
-# the singleton gateway delivery forever.  Keep that recovery deliberately
-# narrower than the generic semantic-error path.
+# At that point the type-specific -ENOENT/-ESTALE is terminal stale-survey
+# evidence, not a reason to pin the singleton gateway delivery forever.  Keep
+# that recovery deliberately narrower than the generic semantic-error path.
 complete_host_delivery = function_body(
     delivery, "mesh_complete_gateway_host_delivery_locked"
 )
@@ -231,6 +264,9 @@ classifier = function_body(delivery, classifier_name)
 
 for required in (
     "preflight_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_NEW",
+    "semantic_ret == -ESTALE",
+    "pending->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT",
+    "pending->packet.msg_type == MSG_SURVEY_PAIR_RESULT",
     "semantic_ret != -ENOENT",
     "pending->packet.msg_type != MSG_COMMAND_RESULT",
     "gateway_command_extract_id(pending->payload",
@@ -241,14 +277,25 @@ for required in (
     "APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW",
 ):
     assert required in classifier, (
-        "stale post-receipt recovery must require -ENOENT and an exact "
-        f"survey PREPARE/START command-result identity: missing {required}"
+        "stale post-receipt recovery must require exact survey report/result "
+        f"identity and terminal stale evidence: missing {required}"
     )
-assert classifier.count("APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW") == 1
-assert classifier.count("return semantic_ret;") == 1, (
-    "non-ENOENT errors and non-survey command results must retain their "
-    "original semantic failure"
+assert classifier.count("APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW") == 2
+assert classifier.count("return semantic_ret;") >= 1, (
+    "non-stale errors and unrelated packet types must retain their original "
+    "semantic failure"
 )
+survey_recovery = classifier.index("semantic_ret == -ESTALE")
+survey_recovery_end = classifier.index(
+    "APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW", survey_recovery
+)
+survey_recovery_branch = classifier[survey_recovery:survey_recovery_end]
+for packet_type in (
+    "MSG_SURVEY_DISCOVERY_REPORT",
+    "MSG_SURVEY_PAIR_RESULT",
+):
+    assert packet_type in survey_recovery_branch
+assert "MSG_COMMAND_RESULT" not in survey_recovery_branch
 
 # The shared extractor is the parser boundary used above.  Pin its unique,
 # exact-width decode so a duplicate or malformed command-ID TLV cannot enter
@@ -288,15 +335,27 @@ semantic_finalize = complete_host_delivery.index(
 relay_commit = complete_host_delivery.index(
     "mesh_relay_commit_gateway_delivery", semantic_finalize
 )
+delayed_commit = complete_host_delivery[relay_commit:]
+assert re.search(
+    r"mesh_relay_commit_gateway_delivery\s*\([^;]*?"
+    r"pending->previous_hop_id\s*,",
+    delayed_commit,
+    re.DOTALL,
+), "delayed host receipt must preserve the captured physical ingress peer"
 ack_handoff = complete_host_delivery.index(
     "mesh_handle_result_actions", relay_commit
 )
 ble_retire = complete_host_delivery.index(
     "gateway_ble_finish_host_delivery", ack_handoff
 )
-assert (
-    "semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW"
-    in complete_host_delivery[semantic_accepted:semantic_finalize]
+collection_recovery_relay_bypass = complete_host_delivery.index(
+    "semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY",
+    relay_commit,
+)
+assert relay_commit < collection_recovery_relay_bypass < ack_handoff, (
+    "only the reboot-recovery EACK path may bypass normal relay/ACK handoff; "
+    "recovered stale survey records still need their captured physical custody "
+    "committed"
 )
 assert semantic_finalize < relay_commit < ack_handoff < ble_retire, (
     "recovered stale survey results must skip semantic mutation but still "
@@ -369,6 +428,12 @@ no_host = drain[drain.index("if (!stream_reservation_acquired)", redrive_gate) :
 assert no_host.index("gateway_finalize_semantic_delivery") < no_host.index(
     "mesh_relay_commit_gateway_delivery"
 )
+assert re.search(
+    r"mesh_relay_commit_gateway_delivery\s*\([^;]*?"
+    r"pending->previous_hop_id\s*,",
+    no_host,
+    re.DOTALL,
+), "immediate and duplicate commits must use the current queued ingress peer"
 common_actions = delivery.index(
     "mesh_handle_result_actions(result, pending->radio_channel"
 )
@@ -378,7 +443,15 @@ pending_barrier = delivery.rfind(
     common_actions,
 )
 assert pending_barrier >= 0
-assert common_actions - pending_barrier < 300
+abort_retirement = delivery.index(
+    "mesh_retire_stale_transit_survey_result_for_abort(",
+    pending_barrier,
+    common_actions,
+)
+assert pending_barrier < abort_retirement < common_actions
+assert "app_watchdog_stop_feeding();" in delivery[
+    abort_retirement:common_actions
+]
 
 tx_reset = function_body(BLE, "gateway_ble_tx_reset_locked")
 for reset_statement in (
@@ -449,7 +522,7 @@ for helper in (
     assert "k_spin_unlock(&gateway_command_observability_lock" in body
 
 reserve_identity = function_body(BLE, "gateway_observability_reserve_identity")
-assert "gateway_next_broadcast_command_seq()" in reserve_identity
+assert "app_gateway_control_sequence_next_receiptable(&event_seq)" in reserve_identity
 assert "event->event_seq != 0u" in reserve_identity
 assert "k_spin_lock(" not in reserve_identity
 
@@ -467,14 +540,63 @@ assert "gateway_observability_pending_terminal_state" in flush
 assert "gateway_observability_snapshot_state" in flush
 
 tx_complete = function_body(BLE, "gateway_ble_tx_complete")
-assert "gateway_observability_mark_sent_state" in tx_complete
+generic_sent = tx_complete.index("generic_command_event_sent =")
+generic_mark_sent = tx_complete.index(
+    "gateway_observability_mark_sent_state(", generic_sent
+)
+host_custody_gate = tx_complete.index("host_custody_supported =")
+host_notified = tx_complete.index(
+    "gateway_ble_stream_mark_host_notified", host_custody_gate
+)
+assert generic_sent < generic_mark_sent
+assert host_custody_gate < host_notified < generic_mark_sent, (
+    "only a flags-zero generic command event retires on ATT completion; "
+    "a reliable publisher item remains host-notified until its exact GUI "
+    "receipt advances the publisher"
+)
+
+finish_command_event = function_body(
+    BLE, "gateway_command_event_finish_host_receipt"
+)
+assert "gateway_observability_mark_sent_state(event.event_seq)" in finish_command_event
+assert "packet->flags != FLAG_GATEWAY_ACK_REQUIRED" in finish_command_event
+assert "app_gateway_assignment_publisher_event_is_reliable(&event)" in finish_command_event
+publisher_advance = finish_command_event.index(
+    "app_gateway_assignment_publisher_note_host_receipt(&event)"
+)
+stream_retire = finish_command_event.index(
+    "gateway_ble_stream_mark_sent", publisher_advance
+)
+assert publisher_advance < stream_retire, (
+    "publisher semantic advancement must succeed before its exact retained "
+    "BLE head can retire"
+)
 
 stream_packet = function_body(RESULT_RUNTIME, "gateway_ble_stream_packet")
-assert "GATEWAY_COMMAND_EVENT_FLAG_TERMINAL" in stream_packet
+assert "MSG_GATEWAY_COMMAND_EVENT" in stream_packet
 assert "gateway_ble_stream_enqueue_retained_packet" in stream_packet
-assert stream_packet.index("GATEWAY_COMMAND_EVENT_FLAG_TERMINAL") < (
-    stream_packet.index("gateway_ble_stream_enqueue_retained_packet")
-), "terminal command events must become non-evictable before queue admission"
+assert "if (packet->flags == 0u)" in stream_packet
+reliable_marker = stream_packet.index(
+    "packet->flags == FLAG_GATEWAY_ACK_REQUIRED"
+)
+reliable_shape = stream_packet.index(
+    "app_gateway_assignment_publisher_event_is_reliable(", reliable_marker
+)
+retained_enqueue = stream_packet.index(
+    "gateway_ble_stream_enqueue_retained_packet", reliable_shape
+)
+best_effort_enqueue = stream_packet.index(
+    "gateway_ble_stream_enqueue_packet", retained_enqueue
+)
+assert reliable_marker < reliable_shape < retained_enqueue < best_effort_enqueue, (
+    "ACK_REQUIRED is reserved for a validated durable publisher event; "
+    "flags-zero command telemetry remains an ordinary evictable stream item"
+)
+
+publisher_emit = function_body(BLE, "gateway_publish_assignment_event_if_available")
+assert "app_gateway_assignment_publisher_event_is_reliable(event)" in publisher_emit
+assert "packet.flags = FLAG_GATEWAY_ACK_REQUIRED" in publisher_emit
+assert "gateway_ble_stream_packet(&packet" in publisher_emit
 
 observe_available = function_body(
     BLE, "gateway_observe_command_event_if_available"
@@ -499,6 +621,9 @@ assert "gateway_next_broadcast_command_seq" not in observe_available, (
 )
 assert "packet.session_id = event->event_seq" in observe_available
 assert "packet.seq = (uint16_t)event->event_seq" in observe_available
+assert "packet.flags = 0u" in observe_available
+assert "gateway_ble_stream_enqueue_packet(" in observe_available
+assert "gateway_ble_stream_enqueue_retained_packet" not in observe_available
 assert "gateway_observability_note_enqueue_state" in observe_available
 
 ble_init = function_body(BLE, "gateway_ble_init")

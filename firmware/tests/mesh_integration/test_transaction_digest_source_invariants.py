@@ -2,6 +2,7 @@
 """Source guards for full-width transaction equality commitments."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,6 +14,24 @@ APP_STATE = (ROOT / "app" / "src" / "app_anchor.c").read_text()
 APP_GLUE = (
     ROOT / "app" / "src" / "app_anchor_gateway_survey.inc"
 ).read_text()
+
+
+def function_body(source: str, name: str) -> str:
+    match = re.search(rf"\b{name}\s*\([^;]*?\)\s*\{{", source, re.S)
+    if match is None:
+        raise AssertionError(f"missing function {name}")
+    start = match.end()
+    depth = 1
+    index = start
+    while index < len(source) and depth != 0:
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+        index += 1
+    if depth != 0:
+        raise AssertionError(f"unterminated function {name}")
+    return source[start : index - 1]
 
 ALL_TRANSACTION_SOURCES = "\n".join(
     (NODE_HEADER, NODE_SOURCE, SURVEY_HEADER, SURVEY_SOURCE, APP_STATE, APP_GLUE)
@@ -46,10 +65,22 @@ assert "memcpy(recent->request_digest" in SURVEY_SOURCE
 assert "memcpy(recent->result_digest" in SURVEY_SOURCE
 assert "survey_gateway_transaction_request_digest" in SURVEY_SOURCE
 
-# The composed gateway hashes the exact outbound packet and decoded result
-# bytes, then carries the full result commitment across preflight/commit.
+# The composed gateway hashes the exact outbound packet and the complete
+# received result packet.  The latter is the same semantic commitment carried
+# by ACK_CONFIRM, so payload-only hashing cannot promote a different packet.
 assert "node_transaction_digest_packet(&outbound->packet" in APP_GLUE
-assert "node_transaction_digest_bytes(payload" in APP_GLUE
+PREFLIGHT_RESULT = function_body(
+    APP_GLUE, "gateway_survey_preflight_result"
+)
+packet_digest = PREFLIGHT_RESULT.index("mesh_packet_semantic_digest(packet,")
+reconcile = PREFLIGHT_RESULT.index("survey_gateway_transaction_reconcile_result(")
+assert re.search(
+    r"mesh_packet_semantic_digest\(\s*packet,\s*payload,\s*"
+    r"payload_len,\s*result_digest\s*\)",
+    PREFLIGHT_RESULT,
+)
+assert "node_transaction_digest_bytes(payload" not in PREFLIGHT_RESULT
+assert packet_digest < reconcile
 assert APP_GLUE.count("survey_gateway_transaction_request_digest(") >= 2
 assert "result_token = packet->seq;" in APP_GLUE
 assert "uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN]" in APP_STATE

@@ -2,6 +2,17 @@ mainmenu "IMEC UWB firmware"
 
 source "Kconfig.zephyr"
 
+config IMEC_DURABLE_STATE
+    bool "Enable sparse durable application checkpoints"
+    depends on FLASH && FLASH_MAP && FLASH_PAGE_LAYOUT && NVS && NVS_DATA_CRC
+    help
+      Mount storage_partition through one application owner and retain only
+      typed, versioned, infrequently updated identity/configuration
+      checkpoints. Packet queues, retry counters, ACK history, and other hot
+      runtime state remain in bounded RAM or the gateway GUI. Any mount,
+      schema, identity, CRC, write, or read-back failure fails closed; this
+      option does not add a thread or workqueue.
+
 menu "IMEC power management"
 
 config IMEC_CLICKER_SYSTEMOFF_IDLE

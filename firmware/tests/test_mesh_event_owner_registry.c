@@ -156,10 +156,69 @@ static void test_registry_deadlines_are_wrap_safe(void)
         &registry, PEER_A_ID, 11899u));
 }
 
+static void test_supervision_retirement_is_the_fresh_incarnation_boundary(void)
+{
+    struct mesh_event_owner owners[1] = {0};
+    struct mesh_event_origin_tombstone tombstones[1] = {0};
+    const struct mesh_event_owner_registry registry = {
+        .owners = owners,
+        .owner_capacity = 1u,
+        .tombstones = tombstones,
+        .tombstone_capacity = 1u,
+    };
+    uint8_t stale_payload[PROTO_TLV_U64_ENCODED_LEN];
+    uint8_t fresh_payload[PROTO_TLV_U64_ENCODED_LEN];
+    size_t stale_payload_len = proposal_payload(
+        stale_payload, sizeof(stale_payload), PEER_A_BOOT_NONCE);
+    size_t fresh_payload_len = proposal_payload(
+        fresh_payload, sizeof(fresh_payload), PEER_B_BOOT_NONCE);
+    struct proto_packet stale = proposal(
+        PEER_A_ID, UINT32_C(0xa3000001), 1u, stale_payload_len);
+    struct proto_packet fresh = proposal(
+        PEER_A_ID, UINT32_C(0xa3000002), 1u, fresh_payload_len);
+
+    /* Model the locally proposed owner left behind by Channel-9 timing. */
+    assert(mesh_event_owner_registry_begin(
+               &registry, PEER_A_ID, stale.session_id, stale.seq, false, 0u,
+               100u, REPLAY_LIFETIME_MS, QUEUE_LIFETIME_MS) == PROTO_OK);
+
+    /* A still-usable timing owns the peer and a new incarnation cannot replace it. */
+    assert(mesh_event_owner_registry_classify_proposal(
+               &registry, 200u, 200u, LOCAL_ID, PEER_A_ID, &fresh,
+               fresh_payload, fresh_payload_len, false) ==
+           MESH_EVENT_OWNER_STALE);
+    assert(owners[0].active);
+    assert(owners[0].session_id == stale.session_id);
+    assert(owners[0].remote_boot_nonce == 0u);
+
+    /* Supervision expiry retires the owner before receive classification. */
+    mesh_event_owner_registry_abandon(&registry, PEER_A_ID);
+    assert(mesh_event_owner_registry_classify_proposal(
+               &registry, 700u, 699u, LOCAL_ID, PEER_A_ID, &fresh,
+               fresh_payload, fresh_payload_len, false) ==
+           MESH_EVENT_OWNER_APPLY);
+    assert(mesh_event_owner_registry_begin(
+               &registry, PEER_A_ID, fresh.session_id, fresh.seq, true,
+               PEER_B_BOOT_NONCE, 700u, REPLAY_LIFETIME_MS,
+               QUEUE_LIFETIME_MS) == PROTO_OK);
+    assert(owners[0].active);
+    assert(owners[0].session_id == fresh.session_id);
+    assert(owners[0].remote_boot_nonce == PEER_B_BOOT_NONCE);
+
+    /* Work queued before retirement cannot revive the superseded proposal. */
+    assert(mesh_event_owner_registry_classify_proposal(
+               &registry, 701u, 199u, LOCAL_ID, PEER_A_ID, &stale,
+               stale_payload, stale_payload_len, false) ==
+           MESH_EVENT_OWNER_STALE);
+    assert(owners[0].session_id == fresh.session_id);
+    assert(owners[0].remote_boot_nonce == PEER_B_BOOT_NONCE);
+}
+
 int main(void)
 {
     test_slot_reuse_retains_origin_through_queue_horizon();
     test_live_tombstone_blocks_admission_instead_of_eviction();
     test_registry_deadlines_are_wrap_safe();
+    test_supervision_retirement_is_the_fresh_incarnation_boundary();
     return 0;
 }

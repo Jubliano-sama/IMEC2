@@ -1,4 +1,5 @@
 #include "app_mesh_ch9_ack.h"
+#include "firmware_state_machines.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -634,6 +635,7 @@ static void test_wait_plan_retries_at_slot_prepare_boundary(void)
 static void test_core_retry_backoff_keeps_channel9_rx_available(void)
 {
     struct mesh_pending_tx pending = {
+        .packet.msg_type = MSG_GATEWAY_ACK_CONFIRM,
         .state = MESH_RELAY_TX_WAIT_GATEWAY_ACK,
         .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
         .next_hop_id = RELAY_ID,
@@ -658,22 +660,265 @@ static void test_relay_path_stays_out_of_final_ack_batch_tracker(void)
     assert(!app_mesh_ch9_tx_should_track_sent(&sent, RELAY_ID));
 }
 
-static void test_relay_path_core_ack_wait_requires_channel9(void)
+static void assert_pending_coordinator_decision(
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    enum fw_radio_activity_state expected_state,
+    bool expected_uwb_rx_allowed,
+    bool expected_c5_tx_allowed)
+{
+    const struct fw_radio_activity_capture capture = {
+        .relay_tx_active = relay_tx_active,
+        .route_waiting_tx_active = true,
+        .report_queue_used = 1u,
+        .ch9_ack_wait_active =
+            app_mesh_ch9_core_ack_wait_active(pending, relay_tx_active),
+        .ch9_ack_receive_eligible =
+            app_mesh_ch9_core_pending_allows_rx(pending, relay_tx_active),
+    };
+    struct fw_radio_activity_decision decision;
+
+    assert(fw_radio_activity_decide(&capture, NULL, &decision, NULL) == 0);
+    assert(decision.state == expected_state);
+    assert(decision.uwb_rx_allowed == expected_uwb_rx_allowed);
+    assert(decision.c5_tx_allowed == expected_c5_tx_allowed);
+}
+
+static void test_retry_backoff_keeps_coordinator_rx_visible(void)
 {
     struct mesh_pending_tx pending = {
+        .packet.msg_type = MSG_GATEWAY_ACK_CONFIRM,
         .state = MESH_RELAY_TX_WAIT_GATEWAY_ACK,
         .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
         .next_hop_id = RELAY_ID,
     };
 
     assert(app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(app_mesh_ch9_core_pending_allows_rx(&pending, true));
+
+    pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(app_mesh_ch9_core_pending_allows_rx(&pending, true));
+    assert_pending_coordinator_decision(&pending,
+                                        true,
+                                        FW_RADIO_ACTIVITY_MESH_RX,
+                                        true,
+                                        true);
+
+    pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD;
+    assert(app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(app_mesh_ch9_core_pending_allows_rx(&pending, true));
+    assert_pending_coordinator_decision(&pending,
+                                        true,
+                                        FW_RADIO_ACTIVITY_MESH_RX,
+                                        true,
+                                        false);
+
     assert(!app_mesh_ch9_core_ack_wait_active(&pending, false));
+    assert(!app_mesh_ch9_core_pending_allows_rx(&pending, false));
 
     pending.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(!app_mesh_ch9_core_pending_allows_rx(&pending, true));
+    assert_pending_coordinator_decision(&pending,
+                                        true,
+                                        FW_RADIO_ACTIVITY_MESH_TX,
+                                        false,
+                                        true);
     pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
-    pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+
+    pending.next_hop_id = 0u;
     assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(!app_mesh_ch9_core_pending_allows_rx(&pending, true));
+    pending.next_hop_id = RELAY_ID;
+
+    pending.state = MESH_RELAY_TX_WAIT_RESULT_GRANT;
+    assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(!app_mesh_ch9_core_pending_allows_rx(&pending, true));
+    pending.state = MESH_RELAY_TX_IDLE;
+    assert(!app_mesh_ch9_core_ack_wait_active(&pending, true));
+    assert(!app_mesh_ch9_core_pending_allows_rx(&pending, true));
+    assert_pending_coordinator_decision(&pending,
+                                        true,
+                                        FW_RADIO_ACTIVITY_MESH_TX,
+                                        false,
+                                        true);
+
+    pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    assert_pending_coordinator_decision(&pending,
+                                        false,
+                                        FW_RADIO_ACTIVITY_MESH_TX,
+                                        false,
+                                        true);
+}
+
+static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
+{
+    struct mesh_pending_tx pending = {
+        .state = MESH_RELAY_TX_WAIT_GATEWAY_ACK,
+        .packet = {
+            .msg_type = MSG_MESH_DATA,
+            .flags = FLAG_GATEWAY_ACK_REQUIRED,
+            .src_id = TRANSMITTER_ID,
+            .dst_id = GATEWAY_ID_TEST,
+        },
+        .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        .next_hop_id = GATEWAY_ID_TEST,
+    };
+    struct mesh_outbound route_request = {
+        .packet = {
+            .msg_type = MSG_ROUTE_REQ,
+            .src_id = RELAY_ID,
+            .dst_id = MESH_BROADCAST_ID,
+        },
+        .next_hop_id = MESH_BROADCAST_ID,
+        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+    };
+    struct mesh_outbound event_propose = {
+        .packet = {
+            .msg_type = MSG_MESH_EVENT_PROPOSE,
+            .src_id = RELAY_ID,
+            .dst_id = TRANSMITTER_ID,
+        },
+        .next_hop_id = TRANSMITTER_ID,
+        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
+    };
+    struct app_mesh_ch9_ack_batch batch = {
+        .template_ack = {
+            .packet = {
+                .msg_type = MSG_GATEWAY_ACK,
+                .src_id = GATEWAY_ID_TEST,
+                .dst_id = TRANSMITTER_ID,
+                .payload_len = 2u,
+            },
+            .payload = {UINT8_C(0x5a), UINT8_C(0xa5)},
+            .payload_len = 2u,
+            .next_hop_id = TRANSMITTER_ID,
+            .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
+        },
+        .peer_id = TRANSMITTER_ID,
+        .count = 1u,
+        .valid = true,
+        .preserve_payload = true,
+        .owner = APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE,
+    };
+    struct mesh_outbound wrong_route_request = route_request;
+    struct app_mesh_c5_tx_authorization_token authorization;
+    struct app_mesh_c5_tx_authorization_token event_authorization;
+    struct app_mesh_c5_tx_authorization_token late_authorization;
+    struct app_mesh_c5_tx_authorization_token none = {0};
+    size_t route_payload_len = 0u;
+    size_t wrong_route_payload_len = 0u;
+
+    assert(tlv_append_u64(route_request.payload,
+                          sizeof(route_request.payload),
+                          &route_payload_len,
+                          TLV_RESPONDER_ID,
+                          TRANSMITTER_ID) == PROTO_OK);
+    route_request.payload_len = (uint16_t)route_payload_len;
+    route_request.packet.payload_len = (uint16_t)route_payload_len;
+    assert(tlv_append_u64(wrong_route_request.payload,
+                          sizeof(wrong_route_request.payload),
+                          &wrong_route_payload_len,
+                          TLV_RESPONDER_ID,
+                          SECOND_RELAY_ID) == PROTO_OK);
+    wrong_route_request.payload_len = (uint16_t)wrong_route_payload_len;
+    wrong_route_request.packet.payload_len = (uint16_t)wrong_route_payload_len;
+
+    /* Before a forwarded batch exists, only a captured authorization for the
+     * exact retained transit owner opens the exact child route request. */
+    assert(app_mesh_ch9_c5_repair_authorization_capture(
+        &authorization,
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR,
+        &pending, true, NULL, TRANSMITTER_ID));
+    assert(app_mesh_ch9_c5_repair_owner_matches(
+        &authorization, &pending, true, NULL));
+    assert(app_mesh_ch9_c5_repair_allowed(
+        &authorization, &pending, true, NULL, &route_request));
+    assert(!app_mesh_ch9_c5_repair_allowed(
+        &none, &pending, true, NULL, &route_request));
+    assert(!app_mesh_ch9_c5_repair_allowed(
+        &authorization, &pending, true, NULL, &wrong_route_request));
+    assert(!app_mesh_ch9_c5_repair_allowed(
+        &authorization, &pending, true, NULL, &event_propose));
+    assert(!app_mesh_ch9_c5_repair_authorization_capture(
+        &none,
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR,
+        &pending, true, NULL, SECOND_RELAY_ID));
+    assert(!none.valid);
+
+    pending.packet.seq++;
+    assert(!app_mesh_ch9_c5_repair_owner_matches(
+        &authorization, &pending, true, NULL));
+    pending.packet.seq--;
+    pending.packet.flags = 0u;
+    assert(!app_mesh_ch9_c5_repair_authorization_capture(
+        &none,
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR,
+        &pending, true, NULL, TRANSMITTER_ID));
+    pending.packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+
+    /* After the gateway ACK is retained, event timing repair requires a
+     * second authorization bound to both the transit owner and ACK digest. */
+    pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD;
+    pending.gateway_ack_forward_pending = true;
+    assert(app_mesh_ch9_c5_repair_authorization_capture(
+        &event_authorization,
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR,
+        &pending, true, &batch, TRANSMITTER_ID));
+    assert(event_authorization.retained_ack_valid);
+    assert(app_mesh_ch9_c5_repair_allowed(
+        &event_authorization, &pending, true, &batch, &event_propose));
+    assert(!app_mesh_ch9_c5_repair_allowed(
+        &event_authorization, &pending, true, &batch, &route_request));
+
+    batch.preserve_payload = false;
+    assert(!app_mesh_ch9_c5_repair_owner_matches(
+        &event_authorization, &pending, true, &batch));
+    batch.preserve_payload = true;
+    batch.template_ack.packet.seq++;
+    assert(!app_mesh_ch9_c5_repair_owner_matches(
+        &event_authorization, &pending, true, &batch));
+    batch.template_ack.packet.seq--;
+    pending.gateway_ack_forward_pending = false;
+    assert(!app_mesh_ch9_c5_repair_owner_matches(
+        &event_authorization, &pending, true, &batch));
+
+    /* A late terminal ACK owns event repair through its retained bytes, even
+     * though the exact transit core has already been released. */
+    batch.owner = APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD;
+    assert(app_mesh_ch9_c5_repair_authorization_capture(
+        &late_authorization,
+        APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR,
+        NULL, false, &batch, TRANSMITTER_ID));
+    assert(app_mesh_ch9_c5_repair_owner_matches(
+        &late_authorization, NULL, false, &batch));
+    assert(app_mesh_ch9_c5_repair_allowed(
+        &late_authorization, NULL, false, &batch, &event_propose));
+    assert(!app_mesh_ch9_c5_repair_allowed(
+        &late_authorization, NULL, false, &batch, &route_request));
+    assert(!app_mesh_ch9_c5_repair_authorization_capture(
+        &none,
+        APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR,
+        NULL, false, &batch, SECOND_RELAY_ID));
+    assert(!app_mesh_ch9_c5_repair_authorization_capture(
+        &none,
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR,
+        NULL, false, &batch, TRANSMITTER_ID));
+
+    batch.template_ack.payload[0] ^= UINT8_C(0xff);
+    assert(!app_mesh_ch9_c5_repair_owner_matches(
+        &late_authorization, NULL, false, &batch));
+    batch.template_ack.payload[0] ^= UINT8_C(0xff);
+    batch.owner = APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE;
+    assert(!app_mesh_ch9_c5_repair_owner_matches(
+        &late_authorization, NULL, false, &batch));
+    batch.owner = APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD;
+    batch.template_ack.packet.msg_type = MSG_MESH_HOP_ACK;
+    assert(!app_mesh_ch9_c5_repair_authorization_capture(
+        &none,
+        APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR,
+        NULL, false, &batch, TRANSMITTER_ID));
 }
 
 static void test_durable_gateway_result_stays_in_core_tracker(void)
@@ -1235,6 +1480,49 @@ static void test_overlapping_forwarded_gateway_acks_preserve_first_peer_custody(
     assert(memcmp(built.payload, first.payload, first.payload_len) == 0);
 }
 
+static void test_forwarded_gateway_ack_owner_class_tracks_real_custody(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound forwarded = ack_outbound(RELAY_ID, MSG_GATEWAY_ACK);
+    enum app_mesh_ch9_ack_queue_result result;
+    const struct app_mesh_ch9_ack_batch *batch;
+
+    forwarded.packet.session_id = UINT32_C(0x31415926);
+    forwarded.packet.seq = UINT16_C(0x2718);
+    forwarded.packet.dst_id = TRANSMITTER_ID;
+    forwarded.payload[0] = UINT8_C(0x5a);
+    forwarded.payload[1] = UINT8_C(0xa5);
+    forwarded.payload_len = 2u;
+    forwarded.packet.payload_len = 2u;
+
+    assert(app_mesh_ch9_ack_table_queue_late_forwarded(
+               &table, &forwarded, &result) == PROTO_OK);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_ADDED);
+    batch = app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID);
+    assert(batch != NULL && batch->preserve_payload);
+    assert(batch->owner == APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD);
+
+    /* A live transit owner may strengthen an exact queued replay, while a
+     * later unowned copy must never weaken that custody. */
+    assert(app_mesh_ch9_ack_table_queue_forwarded(
+               &table, &forwarded, &result) == PROTO_OK);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+    assert(app_mesh_ch9_ack_table_get_peer(
+               &table, RELAY_ID)->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE);
+    assert(app_mesh_ch9_ack_table_queue_late_forwarded(
+               &table, &forwarded, &result) == PROTO_OK);
+    assert(result == APP_MESH_CH9_ACK_QUEUE_DUPLICATE);
+    assert(app_mesh_ch9_ack_table_get_peer(
+               &table, RELAY_ID)->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE);
+
+    assert(app_mesh_ch9_ack_table_clear_peer(&table, RELAY_ID));
+    assert(app_mesh_ch9_ack_table_queue_late_forwarded(
+               &table, &forwarded, &result) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_get_peer(
+               &table, RELAY_ID)->owner ==
+           APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD);
+}
+
 static void test_forwarded_gateway_ack_table_full_preserves_existing_peers(void)
 {
     struct app_mesh_ch9_ack_table table = {0};
@@ -1379,6 +1667,7 @@ int main(void)
     test_ack_table_flush_retains_failure_and_clears_only_sent_peer();
     test_forwarded_gateway_ack_does_not_replace_other_peer();
     test_overlapping_forwarded_gateway_acks_preserve_first_peer_custody();
+    test_forwarded_gateway_ack_owner_class_tracks_real_custody();
     test_forwarded_gateway_ack_table_full_preserves_existing_peers();
     test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff();
     test_duplicate_sender_retry_does_not_reset_ack_retry_round();
@@ -1398,7 +1687,8 @@ int main(void)
     test_wait_plan_retries_at_slot_prepare_boundary();
     test_core_retry_backoff_keeps_channel9_rx_available();
     test_relay_path_stays_out_of_final_ack_batch_tracker();
-    test_relay_path_core_ack_wait_requires_channel9();
+    test_retry_backoff_keeps_coordinator_rx_visible();
+    test_only_exact_forwarded_ack_route_repair_may_use_c5();
     test_durable_gateway_result_stays_in_core_tracker();
     test_anchor_tracks_transit_direct_gateway_send();
     test_forced_hop_transit_retries_without_local_pressure();

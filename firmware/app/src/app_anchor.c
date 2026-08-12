@@ -10,6 +10,7 @@
 #include "app_config.h"
 #include "app_discovery_assignment_policy.h"
 #include "app_discovery_assignment_stack.h"
+#include "app_durable_state.h"
 #include "app_gateway_ble.h"
 #include "app_gateway_assignment_publisher.h"
 #include "app_gateway_survey_round.h"
@@ -17,6 +18,8 @@
 #include "app_gateway_command_ingress.h"
 #include "app_gateway_command_lifecycle.h"
 #include "app_gateway_command_result.h"
+#include "app_gateway_control_sequence.h"
+#include "app_gateway_operation_owner.h"
 #include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_gateway_command_flow.h"
@@ -63,12 +66,12 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 
 #define ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS 1000u
 #define ANCHOR_COMMAND_DELIVERY_POLL_MS 5u
-#define ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES 3u
 #define ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_BASE_MS 60000u
 #define ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_MAX_MS 3600000u
 #define GATEWAY_HOST_COMMAND_QUEUE_DEPTH 2u
 #define GATEWAY_HOST_ABORT_QUEUE_DEPTH 2u
 #define GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS 8u
+#define GATEWAY_HOST_COMMAND_ACK_CONFIRM_POLL_MS 1000u
 #define GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS
 #define GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS \
     SURVEY_DISCOVERY_DELIVERY_TERMINAL_POLL_MS
@@ -80,6 +83,14 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 BUILD_ASSERT(GATEWAY_SURVEY_TRANSACTION_POLL_MS <
              SURVEY_ROUND_START_EXECUTE_DELAY_MS,
              "survey polling must fit before the START release horizon");
+BUILD_ASSERT(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
+                 APP_WATCHDOG_PROGRESS_LEASE_MS,
+             "the valid survey START release horizon must fit inside the watchdog lease");
+BUILD_ASSERT((SURVEY_DISCOVERY_MAX_SLOT_COUNT *
+              SURVEY_DISCOVERY_MAX_SLOT_MS *
+              SURVEY_DISCOVERY_MAX_ROUND_COUNT) <
+                 APP_WATCHDOG_PROGRESS_LEASE_MS,
+             "the maximum valid discovery must fit inside the watchdog lease");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
              "gateway enumeration must cover the connected anchor maximum");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
@@ -110,6 +121,11 @@ BUILD_ASSERT(GATEWAY_COLLECTION_RESULT_CACHE_SIZE == MESH_CONNECTED_MAX_ANCHORS,
 BUILD_ASSERT(APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES ==
              MESH_CONNECTED_MAX_ANCHORS,
              "gateway assignment publication must cover every connected anchor");
+BUILD_ASSERT((uint64_t)UINT16_MAX *
+                 (uint64_t)ANCHOR_HEARTBEAT_MIN_INTERVAL_MS >
+             (uint64_t)MESH_RELAY_GATEWAY_ACK_RETENTION_MS +
+                 (uint64_t)ANCHOR_HEARTBEAT_DELIVERY_TIMEOUT_MS,
+             "heartbeat sequence must not wrap inside retained gateway identity custody");
 BUILD_ASSERT(SURVEY_GATEWAY_MAX_PEERS_PER_REPORT == SURVEY_REACH_MAX_ENTRIES,
              "anchor collection and gateway survey report caps must match");
 BUILD_ASSERT(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT <= 16u,
@@ -132,7 +148,7 @@ BUILD_ASSERT(DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS >=
                  (NODE_COMM_PROTOCOL_RESPONSE_RETRY_BACKOFF_MAX_MS +
                   ROUTE_GATEWAY_ACK_TIMEOUT_MS),
              "assignment response custody must cover every bounded protocol-response retry");
-BUILD_ASSERT(ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES > 0u &&
+BUILD_ASSERT(DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES > 0u &&
              ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_BASE_MS >
                  DISCOVERY_ASSIGNMENT_RETRY_MAX_MS &&
              ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_MAX_MS >=
@@ -142,11 +158,11 @@ BUILD_ASSERT(ANCHOR_DISCOVERY_ACK_FAST_HANDLE_RETRIES > 0u &&
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
              "post-wake route RX buffer must still fit normal ranging schedules");
-BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 6912u,
+BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 7200u,
              "mesh-route anchor scan must retain its measured safety margin");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_PRIORITY < ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
              "mesh route work must preempt low-duty anchor scan handoff");
-BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 9216u,
+BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 8576u,
              "mesh communication worker must retain its verified route stack budget");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_BUSY_RETRY_MS > 0u,
              "blocked mesh route-test anchor scans must not spin at zero delay");
@@ -273,6 +289,9 @@ static struct survey_gateway_context gateway_survey_context;
 static bool gateway_survey_active;
 static uint32_t gateway_survey_operation_deadline_ms;
 static uint32_t gateway_survey_discovery_delivery_handle;
+static uint64_t gateway_survey_discovery_origin_uptime_ms;
+static uint64_t gateway_survey_discovery_start_deadline_ms;
+static bool gateway_survey_discovery_redrive_started;
 static uint32_t gateway_survey_collection_deadline_ms;
 static uint32_t gateway_survey_collection_emission_deadline_ms;
 static uint32_t gateway_survey_collection_duration_ms;
@@ -285,7 +304,6 @@ static bool gateway_survey_collection_window_armed;
 static bool gateway_survey_collection_pending;
 static bool gateway_survey_expected_node_count_present;
 static struct k_work_delayable gateway_survey_work;
-static struct survey_gateway_auto_context gateway_survey_auto;
 static struct proto_packet gateway_survey_pending_command;
 static bool gateway_survey_pending_command_valid;
 static struct proto_packet gateway_survey_host_command;
@@ -295,36 +313,21 @@ static uint16_t gateway_survey_pair_failure_count;
 static uint16_t gateway_survey_discovery_failure_count;
 static bool gateway_survey_topology_accounted;
 static enum gateway_command_event_reason gateway_survey_terminal_failure_reason;
-static uint16_t gateway_survey_pair_result_mask;
-static uint16_t gateway_survey_pair_responder_usable_mask;
-static uint16_t gateway_survey_pair_initiator_unusable_mask;
-static uint16_t gateway_survey_pair_responder_unusable_mask;
-static struct survey_sample_observation_identity
-    gateway_survey_pair_initiator_identities
-    [SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT];
 static struct survey_sample_observation_identity
     gateway_survey_pair_responder_identities
     [SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT];
-static bool gateway_survey_pair_observation_active;
-static struct survey_gateway_response_ack_settle
-    gateway_survey_response_ack_settle;
+static uint64_t gateway_survey_discovery_ack_confirm_mask;
 static struct app_gateway_survey_observability_state
     gateway_survey_observability;
-struct gateway_survey_sequential_run {
-    struct survey_pair pair;
-    uint16_t round_id;
-    uint16_t generation_cursor;
-    uint8_t reruns_started;
-    bool valid;
-};
-static struct gateway_survey_sequential_run gateway_survey_sequential_run;
 #if DEVICE_ROLE == ROLE_GATEWAY
 struct gateway_survey_cleanup_delivery {
     struct survey_pair pair;
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint64_t target_id;
     uint64_t next_hop_id;
+    uint64_t request_deadline_ms;
     uint64_t absolute_deadline_ms;
+    uint64_t safe_release_deadline_ms;
     uint32_t client_token;
     uint32_t handle;
     uint16_t sequence;
@@ -334,8 +337,13 @@ struct gateway_survey_cleanup_delivery {
     bool active;
     bool prepared;
     bool submitted;
+    bool request_terminal;
+    bool result_terminal;
+    bool result_ok;
     bool completion_ready;
     bool peer_unavailable;
+    bool quarantined;
+    bool terminal_failure_published;
 };
 struct gateway_survey_result_preflight {
     struct node_transaction_key key;
@@ -357,16 +365,41 @@ struct gateway_survey_result_preparation {
 };
 static struct survey_gateway_transaction gateway_survey_transaction;
 static struct app_gateway_survey_round gateway_survey_round;
+static struct app_gateway_survey_incarnation_tracker
+    gateway_survey_incarnation_tracker;
+static uint16_t gateway_survey_discovery_report_sequences[
+    SURVEY_GATEWAY_MAX_REPORTS];
+BUILD_ASSERT(sizeof(gateway_survey_discovery_report_sequences) == 100u,
+             "gateway survey discovery ACK identity exceeded its RAM gate");
+struct gateway_survey_incarnation_event {
+    uint64_t anchor_id;
+    uint64_t first_received_at_ms;
+    uint64_t operation_generation;
+    uint32_t previous_incarnation;
+    uint32_t new_incarnation;
+    uint32_t owner_lease_generation;
+    bool tracking_capacity_failure;
+    bool pending;
+};
+static struct gateway_survey_incarnation_event
+    gateway_survey_incarnation_event;
+BUILD_ASSERT(sizeof(struct gateway_survey_incarnation_event) <= 40u,
+             "gateway survey reboot event must remain one compact RAM owner");
 static struct gateway_survey_cleanup_delivery gateway_survey_cleanup;
 static struct gateway_survey_result_preflight gateway_survey_result_preflight;
 static struct gateway_survey_result_preparation
     gateway_survey_result_preparation;
 struct gateway_manual_survey_pair_state {
     struct survey_pair pair;
+    struct proto_packet control_command;
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
+    uint64_t control_transaction_deadline_ms;
     uint32_t deadline_ms;
     uint32_t start_release_started_at_ms;
+    uint32_t control_redrive_horizon_ms;
+    uint32_t control_delivery_handle;
     uint16_t round_id;
+    enum command_id control_command_id;
     uint8_t prepare_submitted_mask;
     uint8_t prepare_possible_mask;
     uint8_t prepared_mask;
@@ -374,11 +407,12 @@ struct gateway_manual_survey_pair_state {
     uint8_t started_mask;
     uint8_t abort_submitted_mask;
     uint8_t aborted_mask;
-    uint16_t initiator_result_mask;
     uint16_t responder_result_mask;
+    uint8_t control_target_mask;
     uint8_t valid : 1;
     uint8_t start_release_armed : 1;
     uint8_t cleanup_requested : 1;
+    uint8_t control_delivery_active : 1;
 };
 static struct gateway_manual_survey_pair_state
     gateway_manual_survey_pair_state;
@@ -388,31 +422,65 @@ struct gateway_survey_start_release {
     bool valid;
 };
 static struct gateway_survey_start_release gateway_survey_start_release;
-enum gateway_operation_owner {
-    GATEWAY_OPERATION_OWNER_NONE = 0,
-    GATEWAY_OPERATION_OWNER_AUTO_SURVEY,
-    GATEWAY_OPERATION_OWNER_MANUAL_SURVEY,
-    GATEWAY_OPERATION_OWNER_ASSIGNMENT,
-};
-static atomic_t gateway_operation_owner =
-    ATOMIC_INIT(GATEWAY_OPERATION_OWNER_NONE);
+static struct app_gateway_operation_owner gateway_operation_owner;
+static struct app_gateway_operation_lease gateway_auto_survey_operation_lease;
+static struct app_gateway_operation_lease gateway_manual_survey_operation_lease;
+static struct app_gateway_operation_lease gateway_assignment_operation_lease;
+static struct k_spinlock gateway_operation_owner_lock;
 
-static bool gateway_operation_owner_claim(enum gateway_operation_owner owner)
+static int gateway_operation_owner_claim(
+    enum app_gateway_operation_owner_kind owner,
+    struct app_gateway_operation_lease *lease)
 {
-    return owner != GATEWAY_OPERATION_OWNER_NONE &&
-           atomic_cas(&gateway_operation_owner,
-                      GATEWAY_OPERATION_OWNER_NONE,
-                      (atomic_val_t)owner);
+    k_spinlock_key_t key = k_spin_lock(&gateway_operation_owner_lock);
+    int ret = app_gateway_operation_owner_claim(
+        &gateway_operation_owner, owner, lease);
+
+    k_spin_unlock(&gateway_operation_owner_lock, key);
+    return ret;
 }
 
-static void gateway_operation_owner_release(
-    enum gateway_operation_owner owner)
+static int gateway_operation_owner_release(
+    struct app_gateway_operation_lease *lease)
 {
-    if (owner != GATEWAY_OPERATION_OWNER_NONE) {
-        (void)atomic_cas(&gateway_operation_owner,
-                         (atomic_val_t)owner,
-                         GATEWAY_OPERATION_OWNER_NONE);
+    k_spinlock_key_t key = k_spin_lock(&gateway_operation_owner_lock);
+    int ret = app_gateway_operation_owner_release(
+        &gateway_operation_owner, lease);
+
+    if (ret == 0) {
+        /*
+         * The per-kind lease object is also the destination of the next
+         * claim. Clear the retired capability before dropping the same lock
+         * which serializes that claim, otherwise a successor can publish its
+         * generation and have this delayed release erase it.
+         */
+        memset(lease, 0, sizeof(*lease));
     }
+    k_spin_unlock(&gateway_operation_owner_lock, key);
+    if (ret != 0) {
+        status_debug_printf("DBG_GOWNER_RELEASE %u %u %d\n",
+                            lease == NULL ? 0u :
+                                (unsigned int)lease->owner,
+                            lease == NULL ? 0u : lease->generation,
+                            ret);
+        app_watchdog_stop_feeding();
+    }
+    return ret;
+}
+
+static bool gateway_operation_owner_matches(
+    enum app_gateway_operation_owner_kind owner,
+    const struct app_gateway_operation_lease *lease)
+{
+    k_spinlock_key_t key = k_spin_lock(&gateway_operation_owner_lock);
+    bool matches = lease != NULL &&
+        app_gateway_operation_lease_valid(lease) &&
+        lease->owner == owner &&
+        gateway_operation_owner.active.owner == lease->owner &&
+        gateway_operation_owner.active.generation == lease->generation;
+
+    k_spin_unlock(&gateway_operation_owner_lock, key);
+    return matches;
 }
 
 static uint32_t gateway_survey_transaction_client_token;
@@ -447,6 +515,8 @@ static struct k_work_delayable gateway_host_command_work;
 static struct k_work_delayable gateway_host_command_retry_work;
 static uint8_t gateway_host_command_retry_round;
 static uint32_t gateway_host_command_retry_started_ms;
+static uint32_t gateway_host_command_ack_confirm_wait_admission_id;
+static uint32_t gateway_host_command_ack_confirm_wait_deadline_ms;
 /*
  * Synchronous host-command dispatch has one authoritative reservation owner.
  * Any path that survives this dispatch must copy the token into its own
@@ -465,9 +535,7 @@ BUILD_ASSERT(GATEWAY_HOST_COMMAND_QUEUE_DEPTH +
              "result custody must cover normal, queued abort, and active abort commands");
 #endif
 static uint32_t gateway_route_refresh_result_token;
-static uint32_t anchor_collection_node_boot_counter;
 static uint16_t anchor_collection_result_seq;
-static bool anchor_collection_result_restore_complete;
 K_MUTEX_DEFINE(anchor_command_result_mutex);
 struct anchor_collection_result_pending {
     struct proto_packet command;
@@ -480,8 +548,8 @@ struct anchor_collection_result_pending {
     bool active;
     bool force_rediscovery_after_result;
     bool reboot_after_result;
-    bool persistence_dirty;
-    uint8_t persistence_retry_round;
+    bool result_confirmed;
+    uint8_t retry_round;
 };
 static struct anchor_collection_result_pending anchor_collection_result_pending;
 struct anchor_pending_command_options {
@@ -510,6 +578,7 @@ struct anchor_pending_command_execution {
 static struct anchor_pending_command_execution anchor_pending_command_execution;
 struct anchor_pending_click_handoff {
     struct uwb_wake_claim_frame claim;
+    struct radio_guard_uwb_lease radio_lease;
     int64_t received_at_ms;
     uint8_t link_quality;
     bool active;
@@ -532,7 +601,8 @@ static bool anchor_handle_mesh_click_wake_claim(
 static bool anchor_run_mesh_click_wake_claim(
     const struct uwb_wake_claim_frame *claim,
     uint8_t link_quality,
-    int64_t received_at_ms);
+    int64_t received_at_ms,
+    struct radio_guard_uwb_lease *radio_lease);
 static void anchor_click_handoff_work_handler(struct k_work *work);
 static int anchor_uwb_scan_schedule_ms(uint32_t delay_ms);
 static void anchor_reboot_work_handler(struct k_work *work);
@@ -540,8 +610,8 @@ static void anchor_collection_result_work_handler(struct k_work *work);
 static void anchor_command_execute_work_handler(struct k_work *work);
 static int anchor_resume_pending_discovery_assignment_ack(
     bool explicit_table_replay);
-static void anchor_schedule_reboot_after_command_result(void);
-static void anchor_force_rediscovery_from_command(void);
+static int anchor_schedule_reboot_after_command_result(void);
+static int anchor_force_rediscovery_from_command(void);
 static void gateway_survey_work_handler(struct k_work *work);
 #if DEVICE_ROLE == ROLE_GATEWAY
 static void gateway_survey_begin_cleanup(void);
@@ -549,15 +619,25 @@ static bool gateway_survey_cleanup_pending(void);
 static int gateway_survey_cancel_take_active_delivery(
     enum node_transaction_action *action);
 #endif
-static void gateway_survey_auto_finish(void);
-static void gateway_survey_auto_note_command_result(const struct proto_packet *command,
-                                                    enum command_id command_id,
-                                                    enum command_status status,
-                                                    uint8_t reason);
-static void gateway_survey_auto_note_command_timeout(const struct proto_packet *command,
-                                                     enum command_id command_id);
+static void gateway_survey_finish(void);
+static int gateway_survey_finish_status(
+    enum command_status status,
+    enum gateway_command_event_reason reason);
+static void gateway_survey_note_command_result(const struct proto_packet *command,
+                                               enum command_id command_id,
+                                               enum command_status status,
+                                               uint8_t reason);
+static void gateway_survey_note_command_timeout(const struct proto_packet *command,
+                                                enum command_id command_id);
 #if DEVICE_ROLE == ROLE_GATEWAY
 static bool gateway_survey_round_active(void);
+static void gateway_note_anchor_boot_observation(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t first_received_at_ms);
+static bool gateway_survey_consume_incarnation_event(void);
+static bool gateway_survey_control_inflight(void);
 static bool gateway_survey_round_drive(void);
 static int gateway_survey_round_note_sample(uint64_t reporter_id,
                                             const struct survey_sample *sample,
@@ -576,6 +656,9 @@ static void gateway_survey_round_fail_current_control(
 static void gateway_survey_round_note_cleanup_peer(uint8_t peer_mask);
 static void gateway_survey_round_reset(void);
 static void gateway_manual_survey_pair_reset(void);
+static int gateway_discovery_assignment_reschedule(k_timeout_t delay,
+                                                    const char *source);
+static int gateway_discovery_assignment_wake_now(const char *source);
 #endif
 static void anchor_heartbeat_work_handler(struct k_work *work);
 

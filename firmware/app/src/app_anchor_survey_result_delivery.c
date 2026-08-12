@@ -6,6 +6,7 @@
 #include "app_node_comm.h"
 #include "app_watchdog.h"
 #include "survey.h"
+#include "survey_round_control.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -22,19 +23,30 @@ LOG_MODULE_DECLARE(app_anchor, LOG_LEVEL_DBG);
 
 struct survey_pair_result_delivery_slot {
     struct app_mesh_local_delivery delivery;
+    /* Preserves the semantic survey operation across transport redrive. */
+    uint64_t reservation_owner_generation;
     uint32_t handle;
     uint8_t index;
     bool admission_in_progress;
+    bool retirement_in_progress;
+};
+
+struct survey_pair_result_abort_tombstone {
+    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
+    bool active;
+    bool abort_requested;
+    bool producer_active;
 };
 
 static struct app_anchor_survey_result_delivery_ops result_delivery_ops;
 static struct survey_pair_result_delivery_slot result_delivery_slots[
-    APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS];
+    APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS];
+static struct survey_pair_result_abort_tombstone result_abort_tombstone;
 static bool result_delivery_initialized;
 
-BUILD_ASSERT(APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS ==
+BUILD_ASSERT(APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS ==
                  SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-             "durable result slots must cover one maximum survey endpoint burst");
+             "RAM result slots must cover one maximum survey endpoint burst");
 BUILD_ASSERT(APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY >=
                  SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
              "node communication must reserve one complete survey endpoint burst");
@@ -62,7 +74,7 @@ static int result_delivery_schedule(uint32_t delay_ms)
                 delay_ms, ret);
         app_watchdog_stop_feeding();
     }
-    return ret;
+    return ret < 0 ? ret : 0;
 }
 
 static int result_delivery_abandon_handle(uint32_t handle,
@@ -90,6 +102,7 @@ static int result_delivery_save(
 {
     const struct survey_pair_result_delivery_slot *slot = ctx;
 
+    /* Volatile owner adapter: the snapshot already lives in the RAM slot. */
     ARG_UNUSED(slot);
     ARG_UNUSED(snapshot);
     return 0;
@@ -99,6 +112,7 @@ static int result_delivery_clear(void *ctx)
 {
     const struct survey_pair_result_delivery_slot *slot = ctx;
 
+    /* Volatile owner adapter: app_mesh_local_delivery clears its RAM state. */
     ARG_UNUSED(slot);
     return 0;
 }
@@ -122,7 +136,7 @@ static struct survey_pair_result_delivery_slot *
 result_delivery_find_slot_locked(const struct proto_packet *packet)
 {
     for (size_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
          i++) {
         if (result_delivery_slot_matches(&result_delivery_slots[i],
                                          packet)) {
@@ -136,7 +150,7 @@ static struct survey_pair_result_delivery_slot *
 result_delivery_find_empty_slot_locked(void)
 {
     for (size_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
          i++) {
         if (!app_mesh_local_delivery_occupied(
                 &result_delivery_slots[i].delivery)) {
@@ -149,7 +163,7 @@ result_delivery_find_empty_slot_locked(void)
 static bool result_delivery_any_occupied_locked(void)
 {
     for (size_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
          i++) {
         if (app_mesh_local_delivery_occupied(
                 &result_delivery_slots[i].delivery)) {
@@ -164,6 +178,90 @@ static bool result_delivery_same_packet(
     const struct proto_packet *packet)
 {
     return result_delivery_slot_matches(slot, packet);
+}
+
+static bool result_delivery_tombstone_equal(
+    const struct survey_pair_result_abort_tombstone *tombstone,
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    return tombstone != NULL && tombstone->active && pair != NULL &&
+           round_commitment != NULL &&
+           pair->responder_id == DEVICE_ID &&
+           pair->operation_generation != 0u &&
+           session_id == survey_operation_session_id(
+               pair->operation_generation) &&
+           round_id != SURVEY_LEGACY_ROUND_ID &&
+           semantic_digest_equal(tombstone->round_commitment,
+                                 round_commitment,
+                                 SEMANTIC_DIGEST_SHA256_LEN);
+}
+
+static bool result_delivery_matches_round_abort(
+    const struct survey_pair_result_delivery_slot *slot,
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    const struct mesh_outbound *outbound;
+    struct survey_sample sample = {0};
+
+    if (slot == NULL || pair == NULL || round_commitment == NULL ||
+        !result_delivery_tombstone_equal(&result_abort_tombstone,
+                                         pair,
+                                         session_id,
+                                         round_id,
+                                         round_commitment) ||
+        !app_mesh_local_delivery_occupied(&slot->delivery)) {
+        return false;
+    }
+    outbound = &slot->delivery.snapshot.outbound;
+    return outbound->packet.msg_type == MSG_SURVEY_PAIR_RESULT &&
+           outbound->packet.src_id == pair->responder_id &&
+           outbound->packet.session_id == session_id &&
+           survey_pair_result_payload_validate(outbound->payload,
+                                               outbound->payload_len,
+                                               &sample) == PROTO_OK &&
+           survey_sample_matches_pair_run(&sample, pair, round_id);
+}
+
+static bool result_delivery_tombstone_has_records_locked(void)
+{
+    return result_abort_tombstone.active &&
+           result_delivery_any_occupied_locked();
+}
+
+static void result_delivery_tombstone_clear_if_done_locked(void)
+{
+    if (result_abort_tombstone.active &&
+        !result_abort_tombstone.producer_active &&
+        !result_delivery_tombstone_has_records_locked()) {
+        memset(&result_abort_tombstone, 0,
+               sizeof(result_abort_tombstone));
+    }
+}
+
+static bool result_delivery_candidate_aborted_locked(
+    const struct mesh_outbound *outbound,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    struct survey_sample sample = {0};
+
+    return result_abort_tombstone.active &&
+           result_abort_tombstone.abort_requested && outbound != NULL &&
+           round_commitment != NULL &&
+           survey_pair_result_payload_validate(outbound->payload,
+                                               outbound->payload_len,
+                                               &sample) == PROTO_OK &&
+           result_delivery_tombstone_equal(
+               &result_abort_tombstone,
+               &sample.pair,
+               outbound->packet.session_id,
+               sample.round_id,
+               round_commitment);
 }
 
 static bool result_delivery_semantic_digest_matches(
@@ -197,7 +295,7 @@ static void result_delivery_prepare_transport_envelope(
         return;
     }
     /*
-     * Waiting in the bounded source journal or behind nodecomm's reliable
+     * Waiting in a bounded source RAM slot or behind nodecomm's reliable
      * single-flight owner is pre-transport custody.  Do not age a packet that
      * has never entered RF; the mesh transport stamps queued_at exactly once
      * when it first has to retain the packet for a route or retry.
@@ -306,7 +404,7 @@ static int result_delivery_attempt_complete(
         return -ENOENT;
     }
     /*
-     * A direct gateway ACK can durably commit while the communication facade
+     * A direct gateway ACK can commit the RAM owner while the communication facade
      * is still unwinding the backend call. The ACK proves that RF started, so
      * completing that backend token is idempotent and must not strand the
      * facade's backend-release guard.
@@ -336,15 +434,16 @@ int app_anchor_survey_result_delivery_init(
 {
     if (ops == NULL || ops->schedule_work_ms == NULL ||
         ops->active_owner_matches_outbound == NULL ||
-        ops->resume_restored_outbox == NULL) {
+        ops->wake_active_outbox == NULL) {
         return -EINVAL;
     }
     result_delivery_ops = *ops;
     result_delivery_initialized = true;
+    memset(&result_abort_tombstone, 0, sizeof(result_abort_tombstone));
 #if DEVICE_ROLE == ROLE_ANCHOR
     RESULT_DELIVERY_LOCK();
     for (uint8_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
          i++) {
         struct app_mesh_local_delivery_ops delivery_ops = {
             .save = result_delivery_save,
@@ -374,85 +473,6 @@ int app_anchor_survey_result_delivery_init(
     return 0;
 }
 
-int app_anchor_survey_result_delivery_restore(bool *restored)
-{
-    bool any_restored = false;
-
-    if (restored == NULL) {
-        return -EINVAL;
-    }
-    *restored = false;
-    if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return 0;
-    }
-    if (!result_delivery_initialized) {
-        return -EACCES;
-    }
-
-    RESULT_DELIVERY_LOCK();
-    for (uint8_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
-         i++) {
-        struct app_mesh_local_delivery_snapshot snapshot = {0};
-        struct survey_pair_result_delivery_slot *slot =
-            &result_delivery_slots[i];
-        int ret = 0;
-
-        slot->handle = 0u;
-        if (ret == 0) {
-            continue;
-        }
-        if (ret < 0) {
-            RESULT_DELIVERY_UNLOCK();
-            LOG_ERR("survey pair result journal restore failed closed: slot=%u ret=%d",
-                    i, ret);
-            return ret;
-        }
-        ret = app_mesh_local_delivery_restore(&slot->delivery, &snapshot);
-        if (ret < 0 &&
-            !app_mesh_local_delivery_ack_committed(&slot->delivery)) {
-            RESULT_DELIVERY_UNLOCK();
-            return ret;
-        }
-        if (app_mesh_local_delivery_active(&slot->delivery)) {
-            if (slot->delivery.snapshot.state ==
-                    APP_MESH_LOCAL_DELIVERY_STARTING ||
-                slot->delivery.snapshot.state ==
-                    APP_MESH_LOCAL_DELIVERY_TRACKED) {
-                ret = app_mesh_local_delivery_note_attempt_released(
-                    &slot->delivery,
-                    slot->delivery.snapshot.attempt_token,
-                    APP_MESH_LOCAL_DELIVERY_RETRY);
-                if (ret < 0) {
-                    RESULT_DELIVERY_UNLOCK();
-                    return ret;
-                }
-            }
-            ret = app_mesh_local_delivery_rebase_after_boot(
-                &slot->delivery, k_uptime_get_32());
-            if (ret < 0) {
-                RESULT_DELIVERY_UNLOCK();
-                return ret;
-            }
-        }
-        any_restored =
-            any_restored ||
-            app_mesh_local_delivery_occupied(&slot->delivery);
-    }
-    RESULT_DELIVERY_UNLOCK();
-    *restored = any_restored;
-    return 0;
-}
-
-int app_anchor_survey_result_delivery_start(void)
-{
-    if (!result_delivery_initialized) {
-        return -EACCES;
-    }
-    return app_anchor_survey_result_delivery_occupied_count() == 0u ?
-        0 : result_delivery_schedule(0u);
-}
-
 size_t app_anchor_survey_result_delivery_occupied_count(void)
 {
     size_t count = 0u;
@@ -462,7 +482,7 @@ size_t app_anchor_survey_result_delivery_occupied_count(void)
     }
     RESULT_DELIVERY_LOCK();
     for (size_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
          i++) {
         if (app_mesh_local_delivery_occupied(
                 &result_delivery_slots[i].delivery)) {
@@ -474,27 +494,67 @@ size_t app_anchor_survey_result_delivery_occupied_count(void)
 }
 
 int app_anchor_survey_result_delivery_stage_reserved(
-    uint32_t delivery_reservation_token,
-    const struct mesh_outbound *outbound)
+    const struct app_node_comm_reservation_lease *delivery_reservation,
+    const struct mesh_outbound *outbound,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN])
 {
     struct survey_pair_result_delivery_slot *slot;
-    struct mesh_outbound durable_outbound;
+    struct mesh_outbound staged_outbound;
+    struct survey_sample sample = {0};
     uint64_t absolute_deadline_ms;
     uint32_t handle = 0u;
     int ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || !result_delivery_initialized ||
-        delivery_reservation_token == 0u || outbound == NULL ||
+        delivery_reservation == NULL ||
+        delivery_reservation->token == 0u ||
+        delivery_reservation->owner_generation == 0u ||
+        delivery_reservation->owner_kind !=
+            APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT ||
+        outbound == NULL ||
+        round_commitment == NULL ||
         outbound->packet.msg_type != MSG_SURVEY_PAIR_RESULT ||
         outbound->payload_len != outbound->packet.payload_len ||
         outbound->payload_len > APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN) {
         return -EINVAL;
     }
-    durable_outbound = *outbound;
-    result_delivery_prepare_transport_envelope(&durable_outbound);
+    staged_outbound = *outbound;
+    result_delivery_prepare_transport_envelope(&staged_outbound);
+    if (survey_pair_result_payload_validate(staged_outbound.payload,
+                                            staged_outbound.payload_len,
+                                            &sample) != PROTO_OK) {
+        return -EBADMSG;
+    }
+    if (sample.pair.operation_generation == 0u ||
+        sample.pair.operation_generation !=
+            delivery_reservation->owner_generation) {
+        return -ESTALE;
+    }
     absolute_deadline_ms = SURVEY_PAIR_RESULT_SOURCE_DEADLINE_MS;
 
     RESULT_DELIVERY_LOCK();
+    result_delivery_tombstone_clear_if_done_locked();
+    if (result_abort_tombstone.active &&
+        !result_delivery_tombstone_equal(&result_abort_tombstone,
+                                         &sample.pair,
+                                         staged_outbound.packet.session_id,
+                                         sample.round_id,
+                                         round_commitment)) {
+        RESULT_DELIVERY_UNLOCK();
+        return -EBUSY;
+    }
+    if (result_delivery_candidate_aborted_locked(&staged_outbound,
+                                                 round_commitment)) {
+        RESULT_DELIVERY_UNLOCK();
+        return -ECANCELED;
+    }
+    if (!result_abort_tombstone.active) {
+        memcpy(result_abort_tombstone.round_commitment,
+               round_commitment,
+               sizeof(result_abort_tombstone.round_commitment));
+        result_abort_tombstone.active = true;
+        result_abort_tombstone.producer_active = true;
+    }
     slot = result_delivery_find_empty_slot_locked();
     if (slot == NULL) {
         RESULT_DELIVERY_UNLOCK();
@@ -502,16 +562,18 @@ int app_anchor_survey_result_delivery_stage_reserved(
     }
     ret = app_mesh_local_delivery_stage(
         &slot->delivery,
-        &durable_outbound,
-        durable_outbound.packet.session_id);
+        &staged_outbound,
+        staged_outbound.packet.session_id);
     if (ret == 0) {
         /*
          * Communication admission runs outside this mutex because it can
          * schedule the mesh owner immediately.  Keep the exact staged slot
          * privately owned until that call returns so a concurrent service
-         * pass cannot submit the same durable packet through a second handle.
+         * pass cannot submit the same retained packet through a second handle.
          */
         slot->admission_in_progress = true;
+        slot->reservation_owner_generation =
+            delivery_reservation->owner_generation;
     }
     RESULT_DELIVERY_UNLOCK();
     if (ret < 0) {
@@ -519,18 +581,22 @@ int app_anchor_survey_result_delivery_stage_reserved(
     }
 
     ret = app_node_comm_commit_durable_reliable_uplink_reservation(
-        delivery_reservation_token,
-        &durable_outbound,
+        delivery_reservation,
+        &staged_outbound,
         absolute_deadline_ms,
         ((uint32_t)MSG_SURVEY_PAIR_RESULT << 16) |
-            durable_outbound.packet.seq,
+            staged_outbound.packet.seq,
         &handle);
     RESULT_DELIVERY_LOCK();
     if (ret == 0 &&
         slot->admission_in_progress &&
-        result_delivery_same_packet(slot, &durable_outbound.packet) &&
+        result_delivery_same_packet(slot, &staged_outbound.packet) &&
         slot->handle == 0u) {
         slot->handle = handle;
+        if (result_delivery_candidate_aborted_locked(
+                &staged_outbound, round_commitment)) {
+            slot->retirement_in_progress = true;
+        }
     } else if (ret == 0) {
         ret = -ESTALE;
     }
@@ -540,8 +606,8 @@ int app_anchor_survey_result_delivery_stage_reserved(
     if (ret == 0) {
         status_debug_printf(
             "DBG_SURVEY_PAIR_RESULT_STAGED survey=%u seq=%u slot=%u handle=%u deadline=%llu\n",
-            durable_outbound.packet.session_id,
-            durable_outbound.packet.seq,
+            staged_outbound.packet.session_id,
+            staged_outbound.packet.seq,
             slot->index,
             handle,
             (unsigned long long)absolute_deadline_ms);
@@ -564,7 +630,8 @@ int app_anchor_survey_result_delivery_stage_reserved(
     }
 
     /*
-     * The exact record remains durable when communication admission fails.
+     * The exact record remains in its bounded RAM slot when communication
+     * admission fails.
      * Runtime production stops on this return and the worker retries the
      * staged record after the caller cancels the unconsumed reservation.
      */
@@ -573,31 +640,39 @@ int app_anchor_survey_result_delivery_stage_reserved(
 }
 
 int app_anchor_survey_result_delivery_cancel_reservations(
-    uint32_t *delivery_reservation_tokens,
+    struct app_node_comm_reservation_lease *delivery_reservations,
     size_t delivery_reservation_count,
     const char *reason)
 {
     int first_error = 0;
 
-    if (delivery_reservation_tokens == NULL) {
+    if (delivery_reservations == NULL) {
         return -EINVAL;
     }
     for (size_t i = 0u; i < delivery_reservation_count; i++) {
-        uint32_t token = delivery_reservation_tokens[i];
+        struct app_node_comm_reservation_lease *reservation =
+            &delivery_reservations[i];
         int ret;
 
-        if (token == 0u) {
+        if (reservation->token == 0u) {
             continue;
         }
         ret = app_node_comm_cancel_durable_reliable_uplink_reservation(
-            token);
-        delivery_reservation_tokens[i] = 0u;
+            reservation);
+        /* The capability is consumed, explicitly cancelled, or reaped. */
+        memset(reservation, 0, sizeof(*reservation));
+        if (ret == -ESTALE) {
+            status_debug_printf(
+                "DBG_SURVEY_PAIR_RESULT_RESERVATION_RECLAIMED index=%u reason=%s\n",
+                (unsigned int)i,
+                reason == NULL ? "unknown" : reason);
+            ret = 0;
+        }
         if (ret < 0 && first_error == 0) {
             first_error = ret;
         }
         if (ret < 0) {
-            LOG_ERR("survey result reservation cancellation failed closed: token=%u index=%u reason=%s ret=%d",
-                    token,
+            LOG_ERR("survey result reservation cancellation failed closed: index=%u reason=%s ret=%d",
                     (unsigned int)i,
                     reason == NULL ? "unknown" : reason,
                     ret);
@@ -605,13 +680,114 @@ int app_anchor_survey_result_delivery_cancel_reservations(
     }
     if (first_error < 0) {
         /*
-         * Reservations are RAM-owned by node communication. Losing the only
-         * token after a rejected cancellation would permanently reduce the
-         * five-record admission capacity, so force bounded reboot recovery.
+         * A hard cancellation failure leaves an exact lease record owned by
+         * node communication. The caller cannot safely infer whether that
+         * bounded capacity was released, so recover instead of running with
+         * an unknown five-record admission floor.
          */
         app_watchdog_stop_feeding();
     }
     return first_error;
+}
+
+int app_anchor_survey_result_delivery_abort_round(
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
+    bool producer_active,
+    size_t *retired_count)
+{
+    size_t retired = 0u;
+
+    if (retired_count == NULL) {
+        return -EINVAL;
+    }
+    *retired_count = 0u;
+    if (DEVICE_ROLE != ROLE_ANCHOR || !result_delivery_initialized) {
+        return 0;
+    }
+    if (survey_pair_validate(pair) != PROTO_OK ||
+        pair->operation_generation == 0u ||
+        round_commitment == NULL ||
+        session_id != survey_operation_session_id(
+            pair->operation_generation) ||
+        round_id == SURVEY_LEGACY_ROUND_ID) {
+        return -EINVAL;
+    }
+
+    RESULT_DELIVERY_LOCK();
+    result_delivery_tombstone_clear_if_done_locked();
+    if (result_abort_tombstone.active &&
+        !result_delivery_tombstone_equal(&result_abort_tombstone,
+                                         pair,
+                                         session_id,
+                                         round_id,
+                                         round_commitment)) {
+        RESULT_DELIVERY_UNLOCK();
+        return -EBUSY;
+    }
+    if (!result_abort_tombstone.active) {
+        memcpy(result_abort_tombstone.round_commitment,
+               round_commitment,
+               sizeof(result_abort_tombstone.round_commitment));
+        result_abort_tombstone.active = true;
+    }
+    result_abort_tombstone.abort_requested = true;
+    result_abort_tombstone.producer_active |= producer_active;
+    for (size_t i = 0u;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
+         i++) {
+        struct survey_pair_result_delivery_slot *slot =
+            &result_delivery_slots[i];
+
+        if (!result_delivery_matches_round_abort(slot,
+                                                 pair,
+                                                 session_id,
+                                                 round_id,
+                                                 round_commitment)) {
+            continue;
+        }
+        slot->retirement_in_progress = true;
+        retired++;
+        status_debug_printf(
+            "DBG_SURVEY_PAIR_RESULT_ABORT_OWNED survey=%u round=%u seq=%u slot=%u handle=%u\n",
+            pair->survey_id,
+            round_id,
+            slot->delivery.snapshot.outbound.packet.seq,
+            (unsigned int)i,
+            slot->handle);
+    }
+    result_delivery_tombstone_clear_if_done_locked();
+    RESULT_DELIVERY_UNLOCK();
+    *retired_count = retired;
+    if (retired != 0u) {
+        (void)result_delivery_schedule(0u);
+    }
+    return 0;
+}
+
+void app_anchor_survey_result_delivery_producer_finished(
+    const struct survey_pair *pair,
+    uint32_t session_id,
+    uint16_t round_id,
+    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    if (DEVICE_ROLE != ROLE_ANCHOR || !result_delivery_initialized ||
+        pair == NULL || round_commitment == NULL) {
+        return;
+    }
+    RESULT_DELIVERY_LOCK();
+    if (result_delivery_tombstone_equal(&result_abort_tombstone,
+                                        pair,
+                                        session_id,
+                                        round_id,
+                                        round_commitment)) {
+        result_abort_tombstone.producer_active = false;
+        result_delivery_tombstone_clear_if_done_locked();
+    }
+    RESULT_DELIVERY_UNLOCK();
+    (void)result_delivery_schedule(0u);
 }
 
 static int result_delivery_service_terminal(
@@ -665,6 +841,10 @@ static int result_delivery_service_terminal(
     slot->handle = 0u;
     if (accepted) {
         ret = app_mesh_local_delivery_cleanup_ack(&slot->delivery);
+        if (ret == 0) {
+            slot->reservation_owner_generation = 0u;
+            result_delivery_tombstone_clear_if_done_locked();
+        }
     }
     RESULT_DELIVERY_UNLOCK();
 
@@ -692,15 +872,74 @@ static int result_delivery_service_slot(
 {
     struct node_comm_terminal_event event;
     struct mesh_outbound outbound;
+    struct app_node_comm_reservation_lease reservation = {0};
     uint64_t absolute_deadline_ms;
-    uint32_t reservation_token = 0u;
+    uint64_t reservation_owner_generation;
     uint32_t handle;
     uint8_t state;
     int ret;
 
     RESULT_DELIVERY_LOCK();
     if (!app_mesh_local_delivery_occupied(&slot->delivery)) {
+        result_delivery_tombstone_clear_if_done_locked();
         RESULT_DELIVERY_UNLOCK();
+        return 0;
+    }
+    if (slot->retirement_in_progress) {
+        int handle_state;
+
+        if (slot->admission_in_progress) {
+            RESULT_DELIVERY_UNLOCK();
+            (void)result_delivery_schedule(
+                SURVEY_PAIR_RESULT_EVENT_POLL_MS);
+            return -EINPROGRESS;
+        }
+        handle = slot->handle;
+        outbound = slot->delivery.snapshot.outbound;
+        RESULT_DELIVERY_UNLOCK();
+        if (handle != 0u) {
+            ret = app_node_comm_abandon_delivery(handle);
+            if (ret < 0 && ret != -ENOENT && ret != -EALREADY) {
+                (void)result_delivery_schedule(
+                    SURVEY_PAIR_RESULT_RETRY_MS);
+                return ret;
+            }
+        }
+        handle_state = handle == 0u ? 0 :
+            app_node_comm_delivery_handle_state(handle);
+        if (handle_state < 0) {
+            (void)result_delivery_schedule(SURVEY_PAIR_RESULT_RETRY_MS);
+            return handle_state;
+        }
+        if (handle_state > 0) {
+            (void)result_delivery_schedule(
+                SURVEY_PAIR_RESULT_EVENT_POLL_MS);
+            return -EINPROGRESS;
+        }
+        RESULT_DELIVERY_LOCK();
+        if (!slot->retirement_in_progress ||
+            !result_delivery_same_packet(slot, &outbound.packet) ||
+            slot->handle != handle) {
+            RESULT_DELIVERY_UNLOCK();
+            return -ESTALE;
+        }
+        slot->handle = 0u;
+        ret = app_mesh_local_delivery_cancel(&slot->delivery);
+        if (ret == 0) {
+            slot->reservation_owner_generation = 0u;
+            slot->retirement_in_progress = false;
+            result_delivery_tombstone_clear_if_done_locked();
+        }
+        RESULT_DELIVERY_UNLOCK();
+        if (ret < 0) {
+            (void)result_delivery_schedule(SURVEY_PAIR_RESULT_RETRY_MS);
+            return ret;
+        }
+        status_debug_printf(
+            "DBG_SURVEY_PAIR_RESULT_ABORT_RETIRED survey=%u seq=%u slot=%u\n",
+            outbound.packet.session_id,
+            outbound.packet.seq,
+            slot->index);
         return 0;
     }
     if (slot->admission_in_progress) {
@@ -717,7 +956,7 @@ static int result_delivery_service_slot(
         state != APP_MESH_LOCAL_DELIVERY_ACK_COMMITTED) {
         ret = result_delivery_ops.active_owner_matches_outbound(&outbound);
         if (ret > 0) {
-            result_delivery_ops.resume_restored_outbox(
+            result_delivery_ops.wake_active_outbox(
                 "survey-pair-result-owner");
             (void)result_delivery_schedule(
                 SURVEY_PAIR_RESULT_EVENT_POLL_MS);
@@ -749,6 +988,9 @@ static int result_delivery_service_slot(
         ret = result_delivery_same_packet(slot, &outbound.packet) ?
             app_mesh_local_delivery_cleanup_ack(&slot->delivery) :
             -ESTALE;
+        if (ret == 0) {
+            slot->reservation_owner_generation = 0u;
+        }
         RESULT_DELIVERY_UNLOCK();
         if (ret < 0) {
             (void)result_delivery_schedule(SURVEY_PAIR_RESULT_RETRY_MS);
@@ -765,7 +1007,7 @@ static int result_delivery_service_slot(
             (void)result_delivery_schedule(SURVEY_PAIR_RESULT_RETRY_MS);
             return ret;
         }
-        LOG_WRN("survey pair result restored from terminal state for retry: survey=%u seq=%u",
+        LOG_WRN("survey pair result returned from terminal state for retry: survey=%u seq=%u",
                 outbound.packet.session_id,
                 outbound.packet.seq);
         state = APP_MESH_LOCAL_DELIVERY_RETRY;
@@ -808,6 +1050,11 @@ static int result_delivery_service_slot(
         return -EINPROGRESS;
     }
     outbound = slot->delivery.snapshot.outbound;
+    reservation_owner_generation = slot->reservation_owner_generation;
+    if (reservation_owner_generation == 0u) {
+        RESULT_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
     slot->admission_in_progress = true;
     RESULT_DELIVERY_UNLOCK();
 
@@ -815,7 +1062,7 @@ static int result_delivery_service_slot(
     absolute_deadline_ms = SURVEY_PAIR_RESULT_SOURCE_DEADLINE_MS;
 
     ret = app_node_comm_reserve_durable_reliable_uplinks(
-        1u, &reservation_token, 1u);
+        reservation_owner_generation, 1u, &reservation, 1u);
     if (ret < 0) {
         RESULT_DELIVERY_LOCK();
         if (result_delivery_same_packet(slot, &outbound.packet)) {
@@ -827,7 +1074,7 @@ static int result_delivery_service_slot(
     }
     handle = 0u;
     ret = app_node_comm_commit_durable_reliable_uplink_reservation(
-        reservation_token,
+        &reservation,
         &outbound,
         absolute_deadline_ms,
         ((uint32_t)MSG_SURVEY_PAIR_RESULT << 16) |
@@ -853,11 +1100,9 @@ static int result_delivery_service_slot(
             cleanup_ret = result_delivery_abandon_handle(
                 handle, "retry-admission-race");
         } else {
-            uint32_t token = reservation_token;
-
             cleanup_ret =
                 app_anchor_survey_result_delivery_cancel_reservations(
-                    &token, 1u, "retry-admission-failed");
+                    &reservation, 1u, "retry-admission-failed");
         }
         if (cleanup_ret < 0) {
             ret = cleanup_ret;
@@ -877,7 +1122,7 @@ int app_anchor_survey_result_delivery_service(void)
         return 0;
     }
     for (size_t i = 0u;
-         i < APP_MESH_SURVEY_PAIR_RESULT_JOURNAL_SLOTS;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
          i++) {
         int ret = result_delivery_service_slot(&result_delivery_slots[i]);
 
@@ -924,7 +1169,7 @@ int app_anchor_survey_result_delivery_gateway_confirmed(
             packet->session_id, packet->seq, slot->index);
         schedule_ret = result_delivery_schedule(0u);
     } else if (ret != -ENOENT) {
-        LOG_ERR("survey pair result ACK persistence failed: survey=%u seq=%u ret=%d",
+        LOG_ERR("survey pair result RAM-owner ACK commit failed: survey=%u seq=%u ret=%d",
                 packet->session_id, packet->seq, ret);
         schedule_ret =
             result_delivery_schedule(SURVEY_PAIR_RESULT_RETRY_MS);
@@ -970,7 +1215,7 @@ int app_anchor_survey_result_delivery_transport_released(
         return ret;
     }
     /*
-     * Persist the attempt release before the mesh primary owner is deleted.
+     * Commit the attempt release before the mesh primary owner is deleted.
      * Terminal polling owns the later bounded retry/failure decision.
      */
     return result_delivery_schedule(0u);

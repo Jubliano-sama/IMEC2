@@ -239,7 +239,7 @@ static void test_sample_distance_usability(void)
     assert(!survey_sample_distance_usable(&value));
 }
 
-static void test_missing_samples_require_unusable_from_both_reporters(void)
+static void test_missing_samples_use_responder_outcomes_only(void)
 {
     const uint16_t sample_0 = UINT16_C(1) << 0;
     const uint16_t sample_1 = UINT16_C(1) << 1;
@@ -251,133 +251,94 @@ static void test_missing_samples_require_unusable_from_both_reporters(void)
         17u, 0u, UINT16_MAX, UINT16_MAX));
     assert(!survey_pair_missing_samples_all_unusable(
         3u, sample_1, sample_0 | sample_2, 0u));
-    assert(!survey_pair_missing_samples_all_unusable(
-        3u, sample_1, sample_0 | sample_2, sample_0));
     assert(survey_pair_missing_samples_all_unusable(
-        3u, sample_1, sample_0 | sample_2, sample_0 | sample_2));
+        3u, sample_1, 0u, sample_0 | sample_2));
     assert(!survey_pair_missing_samples_all_unusable(
         3u, sample_0 | sample_1 | sample_2, UINT16_MAX, UINT16_MAX));
 }
 
-static void test_pair_sample_admission_prefers_responder_over_initiator(void)
+static void test_pair_sample_admission_accepts_only_responder(void)
 {
     struct survey_sample value = sample();
-    uint16_t usable_forward = 0u;
-    uint16_t responder_usable_forward = 0u;
-    uint16_t initiator_unusable_forward = 0u;
-    uint16_t responder_unusable_forward = 0u;
-    uint16_t usable_reverse = 0u;
-    uint16_t responder_usable_reverse = 0u;
-    uint16_t initiator_unusable_reverse = 0u;
-    uint16_t responder_unusable_reverse = 0u;
+    uint16_t usable = 0u;
+    uint16_t responder_usable = 0u;
+    uint16_t initiator_unusable = 0u;
+    uint16_t responder_unusable = 0u;
     const uint16_t expected_mask =
         (uint16_t)((UINT16_C(1) << value.pair.sample_count) - 1u);
     bool changed;
 
     value.distance_mm = 1000;
     for (uint16_t i = 0u; i < value.pair.sample_count; i++) {
+        const uint16_t usable_before = usable;
+        const uint16_t responder_usable_before = responder_usable;
+        const uint16_t initiator_unusable_before = initiator_unusable;
+        const uint16_t responder_unusable_before = responder_unusable;
+
         value.sample_index = i;
+        changed = true;
         assert(survey_pair_note_sample_masks(
                    &value,
                    value.pair.initiator_id,
-                   &usable_forward,
-                   &responder_usable_forward,
-                   &initiator_unusable_forward,
-                   &responder_unusable_forward,
-                   &changed) == PROTO_OK);
+                   &usable,
+                   &responder_usable,
+                   &initiator_unusable,
+                   &responder_unusable,
+                   &changed) == PROTO_ERR_MALFORMED);
         assert(changed);
-    }
-    assert(usable_forward == expected_mask);
-    assert(responder_usable_forward == 0u);
-
-    /* Later responder results upgrade every already-usable initiator slot. */
-    for (uint16_t i = 0u; i < value.pair.sample_count; i++) {
-        value.sample_index = i;
+        assert(usable == usable_before &&
+               responder_usable == responder_usable_before &&
+               initiator_unusable == initiator_unusable_before &&
+               responder_unusable == responder_unusable_before);
         assert(survey_pair_note_sample_masks(
                    &value,
                    value.pair.responder_id,
-                   &usable_forward,
-                   &responder_usable_forward,
-                   &initiator_unusable_forward,
-                   &responder_unusable_forward,
+                   &usable,
+                   &responder_usable,
+                   &initiator_unusable,
+                   &responder_unusable,
                    &changed) == PROTO_OK);
         assert(changed);
     }
-    assert(responder_usable_forward == expected_mask);
-
+    assert(usable == expected_mask);
+    assert(responder_usable == expected_mask);
     value.sample_index = 0u;
     assert(survey_pair_note_sample_masks(
                &value,
                value.pair.responder_id,
-               &usable_reverse,
-               &responder_usable_reverse,
-               &initiator_unusable_reverse,
-               &responder_unusable_reverse,
-               &changed) == PROTO_OK);
-    assert(changed);
-    assert(survey_pair_note_sample_masks(
-               &value,
-               value.pair.initiator_id,
-               &usable_reverse,
-               &responder_usable_reverse,
-               &initiator_unusable_reverse,
-               &responder_unusable_reverse,
+               &usable,
+               &responder_usable,
+               &initiator_unusable,
+               &responder_unusable,
                &changed) == PROTO_OK);
     assert(!changed);
-    assert((usable_forward & UINT16_C(1)) == usable_reverse);
-    assert((responder_usable_forward & UINT16_C(1)) ==
-           responder_usable_reverse);
 
     value.range_status = RANGE_RX_TIMEOUT;
     value.distance_mm = 0;
-    usable_forward = 0u;
-    responder_usable_forward = 0u;
-    initiator_unusable_forward = 0u;
-    responder_unusable_forward = 0u;
-    usable_reverse = 0u;
-    responder_usable_reverse = 0u;
-    initiator_unusable_reverse = 0u;
-    responder_unusable_reverse = 0u;
-    assert(survey_pair_note_sample_masks(
-               &value,
-               value.pair.initiator_id,
-               &usable_forward,
-               &responder_usable_forward,
-               &initiator_unusable_forward,
-               &responder_unusable_forward,
-               &changed) == PROTO_OK);
-    assert(changed);
+    usable = 0u;
+    responder_usable = 0u;
+    initiator_unusable = 0u;
+    responder_unusable = 0u;
     assert(survey_pair_note_sample_masks(
                &value,
                value.pair.responder_id,
-               &usable_forward,
-               &responder_usable_forward,
-               &initiator_unusable_forward,
-               &responder_unusable_forward,
+               &usable,
+               &responder_usable,
+               &initiator_unusable,
+               &responder_unusable,
                &changed) == PROTO_OK);
     assert(changed);
-    assert(survey_pair_note_sample_masks(
-               &value,
-               value.pair.responder_id,
-               &usable_reverse,
-               &responder_usable_reverse,
-               &initiator_unusable_reverse,
-               &responder_unusable_reverse,
-               &changed) == PROTO_OK);
-    assert(changed);
+    assert(responder_unusable == UINT16_C(1));
+    changed = false;
     assert(survey_pair_note_sample_masks(
                &value,
                value.pair.initiator_id,
-               &usable_reverse,
-               &responder_usable_reverse,
-               &initiator_unusable_reverse,
-               &responder_unusable_reverse,
-               &changed) == PROTO_OK);
-    assert(changed);
-    assert(usable_forward == usable_reverse);
-    assert(responder_usable_forward == responder_usable_reverse);
-    assert(initiator_unusable_forward == initiator_unusable_reverse);
-    assert(responder_unusable_forward == responder_unusable_reverse);
+               &usable,
+               &responder_usable,
+               &initiator_unusable,
+               &responder_unusable,
+               &changed) == PROTO_ERR_MALFORMED);
+    assert(!changed);
 }
 
 static void test_delayed_sequential_generation_cannot_mutate_current_masks(void)
@@ -584,7 +545,7 @@ static void test_sample_tlvs_bind_operation_generation(void)
     assert(survey_init_result_packet_from_reporter(
                &packet,
                &value,
-               value.pair.initiator_id,
+               value.pair.responder_id,
                UINT64_C(0x9999),
                3u,
                (uint8_t)payload_len) == PROTO_OK);
@@ -602,6 +563,44 @@ static void test_sample_tlvs_bind_operation_generation(void)
                                       payload_len,
                                       &decoded) ==
            PROTO_ERR_MALFORMED);
+}
+
+static void test_pair_result_payload_validator_commits_atomically(void)
+{
+    const struct survey_sample value = sample();
+    struct survey_sample decoded = {0};
+    struct survey_sample unchanged = sample();
+    struct survey_sample expected_unchanged;
+    uint8_t payload[SURVEY_SAMPLE_TLV_MAX_LEN +
+                    PROTO_TLV_U64_ENCODED_LEN +
+                    PROTO_TLV_U8_ENCODED_LEN];
+    size_t payload_len = 0u;
+
+    unchanged.distance_mm++;
+    unchanged.quality--;
+    expected_unchanged = unchanged;
+    assert(survey_append_sample_tlvs(payload, sizeof(payload), &payload_len,
+                                     &value) == PROTO_OK);
+    assert(tlv_append_u64(payload,
+                          sizeof(payload),
+                          &payload_len,
+                          TLV_TIMESTAMP_MS,
+                          UINT64_C(0x0102030405060708)) == PROTO_OK);
+    assert(survey_pair_result_payload_validate(payload,
+                                               payload_len,
+                                               &decoded) == PROTO_OK);
+    assert_sample_equal(&decoded, &value);
+
+    assert(tlv_append_u8(payload,
+                         sizeof(payload),
+                         &payload_len,
+                         UINT8_C(0x27),
+                         1u) == PROTO_OK);
+    assert(survey_pair_result_payload_validate(payload,
+                                               payload_len,
+                                               &unchanged) ==
+           PROTO_ERR_MALFORMED);
+    assert_sample_equal(&unchanged, &expected_unchanged);
 }
 
 static void test_sample_tlv_parser_rejects_bad_scalar_lengths_atomically(void)
@@ -817,7 +816,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 6000u,
+        .start_delay_ms = 60000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 4u,
@@ -879,7 +878,7 @@ static void test_discovery_start_rejects_conflicting_singletons(void)
     };
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 6000u,
+        .start_delay_ms = 60000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 4u,
@@ -911,7 +910,7 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 6000u,
+        .start_delay_ms = 60000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 2u,
@@ -919,7 +918,7 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
     const struct operation_policy policy = {
         .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
         .value.discovery = {
-            .start_delay_ms = 6000u,
+            .start_delay_ms = 60000u,
             .slot_ms = 40u,
             .slot_count = 50u,
             .round_count = 2u,
@@ -1263,7 +1262,7 @@ static void test_multi_output_survey_parsers_fail_atomically(void)
     const struct survey_discovery_config config = {
         .operation_generation = UINT64_C(0x1234000000000001),
         .survey_id = 0x10203040u,
-        .start_delay_ms = 6000u,
+        .start_delay_ms = 60000u,
         .slot_ms = 40u,
         .slot_count = 4u,
         .round_count = 2u,
@@ -1573,6 +1572,7 @@ static void test_discovery_packets_use_diagnostic_ids(void)
                                                0x9999888877776666ull,
                                                config.survey_id,
                                                config.operation_generation,
+                                               UINT32_C(0x12345678),
                                                45u,
                                                24u) == PROTO_OK);
     assert(packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT);
@@ -1580,7 +1580,7 @@ static void test_discovery_packets_use_diagnostic_ids(void)
     assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
     assert(packet.src_id == 0x1111222233334444ull);
     assert(packet.dst_id == 0x9999888877776666ull);
-    assert(packet.session_id == config.survey_id);
+    assert(packet.session_id == UINT32_C(0x12345678));
     assert(packet.seq == 45u);
     assert(packet.payload_len == 24u);
 }
@@ -1775,6 +1775,7 @@ static void test_reach_report_tlv_parser_accepts_empty_peer_list(void)
                                                expected_gateway_id,
                                                expected_survey_id,
                                                0u,
+                                               1u,
                                                77u,
                                                (uint8_t)payload_len) == PROTO_OK);
     assert(packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT);
@@ -1783,7 +1784,7 @@ static void test_reach_report_tlv_parser_accepts_empty_peer_list(void)
     assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
     assert(packet.src_id == expected_anchor_id);
     assert(packet.dst_id == expected_gateway_id);
-    assert(packet.session_id == expected_survey_id);
+    assert(packet.session_id == 1u);
     assert(packet.seq == 77u);
     assert(packet.payload_len == payload_len);
 
@@ -2795,23 +2796,24 @@ static void test_gateway_context_collects_reports_and_sequences_pairs(void)
     assert(context.report_count == 3u);
     assert(context.pair_count == 3u);
 
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(survey_gateway_pair_at(&context, 0u, &pair) == PROTO_OK);
     assert(pair.survey_id == 0xAABBCCDDu);
     assert(pair.initiator_id == 0x1111000000000001ull);
     assert(pair.responder_id == 0x2222000000000002ull);
     assert(pair.sample_count == 5u);
 
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(survey_gateway_pair_at(&context, 1u, &pair) == PROTO_OK);
     assert(pair.initiator_id == 0x1111000000000001ull);
     assert(pair.responder_id == 0x3333000000000003ull);
     assert(pair.sample_count == 5u);
 
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(survey_gateway_pair_at(&context, 2u, &pair) == PROTO_OK);
     assert(pair.initiator_id == 0x1111000000000001ull);
     assert(pair.responder_id == 0x9999000000000009ull);
     assert(pair.sample_count == 5u);
 
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_ERR_NOT_FOUND);
+    assert(survey_gateway_pair_at(&context, context.pair_count, &pair) ==
+           PROTO_ERR_NOT_FOUND);
 }
 
 static void test_gateway_pair_orientation_is_independent_of_reverse_depth(void)
@@ -2850,7 +2852,7 @@ static void test_gateway_pair_orientation_is_independent_of_reverse_depth(void)
                &context, survey_id, higher_id, higher_entries, 1u,
                &higher_hint) == PROTO_OK);
     assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(survey_gateway_pair_at(&context, 0u, &pair) == PROTO_OK);
     assert(pair.initiator_id == lower_id);
     assert(pair.responder_id == higher_id);
 
@@ -2863,7 +2865,7 @@ static void test_gateway_pair_orientation_is_independent_of_reverse_depth(void)
                &context, survey_id, higher_id, higher_entries, 1u,
                &higher_hint) == PROTO_OK);
     assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(survey_gateway_pair_at(&context, 0u, &pair) == PROTO_OK);
     assert(pair.initiator_id == lower_id);
     assert(pair.responder_id == higher_id);
 
@@ -2874,7 +2876,7 @@ static void test_gateway_pair_orientation_is_independent_of_reverse_depth(void)
                &context, survey_id, higher_id, higher_entries, 1u,
                &higher_hint) == PROTO_OK);
     assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
-    assert(survey_gateway_next_pair(&context, &pair) == PROTO_OK);
+    assert(survey_gateway_pair_at(&context, 0u, &pair) == PROTO_OK);
     assert(pair.initiator_id == lower_id);
     assert(pair.responder_id == higher_id);
 }
@@ -3132,6 +3134,24 @@ static void test_gateway_control_timeout_tracks_accepted_route_depth(void)
            SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
     assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL + 1u) ==
            SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+
+    assert(survey_pair_control_round_trip_timeout_ms(1u) ==
+           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+    assert(survey_pair_control_round_trip_timeout_ms(2u) ==
+           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+               SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS +
+               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+    assert(survey_pair_control_round_trip_timeout_ms(SURVEY_DEFAULT_TTL) ==
+           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+               ((SURVEY_DEFAULT_TTL - 1u) *
+                SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS) +
+               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+    assert(survey_pair_control_round_trip_timeout_ms(0u) ==
+           2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+    assert(survey_pair_control_round_trip_timeout_ms(
+               SURVEY_DEFAULT_TTL + 1u) ==
+           2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
 }
 
 static void test_gateway_context_retains_fifty_reverse_hints(void)
@@ -3472,10 +3492,6 @@ static void test_gateway_compact_context_rejects_corrupt_indices(void)
     corrupt.pairs[0].initiator_index = SURVEY_GATEWAY_MAX_REPORTS;
     assert(survey_gateway_pair_at(&corrupt, 0u, &pair) ==
            PROTO_ERR_MALFORMED);
-    assert(corrupt.next_pair_index == 0u);
-    assert(survey_gateway_next_pair(&corrupt, &pair) ==
-           PROTO_ERR_MALFORMED);
-    assert(corrupt.next_pair_index == 0u);
     assert(survey_gateway_plan_pair_rounds(
                &corrupt, &metadata, 1u, &round_count) ==
            PROTO_ERR_MALFORMED);
@@ -4369,13 +4385,13 @@ static void test_pair_planner_reaches_six_degree_ceiling_for_50_anchors(void)
     for (size_t i = 0u; i < pair_count; i++) {
         struct survey_pair next = {0};
 
-        assert(survey_gateway_next_pair(&context, &next) == PROTO_OK);
+        assert(survey_gateway_pair_at(&context, i, &next) == PROTO_OK);
         assert(next.survey_id == pairs[i].survey_id);
         assert(next.initiator_id == pairs[i].initiator_id);
         assert(next.responder_id == pairs[i].responder_id);
         assert(next.sample_count == pairs[i].sample_count);
     }
-    assert(survey_gateway_next_pair(&context, &pairs[0]) ==
+    assert(survey_gateway_pair_at(&context, pair_count, &pairs[0]) ==
            PROTO_ERR_NOT_FOUND);
 }
 
@@ -4441,103 +4457,6 @@ static void test_pair_planner_bounds_sparse_k50_augmentation_work(void)
     }
 }
 
-static void test_gateway_auto_sequences_prepare_and_start_actions(void)
-{
-    struct survey_gateway_context context;
-    struct survey_gateway_auto_context auto_context;
-    struct survey_gateway_auto_action action = {0};
-    const struct survey_reachability_entry a_entries[] = {
-        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
-    };
-    bool launched = false;
-    bool skipped = false;
-
-    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 4u) == PROTO_OK);
-    assert(survey_gateway_note_reach_report(&context,
-                                            0xAABBCCDDu,
-                                            0x1111000000000001ull,
-                                            a_entries,
-                                            sizeof(a_entries) / sizeof(a_entries[0])) == PROTO_OK);
-    assert(survey_gateway_note_reach_report(&context,
-                                            0xAABBCCDDu,
-                                            0x2222000000000002ull,
-                                            NULL,
-                                            0u) == PROTO_OK);
-    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
-    assert(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
-
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(!action.complete);
-    assert(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
-    assert(action.command_id == CMD_SURVEY_PREPARE_PAIR);
-    assert(action.target_id == 0x1111000000000001ull);
-    assert(action.pair.responder_id == 0x2222000000000002ull);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    assert(survey_gateway_auto_command_matches(&auto_context,
-                                               CMD_SURVEY_PREPARE_PAIR,
-                                               0x1111000000000001ull,
-                                               0xAABBCCDDu));
-    assert(!survey_gateway_auto_command_matches(&auto_context,
-                                                CMD_SURVEY_START_PAIR,
-                                                0x1111000000000001ull,
-                                                0xAABBCCDDu));
-    assert(survey_gateway_auto_note_result(&auto_context,
-                                           CMD_SURVEY_PREPARE_PAIR,
-                                           0x1111000000000001ull,
-                                           0xAABBCCDDu,
-                                           COMMAND_OK,
-                                           &launched,
-                                           &skipped) == PROTO_OK);
-    assert(!launched && !skipped);
-
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(action.stage == SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER);
-    assert(action.command_id == CMD_SURVEY_PREPARE_PAIR);
-    assert(action.target_id == 0x2222000000000002ull);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    assert(survey_gateway_auto_note_result(&auto_context,
-                                           action.command_id,
-                                           action.target_id,
-                                           action.pair.survey_id,
-                                           COMMAND_OK,
-                                           &launched,
-                                           &skipped) == PROTO_OK);
-    assert(!launched && !skipped);
-
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(action.stage == SURVEY_GATEWAY_AUTO_START_RESPONDER);
-    assert(action.command_id == CMD_SURVEY_START_PAIR);
-    assert(action.target_id == 0x2222000000000002ull);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    assert(survey_gateway_auto_note_result(&auto_context,
-                                           action.command_id,
-                                           action.target_id,
-                                           action.pair.survey_id,
-                                           COMMAND_OK,
-                                           &launched,
-                                           &skipped) == PROTO_OK);
-    assert(!launched && !skipped);
-
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(action.stage == SURVEY_GATEWAY_AUTO_START_INITIATOR);
-    assert(action.command_id == CMD_SURVEY_START_PAIR);
-    assert(action.target_id == 0x1111000000000001ull);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    assert(survey_gateway_auto_note_result(&auto_context,
-                                           action.command_id,
-                                           action.target_id,
-                                           action.pair.survey_id,
-                                           COMMAND_OK,
-                                           &launched,
-                                           &skipped) == PROTO_OK);
-    assert(launched && !skipped);
-
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(action.complete);
-    assert(!auto_context.running);
-    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_IDLE);
-}
-
 static void test_gateway_operation_identity_keeps_host_id_and_generation_distinct(void)
 {
     const uint32_t host_survey_id = UINT32_C(0x55667788);
@@ -4555,11 +4474,7 @@ static void test_gateway_operation_identity_keeps_host_id_and_generation_distinc
         },
     };
     struct survey_gateway_context context;
-    struct survey_gateway_auto_context auto_context;
-    struct survey_gateway_auto_action action = {0};
     struct survey_pair planned_pair = {0};
-    bool launched = true;
-    bool skipped = true;
 
     assert(operation_session_id != host_survey_id);
     assert(survey_gateway_begin_operation(
@@ -4585,189 +4500,6 @@ static void test_gateway_operation_identity_keeps_host_id_and_generation_distinc
     assert(survey_gateway_pair_at(&context, 0u, &planned_pair) == PROTO_OK);
     assert(planned_pair.survey_id == host_survey_id);
     assert(planned_pair.operation_generation == operation_generation);
-
-    assert(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
-    assert(survey_gateway_auto_next_action(
-               &auto_context, &context, &action) == PROTO_OK);
-    assert(action.pair.survey_id == host_survey_id);
-    assert(action.pair.operation_generation == operation_generation);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-    assert(!survey_gateway_auto_command_matches(
-        &auto_context,
-        action.command_id,
-        action.target_id,
-        host_survey_id));
-    assert(!survey_gateway_auto_command_matches(
-        &auto_context,
-        action.command_id,
-        action.target_id,
-        survey_operation_session_id(operation_generation + 1u)));
-    assert(survey_gateway_auto_note_result(
-               &auto_context,
-               action.command_id,
-               action.target_id,
-               host_survey_id,
-               COMMAND_OK,
-               &launched,
-               &skipped) == PROTO_ERR_NOT_FOUND);
-    assert(auto_context.waiting);
-    assert(survey_gateway_auto_note_result(
-               &auto_context,
-               action.command_id,
-               action.target_id,
-               operation_session_id,
-               COMMAND_OK,
-               &launched,
-               &skipped) == PROTO_OK);
-    assert(!launched);
-    assert(!skipped);
-}
-
-static void test_gateway_auto_reranges_current_pair_without_advancing_plan(void)
-{
-    const struct survey_pair pair = {
-        .survey_id = 0xAABBCCDDu,
-        .initiator_id = 0x1111000000000001ull,
-        .responder_id = 0x2222000000000002ull,
-        .sample_count = 1u,
-    };
-    struct survey_gateway_context gateway_context;
-    struct survey_gateway_auto_context auto_context = {
-        .pair = pair,
-        .stage = SURVEY_GATEWAY_AUTO_LOAD_PAIR,
-        .running = true,
-    };
-    struct survey_gateway_auto_context invalid_context = auto_context;
-    const enum survey_gateway_auto_stage expected_stages[] = {
-        SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR,
-        SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER,
-        SURVEY_GATEWAY_AUTO_START_RESPONDER,
-        SURVEY_GATEWAY_AUTO_START_INITIATOR,
-    };
-    const uint64_t expected_targets[] = {
-        pair.initiator_id,
-        pair.responder_id,
-        pair.responder_id,
-        pair.initiator_id,
-    };
-    struct survey_gateway_auto_action action = {0};
-    bool launched = false;
-    bool skipped = false;
-
-    round_test_context_init(&gateway_context, &pair, 1u);
-    gateway_context.next_pair_index = 1u;
-    invalid_context.waiting = true;
-    assert(survey_gateway_auto_rerun_pair(&invalid_context) == PROTO_ERR_BUSY);
-    invalid_context = auto_context;
-    invalid_context.stage = SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER;
-    assert(survey_gateway_auto_rerun_pair(&invalid_context) == PROTO_ERR_STALE);
-
-    for (uint8_t rerun = 1u;
-         rerun <= SURVEY_GATEWAY_PAIR_MAX_RERUNS;
-         rerun++) {
-        assert(survey_gateway_auto_rerun_pair(&auto_context) == PROTO_OK);
-        assert(gateway_context.next_pair_index == 1u);
-        assert(auto_context.pair_reruns_started == rerun);
-        assert(auto_context.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
-        assert(memcmp(&auto_context.pair, &pair, sizeof(pair)) == 0);
-
-        for (size_t i = 0u;
-             i < sizeof(expected_stages) / sizeof(expected_stages[0]);
-             i++) {
-            memset(&action, 0, sizeof(action));
-            assert(survey_gateway_auto_next_action(&auto_context,
-                                                   &gateway_context,
-                                                   &action) == PROTO_OK);
-            assert(!action.complete);
-            assert(action.stage == expected_stages[i]);
-            assert(action.target_id == expected_targets[i]);
-            assert(memcmp(&action.pair, &pair, sizeof(pair)) == 0);
-            assert(gateway_context.next_pair_index == 1u);
-            assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-            assert(survey_gateway_auto_note_result(&auto_context,
-                                                   action.command_id,
-                                                   action.target_id,
-                                                   action.pair.survey_id,
-                                                   COMMAND_OK,
-                                                   &launched,
-                                                   &skipped) == PROTO_OK);
-            assert(!skipped);
-            assert(launched ==
-                   (expected_stages[i] == SURVEY_GATEWAY_AUTO_START_INITIATOR));
-        }
-    }
-
-    assert(survey_gateway_auto_rerun_pair(&auto_context) == PROTO_ERR_NO_SPACE);
-    assert(auto_context.pair_reruns_started ==
-           SURVEY_GATEWAY_PAIR_MAX_RERUNS);
-    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_LOAD_PAIR);
-    assert(memcmp(&auto_context.pair, &pair, sizeof(pair)) == 0);
-    assert(gateway_context.next_pair_index == 1u);
-
-    memset(&action, 0, sizeof(action));
-    assert(survey_gateway_auto_next_action(&auto_context,
-                                           &gateway_context,
-                                           &action) == PROTO_OK);
-    assert(action.complete);
-    assert(gateway_context.next_pair_index == 1u);
-}
-
-static void test_gateway_auto_skips_pair_on_failed_command_result(void)
-{
-    struct survey_gateway_context context;
-    struct survey_gateway_auto_context auto_context;
-    struct survey_gateway_auto_action action = {0};
-    const struct survey_reachability_entry a_entries[] = {
-        {.peer_id = 0x2222000000000002ull, .rssi_dbm = -61, .quality = 82u},
-    };
-    bool launched = true;
-    bool skipped = false;
-
-    assert(survey_gateway_begin(&context, 0xAABBCCDDu, 4u) == PROTO_OK);
-    assert(survey_gateway_note_reach_report(&context,
-                                            0xAABBCCDDu,
-                                            0x1111000000000001ull,
-                                            a_entries,
-                                            sizeof(a_entries) / sizeof(a_entries[0])) == PROTO_OK);
-    assert(survey_gateway_note_reach_report(&context,
-                                            0xAABBCCDDu,
-                                            0x2222000000000002ull,
-                                            NULL,
-                                            0u) == PROTO_OK);
-    assert(survey_gateway_plan_pairs(&context) == PROTO_OK);
-    assert(survey_gateway_auto_begin(&auto_context) == PROTO_OK);
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-
-    assert(survey_gateway_auto_retry_pending(&auto_context,
-                                             CMD_SURVEY_PREPARE_PAIR,
-                                             0x2222000000000002ull,
-                                             0xAABBCCDDu) == PROTO_ERR_NOT_FOUND);
-    assert(survey_gateway_auto_retry_pending(&auto_context,
-                                             CMD_SURVEY_PREPARE_PAIR,
-                                             0x1111000000000001ull,
-                                             0xAABBCCDDu) == PROTO_OK);
-    assert(!auto_context.waiting);
-    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR);
-    memset(&action, 0, sizeof(action));
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(action.command_id == CMD_SURVEY_PREPARE_PAIR);
-    assert(action.target_id == 0x1111000000000001ull);
-    assert(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK);
-
-    assert(survey_gateway_auto_note_result(&auto_context,
-                                           CMD_SURVEY_PREPARE_PAIR,
-                                           0x1111000000000001ull,
-                                           0xAABBCCDDu,
-                                           COMMAND_TIMEOUT,
-                                           &launched,
-                                           &skipped) == PROTO_OK);
-    assert(!launched && skipped);
-    assert(!auto_context.waiting);
-    assert(auto_context.stage == SURVEY_GATEWAY_AUTO_LOAD_PAIR);
-
-    assert(survey_gateway_auto_next_action(&auto_context, &context, &action) == PROTO_OK);
-    assert(action.complete);
 }
 
 static void test_reachability_plan_rejects_invalid_graph_or_capacity(void)
@@ -4881,7 +4613,7 @@ static void test_result_packet_is_diagnostic_not_click(void)
     assert((packet.flags & FLAG_DIAGNOSTIC) != 0u);
     assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
     assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
-    assert(packet.src_id == value.pair.initiator_id);
+    assert(packet.src_id == value.pair.responder_id);
     assert(packet.session_id == value.pair.survey_id);
     assert(packet.ttl == SURVEY_DEFAULT_TTL);
     assert(packet.payload_len == 77u);
@@ -4904,6 +4636,12 @@ static void test_result_packet_can_use_responder_as_reporter(void)
     assert(packet.session_id == value.pair.survey_id);
     assert(packet.seq == 43u);
     assert(packet.payload_len == 78u);
+    assert(survey_init_result_packet_from_reporter(&packet,
+                                                   &value,
+                                                   value.pair.initiator_id,
+                                                   0x9999888877776666ull,
+                                                   43u,
+                                                   78u) == PROTO_ERR_MALFORMED);
     assert(survey_init_result_packet_from_reporter(&packet,
                                                    &value,
                                                    0x5555000000000005ull,
@@ -4936,7 +4674,7 @@ static void test_survey_packet_initializers_reject_zero_sequence_atomically(void
     assert(survey_init_result_packet_from_reporter(
                &packet,
                &value,
-               value.pair.initiator_id,
+               value.pair.responder_id,
                UINT64_C(0x9999888877776666),
                0u,
                10u) == PROTO_ERR_MALFORMED);
@@ -4986,6 +4724,7 @@ static void test_survey_packet_initializers_reject_zero_sequence_atomically(void
                UINT64_C(0x9999888877776666),
                value.pair.survey_id,
                0u,
+               1u,
                0u,
                10u) == PROTO_ERR_MALFORMED);
     assert_packet_unchanged(&packet, &unchanged);
@@ -5020,7 +4759,7 @@ static void test_survey_packet_initializers_accept_sequence_wrap_boundary(void)
     assert(survey_init_result_packet_from_reporter(
                &packet,
                &value,
-               value.pair.initiator_id,
+               value.pair.responder_id,
                UINT64_C(0x9999888877776666),
                UINT16_MAX,
                10u) == PROTO_OK);
@@ -5067,6 +4806,7 @@ static void test_survey_packet_initializers_accept_sequence_wrap_boundary(void)
                UINT64_C(0x9999888877776666),
                value.pair.survey_id,
                0u,
+               1u,
                UINT16_MAX,
                10u) == PROTO_OK);
     assert(packet.seq == UINT16_MAX);
@@ -5082,6 +4822,23 @@ static void test_survey_packet_initializers_accept_sequence_wrap_boundary(void)
                10u) == PROTO_OK);
     assert(packet.seq == UINT16_MAX);
     assert(packet.message_age_ms == 0u);
+}
+
+static void test_discovery_report_sequence_exhaustion_is_fail_closed(void)
+{
+    uint16_t sequence = 0u;
+
+    assert(survey_discovery_sequence_next(NULL) == 0u);
+    assert(survey_discovery_sequence_next(&sequence) == 1u);
+    assert(sequence == 1u);
+
+    sequence = UINT16_MAX - 1u;
+    assert(survey_discovery_sequence_next(&sequence) == UINT16_MAX);
+    assert(sequence == UINT16_MAX);
+    assert(survey_discovery_sequence_next(&sequence) == 0u);
+    assert(sequence == UINT16_MAX);
+    assert(survey_discovery_sequence_next(&sequence) == 0u);
+    assert(sequence == UINT16_MAX);
 }
 
 static void test_sample_observation_identity_is_exact(void)
@@ -5226,14 +4983,15 @@ int main(void)
     test_pair_result_transport_sequence_supports_legacy_controls();
     test_pair_result_transport_sequence_rejects_invalid_atomically();
     test_sample_distance_usability();
-    test_missing_samples_require_unusable_from_both_reporters();
-    test_pair_sample_admission_prefers_responder_over_initiator();
+    test_missing_samples_use_responder_outcomes_only();
+    test_pair_sample_admission_accepts_only_responder();
     test_delayed_sequential_generation_cannot_mutate_current_masks();
     test_discovery_post_rf_terminal_preserves_delayed_report_horizon();
     test_sample_nonce_is_unique_across_sequence_wrap();
     test_sample_tlvs_include_required_fields();
     test_sample_tlvs_round_trip_round_ownership();
     test_sample_tlvs_bind_operation_generation();
+    test_pair_result_payload_validator_commits_atomically();
     test_sample_tlv_parser_rejects_bad_scalar_lengths_atomically();
     test_sample_parser_rejects_conflicting_singletons_atomically();
     test_reach_request_tlvs_include_survey_and_duration();
@@ -5297,15 +5055,13 @@ int main(void)
     test_pair_planner_component_budget_fairness();
     test_pair_planner_reaches_six_degree_ceiling_for_50_anchors();
     test_pair_planner_bounds_sparse_k50_augmentation_work();
-    test_gateway_auto_sequences_prepare_and_start_actions();
     test_gateway_operation_identity_keeps_host_id_and_generation_distinct();
-    test_gateway_auto_reranges_current_pair_without_advancing_plan();
-    test_gateway_auto_skips_pair_on_failed_command_result();
     test_reachability_plan_rejects_invalid_graph_or_capacity();
     test_result_packet_is_diagnostic_not_click();
     test_result_packet_can_use_responder_as_reporter();
     test_survey_packet_initializers_reject_zero_sequence_atomically();
     test_survey_packet_initializers_accept_sequence_wrap_boundary();
+    test_discovery_report_sequence_exhaustion_is_fail_closed();
     test_sample_observation_identity_is_exact();
     test_reach_report_identity_retains_exact_status();
     test_sample_observation_identity_distinguishes_prior_hash_collision();

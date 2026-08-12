@@ -36,7 +36,7 @@ static bool delivery_identity_matches(const struct mesh_sim_delivery *a,
 
 static bool outbox_matches_pending(const struct mesh_relay *relay)
 {
-    const struct persistent_outbox_record *record = &relay->outbox_record;
+    const struct mesh_outbox_record *record = &relay->outbox_record;
     const struct mesh_pending_tx *pending = &relay->pending;
     enum mesh_relay_delivery_state state = record->delivery_state;
 

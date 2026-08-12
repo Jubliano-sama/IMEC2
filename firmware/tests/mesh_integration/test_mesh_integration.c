@@ -710,8 +710,7 @@ static void test_click_preempts_transit_and_origin_retries(void)
     run_next_connection(&world, gateway_connection, false);
     assert(world.roles[anchors[0]].relay.pending.state !=
            MESH_RELAY_TX_IDLE);
-    assert(world.roles[anchors[0]].relay.pending.packet.msg_type ==
-           MSG_GATEWAY_ACK_CONFIRM);
+    assert(world.roles[anchors[0]].relay.pending.gateway_ack_confirm_pending);
     timeout_ms = world.roles[transmitter].relay.pending.gateway_ack_deadline_ms;
     assert(timeout_ms > 100u);
     assert(mesh_sim_schedule_relay_tick(&world,

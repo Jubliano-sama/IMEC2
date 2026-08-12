@@ -193,7 +193,9 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
     uint8_t click_quality = 0u;
     uint32_t click_observed_ms = 0u;
     uint8_t capture_quality = 0u;
+    struct radio_guard_uwb_lease radio_lease = {0};
     int last_ret = -ETIMEDOUT;
+    int parking_ret;
     int release_ret;
     int ret;
 
@@ -216,7 +218,9 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
                              k_uptime_get_32() + RREP_ACK_TIMEOUT_MS,
                              "route-reply-ack-listen");
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh route reply ACK RX");
+    ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_RX,
+                                     "mesh route reply ACK RX",
+                                     &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         goto out_unlock;
@@ -328,9 +332,10 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
         last_ret = ret;
     }
 
-    release_ret = mesh_radio_standby_with_bounded_recovery(
+    parking_ret = mesh_radio_standby_with_bounded_recovery(
         "route-reply-ack-listen");
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
+    release_ret = mesh_transport_radio_finish(&radio_lease, parking_ret);
     if (release_ret < 0) {
         LOG_ERR("route-reply ACK listen radio release failed: %d",
                 release_ret);
@@ -340,8 +345,6 @@ static int mesh_listen_for_route_reply_ack(const struct mesh_outbound *route_rep
         k_mutex_unlock(&mesh_route_reply_ack_scratch_lock);
         return release_ret;
     }
-    radio_guard_uwb_stop();
-
     if (click_captured) {
         bool handled;
 
@@ -409,11 +412,11 @@ static int mesh_send_route_reply_burst(const struct mesh_outbound *route_reply,
             k_msleep(MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_GAP_MS);
         }
 
-        last_ret = mesh_send_c5_control(route_reply,
-                                        C5_CONTACT_PURPOSE_ROUTE_REPLY,
-                                        MESH_C5_CONTROL_WAKE_IF_NEEDED,
-                                        i == 0u ? "route-reply" :
-                                                  "route-reply-repeat");
+        last_ret = mesh_send_c5_causal_response(
+            route_reply,
+            C5_CONTACT_PURPOSE_ROUTE_REPLY,
+            MESH_C5_CONTROL_WAKE_IF_NEEDED,
+            i == 0u ? "route-reply" : "route-reply-repeat");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_ROUTE_REPLY_TX_REPEAT attempt=%u idx=%u ret=%d sent=%u\n",
                                 attempt,
@@ -914,6 +917,7 @@ static void mesh_ch9_ack_batch_queue(const struct mesh_outbound *ack,
 
 static int mesh_ch9_ack_batch_queue_forwarded_gateway_ack(
     const struct mesh_outbound *ack,
+    bool transit_core_owned,
     const char *reason)
 {
     enum app_mesh_ch9_ack_queue_result queue_result =
@@ -930,9 +934,13 @@ static int mesh_ch9_ack_batch_queue_forwarded_gateway_ack(
         return -EINVAL;
     }
 
-    ret = app_mesh_ch9_ack_table_queue_forwarded(&mesh_ch9_ack_table,
-                                                  ack,
-                                                  &queue_result);
+    ret = transit_core_owned ?
+        app_mesh_ch9_ack_table_queue_forwarded(&mesh_ch9_ack_table,
+                                                ack,
+                                                &queue_result) :
+        app_mesh_ch9_ack_table_queue_late_forwarded(&mesh_ch9_ack_table,
+                                                     ack,
+                                                     &queue_result);
     if (ret != PROTO_OK) {
         LOG_WRN("mesh forwarded gateway ACK table full: next=0x%016llx seq=%u ret=%d",
                 (unsigned long long)ack->next_hop_id,
@@ -951,13 +959,14 @@ static int mesh_ch9_ack_batch_queue_forwarded_gateway_ack(
                                              &first_packet_id,
                                              &last_packet_id);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_FORWARD_GATEWAY_ACK_QUEUE seq=%u next=0x%llx len=%u ids=%u first=%u last=%u ret=%d reason=%s\n",
+        status_debug_printf("DBG_FORWARD_GATEWAY_ACK_QUEUE seq=%u next=0x%llx len=%u ids=%u first=%u last=%u owner=%s ret=%d reason=%s\n",
                             ack->packet.seq,
                             (unsigned long long)ack->next_hop_id,
                             ack->payload_len,
                             packet_id_count,
                             first_packet_id,
                             last_packet_id,
+                            transit_core_owned ? "transit" : "late",
                             ret,
                             reason == NULL ? "forward-gateway-ack" : reason);
     }
@@ -996,7 +1005,6 @@ static int mesh_commit_forwarded_gateway_ack_sent(
     const struct mesh_outbound *ack)
 {
     uint32_t actions = MESH_RELAY_ACTION_NONE;
-    int clear_ret;
     int ret;
 
     ret = mesh_relay_commit_transit_gateway_ack_forward(
@@ -1008,11 +1016,6 @@ static int mesh_commit_forwarded_gateway_ack_sent(
         return ret == PROTO_OK ? -EIO : mesh_errno_from_proto(ret);
     }
 
-    clear_ret = mesh_save_outbox_durable("forwarded-gateway-ack");
-    if (clear_ret < 0) {
-        LOG_WRN("forwarded gateway ACK committed with stale durable snapshot retained for safe replay: ret=%d seq=%u",
-                clear_ret, ack->packet.seq);
-    }
     status_debug_printf("DBG_FORWARD_GATEWAY_ACK_COMMIT seq=%u dst=0x%llx next=0x%llx\n",
                         ack->packet.seq,
                         (unsigned long long)ack->packet.dst_id,
@@ -1030,6 +1033,7 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
     const struct app_mesh_ch9_ack_batch *batch =
         app_mesh_ch9_ack_table_get_peer(&mesh_ch9_ack_table, peer_id);
     bool forwarded_gateway_ack;
+    bool transit_core_commit;
     uint8_t count;
     int ret;
 
@@ -1039,6 +1043,8 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
 
     forwarded_gateway_ack = batch->preserve_payload &&
         batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK;
+    transit_core_commit = forwarded_gateway_ack &&
+        batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE;
     count = batch->count;
     ret = mesh_ch9_ack_batch_build(peer_id, &ack);
     if (ret < 0) {
@@ -1096,7 +1102,7 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
             mesh_ch9_event_set(CH9_EVENT_COMPLETE, peer_id, plan, reason);
         }
 
-        if (forwarded_gateway_ack) {
+        if (transit_core_commit) {
             ret = mesh_commit_forwarded_gateway_ack_sent(&ack);
             if (ret < 0) {
                 uint32_t retry_delay_ms = 0u;
@@ -1114,6 +1120,12 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
             }
         }
         if (ret == 0) {
+            if (mesh_forwarded_ack_event_repair_authorization.valid &&
+                mesh_forwarded_ack_event_repair_authorization.peer_id ==
+                    peer_id) {
+                memset(&mesh_forwarded_ack_event_repair_authorization, 0,
+                       sizeof(mesh_forwarded_ack_event_repair_authorization));
+            }
             (void)app_mesh_ch9_ack_table_clear_peer(&mesh_ch9_ack_table,
                                                      peer_id);
         }
@@ -1168,7 +1180,7 @@ static int mesh_send_current_ch9_ack_batch(uint64_t peer_id,
                             reason == NULL ? "batch-ack" : reason);
     }
     k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
-    ret = mesh_send_outbound_keep_channel9_awake(
+    ret = mesh_send_causal_channel9_response(
         &ack,
         reason == NULL ? "gateway-batch-ack-current-channel9" : reason,
         NULL);
@@ -1501,7 +1513,7 @@ static bool mesh_ch9_tx_pending_track_sent(const struct mesh_outbound *sent,
         return false;
     }
     if (sent->packet.src_id == DEVICE_ID) {
-        LOG_ERR("local gateway-ack TX has no durable relay-core owner: seq=%u next=0x%016llx",
+        LOG_ERR("local gateway-ack TX has no live RAM relay-core owner: seq=%u next=0x%016llx",
                 sent->packet.seq,
                 (unsigned long long)sent->next_hop_id);
         return false;
@@ -1679,7 +1691,6 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
             (uint16_t)report_tx_queue_used(), 0u);
     }
     mesh_ch9_tx_pending_clear();
-    (void)mesh_save_outbox_durable("channel9-ack-complete");
     mesh_schedule_tx_timeout();
     report_tx_schedule(0u);
     const struct app_mesh_ch9_ack_complete_state complete_state = {
@@ -1877,7 +1888,12 @@ static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
                                       uint8_t purpose,
-                                      const char *reason)
+                                      const char *reason,
+                                      const struct mesh_outbound *authorization_candidate,
+                                      const struct app_mesh_c5_tx_authorization_token *authorization,
+                                      enum fw_c5_tx_intent c5_tx_intent,
+                                      bool *rf_started_out,
+                                      uint64_t *rf_started_at_ms_out)
 {
     struct uwb_clicker_session *session = &mesh_route_wake_session_scratch;
     struct uwb_clicker_config *config = &mesh_route_wake_config_scratch;
@@ -1905,23 +1921,43 @@ static int mesh_send_route_wake_train(uint64_t target_id,
         DEVICE_ROLE == ROLE_ANCHOR &&
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER);
     struct uwb_wake_claim_frame click_claim = {0};
+    struct radio_guard_uwb_lease radio_lease = {0};
     const char *activity_phase = NULL;
+    int parking_ret;
     int release_ret;
     int ret;
 
     if (embedded_sent != NULL) {
         *embedded_sent = false;
     }
+    if (rf_started_out != NULL) {
+        *rf_started_out = false;
+    }
+    if (rf_started_at_ms_out != NULL) {
+        *rf_started_at_ms_out = 0u;
+    }
     if (target_id != MESH_BROADCAST_ID &&
         (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID)) {
         return -EINVAL;
     }
-    if (!mesh_coordinator_mesh_work_allowed(reason == NULL ? "route-wake-train" : reason)) {
+    if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+            reason == NULL ? "route-wake-train" : reason,
+            authorization_candidate,
+            authorization,
+            c5_tx_intent)) {
         return -EBUSY;
     }
 
     ret = k_mutex_lock(&mesh_route_wake_scratch_lock, K_NO_WAIT);
     if (ret < 0) {
+        return -EBUSY;
+    }
+    if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+            reason == NULL ? "route-wake-train" : reason,
+            authorization_candidate,
+            authorization,
+            c5_tx_intent)) {
+        k_mutex_unlock(&mesh_route_wake_scratch_lock);
         return -EBUSY;
     }
 
@@ -1988,6 +2024,14 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     }
 
 wake_train_attempt:
+    if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+            reason == NULL ? "route-wake-train" : reason,
+            authorization_candidate,
+            authorization,
+            c5_tx_intent)) {
+        ret = -EBUSY;
+        goto out_unlock;
+    }
     sent_count = 0u;
     embedded_count = 0u;
     c5_activity = false;
@@ -2008,7 +2052,9 @@ wake_train_attempt:
                          wake_train_config.post_wake_claimed_duration_ms,
                          reason);
 
-    ret = mesh_transport_radio_start("mesh route WAKE_CLAIM train");
+    ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_TX,
+                                     "mesh route WAKE_CLAIM train",
+                                     &radio_lease);
     if (ret < 0) {
         status_debug_note("DBG_WAKE_TRAIN_GUARD_FAIL\n");
         LOG_WRN("mesh route UWB WAKE_CLAIM guard failed: target=0x%016llx ret=%d",
@@ -2090,6 +2136,14 @@ wake_train_attempt:
             k_uptime_get() < close_ms) {
             memcpy(&frame[frame_len], route_suffix, route_suffix_len);
             frame_len += route_suffix_len;
+            if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+                    reason == NULL ? "route-wake-train" : reason,
+                    authorization_candidate,
+                    authorization,
+                    c5_tx_intent)) {
+                ret = -EBUSY;
+                break;
+            }
             ret = dwm3000_driver_send_frame(frame,
                                             frame_len,
                                             wake_train_config.control_tx_timeout_ms);
@@ -2105,6 +2159,12 @@ wake_train_attempt:
             }
             status_debug_note("DBG_EMBEDDED_ROUTE_REQ_TX\n");
             status_debug_tx_wake_claim_sent_pulse();
+            if (rf_started_out != NULL && !*rf_started_out) {
+                *rf_started_out = true;
+                if (rf_started_at_ms_out != NULL) {
+                    *rf_started_at_ms_out = (uint64_t)k_uptime_get();
+                }
+            }
             sent_count++;
             embedded_count++;
             uwb_clicker_note_wake_claim_tx(session, 1u);
@@ -2129,6 +2189,14 @@ wake_train_attempt:
         if (sent_count == 0u) {
             status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_BEGIN\n");
         }
+        if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+                reason == NULL ? "route-wake-train" : reason,
+                authorization_candidate,
+                authorization,
+                c5_tx_intent)) {
+            ret = -EBUSY;
+            break;
+        }
         ret = dwm3000_driver_send_frame(frame,
                                         frame_len,
                                         wake_train_config.control_tx_timeout_ms);
@@ -2145,6 +2213,12 @@ wake_train_attempt:
             status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_OK\n");
         }
         status_debug_tx_wake_claim_sent_pulse();
+        if (rf_started_out != NULL && !*rf_started_out) {
+            *rf_started_out = true;
+            if (rf_started_at_ms_out != NULL) {
+                *rf_started_at_ms_out = (uint64_t)k_uptime_get();
+            }
+        }
         sent_count++;
         uwb_clicker_note_wake_claim_tx(session, 1u);
 
@@ -2208,8 +2282,9 @@ wake_train_attempt:
     }
 
 out:
-    release_ret = mesh_radio_standby_with_bounded_recovery(
+    parking_ret = mesh_radio_standby_with_bounded_recovery(
         "route-wake-train");
+    release_ret = mesh_transport_radio_finish(&radio_lease, parking_ret);
     if (release_ret < 0) {
         LOG_ERR("mesh route wake radio release failed: %d",
                 release_ret);
@@ -2220,8 +2295,6 @@ out:
         ret = release_ret;
         goto out_unlock;
     }
-    radio_guard_uwb_stop();
-
     if (click_captured) {
         mesh_c5_contact_clear("click-preempt");
         goto out_unlock;
@@ -2407,9 +2480,11 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     bool rx_failure_diagnostic_logged = false;
     atomic_val_t route_ready_generation;
     int64_t uwb_window_start_ms = -1;
+    struct radio_guard_uwb_lease radio_lease = {0};
     uint32_t deadline_ms;
     uint8_t contact_purpose;
     int last_ret = -ETIMEDOUT;
+    int parking_ret;
     int release_ret;
     int ret;
 
@@ -2439,7 +2514,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                              reason);
 
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh route reply RX");
+    ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_RX,
+                                     "mesh route reply RX",
+                                     &radio_lease);
     if (ret < 0) {
         mesh_c5_contact_clear("reply-listen-guard-fail");
         mesh_restart_role_scan();
@@ -3010,9 +3087,10 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 reason == NULL ? "route" : reason);
     }
 
-    release_ret = mesh_radio_standby_with_bounded_recovery(
+    parking_ret = mesh_radio_standby_with_bounded_recovery(
         "route-reply-listen");
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
+    release_ret = mesh_transport_radio_finish(&radio_lease, parking_ret);
     if (release_ret < 0) {
         LOG_ERR("route-reply listen radio release failed: %d",
                 release_ret);
@@ -3024,8 +3102,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
         }
         return release_ret;
     }
-    radio_guard_uwb_stop();
-
     if (click_captured) {
         bool handled;
 

@@ -84,6 +84,11 @@ enum fw_radio_activity_state {
     FW_RADIO_ACTIVITY_GATEWAY_RX,
 };
 
+enum fw_c5_tx_intent {
+    FW_C5_TX_INTENT_BACKGROUND = 0,
+    FW_C5_TX_INTENT_CAUSAL_RESPONSE,
+};
+
 struct fw_radio_activity_capture {
     bool click_active;
     bool survey_pending;
@@ -93,12 +98,15 @@ struct fw_radio_activity_capture {
     bool route_waiting_tx_active;
     bool ch9_ack_wait_active;
     bool ch9_ack_send_pending;
+    bool ch9_ack_receive_eligible;
     bool gateway_continuous_ch9;
+    enum fw_c5_tx_intent c5_tx_intent;
 };
 
 struct fw_radio_activity_decision {
     enum fw_radio_activity_state state;
     bool mesh_work_allowed;
+    bool c5_tx_allowed;
     bool route_wait_allowed;
     bool report_tx_allowed;
     bool uwb_rx_allowed;

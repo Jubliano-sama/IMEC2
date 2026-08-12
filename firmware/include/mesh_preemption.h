@@ -8,13 +8,15 @@
 #include <stdint.h>
 
 struct mesh_click_preempt_plan {
-    bool requeue_click_report;
-    bool save_outbox;
-    bool clear_outbox;
-    bool cancel_timeout;
+    /*
+     * A local click has one atomic ownership transfer: report queue admission
+     * and release of relay->pending.  The application must not split this
+     * into a fallible queue operation followed by a blind cancellation.
+     */
+    bool transfer_local_click;
+    /* Non-local work stays in the relay and is paused at retry backoff. */
+    bool defer_active_tx;
     bool schedule_timeout;
-    /* The runtime copy is released only after the replacement is prepared. */
-    bool cancel_active_tx;
     struct mesh_outbound click_report;
 };
 

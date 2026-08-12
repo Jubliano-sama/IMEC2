@@ -301,6 +301,9 @@ static int run_scenario(enum response_rx_mode mode,
                 opportunity, ret);
     }
     ret = discovery_assignment_response_delay_ms(
+        0u,
+        1u,
+        DISCOVERY_ASSIGNMENT_MAX_HOPS,
         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
         0u,
         0u,

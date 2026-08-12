@@ -31,6 +31,14 @@ LOG_MODULE_REGISTER(app_mesh_test, LOG_LEVEL_DBG);
     (APP_NODE_COMM_MAX_DELIVERIES - \
      APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES)
 
+/* Gateway receipt verification and synthetic transmit diagnostics own this. */
+#if DEVICE_ROLE == ROLE_GATEWAY || \
+    defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+#define MESH_TEST_SMOKE_STATE_ENABLED 1
+#else
+#define MESH_TEST_SMOKE_STATE_ENABLED 0
+#endif
+
 #ifndef CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
 #define CONFIG_IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS 1000
 #endif
@@ -67,8 +75,10 @@ static uint16_t mesh_test_seq;
 static uint32_t mesh_test_drop_count;
 static bool mesh_test_ch5_refresh_logged;
 static uint8_t mesh_test_wait_log_ticks;
+#if MESH_TEST_SMOKE_STATE_ENABLED
 static struct mesh_smoke_fast_state mesh_test_gateway_state;
 static uint32_t mesh_test_gateway_last_summary_ms;
+#endif
 static uint32_t mesh_test_first_queue_ms;
 static uint32_t mesh_test_first_queue_id;
 static uint16_t mesh_test_first_queue_seq;
@@ -623,7 +633,9 @@ void app_mesh_test_note_wake_event(const struct proto_packet *packet,
                 link_quality,
                 anchor_uwb_scan_interval_ms);
     }
+#if MESH_TEST_SMOKE_STATE_ENABLED
     mesh_smoke_fast_note_c5_refresh(&mesh_test_gateway_state);
+#endif
 }
 
 void app_mesh_test_note_wake_claim(uint64_t source_id,
@@ -650,12 +662,16 @@ void app_mesh_test_note_wake_claim(uint64_t source_id,
                 link_quality,
                 anchor_uwb_scan_interval_ms);
     }
+#if MESH_TEST_SMOKE_STATE_ENABLED
     mesh_smoke_fast_note_c5_refresh(&mesh_test_gateway_state);
+#endif
 }
 
 void app_mesh_test_note_ch9_missed(void)
 {
+#if MESH_TEST_SMOKE_STATE_ENABLED
     mesh_smoke_fast_note_ch9_missed(&mesh_test_gateway_state);
+#endif
 }
 
 void app_mesh_test_note_direct_gateway_route_probe(uint64_t target_id, int ret)
@@ -797,6 +813,7 @@ void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,
                                          uint32_t received_at_ms,
                                          uint32_t queue_depth)
 {
+#if MESH_TEST_SMOKE_STATE_ENABLED
     struct mesh_smoke_fast_summary summary;
     uint32_t now_ms = k_uptime_get_32();
     int ret;
@@ -848,6 +865,13 @@ void app_mesh_test_note_gateway_delivery(const struct proto_packet *packet,
             summary.queue_depth_max,
             summary.last_packet_id,
             summary.last_drop_or_defer_reason);
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    ARG_UNUSED(received_at_ms);
+    ARG_UNUSED(queue_depth);
+#endif
 }
 #else
 int app_mesh_test_init(void)

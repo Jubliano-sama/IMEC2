@@ -304,6 +304,14 @@ static int build_report(size_t anchor_count,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = tlv_append_u32(payload,
+                         UWB_MESH_MAX_PAYLOAD_LEN,
+                         payload_len,
+                         TLV_NODE_BOOT_COUNTER,
+                         (uint32_t)anchor_index + 1u);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     ret = tlv_append_u16(payload,
                          UWB_MESH_MAX_PAYLOAD_LEN,
                          payload_len,
@@ -314,24 +322,30 @@ static int build_report(size_t anchor_count,
     }
     return survey_init_discovery_report_packet(
         packet, ANCHOR_ID_BASE + anchor_index, GATEWAY_ID, SURVEY_ID,
-        OPERATION_GENERATION, seq,
+        OPERATION_GENERATION, (uint32_t)anchor_index + 1u, seq,
         (uint8_t)*payload_len);
 }
 
 static int note_delivery(const struct mesh_sim_delivery *delivery)
 {
     struct survey_reachability_entry entries[SURVEY_GATEWAY_MAX_PEERS_PER_REPORT];
+    const uint8_t *boot_raw = NULL;
     uint32_t survey_id = 0u;
     uint64_t anchor_id = 0u;
     size_t entry_count = 0u;
+    uint8_t boot_len = 0u;
     int ret = survey_extract_reach_report_tlvs(
         delivery->payload, delivery->payload_len, &survey_id, &anchor_id,
         entries, sizeof(entries) / sizeof(entries[0]), &entry_count);
 
-    if (ret != PROTO_OK ||
+    if (ret == PROTO_OK) {
+        ret = tlv_find_unique(delivery->payload, delivery->payload_len,
+                              TLV_NODE_BOOT_COUNTER,
+                              &boot_raw, &boot_len);
+    }
+    if (ret != PROTO_OK || boot_len != sizeof(uint32_t) ||
         delivery->packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
-        delivery->packet.session_id !=
-            survey_operation_session_id(OPERATION_GENERATION) ||
+        delivery->packet.session_id != proto_get_u32_le(boot_raw) ||
         delivery->packet.src_id != anchor_id) {
         return PROTO_ERR_MALFORMED;
     }
@@ -596,8 +610,7 @@ static int test_unscheduled_direct_gateway_custody(void)
                 &world, gateway, anchor, ack_air_start_us, ack_window_end_us,
                 NULL) == MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, ack_window_end_us) == MESH_SIM_OK);
-    REQUIRE(world.roles[anchor].relay.pending.packet.msg_type ==
-            MSG_GATEWAY_ACK_CONFIRM);
+    REQUIRE(world.roles[anchor].relay.pending.gateway_ack_confirm_pending);
     REQUIRE(complete_direct_gateway_confirmation(anchor, gateway) ==
             MESH_SIM_OK);
     REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
@@ -663,7 +676,7 @@ static int complete_direct_gateway_confirmation(uint8_t anchor,
 
     if ((relay->pending.state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF &&
          relay->pending.state != MESH_RELAY_TX_WAIT_GATEWAY_ACK) ||
-        relay->pending.packet.msg_type != MSG_GATEWAY_ACK_CONFIRM) {
+        !relay->pending.gateway_ack_confirm_pending) {
         return MESH_SIM_ERR_PROTOCOL;
     }
     if (relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
@@ -847,8 +860,7 @@ static int test_gateway_semantic_rejection_retry_and_sticky_ack(void)
                 &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
             MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
-    REQUIRE(world.roles[anchor].relay.pending.packet.msg_type ==
-            MSG_GATEWAY_ACK_CONFIRM);
+    REQUIRE(world.roles[anchor].relay.pending.gateway_ack_confirm_pending);
     REQUIRE(complete_direct_gateway_confirmation(anchor, gateway) ==
             MESH_SIM_OK);
     REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
@@ -1056,8 +1068,7 @@ static int test_direct_short_rx_and_mismatched_ack_retry(void)
                 &world, gateway, anchor, air_start_us, window_end_us, NULL) ==
             MESH_SIM_OK);
     REQUIRE(mesh_sim_run_until(&world, window_end_us) == MESH_SIM_OK);
-    REQUIRE(world.roles[anchor].relay.pending.packet.msg_type ==
-            MSG_GATEWAY_ACK_CONFIRM);
+    REQUIRE(world.roles[anchor].relay.pending.gateway_ack_confirm_pending);
     REQUIRE(complete_direct_gateway_confirmation(anchor, gateway) ==
             MESH_SIM_OK);
     REQUIRE(world.roles[anchor].relay.pending.state == MESH_RELAY_TX_IDLE);
@@ -1252,8 +1263,8 @@ static int test_twenty_direct_reports_retry_to_exactly_once(void)
                             &world, gateway, candidates[i].node,
                             ack_air_start_us, ack_end_us, NULL) == MESH_SIM_OK);
                 REQUIRE(mesh_sim_run_until(&world, ack_end_us) == MESH_SIM_OK);
-                REQUIRE(world.roles[candidates[i].node].relay.pending.packet
-                            .msg_type == MSG_GATEWAY_ACK_CONFIRM);
+                REQUIRE(world.roles[candidates[i].node].relay.pending
+                            .gateway_ack_confirm_pending);
                 REQUIRE(complete_direct_gateway_confirmation(
                             candidates[i].node, gateway) == MESH_SIM_OK);
                 REQUIRE(world.roles[candidates[i].node].relay.pending.state ==
@@ -1386,6 +1397,122 @@ static int test_multihop_route_loss_recovers_exactly_once(void)
     REQUIRE(mesh_sim_count_transitions(&world,
                                        MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                        ANCHOR_ID_BASE + 1u) == 1u);
+    return 0;
+}
+
+static int build_pair_result(const struct survey_pair *pair,
+                             uint16_t round_id,
+                             uint16_t sample_index,
+                             struct proto_packet *packet,
+                             uint8_t *payload,
+                             size_t *payload_len)
+{
+    const struct survey_sample sample = {
+        .pair = *pair,
+        .round_id = round_id,
+        .sample_index = sample_index,
+        .distance_mm = 3100 + (int32_t)sample_index * 10,
+        .quality = (uint8_t)(90u - sample_index),
+        .range_status = RANGE_OK,
+    };
+    uint16_t sequence;
+    int ret;
+
+    ret = survey_pair_result_transport_sequence(round_id,
+                                                sample_index,
+                                                &sequence);
+    if (ret == PROTO_OK) {
+        ret = survey_append_sample_tlvs(payload,
+                                        UWB_MESH_MAX_PAYLOAD_LEN,
+                                        payload_len,
+                                        &sample);
+    }
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u64(payload,
+                             UWB_MESH_MAX_PAYLOAD_LEN,
+                             payload_len,
+                             TLV_TIMESTAMP_MS,
+                             UINT64_C(123456) + sample_index);
+    }
+    return ret == PROTO_OK ?
+        survey_init_result_packet_from_reporter(
+            packet,
+            &sample,
+            pair->responder_id,
+            GATEWAY_ID,
+            sequence,
+            (uint8_t)*payload_len) : ret;
+}
+
+static int test_three_node_pair_results_are_responder_only(void)
+{
+    const struct survey_pair pair = {
+        .initiator_id = ANCHOR_ID_BASE,
+        .responder_id = ANCHOR_ID_BASE + 1u,
+        .operation_generation = OPERATION_GENERATION,
+        .survey_id = SURVEY_ID,
+        .sample_count = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+    };
+    uint8_t initiator;
+    uint8_t responder;
+    uint8_t gateway;
+    uint16_t connections[2];
+    struct mesh_event_params child_params =
+        connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS);
+    struct mesh_event_params upstream_params = connection_params(
+        MESH_RADIO_EVENT_FIRST_DELAY_MS + MESH_RADIO_EVENT_INTERVAL_MS / 2u);
+
+    mesh_sim_init(&world, UINT32_C(0x5a17ff02));
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              pair.initiator_id, GATEWAY_ID, ROUTE_EPOCH,
+                              &initiator) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                              pair.responder_id, GATEWAY_ID, ROUTE_EPOCH,
+                              &responder) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                              GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
+    REQUIRE(mesh_sim_set_link(&world, responder, initiator, 96u, 1u) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_set_link(&world, initiator, gateway, 96u, 1u) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_add_connection(&world, responder, initiator,
+                                    &child_params, true, &connections[0]) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_add_connection(&world, initiator, gateway,
+                                    &upstream_params, true, &connections[1]) ==
+            MESH_SIM_OK);
+    REQUIRE(mesh_sim_install_route(&world, responder, initiator, 1u,
+                                   ROUTE_EPOCH) == PROTO_OK);
+    REQUIRE(mesh_sim_install_route(&world, initiator, gateway, 0u,
+                                   ROUTE_EPOCH) == PROTO_OK);
+    REQUIRE(mesh_sim_install_downlink(&world, initiator, pair.responder_id,
+                                      responder, 1u, ROUTE_EPOCH) ==
+            MESH_SIM_OK);
+
+    for (uint16_t sample_index = 0u;
+         sample_index < pair.sample_count;
+         sample_index++) {
+        struct proto_packet packet;
+        uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN] = {0};
+        size_t payload_len = 0u;
+
+        REQUIRE(build_pair_result(&pair, 1u, sample_index, &packet,
+                                  payload, &payload_len) == PROTO_OK);
+        REQUIRE(packet.src_id == pair.responder_id);
+        REQUIRE(mesh_sim_queue_originated(&world, responder, &packet,
+                                          payload, payload_len) == MESH_SIM_OK);
+        REQUIRE(drive_until_drained(&world, connections, 2u, gateway,
+                                    sample_index + 1u) == MESH_SIM_OK);
+        REQUIRE(world.roles[gateway].delivery_count == sample_index + 1u);
+        REQUIRE(world.roles[gateway].deliveries[sample_index].packet.src_id ==
+                pair.responder_id);
+        REQUIRE(world.roles[gateway].deliveries[sample_index].previous_hop_id ==
+                pair.initiator_id);
+    }
+    REQUIRE(network_idle(&world));
+    REQUIRE(mesh_sim_count_transitions(&world,
+                                       MESH_SIM_TRANSITION_GATEWAY_ACKED,
+                                       pair.responder_id) == pair.sample_count);
     return 0;
 }
 
@@ -1617,6 +1744,7 @@ int main(void)
         test_partial_directed_components_plan_deterministically() != 0 ||
         test_twenty_direct_reports_retry_to_exactly_once() != 0 ||
         test_multihop_route_loss_recovers_exactly_once() != 0 ||
+        test_three_node_pair_results_are_responder_only() != 0 ||
         test_gateway_reset_reinstalls_fifty_accepted_reverse_hints() != 0 ||
         test_survey_ttl_exhaustion_fails_explicitly() != 0) {
         return EXIT_FAILURE;

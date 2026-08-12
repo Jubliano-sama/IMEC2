@@ -2269,11 +2269,9 @@ int survey_gateway_plan_pairs(struct survey_gateway_context *context)
         context->pairs_planned = false;
         context->topology_complete = false;
         context->pair_count = 0u;
-        context->next_pair_index = 0u;
         return ret;
     }
     context->pairs_planned = true;
-    context->next_pair_index = 0u;
     return PROTO_OK;
 }
 

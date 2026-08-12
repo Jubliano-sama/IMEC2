@@ -13,8 +13,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS 1000u
-
 #if defined(__ZEPHYR__)
 #include <zephyr/kernel.h>
 #else
@@ -39,10 +37,17 @@ enum app_gateway_semantic_acceptance {
     APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW = 2,
     /*
      * Collection state already owns this result and no new BLE host item is
-     * needed. Reapply only the durable collection/EACK transition; do not
+     * needed. Reapply only the live collection/EACK transition; do not
      * enqueue a duplicate host record.
      */
     APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE = 3,
+    /*
+     * A structurally valid collection result/bundle reached a gateway with no
+     * live RAM ledger. The raw host record is retained until its exact GUI
+     * receipt; that receipt emits a CLOSED one-packet recovery EACK instead
+     * of the ordinary gateway ACK path.
+     */
+    APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY = 4,
 };
 
 struct mesh_delivery_health {
@@ -74,7 +79,7 @@ struct anchor_range_window_report {
 };
 
 struct app_mesh_report_callbacks {
-    bool (*anchor_survey_discovery_is_pending)(void);
+    bool (*anchor_survey_radio_active)(void);
     void (*anchor_note_uwb_awake_since)(int64_t start_ms,
                                         uint32_t already_counted_us);
     bool (*anchor_handle_click_wake_claim)(
@@ -97,6 +102,15 @@ struct app_mesh_report_callbacks {
                                                   uint64_t previous_hop_id,
                                                   uint8_t radio_channel,
                                                   uint8_t link_quality);
+    void (*gateway_note_anchor_boot_observation)(
+        const struct proto_packet *packet,
+        const uint8_t *payload,
+        size_t payload_len,
+        uint64_t first_received_at_ms);
+    int (*gateway_note_ack_confirm)(
+        const struct proto_packet *confirm_packet,
+        const struct mesh_gateway_ack_confirm_identity *identity,
+        uint64_t first_received_at_ms);
     int (*anchor_survey_delivery_gateway_confirmed)(
         const struct proto_packet *packet,
         const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
@@ -139,6 +153,23 @@ enum mesh_c5_control_send_mode {
 
 int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks);
 int app_mesh_report_attach_gateway_ack_store(void);
+bool app_mesh_report_gateway_delivery_confirmation_pending(
+    uint64_t src_id,
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint32_t now_ms);
+bool app_mesh_report_gateway_identity_confirmation_pending(
+    uint64_t src_id,
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint16_t seq,
+    uint32_t now_ms);
+bool app_mesh_report_gateway_operation_confirmation_pending(
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint32_t now_ms);
+bool app_mesh_report_gateway_origin_confirmation_pending(uint64_t src_id,
+                                                         uint32_t now_ms);
 int app_mesh_report_attach_anchor_downlink_store(void);
 int anchor_append_sequence_time_tlvs(uint8_t *payload,
                                      size_t payload_cap,
@@ -220,7 +251,10 @@ int mesh_prepare_channel9_outbound(struct mesh_outbound *out,
                                    uint32_t now_ms,
                                    uint32_t *required_ms);
 int mesh_request_route(uint64_t target_id, const char *reason);
-void mesh_clear_route_waiting_tx(const struct proto_packet *packet);
+void mesh_clear_route_waiting_tx(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    enum app_mesh_route_wait_tx_owner expected_owner);
 int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason);
 int mesh_start_owned_tracked_tx(const struct mesh_outbound *out,
                                 const char *reason,
@@ -229,8 +263,9 @@ int mesh_owned_tracked_tx_preflight(const struct mesh_outbound *out,
                                     const char *reason,
                                     enum app_mesh_route_wait_tx_owner owner,
                                     uint32_t generation);
-void mesh_report_resume_restored_outbox(const char *reason);
-int mesh_preempt_for_click_event(void);
+void mesh_report_wake_active_outbox(const char *reason);
+/* Complete custody preemption before this absolute physical handoff deadline. */
+int mesh_preempt_for_click_event_until(uint32_t physical_deadline_ms);
 void report_tx_schedule(uint32_t delay_ms);
 uint32_t report_tx_queue_used(void);
 bool mesh_report_tx_backlog_active(void);
@@ -246,12 +281,10 @@ int queue_anchor_range_report_fragment(
     uint64_t clicker_id,
     uint32_t event_seq,
     uint8_t attempt_index,
-    bool final_fragment,
-    int64_t persistence_deadline_ms);
-int mesh_restore_anchor_range_report_journal(void);
+    bool final_fragment);
 /*
- * Return 1 when the active relay owner is either the exact raw outbound or
- * its durable gateway-ACK confirmation tombstone, 0 when unrelated/idle.
+ * Return 1 when the active relay RAM owner is either the exact raw outbound
+ * or its retained in-RAM gateway-ACK confirmation state, 0 when unrelated/idle.
  * Malformed active confirmation state fails closed with a negative errno.
  */
 int mesh_report_active_owner_matches_outbound(

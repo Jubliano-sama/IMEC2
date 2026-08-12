@@ -67,7 +67,6 @@ class SurveyPairObservation:
 class _SurveySampleOutcome:
     successful: bool
     distance_mm: int | None
-    reporter_priority: int
 
 
 class SurveyGeometryModel:
@@ -89,9 +88,6 @@ class SurveyGeometryModel:
         self._operation_generation: int | None = None
         self._round_commitments: dict[int, bytes] = {}
         self._sample_counts: dict[tuple[tuple[str, str], int], int] = {}
-        self._sample_count_priorities: dict[
-            tuple[tuple[str, str], int], int
-        ] = {}
         self._sample_outcomes: dict[
             tuple[tuple[str, str], int], dict[int, _SurveySampleOutcome]
         ] = {}
@@ -226,7 +222,7 @@ class SurveyGeometryModel:
             return None
         if initiator == 0 or responder == 0 or initiator == responder:
             return None
-        if packet.src_id not in (initiator, responder):
+        if packet.src_id != responder:
             return None
         if self.survey_id is None:
             self.reset(survey_id)
@@ -262,36 +258,19 @@ class SurveyGeometryModel:
             or not 0 <= sample_index < sample_count
         ):
             return None
-        reporter_priority = 2 if packet.src_id == initiator else 1 if packet.src_id == responder else 0
         round_key = (pair, round_id)
         known_sample_count = self._sample_counts.get(round_key)
-        known_count_priority = self._sample_count_priorities.get(round_key, -1)
         if known_sample_count is None:
             self._sample_counts[round_key] = sample_count
-            self._sample_count_priorities[round_key] = reporter_priority
         elif known_sample_count != sample_count:
-            if reporter_priority <= known_count_priority:
-                return None
-            self._sample_counts[round_key] = sample_count
-            self._sample_count_priorities[round_key] = reporter_priority
-            self._sample_outcomes.pop(round_key, None)
-        elif reporter_priority > known_count_priority:
-            self._sample_count_priorities[round_key] = reporter_priority
+            return None
         candidate = _SurveySampleOutcome(
             success,
             distance_mm if success and isinstance(distance_mm, int) else None,
-            reporter_priority,
         )
         samples = self._sample_outcomes.setdefault(round_key, {})
         previous = samples.get(sample_index)
-        if (
-            previous is None
-            or (candidate.successful and not previous.successful)
-            or (
-                candidate.successful == previous.successful
-                and candidate.reporter_priority > previous.reporter_priority
-            )
-        ):
+        if previous is None:
             samples[sample_index] = candidate
 
         self._refresh_pair_aggregate(pair, survey_id)
@@ -438,7 +417,6 @@ class SurveyGeometryModel:
         self._operation_generation = None
         self._round_commitments.clear()
         self._sample_counts.clear()
-        self._sample_count_priorities.clear()
         self._sample_outcomes.clear()
         self.generation += 1
 
@@ -452,7 +430,6 @@ class SurveyGeometryModel:
         self.failures.clear()
         self.observed_opportunities.clear()
         self._sample_counts.clear()
-        self._sample_count_priorities.clear()
         self._sample_outcomes.clear()
         self._round_commitments.clear()
         self._operation_generation = operation_generation

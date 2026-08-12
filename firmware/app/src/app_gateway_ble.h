@@ -62,6 +62,20 @@ void gateway_ble_cancel_stream_reservation(void);
  * mesh/radio retry path. */
 int gateway_ble_finish_host_delivery(const struct proto_packet *packet);
 /*
+ * Finish a host-accepted command-event head. Non-command packets return zero
+ * so the generic receipt path can call this safely; a mismatched command
+ * event fails closed and must block mesh receipt completion.
+ */
+int gateway_command_event_finish_host_receipt(
+    const struct proto_packet *packet);
+/*
+ * Validate a duplicate command-event receipt after the first exact receipt
+ * already retired the stream head. The complete host-receipt identity,
+ * including its record digest, must match the RAM-only last-receipt cache.
+ */
+int gateway_command_event_duplicate_host_receipt_valid(
+    const struct gateway_host_receipt_identity *identity);
+/*
  * Consume a serial host receipt.  Return 1 when the frame is a host receipt
  * (accepted or rejected), 0 when it is an ordinary frame, and a negative
  * errno only for a decoded host receipt that failed validation.
@@ -94,10 +108,53 @@ int gateway_finalize_semantic_delivery(
     uint8_t received_radio_channel,
     const struct mesh_event_plan *current_channel9_plan,
     int semantic_acceptance);
+/*
+ * The exact GUI receipt of a stale collection result owns the only legal
+ * source-custody release after gateway reset. This emits a bounded recovery
+ * EACK from RAM; it never writes a collection receipt journal.
+ */
+int gateway_collection_recovery_after_host_receipt(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
+/* Bind a stale collection packet to the collection lane before its reserved
+ * BLE record is exposed.  Matching cancellation rolls that pre-receipt owner
+ * back if the stream commit itself fails. */
+int gateway_collection_recovery_reserve_host_custody(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
+int gateway_collection_recovery_cancel_host_custody(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
+/* The recovery flood remains a collection barrier until the BLE record was
+ * retired; only then may this exact owner be released. */
+int gateway_collection_recovery_finish_host_delivery(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len);
+/* True only while a frozen RAM-only recovery EACK exists. The mesh delivery
+ * owner combines this with its exact HOST_ACCEPTED state before it permits
+ * that EACK to pass later queued stale packets. */
+bool gateway_collection_recovery_active(void);
+/* True only for the frozen recovery EACK itself.  Mesh coordinator bypasses
+ * must combine this with their local retained HOST_ACCEPTED owner state. */
+bool gateway_collection_recovery_flood_matches(
+    const struct mesh_outbound *outbound);
 void gateway_ble_stream_get_status(struct gateway_ble_stream_diagnostics *diagnostics);
 int gateway_observe_command_event(struct gateway_command_event *event,
                                   bool terminal);
+/* Reserve a command-event transport identity without exposing a BLE record. */
+int gateway_reserve_command_event_sequence(struct gateway_command_event *event,
+                                           void *ctx);
 int gateway_observe_command_event_if_available(
+    struct gateway_command_event *event,
+    bool terminal,
+    void *ctx);
+/* Publisher-only BLE boundary. It is the only command-event path that marks
+ * the outer record ACK-required and retains it until an exact GUI receipt. */
+int gateway_publish_assignment_event_if_available(
     struct gateway_command_event *event,
     bool terminal,
     void *ctx);
@@ -111,6 +168,15 @@ void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_status status,
                                       uint8_t reason);
 void gateway_emit_host_command_result_reserved(
+    uint32_t result_reservation_token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    enum command_status status,
+    uint8_t reason);
+/* Convert one exact admission reservation into a local gateway result.  The
+ * caller retains its token until this returns zero, so an ambiguous durable
+ * assignment save can retry without fabricating a second terminal result. */
+int gateway_commit_host_command_result_reserved(
     uint32_t result_reservation_token,
     const struct proto_packet *command,
     enum command_id command_id,
@@ -138,15 +204,23 @@ void gateway_command_result_release_terminal_reserved(
     uint32_t token,
     const struct proto_packet *command,
     enum command_id command_id);
-int gateway_begin_command_result_wait(const struct proto_packet *command,
+int gateway_begin_command_result_wait(const struct mesh_outbound *command,
                                       enum command_id command_id);
-int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+int gateway_begin_command_result_wait_for(const struct mesh_outbound *command,
                                           enum command_id command_id,
                                           uint32_t timeout_ms);
 int gateway_begin_command_result_wait_until(
-    const struct proto_packet *command,
+    const struct mesh_outbound *command,
     enum command_id command_id,
     uint32_t absolute_deadline_ms);
+/* Two-phase singleton admission used before an infrequent durable identity. */
+int gateway_command_result_wait_reserve(uint32_t *reservation_token);
+int gateway_command_result_wait_commit(
+    uint32_t reservation_token,
+    const struct mesh_outbound *command,
+    enum command_id command_id,
+    uint32_t absolute_deadline_ms);
+int gateway_command_result_wait_cancel(uint32_t reservation_token);
 int gateway_command_result_validation_reserve(
     const struct proto_packet *result,
     uint64_t received_at_ms,
@@ -170,6 +244,10 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
                                              uint32_t table_seq,
                                              const struct discovery_assignment_table_commitment *table_commitment,
                                              const struct gateway_membership_publication *publication);
+/* The exact NVS commit may have landed before readback failed. This positive
+ * result retains the prepared publication and original operation lease while
+ * owner work adopts the same candidate; it is neither failure nor success. */
+#define GATEWAY_MEMBERSHIP_COMMIT_ADOPTION_PENDING 1
 int gateway_get_registered_membership_roster_with_slots(
     uint64_t *node_ids,
     uint8_t *slots,
@@ -177,6 +255,8 @@ int gateway_get_registered_membership_roster_with_slots(
     size_t *node_count,
     uint16_t *membership_epoch);
 bool gateway_assignment_publication_pending(void);
+/* Reconstruct the exact sparse assignment publication after durable restore. */
+int gateway_replay_pending_assignment_publication(void);
 int gateway_complete_assignment_publication(
     const struct gateway_command_event *base_event,
     void *ctx);

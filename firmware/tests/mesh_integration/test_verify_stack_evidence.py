@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -149,6 +150,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                 "CONFIG_MPSL": True,
                 "CONFIG_MPSL_WORK_STACK_SIZE": 1024,
             })
+        if policy.preset == "mesh_gateway":
+            config.update(verifier.GATEWAY_FIT_REQUIRED_CONFIG)
         if policy.deployable:
             config.update({
                 "CONFIG_IMEC_STACK_DIAGNOSTICS": True,
@@ -156,13 +159,35 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                 "CONFIG_THREAD_NAME": True,
                 "CONFIG_USE_SEGGER_RTT": True,
             })
+        if policy.preset in verifier.DURABLE_STATE_PRESETS:
+            config.update({
+                key: True for key in verifier.DURABLE_STATE_REQUIRED_CONFIG
+            })
+            config.update({
+                "CONFIG_FLASH_LOAD_OFFSET": 0,
+                "CONFIG_FLASH_LOAD_SIZE": verifier.DURABLE_STATE_FLASH_LIMIT,
+            })
         (zephyr / ".config").write_text("\n".join(_line(key, value) for key, value in config.items()) + "\n", encoding="utf-8")
+        if policy.preset in verifier.DURABLE_STATE_PRESETS:
+            (zephyr / "zephyr.dts").write_text(
+                "/dts-v1/;\n"
+                "/ {\n"
+                "  storage_partition: partition@7a000 {\n"
+                "    reg = < 0x7a000 0x6000 >;\n"
+                "    status = \"okay\";\n"
+                "  };\n"
+                "};\n",
+                encoding="utf-8",
+            )
         object_path = Path("CMakeFiles/app.dir/src") / f"{source_name}.obj"
         kernel_source = self.root / "kernel.c"
         kernel_source.write_text("void kernel_frame(void) {}\n", encoding="utf-8")
         (build / "build.ninja").write_text(
-            "FLAGS = -fstack-usage\n"
+            "FLAGS = -fstack-usage -fdump-ipa-cgraph\n"
             f"build {object_path}: C_COMPILER__app {source}\n"
+            f"build app/libapp.a: C_STATIC_LIBRARY_LINKER__app {object_path}\n"
+            "build zephyr/zephyr.elf zephyr/zephyr.map: C_LINK "
+            "zephyr/CMakeFiles/zephyr_final.dir/empty.c.obj | app/libapp.a\n"
             f"build zephyr/kernel/CMakeFiles/kernel.dir/kernel.c.obj: C_COMPILER__kernel {kernel_source}\n",
             encoding="utf-8",
         )
@@ -180,10 +205,15 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         origin, size = 0x20000000, 128 * 1024
         end = origin + size - (policy.minimum_static_ram_headroom_bytes + headroom_delta)
         (zephyr / "zephyr.map").write_text(
+            "Archive member included to satisfy reference by file (symbol)\n\n"
+            f"app/libapp.a({object_path.name}) (--whole-archive)\n\n"
             "Memory Configuration\n\nName Origin Length Attributes\n"
+            "FLASH 0x0000000000000000 0x0000000000080000 xr\n"
             f"RAM 0x{origin:016x} 0x{size:016x} xw\n\nLinker script and memory map\n"
             f" .text.{function}\n                0x0000000000010000 {function}\n"
-            f"                0x{end:016x} _image_ram_end = .\n", encoding="utf-8"
+            f"                0x{end:016x} _image_ram_end = .\n"
+            "                0x0000000000070000 _flash_used = .\n",
+            encoding="utf-8"
         )
         build_identity = identity or f"imec-stack-v1:{policy.preset}:{'a' * 64}"
         (zephyr / "zephyr.elf").write_bytes(f"ELF {build_identity}".encode("ascii"))
@@ -263,6 +293,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
                 "workflow": verifier.CAPTURE_WORKFLOW,
                 "rtt_command": [
                     "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+                    "-a", "0x20000410", "-s", "0x100",
                     "-u", "TEST-PROBE", "--up-channel-id", "0",
                 ],
                 "tty_wrapper": "script",
@@ -285,6 +316,42 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
     def test_policy_covers_exact_deployable_presets_and_static_builds(self) -> None:
         self.assertEqual(verifier.DEPLOYABLE_PRESETS, {key for key, value in self.policies.items() if value.deployable})
+
+    def test_every_production_work_and_timer_callback_has_an_exact_root(self) -> None:
+        app_src = REPO_ROOT / "firmware" / "app" / "src"
+        roots = verifier.load_thread_roots(POLICY_PATH)
+        owners_by_function: dict[str, set[str]] = {}
+        for (_source, function), owners in roots.items():
+            owners_by_function.setdefault(function, set()).update(owners)
+
+        initialized: set[str] = set()
+        timer_handlers: set[str] = set()
+        pattern = re.compile(
+            r"\bk_(work_init|work_init_delayable|timer_init)\s*\("
+            r"\s*[^,]+,\s*([A-Za-z_][A-Za-z0-9_]*)",
+            re.DOTALL,
+        )
+        for path in (*app_src.glob("*.c"), *app_src.glob("*.inc")):
+            if path.name == "app_ml.c":
+                continue
+            for kind, handler in pattern.findall(
+                path.read_text(encoding="utf-8")
+            ):
+                initialized.add(handler)
+                if kind == "timer_init":
+                    timer_handlers.add(handler)
+
+        self.assertEqual(
+            set(),
+            initialized - set(owners_by_function),
+            "production kernel callbacks are missing stack execution roots",
+        )
+        for handler in timer_handlers:
+            self.assertIn(
+                "isr",
+                owners_by_function[handler],
+                f"k_timer expiry callback {handler} must be charged to ISR stack",
+            )
         workload_policy = verifier.load_workload_policy(POLICY_PATH)
         self.assertEqual(verifier.DEPLOYABLE_PRESETS, set(workload_policy))
         self.assertEqual(
@@ -301,6 +368,27 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         builds = [verifier.verify_build(self._write_build(policy), self.policies, self.frame_limit) for policy in self.policies.values()]
         self.assertEqual([], [(build.preset, build.issues) for build in builds if build.issues])
+
+    def test_gateway_control_sequence_maintenance_is_charged_to_system_workqueue(self) -> None:
+        roots = verifier.load_thread_roots(POLICY_PATH)
+        self.assertEqual(
+            {"system_workqueue"},
+            roots[(
+                "app_gateway_control_sequence.c",
+                "gateway_control_sequence_maintenance_handler",
+            )],
+        )
+
+        source = (
+            REPO_ROOT / "firmware" / "app" / "src" /
+            "app_gateway_control_sequence.c"
+        ).read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"k_work_init_delayable\s*\(\s*"
+            r"&gateway_control_sequence_maintenance_work\s*,\s*"
+            r"gateway_control_sequence_maintenance_handler\s*\)",
+        )
 
     def test_workload_policy_parser_fails_closed(self) -> None:
         text = POLICY_PATH.read_text(encoding="utf-8")
@@ -333,6 +421,386 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         low = verifier.verify_build(self._write_build(policy, headroom_delta=-1), self.policies, self.frame_limit)
         self.assertTrue(any("static RAM headroom" in issue for issue in low.issues))
 
+    def test_ninja_objects_decode_escaped_source_paths(self) -> None:
+        ninja = self.root / "escaped-path-build.ninja"
+        ninja.write_text(
+            "build CMakeFiles/app.dir/src/local.c.obj: "
+            "C_COMPILER /tmp/local.c\n"
+            "build CMakeFiles/app.dir/src/driver.c.obj: "
+            "C_COMPILER /tmp/vendor$ tree/driver.c "
+            "| implicit_dep || order_dep |@ validation_dep\n"
+            "build app/libapp.a: C_STATIC_LIBRARY_LINKER__app "
+            "CMakeFiles/app.dir/src/local.c.obj "
+            "CMakeFiles/app.dir/src/driver.c.obj || generated_headers\n",
+            encoding="utf-8",
+        )
+
+        _text, objects = verifier._ninja_objects(ninja)
+
+        self.assertEqual(
+            [(Path("CMakeFiles/app.dir/src/local.c.obj"),
+              Path("/tmp/local.c")),
+             (Path("CMakeFiles/app.dir/src/driver.c.obj"),
+              Path("/tmp/vendor tree/driver.c"))],
+            objects,
+        )
+
+    def test_ninja_objects_fail_closed_on_unresolved_app_source(self) -> None:
+        ninja = self.root / "unresolved-path-build.ninja"
+        ninja.write_text(
+            "build CMakeFiles/app.dir/src/driver.c.obj: "
+            "C_COMPILER $generated_source || generated_headers\n"
+            "build app/libapp.a: C_STATIC_LIBRARY_LINKER__app "
+            "CMakeFiles/app.dir/src/driver.c.obj\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            verifier.EvidenceError, "unsupported Ninja path escape"
+        ):
+            verifier._ninja_objects(ninja)
+
+    def test_ninja_objects_fail_closed_when_archive_member_is_unmapped(self) -> None:
+        ninja = self.root / "hidden-output-build.ninja"
+        ninja.write_text(
+            "build CMakeFiles/app.dir/src/known.c.obj: "
+            "C_COMPILER /tmp/known.c\n"
+            "build $app_object: C_COMPILER /tmp/driver.c\n"
+            "build app/libapp.a: C_STATIC_LIBRARY_LINKER__app "
+            "CMakeFiles/app.dir/src/known.c.obj "
+            "CMakeFiles/app.dir/src/driver.c.obj\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            verifier.EvidenceError,
+            "compile edges differ",
+        ):
+            verifier._ninja_objects(ninja)
+
+    def test_application_boundary_reconciles_exact_final_link_members(self) -> None:
+        build = self.root / "build"
+        (build / "zephyr").mkdir(parents=True)
+        source = self.root / "application.c"
+        source.write_text("void application(void) {}\n", encoding="utf-8")
+        object_path = Path("CMakeFiles/app.dir/application.c.obj")
+        ninja = (
+            f"build {object_path}: C_COMPILER {source}\n"
+            f"build app/libapp.a: C_STATIC_LIBRARY_LINKER {object_path}\n"
+            "build zephyr/zephyr.elf zephyr/zephyr.map: C_LINK "
+            "zephyr/CMakeFiles/zephyr_final.dir/empty.c.obj | app/libapp.a\n"
+        )
+        (build / "zephyr" / "zephyr.map").write_text(
+            "Archive member included to satisfy reference by file (symbol)\n\n"
+            "app/libapp.a(application.c.obj) (--whole-archive)\n\n"
+            "Linker script and memory map\n",
+            encoding="utf-8",
+        )
+
+        linked = verifier._linked_application_objects(
+            build, ninja, [(object_path, source)]
+        )
+
+        self.assertEqual(
+            [verifier.LinkedObject(object_path, source, Path("app/libapp.a"))],
+            linked,
+        )
+
+    def test_application_boundary_rejects_unmapped_final_member(self) -> None:
+        build = self.root / "build"
+        (build / "zephyr").mkdir(parents=True)
+        known_source = self.root / "known.c"
+        known_source.write_text("void known(void) {}\n", encoding="utf-8")
+        known_object = Path("CMakeFiles/app.dir/known.c.obj")
+        ninja = (
+            f"build {known_object}: C_COMPILER {known_source}\n"
+            f"build app/libapp.a: C_STATIC_LIBRARY_LINKER {known_object}\n"
+            "build zephyr/zephyr.elf zephyr/zephyr.map: C_LINK "
+            "zephyr/CMakeFiles/zephyr_final.dir/empty.c.obj | "
+            "app/libapp.a\n"
+        )
+        (build / "zephyr" / "zephyr.map").write_text(
+            "Archive member included to satisfy reference by file (symbol)\n\n"
+            "app/libapp.a(missing.c.obj) (--whole-archive)\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            verifier.EvidenceError, "members differ from Ninja archive"
+        ):
+            verifier._linked_application_objects(
+                build, ninja, [(known_object, known_source)]
+            )
+
+    def test_live_inline_rows_keep_translation_unit_provenance(self) -> None:
+        build = self.root / "build"
+        build.mkdir()
+        source = self.root / "app.c"
+        inline = build / "generated.inc"
+        source.write_text("void root(void) {}\n", encoding="utf-8")
+        inline.write_text("static void helper(void) {}\n", encoding="utf-8")
+        object_path = Path("CMakeFiles/app.dir/src/app.c.obj")
+        tu = verifier._translation_unit_key(source, object_path)
+        records = [
+            verifier.StackUsage(source, 1, "root", 64, "static", tu,
+                                str(object_path)),
+            verifier.StackUsage(inline, 2, "helper", 96, "static", tu,
+                                str(object_path)),
+        ]
+
+        selected = verifier._select_live_records(
+            {tu: (source, records)},
+            {"root"},
+            {(tu, "root"): {"helper"}, (tu, "helper"): set()},
+            build,
+        )
+
+        self.assertEqual(["root", "helper"], [row.function for row in selected])
+        self.assertTrue(all(row.translation_unit == tu for row in selected))
+
+    def test_live_unresolved_direct_call_is_a_verifier_issue(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 64}, {"root": {"missing_vendor_entry"}}
+        )
+
+        self.assertTrue(any(
+            "unresolved live compiler call" in issue
+            for issue in evidence.issues
+        ), evidence.issues)
+
+    def test_exact_linked_platform_symbol_ends_application_graph(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [
+            verifier.StackUsage(Path("app.c"), 1, "root", 64, "static")
+        ]
+        graph = {("app.c", "root"): {"k_work_submit"}}
+
+        verifier._attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            graph,
+            {("app.c", "root"): {"main"}},
+            self.frame_limit,
+            platform_symbols={"k_work_submit"},
+        )
+
+        self.assertEqual([], evidence.issues)
+
+    def test_targetless_dispatch_ends_at_runtime_capture_boundary(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 64}, {"root": {verifier._CGRAPH_INDIRECT_CALL}}
+        )
+
+        self.assertEqual([], evidence.issues)
+
+    def test_live_unresolved_indirect_call_is_a_verifier_issue(self) -> None:
+        evidence = self._synchronous_evidence(
+            {"root": 64},
+            {"root": {verifier._CGRAPH_REFERENCE_PREFIX + "missing_callback"}},
+        )
+
+        self.assertTrue(any(
+            "unresolved live compiler indirect call" in issue
+            for issue in evidence.issues
+        ), evidence.issues)
+
+    def test_vendor_prefixes_have_no_implicit_abi_contract(self) -> None:
+        for symbol in (
+            "sd_new_entry",
+            "sdc_new_entry",
+            "mpsl_new_entry",
+            "ocrypto_new_entry",
+        ):
+            self.assertIsNone(verifier._abi_contract_reason(symbol))
+
+    def test_empty_stack_usage_is_allowed_for_data_only_tu(self) -> None:
+        usage = self.root / "flash_map_default.su"
+        graph = self.root / "flash_map_default.c.000i.cgraph"
+        usage.write_text("", encoding="utf-8")
+        graph.write_text(
+            "Initial Symbol table:\n"
+            "default_flash_map/2 (default_flash_map)\n"
+            "  Type: variable definition analyzed\n"
+            "  References: \n"
+            "Optimized Symbol table:\n"
+            "default_flash_map/2 (default_flash_map)\n"
+            "  Type: variable definition analyzed\n"
+            "Final Symbol table:\n",
+            encoding="utf-8",
+        )
+
+        records, nodes, synchronous = verifier._parse_tu_compiler_evidence(
+            usage,
+            graph,
+            "flash_map_default.c [flash_map_default.c.obj]",
+            Path("flash_map_default.c.obj"),
+        )
+
+        self.assertEqual([], records)
+        self.assertEqual(
+            {("flash_map_default.c [flash_map_default.c.obj]",
+              verifier._CGRAPH_VARIABLE_PREFIX + "default_flash_map")},
+            set(nodes),
+        )
+        self.assertEqual({}, synchronous)
+
+    def test_empty_stack_usage_accepts_only_complete_empty_optimized_tu(self) -> None:
+        usage = self.root / "empty.c.su"
+        graph = self.root / "empty.c.000i.cgraph"
+        linker_map = self.root / "zephyr.map"
+        linked_object = verifier.LinkedObject(
+            Path("zephyr/CMakeFiles/empty.dir/empty.c.obj"),
+            self.root / "empty.c",
+            Path("zephyr/libempty.a"),
+        )
+        usage.write_text("", encoding="utf-8")
+        graph.write_text(
+            "Initial Symbol table:\n\n"
+            "unused_inline/1 (unused_inline)\n"
+            "  Type: function definition\n"
+            "  Calls: \n"
+            "Optimized Symbol table:\n\n"
+            "Trivially needed variables:\n"
+            "Removing variables:\n\n"
+            "Final Symbol table:\n",
+            encoding="utf-8",
+        )
+        linker_map.write_text(
+            "Archive member included to satisfy reference by file (symbol)\n\n"
+            "zephyr/libempty.a(empty.c.obj) (--whole-archive)\n\n"
+            "Discarded input sections\n"
+            " .text 0x0000000000000000 0x0 "
+            "zephyr/libempty.a(empty.c.obj)\n"
+            "Linker script and memory map\n",
+            encoding="utf-8",
+        )
+
+        records, nodes, synchronous = verifier._parse_tu_compiler_evidence(
+            usage,
+            graph,
+            "empty.c [empty.c.obj]",
+            Path("empty.c.obj"),
+            final_map_path=linker_map,
+            linked_object=linked_object,
+        )
+
+        self.assertEqual([], records)
+        self.assertEqual({}, nodes)
+        self.assertEqual({}, synchronous)
+
+        graph.write_text(
+            graph.read_text(encoding="utf-8").replace(
+                "Trivially needed variables:\n",
+                "unexpected truncated evidence\n",
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            verifier.EvidenceError, "no analyzed definitions"
+        ):
+            verifier._parse_tu_compiler_evidence(
+                usage,
+                graph,
+                "empty.c [empty.c.obj]",
+                Path("empty.c.obj"),
+                final_map_path=linker_map,
+                linked_object=linked_object,
+            )
+
+        usage.write_text(
+            f"{self.root / 'empty.c'}:1:1:lost_frame\t64\tstatic\n",
+            encoding="utf-8",
+        )
+        graph.write_text(
+            "Initial Symbol table:\n\n"
+            "Optimized Symbol table:\n\n"
+            "Final Symbol table:\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            verifier.EvidenceError, "no analyzed definitions"
+        ):
+            verifier._parse_tu_compiler_evidence(
+                usage,
+                graph,
+                "empty.c [empty.c.obj]",
+                Path("empty.c.obj"),
+                final_map_path=linker_map,
+                linked_object=linked_object,
+            )
+
+        usage.write_text("", encoding="utf-8")
+        linker_map.write_text(
+            linker_map.read_text(encoding="utf-8")
+            + " .text.live_function\n"
+            + "                0x0000000000010000 0x20 "
+            + "zephyr/libempty.a(empty.c.obj)\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            verifier.EvidenceError, "no analyzed definitions"
+        ):
+            verifier._parse_tu_compiler_evidence(
+                usage,
+                graph,
+                "empty.c [empty.c.obj]",
+                Path("empty.c.obj"),
+                final_map_path=linker_map,
+                linked_object=linked_object,
+            )
+
+    def test_empty_stack_usage_is_rejected_when_cgraph_has_function(self) -> None:
+        usage = self.root / "function.su"
+        graph = self.root / "function.c.000i.cgraph"
+        usage.write_text("", encoding="utf-8")
+        graph.write_text(
+            "Initial Symbol table:\n"
+            "function/1 (function)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: \n"
+            "Optimized Symbol table:\n"
+            "function/1 (function)\n"
+            "  Type: function definition analyzed\n"
+            "  Calls: \n"
+            "Final Symbol table:\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            verifier.EvidenceError,
+            "empty compiler stack evidence",
+        ):
+            verifier._parse_tu_compiler_evidence(
+                usage,
+                graph,
+                "function.c [function.c.obj]",
+                Path("function.c.obj"),
+            )
+
+    def test_live_data_reference_is_resolved_as_a_variable_node(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        evidence = verifier.BuildEvidence(self.root)
+        linked = [verifier.StackUsage(Path("root.c"), 1, "root", 64, "static")]
+        graph = {
+            ("root.c", "root"): {
+                verifier._CGRAPH_DATA_REFERENCE_PREFIX + "shared_state"
+            },
+            ("state.c", verifier._CGRAPH_VARIABLE_PREFIX + "shared_state"): set(),
+        }
+
+        verifier._attribute_linked_functions(
+            evidence,
+            policy,
+            linked,
+            graph,
+            {("root.c", "root"): {"main"}},
+            self.frame_limit,
+        )
+
+        self.assertEqual([], evidence.issues)
+
     def test_disabled_boolean_may_be_absent_but_required_values_may_not(self) -> None:
         policy = self.policies["mesh_anchor"]
         build = self._write_build(policy)
@@ -354,6 +822,257 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         missing = verifier.verify_build(build, self.policies, self.frame_limit)
         self.assertTrue(any("CONFIG_MAIN_STACK_SIZE" in issue for issue in missing.issues), missing.issues)
+
+    def test_exact_gateway_fit_booleans_are_generated_config_contract(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        expected = {
+            "CONFIG_ADC": False,
+            "CONFIG_BT_CTLR_ECDH": False,
+            "CONFIG_BT_CTLR_LE_ENC": False,
+            "CONFIG_BT_GATT_CACHING": False,
+            "CONFIG_BT_GATT_READ_MULTIPLE": False,
+            "CONFIG_BT_GATT_READ_MULT_VAR_LEN": False,
+            "CONFIG_BT_GATT_SERVICE_CHANGED": True,
+            "CONFIG_BT_CTLR_CRYPTO": True,
+        }
+        self.assertEqual(expected, verifier.GATEWAY_FIT_REQUIRED_CONFIG)
+
+        accepted = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        self.assertEqual([], accepted.issues)
+
+        for key, required in expected.items():
+            with self.subTest(key=key):
+                build = self._write_build(policy)
+                config = build / "zephyr" / ".config"
+                retained = [
+                    line
+                    for line in config.read_text(encoding="utf-8").splitlines()
+                    if line != f"# {key} is not set"
+                    and not line.startswith(f"{key}=")
+                ]
+                retained.append(_line(key, not required))
+                config.write_text("\n".join(retained) + "\n", encoding="utf-8")
+
+                rejected = verifier.verify_build(
+                    build, self.policies, self.frame_limit
+                )
+                self.assertTrue(
+                    any(key in issue for issue in rejected.issues),
+                    rejected.issues,
+                )
+
+    def test_gateway_fit_booleans_do_not_constrain_non_gateway_presets(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        build = self._write_build(policy)
+        config = build / "zephyr" / ".config"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + "\n".join(
+                _line(key, not required)
+                for key, required in verifier.GATEWAY_FIT_REQUIRED_CONFIG.items()
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        evidence = verifier.verify_build(
+            build, self.policies, self.frame_limit
+        )
+        self.assertEqual([], evidence.issues)
+
+    def test_watchdog_bypass_is_bench_only_and_cannot_promote(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        build = self._write_build(policy)
+        config = build / "zephyr" / ".config"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + "CONFIG_IMEC_WATCHDOG_BYPASS=y\n",
+            encoding="utf-8",
+        )
+
+        production = verifier.verify_build(
+            build, self.policies, self.frame_limit
+        )
+        self.assertTrue(
+            any("bench-only" in issue for issue in production.issues),
+            production.issues,
+        )
+
+        bench = verifier.verify_build(
+            build,
+            self.policies,
+            self.frame_limit,
+            allow_watchdog_bypass=True,
+        )
+        self.assertEqual([], bench.issues)
+
+    def test_watchdog_bypass_is_limited_to_the_forcedhop_anchor_bench(self) -> None:
+        forcedhop = self.policies["mesh_anchor_forcedhop"]
+        forcedhop_build = self._write_build(forcedhop)
+        forcedhop_config = forcedhop_build / "zephyr" / ".config"
+        forcedhop_config.write_text(
+            forcedhop_config.read_text(encoding="utf-8")
+            + "CONFIG_IMEC_WATCHDOG_BYPASS=y\n",
+            encoding="utf-8",
+        )
+        accepted = verifier.verify_build(
+            forcedhop_build, self.policies, self.frame_limit
+        )
+        self.assertEqual([], accepted.issues)
+        self.assertNotIn(
+            "mesh_anchor_forcedhop", verifier.DEPLOYABLE_PRESETS
+        )
+
+        transmitter = self.policies["mesh_transmitter_forcedhop"]
+        transmitter_build = self._write_build(transmitter)
+        transmitter_config = transmitter_build / "zephyr" / ".config"
+        transmitter_config.write_text(
+            transmitter_config.read_text(encoding="utf-8")
+            + "CONFIG_IMEC_WATCHDOG_BYPASS=y\n",
+            encoding="utf-8",
+        )
+        rejected = verifier.verify_build(
+            transmitter_build,
+            self.policies,
+            self.frame_limit,
+            allow_watchdog_bypass=True,
+        )
+        self.assertTrue(
+            any("not allowed" in issue for issue in rejected.issues),
+            rejected.issues,
+        )
+
+    def test_durable_state_features_are_required_for_deployable_and_bench_images(self) -> None:
+        for preset in sorted(verifier.DURABLE_STATE_PRESETS):
+            with self.subTest(preset=preset):
+                policy = self.policies[preset]
+                for key in ("CONFIG_IMEC_DURABLE_STATE", "CONFIG_NVS"):
+                    build = self._write_build(policy)
+                    config = build / "zephyr" / ".config"
+                    config.write_text(
+                        "\n".join(
+                            line
+                            for line in config.read_text(encoding="utf-8").splitlines()
+                            if not line.startswith(f"{key}=")
+                        ) + "\n",
+                        encoding="utf-8",
+                    )
+                    rejected = verifier.verify_build(
+                        build, self.policies, self.frame_limit
+                    )
+                    self.assertTrue(
+                        any(key in issue for issue in rejected.issues),
+                        rejected.issues,
+                    )
+
+    def test_durable_state_storage_partition_must_be_present_enabled_and_usable(self) -> None:
+        policy = self.policies["mesh_gateway"]
+
+        build = self._write_build(policy)
+        dts = build / "zephyr" / "zephyr.dts"
+        dts.write_text("/dts-v1/; / {};\n", encoding="utf-8")
+        missing = verifier.verify_build(build, self.policies, self.frame_limit)
+        self.assertTrue(
+            any("lacks storage_partition" in issue for issue in missing.issues),
+            missing.issues,
+        )
+
+        build = self._write_build(policy)
+        dts = build / "zephyr" / "zephyr.dts"
+        dts.write_text(
+            dts.read_text(encoding="utf-8").replace(
+                'status = "okay";', 'status = "disabled";'
+            ),
+            encoding="utf-8",
+        )
+        disabled = verifier.verify_build(build, self.policies, self.frame_limit)
+        self.assertTrue(
+            any("status is 'disabled'" in issue for issue in disabled.issues),
+            disabled.issues,
+        )
+
+        build = self._write_build(policy)
+        dts = build / "zephyr" / "zephyr.dts"
+        dts.write_text(
+            dts.read_text(encoding="utf-8").replace(
+                "< 0x7a000 0x6000 >", "< 0x7a001 0x1000 >"
+            ),
+            encoding="utf-8",
+        )
+        unusable = verifier.verify_build(build, self.policies, self.frame_limit)
+        self.assertTrue(
+            any("not 4096-byte aligned" in issue for issue in unusable.issues),
+            unusable.issues,
+        )
+        self.assertTrue(
+            any("size 4096 is below 8192" in issue for issue in unusable.issues),
+            unusable.issues,
+        )
+
+        build = self._write_build(policy)
+        linker_map = build / "zephyr" / "zephyr.map"
+        linker_map.write_text(
+            linker_map.read_text(encoding="utf-8").replace(
+                "0x0000000000070000 _flash_used",
+                "0x000000000007b000 _flash_used",
+            ),
+            encoding="utf-8",
+        )
+        overlapping = verifier.verify_build(
+            build, self.policies, self.frame_limit
+        )
+        self.assertTrue(
+            any("overlaps storage_partition" in issue
+                for issue in overlapping.issues),
+            overlapping.issues,
+        )
+
+    def test_durable_state_accepts_exact_partition_boundary_and_rejects_overlap(self) -> None:
+        policy = self.policies["mesh_gateway"]
+
+        boundary_build = self._write_build(policy)
+        boundary_map = boundary_build / "zephyr" / "zephyr.map"
+        boundary_map.write_text(
+            boundary_map.read_text(encoding="utf-8").replace(
+                "0x0000000000070000 _flash_used",
+                "0x000000000007a000 _flash_used",
+            ),
+            encoding="utf-8",
+        )
+        boundary = verifier.verify_build(
+            boundary_build, self.policies, self.frame_limit
+        )
+        self.assertEqual([], boundary.issues)
+
+        overlap_build = self._write_build(policy)
+        overlap_map = overlap_build / "zephyr" / "zephyr.map"
+        overlap_map.write_text(
+            overlap_map.read_text(encoding="utf-8").replace(
+                "0x0000000000070000 _flash_used",
+                "0x000000000007a001 _flash_used",
+            ),
+            encoding="utf-8",
+        )
+        overlap = verifier.verify_build(
+            overlap_build, self.policies, self.frame_limit
+        )
+        self.assertTrue(
+            any(
+                "linked image [0x0,0x7a001) overlaps "
+                "storage_partition [0x7a000,0x80000)" in issue
+                for issue in overlap.issues
+            ),
+            overlap.issues,
+        )
+
+    def test_durable_state_gate_does_not_apply_to_synthetic_transmitter(self) -> None:
+        policy = self.policies["mesh_transmitter_forcedhop"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+        self.assertEqual([], build.issues)
 
     def test_rooted_call_graph_requires_exact_reachability(self) -> None:
         policy = self.policies["mesh_anchor"]
@@ -589,10 +1308,18 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
     def test_anchor_capture_requires_survey_owner_queue_with_exact_stack(self) -> None:
         policy = self.policies["mesh_anchor"]
-        build = verifier.BuildEvidence(self.root, preset="mesh_anchor")
+        build = verifier.BuildEvidence(
+            self.root,
+            preset="mesh_anchor",
+            config={
+                "CONFIG_STACK_ALIGN_DOUBLE_WORD": True,
+                "CONFIG_MPU_STACK_GUARD": True,
+                "CONFIG_ARM_MPU_REGION_MIN_ALIGN_AND_SIZE": "32",
+            },
+        )
         required = verifier._required_threads(build, policy)
 
-        self.assertEqual(required["anchor_uwb_scan"], 6912)
+        self.assertEqual(required["anchor_uwb_scan"], 7232)
         rows = {
             name: (size - verifier._required_free(size),
                    verifier._required_free(size), size)
@@ -626,7 +1353,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertNotIn("main", required)
         self.assertNotIn("BT HCI TX", required)
         self.assertNotIn("BT RX", required)
-        self.assertEqual(4288, required["sysworkq"])
+        self.assertEqual(4480, required["sysworkq"])
         self.assertEqual(8192, required["mesh_route"])
         self.assertEqual(policy.bt_rx_bytes, required["BT RX WQ"])
         self.assertGreaterEqual(required["BT RX WQ"], 1536)
@@ -688,13 +1415,15 @@ class StackEvidenceVerifierTests(unittest.TestCase):
     def test_compiler_address_taken_callback_is_a_conservative_edge(self) -> None:
         graph = self.root / "callback.c.c.000i.cgraph"
         graph.write_text(
+            "Optimized Symbol table:\n"
             "root/1 (root)\n"
             "  Type: function definition analyzed\n"
             "  References: callback/2 (addr)\n"
             "  Calls: \n"
             "callback/2 (callback)\n"
             "  Type: function definition analyzed\n"
-            "  Calls: \n",
+            "  Calls: \n"
+            "Final Symbol table:\n",
             encoding="utf-8",
         )
         parsed = verifier._parse_cgraph(graph, "callback.c")
@@ -703,9 +1432,69 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             parsed[("callback.c", "root")],
         )
 
+    def test_data_address_is_not_misclassified_as_a_callback(self) -> None:
+        graph = self.root / "data-ref.c.c.000i.cgraph"
+        graph.write_text(
+            "Optimized Symbol table:\n"
+            "root/1 (root)\n"
+            "  Type: function definition analyzed\n"
+            "  References: __region_start/2 (addr)\n"
+            "  Calls: \n"
+            "__region_start/2 (__region_start)\n"
+            "  Type: variable\n"
+            "  References: \n"
+            "Final Symbol table:\n",
+            encoding="utf-8",
+        )
+
+        parsed = verifier._parse_cgraph(graph, "data-ref.c")
+
+        self.assertEqual(
+            {verifier._CGRAPH_DATA_REFERENCE_PREFIX + "__region_start"},
+            parsed[("data-ref.c", "root")],
+        )
+
+    def test_tu_qualified_callback_root_stops_inherited_owner(self) -> None:
+        policy = self.policies["mesh_gateway"]
+        evidence = verifier.BuildEvidence(self.root)
+        main_tu = "firmware/app/src/main.c [CMakeFiles/app.dir/main.c.obj]"
+        worker_tu = (
+            "firmware/app/src/worker.c [CMakeFiles/app.dir/worker.c.obj]"
+        )
+        linked = [
+            verifier.StackUsage(Path("main.c"), 1, "main", 64, "static",
+                                main_tu),
+            verifier.StackUsage(Path("worker.c"), 1, "work_handler", 64,
+                                "static", worker_tu),
+            verifier.StackUsage(Path("worker.c"), 2, "worker_helper", 4097,
+                                "static", worker_tu),
+        ]
+        graph = {
+            (main_tu, "main"): {
+                verifier._CGRAPH_REFERENCE_PREFIX + "work_handler"
+            },
+            (worker_tu, "work_handler"): {"worker_helper"},
+            (worker_tu, "worker_helper"): set(),
+        }
+        roots = {
+            ("main.c", "main"): {"main"},
+            ("worker.c", "work_handler"): {"system_workqueue"},
+        }
+
+        verifier._attribute_linked_functions(
+            evidence, policy, linked, graph, roots, self.frame_limit
+        )
+
+        self.assertFalse(
+            any("owner=main" in issue for issue in evidence.issues),
+            evidence.issues,
+        )
+        self.assertEqual(3, evidence.attributed_usage_count)
+
     def test_compiler_func_strings_do_not_join_unrelated_functions(self) -> None:
         graph = self.root / "func-string.c.c.000i.cgraph"
         graph.write_text(
+            "Optimized Symbol table:\n"
             "first/1 (first)\n"
             "  Type: function definition analyzed\n"
             "  References: __func__/2 (read)\n"
@@ -721,7 +1510,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "__func__/4 (__func__)\n"
             "  Type: variable definition analyzed\n"
             "  References: \n"
-            "  Varpool flags: initialized read-only const-value-known\n",
+            "  Varpool flags: initialized read-only const-value-known\n"
+            "Final Symbol table:\n",
             encoding="utf-8",
         )
 
@@ -735,6 +1525,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
     def test_callback_and_ops_variables_preserve_exact_stack_ownership(self) -> None:
         graph_file = self.root / "callback.c.c.000i.cgraph"
         graph_file.write_text(
+            "Optimized Symbol table:\n"
             "root/1 (root)\n"
             "  Type: function definition analyzed\n"
             "  References: callback_ops/2 (read)\n"
@@ -751,7 +1542,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "  Calls: \n"
             "unrooted/5 (unrooted)\n"
             "  Type: function definition analyzed\n"
-            "  Calls: \n",
+            "  Calls: \n"
+            "Final Symbol table:\n",
             encoding="utf-8",
         )
         graph = verifier._parse_cgraph(graph_file, "callback.c")

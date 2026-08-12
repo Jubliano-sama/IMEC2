@@ -48,7 +48,7 @@ static atomic_t receive_abort_enabled;
 #endif
 
 #ifndef DEVICE_ID
-#if IMEC_USE_HARDWARE_ANCHOR_ID
+#if IMEC_USE_HARDWARE_DEVICE_ID
 #define DEVICE_ID app_device_id()
 #elif DEVICE_ROLE == ROLE_ANCHOR
 #define DEVICE_ID 0x2222222222222222ull

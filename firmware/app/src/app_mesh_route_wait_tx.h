@@ -3,6 +3,7 @@
 
 #include "app_mesh_direct_gateway_retry.h"
 #include "protocol.h"
+#include "semantic_digest.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,11 +20,23 @@ enum app_mesh_route_wait_tx_action {
 
 enum app_mesh_route_wait_tx_owner {
     APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC = 0,
-    APP_MESH_ROUTE_WAIT_TX_OWNER_DURABLE_LOCAL,
+    APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL,
+    APP_MESH_ROUTE_WAIT_TX_OWNER_TRANSIT_GATEWAY_ACK,
 };
 
 bool app_mesh_route_wait_tx_may_store(
     enum app_mesh_route_wait_tx_owner owner);
+
+/* Match one clear request to the exact route-wait owner and full immutable
+ * packet commitment. The transport owner supplies semantic digests that
+ * commit the full payload; TTL and message age are retry-local fields. */
+bool app_mesh_route_wait_tx_clear_matches(
+    enum app_mesh_route_wait_tx_owner active_owner,
+    const struct proto_packet *active_packet,
+    const uint8_t active_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    enum app_mesh_route_wait_tx_owner expected_owner,
+    const struct proto_packet *expected_packet,
+    const uint8_t expected_digest[SEMANTIC_DIGEST_SHA256_LEN]);
 
 struct app_mesh_route_retry_identity {
     enum app_mesh_direct_gateway_retry_mode mode;

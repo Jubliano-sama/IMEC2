@@ -21,6 +21,12 @@ REPORT_DELIVERY = (
 REPORT_TRANSPORT = (
     ROOT / "app" / "src" / "app_mesh_report_transport.inc"
 ).read_text(encoding="utf-8")
+REPORT_EVENT_TX = (
+    ROOT / "app" / "src" / "app_mesh_report_event_tx.inc"
+).read_text(encoding="utf-8")
+ANCHOR_RADIO = (
+    ROOT / "app" / "src" / "app_anchor_radio.inc"
+).read_text(encoding="utf-8")
 APP_CONFIG = (ROOT / "app" / "src" / "app_config.h").read_text(
     encoding="utf-8"
 )
@@ -57,6 +63,55 @@ def braced_block_after(source: str, marker: str) -> str:
 
 
 class MeshRfRetrySourceInvariantTests(unittest.TestCase):
+    def test_inline_channel9_responses_publish_gateway_control_handoff(self):
+        helper = function_body(
+            REPORT, "mesh_send_causal_channel9_response"
+        )
+        begin = helper.index("mesh_rx_handoff_begin_control(")
+        stop = helper.index("mesh_stop_role_scan()", begin)
+        wait = helper.index("mesh_rx_handoff_wait_for_control()", stop)
+        send = helper.index(
+            "mesh_send_outbound_keep_channel9_awake(", wait
+        )
+        end = helper.index("mesh_rx_handoff_end_control()", send)
+        restart = helper.index("mesh_restart_role_scan()", end)
+
+        self.assertLess(begin, stop)
+        self.assertLess(stop, wait)
+        self.assertLess(wait, send)
+        self.assertLess(send, end)
+        self.assertLess(end, restart)
+        self.assertIn("if (DEVICE_ROLE == ROLE_GATEWAY)", helper)
+        self.assertIn("if (abort_scan)", helper)
+        self.assertIn("DWM3000_RECEIVE_ABORT_MESH_CONTROL", helper)
+
+        # The definition plus both immediate single-ACK policy branches and
+        # the batch-ACK call are the complete non-deferred causal Channel-9
+        # send surface.
+        self.assertEqual(
+            REPORT.count("mesh_send_causal_channel9_response("), 4
+        )
+
+    def test_failed_direct_probe_ack_remains_sender_retry_owned(self):
+        delivery = function_body(REPORT, "mesh_handle_result_actions")
+        route_probe = delivery.index(
+            "rx->packet.msg_type == MSG_GATEWAY_ROUTE_REQ"
+        )
+        retry_owned = delivery.index(
+            "DBG_GATEWAY_ROUTE_PROBE_ACK_RETRY_OWNED", route_probe
+        )
+        drop = delivery.index("goto after_gateway_ack;", retry_owned)
+        durable_submit = delivery.index(
+            "app_node_comm_submit_control_response(", drop
+        )
+        narrow_path = delivery[route_probe:drop]
+
+        self.assertLess(route_probe, retry_owned)
+        self.assertLess(retry_owned, drop)
+        self.assertLess(drop, durable_submit)
+        self.assertNotIn("app_node_comm_submit", narrow_path)
+        self.assertNotIn("*gateway_ack_handed_off = true", narrow_path)
+
     def test_direct_gateway_probe_checks_control_lane_before_channel9(self):
         body = function_body(
             REPORT, "mesh_send_direct_gateway_probe_and_wait"
@@ -74,6 +129,225 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         )
         self.assertIn("mesh_restart_role_scan()", body)
 
+    def test_direct_gateway_probe_yields_queued_rx_before_retrying_rf(self):
+        body = function_body(
+            REPORT, "mesh_try_direct_gateway_route_probe"
+        )
+        attempt_loop = body.index("while (true)")
+        send = body.index(
+            "ret = mesh_send_direct_gateway_probe_and_wait", attempt_loop
+        )
+        success = body.index("if (ret == 0)", send)
+        retry_note = body.index(
+            "app_mesh_direct_gateway_retry_note(", success
+        )
+        sleep = body.index("k_msleep(retry_decision.delay_ms)", retry_note)
+        unlock = body.index(
+            "k_mutex_unlock(&mesh_direct_gateway_probe_scratch_lock)", sleep
+        )
+
+        pre_attempt = body[attempt_loop:send]
+        post_attempt = body[send:success]
+        self.assertRegex(
+            pre_attempt,
+            r"k_msgq_num_used_get\(&mesh_rx_msgq\)\s*!=\s*0u",
+        )
+        self.assertIn("break;", pre_attempt)
+        self.assertRegex(
+            post_attempt,
+            r"ret\s*!=\s*0\s*&&[\s\S]*"
+            r"k_msgq_num_used_get\(&mesh_rx_msgq\)\s*!=\s*0u",
+        )
+        self.assertIn("last_ret = -EAGAIN", post_attempt)
+        self.assertIn("break;", post_attempt)
+        self.assertLess(post_attempt.index("break;"), success - send)
+        self.assertLess(success, retry_note)
+        self.assertLess(retry_note, sleep)
+        self.assertLess(sleep, unlock)
+
+    def test_direct_ack_wait_returns_after_queuing_unmatched_valid_rx(self):
+        body = function_body(
+            REPORT, "mesh_wait_for_direct_gateway_ack_configured"
+        )
+        matched_queue = body.index("bool queued = mesh_queue_from_frame_at(")
+        unmatched = body.index(
+            "bool queued = mesh_queue_from_frame_at(", matched_queue + 1
+        )
+        tail = body[unmatched:]
+
+        self.assertRegex(
+            tail,
+            r"queued\s*&&\s*valid_mesh_frame",
+        )
+        deferral = tail.index("result_ret = -EAGAIN")
+        stop = tail.index("break;", deferral)
+        self.assertLess(deferral, stop)
+
+    def test_direct_probe_caller_yields_before_route_repair_rf(self):
+        body = function_body(REPORT, "mesh_request_route_owned")
+        probe = body.index("ret = mesh_try_direct_gateway_route_probe(")
+        policy = body.index(
+            "route_policy_state.direct_probe_ret = ret", probe
+        )
+        wake = body.index("mesh_send_route_wake_train(", policy)
+        between = body[probe:policy]
+
+        self.assertRegex(
+            between,
+            r"ret\s*!=\s*0\s*&&[\s\S]*"
+            r"k_msgq_num_used_get\(&mesh_rx_msgq\)\s*!=\s*0u",
+        )
+        self.assertIn("mesh_schedule_route_waiting_retry_after(", between)
+        self.assertIn("REPORT_TX_RETRY_DELAY_MS", between)
+        self.assertRegex(between, r"return\s+-E(?:BUSY|AGAIN)\s*;")
+        self.assertLess(probe, policy)
+        self.assertLess(policy, wake)
+
+    def test_untracked_route_probe_ack_is_consumed_without_queue(self):
+        body = function_body(
+            REPORT, "mesh_wait_for_direct_gateway_ack_configured"
+        )
+        match = body.index("mesh_direct_gateway_ack_matches_packet(")
+        tracked = body.index("if (apply_tracked_ack)", match)
+        consume = body.index(
+            "if (!apply_tracked_ack &&\n"
+            "                probe->packet.msg_type == MSG_GATEWAY_ROUTE_REQ)",
+            tracked,
+        )
+        queue = body.index("bool queued = mesh_queue_from_frame_at(", consume)
+        consume_block = body[consume:queue]
+
+        self.assertLess(match, queue)
+        self.assertLess(tracked, consume)
+        self.assertIn("debug->queued_frame = false", consume_block)
+        self.assertIn("debug->valid_frame = true", consume_block)
+        self.assertIn("result_ret = 0", consume_block)
+        self.assertIn("break;", consume_block)
+
+    def test_tracked_and_non_probe_direct_acks_keep_normal_rx_custody(self):
+        body = function_body(
+            REPORT, "mesh_wait_for_direct_gateway_ack_configured"
+        )
+        match = body.index("mesh_direct_gateway_ack_matches_packet(")
+        tracked = body.index("if (apply_tracked_ack)", match)
+        tracked_handler = body.index(
+            "mesh_ch9_tx_pending_handle_ack(", tracked
+        )
+        narrow_bypass = body.index("if (!apply_tracked_ack &&", tracked_handler)
+        route_only = body.index(
+            "probe->packet.msg_type == MSG_GATEWAY_ROUTE_REQ", narrow_bypass
+        )
+        queue = body.index("bool queued = mesh_queue_from_frame_at(", route_only)
+
+        self.assertLess(tracked, tracked_handler)
+        self.assertLess(tracked_handler, narrow_bypass)
+        self.assertLess(narrow_bypass, route_only)
+        self.assertLess(route_only, queue)
+
+    def test_route_continuations_do_not_inline_large_rx_drain(self):
+        route = function_body(REPORT, "mesh_request_route_owned")
+        rebroadcast = function_body(
+            REPORT, "mesh_execute_route_request_action"
+        )
+
+        self.assertNotIn("mesh_process_queued_rx_now", route)
+        self.assertNotIn("mesh_process_queued_rx_now", rebroadcast)
+
+    def test_rebroadcast_direct_probe_rearms_owner_before_rx_yield(self):
+        body = function_body(REPORT, "mesh_execute_route_request_action")
+        probe = body.index("ret = mesh_try_direct_gateway_route_probe(")
+        direct_success = body.index("if (ret == 0", probe)
+        wake = body.index("mesh_send_route_wake_train(", direct_success)
+        between = body[probe:direct_success]
+
+        self.assertRegex(
+            between,
+            r"ret\s*!=\s*0\s*&&[\s\S]*"
+            r"k_msgq_num_used_get\(&mesh_rx_msgq\)\s*!=\s*0u",
+        )
+        pending = between.index("mesh_route_request_action_pending = true")
+        reschedule = between.index("mesh_reschedule_owned_work(", pending)
+        self.assertIn(
+            "&mesh_route_request_action_work",
+            between[reschedule : reschedule + 180],
+        )
+        exits = [
+            between.find(marker, reschedule)
+            for marker in ("goto out;", "return false;")
+        ]
+        exits = [index for index in exits if index >= 0]
+        self.assertTrue(exits)
+        exit_index = min(exits)
+        self.assertLess(pending, reschedule)
+        self.assertLess(reschedule, exit_index)
+        self.assertLess(direct_success, wake)
+
+    def test_c5_flood_delay_yields_valid_rx_before_next_rf_attempt(self):
+        sleep_body = function_body(REPORT, "mesh_c5_flood_sleep_until_ms")
+        queue = sleep_body.index("mesh_queue_from_frame_at_internal(")
+        queued = sleep_body.index("if (queued)", queue)
+        submit = sleep_body.index("mesh_submit_owned_work(&mesh_rx_work", queued)
+        valid = sleep_body.index("valid_mesh_frame", submit)
+        yield_return = sleep_body.find("return;", submit)
+        loop_close = sleep_body.rindex("}")
+
+        self.assertLess(queue, queued)
+        self.assertLess(queued, submit)
+        self.assertLess(submit, valid)
+        self.assertGreaterEqual(yield_return, 0)
+        self.assertLess(submit, yield_return)
+        self.assertLess(yield_return, loop_close)
+
+        defer = function_body(REPORT, "mesh_c5_flood_defer_active_cb")
+        coordinator = defer.index("mesh_coordinator_decide_now(")
+        pending = defer.find("mesh_rx_pending_count()")
+        self.assertGreaterEqual(pending, 0)
+        self.assertLess(pending, coordinator)
+        self.assertRegex(
+            defer[pending:coordinator],
+            r"mesh_rx_pending_count\(\)\s*>\s*0u[\s\S]*return true;",
+        )
+
+    def test_route_reply_listener_releases_after_every_queued_owner_class(self):
+        body = function_body(REPORT, "mesh_listen_for_route_reply")
+        queue = body.index("mesh_queue_from_frame_at_internal(")
+        release = body.index(
+            'mesh_radio_standby_with_bounded_recovery(', queue
+        )
+        queued_tail = body[queue:release]
+
+        for classifier in (
+            "app_mesh_c5_route_capture_yields_to_competing_request",
+            "app_mesh_c5_route_capture_completes_discovery",
+            "mesh_packet_is_event_control_type",
+        ):
+            self.assertIn(
+                "break;", braced_block_after(queued_tail, classifier)
+            )
+        self.assertIn(
+            "break;",
+            braced_block_after(queued_tail, "if (gateway_priority_control)"),
+        )
+
+        submit = body.index("mesh_submit_owned_work(&mesh_rx_work", release)
+        self.assertLess(queue, release)
+        self.assertLess(release, submit)
+
+    def test_rx_drain_applies_ack_to_core_before_route_repair_rearm(self):
+        body = function_body(REPORT, "mesh_drain_rx_queue_locked")
+        tracked_ack = body.index("mesh_ch9_tx_pending_handle_ack(")
+        core = body.index("mesh_relay_handle_rx_with_random(", tracked_ack)
+        repair_action = body.index(
+            "MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_ROUTE_REPAIR", core
+        )
+        repair_schedule = body.index(
+            "mesh_schedule_route_request_authorized(", repair_action
+        )
+
+        self.assertLess(tracked_ack, core)
+        self.assertLess(core, repair_action)
+        self.assertLess(repair_action, repair_schedule)
+
     def test_route_request_pre_rf_busy_uses_identity_backoff(self):
         body = function_body(REPORT, "mesh_route_request_defer_rf_busy")
 
@@ -83,13 +357,58 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("APP_MESH_RF_RETRY_POLICY_WAKE_TRAIN", body)
         self.assertNotIn("MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS", body)
 
+    def test_route_discovery_backoff_gates_before_direct_probe_side_effect(self):
+        body = function_body(REPORT, "mesh_request_route_owned")
+        coordinator_gate = body.index("mesh_coordinator_mesh_work_allowed(")
+        backoff_gate = body.index(
+            "mesh_relay_route_discovery_backoff_pending("
+        )
+        exact_schedule = body.index(
+            "mesh_schedule_route_waiting_retry_after(", backoff_gate
+        )
+        policy = body.index("app_mesh_route_request_policy_decide(")
+        direct_probe = body.index("mesh_try_direct_gateway_route_probe(")
+
+        self.assertLess(coordinator_gate, backoff_gate)
+        self.assertLess(backoff_gate, exact_schedule)
+        self.assertLess(exact_schedule, policy)
+        self.assertLess(policy, direct_probe)
+        backoff_block = body[backoff_gate:policy]
+        self.assertIn("route_backoff_remaining_ms", backoff_block)
+        self.assertIn("return -EAGAIN", backoff_block)
+
+    def test_exact_async_coalesce_preserves_existing_retry_due_time(self):
+        body = function_body(
+            REPORT, "mesh_schedule_route_request_authorized"
+        )
+        snapshot_pending = body.index(
+            "prior_pending = mesh_route_discovery_request.pending"
+        )
+        submit = body.index("app_mesh_async_route_request_submit(")
+        same_generation = body.index(
+            "prior_generation == mesh_route_discovery_request.generation"
+        )
+        remaining_delay = body.index(
+            "app_mesh_async_route_request_retry_delay_ms(", same_generation
+        )
+        reschedule = body.index(
+            "mesh_reschedule_owned_work(&mesh_route_discovery_work",
+            remaining_delay,
+        )
+
+        self.assertLess(snapshot_pending, submit)
+        self.assertLess(submit, same_generation)
+        self.assertLess(same_generation, remaining_delay)
+        self.assertLess(remaining_delay, reschedule)
+        self.assertIn("schedule_delay_ms", body[remaining_delay:reschedule])
+
     def test_route_request_wake_success_cannot_clear_control_retry_round(self):
         body = function_body(REPORT, "mesh_request_route_owned")
         wake_success = body.index(
             "app_mesh_rf_retry_note_success(&mesh_route_request_wake_rf_retry"
         )
         control_send = body.index(
-            'mesh_send_outbound(&route_req, "route-request-control")'
+            "mesh_send_outbound_authorized("
         )
         control_failure = body.index(
             "app_mesh_rf_retry_reset(&mesh_route_request_control_rf_retry)"
@@ -170,6 +489,12 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             REPORT, "mesh_try_deferred_gateway_ack_on_channel9"
         )
         waiting_body = function_body(REPORT, "mesh_try_route_waiting_tx")
+        event_handler = function_body(
+            REPORT_EVENT_TX, "mesh_handle_event_control"
+        )
+        accept_finish = function_body(
+            REPORT_EVENT_TX, "mesh_event_accept_finish_send"
+        )
         attempted_branch = waiting_body.index("if (gateway_ack_send_attempted)")
         service_busy_branch = waiting_body.index("if (ret == -EBUSY)")
 
@@ -187,6 +512,50 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("gateway_ack_policy_deferred", waiting_body)
         self.assertIn("gateway-ack-channel5-deferral", waiting_body)
         self.assertIn("gateway_ack_wait_retry_delay_ms", waiting_body)
+
+        # The ACCEPT sender owns RX in the first/current negotiated event. A
+        # successful send installs that exact timing and arms its RX owner;
+        # gateway-ACK forwarding must therefore plan the following TX turn.
+        propose_start = event_handler.index(
+            "if (packet->msg_type == MSG_MESH_EVENT_PROPOSE)"
+        )
+        accept_rx_start = event_handler.index(
+            "} else if (packet->msg_type == MSG_MESH_EVENT_ACCEPT)",
+            propose_start,
+        )
+        propose = event_handler[propose_start:accept_rx_start]
+        rx_parity = propose.index(
+            "mesh_event_timing_set_local_first_slot_tx(&timing, false)"
+        )
+        accept_attempt = propose.index("mesh_event_accept_attempt(", rx_parity)
+        self.assertLess(rx_parity, accept_attempt)
+
+        install = accept_finish.index(
+            "mesh_install_channel9_timing_direction("
+        )
+        schedule_rx = accept_finish.index("mesh_schedule_uwb_rx(delay_ms)")
+        self.assertIn("negotiated_timing", accept_finish[install:schedule_rx])
+        self.assertLess(install, schedule_rx)
+
+        plan_wait = braced_block_after(
+            send_body, "plan.action == MESH_EVENT_PLAN_WAIT"
+        )
+        self.assertIn("app_mesh_ch9_wait_plan_retry_delay_ms(", plan_wait)
+        self.assertIn("wait_retry_delay_ms", plan_wait)
+        self.assertNotIn("REPORT_TX_RETRY_DELAY_MS", plan_wait)
+
+        service_wait = braced_block_after(waiting_body, "if (ret == -EBUSY)")
+        self.assertIn(
+            "uint32_t retry_delay_ms = gateway_ack_wait_retry_delay_ms",
+            service_wait,
+        )
+        self.assertIn(
+            "retry_delay_ms = MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS",
+            service_wait,
+        )
+        self.assertIn('"gateway-ack-channel9-wait"', service_wait)
+        self.assertIn("mesh_schedule_route_waiting_retry_after(", service_wait)
+        self.assertNotIn("REPORT_TX_RETRY_DELAY_MS", service_wait)
 
     def test_route_wait_delivery_separates_transport_attempt_from_service_wait(self):
         send_body = function_body(REPORT, "mesh_start_tracked_tx_with_retry")
@@ -243,7 +612,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         helper = function_body(
             REPORT, "mesh_try_repair_selected_parent_event"
         )
-        store = helper.index("mesh_store_route_waiting_tx(out)")
+        store = helper.index("mesh_store_route_waiting_tx_owned(")
         propose = helper.index(
             "mesh_propose_event_after_channel5_contact("
         )
@@ -393,7 +762,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             REPORT, "mesh_route_discovery_work_handler"
         )
         route_wait = function_body(REPORT, "mesh_try_route_waiting_tx")
-        async_submit = function_body(REPORT, "mesh_schedule_route_request")
+        async_submit = function_body(
+            REPORT, "mesh_schedule_route_request_authorized"
+        )
         init = function_body(REPORT, "app_mesh_report_init")
 
         self.assertEqual(REPORT.count("mesh_request_route("), 3)
@@ -517,6 +888,40 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(retry, success)
         self.assertIn("DBG_ANCHOR_CH9_REARM", body)
 
+    def test_anchor_low_duty_scan_blocks_live_channel9_ack_owner_before_ch5(self):
+        owner = function_body(
+            REPORT_DELIVERY, "mesh_report_ch9_ack_wait_active"
+        )
+        relay_snapshot = owner.index(
+            "relay_tx_active = mesh_relay_tx_active(&mesh_runtime)"
+        )
+        direct = owner.index("mesh_ch9_tx_pending_is_active()", relay_snapshot)
+        core = owner.index("app_mesh_ch9_core_ack_wait_active(", direct)
+        pending = owner.index("&mesh_runtime.pending", core)
+        relay = owner.index("relay_tx_active", pending)
+
+        self.assertLess(relay_snapshot, direct)
+        self.assertLess(direct, core)
+        self.assertLess(core, pending)
+        self.assertLess(pending, relay)
+
+        scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
+        snapshot = scan.index(
+            "ch9_ack_wait_active = mesh_report_ch9_ack_wait_active()"
+        )
+        blocked = scan.index("if (anchor_uwb_window_active() ||", snapshot)
+        claim = scan.index("radio_guard_uwb_claim(", blocked)
+        blocked_path = scan[blocked:claim]
+        schedule = blocked_path.index("anchor_uwb_scan_schedule_ms(retry_ms)")
+        leave = blocked_path.index("return;", schedule)
+        arm = scan.index("DBG_ANCHOR_CH5_SCAN_ARM", claim)
+        configure = scan.index("dwm3000_driver_configure_wake_mode()", arm)
+
+        self.assertIn("ch9_ack_wait_active", blocked_path[:schedule])
+        self.assertLess(schedule, leave)
+        self.assertLess(claim, arm)
+        self.assertLess(arm, configure)
+
     def test_pending_reliable_response_protects_next_local_tx_slot(self):
         required_source = REPORT_TRANSPORT[
             REPORT_TRANSPORT.index(
@@ -562,10 +967,12 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_route_reply_listener_hands_event_control_to_the_worker(self):
         body = function_body(REPORT, "mesh_listen_for_route_reply")
-        radio_stop = body.index("radio_guard_uwb_stop()")
-        submit = body.index("mesh_submit_owned_work(", radio_stop)
+        radio_finish = body.index(
+            "mesh_transport_radio_finish(&radio_lease, parking_ret)"
+        )
+        submit = body.index("mesh_submit_owned_work(", radio_finish)
 
-        self.assertLess(radio_stop, submit)
+        self.assertLess(radio_finish, submit)
         self.assertIn("DBG_EVENT_CTRL_POST_RX_QUEUED", body)
         self.assertNotIn("mesh_process_queued_rx_now", body)
 
@@ -577,11 +984,12 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "route_ready_generation = "
             "atomic_get(&mesh_route_ready_generation)"
         )
-        radio_start = listener.index(
-            'mesh_transport_radio_start("mesh route reply RX")', snapshot
+        radio_claim = listener.index(
+            "mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_RX,",
+            snapshot,
         )
         ready_check = listener.index(
-            "if (atomic_get(&mesh_route_ready_generation) !=", radio_start
+            "if (atomic_get(&mesh_route_ready_generation) !=", radio_claim
         )
         receive = listener.index(
             "ret = dwm3000_driver_receive_frame_continuous(", ready_check
@@ -593,10 +1001,12 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "mesh_radio_standby_with_bounded_recovery(",
             timeout_continue,
         )
-        radio_stop = listener.index("radio_guard_uwb_stop()", standby)
+        radio_finish = listener.index(
+            "mesh_transport_radio_finish(&radio_lease, parking_ret)", standby
+        )
 
-        self.assertLess(snapshot, radio_start)
-        self.assertLess(radio_start, ready_check)
+        self.assertLess(snapshot, radio_claim)
+        self.assertLess(radio_claim, ready_check)
         self.assertLess(ready_check, receive)
         self.assertIn("captured_route_reply = true", ready_branch)
         self.assertIn("last_ret = 0", ready_branch)
@@ -609,7 +1019,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         )
         self.assertLess(timeout, timeout_continue)
         self.assertLess(timeout_continue, standby)
-        self.assertLess(standby, radio_stop)
+        self.assertLess(standby, radio_finish)
 
         delivery = function_body(REPORT_DELIVERY, "mesh_handle_result_actions")
         ready_action = delivery.index(
@@ -628,8 +1038,10 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         ack_listener = function_body(
             REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply_ack"
         )
-        ack_guard_stop = ack_listener.index("radio_guard_uwb_stop()")
-        ack_click = ack_listener.index("if (click_captured)", ack_guard_stop)
+        ack_guard_finish = ack_listener.index(
+            "mesh_transport_radio_finish(&radio_lease, parking_ret)"
+        )
+        ack_click = ack_listener.index("if (click_captured)", ack_guard_finish)
         ack_clear = ack_listener.index(
             'mesh_c5_contact_clear("click-preempt")', ack_click
         )
@@ -639,26 +1051,28 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         ack_restart = ack_listener.index(
             "mesh_restart_role_scan()", ack_handoff
         )
-        self.assertLess(ack_guard_stop, ack_click)
+        self.assertLess(ack_guard_finish, ack_click)
         self.assertLess(ack_click, ack_clear)
         self.assertLess(ack_clear, ack_handoff)
         self.assertLess(ack_handoff, ack_restart)
         self.assertIn("k_mutex_unlock(&mesh_route_reply_ack_scratch_lock)",
-                      ack_listener[ack_guard_stop:ack_clear])
+                      ack_listener[ack_guard_finish:ack_clear])
         self.assertIn("if (!handled)", ack_listener[ack_handoff:ack_restart])
 
         listener = function_body(
             REPORT_ROUTE_CONTROL, "mesh_listen_for_route_reply"
         )
-        guard_stop = listener.index("radio_guard_uwb_stop()")
-        click = listener.index("if (click_captured)", guard_stop)
+        guard_finish = listener.index(
+            "mesh_transport_radio_finish(&radio_lease, parking_ret)"
+        )
+        click = listener.index("if (click_captured)", guard_finish)
         clear = listener.index(
             'mesh_c5_contact_clear("click-preempt")', click
         )
         handoff = listener.index("mesh_handoff_anchor_click_claim", clear)
         restart = listener.index("mesh_restart_role_scan()", handoff)
         pending = listener.index("mesh_submit_owned_work(", restart)
-        self.assertLess(guard_stop, click)
+        self.assertLess(guard_finish, click)
         self.assertLess(click, clear)
         self.assertLess(clear, handoff)
         self.assertLess(handoff, restart)
@@ -908,7 +1322,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
     def test_event_retry_scheduler_arms_wrapped_zero_due_time_explicitly(self):
         scheduler = function_body(REPORT, "mesh_event_negotiation_schedule_next")
         proposal = function_body(
-            REPORT, "mesh_propose_event_after_channel5_contact"
+            REPORT, "mesh_propose_event_after_channel5_contact_authorized"
         )
         parent_repair = function_body(
             REPORT, "mesh_try_repair_selected_parent_event"
@@ -1058,7 +1472,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
     def test_accept_confirms_retained_proposal_phase_and_duplicates_are_inert(self):
         classify = function_body(REPORT, "mesh_event_accept_rx_match")
         propose = function_body(
-            REPORT, "mesh_propose_event_after_channel5_contact"
+            REPORT, "mesh_propose_event_after_channel5_contact_authorized"
         )
         propose_send = propose.index("mesh_send_event_control_record")
         propose_failure = propose.index("if (ret < 0)", propose_send)
@@ -1100,7 +1514,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         )
 
     def test_accept_rx_cache_ends_with_its_proposal_or_connection(self):
-        propose = function_body(REPORT, "mesh_propose_event_after_channel5_contact")
+        propose = function_body(
+            REPORT, "mesh_propose_event_after_channel5_contact_authorized"
+        )
         new_proposal = propose.index("if (!mesh_event_propose_retry.active)")
         clear = propose.index(
             "mesh_event_accept_rx_clear()",
@@ -1145,12 +1561,15 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             REPORT,
         )
 
-    def test_stale_proposal_is_rejected_before_active_timing_replacement(self):
+    def test_proposal_services_supervision_before_owner_classification(self):
         handler_source = REPORT[
             REPORT.rindex("static bool mesh_handle_event_control") :
         ]
         handler = function_body(handler_source, "mesh_handle_event_control")
         proposal = handler.index("packet->msg_type == MSG_MESH_EVENT_PROPOSE")
+        expire = handler.index("mesh_expire_channel9_timings", proposal)
+        nonce = handler.index("mesh_event_owner_proposal_boot_nonce", proposal)
+        owner_lookup = handler.index("mesh_event_owner_for_peer", nonce)
         classify = handler.index(
             "mesh_event_owner_registry_classify_proposal", proposal
         )
@@ -1164,12 +1583,25 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         reserve = handler.index("app_mesh_c5_event_accept_reservation", active_lookup)
         prepare_accept = handler.index("mesh_prepare_event_control_record", reserve)
 
+        self.assertLess(expire, nonce)
+        self.assertLess(nonce, owner_lookup)
+        self.assertLess(owner_lookup, classify)
         self.assertLess(classify, reject)
         self.assertLess(reject, duplicate)
         self.assertIn("return true", handler[reject:active_lookup])
         self.assertLess(reject, active_lookup)
         self.assertLess(active_lookup, reserve)
         self.assertLess(reserve, prepare_accept)
+
+    def test_timing_expiry_retires_owner_before_erasing_timing(self):
+        expire = function_body(REPORT, "mesh_expire_channel9_timings")
+        unusable = expire.index("!mesh_event_timing_usable")
+        abandon = expire.index("mesh_event_owner_abandon_peer", unusable)
+        erase = expire.index("mesh_relay_expire_channel9_timings", abandon)
+
+        self.assertLess(unusable, abandon)
+        self.assertLess(abandon, erase)
+        self.assertIn("entry->valid", expire[:abandon])
 
 
 if __name__ == "__main__":

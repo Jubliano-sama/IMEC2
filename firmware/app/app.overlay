@@ -3,6 +3,11 @@
 #include <zephyr/dt-bindings/adc/nrf-saadc.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
 
+/* Sparse durable checkpoints use the board's explicit final flash region. */
+&storage_partition {
+    status = "okay";
+};
+
 / {
     aliases {
         /delete-property/ led0;

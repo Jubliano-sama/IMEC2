@@ -361,6 +361,7 @@ int operation_policy_assignment_required_budget_ms(
     uint32_t *required_budget_ms)
 {
     uint64_t collection_ms;
+    uint64_t table_collection_ms;
     uint64_t total_ms;
 
     if (policy == NULL || required_budget_ms == NULL ||
@@ -373,15 +374,18 @@ int operation_policy_assignment_required_budget_ms(
         return PROTO_ERR_ARG;
     }
 
-    collection_ms =
-        (uint64_t)discovery_assignment_response_custody_ms(
-            DISCOVERY_ASSIGNMENT_MAX_HOPS) +
-        DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-        policy->response_spread_ms - 1u;
+    collection_ms = discovery_assignment_collection_window_ms(
+        policy->response_spread_ms, DISCOVERY_ASSIGNMENT_MAX_HOPS);
+    table_collection_ms = discovery_assignment_table_collection_window_ms(
+        policy->response_spread_ms, DISCOVERY_ASSIGNMENT_MAX_HOPS);
     total_ms =
         (uint64_t)DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT *
             DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS +
-        2u * collection_ms +
+        collection_ms + table_collection_ms +
+        ((uint64_t)DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES *
+         discovery_assignment_response_custody_ms(
+             DISCOVERY_ASSIGNMENT_MAX_HOPS)) +
+        DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS +
         DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS +
         DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
         DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS +

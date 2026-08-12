@@ -6,6 +6,158 @@
 _Static_assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS > 0u,
                "survey pair control floor must be nonzero");
 
+static bool survey_gateway_due_owner_valid(enum survey_gateway_due_owner owner)
+{
+    return owner >= SURVEY_GATEWAY_DUE_ROUND_OBSERVATION &&
+           owner < SURVEY_GATEWAY_DUE_OWNER_COUNT;
+}
+
+static bool survey_gateway_due_reached(uint32_t now_ms, uint32_t due_ms)
+{
+    return (int32_t)(now_ms - due_ms) >= 0;
+}
+
+void survey_gateway_due_registry_init(
+    struct survey_gateway_due_registry *registry)
+{
+    if (registry != NULL) {
+        memset(registry, 0, sizeof(*registry));
+    }
+}
+
+bool survey_gateway_due_registry_next(
+    const struct survey_gateway_due_registry *registry,
+    uint32_t now_ms,
+    uint32_t *delay_ms)
+{
+    bool found = false;
+    uint32_t selected_delay_ms = 0u;
+
+    if (registry == NULL || delay_ms == NULL) {
+        return false;
+    }
+    for (size_t i = 0u; i < SURVEY_GATEWAY_DUE_OWNER_COUNT; i++) {
+        const uint8_t owner_bit = (uint8_t)(UINT8_C(1) << i);
+        uint32_t candidate_delay_ms;
+
+        if ((registry->valid_mask & owner_bit) == 0u) {
+            continue;
+        }
+        candidate_delay_ms = survey_gateway_due_reached(
+            now_ms, registry->due_ms[i]) ?
+                                 0u : registry->due_ms[i] - now_ms;
+        if (!found || candidate_delay_ms < selected_delay_ms) {
+            found = true;
+            selected_delay_ms = candidate_delay_ms;
+        }
+    }
+    if (found) {
+        *delay_ms = selected_delay_ms;
+    }
+    return found;
+}
+
+int survey_gateway_due_registry_rearm(
+    const struct survey_gateway_due_registry *registry,
+    uint32_t now_ms,
+    survey_gateway_due_arm_fn arm,
+    void *arm_context)
+{
+    uint32_t delay_ms;
+
+    if (registry == NULL || arm == NULL) {
+        return -EINVAL;
+    }
+    if (!survey_gateway_due_registry_next(registry, now_ms, &delay_ms)) {
+        return 0;
+    }
+    return arm(arm_context, delay_ms);
+}
+
+int survey_gateway_due_registry_schedule_after(
+    struct survey_gateway_due_registry *registry,
+    enum survey_gateway_due_owner owner,
+    uint32_t now_ms,
+    uint32_t delay_ms,
+    survey_gateway_due_arm_fn arm,
+    void *arm_context)
+{
+    uint8_t owner_bit;
+
+    if (registry == NULL || !survey_gateway_due_owner_valid(owner) ||
+        arm == NULL) {
+        return -EINVAL;
+    }
+    owner_bit = (uint8_t)(UINT8_C(1) << owner);
+    if ((registry->valid_mask & owner_bit) == 0u ||
+        (!survey_gateway_due_reached(now_ms, registry->due_ms[owner]) &&
+         delay_ms < registry->due_ms[owner] - now_ms)) {
+        registry->due_ms[owner] = now_ms + delay_ms;
+    }
+    registry->valid_mask |= owner_bit;
+    return survey_gateway_due_registry_rearm(registry, now_ms, arm,
+                                             arm_context);
+}
+
+void survey_gateway_due_registry_cancel(
+    struct survey_gateway_due_registry *registry,
+    enum survey_gateway_due_owner owner)
+{
+    if (registry == NULL || !survey_gateway_due_owner_valid(owner)) {
+        return;
+    }
+    registry->valid_mask &= (uint8_t)~(UINT8_C(1) << owner);
+}
+
+void survey_gateway_due_registry_consume_due(
+    struct survey_gateway_due_registry *registry,
+    uint32_t now_ms)
+{
+    if (registry == NULL) {
+        return;
+    }
+    for (size_t i = 0u; i < SURVEY_GATEWAY_DUE_OWNER_COUNT; i++) {
+        const uint8_t owner_bit = (uint8_t)(UINT8_C(1) << i);
+
+        if ((registry->valid_mask & owner_bit) != 0u &&
+            survey_gateway_due_reached(now_ms, registry->due_ms[i])) {
+            registry->valid_mask &= (uint8_t)~owner_bit;
+        }
+    }
+}
+
+bool survey_gateway_receive_in_interval(uint64_t first_received_at_ms,
+                                        uint32_t started_at_ms,
+                                        uint32_t deadline_ms)
+{
+    const uint32_t received_at_ms = (uint32_t)first_received_at_ms;
+
+    return deadline_ms != started_at_ms &&
+           survey_gateway_due_reached(deadline_ms, started_at_ms) &&
+           survey_gateway_due_reached(received_at_ms, started_at_ms) &&
+           !survey_gateway_due_reached(received_at_ms, deadline_ms);
+}
+
+void survey_gateway_observation_origin_reset(
+    struct survey_gateway_observation_origin *origin)
+{
+    if (origin != NULL) {
+        memset(origin, 0, sizeof(*origin));
+    }
+}
+
+bool survey_gateway_observation_origin_freeze(
+    struct survey_gateway_observation_origin *origin,
+    uint32_t started_at_ms)
+{
+    if (origin == NULL || origin->valid) {
+        return false;
+    }
+    origin->started_at_ms = started_at_ms;
+    origin->valid = true;
+    return true;
+}
+
 static uint8_t peer_mask(const struct survey_pair *pair, uint64_t target_id)
 {
     if (pair == NULL || target_id == 0u) {
@@ -199,6 +351,7 @@ int survey_gateway_transaction_begin(
     context->active_command_id = command_id;
     context->active_target_id = key->responder_id;
     context->active_started_at_ms = (uint32_t)now_ms;
+    context->close_intent = SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE;
     if (command_id == CMD_SURVEY_PREPARE_PAIR) {
         context->possible_prepare_mask |= target_mask;
     }
@@ -243,6 +396,23 @@ int survey_gateway_transaction_note_delivery_terminal(
         set_cleanup_from_side_effects(context, now_ms);
     }
     return 0;
+}
+
+int survey_gateway_transaction_note_delivery_redrive(
+    struct survey_gateway_transaction *context,
+    const struct node_comm_terminal_event *event,
+    uint64_t now_ms,
+    enum node_transaction_action *action)
+{
+    if (context == NULL) {
+        return -EINVAL;
+    }
+    if (context->close_intent !=
+        SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE) {
+        return -ECANCELED;
+    }
+    return node_transaction_note_request_redrive(
+        &context->active, event, now_ms, action);
 }
 
 int survey_gateway_transaction_reconcile_result(
@@ -354,6 +524,42 @@ bool survey_gateway_transaction_service(
     return expired;
 }
 
+int survey_gateway_transaction_request_close(
+    struct survey_gateway_transaction *context,
+    enum survey_gateway_transaction_close_intent intent)
+{
+    if (context == NULL ||
+        intent <= SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE ||
+        intent > SURVEY_GATEWAY_TRANSACTION_CLOSE_INTERNAL ||
+        context->active.state == NODE_TRANSACTION_EMPTY) {
+        return -EINVAL;
+    }
+    if (context->close_intent == intent) {
+        return 0;
+    }
+    if (context->close_intent != SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE) {
+        return -EALREADY;
+    }
+    context->close_intent = intent;
+    return 0;
+}
+
+enum survey_gateway_transaction_close_intent
+survey_gateway_transaction_close_requested(
+    const struct survey_gateway_transaction *context)
+{
+    return context == NULL ? SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE :
+                             context->close_intent;
+}
+
+void survey_gateway_transaction_clear_close_request(
+    struct survey_gateway_transaction *context)
+{
+    if (context != NULL) {
+        context->close_intent = SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE;
+    }
+}
+
 int survey_gateway_transaction_phase_complete(
     struct survey_gateway_transaction *context)
 {
@@ -373,6 +579,7 @@ int survey_gateway_transaction_phase_complete(
     context->active_command_id = CMD_VENDOR_BASE;
     context->active_target_id = 0u;
     context->active_started_at_ms = 0u;
+    context->close_intent = SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE;
     return 0;
 }
 
@@ -420,115 +627,6 @@ bool survey_gateway_transaction_pair_plan_fits_minimum_budget(
            (size_t)(remaining_ms / SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS);
 }
 
-void survey_gateway_response_ack_settle_init(
-    struct survey_gateway_response_ack_settle *state)
-{
-    if (state != NULL) {
-        memset(state, 0, sizeof(*state));
-    }
-}
-
-void survey_gateway_response_ack_settle_note_result(
-    struct survey_gateway_response_ack_settle *state,
-    uint64_t now_ms,
-    uint32_t operation_deadline_ms)
-{
-    uint32_t now_32;
-    uint32_t settle_deadline_ms;
-
-    if (state == NULL) {
-        return;
-    }
-    now_32 = (uint32_t)now_ms;
-    if ((int32_t)(now_32 - operation_deadline_ms) >= 0) {
-        return;
-    }
-    settle_deadline_ms =
-        now_32 + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
-    if ((int32_t)(settle_deadline_ms - operation_deadline_ms) >= 0) {
-        settle_deadline_ms = operation_deadline_ms;
-    }
-    if (state->active &&
-        (int32_t)(now_32 - state->deadline_ms) < 0) {
-        if ((int32_t)(state->deadline_ms - operation_deadline_ms) > 0) {
-            state->deadline_ms = operation_deadline_ms;
-        }
-        /*
-         * A phase owner may observe its accepted result more than once while
-         * delivery cancellation settles. Exact over-the-air duplicates use
-         * the explicit re-arm helper below.
-         */
-        return;
-    }
-    state->started_at_ms = now_32;
-    state->deadline_ms = settle_deadline_ms;
-    state->active = true;
-}
-
-void survey_gateway_response_ack_settle_note_duplicate(
-    struct survey_gateway_response_ack_settle *state,
-    uint64_t received_at_ms,
-    uint32_t operation_deadline_ms)
-{
-    uint32_t received_at_32;
-    uint32_t settle_deadline_ms;
-
-    if (state == NULL) {
-        return;
-    }
-    received_at_32 = (uint32_t)received_at_ms;
-    if ((int32_t)(received_at_32 - operation_deadline_ms) >= 0) {
-        return;
-    }
-    settle_deadline_ms =
-        received_at_32 + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
-    if ((int32_t)(settle_deadline_ms - operation_deadline_ms) >= 0) {
-        settle_deadline_ms = operation_deadline_ms;
-    }
-    if (state->active) {
-        /*
-         * Semantic validation can complete out of physical receive order.
-         * Preserve one continuous causal interval and never let an older
-         * duplicate shorten the quiet ownership established by a later one.
-         */
-        if ((int32_t)(received_at_32 - state->started_at_ms) < 0) {
-            state->started_at_ms = received_at_32;
-        }
-        if ((int32_t)(state->deadline_ms - operation_deadline_ms) >= 0) {
-            state->deadline_ms = operation_deadline_ms;
-        }
-        if ((int32_t)(settle_deadline_ms - state->deadline_ms) > 0) {
-            state->deadline_ms = settle_deadline_ms;
-        }
-    } else {
-        state->started_at_ms = received_at_32;
-        state->deadline_ms = settle_deadline_ms;
-    }
-    state->active = true;
-}
-
-bool survey_gateway_response_ack_settle_pending(
-    struct survey_gateway_response_ack_settle *state,
-    uint64_t now_ms)
-{
-    (void)now_ms;
-    return state != NULL && state->active;
-}
-
-bool survey_gateway_response_ack_settle_deadline_reached(
-    const struct survey_gateway_response_ack_settle *state,
-    uint64_t now_ms)
-{
-    return state != NULL && state->active &&
-           (int32_t)((uint32_t)now_ms - state->deadline_ms) >= 0;
-}
-
-void survey_gateway_response_ack_settle_complete(
-    struct survey_gateway_response_ack_settle *state)
-{
-    survey_gateway_response_ack_settle_init(state);
-}
-
 enum survey_gateway_drive_action survey_gateway_drive_action(
     const struct survey_gateway_drive_state *state)
 {
@@ -544,15 +642,13 @@ enum survey_gateway_drive_action survey_gateway_drive_action(
     if (state->boundary_pending) {
         return SURVEY_GATEWAY_DRIVE_RETRY_BOUNDARY;
     }
-    if (state->response_ack_settle_pending) {
-        return SURVEY_GATEWAY_DRIVE_NONE;
+    if (state->control_confirmation_pending) {
+        return SURVEY_GATEWAY_DRIVE_WAIT_CONFIRMATION;
     }
-    if (state->auto_waiting || state->pair_observation_active) {
+    if (state->control_inflight || state->round_observing) {
         return SURVEY_GATEWAY_DRIVE_POLL_WAIT;
     }
-    if ((state->auto_running || state->round_drive_ready) &&
-        !state->auto_waiting &&
-        !state->pair_observation_active) {
+    if (state->round_drive_ready) {
         return SURVEY_GATEWAY_DRIVE_RUN_NOW;
     }
     return SURVEY_GATEWAY_DRIVE_NONE;
@@ -649,6 +745,21 @@ int survey_gateway_transaction_note_cleanup_complete(
     return 0;
 }
 
+int survey_gateway_transaction_note_cleanup_lease_expired(
+    struct survey_gateway_transaction *context,
+    uint8_t peer_mask_value,
+    uint64_t now_ms)
+{
+    /*
+     * Expiry of the immutable remote PREPARE lease is terminal authority:
+     * the peer can no longer retain START_PENDING for this pair even when an
+     * ABORT result could not be obtained. Keep that proof distinct at the
+     * API boundary while sharing the exact local retirement transition.
+     */
+    return survey_gateway_transaction_note_cleanup_complete(
+        context, peer_mask_value, now_ms);
+}
+
 void survey_gateway_transaction_pair_complete(
     struct survey_gateway_transaction *context,
     bool success,
@@ -667,4 +778,5 @@ void survey_gateway_transaction_pair_complete(
     context->cleanup_deadline_ms = 0u;
     context->pair_loaded = false;
     context->abandoning = false;
+    context->close_intent = SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE;
 }

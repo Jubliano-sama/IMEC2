@@ -1,12 +1,13 @@
 #include "app_device_identity.h"
 
+#include "app_config.h"
 #include "device_identity.h"
 
 #include <zephyr/kernel.h>
 
 #include <errno.h>
 
-#if IMEC_USE_HARDWARE_ANCHOR_ID
+#if IMEC_USE_HARDWARE_DEVICE_ID
 #include <hal/nrf_ficr.h>
 #endif
 
@@ -16,12 +17,14 @@ static bool identity_ready;
 
 int app_device_identity_init(void)
 {
-#if IMEC_USE_HARDWARE_ANCHOR_ID
+#if IMEC_USE_HARDWARE_DEVICE_ID
     uint32_t word0 = nrf_ficr_deviceid_get(NRF_FICR, 0u);
     uint32_t word1 = nrf_ficr_deviceid_get(NRF_FICR, 1u);
 
     hardware_id = device_identity_ficr_value(word0, word1);
-    if (!device_identity_anchor_from_ficr(word0, word1, &network_id)) {
+    if (!device_identity_node_from_ficr(word0, word1, &network_id) ||
+        network_id == GATEWAY_ID ||
+        network_id == LEGACY_FIXED_CLICKER_ID) {
         hardware_id = 0u;
         network_id = 0u;
         identity_ready = false;

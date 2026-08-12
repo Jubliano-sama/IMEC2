@@ -18,6 +18,7 @@ from tools.gateway_gui.protocol import (
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     FLAG_COUNT_AS_CLICK,
     FLAG_DIAGNOSTIC,
+    FLAG_ERROR,
     FLAG_GATEWAY_ACK_REQUIRED,
     GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN,
     GATEWAY_HOST_RECEIPT_TLV_LEN,
@@ -29,9 +30,11 @@ from tools.gateway_gui.protocol import (
     GATEWAY_STREAM_VERSION,
     GatewayReceiveBuffer,
     MSG_CLICK_REPORT,
+    MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     MSG_GATEWAY_HOST_RECEIPT,
     MSG_MESH_DATA,
+    MSG_SURVEY_DISCOVERY_REPORT,
     PACKET_EXT_MAX_PAYLOAD_LEN,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_ANCHOR_ID,
@@ -40,6 +43,7 @@ from tools.gateway_gui.protocol import (
     TLV_CLICKER_CLOCK_OFFSET_RAW,
     TLV_COMMAND_ID,
     TLV_COMMAND_BUDGET_MS,
+    TLV_COMMAND_STATUS,
     TLV_DIAG_STATUS_FLAGS,
     TLV_DIAG_FRAGMENT_COUNT,
     TLV_DIAG_FRAGMENT_INDEX,
@@ -51,6 +55,7 @@ from tools.gateway_gui.protocol import (
     TLV_DISCOVERY_ASSIGNMENT_TABLE,
     TLV_EXPECTED_NODE_COUNT,
     TLV_OPERATION_POLICY,
+    TLV_NODE_BOOT_COUNTER,
     TLV_DISTANCE_MM,
     TLV_DISTANCE_SAMPLES_MM,
     TLV_DURATION_MS,
@@ -58,11 +63,14 @@ from tools.gateway_gui.protocol import (
     TLV_GATEWAY_HOST_RECEIPT_IDENTITY,
     TLV_QUALITY,
     TLV_RANGE_STATUS,
+    TLV_REASON,
+    TLV_REACHABILITY_ENTRY,
     TLV_RANGE_ROUND_INDICES,
     TLV_SAMPLE_COUNT,
     TLV_SAMPLE_INDEX,
     TLV_SEQUENCE_START_TIMESTAMPS_MS,
     TLV_SURVEY_ID,
+    TLV_SURVEY_OPERATION_GENERATION,
     TLV_TIMESTAMP_MS,
     TLV_ATTEMPT_INDEX,
     TLV_UWB_CIR_SAMPLE,
@@ -93,6 +101,8 @@ from tools.gateway_gui.protocol import (
     parse_stream_record,
     parse_tlvs,
     validate_click_payload,
+    validate_gateway_local_command_result_packet,
+    validate_survey_discovery_report,
 )
 
 
@@ -127,6 +137,47 @@ def click_payload() -> bytes:
     append_tlv(payload, TLV_UWB_CIR_SAMPLE, b"\x01\x02\x03\xfe\xff\xff")
     append_tlv(payload, 0xFE, b"\xaa\xbb")
     append_tlv(payload, 0xFE, b"\xcc")
+    return bytes(payload)
+
+
+def survey_discovery_payload(
+    *,
+    anchor_id: int = 0x5555666677778888,
+    survey_id: int = 0xAABBCCDD,
+    operation_generation: int = 0x1234567887654321,
+    boot_incarnation: int = 0x10203040,
+    entries: tuple[tuple[int, int, int], ...] = (
+        (0x1111222233334444, -61, 82),
+        (0x2222333344445555, -72, 63),
+    ),
+    command_status: int = 0,
+) -> bytes:
+    payload = bytearray()
+    append_tlv(payload, TLV_SURVEY_ID, survey_id.to_bytes(4, "little"))
+    append_tlv(payload, TLV_ANCHOR_ID, anchor_id.to_bytes(8, "little"))
+    for peer_id, rssi_dbm, quality in entries:
+        append_tlv(
+            payload,
+            TLV_REACHABILITY_ENTRY,
+            peer_id.to_bytes(8, "little")
+            + rssi_dbm.to_bytes(1, "little", signed=True)
+            + quality.to_bytes(1, "little"),
+        )
+    append_tlv(
+        payload,
+        TLV_SURVEY_OPERATION_GENERATION,
+        operation_generation.to_bytes(8, "little"),
+    )
+    append_tlv(
+        payload,
+        TLV_NODE_BOOT_COUNTER,
+        boot_incarnation.to_bytes(4, "little"),
+    )
+    append_tlv(
+        payload,
+        TLV_COMMAND_STATUS,
+        command_status.to_bytes(2, "little"),
+    )
     return bytes(payload)
 
 
@@ -210,6 +261,10 @@ def stream_record(
     msg_type: int = MSG_CLICK_REPORT,
     packet_flags: int = 0x24,
     stream_flags: int = 0,
+    packet_session_id: int | None = None,
+    packet_src_id: int = 0x5555666677778888,
+    packet_dst_id: int = 0x9999AAAABBBBCCCC,
+    packet_seq: int = 0x1234,
 ) -> bytes:
     record = bytearray(GATEWAY_STREAM_RECORD_HEADER_LEN)
     record[0:2] = GATEWAY_STREAM_MAGIC.to_bytes(2, "little")
@@ -221,17 +276,61 @@ def stream_record(
     record[7] = stream_flags
     record[8] = msg_type
     record[9] = packet_flags
-    record[10:12] = (0x1234).to_bytes(2, "little")
-    record[12:16] = click_report_session_id(
-        0x1111222233334444, 0x11223344
-    ).to_bytes(4, "little")
-    record[16:24] = (0x5555666677778888).to_bytes(8, "little")
-    record[24:32] = (0x9999AAAABBBBCCCC).to_bytes(8, "little")
+    record[10:12] = packet_seq.to_bytes(2, "little")
+    if packet_session_id is None:
+        packet_session_id = click_report_session_id(
+            0x1111222233334444, 0x11223344
+        )
+    record[12:16] = packet_session_id.to_bytes(4, "little")
+    record[16:24] = packet_src_id.to_bytes(8, "little")
+    record[24:32] = packet_dst_id.to_bytes(8, "little")
     record[32:36] = (17).to_bytes(4, "little")
     record[36:38] = len(payload).to_bytes(2, "little")
     record[38:40] = crc16_ccitt_false(payload).to_bytes(2, "little")
     record.extend(payload)
     return bytes(record)
+
+
+def gateway_assignment_event_payload(
+    *,
+    event_sequence: int = 0x10203040,
+    stage: int = 6,
+    flags: int = 0,
+    anchor_id: int = 0x5555666677778888,
+    discovery_slot: int = 4,
+    progress_count: int = 1,
+    total_count: int = 1,
+    success_count: int = 1,
+    failure_count: int = 0,
+) -> bytes:
+    raw = bytearray(78)
+    raw[0:8] = bytes((1, 78, 1, stage, flags, 0, 0, 0))
+    raw[8:10] = CMD_ASSIGN_DISCOVERY_SLOTS.to_bytes(2, "little")
+    raw[10:12] = (17).to_bytes(2, "little")
+    raw[12:16] = (0x55667788).to_bytes(4, "little")
+    raw[16:20] = (0x12345678).to_bytes(4, "little")
+    raw[20:24] = (0x55667788).to_bytes(4, "little")
+    raw[24:26] = (0x1234).to_bytes(2, "little")
+    raw[28:32] = event_sequence.to_bytes(4, "little")
+    raw[32:40] = anchor_id.to_bytes(8, "little")
+    raw[64:66] = progress_count.to_bytes(2, "little")
+    raw[66:68] = total_count.to_bytes(2, "little")
+    raw[68:70] = success_count.to_bytes(2, "little")
+    raw[70:72] = failure_count.to_bytes(2, "little")
+    raw[77] = discovery_slot
+    return bytes(raw)
+
+
+def gateway_local_command_result_payload(
+    *, command_id: int = CMD_ASSIGN_DISCOVERY_SLOTS, status: int = 0, reason: int = 0
+) -> bytes:
+    return (
+        bytes((TLV_COMMAND_ID, 2))
+        + command_id.to_bytes(2, "little")
+        + bytes((TLV_COMMAND_STATUS, 2))
+        + status.to_bytes(2, "little")
+        + bytes((TLV_REASON, 1, reason))
+    )
 
 
 def synthetic_truncated_payload() -> bytes:
@@ -326,7 +425,7 @@ class ProtocolTests(unittest.TestCase):
             encode_cobs_packet(
                 msg_type=MSG_CLICK_REPORT,
                 flags=0,
-                src_id=1,
+                src_id=0x5555666677778888,
                 dst_id=2,
                 session_id=3,
                 seq=4,
@@ -365,6 +464,270 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(third.errors, ())
         self.assertEqual(len(third.packets), 1)
         self.assertEqual(third.packets[0].seq, 0x1234)
+
+    def test_receive_buffer_admits_only_canonical_gateway_command_events(self) -> None:
+        gateway_id = 0x9999AAAABBBBCCCC
+        event_sequence = 0x10203040
+        payload = gateway_assignment_event_payload(event_sequence=event_sequence)
+        record = stream_record(
+            payload,
+            msg_type=MSG_GATEWAY_COMMAND_EVENT,
+            packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+            packet_src_id=gateway_id,
+            packet_dst_id=gateway_id,
+            packet_session_id=event_sequence,
+            packet_seq=event_sequence & 0xFFFF,
+        )
+        accepted = GatewayReceiveBuffer().feed(record)
+        self.assertEqual(accepted.errors, ())
+        self.assertEqual(len(accepted.packets), 1)
+        self.assertEqual(accepted.packets[0].msg_type, MSG_GATEWAY_COMMAND_EVENT)
+        receipt = build_gateway_host_receipt(
+            accepted.packets[0],
+            host_id=0xA1C1BEEFC0DE0001,
+            gateway_id=gateway_id,
+        )
+        self.assertEqual(receipt.identity.src_id, gateway_id)
+        self.assertEqual(receipt.identity.dst_id, gateway_id)
+        self.assertEqual(
+            receipt.identity.original_flags, FLAG_GATEWAY_ACK_REQUIRED
+        )
+
+        # Generic pre-commit claim progress deliberately has no durable
+        # assignment identity and no outer ACK flag. It remains visible but
+        # cannot acquire publisher/host-receipt custody.
+        precommit_payload = gateway_assignment_event_payload(
+            event_sequence=0x11223344,
+            discovery_slot=0xFF,
+            progress_count=1,
+            total_count=0,
+            success_count=0,
+            failure_count=0,
+        )
+        precommit = GatewayReceiveBuffer().feed(
+            stream_record(
+                precommit_payload,
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=0,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x11223344,
+                packet_seq=0x3344,
+            )
+        )
+        self.assertEqual(precommit.errors, ())
+        self.assertEqual(len(precommit.packets), 1)
+        with self.assertRaises(ValueError):
+            build_gateway_host_receipt(
+                precommit.packets[0],
+                host_id=0xA1C1BEEFC0DE0001,
+                gateway_id=gateway_id,
+            )
+
+        malformed_records = (
+            stream_record(
+                payload,
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=1,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_sequence,
+                packet_seq=event_sequence & 0xFFFF,
+            ),
+            stream_record(
+                payload,
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id + 1,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_sequence,
+                packet_seq=event_sequence & 0xFFFF,
+            ),
+            stream_record(
+                payload,
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_sequence + 1,
+                packet_seq=event_sequence & 0xFFFF,
+            ),
+            stream_record(
+                gateway_assignment_event_payload(
+                    event_sequence=0x11223344,
+                    discovery_slot=0xFF,
+                ),
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x11223344,
+                packet_seq=0x3344,
+            ),
+            stream_record(
+                payload[:-1],
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_sequence,
+                packet_seq=event_sequence & 0xFFFF,
+            ),
+        )
+        for record in malformed_records:
+            with self.subTest(record=record[:16]):
+                rejected = GatewayReceiveBuffer().feed(record)
+                self.assertEqual(rejected.packets, ())
+                self.assertEqual(len(rejected.errors), 1)
+                self.assertIn("decode failed", rejected.errors[0])
+
+    def test_gateway_local_command_result_receipt_boundary(self) -> None:
+        gateway_id = 0x9999AAAABBBBCCCC
+        local = GatewayReceiveBuffer().feed(
+            stream_record(
+                gateway_local_command_result_payload(),
+                msg_type=MSG_COMMAND_RESULT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x10203040,
+                packet_seq=0x3040,
+            )
+        )
+        self.assertEqual(local.errors, ())
+        self.assertEqual(len(local.packets), 1)
+        validate_gateway_local_command_result_packet(local.packets[0])
+        local_receipt = build_gateway_host_receipt(
+            local.packets[0],
+            host_id=0xA1C1BEEFC0DE0001,
+            gateway_id=gateway_id,
+        )
+        self.assertEqual(local_receipt.identity.original_msg_type, MSG_COMMAND_RESULT)
+        self.assertEqual(
+            local_receipt.identity.original_flags, FLAG_GATEWAY_ACK_REQUIRED
+        )
+
+        error_local = parse_stream_record(
+            stream_record(
+                gateway_local_command_result_payload(status=5),
+                msg_type=MSG_COMMAND_RESULT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_ERROR,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x10203041,
+                packet_seq=0x3041,
+            )
+        )
+        validate_gateway_local_command_result_packet(error_local)
+
+        # The same result type is valid for a mesh producer only with distinct
+        # endpoints and ACK-required custody; it must not be coerced local.
+        mesh_result = parse_stream_record(
+            stream_record(
+                gateway_local_command_result_payload(),
+                msg_type=MSG_COMMAND_RESULT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=0x1111222233334444,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x10203042,
+                packet_seq=0x3042,
+            )
+        )
+        mesh_receipt = build_gateway_host_receipt(
+            mesh_result,
+            host_id=0xA1C1BEEFC0DE0001,
+            gateway_id=gateway_id,
+        )
+        self.assertEqual(mesh_receipt.identity.src_id, mesh_result.src_id)
+        self.assertNotEqual(mesh_receipt.identity.src_id, mesh_receipt.identity.dst_id)
+
+        malformed_cases = (
+            stream_record(
+                gateway_local_command_result_payload(),
+                msg_type=MSG_COMMAND_RESULT,
+                packet_flags=0,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x10203043,
+                packet_seq=0x3043,
+            ),
+            stream_record(
+                bytes((TLV_REASON, 2, 0, 0))
+                + gateway_local_command_result_payload()[4:],
+                msg_type=MSG_COMMAND_RESULT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x10203044,
+                packet_seq=0x3044,
+            ),
+            stream_record(
+                gateway_local_command_result_payload(status=5),
+                msg_type=MSG_COMMAND_RESULT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x10203045,
+                packet_seq=0x3045,
+            ),
+        )
+        for record in malformed_cases:
+            with self.subTest(record=record[:16]):
+                rejected = GatewayReceiveBuffer().feed(record)
+                self.assertEqual(rejected.packets, ())
+                self.assertEqual(len(rejected.errors), 1)
+
+    def test_receive_buffer_resynchronizes_suffix_before_full_stream_retry(self) -> None:
+        record = stream_record(click_payload())
+        decoder = GatewayReceiveBuffer()
+
+        # Model a dropped ATT prefix: the first notification leaves only the
+        # record suffix in the parser, then the gateway retries the full head.
+        suffix = decoder.feed(record[17:])
+        self.assertEqual(suffix.packets, ())
+
+        retry = decoder.feed(record)
+        self.assertEqual(retry.errors, ())
+        self.assertEqual(len(retry.packets), 1)
+        self.assertEqual(retry.packets[0].transport, "gateway-stream-v1")
+        self.assertEqual(retry.packets[0].seq, 0x1234)
+
+    def test_receive_buffer_discards_corrupt_cobs_before_valid_legacy_frame(self) -> None:
+        report_session_id = click_report_session_id(
+            0x1111222233334444, 0x11223344
+        )
+        corrupt = bytearray(
+            encode_cobs_packet(
+                msg_type=MSG_CLICK_REPORT,
+                flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+                src_id=0x5555666677778888,
+                dst_id=2,
+                session_id=report_session_id,
+                seq=4,
+                ttl=4,
+                payload=click_payload(),
+            )
+        )
+        # Corrupt the encoded CRC without introducing an extra zero delimiter;
+        # that keeps this regression about one bad legacy frame followed by a
+        # valid one, rather than two syntactically separate corrupt frames.
+        corrupt[-2] = 2 if corrupt[-2] == 1 else corrupt[-2] ^ 1
+        valid = encode_cobs_packet(
+            msg_type=MSG_CLICK_REPORT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+            src_id=0x5555666677778888,
+            dst_id=2,
+            session_id=report_session_id,
+            seq=5,
+            ttl=4,
+            payload=click_payload(),
+        )
+
+        result = GatewayReceiveBuffer().feed(bytes(corrupt) + valid)
+
+        self.assertEqual(len(result.errors), 1)
+        self.assertEqual(len(result.packets), 1)
+        self.assertEqual(result.packets[0].seq, 5)
 
     def test_click_semantics_accept_normal_and_diagnostic_range_reports(self) -> None:
         normal = parse_stream_record(stream_record(click_payload()))
@@ -455,6 +818,130 @@ class ProtocolTests(unittest.TestCase):
                 packet = parse_stream_record(stream_record(mutation, packet_flags=packet_flags))
                 with self.assertRaisesRegex(DecodeError, "malformed click report"):
                     validate_click_payload(packet)
+
+    def test_survey_discovery_semantics_keep_boot_and_operation_identities_distinct(
+        self,
+    ) -> None:
+        operation_generation = 0x1234567887654321
+        records = b"".join(
+            stream_record(
+                survey_discovery_payload(
+                    operation_generation=operation_generation,
+                    boot_incarnation=boot_incarnation,
+                ),
+                msg_type=MSG_SURVEY_DISCOVERY_REPORT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+                packet_session_id=boot_incarnation,
+                packet_seq=1,
+            )
+            for boot_incarnation in (41, 42)
+        )
+
+        received = GatewayReceiveBuffer().feed(records)
+
+        self.assertEqual(received.errors, ())
+        self.assertEqual(len(received.packets), 2)
+        self.assertEqual(
+            [packet.session_id for packet in received.packets], [41, 42]
+        )
+        for packet in received.packets:
+            validate_survey_discovery_report(packet)
+            self.assertEqual(
+                packet.value(TLV_SURVEY_OPERATION_GENERATION),
+                operation_generation,
+            )
+            self.assertEqual(packet.value(TLV_NODE_BOOT_COUNTER), packet.session_id)
+            self.assertNotEqual(
+                packet.session_id, operation_generation & 0xFFFFFFFF
+            )
+
+    def test_receive_buffer_rejects_noncanonical_survey_discovery_reports(
+        self,
+    ) -> None:
+        anchor_id = 0x5555666677778888
+        gateway_id = 0x9999AAAABBBBCCCC
+        boot_incarnation = 0x10203040
+        operation_generation = 0x1234567887654321
+        valid = survey_discovery_payload(
+            anchor_id=anchor_id,
+            operation_generation=operation_generation,
+            boot_incarnation=boot_incarnation,
+        )
+        duplicate_boot = valid + tlv(
+            TLV_NODE_BOOT_COUNTER, boot_incarnation.to_bytes(4, "little")
+        )
+        invalid_peer = survey_discovery_payload(
+            anchor_id=anchor_id,
+            operation_generation=operation_generation,
+            boot_incarnation=boot_incarnation,
+            entries=((gateway_id, -61, 82),),
+        )
+        duplicate_peer = survey_discovery_payload(
+            anchor_id=anchor_id,
+            operation_generation=operation_generation,
+            boot_incarnation=boot_incarnation,
+            entries=((0x1111222233334444, -61, 82),) * 2,
+        )
+        cases = {
+            "missing operation generation": (
+                remove_tlv(valid, TLV_SURVEY_OPERATION_GENERATION),
+                boot_incarnation,
+                anchor_id,
+            ),
+            "duplicate boot": (duplicate_boot, boot_incarnation, anchor_id),
+            "unsupported TLV": (valid + tlv(0xFE, b"\x01"), boot_incarnation, anchor_id),
+            "old operation-session header": (
+                valid,
+                operation_generation & 0xFFFFFFFF,
+                anchor_id,
+            ),
+            "source anchor mismatch": (valid, boot_incarnation, anchor_id + 1),
+            "zero operation projection": (
+                replace_tlv(
+                    valid,
+                    TLV_SURVEY_OPERATION_GENERATION,
+                    0x1234567800000000.to_bytes(8, "little"),
+                ),
+                boot_incarnation,
+                anchor_id,
+            ),
+            "invalid command status": (
+                replace_tlv(valid, TLV_COMMAND_STATUS, (9).to_bytes(2, "little")),
+                boot_incarnation,
+                anchor_id,
+            ),
+            "gateway reachability peer": (
+                invalid_peer,
+                boot_incarnation,
+                anchor_id,
+            ),
+            "duplicate reachability peer": (
+                duplicate_peer,
+                boot_incarnation,
+                anchor_id,
+            ),
+        }
+        for label, (payload, session_id, source_id) in cases.items():
+            with self.subTest(label=label):
+                record = stream_record(
+                    payload,
+                    msg_type=MSG_SURVEY_DISCOVERY_REPORT,
+                    packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+                    packet_session_id=session_id,
+                    packet_src_id=source_id,
+                )
+                decoded = parse_stream_record(record)
+                self.assertEqual(decoded.msg_type, MSG_SURVEY_DISCOVERY_REPORT)
+                with self.assertRaisesRegex(
+                    DecodeError, "malformed survey discovery report"
+                ):
+                    validate_survey_discovery_report(decoded)
+                received = GatewayReceiveBuffer().feed(record)
+                self.assertEqual(received.packets, ())
+                self.assertEqual(len(received.errors), 1)
+                self.assertIn(
+                    "malformed survey discovery report", received.errors[0]
+                )
 
     def test_gateway_stream_accepts_extended_payload_maximum(self) -> None:
         payload = extended_stream_payload()
@@ -603,6 +1090,79 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(encoded, expected)
         self.assertEqual(decode_gateway_host_receipt_identity(encoded), identity)
 
+        command_identity = GatewayHostReceiptIdentity(
+            original_msg_type=MSG_GATEWAY_COMMAND_EVENT,
+            original_flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=0x9999AAAABBBBCCCC,
+            dst_id=0x9999AAAABBBBCCCC,
+            session_id=0x10203040,
+            seq=0x3040,
+            stream_record_digest=bytes(range(32)),
+        )
+        command_encoded = encode_gateway_host_receipt_identity(command_identity)
+        self.assertEqual(
+            decode_gateway_host_receipt_identity(command_encoded),
+            command_identity,
+        )
+        crosswired_command = GatewayHostReceiptIdentity(
+            original_msg_type=MSG_GATEWAY_COMMAND_EVENT,
+            original_flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=command_identity.src_id,
+            dst_id=command_identity.dst_id + 1,
+            session_id=command_identity.session_id,
+            seq=command_identity.seq,
+            stream_record_digest=command_identity.stream_record_digest,
+        )
+        with self.assertRaises(ValueError):
+            encode_gateway_host_receipt_identity(crosswired_command)
+        malformed_command = bytearray(command_encoded)
+        malformed_command[10] ^= 1
+        with self.assertRaises(DecodeError):
+            decode_gateway_host_receipt_identity(bytes(malformed_command))
+
+        local_result = GatewayHostReceiptIdentity(
+            original_msg_type=MSG_COMMAND_RESULT,
+            original_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_ERROR,
+            src_id=command_identity.src_id,
+            dst_id=command_identity.src_id,
+            session_id=command_identity.session_id,
+            seq=command_identity.seq,
+            stream_record_digest=command_identity.stream_record_digest,
+        )
+        self.assertEqual(
+            decode_gateway_host_receipt_identity(
+                encode_gateway_host_receipt_identity(local_result)
+            ),
+            local_result,
+        )
+        mesh_result = GatewayHostReceiptIdentity(
+            original_msg_type=MSG_COMMAND_RESULT,
+            original_flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=command_identity.src_id,
+            dst_id=command_identity.src_id + 1,
+            session_id=command_identity.session_id,
+            seq=command_identity.seq,
+            stream_record_digest=command_identity.stream_record_digest,
+        )
+        self.assertEqual(
+            decode_gateway_host_receipt_identity(
+                encode_gateway_host_receipt_identity(mesh_result)
+            ),
+            mesh_result,
+        )
+        with self.assertRaises(ValueError):
+            encode_gateway_host_receipt_identity(
+                GatewayHostReceiptIdentity(
+                    original_msg_type=MSG_COMMAND_RESULT,
+                    original_flags=FLAG_ERROR,
+                    src_id=local_result.src_id,
+                    dst_id=local_result.dst_id,
+                    session_id=local_result.session_id,
+                    seq=local_result.seq,
+                    stream_record_digest=local_result.stream_record_digest,
+                )
+            )
+
     def test_gateway_host_receipt_rejects_malformed_identity_and_trailing_tlvs(self) -> None:
         source = parse_stream_record(stream_record(click_payload()))
         receipt = build_gateway_host_receipt(
@@ -647,7 +1207,7 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(DecodeError):
             parse_gateway_host_receipt(parse_cobs_packet(trailing_frame))
 
-    def test_gateway_host_receipt_rejects_invalid_source_and_host_only_records(self) -> None:
+    def test_gateway_host_receipt_rejects_invalid_source_and_nonreceiptable_records(self) -> None:
         source = bytearray(stream_record(click_payload()))
         source[16:24] = b"\x00" * 8
         malformed = parse_stream_record(bytes(source))
@@ -658,12 +1218,37 @@ class ProtocolTests(unittest.TestCase):
                 gateway_id=0x9999888877776666,
             )
 
-        host_only = parse_stream_record(
-            stream_record(b"", msg_type=MSG_GATEWAY_COMMAND_EVENT, packet_flags=0)
+        generic_command_event = parse_stream_record(
+            stream_record(
+                gateway_assignment_event_payload(
+                    event_sequence=0x10203040,
+                    discovery_slot=0xFF,
+                    progress_count=1,
+                    total_count=0,
+                    success_count=0,
+                    failure_count=0,
+                ),
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=0,
+                packet_src_id=0x9999AAAABBBBCCCC,
+                packet_dst_id=0x9999AAAABBBBCCCC,
+                packet_session_id=0x10203040,
+                packet_seq=0x3040,
+            )
         )
         with self.assertRaises(ValueError):
             build_gateway_host_receipt(
-                host_only,
+                generic_command_event,
+                host_id=0xA1C1BEEFC0DE0001,
+                gateway_id=0x9999888877776666,
+            )
+
+        nonreceiptable = parse_stream_record(
+            stream_record(b"", msg_type=MSG_GATEWAY_HOST_RECEIPT, packet_flags=0)
+        )
+        with self.assertRaises(ValueError):
+            build_gateway_host_receipt(
+                nonreceiptable,
                 host_id=0xA1C1BEEFC0DE0001,
                 gateway_id=0x9999888877776666,
             )
@@ -805,7 +1390,7 @@ class ProtocolTests(unittest.TestCase):
             "gateway_id": 0xAABBCCDDEEFF0011,
             "session_id": 1,
             "seq": 2,
-            "command_budget_ms": 15000,
+            "command_budget_ms": 800000,
         }
         commands = (
             build_here_i_am_command(**common),
@@ -819,7 +1404,7 @@ class ProtocolTests(unittest.TestCase):
         )
         for command in commands:
             with self.subTest(command=command.label):
-                self.assertEqual(command.packet.value(TLV_COMMAND_BUDGET_MS), 15000)
+                self.assertEqual(command.packet.value(TLV_COMMAND_BUDGET_MS), 800000)
                 budget_tlv = next(
                     value for value in command.packet.tlvs
                     if value.type_id == TLV_COMMAND_BUDGET_MS
@@ -841,7 +1426,7 @@ class ProtocolTests(unittest.TestCase):
             build_assign_discovery_slots_command(**common).packet.value(
                 TLV_COMMAND_BUDGET_MS
             ),
-            15000,
+            800000,
         )
 
         maximum = {**common, "command_budget_ms": 900000}
@@ -857,11 +1442,44 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "command budget"):
                     build_here_i_am_command(**{**common, "command_budget_ms": invalid})
 
+    def test_bare_builders_reject_budgets_firmware_cannot_admit(self) -> None:
+        common: dict[str, Any] = {
+            "host_id": DEFAULT_HOST_ID,
+            "gateway_id": 0xAABBCCDDEEFF0011,
+            "session_id": 1,
+            "seq": 2,
+        }
+        with self.assertRaisesRegex(ValueError, "assignment policy: minimum"):
+            build_assign_discovery_slots_command(
+                **common,
+                command_budget_ms=(
+                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS - 1
+                ),
+            )
+
+        with self.assertRaisesRegex(
+            ValueError, "survey discovery policy: minimum 179993"
+        ):
+            build_anchor_discovery_command(
+                **common,
+                survey_id=3,
+                duration_ms=250,
+                discovery_slot_count=6,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+                command_budget_ms=179_992,
+            )
+
+        # Route refresh is different: firmware accepts a shorter explicit
+        # horizon to intentionally limit retries, while omission selects its
+        # robust 120-second default.
+        route = build_here_i_am_command(**common, command_budget_ms=1_000)
+        self.assertEqual(route.packet.value(TLV_COMMAND_BUDGET_MS), 1_000)
+
     def test_v1_operation_policy_is_repeated_decoded_and_legacy_equal(self) -> None:
         profile = OperationPolicyProfile(
-            assignment=AssignmentOperationPolicy(5, 300_000, 750),
+            assignment=AssignmentOperationPolicy(5, 800_000, 750),
             discovery=DiscoveryOperationPolicy(
-                9_000, 80, 12, 3, 1_500, 500_000
+                60_000, 80, 12, 3, 1_500, 500_000
             ),
             pair=PairOperationPolicy(1, 8),
         )
@@ -885,7 +1503,7 @@ class ProtocolTests(unittest.TestCase):
             session_id=13,
             seq=14,
             expected_anchor_count=5,
-            command_budget_ms=300_000,
+            command_budget_ms=800_000,
         )
         here_i_am = build_here_i_am_command(
             **common,
@@ -894,18 +1512,27 @@ class ProtocolTests(unittest.TestCase):
         )
 
         expected_values = profile.encoded_values()
-        for command in (survey, assignment, here_i_am):
+        expected_by_command = (
+            (survey, expected_values[1:], ["survey_discovery", "survey_pair"]),
+            (assignment, expected_values[:1], ["assignment"]),
+            (
+                here_i_am,
+                expected_values,
+                ["assignment", "survey_discovery", "survey_pair"],
+            ),
+        )
+        for command, expected, families in expected_by_command:
             with self.subTest(command=command.label):
                 policy_tlvs = tuple(
                     value for value in command.packet.tlvs
                     if value.type_id == TLV_OPERATION_POLICY
                 )
                 self.assertEqual(
-                    tuple(value.raw for value in policy_tlvs), expected_values
+                    tuple(value.raw for value in policy_tlvs), expected
                 )
                 self.assertEqual(
                     [value.decoded["family"] for value in policy_tlvs],
-                    ["assignment", "survey_discovery", "survey_pair"],
+                    families,
                 )
                 self.assertTrue(all(
                     value.name == "OPERATION_POLICY" for value in policy_tlvs
@@ -915,7 +1542,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(survey.packet.value(TLV_DISCOVERY_SLOT_COUNT), 12)
         self.assertEqual(survey.packet.value(TLV_COMMAND_BUDGET_MS), 500_000)
         self.assertEqual(assignment.packet.value(TLV_EXPECTED_NODE_COUNT), 5)
-        self.assertEqual(assignment.packet.value(TLV_COMMAND_BUDGET_MS), 300_000)
+        self.assertEqual(assignment.packet.value(TLV_COMMAND_BUDGET_MS), 800_000)
 
         with self.assertRaisesRegex(ValueError, "legacy duration"):
             build_anchor_discovery_command(
@@ -941,12 +1568,12 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legacy expected"):
             build_assign_discovery_slots_command(
                 **common, session_id=23, seq=24,
-                expected_anchor_count=4, command_budget_ms=300_000,
+                expected_anchor_count=4, command_budget_ms=800_000,
             )
         with self.assertRaisesRegex(ValueError, "legacy command budget"):
             build_assign_discovery_slots_command(
                 **common, session_id=23, seq=24,
-                expected_anchor_count=5, command_budget_ms=300_001,
+                expected_anchor_count=5, command_budget_ms=800_001,
             )
 
     def test_discovery_assignment_tlvs_and_clock_offsets_decode_exact_wire_shapes(self) -> None:

@@ -180,6 +180,7 @@ static void test_survey_packet_initializers_reset_message_age(void)
                                                             GATEWAY_ID,
                                                             SESSION_ID,
                                                             0u,
+                                                            1u,
                                                             6u,
                                                             24u),
                         &packet);

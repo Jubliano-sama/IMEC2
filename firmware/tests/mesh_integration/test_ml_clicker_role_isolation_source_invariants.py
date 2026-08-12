@@ -89,7 +89,7 @@ for connected_mesh_owner in (
     "app_mesh_report_attach",
     "app_anchor_survey_runtime",
     "app_anchor_survey_discovery",
-    "mesh_report_resume_restored_outbox",
+    "mesh_report_wake_active_outbox",
 ):
     assert connected_mesh_owner not in ml_anchor_start, (
         f"ML anchor retained unused connected-mesh owner {connected_mesh_owner}"

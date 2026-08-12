@@ -457,7 +457,8 @@ static bool command_event_packet_valid(
 
     if (packet == NULL || payload == NULL ||
         packet->msg_type != MSG_GATEWAY_COMMAND_EVENT ||
-        packet->flags != 0u ||
+        (packet->flags != 0u &&
+         packet->flags != FLAG_GATEWAY_ACK_REQUIRED) ||
         packet->src_id == 0u ||
         packet->src_id != packet->dst_id ||
         packet->payload_len != payload_len ||

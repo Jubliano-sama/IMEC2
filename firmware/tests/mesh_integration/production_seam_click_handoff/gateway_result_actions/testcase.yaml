@@ -1,0 +1,12 @@
+tests:
+  imec2.production_seam.gateway_result_actions:
+    tags:
+      - mesh_integration
+      - hardware_models
+      - production_seam
+      - gateway
+      - custody
+    platform_allow:
+      - native_sim/native/64
+    integration_platforms:
+      - native_sim/native/64

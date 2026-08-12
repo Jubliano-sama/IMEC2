@@ -167,6 +167,22 @@ static struct gateway_membership_snapshot assignment_snapshot(void)
     return snapshot;
 }
 
+static struct gateway_membership_snapshot nonpending_assignment_snapshot(
+    uint16_t membership_epoch)
+{
+    struct gateway_membership_roster roster = sparse_roster(membership_epoch);
+    struct gateway_membership_snapshot snapshot;
+
+    assert(gateway_membership_export_assignment_snapshot(
+               &roster,
+               UINT32_C(0x12345678),
+               UINT32_C(0x92345678),
+               &assignment_commitment,
+               NULL,
+               &snapshot) == PROTO_OK);
+    return snapshot;
+}
+
 static void assert_snapshot_rejected(
     const struct gateway_membership_snapshot *snapshot)
 {
@@ -273,36 +289,26 @@ static void test_set_rejects_zero_duplicate_capacity_and_bad_slots(void)
     assert(!roster.valid);
 }
 
-static void test_sparse_gap_lookup_exports_reset_and_extension(void)
+static void test_sparse_gap_exports_reset_and_extension(void)
 {
     struct gateway_membership_roster roster = sparse_roster(9u);
     struct gateway_membership_roster restored = {0};
     struct gateway_membership_roster extended = {0};
-    struct gateway_membership_snapshot snapshot;
+    struct gateway_membership_snapshot snapshot =
+        nonpending_assignment_snapshot(9u);
     uint64_t dense[4] = {0};
     uint64_t explicit_ids[4] = {0};
     uint8_t explicit_slots[4] = {0};
     size_t count = 0u;
-    size_t slot = 99u;
 
     assert(roster.node_count == 3u);
     assert(roster.slot_span == 4u);
     assert(roster.node_ids[2] == 0u);
-    assert(gateway_membership_lookup_node_index(
-               &roster, 9u, sparse_ids[2], &slot) == PROTO_OK);
-    assert(slot == 3u);
-    assert(gateway_membership_contains_node_id(
-        &roster, 9u, sparse_ids[1]));
-    assert(!gateway_membership_contains_node_id(
-        &roster, 8u, sparse_ids[1]));
-
     assert(gateway_membership_export_node_ids_preserve_order(
                &roster, 9u, dense, 4u, &count) == PROTO_OK);
     assert(count == 3u);
     assert(memcmp(dense, sparse_ids, sizeof(sparse_ids)) == 0);
 
-    assert(gateway_membership_export_snapshot(&roster, &snapshot) ==
-           PROTO_OK);
     gateway_membership_clear(&roster);
     assert(gateway_membership_restore_snapshot(&restored, &snapshot) ==
            PROTO_OK);
@@ -355,10 +361,6 @@ static void test_exports_report_required_capacity(void)
 
 static void test_pending_publication_exact_roundtrip(void)
 {
-    const uint32_t epoch = UINT32_C(0x12345678);
-    const uint32_t table_seq = UINT32_C(0x92345678);
-    struct discovery_assignment_table_commitment wrong_commitment =
-        assignment_commitment;
     struct gateway_membership_snapshot snapshot = assignment_snapshot();
     struct gateway_membership_roster restored = {0};
     struct gateway_membership_publication publication = {0};
@@ -376,40 +378,18 @@ static void test_pending_publication_exact_roundtrip(void)
     assert(gateway_membership_snapshot_get_publication(
                &snapshot, &publication) == PROTO_OK);
     assert(publication_semantically_equal(&publication, &expected));
-    assert(gateway_membership_snapshot_proves_assignment(
-        &snapshot, epoch, table_seq, &assignment_commitment, sparse_ids[0]));
-    assert(gateway_membership_snapshot_proves_assignment(
-        &snapshot, epoch, table_seq, &assignment_commitment, sparse_ids[2]));
-    assert(!gateway_membership_snapshot_proves_assignment(
-        &snapshot,
-        epoch,
-        table_seq,
-        &assignment_commitment,
-        UINT64_C(0x3003)));
-    assert(!gateway_membership_snapshot_proves_assignment(
-        &snapshot,
-        epoch + 1u,
-        table_seq,
-        &assignment_commitment,
-        sparse_ids[0]));
-    wrong_commitment.bytes[31] ^= 1u;
-    assert(!gateway_membership_snapshot_proves_assignment(
-        &snapshot, epoch, table_seq, &wrong_commitment, sparse_ids[0]));
-    assert(!gateway_membership_snapshot_proves_assignment(
-        &snapshot, epoch, table_seq, NULL, sparse_ids[0]));
 }
 
-static void test_nonassignment_and_nonpending_snapshots_have_no_publication(void)
+static void test_nonpending_assignment_snapshot_has_no_publication(void)
 {
     struct gateway_membership_roster roster = sparse_roster(4u);
-    struct gateway_membership_snapshot snapshot;
+    struct gateway_membership_snapshot snapshot =
+        nonpending_assignment_snapshot(4u);
     struct gateway_membership_publication publication =
         pending_publication();
     struct gateway_membership_publication restored;
 
     memset(&restored, 0xA5, sizeof(restored));
-    assert(gateway_membership_export_snapshot(&roster, &snapshot) ==
-           PROTO_OK);
     assert(gateway_membership_snapshot_get_publication(
                &snapshot, &restored) == PROTO_ERR_NOT_FOUND);
     assert(!restored.publish_pending);
@@ -459,12 +439,8 @@ static void test_fieldwise_zero_publication_ignores_padding(void)
 
 static void test_snapshot_roster_and_proof_corruption_rejected(void)
 {
-    struct gateway_membership_roster roster = sparse_roster(5u);
-    struct gateway_membership_snapshot valid;
+    struct gateway_membership_snapshot valid = assignment_snapshot();
     struct gateway_membership_snapshot corrupt;
-
-    assert(gateway_membership_export_snapshot(&roster, &valid) ==
-           PROTO_OK);
 
     corrupt = valid;
     corrupt.checksum ^= 1u;
@@ -521,17 +497,17 @@ static void test_snapshot_roster_and_proof_corruption_rejected(void)
     assert_snapshot_rejected(&corrupt);
 
     corrupt = valid;
-    corrupt.assignment_proof_valid = 1u;
+    corrupt.assignment_proof_valid = 0u;
     snapshot_reseal(&corrupt);
     assert_snapshot_rejected(&corrupt);
 
     corrupt = valid;
-    corrupt.assignment_epoch = 1u;
+    corrupt.assignment_epoch = 0u;
     snapshot_reseal(&corrupt);
     assert_snapshot_rejected(&corrupt);
 
     corrupt = valid;
-    corrupt.publication_host_seq = 1u;
+    corrupt.publication_table_round = 0u;
     snapshot_reseal(&corrupt);
     assert_snapshot_rejected(&corrupt);
 }
@@ -652,37 +628,18 @@ static void test_invalid_pending_publication_rejected_at_export(void)
            PROTO_ERR_ARG);
 }
 
-static void test_zero_assignment_commitment_never_proves_membership(void)
-{
-    const struct discovery_assignment_table_commitment zero_commitment = {0};
-    struct gateway_membership_snapshot snapshot = assignment_snapshot();
-
-    memset(&snapshot.assignment_table_commitment,
-           0,
-           sizeof(snapshot.assignment_table_commitment));
-    snapshot_reseal(&snapshot);
-    assert_snapshot_rejected(&snapshot);
-    assert(!gateway_membership_snapshot_proves_assignment(
-        &snapshot,
-        snapshot.assignment_epoch,
-        snapshot.assignment_table_seq,
-        &zero_commitment,
-        sparse_ids[0]));
-}
-
 int main(void)
 {
     test_live_roster_ram_budget_and_dense_compatibility();
     test_set_rejects_zero_duplicate_capacity_and_bad_slots();
-    test_sparse_gap_lookup_exports_reset_and_extension();
+    test_sparse_gap_exports_reset_and_extension();
     test_exports_report_required_capacity();
     test_pending_publication_exact_roundtrip();
-    test_nonassignment_and_nonpending_snapshots_have_no_publication();
+    test_nonpending_assignment_snapshot_has_no_publication();
     test_fieldwise_zero_publication_ignores_padding();
     test_snapshot_roster_and_proof_corruption_rejected();
     test_pending_publication_corruption_rejected();
     test_exact_identity_fields_are_checksum_bound();
     test_invalid_pending_publication_rejected_at_export();
-    test_zero_assignment_commitment_never_proves_membership();
     return 0;
 }

@@ -2,6 +2,7 @@
 #define APP_STATE_H
 
 #include "app_discovery_assignment_policy.h"
+#include "app_radio_guard.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -23,8 +24,6 @@
  * first behavior-preserving split.
  */
 
-extern bool uwb_rf_active;
-extern struct k_spinlock uwb_rf_lock;
 extern struct k_spinlock anchor_uwb_lock;
 extern bool anchor_uwb_busy;
 extern bool anchor_click_window_busy;
@@ -43,12 +42,6 @@ bool range_status_valid(enum range_status status);
 bool mesh_id_is_unicast(uint64_t node_id);
 bool gateway_ble_transport_enabled(void);
 int mesh_errno_from_proto(int ret);
-int radio_guard_uwb_start(const char *reason);
-void radio_guard_uwb_stop(void);
-bool radio_guard_uwb_busy(void);
-void radio_guard_uwb_admission_pause(void);
-void radio_guard_uwb_admission_resume(void);
-bool radio_guard_uwb_admission_paused(void);
 bool anchor_uwb_window_active(void);
 bool anchor_click_window_active(void);
 void anchor_click_window_set_active(bool active);
@@ -58,7 +51,7 @@ void packet_age_add_elapsed(struct proto_packet *packet, uint32_t elapsed_ms);
 bool uptime_deadline_reached(uint32_t now_ms, uint32_t deadline_ms);
 uint32_t uptime_ms_until_deadline(uint32_t now_ms, uint32_t deadline_ms);
 uint16_t mesh_next_event_control_seq(void);
-/* Per-boot random incarnation used to safely restart event sequence domains. */
+/* Durable production boot incarnation; random only in non-durable builds. */
 uint64_t mesh_event_boot_nonce(void);
 uint32_t nonzero_uptime_session_id(void);
 uint16_t local_uwb_short_addr(void);

@@ -468,7 +468,13 @@ static void test_retained_assignment_event_survives_click_eviction(void)
         .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
         .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
     };
-    struct proto_packet publisher = packet(MSG_GATEWAY_COMMAND_EVENT, 0u, 10u);
+    /* The stream receives an explicit custody decision from its gateway
+     * wrapper.  It does not link the publisher runtime just to rediscover the
+     * durable shape, so ACK is the wire marker and the retained enqueue API is
+     * the ownership marker. */
+    struct proto_packet publisher = packet(MSG_GATEWAY_COMMAND_EVENT,
+                                           FLAG_GATEWAY_ACK_REQUIRED,
+                                           10u);
     struct proto_packet diagnostic = packet(MSG_UWB_ANCHOR_DIAG, 0u, 20u);
     struct proto_packet click = packet(MSG_CLICK_REPORT, 0u, 30u);
     struct proto_packet head;
@@ -489,11 +495,10 @@ static void test_retained_assignment_event_survives_click_eviction(void)
     publisher.session_id = event.event_seq;
     publisher.seq = (uint16_t)event.event_seq;
     publisher.payload_len = (uint16_t)event_payload_len;
-    assert(gateway_ble_stream_enqueue_packet(&state, &publisher,
-                                             event_payload,
-                                             event_payload_len,
-                                             0u, 1u, true) == 1);
-    state.items[state.count - 1u].retain_until_sent = true;
+    assert(gateway_ble_stream_enqueue_retained_packet(&state, &publisher,
+                                                      event_payload,
+                                                      event_payload_len,
+                                                      0u, 1u, true) == 1);
     assert(gateway_ble_stream_enqueue_packet(&state, &diagnostic,
                                              payload, sizeof(payload),
                                              0u, 2u, true) == 1);
@@ -518,6 +523,45 @@ static void test_retained_assignment_event_survives_click_eviction(void)
     assert(head.msg_type == MSG_GATEWAY_COMMAND_EVENT);
     assert(head.seq == publisher.seq);
     assert(state.items[0].retain_until_sent);
+}
+
+static void test_generic_command_event_does_not_claim_host_custody(void)
+{
+    struct gateway_ble_stream_state state;
+    struct gateway_command_observability_state observability;
+    struct gateway_command_event event = {
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        .stage = GATEWAY_COMMAND_EVENT_STAGE_ACCEPTED,
+        .status = COMMAND_OK,
+        .reason = GATEWAY_COMMAND_EVENT_REASON_NONE,
+        .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
+        .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
+    };
+    struct proto_packet generic = packet(MSG_GATEWAY_COMMAND_EVENT, 0u, 11u);
+    uint8_t event_payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
+    size_t event_payload_len = 0u;
+
+    gateway_ble_stream_init(&state);
+    gateway_command_observability_init(&observability);
+    assert(gateway_command_observability_prepare(
+               &observability, &event, false) == 0);
+    assert(gateway_command_event_encode(&event,
+                                        event_payload,
+                                        sizeof(event_payload),
+                                        &event_payload_len) == 0);
+    generic.src_id = UINT64_C(0x1111222233334444);
+    generic.dst_id = generic.src_id;
+    generic.session_id = event.event_seq;
+    generic.seq = (uint16_t)event.event_seq;
+    generic.payload_len = (uint16_t)event_payload_len;
+
+    assert(gateway_ble_stream_enqueue_packet(&state, &generic,
+                                             event_payload,
+                                             event_payload_len,
+                                             0u, 1u, true) == 1);
+    assert(state.count == 1u);
+    assert(!state.items[0].retain_until_sent);
+    assert(!state.items[0].host_custody_owner);
 }
 
 static void test_terminal_command_event_evicts_lower_priority_status(void)
@@ -1464,6 +1508,7 @@ int main(void)
     test_click_evicts_lower_priority_diagnostic();
     test_click_cannot_evict_durable_result_records();
     test_retained_assignment_event_survives_click_eviction();
+    test_generic_command_event_does_not_claim_host_custody();
     test_terminal_command_event_evicts_lower_priority_status();
     test_fast_drain_and_counters();
     test_corrupt_item_extent_cannot_underflow_pool_compaction();

@@ -435,7 +435,11 @@ static void test_50_anchor_1225_pair_flow_control_sweep(void)
 
 struct survey_emit_fixture {
     struct gateway_command_event events[64];
+    enum gateway_command_event_stage attempt_stages[128];
+    uint32_t attempt_event_seqs[128];
     size_t count;
+    size_t attempt_count;
+    uint32_t next_event_seq;
     bool blocked;
 };
 
@@ -446,12 +450,157 @@ static int survey_emit(struct gateway_command_event *event,
     struct survey_emit_fixture *fixture = ctx;
 
     assert(!terminal);
+    if (event->event_seq == 0u) {
+        fixture->next_event_seq++;
+        if (fixture->next_event_seq == 0u) {
+            fixture->next_event_seq++;
+        }
+        event->event_seq = fixture->next_event_seq;
+    }
+    assert(fixture->attempt_count <
+           sizeof(fixture->attempt_event_seqs) /
+               sizeof(fixture->attempt_event_seqs[0]));
+    fixture->attempt_stages[fixture->attempt_count] = event->stage;
+    fixture->attempt_event_seqs[fixture->attempt_count] = event->event_seq;
+    fixture->attempt_count++;
     if (fixture->blocked) {
         return -EAGAIN;
     }
     assert(fixture->count < sizeof(fixture->events) / sizeof(fixture->events[0]));
     fixture->events[fixture->count++] = *event;
     return 0;
+}
+
+static void test_survey_collection_retries_reuse_exact_event_identity(void)
+{
+    struct app_gateway_survey_observability_state state;
+    struct survey_emit_fixture fixture = {0};
+    const struct app_gateway_survey_observability_ops ops = {
+        .emit_if_available = survey_emit,
+        .ctx = &fixture,
+    };
+    struct survey_gateway_context survey;
+    const uint64_t anchor_id = UINT64_C(0x8800000000000001);
+    const struct survey_gateway_reverse_hint reverse_hint = {
+        .target_id = anchor_id,
+        .next_hop_id = anchor_id,
+        .quality = 100u,
+        .hop_count = 1u,
+        .valid = true,
+    };
+    const struct gateway_command_event base = {
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        .command_id = CMD_SURVEY_REACHABILITY,
+        .gateway_sequence = 79u,
+    };
+    size_t attempt_start;
+
+    assert(survey_gateway_begin(&survey, 79u, 1u) == PROTO_OK);
+    assert(survey_gateway_note_reach_report_with_reverse_hint(
+               &survey,
+               survey.survey_id,
+               anchor_id,
+               NULL,
+               0u,
+               &reverse_hint) == PROTO_OK);
+    survey.pair_count = 1u;
+    app_gateway_survey_observability_reset(&state);
+
+    attempt_start = fixture.attempt_count;
+    fixture.blocked = true;
+    for (size_t retry = 0u; retry < 3u; retry++) {
+        assert(app_gateway_survey_observability_emit_collection_next(
+                   &state, &ops, &survey, &base, 0u) == -EAGAIN);
+        assert(state.report_cursor == 0u);
+        assert(!state.collection_complete);
+        assert(!state.schedule_complete);
+        assert(state.pending_event_seq == 1u);
+    }
+    assert(fixture.attempt_count == attempt_start + 3u);
+    for (size_t i = attempt_start; i < fixture.attempt_count; i++) {
+        assert(fixture.attempt_stages[i] ==
+               GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+        assert(fixture.attempt_event_seqs[i] == 1u);
+    }
+    fixture.blocked = false;
+    assert(app_gateway_survey_observability_emit_collection_next(
+               &state, &ops, &survey, &base, 0u) == 0);
+    assert(state.report_cursor == 1u);
+    assert(!state.collection_complete);
+    assert(state.pending_event_seq == 0u);
+    assert(fixture.events[fixture.count - 1u].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+    assert(fixture.events[fixture.count - 1u].event_seq == 1u);
+
+    attempt_start = fixture.attempt_count;
+    fixture.blocked = true;
+    for (size_t retry = 0u; retry < 3u; retry++) {
+        assert(app_gateway_survey_observability_emit_collection_next(
+                   &state, &ops, &survey, &base, 0u) == -EAGAIN);
+        assert(state.report_cursor == 1u);
+        assert(!state.collection_complete);
+        assert(!state.schedule_complete);
+        assert(state.pending_event_seq == 2u);
+    }
+    assert(fixture.attempt_count == attempt_start + 3u);
+    for (size_t i = attempt_start; i < fixture.attempt_count; i++) {
+        assert(fixture.attempt_stages[i] ==
+               GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE);
+        assert(fixture.attempt_event_seqs[i] == 2u);
+    }
+    fixture.blocked = false;
+    assert(app_gateway_survey_observability_emit_collection_next(
+               &state, &ops, &survey, &base, 0u) == 0);
+    assert(state.report_cursor == 1u);
+    assert(state.collection_complete);
+    assert(!state.schedule_complete);
+    assert(state.pending_event_seq == 0u);
+    assert(fixture.events[fixture.count - 1u].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE);
+    assert(fixture.events[fixture.count - 1u].event_seq == 2u);
+
+    attempt_start = fixture.attempt_count;
+    fixture.blocked = true;
+    for (size_t retry = 0u; retry < 3u; retry++) {
+        assert(app_gateway_survey_observability_emit_collection_next(
+                   &state, &ops, &survey, &base, 0u) == -EAGAIN);
+        assert(state.report_cursor == 1u);
+        assert(state.collection_complete);
+        assert(!state.schedule_complete);
+        assert(state.pending_event_seq == 3u);
+    }
+    assert(fixture.attempt_count == attempt_start + 3u);
+    for (size_t i = attempt_start; i < fixture.attempt_count; i++) {
+        assert(fixture.attempt_stages[i] ==
+               GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY);
+        assert(fixture.attempt_event_seqs[i] == 3u);
+    }
+    fixture.blocked = false;
+    assert(app_gateway_survey_observability_emit_collection_next(
+               &state, &ops, &survey, &base, 0u) == 1);
+    assert(state.report_cursor == 1u);
+    assert(state.collection_complete);
+    assert(state.schedule_complete);
+    assert(state.pending_event_seq == 0u);
+    assert(fixture.events[fixture.count - 1u].stage ==
+           GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY);
+    assert(fixture.events[fixture.count - 1u].event_seq == 3u);
+
+    /* Reset abandons a failed identity instead of leaking it into a new run. */
+    app_gateway_survey_observability_reset(&state);
+    fixture.blocked = true;
+    assert(app_gateway_survey_observability_emit_collection_next(
+               &state, &ops, &survey, &base, 0u) == -EAGAIN);
+    assert(state.pending_event_seq == 4u);
+    app_gateway_survey_observability_reset(&state);
+    assert(state.pending_event_seq == 0u);
+    assert(state.report_cursor == 0u);
+    assert(!state.collection_complete);
+    assert(!state.schedule_complete);
+    fixture.blocked = false;
+    assert(app_gateway_survey_observability_emit_collection_next(
+               &state, &ops, &survey, &base, 0u) == 0);
+    assert(fixture.events[fixture.count - 1u].event_seq == 5u);
 }
 
 static void test_survey_progress_reconstructs_50_reports_and_gates_boundaries(void)
@@ -665,6 +814,7 @@ int main(void)
     test_ble_disconnect_backpressure_and_reconnect_snapshot();
     test_progress_backpressure_coalesces_without_irreversible_loss();
     test_50_anchor_1225_pair_flow_control_sweep();
+    test_survey_collection_retries_reuse_exact_event_identity();
     test_survey_progress_reconstructs_50_reports_and_gates_boundaries();
     test_backpressured_pair_start_precedes_pair_success();
     test_topology_completeness_is_independent_terminal_gate();

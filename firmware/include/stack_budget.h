@@ -21,15 +21,15 @@ extern "C" {
  */
 /* STACK_BUDGET_POLICY_BEGIN */
 #define STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X)                              \
-    X(CLICKER, "mesh_clicker", 4096u, 6144u, 6144u, 8192u, 320u, 2048u, 1536u,   \
+    X(CLICKER, "mesh_clicker", 4096u, 6144u, 6656u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
-    X(ANCHOR, "mesh_anchor", 5120u, 6144u, 9216u, 8192u, 320u, 2048u, 0u,        \
+    X(ANCHOR, "mesh_anchor", 5120u, 6144u, 8576u, 8192u, 320u, 2048u, 0u,        \
       0u, 10240u, true, true, true, true, false)                              \
-    X(GATEWAY, "mesh_gateway", 4096u, 4256u, 8192u, 8192u, 320u, 2048u, 1536u,  \
+    X(GATEWAY, "mesh_gateway", 4096u, 4480u, 8192u, 8192u, 320u, 2048u, 1536u,  \
       1536u, 6000u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
-    X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 6144u, 9216u, 8192u, \
+    X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 6144u, 8576u, 8192u, \
       320u, 2048u, 0u, 0u, 10240u, true, true, true, true, false)             \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 9216u, 8192u, 320u, 0u, 0u, \
       0u, 18432u, true, true, true, true, false)                              \
@@ -86,18 +86,26 @@ extern "C" {
     X("dwm3000_sdk_port.c", "deca_usleep", "main")                             \
     X("dwm3000_sdk_port.c", "deca_usleep", "system_workqueue")                 \
     X("app_clicker.c", "clicker_action_work_handler", "clicker_action")     \
+    X("app_clicker.c", "clicker_action_submit_retry_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_release_work_handler", "system_workqueue") \
+    X("app_clicker.c", "click_button_rearm_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_work_handler", "system_workqueue")       \
     X("app_clicker.c", "self_test_arm_timeout_handler", "system_workqueue")   \
     X("app_clicker.c", "click_button_isr", "isr")                              \
     X("app_anchor.c", "anchor_discovery_claim_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_collection_result_work_handler", "system_workqueue") \
+    X("app_anchor.c", "anchor_collection_result_work_handler", "mesh_route") \
     X("app_anchor.c", "anchor_reboot_work_handler", "system_workqueue")       \
+    X("app_anchor.c", "anchor_reboot_work_handler", "mesh_route")            \
     X("app_anchor.c", "anchor_heartbeat_work_handler", "system_workqueue")    \
+    X("app_anchor.c", "anchor_heartbeat_work_handler", "mesh_route")         \
     X("app_anchor.c", "anchor_command_execute_work_handler", "system_workqueue") \
+    X("app_anchor.c", "anchor_discovery_ack_liveness_work_handler", "system_workqueue") \
     X("app_anchor_survey_runtime.c", "survey_work_handler", "anchor_uwb_scan") \
+    X("app_anchor_survey_runtime.c", "pair_start_kick_work_handler", "system_workqueue") \
+    X("app_anchor_survey_runtime.c", "pair_lease_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_uwb_scan_work_handler", "anchor_uwb_scan")     \
-    X("app_anchor.c", "anchor_survey_discovery_is_pending", "system_workqueue") \
+    X("app_anchor_survey_runtime.c", "app_anchor_survey_runtime_radio_active", "system_workqueue") \
     X("app_anchor.c", "anchor_note_uwb_awake_since", "system_workqueue")      \
     X("app_anchor.c", "anchor_click_handoff_work_handler", "anchor_uwb_scan") \
     X("app_anchor.c", "anchor_handle_mesh_click_wake_claim", "mesh_route") \
@@ -112,13 +120,17 @@ extern "C" {
     X("app_anchor.c", "gateway_discovery_assignment_finalize_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_survey_work_handler", "system_workqueue")      \
     X("app_anchor.c", "gateway_host_command_retry_work_handler", "system_workqueue") \
-    X("app_anchor.c", "gateway_host_command_work_handler", "system_workqueue") \
-    X("app_mesh_report.c", "mesh_persistence_retry_work_handler", "system_workqueue") \
+    X("app_anchor.c", "gateway_host_abort_work_handler", "system_workqueue") \
+    X("app_anchor.c", "gateway_host_abort_route_work_handler", "mesh_route") \
+    X("app_anchor.c", "gateway_host_command_work_handler", "mesh_route") \
+    X("app_mesh_arbitration_zephyr.c", "retry_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_route_discovery_work_handler", "mesh_route") \
+    X("app_mesh_report.c", "mesh_click_preempt_work_handler", "mesh_route") \
     X("app_node_comm_gateway_route_refresh.c", "refresh_work_handler", "mesh_route") \
     X("app_node_comm.c", "app_node_comm_lifecycle_watchdog_handler", "system_workqueue") \
     X("app_node_comm.c", "app_node_comm_delivery_due_kick_handler", "system_workqueue") \
     X("app_node_comm.c", "app_node_comm_delivery_work_handler", "mesh_route") \
+    X("app_node_comm.c", "app_node_comm_gateway_scan_restart_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_uwb_rx_rearm_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_c5_flood_work_handler", "mesh_route") \
     X("app_mesh_report.c", "report_tx_work_handler", "mesh_route")      \
@@ -128,12 +140,18 @@ extern "C" {
     X("app_mesh_report.c", "mesh_route_waiting_work_handler", "mesh_route") \
     X("app_mesh_report.c", "mesh_event_negotiation_retry_work_handler", "mesh_route") \
     X("app_mesh_report.c", "mesh_uwb_rx_work_handler", "mesh_route")    \
+    X("app_mesh_report.c", "mesh_gateway_host_delivery_retry_work_handler", "mesh_route") \
+    X("app_mesh_report.c", "mesh_node_comm_cancel_work_handler", "mesh_route") \
     X("app_gateway_ble.c", "gateway_persistence_retry_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_collection_eack_work_handler", "mesh_route") \
     X("app_gateway_ble.c", "gateway_command_result_timeout_handler", "system_workqueue") \
+    X("app_gateway_ble.c", "gateway_command_timeout_side_effect_handler", "mesh_route") \
+    X("app_gateway_ble.c", "gateway_command_timeout_side_effect_retry_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_rx_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_stream_work_handler", "system_workqueue") \
+    X("app_gateway_ble.c", "gateway_ble_host_receipt_timeout_work_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_recovery_work_handler", "system_workqueue") \
+    X("app_gateway_control_sequence.c", "gateway_control_sequence_maintenance_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_tx_complete", "bt_rx")                \
     X("app_gateway_ble.c", "gateway_ble_connected", "bt_rx")                  \
     X("app_gateway_ble.c", "gateway_ble_disconnected", "bt_rx")                \
@@ -142,7 +160,7 @@ extern "C" {
     X("app_board.c", "status0_debug_pulse_restore_handler", "system_workqueue") \
     X("app_board.c", "status0_power_blink_handler", "system_workqueue")       \
     X("app_watchdog.c", "system_progress_work_handler", "system_workqueue")   \
-    X("app_watchdog.c", "watchdog_timer_handler", "system_workqueue")         \
+    X("app_watchdog.c", "watchdog_timer_handler", "isr")                    \
     X("app_stack_diag.c", "stack_diag_boot_init", "main")                       \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_click_admit", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_click_sample", "system_workqueue") \

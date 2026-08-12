@@ -25,6 +25,11 @@ PREFLIGHT_EXEMPT_COMMAND_IDS = frozenset(
     }
 )
 ROUTE_REFRESH_DEFAULT_BUDGET_MS = 120_000
+# The firmware may publish its terminal event exactly at the advertised
+# operation deadline.  Keep every host command owner alive long enough for
+# that event to traverse the retained BLE stream and for its receipt to be
+# written back.  The headless qualification client uses this same boundary.
+GATEWAY_COMMAND_COMPLETION_GUARD_S = 5.0
 
 CommandPhase = Literal["preflight", "target"]
 

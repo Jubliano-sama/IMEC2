@@ -360,6 +360,7 @@ static void test_terminal_delivery_failure_uses_attempt_evidence(void)
     struct node_transaction transaction;
     struct node_transaction_spec spec = test_spec(5u, 5000u, true);
     struct node_comm_terminal_event event;
+    enum node_transaction_result_disposition disposition;
     enum node_transaction_action action;
 
     node_transaction_init(&transaction);
@@ -368,6 +369,26 @@ static void test_terminal_delivery_failure_uses_attempt_evidence(void)
                            NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, 3u);
     assert(node_transaction_note_request_terminal(
                &transaction, &event, 100u, &action) == 0);
+    assert(transaction.request_delivery_terminal);
+    assert(transaction.remote_side_effect_possible);
+    assert(transaction.state == NODE_TRANSACTION_ACTIVE);
+    assert(action == NODE_TRANSACTION_ACTION_WAIT_RESULT);
+    assert(reconcile_result_u32(
+               &transaction, &spec.key, spec.request_digest,
+               100u, 20u, 4999u, &disposition, &action) == 0);
+    assert(disposition == NODE_TRANSACTION_RESULT_ACCEPTED);
+    assert(transaction.state == NODE_TRANSACTION_SUCCEEDED);
+    assert(action == NODE_TRANSACTION_ACTION_TERMINAL_SUCCESS);
+
+    node_transaction_init(&transaction);
+    assert(node_transaction_begin(&transaction, &spec, 57u, 0u) == 0);
+    event = terminal_event(&transaction,
+                           NODE_COMM_TERMINAL_PERMANENT_FAILURE, 1u);
+    assert(node_transaction_note_request_terminal(
+               &transaction, &event, 100u, &action) == 0);
+    assert(transaction.state == NODE_TRANSACTION_ACTIVE);
+    assert(action == NODE_TRANSACTION_ACTION_WAIT_RESULT);
+    assert(node_transaction_service(&transaction, 5000u, &action));
     assert(transaction.state == NODE_TRANSACTION_ABANDONING);
     assert(action == NODE_TRANSACTION_ACTION_CLEANUP_REQUIRED);
 
@@ -438,8 +459,9 @@ static void test_terminal_evidence_cannot_downgrade_known_rf(void)
                            3u);
     assert(node_transaction_note_request_terminal(
                &transaction, &event, 2u, &action) == 0);
-    assert(transaction.state == NODE_TRANSACTION_ABANDONING);
+    assert(transaction.state == NODE_TRANSACTION_ACTIVE);
     assert(transaction.remote_side_effect_possible);
+    assert(action == NODE_TRANSACTION_ACTION_WAIT_RESULT);
     event = terminal_event(&transaction,
                            NODE_COMM_TERMINAL_CANCELLED,
                            0u);
@@ -796,6 +818,11 @@ static void test_randomized_transaction_properties(void)
                        &transaction, deadline_ms, &action));
         } else {
             assert(node_transaction_cancel(&transaction, now_ms, &action) == 0);
+        }
+
+        if (transaction.state == NODE_TRANSACTION_ACTIVE) {
+            assert(node_transaction_service(
+                       &transaction, deadline_ms, &action));
         }
 
         assert_key_equal(&transaction.spec.key, &original_key);

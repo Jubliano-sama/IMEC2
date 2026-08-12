@@ -630,6 +630,11 @@ static int validate_route_reply_packet(
         fields->flood_epoch_id != packet->session_id ||
         fields->flood_profile_version !=
             MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION ||
+        fields->slot_seed !=
+            route_discovery_slot_seed(fields->origin_id,
+                                      fields->target_id,
+                                      packet->session_id,
+                                      fields->route_epoch) ||
         fields->quality > 100u ||
         (fields->relay_capacity_state == RELAY_CAP_UNKNOWN ?
              (fields->queue_free_hint != 0u ||
@@ -1148,6 +1153,14 @@ int mesh_relay_validate_gateway_route_adv(
     size_t payload_len,
     uint64_t previous_hop_id)
 {
+#if IMEC_MESH_RELAY_GATEWAY_ONLY
+    (void)relay;
+    (void)packet;
+    (void)payload;
+    (void)payload_len;
+    (void)previous_hop_id;
+    return PROTO_ERR_MALFORMED;
+#else
     struct gateway_route_adv_fields fields;
     uint32_t route_epoch;
 
@@ -1158,6 +1171,7 @@ int mesh_relay_validate_gateway_route_adv(
                                              previous_hop_id,
                                              &fields,
                                              &route_epoch);
+#endif
 }
 
 static int build_gateway_route_adv_forward(const struct proto_packet *packet,
@@ -1239,7 +1253,6 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     struct reactive_route_rollback route_rollback = {0};
     const struct route_candidate *candidate;
     uint32_t previous_gateway_epoch;
-    uint32_t previous_gateway_route_adv_seq;
     uint32_t route_epoch;
     uint8_t path_quality;
     bool forward_valid = false;
@@ -1247,7 +1260,6 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     int route_ret;
 
     previous_gateway_epoch = relay->upstream.current_epoch;
-    previous_gateway_route_adv_seq = relay->gateway_route_adv_seq;
     ret = validate_gateway_route_adv_packet(relay,
                                             packet,
                                             payload,
@@ -1316,14 +1328,11 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     if (route_ret == PROTO_OK && relay->route_discovery.active &&
         relay->route_discovery.target_id == fields.gateway_id) {
         mesh_relay_note_route_discovery_ready(relay, fields.gateway_id);
+        result->route_discovery_target_id = fields.gateway_id;
         result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY;
     }
 
     if (forward_valid) {
-        result->forward_admission_previous_gateway_route_adv_seq =
-            previous_gateway_route_adv_seq;
-        result->forward_admission_gateway_epoch_changed =
-            relay->upstream.current_epoch != previous_gateway_epoch;
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV;
     }
     if (fields.operation_policy_present) {
@@ -1336,9 +1345,13 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
      * failure must leave this exact sequence retryable.
      */
     relay->gateway_route_adv_seq = fields.gateway_route_seq;
-    note_route_state_change(result,
-                            previous_gateway_epoch,
-                            previous_gateway_route_adv_seq);
+    note_route_state_change(result);
+    if (pending_recover_original_after_new_gateway_epoch(relay, now_ms)) {
+        /* Reuse the existing adapter scheduling hook. The retained
+         * owner is still the original; this bit denotes the confirmation
+         * workflow transition, not a replacement packet. */
+        result->actions |= MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING;
+    }
     return PROTO_OK;
 }
 
@@ -1366,6 +1379,10 @@ static int build_route_reply(struct mesh_relay *relay,
 
     fields = *request;
     fields.route_epoch = route_epoch;
+    fields.slot_seed = route_discovery_slot_seed(fields.origin_id,
+                                                 fields.target_id,
+                                                 session_id,
+                                                 route_epoch);
     if (gateway_route != NULL && gateway_route->hop_count < UINT8_MAX) {
         if (gateway_route_path == NULL ||
             mesh_route_path_validate(gateway_route_path,
@@ -1533,6 +1550,7 @@ static int handle_route_request(struct mesh_relay *relay,
                                 bool duplicate_packet)
 {
     struct route_discovery_fields fields = {0};
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
     struct flood_seen_entry *flood_entry = NULL;
     const struct route_candidate *selected = NULL;
     const struct mesh_route_path *selected_path = NULL;
@@ -1547,7 +1565,7 @@ static int handle_route_request(struct mesh_relay *relay,
     bool install_reply_timing = false;
     bool epoch_transition_committed = false;
     uint32_t previous_epoch;
-    uint32_t previous_gateway_route_adv_seq;
+#endif
     int ret;
 
     ret = validate_route_request_packet(relay,
@@ -1560,6 +1578,13 @@ static int handle_route_request(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+#if IMEC_MESH_RELAY_GATEWAY_ONLY
+    (void)link_quality;
+    (void)random_value;
+    (void)result;
+    (void)duplicate_packet;
+    return PROTO_ERR_STALE;
+#else
     if (relay->role == MESH_RELAY_ROLE_GATEWAY) {
         return PROTO_ERR_STALE;
     }
@@ -1569,7 +1594,6 @@ static int handle_route_request(struct mesh_relay *relay,
     }
 
     previous_epoch = relay->upstream.current_epoch;
-    previous_gateway_route_adv_seq = relay->gateway_route_adv_seq;
     if (fields.route_epoch != previous_epoch &&
         route_epoch_strictly_newer(fields.route_epoch, previous_epoch)) {
         /*
@@ -1582,9 +1606,7 @@ static int handle_route_request(struct mesh_relay *relay,
         route_table_init(&relay->upstream, fields.route_epoch);
         commit_route_epoch_transition(relay, previous_epoch, NULL);
         epoch_transition_committed = true;
-        note_route_state_change(result,
-                                previous_epoch,
-                                previous_gateway_route_adv_seq);
+        note_route_state_change(result);
     }
     fields.quality = combined_quality(fields.quality, link_quality);
     selected = route_selected(&relay->upstream);
@@ -1767,6 +1789,7 @@ static int handle_route_request(struct mesh_relay *relay,
     }
 
     return PROTO_ERR_NOT_FOUND;
+#endif
 }
 
 static int handle_route_reply(struct mesh_relay *relay,
@@ -1785,9 +1808,10 @@ static int handle_route_reply(struct mesh_relay *relay,
     struct reactive_route_rollback route_rollback = {0};
     uint8_t completed_reply_digest[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     const struct route_candidate *candidate;
+    enum mesh_relay_channel9_direction timing_direction;
+    bool gateway_target;
     bool install_timing;
     uint32_t previous_epoch;
-    uint32_t previous_gateway_route_adv_seq;
     int ret;
 
     ret = validate_route_reply_packet(relay,
@@ -1808,8 +1832,11 @@ static int handle_route_reply(struct mesh_relay *relay,
                                       completed_reply_digest)) {
         return PROTO_ERR_MALFORMED;
     }
+    gateway_target = fields.target_id == relay->gateway_id;
+    timing_direction = gateway_target ?
+        MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM :
+        MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM;
     previous_epoch = relay->upstream.current_epoch;
-    previous_gateway_route_adv_seq = relay->gateway_route_adv_seq;
     fields.quality = combined_quality(fields.quality, link_quality);
     install_timing = fields.proposed_channel9_timing_valid;
     if (install_timing) {
@@ -1819,7 +1846,7 @@ static int handle_route_reply(struct mesh_relay *relay,
             relay,
             previous_hop_id,
             &upstream_timing,
-            MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
+            timing_direction,
             MESH_RELAY_EVENT_TIMINGS,
             NULL);
         if (ret != PROTO_OK) {
@@ -1862,6 +1889,7 @@ static int handle_route_reply(struct mesh_relay *relay,
                                        payload_len,
                                        previous_hop_id,
                                        result);
+            result->route_discovery_target_id = fields.target_id;
             result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY;
             return PROTO_OK;
         }
@@ -1900,36 +1928,38 @@ static int handle_route_reply(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
-    candidate = find_upstream_candidate(relay,
-                                        previous_hop_id,
-                                        fields.route_epoch);
-    ret = store_upstream_candidate_ancestry(relay,
-                                            candidate,
-                                            &candidate_path,
-                                            &ancestry_before);
-    if (ret != PROTO_OK) {
-        rollback_reactive_route(relay, &route_rollback);
-        return ret;
-    }
-    commit_route_epoch_transition(relay,
-                                  previous_epoch,
-                                  &route_rollback);
-    if (relay->upstream.current_epoch != previous_epoch) {
-        note_route_state_change(result,
-                                previous_epoch,
-                                previous_gateway_route_adv_seq);
+    candidate = NULL;
+    if (gateway_target) {
+        candidate = find_upstream_candidate(relay,
+                                            previous_hop_id,
+                                            fields.route_epoch);
+        ret = store_upstream_candidate_ancestry(relay,
+                                                candidate,
+                                                &candidate_path,
+                                                &ancestry_before);
+        if (ret != PROTO_OK) {
+            rollback_reactive_route(relay, &route_rollback);
+            return ret;
+        }
+        commit_route_epoch_transition(relay,
+                                      previous_epoch,
+                                      &route_rollback);
+        if (relay->upstream.current_epoch != previous_epoch) {
+            note_route_state_change(result);
+        }
     }
     if (install_timing) {
         ret = mesh_relay_set_channel9_timing_guarded_direction(
             relay,
             previous_hop_id,
             &upstream_timing,
-            MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
+            timing_direction,
             MESH_RELAY_EVENT_TIMINGS,
             NULL);
         if (ret != PROTO_OK) {
-            if (route_rollback.kind !=
-                REACTIVE_ROUTE_ROLLBACK_UPSTREAM_EPOCH_COMMITTED) {
+            if (gateway_target &&
+                route_rollback.kind !=
+                    REACTIVE_ROUTE_ROLLBACK_UPSTREAM_EPOCH_COMMITTED) {
                 rollback_reactive_route(relay, &route_rollback);
                 restore_upstream_candidate_ancestry(relay,
                                                     candidate,
@@ -1960,6 +1990,7 @@ static int handle_route_reply(struct mesh_relay *relay,
                                    payload_len,
                                    previous_hop_id,
                                    result);
+        result->route_discovery_target_id = fields.target_id;
         result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY;
         return PROTO_OK;
     }

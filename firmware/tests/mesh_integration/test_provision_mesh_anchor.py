@@ -8,6 +8,7 @@ import asyncio
 import dataclasses
 import importlib.util
 import re
+import struct
 import sys
 import types
 import unittest
@@ -32,14 +33,23 @@ provision = _load(
     REPO_ROOT / "firmware" / "scripts" / "provision_mesh_anchor.py",
 )
 from tools.gateway_gui.protocol import (
+    FLAG_COUNT_AS_CLICK,
+    FLAG_DIAGNOSTIC,
     FLAG_GATEWAY_ACK_REQUIRED,
+    MSG_ANCHOR_HEARTBEAT,
+    MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
+    MSG_RESULT_BUNDLE,
+    MSG_SURVEY_DISCOVERY_REPORT,
+    MSG_SURVEY_PAIR_RESULT,
     Packet,
     build_gateway_host_receipt,
     encode_cobs_packet,
     parse_cobs_packet,
 )
+from tools.gateway_gui import operation_policy as host_operation_policy
+from tools.gateway_gui import protocol as host_protocol
 
 
 GATEWAY_ID = 0xAABBCCDDEEFF0011
@@ -106,6 +116,39 @@ def command_event(
     )
 
 
+def gateway_command_event_payload(event: object) -> bytes:
+    return struct.pack(
+        "<BBBBBBBBHHIIIH2xIQQQQHHHHHHBB",
+        1,
+        78,
+        event.command_kind,
+        event.stage,
+        event.flags,
+        event.attempt,
+        event.command_status,
+        event.reason,
+        event.command_id,
+        event.route_epoch,
+        event.correlation_id,
+        event.gateway_sequence,
+        event.host_session_id,
+        event.host_sequence,
+        event.event_sequence,
+        event.anchor_id,
+        event.pair_initiator_id,
+        event.pair_responder_id,
+        event.previous_hop_id,
+        event.progress_count,
+        event.total_count,
+        event.success_count,
+        event.failure_count,
+        event.duplicate_count,
+        event.lost_event_count,
+        event.hop_count,
+        event.discovery_slot,
+    )
+
+
 def pair_packet(
     initiator_id: int,
     responder_id: int,
@@ -137,7 +180,7 @@ def pair_packet(
     return parse_cobs_packet(encode_cobs_packet(
         msg_type=0x53,
         flags=0x24,
-        src_id=initiator_id,
+        src_id=responder_id,
         dst_id=0x9999888877776666,
         session_id=survey_id,
         seq=sequence,
@@ -167,6 +210,123 @@ def gateway_delivery_packet(
         age_kind="gateway_queue_age_ms",
         payload=f"payload-{sequence}".encode(),
         tlvs=(),
+    )
+
+
+def gateway_stream_pair_packet(
+    initiator_id: int,
+    responder_id: int,
+    distance_mm: int,
+    sequence: int,
+    *,
+    survey_id: int = SURVEY_ID,
+) -> Packet:
+    packet = pair_packet(
+        initiator_id,
+        responder_id,
+        distance_mm,
+        sequence,
+        survey_id=survey_id,
+    )
+    return dataclasses.replace(
+        packet,
+        transport="gateway-stream-v1",
+        raw_transport=f"gateway-survey-pair-{sequence}".encode(),
+    )
+
+
+def gateway_stream_packet(
+    sequence: int,
+    *,
+    msg_type: int,
+    payload: bytes = b"\x05\x00",
+    flags: int = FLAG_GATEWAY_ACK_REQUIRED,
+    src_id: int = 0x1020304050607080,
+    dst_id: int = GATEWAY_ID,
+    session_id: int = 0x11223344,
+) -> Packet:
+    packet = parse_cobs_packet(encode_cobs_packet(
+        msg_type=msg_type,
+        flags=flags,
+        src_id=src_id,
+        dst_id=dst_id,
+        session_id=session_id,
+        seq=sequence,
+        ttl=4,
+        payload=payload,
+    ))
+    return dataclasses.replace(
+        packet,
+        transport="gateway-stream-v1",
+        raw_transport=f"gateway-survey-record-{sequence}".encode(),
+    )
+
+
+def gateway_stream_command_event_packet(
+    event: object,
+    *,
+    flags: int,
+) -> Packet:
+    return Packet(
+        transport="gateway-stream-v1",
+        raw_transport=(
+            f"gateway-command-event-{event.event_sequence}-{flags}".encode()
+        ),
+        raw_packet=None,
+        msg_type=MSG_GATEWAY_COMMAND_EVENT,
+        flags=flags,
+        src_id=GATEWAY_ID,
+        dst_id=GATEWAY_ID,
+        session_id=event.event_sequence,
+        seq=event.event_sequence & 0xFFFF,
+        ttl=None,
+        age_ms=10,
+        age_kind="gateway_queue_age_ms",
+        payload=gateway_command_event_payload(event),
+        tlvs=(),
+    )
+
+
+def gateway_stream_discovery_packet(
+    sequence: int,
+    *,
+    anchor_id: int = 0x1020304050607080,
+    survey_id: int = SURVEY_ID,
+    operation_generation: int = 0x1234567887654321,
+    boot_incarnation: int = 0x55667788,
+) -> Packet:
+    payload = bytearray()
+    host_protocol.append_tlv(
+        payload, host_protocol.TLV_SURVEY_ID, survey_id.to_bytes(4, "little")
+    )
+    host_protocol.append_tlv(
+        payload, host_protocol.TLV_ANCHOR_ID, anchor_id.to_bytes(8, "little")
+    )
+    host_protocol.append_tlv(
+        payload,
+        host_protocol.TLV_REACHABILITY_ENTRY,
+        0x1111222233334444.to_bytes(8, "little") + b"\xc3\x52",
+    )
+    host_protocol.append_tlv(
+        payload,
+        host_protocol.TLV_SURVEY_OPERATION_GENERATION,
+        operation_generation.to_bytes(8, "little"),
+    )
+    host_protocol.append_tlv(
+        payload,
+        host_protocol.TLV_NODE_BOOT_COUNTER,
+        boot_incarnation.to_bytes(4, "little"),
+    )
+    host_protocol.append_tlv(
+        payload, host_protocol.TLV_COMMAND_STATUS, (0).to_bytes(2, "little")
+    )
+    return gateway_stream_packet(
+        sequence,
+        msg_type=MSG_SURVEY_DISCOVERY_REPORT,
+        payload=bytes(payload),
+        flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        src_id=anchor_id,
+        session_id=boot_incarnation,
     )
 
 
@@ -424,6 +584,140 @@ class IdentityAllocationTests(unittest.TestCase):
 
 
 class CommandBudgetContractTests(unittest.TestCase):
+    @staticmethod
+    def _literal_macro(source: str, name: str) -> int:
+        match = re.search(
+            rf"#define\s+{re.escape(name)}\s+(\d+)u\b", source
+        )
+        if match is None:
+            raise AssertionError(f"missing literal macro {name}")
+        return int(match.group(1))
+
+    def test_every_host_command_budget_mirror_matches_firmware(self) -> None:
+        gateway_header = (
+            REPO_ROOT / "firmware" / "include" / "gateway_command.h"
+        ).read_text(encoding="utf-8")
+        operation_header = (
+            REPO_ROOT / "firmware" / "include" / "operation_policy.h"
+        ).read_text(encoding="utf-8")
+        survey_header = (
+            REPO_ROOT / "firmware" / "include" / "survey.h"
+        ).read_text(encoding="utf-8")
+        node_comm_header = (
+            REPO_ROOT / "firmware" / "app" / "src" / "app_node_comm.h"
+        ).read_text(encoding="utf-8")
+
+        firmware_min = self._literal_macro(
+            gateway_header, "GATEWAY_COMMAND_BUDGET_MIN_MS"
+        )
+        firmware_max = self._literal_macro(
+            gateway_header, "GATEWAY_COMMAND_BUDGET_MAX_MS"
+        )
+        assignment_default = self._literal_macro(
+            operation_header,
+            "OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS",
+        )
+        survey_default = self._literal_macro(
+            survey_header, "SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS"
+        )
+        route_refresh_default = self._literal_macro(
+            node_comm_header,
+            "APP_NODE_COMM_ROUTE_REFRESH_DEFAULT_TIMEOUT_MS",
+        )
+        sample_count = self._literal_macro(
+            survey_header, "SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT"
+        )
+
+        self.assertEqual(firmware_min, host_protocol.GATEWAY_COMMAND_BUDGET_MIN_MS)
+        self.assertEqual(firmware_max, host_protocol.GATEWAY_COMMAND_BUDGET_MAX_MS)
+        self.assertEqual(firmware_min, host_operation_policy.COMMAND_BUDGET_MIN_MS)
+        self.assertEqual(firmware_max, host_operation_policy.COMMAND_BUDGET_MAX_MS)
+        self.assertEqual(
+            assignment_default,
+            host_protocol.DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+        )
+        self.assertEqual(
+            assignment_default, host_operation_policy.ASSIGNMENT_DEFAULT_BUDGET_MS
+        )
+        self.assertEqual(
+            survey_default,
+            host_protocol.SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+        )
+        self.assertEqual(
+            survey_default, host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS
+        )
+        self.assertEqual(
+            route_refresh_default,
+            host_protocol.ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
+        )
+        self.assertEqual(sample_count, host_protocol.SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
+        self.assertEqual(
+            assignment_default,
+            provision.DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+        )
+        self.assertEqual(survey_default, provision.SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS)
+        self.assertEqual(
+            route_refresh_default,
+            provision.ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
+        )
+
+    def test_discovery_budget_mirror_covers_maximum_firmware_route_depth(self) -> None:
+        survey_header = (
+            REPO_ROOT / "firmware" / "include" / "survey.h"
+        ).read_text(encoding="utf-8")
+        report_capacity = self._literal_macro(
+            survey_header, "SURVEY_GATEWAY_MAX_REPORTS"
+        )
+        service_ms = self._literal_macro(
+            survey_header, "SURVEY_GATEWAY_HOST_RECORD_SERVICE_BUDGET_MS"
+        )
+        flow_guard_ms = self._literal_macro(
+            survey_header, "SURVEY_DISCOVERY_REPORT_FLOW_CONTROL_GUARD_MS"
+        )
+        per_hop_ms = self._literal_macro(
+            survey_header,
+            "SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS",
+        )
+        max_hops = self._literal_macro(survey_header, "SURVEY_DEFAULT_TTL")
+        direct_ms = report_capacity * service_ms + flow_guard_ms
+        firmware_max_ms = direct_ms + (max_hops - 1) * per_hop_ms
+
+        self.assertEqual(42_000, firmware_max_ms)
+        self.assertEqual(
+            firmware_max_ms,
+            host_operation_policy.DISCOVERY_REPORT_CUSTODY_MAX_MS,
+        )
+
+    def test_cli_rejects_survey_budget_below_selected_discovery_horizon(
+        self,
+    ) -> None:
+        required_ms = host_operation_policy.discovery_required_budget_ms(
+            host_operation_policy.DISCOVERY_DEFAULT_START_DELAY_MS,
+            host_operation_policy.DISCOVERY_DEFAULT_SLOT_MS,
+            6,
+            host_operation_policy.DISCOVERY_DEFAULT_ROUND_COUNT,
+            1_000,
+        )
+        self.assertEqual(180_743, required_ms)
+
+        argv = [
+            "provision_mesh_anchor.py",
+            "--gateway",
+            "test-gateway",
+            "--command",
+            "survey",
+            "--command-budget-ms",
+            str(required_ms - 1),
+        ]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(sys, "stderr", mock.MagicMock()),
+            mock.patch.object(provision.asyncio, "run") as async_run,
+            self.assertRaises(SystemExit),
+        ):
+            provision.main()
+        async_run.assert_not_called()
+
     def test_cli_max_matches_firmware_and_covers_assignment_default(self) -> None:
         gateway_header = (
             REPO_ROOT / "firmware" / "include" / "gateway_command.h"
@@ -451,12 +745,45 @@ class CommandBudgetContractTests(unittest.TestCase):
 
     def test_qualification_timeout_covers_firmware_budget_and_delivery_guard(self) -> None:
         self.assertEqual(
+            5.0,
+            provision.GATEWAY_COMMAND_COMPLETION_GUARD_S,
+        )
+        self.assertEqual(
             125.0,
             provision._qualification_timeout_s(30.0, 120000),
         )
         self.assertEqual(
             300.0,
             provision._qualification_timeout_s(300.0, 120000),
+        )
+
+    def test_survey_terminal_drain_bounds_match_firmware_custody_bounds(self) -> None:
+        survey_header = (
+            REPO_ROOT / "firmware" / "include" / "survey.h"
+        ).read_text(encoding="utf-8")
+        gateway_header = (
+            REPO_ROOT / "firmware" / "include" / "gateway_command.h"
+        ).read_text(encoding="utf-8")
+        control_timeout = re.search(
+            r"#define\s+SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS\s+(\d+)u\b",
+            survey_header,
+        )
+        validation_hold = re.search(
+            r"#define\s+GATEWAY_COMMAND_RESULT_VALIDATION_MAX_HOLD_MS\s+"
+            r"(\d+)u\b",
+            gateway_header,
+        )
+
+        self.assertIsNotNone(control_timeout)
+        self.assertIsNotNone(validation_hold)
+        assert control_timeout is not None and validation_hold is not None
+        self.assertEqual(
+            int(control_timeout.group(1)) / 1000.0,
+            provision.SURVEY_TERMINAL_DRAIN_MAX_S,
+        )
+        self.assertEqual(
+            int(validation_hold.group(1)) / 1000.0,
+            provision.SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S,
         )
 
 
@@ -763,8 +1090,10 @@ class FakeBleakClient:
     async def write_gatt_char(
         self, _characteristic: object, data: bytes, *, response: bool
     ) -> None:
-        assert response
-        self.operations.append(("write", (bytes(data), self.notify_enabled)))
+        assert response is False
+        self.operations.append(
+            ("write", (bytes(data), self.notify_enabled, response))
+        )
         if self.notify_enabled and self.write_notification_counts:
             count = self.write_notification_counts.pop(0)
             assert self.notify_callback is not None
@@ -814,6 +1143,68 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         FakeDecoder.errors = []
         FakeBleakClient.notification_count = 0
         FakeBleakClient.write_notification_counts = []
+
+    async def _run_unqualified_command_with_packets(
+        self,
+        packets: list[Packet],
+        *,
+        command: str = "survey",
+    ) -> list[bytes]:
+        FakeDecoder.packets = packets
+        FakeBleakClient.notification_count = len(packets)
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            await provision.run(
+                args(
+                    command=command,
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+        return [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+
+    async def _run_unqualified_survey_with_packets(
+        self, packets: list[Packet]
+    ) -> list[bytes]:
+        return await self._run_unqualified_command_with_packets(packets)
+
+    async def _run_monitor_with_packets(self, packets: list[Packet]) -> list[bytes]:
+        FakeDecoder.packets = packets
+        FakeBleakClient.notification_count = len(packets)
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch("builtins.print"),
+        ):
+            await provision.run(
+                args(
+                    command="monitor",
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+        return [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+
+    def _expected_receipt(self, packet: Packet) -> bytes:
+        return build_gateway_host_receipt(
+            packet,
+            host_id=1,
+            gateway_id=GATEWAY_ID,
+        ).frame
 
     async def test_qualification_writes_then_holds_then_enables_and_drains(self) -> None:
         events = [
@@ -908,30 +1299,25 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         write = next(value for name, value in FakeBleakClient.operations if name == "write")
         self.assertTrue(write[1])
 
-    async def test_receipts_only_exact_receiptable_gateway_stream_packets(self) -> None:
+    async def test_unretained_gateway_stream_packets_are_not_receipted(self) -> None:
         receiptable = gateway_delivery_packet(7)
-        command_event_packet = gateway_delivery_packet(
-            8, msg_type=MSG_GATEWAY_COMMAND_EVENT
+        command_event_packet = gateway_stream_command_event_packet(
+            command_event(
+                1,
+                event_sequence=8,
+                command_kind=1,
+                command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+            ),
+            flags=0,
         )
         non_stream = gateway_delivery_packet(
             9, transport="cobs-shared-packet"
         )
         FakeDecoder.packets = [receiptable, command_event_packet, non_stream]
         FakeBleakClient.notification_count = len(FakeDecoder.packets)
-        expected = build_gateway_host_receipt(
-            receiptable,
-            host_id=1,
-            gateway_id=GATEWAY_ID,
-        )
-
         with (
             mock.patch.object(provision, "BleakClient", FakeBleakClient),
             mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
-            mock.patch.object(
-                provision,
-                "decode_gateway_command_event",
-                return_value=command_event(12, event_sequence=8),
-            ),
             mock.patch("builtins.print"),
         ):
             await provision.run(
@@ -948,14 +1334,570 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             for name, value in FakeBleakClient.operations
             if name == "write"
         ]
-        self.assertEqual([expected.frame], writes)
+        self.assertEqual([], writes)
+
+    async def test_direct_discovery_report_is_receipted_without_qualification(
+        self,
+    ) -> None:
+        discovery = gateway_stream_discovery_packet(31)
+        operation_generation = discovery.value(
+            host_protocol.TLV_SURVEY_OPERATION_GENERATION
+        )
+
+        self.assertIsInstance(operation_generation, int)
+        assert isinstance(operation_generation, int)
+        self.assertNotEqual(
+            discovery.session_id, operation_generation & 0xFFFFFFFF
+        )
+        self.assertTrue(provision._survey_custody_record_retained(discovery))
+
+        writes = await self._run_unqualified_survey_with_packets([discovery])
+
+        self.assertEqual(2, len(writes), "command plus exact 0x55 receipt")
+        self.assertEqual(self._expected_receipt(discovery), writes[-1])
+
+    async def test_malformed_discovery_report_is_never_receipted(self) -> None:
+        valid = gateway_stream_discovery_packet(32)
+        operation_generation = valid.value(
+            host_protocol.TLV_SURVEY_OPERATION_GENERATION
+        )
+        assert isinstance(operation_generation, int)
+        old_header_identity = dataclasses.replace(
+            valid, session_id=operation_generation & 0xFFFFFFFF
+        )
+        payload_without_generation = b"".join(
+            bytes((value.type_id, len(value.raw))) + value.raw
+            for value in valid.tlvs
+            if value.type_id != host_protocol.TLV_SURVEY_OPERATION_GENERATION
+        )
+        missing_generation = gateway_stream_packet(
+            33,
+            msg_type=MSG_SURVEY_DISCOVERY_REPORT,
+            payload=payload_without_generation,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            src_id=valid.src_id,
+            session_id=valid.session_id,
+        )
+
+        for packet in (old_header_identity, missing_generation):
+            with self.subTest(sequence=packet.seq):
+                with self.assertRaisesRegex(
+                    host_protocol.DecodeError,
+                    "malformed survey discovery report",
+                ):
+                    provision._survey_custody_record_retained(packet)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "malformed survey discovery report"
+        ):
+            await self._run_unqualified_survey_with_packets(
+                [old_header_identity]
+            )
+        writes = [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+        self.assertNotIn(self._expected_receipt(old_header_identity), writes)
+
+    async def test_all_survey_phase_results_are_receipted(self) -> None:
+        reachability = gateway_stream_packet(
+            31,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x00, 0x01)),
+        )
+        prepare = gateway_stream_packet(
+            32,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x01, 0x01)),
+        )
+        start = gateway_stream_packet(
+            33,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x02, 0x01)),
+        )
+        abort = gateway_stream_packet(
+            34,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x03, 0x01)),
+        )
+        unrelated = gateway_stream_packet(
+            35,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x02, 0x00)),
+        )
+
+        writes = await self._run_unqualified_survey_with_packets(
+            [reachability, prepare, start, abort, unrelated]
+        )
+
+        self.assertEqual(
+            5,
+            len(writes),
+            "command plus all four survey-phase result receipts",
+        )
+        self.assertEqual(
+            [
+                self._expected_receipt(reachability),
+                self._expected_receipt(prepare),
+                self._expected_receipt(start),
+                self._expected_receipt(abort),
+            ],
+            writes[-4:],
+        )
+        self.assertNotIn(self._expected_receipt(unrelated), writes)
+
+    async def test_local_route_and_assignment_results_are_receipted(self) -> None:
+        def local_result(sequence: int, command_id: int) -> Packet:
+            return gateway_stream_packet(
+                sequence,
+                msg_type=MSG_COMMAND_RESULT,
+                payload=bytes((
+                    provision.TLV_COMMAND_ID,
+                    2,
+                    command_id & 0xFF,
+                    command_id >> 8,
+                    host_protocol.TLV_COMMAND_STATUS,
+                    2,
+                    0,
+                    0,
+                    host_protocol.TLV_REASON,
+                    1,
+                    0,
+                )),
+                src_id=GATEWAY_ID,
+                dst_id=GATEWAY_ID,
+            )
+
+        route_refresh = local_result(48, provision.CMD_FORCE_REDISCOVERY)
+        assignment = local_result(49, provision.CMD_ASSIGN_DISCOVERY_SLOTS)
+        unrelated = local_result(50, 0x0002)  # CMD_GET_STATUS
+
+        writes = await self._run_monitor_with_packets(
+            [route_refresh, assignment, unrelated]
+        )
+
+        self.assertEqual(
+            [
+                self._expected_receipt(route_refresh),
+                self._expected_receipt(assignment),
+            ],
+            writes,
+        )
+        self.assertNotIn(self._expected_receipt(unrelated), writes)
+
+    async def test_only_ack_required_assignment_publisher_event_is_receipted(
+        self,
+    ) -> None:
+        publisher_event = dataclasses.replace(
+            successful_assignment_events(1)[-1],
+            route_epoch=7,
+            discovery_slot=0xFF,
+        )
+        generic_event = command_event(
+            1,
+            event_sequence=51,
+            command_kind=1,
+            command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+            host_session_id=0x12345,
+            host_sequence=0x2345,
+            correlation_id=0x12345,
+        )
+        publisher = gateway_stream_command_event_packet(
+            publisher_event,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
+        )
+        generic = gateway_stream_command_event_packet(
+            generic_event,
+            flags=0,
+        )
+
+        writes = await self._run_monitor_with_packets([publisher, generic])
+
+        self.assertEqual([self._expected_receipt(publisher)], writes)
+
+    async def test_abort_result_is_receipted_during_unrelated_command(self) -> None:
+        abort = gateway_stream_packet(
+            35,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x03, 0x01)),
+        )
+
+        writes = await self._run_unqualified_command_with_packets(
+            [abort],
+            command="here-i-am",
+        )
+
+        self.assertEqual(2, len(writes), "command plus retained ABORT receipt")
+        self.assertEqual(self._expected_receipt(abort), writes[-1])
+
+    async def test_failed_survey_terminal_drains_delayed_abort_before_disconnect(
+        self,
+    ) -> None:
+        terminal = command_event(
+            12,
+            event_sequence=7,
+            status=6,
+            reason=9,
+            total_count=1,
+            failure_count=1,
+        )
+        terminal_packet = types.SimpleNamespace(
+            msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
+            src_id=GATEWAY_ID,
+            dst_id=1,
+            session_id=0x12345,
+            seq=7,
+            payload=b"terminal",
+        )
+        abort = gateway_stream_packet(
+            8,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x03, 0x01)),
+        )
+        unrelated_click = gateway_stream_packet(
+            80,
+            msg_type=MSG_CLICK_REPORT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        )
+        retained_heartbeat = gateway_stream_packet(
+            81,
+            msg_type=MSG_ANCHOR_HEARTBEAT,
+        )
+
+        class OrderedDecoder:
+            def feed(self, raw: bytes) -> object:
+                packet = {
+                    b"terminal": terminal_packet,
+                    b"click": unrelated_click,
+                    b"heartbeat": retained_heartbeat,
+                    b"abort": abort,
+                }[raw]
+                return types.SimpleNamespace(errors=[], packets=[packet])
+
+        class DelayedAbortClient(FakeBleakClient):
+            late_notification: asyncio.Task[None] | None = None
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, **kwargs)
+                self.connected = False
+
+            async def __aenter__(self):
+                self.connected = True
+                return await super().__aenter__()
+
+            async def __aexit__(self, *_args: object) -> None:
+                self.connected = False
+                await super().__aexit__(*_args)
+                if self.late_notification is not None:
+                    await self.late_notification
+
+            async def start_notify(self, _uuid: object, callback: object) -> None:
+                self.notify_enabled = True
+                self.notify_callback = callback
+                self.operations.append(("start_notify", None))
+                callback(None, bytearray(b"terminal"))
+
+                async def deliver_abort() -> None:
+                    await asyncio.sleep(0.001)
+                    if self.connected:
+                        callback(None, bytearray(b"click"))
+                    await asyncio.sleep(0.001)
+                    if self.connected:
+                        callback(None, bytearray(b"heartbeat"))
+                    await asyncio.sleep(0.005)
+                    if self.connected:
+                        callback(None, bytearray(b"abort"))
+
+                self.late_notification = asyncio.create_task(deliver_abort())
+
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                if not self.connected:
+                    raise RuntimeError("write attempted after disconnect")
+                await super().write_gatt_char(
+                    characteristic,
+                    data,
+                    response=response,
+                )
+
+        with (
+            mock.patch.object(provision, "BleakClient", DelayedAbortClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", OrderedDecoder),
+            mock.patch.object(
+                provision,
+                "decode_gateway_command_event",
+                return_value=terminal,
+            ),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "survey qualification failed"):
+                await asyncio.wait_for(
+                    provision.run(
+                        args(
+                            expected_anchors=2,
+                            expected_pairs=1,
+                            notification_hold_s=0.02,
+                        )
+                    ),
+                    timeout=0.5,
+                )
+
+        receipt = self._expected_receipt(abort)
+        operations = FakeBleakClient.operations
+        writes = [
+            value[0]
+            for name, value in operations
+            if name == "write"
+        ]
+        self.assertIn(
+            receipt,
+            writes,
+            "the delayed exact ABORT must be receipted before the host leaves",
+        )
+        self.assertNotIn(self._expected_receipt(unrelated_click), writes)
+        self.assertIn(self._expected_receipt(retained_heartbeat), writes)
+        receipt_index = next(
+            index
+            for index, (name, value) in enumerate(operations)
+            if name == "write" and value[0] == receipt
+        )
+        disconnect_index = next(
+            index for index, (name, _value) in enumerate(operations)
+            if name == "disconnect"
+        )
+        self.assertLess(receipt_index, disconnect_index)
+
+    async def test_failed_survey_terminal_drain_has_a_bounded_quiet_timeout(
+        self,
+    ) -> None:
+        terminal = command_event(
+            12,
+            event_sequence=7,
+            status=6,
+            reason=9,
+            total_count=1,
+            failure_count=1,
+        )
+        terminal_packet = types.SimpleNamespace(
+            msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
+            src_id=GATEWAY_ID,
+            dst_id=1,
+            session_id=0x12345,
+            seq=7,
+            payload=b"terminal",
+        )
+
+        class TerminalDecoder:
+            def feed(self, _raw: bytes) -> object:
+                return types.SimpleNamespace(errors=[], packets=[terminal_packet])
+
+        class TerminalOnlyClient(FakeBleakClient):
+            async def start_notify(self, _uuid: object, callback: object) -> None:
+                self.notify_enabled = True
+                self.notify_callback = callback
+                self.operations.append(("start_notify", None))
+                callback(None, bytearray(b"terminal"))
+
+        with (
+            mock.patch.object(provision, "BleakClient", TerminalOnlyClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", TerminalDecoder),
+            mock.patch.object(
+                provision,
+                "decode_gateway_command_event",
+                return_value=terminal,
+            ),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "survey qualification failed"):
+                await asyncio.wait_for(
+                    provision.run(
+                        args(
+                            expected_anchors=2,
+                            expected_pairs=1,
+                            notification_hold_s=0.01,
+                        )
+                    ),
+                    timeout=0.5,
+                )
+
+        self.assertEqual("disconnect", FakeBleakClient.operations[-1][0])
+
+    async def test_retained_survey_records_are_receipted_during_monitor(self) -> None:
+        discovery = gateway_stream_discovery_packet(34)
+        pair_result = gateway_stream_packet(
+            35,
+            msg_type=MSG_SURVEY_PAIR_RESULT,
+        )
+        prepare = gateway_stream_packet(
+            36,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x01, 0x01)),
+        )
+        start = gateway_stream_packet(
+            37,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x02, 0x01)),
+        )
+        abort = gateway_stream_packet(
+            38,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x03, 0x01)),
+        )
+
+        writes = await self._run_monitor_with_packets(
+            [discovery, pair_result, prepare, start, abort]
+        )
+
+        self.assertEqual(
+            [
+                self._expected_receipt(discovery),
+                self._expected_receipt(pair_result),
+                self._expected_receipt(prepare),
+                self._expected_receipt(start),
+                self._expected_receipt(abort),
+            ],
+            writes,
+        )
+
+    async def test_nonretained_records_remain_unreceipted_during_monitor(self) -> None:
+        duplicate_command_ids = gateway_stream_packet(
+            39,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes(
+                (
+                    provision.TLV_COMMAND_ID,
+                    2,
+                    0x01,
+                    0x01,
+                    provision.TLV_COMMAND_ID,
+                    2,
+                    0x02,
+                    0x01,
+                )
+            ),
+        )
+        unrelated_result = gateway_stream_packet(
+            40,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x02, 0x00)),
+        )
+        gateway_local_reachability_result = dataclasses.replace(
+            gateway_stream_packet(
+                41,
+                msg_type=MSG_COMMAND_RESULT,
+                payload=bytes((provision.TLV_COMMAND_ID, 2, 0x00, 0x01)),
+                flags=0,
+            ),
+            src_id=GATEWAY_ID,
+            dst_id=GATEWAY_ID,
+        )
+        duplicate_abort_ids = gateway_stream_packet(
+            42,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes(
+                (
+                    provision.TLV_COMMAND_ID,
+                    2,
+                    0x03,
+                    0x01,
+                    provision.TLV_COMMAND_ID,
+                    2,
+                    0x03,
+                    0x01,
+                )
+            ),
+        )
+        malformed_abort_id = gateway_stream_packet(
+            43,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 1, 0x03)),
+        )
+        missing_command_id = gateway_stream_packet(
+            44,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((0x05, 1, 0x00)),
+        )
+        result_bundle = gateway_stream_packet(45, msg_type=MSG_RESULT_BUNDLE)
+        click = gateway_stream_packet(
+            46,
+            msg_type=MSG_CLICK_REPORT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        )
+        writes = await self._run_monitor_with_packets(
+            [
+                duplicate_command_ids,
+                unrelated_result,
+                gateway_local_reachability_result,
+                duplicate_abort_ids,
+                malformed_abort_id,
+                missing_command_id,
+                result_bundle,
+                click,
+            ]
+        )
+
+        self.assertEqual([], writes)
+
+    async def test_retained_heartbeat_releases_head_without_admitting_click_or_result(
+        self,
+    ) -> None:
+        click = gateway_stream_packet(
+            35,
+            msg_type=MSG_CLICK_REPORT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        )
+        unrelated_result = gateway_stream_packet(
+            36,
+            msg_type=MSG_COMMAND_RESULT,
+            payload=bytes((provision.TLV_COMMAND_ID, 2, 0x02, 0x00)),
+        )
+        heartbeat = gateway_stream_packet(
+            37,
+            msg_type=MSG_ANCHOR_HEARTBEAT,
+        )
+
+        writes = await self._run_monitor_with_packets(
+            [click, unrelated_result, heartbeat]
+        )
+
+        self.assertEqual([self._expected_receipt(heartbeat)], writes)
 
     async def test_concurrent_notifications_serialize_exact_receipt_writes(self) -> None:
-        packets = [gateway_delivery_packet(21), gateway_delivery_packet(22)]
-        FakeDecoder.packets = packets
+        packets = [
+            gateway_stream_pair_packet(
+                0x10, 0x20, 1000, 21, survey_id=0x12345
+            ),
+            gateway_stream_pair_packet(
+                0x10, 0x30, 1200, 22, survey_id=0x12345
+            ),
+            gateway_stream_pair_packet(
+                0x20, 0x30, 1500, 23, survey_id=0x12345
+            ),
+        ]
+        events = successful_events()
+        FakeDecoder.events = events
+        FakeDecoder.packets = packets + [
+            types.SimpleNamespace(
+                msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
+                src_id=1,
+                dst_id=1,
+                session_id=index + 1,
+                seq=index + 1,
+                payload=bytes([index]),
+            )
+            for index in range(len(events))
+        ]
 
         class ConcurrentNotificationClient(FakeBleakClient):
-            notification_count = len(packets)
+            notification_count = len(FakeDecoder.packets)
             active_writes = 0
             max_active_writes = 0
 
@@ -988,13 +1930,15 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 *,
                 response: bool,
             ) -> None:
-                assert response
+                assert response is False
                 type(self).active_writes += 1
                 type(self).max_active_writes = max(
                     type(self).max_active_writes,
                     type(self).active_writes,
                 )
-                self.operations.append(("write", (bytes(data), self.notify_enabled)))
+                self.operations.append(
+                    ("write", (bytes(data), self.notify_enabled, response))
+                )
                 await asyncio.sleep(0)
                 type(self).active_writes -= 1
 
@@ -1016,23 +1960,35 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 provision, "BleakClient", ConcurrentNotificationClient
             ),
             mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(
+                provision,
+                "decode_gateway_command_event",
+                side_effect=lambda payload, **_kwargs: events[payload[0]],
+            ),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
             mock.patch("builtins.print"),
         ):
             await provision.run(
                 args(
-                    command="monitor",
-                    duration=0.001,
-                    require_survey_success=False,
+                    command="survey",
+                    duration=1.0,
+                    require_survey_success=True,
                     notification_hold_s=0.0,
                 )
             )
 
-        writes = [
-            value[0]
+        write_records = [
+            value
             for name, value in FakeBleakClient.operations
             if name == "write"
         ]
-        self.assertEqual(expected_chunks, writes)
+        writes = [value[0] for value in write_records]
+        self.assertGreater(len(writes), len(expected_chunks))
+        self.assertEqual(expected_chunks, writes[-len(expected_chunks):])
+        self.assertTrue(
+            all(record[2] is False for record in write_records),
+            "every command and host-receipt chunk must use WWR",
+        )
         self.assertEqual(1, ConcurrentNotificationClient.max_active_writes)
 
     async def test_decode_error_fails_immediately_after_notifications_enable(self) -> None:

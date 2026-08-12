@@ -67,7 +67,7 @@ def pair_result(
         )
     )
     result = packet(0x53, payload, session=session, sequence=sequence)
-    return replace(result, src_id=a if reporter is None else reporter)
+    return replace(result, src_id=b if reporter is None else reporter)
 
 
 def event(*, kind=1, stage=6, flags=0, status=0, reason=0, event_seq=1, anchor=0, total=0, lost=0, correlation=9, gateway_sequence=5):
@@ -120,6 +120,7 @@ class SurveyAndClickTests(unittest.TestCase):
                 "eb0154380ab77f283d01cca05b19a3b028",
             ),
         )
+        accepted = []
         for sequence, (reporter, raw) in enumerate(live_payloads, 1):
             # Preserve the captured range diagnostics while applying the
             # current production survey-run identity envelope.
@@ -132,10 +133,13 @@ class SurveyAndClickTests(unittest.TestCase):
                 packet(0x53, payload, session=survey_id, sequence=sequence),
                 src_id=reporter,
             )
-            self.assertTrue(model.observe_pair_packet(live_packet).successful)
+            accepted.append(model.observe_pair_packet(live_packet))
 
         distances = sorted(pair.distance_m for pair in model.pairs.values())
-        self.assertEqual(distances, [1.068, 1.962])
+        self.assertIsNotNone(accepted[0])
+        self.assertTrue(accepted[0].successful)
+        self.assertIsNone(accepted[1])
+        self.assertEqual(distances, [1.068])
         generation = model.generation
         provisional = event(
             kind=2, stage=2, correlation=40, gateway_sequence=0,
@@ -144,7 +148,7 @@ class SurveyAndClickTests(unittest.TestCase):
         provisional = replace(provisional, host_session_id=7, host_sequence=8)
         model.observe_command_event(provisional)
         self.assertEqual(model.survey_id, survey_id)
-        self.assertEqual(len(model.pairs), 2)
+        self.assertEqual(len(model.pairs), 1)
         self.assertEqual(model.generation, generation)
 
     def test_explicit_survey_binding_rejects_stale_pairs_and_events(self):
@@ -301,7 +305,7 @@ class SurveyAndClickTests(unittest.TestCase):
             {("0x0000000000000002", "0x0000000000000003")},
         )
 
-    def test_multi_sample_result_is_complete_and_reporter_order_independent(self):
+    def test_multi_sample_result_uses_only_responder_records(self):
         for reverse in (False, True):
             model = SurveyGeometryModel()
             model.begin_survey(30, host_session_id=1, host_sequence=2)
@@ -367,7 +371,7 @@ class SurveyAndClickTests(unittest.TestCase):
         self.assertEqual(incomplete_new_round.pairs, {})
         self.assertEqual(incomplete_new_round.observed_opportunities, set())
 
-    def test_usable_report_wins_over_unusable_reporter_priority(self):
+    def test_initiator_records_cannot_replace_responder_evidence(self):
         for records in (
             (
                 pair_result(1, 2, -4726, 0, 1, reporter=1),
@@ -420,8 +424,8 @@ class SurveyAndClickTests(unittest.TestCase):
         model.observe_pair_packet(
             pair_result(1, 2, 1500, 0, 2, survey=40, reporter=1)
         )
-        self.assertEqual(model.positions_m, {})
-        self.assertGreater(model.generation, generation)
+        self.assertEqual(model.positions_m, {"old": (0.0, 0.0)})
+        self.assertEqual(model.generation, generation)
 
     def test_three_anchor_geometry_waits_for_rigid_distance_count(self):
         model = SurveyGeometryModel()
@@ -611,7 +615,7 @@ class SurveyAndClickTests(unittest.TestCase):
             1, 2, 1100, 0, 2, survey=81, sample_count=1,
             sample_index=0, reporter=1,
         ))
-        self.assertEqual(next(iter(count_model.pairs.values())).distance_m, 1.1)
+        self.assertEqual(count_model.pairs, {})
 
     def test_exact_noisy_rapid_and_degenerate_clicks(self):
         positions = {f"0x{value:016x}": point for value, point in {1:(0,0), 2:(5,0), 3:(0,4), 4:(5,4)}.items()}

@@ -2,37 +2,6 @@
 #define GATEWAY_CONTROL_VERBOSE_LOG(...) LOG_INF(__VA_ARGS__)
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-static uint32_t gateway_discovery_assignment_epoch_cursor;
-static bool gateway_discovery_assignment_epoch_ready;
-
-static int gateway_discovery_assignment_restore_epoch_cursor(void)
-{
-    gateway_discovery_assignment_epoch_cursor = 0u;
-    gateway_discovery_assignment_epoch_ready = true;
-    return 0;
-}
-
-static int gateway_discovery_assignment_reserve_epoch(uint32_t *epoch)
-{
-    uint32_t next_epoch;
-    int ret;
-
-    if (epoch == NULL) {
-        return -EINVAL;
-    }
-    if (!gateway_discovery_assignment_epoch_ready) {
-        ret = gateway_discovery_assignment_restore_epoch_cursor();
-        if (ret < 0) {
-            return ret;
-        }
-    }
-    next_epoch =
-        discovery_assignment_next_epoch(gateway_discovery_assignment_epoch_cursor);
-    gateway_discovery_assignment_epoch_cursor = next_epoch;
-    *epoch = next_epoch;
-    return 0;
-}
-
 static uint32_t gateway_discovery_assignment_next_generation(void)
 {
     gateway_discovery_assignment_generation++;
@@ -54,6 +23,26 @@ static int gateway_discovery_assignment_reschedule(k_timeout_t delay,
                 ret);
         app_watchdog_stop_feeding();
     }
+    return ret;
+}
+
+static int gateway_discovery_assignment_wake_now(const char *source)
+{
+    int ret;
+
+    /*
+     * ACK-confirm is a causal boundary, so it must replace a barrier's
+     * operation-deadline timer rather than merely submit an already-pending
+     * delayable item. Both owners run on mesh_route_work_q, which makes this
+     * cancellation and immediate rearm ordered with the confirmation RX.
+     */
+    (void)k_work_cancel_delayable(
+        &gateway_discovery_assignment_finalize_work);
+    ret = gateway_discovery_assignment_reschedule(K_NO_WAIT, source);
+    status_debug_printf(
+        "DBG_DISCOVERY_SLOT_ACK_CONFIRM_WAKE ret=%d now=%u\n",
+        ret,
+        k_uptime_get_32());
     return ret;
 }
 
@@ -216,6 +205,39 @@ static bool gateway_discovery_assignment_rf_started_locked(
            attempts_started > 0u;
 }
 
+static bool gateway_discovery_assignment_ack_confirm_blocks_locked(
+    uint32_t session_id,
+    const char *phase)
+{
+    uint64_t now_ms;
+    uint64_t remaining_64;
+    uint32_t remaining_ms;
+
+    if (session_id == 0u ||
+        !app_mesh_report_gateway_operation_confirmation_pending(
+            MSG_COMMAND_RESULT, session_id, k_uptime_get_32())) {
+        return false;
+    }
+    now_ms = (uint64_t)k_uptime_get();
+    remaining_64 = gateway_discovery_assignment_state.operation_deadline_ms >
+                           now_ms ?
+                       gateway_discovery_assignment_state
+                               .operation_deadline_ms -
+                           now_ms :
+                       0u;
+    remaining_ms = remaining_64 > UINT32_MAX ?
+                       UINT32_MAX :
+                       (uint32_t)remaining_64;
+    (void)gateway_discovery_assignment_reschedule(
+        K_MSEC(remaining_ms), "ack-confirm-barrier");
+    status_debug_printf(
+        "DBG_DISCOVERY_SLOT_ACK_CONFIRM_BARRIER phase=%s session=%u remaining_ms=%u\n",
+        phase == NULL ? "unknown" : phase,
+        session_id,
+        remaining_ms);
+    return true;
+}
+
 static void gateway_discovery_assignment_complete_success_locked(void)
 {
     uint64_t committed_anchor_ids[UWB_DISCOVERY_SLOT_COUNT];
@@ -241,6 +263,11 @@ static void gateway_discovery_assignment_complete_success_locked(void)
          discovery_assignment_response_ack_settle_pending(
              (uint64_t)k_uptime_get(),
              gateway_discovery_assignment_state.response_ack_settle_deadline_ms))) {
+        return;
+    }
+    if (gateway_discovery_assignment_ack_confirm_blocks_locked(
+            gateway_discovery_assignment_state.table_command_seq,
+            "table-complete")) {
         return;
     }
     failure_count = gateway_discovery_assignment_missing_ack_count_locked();
@@ -343,6 +370,17 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         gateway_discovery_assignment_state.table_command_seq,
         &gateway_discovery_assignment_state.table_commitment,
         &publication);
+    if (membership_ret == GATEWAY_MEMBERSHIP_COMMIT_ADOPTION_PENDING) {
+        /* The first durable write may have landed before its readback failed.
+         * Keep this prepared batch and its operation lease intact, emit no
+         * failure, and let the persistence owner adopt/replay this exact
+         * semantic identity. */
+        gateway_discovery_assignment_state.active = false;
+        gateway_discovery_assignment_state.round_open = false;
+        (void)k_work_cancel_delayable(
+            &gateway_discovery_assignment_finalize_work);
+        return;
+    }
     if (membership_ret < 0) {
         (void)app_gateway_assignment_publisher_abort_prepared_batch(&event);
         LOG_ERR("discovery assignment membership persistence failed: assignment_epoch=%u membership_epoch=%u ret=%d",
@@ -411,10 +449,99 @@ static void gateway_discovery_assignment_complete_success_locked(void)
     (void)gateway_observe_command_event(&event, true);
     gateway_discovery_assignment_state.active = false;
     gateway_discovery_assignment_state.round_open = false;
-    gateway_operation_owner_release(
-        GATEWAY_OPERATION_OWNER_ASSIGNMENT);
+    /* The publisher retains this exact operation lease through host send. */
     (void)k_work_cancel_delayable(
         &gateway_discovery_assignment_finalize_work);
+}
+
+static bool gateway_discovery_assignment_adoption_identity_matches_locked(
+    const struct app_durable_state_gateway_assignment_identity *identity)
+{
+    struct gateway_command_event expected;
+
+    if (identity == NULL ||
+        gateway_discovery_assignment_state.active ||
+        gateway_discovery_assignment_state.stage !=
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS ||
+        !gateway_discovery_assignment_state.table_delivery_succeeded) {
+        return false;
+    }
+    expected = gateway_observability_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+        CMD_ASSIGN_DISCOVERY_SLOTS,
+        &gateway_discovery_assignment_state.host_command,
+        gateway_discovery_assignment_state.epoch);
+    return identity->correlation_id == expected.correlation_id &&
+           identity->gateway_sequence == expected.gateway_sequence &&
+           identity->host_session_id == expected.host_session_id &&
+           identity->gateway_epoch == expected.gateway_epoch &&
+           identity->host_seq == expected.host_seq;
+}
+
+int app_anchor_gateway_assignment_adopted_result_commit(
+    const struct app_durable_state_gateway_assignment_identity *identity,
+    uint16_t acknowledged_count)
+{
+    uint32_t token;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || identity == NULL) {
+        return -EINVAL;
+    }
+
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    if (!gateway_discovery_assignment_adoption_identity_matches_locked(
+            identity)) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return -ESTALE;
+    }
+    token = gateway_discovery_assignment_state.result_reservation_token;
+    if (token == 0u) {
+        /* A previous call has already converted this same RAM reservation.
+         * The durable owner may safely retry its post-readback activation. */
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return 0;
+    }
+    if (acknowledged_count == 0u ||
+        acknowledged_count != (uint16_t)__builtin_popcountll(
+                                  gateway_discovery_assignment_state.ack_mask)) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return -EPROTO;
+    }
+
+    /* Keep the exact token in the owner until queue custody succeeds.  The
+     * result commit verifies the original host envelope as well, so a stale
+     * adoption cannot consume another command's reservation. */
+    ret = gateway_commit_host_command_result_reserved(
+        token,
+        &gateway_discovery_assignment_state.host_command,
+        CMD_ASSIGN_DISCOVERY_SLOTS,
+        COMMAND_OK,
+        (uint8_t)acknowledged_count);
+    if (ret == 0) {
+        gateway_discovery_assignment_state.result_reservation_token = 0u;
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return ret;
+}
+
+int app_anchor_gateway_assignment_publication_complete(void)
+{
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    if (gateway_discovery_assignment_state.active) {
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+        return -EBUSY;
+    }
+    ret = gateway_operation_owner_release(
+        &gateway_assignment_operation_lease);
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return ret;
 }
 
 static int gateway_discovery_assignment_submit_control_flood_locked(
@@ -546,9 +673,7 @@ static uint32_t gateway_discovery_assignment_window_ms_locked(void)
             gateway_discovery_assignment_state.expected_claim_count,
             gateway_discovery_assignment_current_claim_count_locked(),
             gateway_discovery_assignment_state.max_hop_count);
-    uint32_t natural_window_ms = discovery_assignment_collection_window_ms(
-        gateway_discovery_assignment_state.response_spread_ms,
-        collection_hop_count);
+    uint32_t natural_window_ms;
     uint64_t now_ms = (uint64_t)k_uptime_get();
     uint64_t remaining_64 =
         gateway_discovery_assignment_state.operation_deadline_ms > now_ms ?
@@ -559,6 +684,14 @@ static uint32_t gateway_discovery_assignment_window_ms_locked(void)
     bool collecting_claims =
         gateway_discovery_assignment_state.stage ==
         GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS;
+
+    natural_window_ms = collecting_claims ?
+        discovery_assignment_collection_window_ms(
+            gateway_discovery_assignment_state.response_spread_ms,
+            collection_hop_count) :
+        discovery_assignment_table_collection_window_ms(
+            gateway_discovery_assignment_state.response_spread_ms,
+            collection_hop_count);
 
     if (collecting_claims) {
         return gateway_command_budget_weighted_window_ms(
@@ -894,8 +1027,8 @@ static void gateway_discovery_assignment_fail_locked(
     }
     gateway_discovery_assignment_state.active = false;
     gateway_discovery_assignment_state.round_open = false;
-    gateway_operation_owner_release(
-        GATEWAY_OPERATION_OWNER_ASSIGNMENT);
+    (void)gateway_operation_owner_release(
+        &gateway_assignment_operation_lease);
     (void)k_work_cancel_delayable(&gateway_discovery_assignment_finalize_work);
     (void)k_work_cancel_delayable(&gateway_discovery_assignment_publish_work);
 }
@@ -928,8 +1061,8 @@ static int gateway_start_discovery_assignment(
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
 #define GATEWAY_ASSIGNMENT_START_RETURN(value) do {                          \
         if (operation_claimed) {                                             \
-            gateway_operation_owner_release(                                \
-                GATEWAY_OPERATION_OWNER_ASSIGNMENT);                         \
+            (void)gateway_operation_owner_release(                           \
+                &gateway_assignment_operation_lease);                        \
         }                                                                    \
         k_mutex_unlock(&gateway_discovery_assignment_mutex);                 \
         return (value);                                                      \
@@ -946,28 +1079,6 @@ static int gateway_start_discovery_assignment(
                                          EINVAL);
         GATEWAY_ASSIGNMENT_START_RETURN(
             ret == PROTO_OK ? -EINVAL : mesh_errno_from_proto(ret));
-    }
-    if (gateway_discovery_assignment_state.active) {
-        gateway_emit_host_command_result(host_command,
-                                         CMD_ASSIGN_DISCOVERY_SLOTS,
-                                         COMMAND_BUSY,
-                                         1u);
-        GATEWAY_ASSIGNMENT_START_RETURN(-EBUSY);
-    }
-    app_gateway_assignment_publisher_get_diagnostics(&publisher_diag);
-    if (publisher_diag.active) {
-        gateway_emit_host_command_result(host_command,
-                                         CMD_ASSIGN_DISCOVERY_SLOTS,
-                                         COMMAND_BUSY,
-                                         2u);
-        GATEWAY_ASSIGNMENT_START_RETURN(-EBUSY);
-    }
-    if (gateway_assignment_publication_pending()) {
-        gateway_emit_host_command_result(host_command,
-                                         CMD_ASSIGN_DISCOVERY_SLOTS,
-                                         COMMAND_BUSY,
-                                         3u);
-        GATEWAY_ASSIGNMENT_START_RETURN(-EBUSY);
     }
     ret = app_operation_policy_prepare_payload(payload,
                                                payload_len,
@@ -1035,8 +1146,40 @@ static int gateway_start_discovery_assignment(
                                          EINVAL);
         GATEWAY_ASSIGNMENT_START_RETURN(-EINVAL);
     }
-    if (!gateway_operation_owner_claim(
-            GATEWAY_OPERATION_OWNER_ASSIGNMENT)) {
+    if (!app_gateway_control_sequence_admission_available(
+            APP_GATEWAY_CONTROL_SEQUENCE_ASSIGNMENT_ADMISSION_BUDGET)) {
+        gateway_emit_host_command_result(host_command,
+                                         CMD_ASSIGN_DISCOVERY_SLOTS,
+                                         COMMAND_BUSY,
+                                         3u);
+        GATEWAY_ASSIGNMENT_START_RETURN(-ENOSPC);
+    }
+    /* A restored assignment may be semantically complete on RF yet still owe
+     * its exact host publication. That is ordinary admission backpressure,
+     * not a leaked live operation: reject it before claiming any new owner or
+     * consuming a control identity. */
+    if (gateway_assignment_publication_pending()) {
+        gateway_emit_host_command_result(host_command,
+                                         CMD_ASSIGN_DISCOVERY_SLOTS,
+                                         COMMAND_BUSY,
+                                         5u);
+        GATEWAY_ASSIGNMENT_START_RETURN(-EBUSY);
+    }
+    app_gateway_assignment_publisher_get_diagnostics(&publisher_diag);
+    if (gateway_discovery_assignment_state.active || publisher_diag.active) {
+        LOG_ERR("assignment state survived without publication debt: active=%u publisher=%u",
+                gateway_discovery_assignment_state.active ? 1u : 0u,
+                publisher_diag.active ? 1u : 0u);
+        app_watchdog_stop_feeding();
+        gateway_emit_host_command_result(host_command,
+                                         CMD_ASSIGN_DISCOVERY_SLOTS,
+                                         COMMAND_INTERNAL_ERROR,
+                                         EIO);
+        GATEWAY_ASSIGNMENT_START_RETURN(-EIO);
+    }
+    if (gateway_operation_owner_claim(
+            APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
+            &gateway_assignment_operation_lease) < 0) {
         gateway_emit_host_command_result(host_command,
                                          CMD_ASSIGN_DISCOVERY_SLOTS,
                                          COMMAND_BUSY,
@@ -1072,14 +1215,6 @@ static int gateway_start_discovery_assignment(
                                          (uint8_t)(-ret));
         GATEWAY_ASSIGNMENT_START_RETURN(mesh_errno_from_proto(ret));
     }
-    ret = gateway_discovery_assignment_reserve_epoch(&reserved_epoch);
-    if (ret < 0) {
-        gateway_emit_host_command_result(host_command,
-                                         CMD_ASSIGN_DISCOVERY_SLOTS,
-                                         COMMAND_INTERNAL_ERROR,
-                                         (uint8_t)(-ret));
-        GATEWAY_ASSIGNMENT_START_RETURN(ret);
-    }
     claim_command_seq = gateway_next_broadcast_command_seq();
     if (claim_command_seq == 0u) {
         gateway_emit_host_command_result(host_command,
@@ -1088,6 +1223,12 @@ static int gateway_start_discovery_assignment(
                                          EIO);
         GATEWAY_ASSIGNMENT_START_RETURN(-EIO);
     }
+    /*
+     * CLAIM and TABLE belong to one semantic operation. Reusing the exact
+     * durable command identity as its RFC 1982 epoch prevents an independent
+     * RAM cursor from rolling an anchor back after a gateway reboot.
+     */
+    reserved_epoch = claim_command_seq;
     app_operation_policy_commit_prepared(&policy_candidate);
     memset(&gateway_discovery_assignment_state,
            0,
@@ -1262,6 +1403,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     struct discovery_assignment_table_commitment table_commitment = {0};
     uint32_t epoch = 0u;
     size_t anchor_index = SIZE_MAX;
+    bool ack_already_recorded = false;
     bool late_table_recovery_claim = false;
     uint8_t missing_ack_count;
     int ret;
@@ -1481,26 +1623,25 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                             epoch);
         GATEWAY_ASSIGNMENT_RETURN(-ENOSPC);
     }
-    if (anchor_index == SIZE_MAX ||
-        anchor_index >=
-            gateway_discovery_assignment_state.prior_anchor_count) {
-        /*
-         * Bind ACK-history capacity only after every phase, epoch, session,
-         * hash, membership, RF-start, and deadline check above succeeds. A
-         * reservation failure precedes hop-depth, roster, ACK-mask, duplicate,
-         * and timer mutation, so a competing candidate remains retryable.
-         */
-        ret = mesh_relay_reserve_gateway_ack_candidate(
-            &mesh_runtime, packet->src_id, (uint32_t)received_at_ms);
-        if (ret != PROTO_OK) {
-            status_debug_printf(
-                "DBG_DISCOVERY_SLOT_CANDIDATE_REJECT reason=ack-capacity phase=%u epoch=%u src=0x%016llx ret=%d\n",
-                (unsigned int)phase,
-                epoch,
-                (unsigned long long)packet->src_id,
-                ret);
-            GATEWAY_ASSIGNMENT_RETURN(mesh_errno_from_proto(ret));
-        }
+    /*
+     * Bind ACK-history capacity only after every phase, epoch, session, hash,
+     * membership, RF-start, and deadline check above succeeds, but before any
+     * hop-depth, roster, ACK-mask, duplicate, or timer mutation. Prior roster
+     * members need the same reservation as new candidates: their prior
+     * assignment marker was retired when that roster became authoritative,
+     * and an accepted TABLE response must never mutate semantic state only to
+     * discover that its terminal gateway ACK cannot be retained.
+     */
+    ret = mesh_relay_reserve_gateway_ack_candidate(
+        &mesh_runtime, packet->src_id, (uint32_t)received_at_ms);
+    if (ret != PROTO_OK) {
+        status_debug_printf(
+            "DBG_DISCOVERY_SLOT_CANDIDATE_REJECT reason=ack-capacity phase=%u epoch=%u src=0x%016llx ret=%d\n",
+            (unsigned int)phase,
+            epoch,
+            (unsigned long long)packet->src_id,
+            ret);
+        GATEWAY_ASSIGNMENT_RETURN(mesh_errno_from_proto(ret));
     }
     if (hop_count == 0u ||
         hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS) {
@@ -1511,6 +1652,9 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     }
 
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        ack_already_recorded =
+            (gateway_discovery_assignment_state.ack_mask &
+             (UINT64_C(1) << anchor_index)) != 0u;
         gateway_discovery_assignment_state.ack_mask |=
             UINT64_C(1) << anchor_index;
         missing_ack_count =
@@ -1558,12 +1702,18 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                 K_NO_WAIT, "proof-validated-response");
         }
         /*
-         * Recording the ACK in RAM is not yet an inclusion proof.  Hold the
-         * transport ACK so the anchor retains response custody; after the
-         * exact roster is durable, its retry enters the inactive proof branch
-         * above and only then reaches NODE_COMM_TERMINAL_DELIVERED.
+         * Acceptance into the live assignment transaction is the terminal
+         * transport boundary for this TABLE response. Holding every gateway
+         * ACK until full quorum deadlocks a multi-hop branch: the relay must
+         * retain either its child's response or its own response in the one
+         * reliable slot, so the other response can never reach the gateway.
+         * Publication remains gated on the complete ACK mask and its own
+         * prepared roster proof below; an exact RF retry is idempotent.
          */
-        GATEWAY_ASSIGNMENT_RETURN(-EAGAIN);
+        GATEWAY_ASSIGNMENT_RETURN(
+            ack_already_recorded ?
+                APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE :
+                APP_GATEWAY_SEMANTIC_ACCEPT_NEW);
     }
 
     if (anchor_index != SIZE_MAX) {
@@ -2228,7 +2378,12 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
             }
             gateway_discovery_assignment_state.response_ack_settle_armed = false;
             gateway_discovery_assignment_state.response_ack_settle_deadline_ms = 0u;
-            gateway_discovery_assignment_state.round_open = false;
+            /*
+             * Keep the TABLE round owned until completion actually commits.
+             * The exact ACK-confirm barrier below may return after scheduling
+             * a causal wake; clearing round_open here would make that wake
+             * skip this only completion path forever.
+             */
             gateway_discovery_assignment_complete_success_locked();
             GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
         }
@@ -2247,8 +2402,28 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     if (gateway_discovery_assignment_state.round_open) {
-        if (gateway_discovery_assignment_state
-                .response_window_deadline_valid) {
+        bool expected_claims_settling =
+            gateway_discovery_assignment_state.stage ==
+                GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS &&
+            gateway_discovery_assignment_expected_claims_complete_locked();
+
+        if (expected_claims_settling) {
+            uint32_t settle_ms =
+                gateway_discovery_assignment_claim_ack_settle_remaining_locked(
+                    (uint64_t)k_uptime_get());
+
+            if (settle_ms != 0u) {
+                (void)gateway_discovery_assignment_reschedule(
+                    K_MSEC(settle_ms), "expected-claim-settle");
+                GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
+            }
+            if (!gateway_discovery_assignment_boundary_ready_locked(
+                    (uint32_t)gateway_discovery_assignment_state
+                        .claim_ack_settle_deadline_ms)) {
+                GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
+            }
+        } else if (gateway_discovery_assignment_state
+                       .response_window_deadline_valid) {
             uint32_t now_ms = k_uptime_get_32();
             uint32_t deadline_ms =
                 gateway_discovery_assignment_state
@@ -2333,12 +2508,10 @@ int gateway_resume_pending_assignment_publication(void)
         return 1;
     }
     k_mutex_unlock(&gateway_discovery_assignment_mutex);
-    /*
-     * The publication lives entirely in RAM during this session, so there is
-     * no persisted record to restore here. A pending flag with an otherwise
-     * idle publisher is transient; the owning worker completes it.
-     */
-    return 0;
+    /* The only replay input is the durable sparse roster proof. It must
+     * reconstruct the full host-visible batch before a successor assignment
+     * can pass this publication-debt gate. */
+    return gateway_replay_pending_assignment_publication();
 }
 #else
 static int gateway_start_discovery_assignment(
@@ -2490,19 +2663,34 @@ static void gateway_manual_survey_pair_note_terminal(
 }
 #endif
 
-void gateway_command_timeout_side_effects(const struct proto_packet *command,
-                                          enum command_id command_id)
+void gateway_command_timeout_side_effects(
+    const struct proto_packet *command,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    enum command_id command_id)
 {
+#if DEVICE_ROLE == ROLE_GATEWAY
+    int manual_ret;
+#endif
+
     if (command == NULL) {
         return;
     }
 
-    mesh_clear_route_waiting_tx(command);
+    mesh_clear_route_waiting_tx(
+        command,
+        semantic_digest,
+        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC);
 #if DEVICE_ROLE == ROLE_GATEWAY
+    manual_ret = gateway_manual_survey_control_complete(command, command_id);
+    if (manual_ret < 0) {
+        return;
+    }
     gateway_manual_survey_pair_note_terminal(
         command, command_id, COMMAND_TIMEOUT);
+    gateway_survey_cleanup_note_command_terminal(
+        command, command_id, COMMAND_TIMEOUT);
 #endif
-    gateway_survey_auto_note_command_timeout(command, command_id);
+    gateway_survey_note_command_timeout(command, command_id);
     if (command_id == CMD_FORCE_REDISCOVERY) {
         (void)app_node_comm_request_route_refresh(
             0u, "force-rediscovery-timeout", false);
@@ -2515,9 +2703,17 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
                                          uint8_t reason)
 {
 #if DEVICE_ROLE == ROLE_GATEWAY
+    int manual_ret = gateway_manual_survey_control_complete(
+        command, command_id);
+
+    if (manual_ret < 0) {
+        return;
+    }
     gateway_manual_survey_pair_note_terminal(command, command_id, status);
+    gateway_survey_cleanup_note_command_terminal(
+        command, command_id, status);
 #endif
-    gateway_survey_auto_note_command_result(command, command_id, status, reason);
+    gateway_survey_note_command_result(command, command_id, status, reason);
     if (command_id == CMD_FORCE_REDISCOVERY && status == COMMAND_OK) {
         (void)app_node_comm_request_route_refresh(
             0u, "force-rediscovery-result", false);
@@ -2533,7 +2729,11 @@ static void gateway_survey_service_active_delivery(void)
     enum node_transaction_action action;
     enum gateway_command_result_validation_check validation_check =
         GATEWAY_COMMAND_RESULT_VALIDATION_CLEAR;
+    enum survey_gateway_transaction_close_intent close_intent;
     bool validation_expired = false;
+    uint64_t now_ms;
+    uint64_t redrive_due_ms;
+    uint32_t redrive_horizon_ms;
     int ret;
 
     if (transaction->state == NODE_TRANSACTION_EMPTY ||
@@ -2542,11 +2742,54 @@ static void gateway_survey_service_active_delivery(void)
     }
     if (!app_node_comm_peek_delivery_event_for(
             transaction->request_delivery_handle, &event)) {
-        (void)gateway_survey_work_reschedule(
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
             GATEWAY_SURVEY_TRANSACTION_POLL_MS);
         return;
     }
-    if (event.reason != NODE_COMM_TERMINAL_DELIVERED) {
+    now_ms = (uint64_t)k_uptime_get();
+    close_intent = survey_gateway_transaction_close_requested(
+        &gateway_survey_transaction);
+    redrive_horizon_ms = gateway_survey_natural_request_timeout_ms(
+        gateway_survey_transaction.active_target_id);
+    redrive_due_ms = UINT64_MAX - now_ms < redrive_horizon_ms ?
+        UINT64_MAX : now_ms + redrive_horizon_ms;
+    if (close_intent == SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE &&
+        event.reason == NODE_COMM_TERMINAL_DELIVERED &&
+        !gateway_survey_result_preflight.valid &&
+        redrive_horizon_ms != 0u &&
+        redrive_due_ms < transaction->spec.absolute_deadline_ms) {
+        ret = app_node_comm_redrive_delivered_control(
+            transaction->request_delivery_handle,
+            redrive_due_ms,
+            transaction->spec.absolute_deadline_ms,
+            &event);
+        if (ret == 0) {
+            ret = survey_gateway_transaction_note_delivery_redrive(
+                &gateway_survey_transaction, &event, now_ms, &action);
+            if (ret == 0) {
+                app_stack_workload_diag_gateway_control_sample(
+                    &gateway_survey_pending_command,
+                    event.attempts_started,
+                    1u);
+                (void)gateway_survey_work_schedule(
+                    SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+                    GATEWAY_SURVEY_TRANSACTION_POLL_MS);
+                return;
+            }
+            (void)app_node_comm_cancel_delivery(
+                transaction->request_delivery_handle);
+        }
+        if (ret != -EAGAIN && ret != -ESTALE) {
+            gateway_survey_abandon_current(
+                COMMAND_INTERNAL_ERROR,
+                (uint8_t)(-ret),
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return;
+        }
+    }
+    if (close_intent == SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE &&
+        event.reason != NODE_COMM_TERMINAL_DELIVERED) {
         validation_check = gateway_protocol_validation_check_interval(
             gateway_survey_transaction.active_started_at_ms,
             (uint32_t)transaction->spec.absolute_deadline_ms);
@@ -2557,7 +2800,8 @@ static void gateway_survey_service_active_delivery(void)
              * A matching result physically reserved in [start,D) must decide
              * the phase before transport failure can make it late.
              */
-            (void)gateway_survey_work_reschedule(
+            (void)gateway_survey_work_schedule(
+                SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
                 GATEWAY_SURVEY_TRANSACTION_POLL_MS);
             return;
         }
@@ -2567,27 +2811,37 @@ static void gateway_survey_service_active_delivery(void)
     }
     if (!app_node_comm_take_delivery_event_for(
             transaction->request_delivery_handle, &event)) {
-        (void)gateway_survey_work_reschedule(
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
             GATEWAY_SURVEY_TRANSACTION_POLL_MS);
         return;
     }
+    gateway_survey_work_cancel_owner(
+        SURVEY_GATEWAY_DUE_CONTROL_DELIVERY);
     ret = survey_gateway_transaction_note_delivery_terminal(
-        &gateway_survey_transaction, &event, (uint64_t)k_uptime_get(),
+        &gateway_survey_transaction, &event, now_ms,
         &action);
     if (ret < 0) {
         gateway_survey_abandon_current(
             COMMAND_INTERNAL_ERROR,
             (uint8_t)(-ret),
-            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
-            "delivery-terminal-mismatch");
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        return;
+    }
+    if (survey_gateway_transaction_close_requested(
+            &gateway_survey_transaction) !=
+            SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE) {
+        if (!gateway_survey_complete_close_request()) {
+            gateway_survey_close_fault(
+                GATEWAY_SURVEY_CLOSE_FAULT_SERVICE, -EPROTO);
+        }
         return;
     }
     if (validation_expired) {
         gateway_survey_abandon_current(
             COMMAND_INTERNAL_ERROR,
             (uint8_t)GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED,
-            GATEWAY_COMMAND_EVENT_REASON_INTERNAL,
-            "delivery-terminal-validation-expired");
+            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return;
     }
     app_stack_workload_diag_gateway_control_sample(
@@ -2597,7 +2851,7 @@ static void gateway_survey_service_active_delivery(void)
     if (transaction->state == NODE_TRANSACTION_SUCCEEDED &&
         gateway_survey_result_preflight.valid &&
         gateway_survey_pending_command_valid) {
-        gateway_survey_auto_note_command_result(
+        gateway_survey_note_command_result(
             &gateway_survey_pending_command,
             gateway_survey_transaction.active_command_id,
             gateway_survey_result_preflight.status,
@@ -2612,8 +2866,7 @@ static void gateway_survey_service_active_delivery(void)
             (uint8_t)event.reason,
             event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ?
                 GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
-                GATEWAY_COMMAND_EVENT_REASON_RADIO,
-            "control-delivery-failed");
+                GATEWAY_COMMAND_EVENT_REASON_RADIO);
     }
 }
 #endif
@@ -2637,13 +2890,75 @@ static bool gateway_survey_wait_for_discovery_collection(void)
     }
     if (gateway_survey_discovery_delivery_handle != 0u) {
         uint32_t handle = gateway_survey_discovery_delivery_handle;
+        uint64_t now_uptime_ms;
+        uint64_t redrive_due_ms;
+        uint64_t latest_gateway_start_ms;
+        uint64_t path_guard_ms;
+        int redrive_ret;
 
+        if (!app_node_comm_peek_delivery_event_for(handle, &event)) {
+            (void)gateway_survey_work_schedule(
+                SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+                GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS);
+            return true;
+        }
+        now_uptime_ms = (uint64_t)k_uptime_get();
+        path_guard_ms = (uint64_t)SURVEY_DEFAULT_TTL *
+            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS;
+        latest_gateway_start_ms =
+            gateway_survey_discovery_start_deadline_ms > path_guard_ms ?
+                gateway_survey_discovery_start_deadline_ms - path_guard_ms :
+                0u;
+        redrive_due_ms = gateway_survey_discovery_origin_uptime_ms +
+            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS;
+        if (redrive_due_ms < now_uptime_ms) {
+            redrive_due_ms = now_uptime_ms;
+        }
+        if (event.reason == NODE_COMM_TERMINAL_DELIVERED &&
+            !gateway_survey_discovery_redrive_started &&
+            gateway_survey_discovery_start_deadline_ms != 0u &&
+            redrive_due_ms <=
+                UINT64_MAX - SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS &&
+            redrive_due_ms + SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS <
+                latest_gateway_start_ms) {
+            redrive_ret = app_node_comm_redrive_delivered_control(
+                handle,
+                redrive_due_ms,
+                latest_gateway_start_ms,
+                &event);
+            if (redrive_ret == 0) {
+                gateway_survey_discovery_redrive_started = true;
+                status_debug_printf(
+                    "DBG_SURVEY_DISCOVERY_FLOOD_REDRIVE handle=%u due=%llu latest=%llu execute=%llu attempts=%u\n",
+                    handle,
+                    (unsigned long long)redrive_due_ms,
+                    (unsigned long long)latest_gateway_start_ms,
+                    (unsigned long long)
+                        gateway_survey_discovery_start_deadline_ms,
+                    event.attempts_started);
+                (void)gateway_survey_work_schedule(
+                    SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+                    GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS);
+                return true;
+            }
+            if (redrive_ret != -EAGAIN && redrive_ret != -ESTALE) {
+                LOG_ERR("gateway survey discovery redrive failed: handle=%u ret=%d",
+                        handle,
+                        redrive_ret);
+                app_watchdog_stop_feeding();
+                return true;
+            }
+        }
         if (!app_node_comm_take_delivery_event_for(handle, &event)) {
-            (void)gateway_survey_work_reschedule(
+            (void)gateway_survey_work_schedule(
+                SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
                 GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS);
             return true;
         }
         gateway_survey_discovery_delivery_handle = 0u;
+        gateway_survey_discovery_origin_uptime_ms = 0u;
+        gateway_survey_discovery_start_deadline_ms = 0u;
+        gateway_survey_discovery_redrive_started = false;
         status_debug_printf("DBG_SURVEY_DISCOVERY_FLOOD_TERMINAL handle=%u reason=%u attempts=%u\n",
                             handle,
                             (unsigned int)event.reason,
@@ -2653,6 +2968,9 @@ static bool gateway_survey_wait_for_discovery_collection(void)
                 event.attempts_started)) {
             gateway_survey_collection_pending = false;
             gateway_survey_collection_started_at_ms = 0u;
+            gateway_survey_discovery_origin_uptime_ms = 0u;
+            gateway_survey_discovery_start_deadline_ms = 0u;
+            gateway_survey_discovery_redrive_started = false;
             gateway_survey_collection_deadline_ms = 0u;
             gateway_survey_collection_finalize_cutoff_ms = 0u;
             gateway_survey_collection_finalize_cutoff_valid = false;
@@ -2664,7 +2982,7 @@ static bool gateway_survey_wait_for_discovery_collection(void)
                 event.reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED ?
                     GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
                     GATEWAY_COMMAND_EVENT_REASON_RADIO;
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 event.reason == NODE_COMM_TERMINAL_DEADLINE_EXPIRED ?
                     COMMAND_TIMEOUT : COMMAND_RADIO_ERROR,
                 failure_reason);
@@ -2690,7 +3008,7 @@ static bool gateway_survey_wait_for_discovery_collection(void)
     if (!gateway_survey_collection_window_armed) {
         gateway_survey_collection_pending = false;
         gateway_survey_collection_duration_ms = 0u;
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
@@ -2716,7 +3034,8 @@ static bool gateway_survey_wait_for_discovery_collection(void)
         if (operation_wait_ms < wait_ms) {
             wait_ms = operation_wait_ms;
         }
-        (void)gateway_survey_work_reschedule(wait_ms);
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_BOUNDARY_POLL, wait_ms);
         return true;
     }
     receive_deadline_ms = gateway_survey_collection_receive_deadline_ms();
@@ -2724,18 +3043,22 @@ static bool gateway_survey_wait_for_discovery_collection(void)
         gateway_survey_collection_started_at_ms,
         receive_deadline_ms);
     if (validation_check == GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED) {
-        (void)gateway_survey_work_reschedule(
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
             GATEWAY_SURVEY_TRANSACTION_POLL_MS);
         return true;
     }
     if (validation_check == GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED) {
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return true;
     }
     gateway_survey_collection_pending = false;
     gateway_survey_collection_started_at_ms = 0u;
+    gateway_survey_discovery_origin_uptime_ms = 0u;
+    gateway_survey_discovery_start_deadline_ms = 0u;
+    gateway_survey_discovery_redrive_started = false;
     gateway_survey_collection_deadline_ms = 0u;
     gateway_survey_collection_emission_deadline_ms = 0u;
     gateway_survey_collection_finalize_cutoff_ms = 0u;
@@ -2751,7 +3074,7 @@ static bool gateway_survey_wait_for_discovery_collection(void)
             gateway_survey_expected_node_count,
             (unsigned int)gateway_survey_context.report_count,
             missing ? 1u : 0u);
-        gateway_survey_auto_finish_status(
+        gateway_survey_finish_status(
             missing ? COMMAND_TIMEOUT : COMMAND_INVALID_STATE,
             gateway_survey_context.report_count == 0u ?
                 GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS :
@@ -2766,10 +3089,6 @@ static bool gateway_survey_wait_for_discovery_collection(void)
 
 static void gateway_survey_work_handler(struct k_work *work)
 {
-    struct survey_gateway_auto_action action = {0};
-#if DEVICE_ROLE == ROLE_GATEWAY
-    enum gateway_survey_pair_finalize_result finalize_result;
-#endif
     int ret;
 
     ARG_UNUSED(work);
@@ -2778,6 +3097,12 @@ static void gateway_survey_work_handler(struct k_work *work)
         return;
     }
 #if DEVICE_ROLE == ROLE_GATEWAY
+    /* Retire only the due slots which actually woke this shared worker. */
+    gateway_survey_work_consume_due();
+    if (gateway_survey_consume_incarnation_event()) {
+        goto out;
+    }
+    gateway_manual_survey_control_service();
     gateway_survey_service_active_delivery();
     if (gateway_survey_active && gateway_survey_finish_pending &&
         (gateway_survey_transaction.active.state == NODE_TRANSACTION_EMPTY ||
@@ -2788,15 +3113,37 @@ static void gateway_survey_work_handler(struct k_work *work)
             gateway_survey_finish_pending_reason;
 
         gateway_survey_finish_pending = false;
-        gateway_survey_auto_finish_status(finish_status, finish_reason);
-        return;
+        gateway_survey_finish_status(finish_status, finish_reason);
+        goto out;
     }
     if (!gateway_survey_active) {
-        gateway_survey_service_cleanup();
+        if (gateway_survey_cleanup_pending() &&
+            gateway_survey_cleanup_custody_owned()) {
+            gateway_survey_service_cleanup();
+        }
         goto out;
     }
     if (uptime_deadline_reached(k_uptime_get_32(),
                                 gateway_survey_operation_deadline_ms)) {
+        /*
+         * Mesh RX may record exact ACK-confirm proof before D while this
+         * lower-priority survey worker runs after D. Apply one such semantic
+         * transition using the immutable physical receive time, then yield;
+         * the already-armed immediate drive will enforce the operation
+         * deadline before any successor RF work can start.
+         */
+        if (gateway_survey_round_active() &&
+            app_gateway_survey_round_control_confirmation_received_in_interval(
+                &gateway_survey_round,
+                gateway_survey_operation_started_at_ms,
+                gateway_survey_operation_deadline_ms)) {
+            if (!gateway_survey_round_apply_control_confirmation()) {
+                gateway_survey_finish_status(
+                    COMMAND_INTERNAL_ERROR,
+                    GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            }
+            goto out;
+        }
         enum gateway_command_result_validation_check validation_check =
             gateway_protocol_validation_check_interval(
                 gateway_survey_operation_started_at_ms,
@@ -2804,66 +3151,43 @@ static void gateway_survey_work_handler(struct k_work *work)
 
         if (validation_check ==
             GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED) {
-            (void)gateway_survey_work_reschedule(
+            (void)gateway_survey_work_schedule(
+                SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
                 GATEWAY_SURVEY_TRANSACTION_POLL_MS);
-            return;
+            goto out;
         }
         if (validation_check ==
             GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED) {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         } else {
-            gateway_survey_auto_finish_status(
+            gateway_survey_finish_status(
                 COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
         }
+        goto out;
+    }
+    gateway_survey_service_cleanup();
+    if (gateway_survey_wait_for_discovery_collection()) {
+        goto out;
+    }
+    if (gateway_survey_cleanup_pending()) {
         goto out;
     }
     if (!gateway_survey_flush_boundary_event()) {
         goto out;
     }
-    if (gateway_survey_response_ack_settle_blocks_progress(
-            k_uptime_get_32())) {
-        return;
-    }
     /*
-     * Complete an observation before servicing cleanup from its preceding
-     * control exchange.  In particular, a failed final pair must be allowed
-     * to publish its terminal outcome immediately after the bounded
-     * observation window; cleanup is independent retirement debt and cannot
-     * hold the host-visible survey terminal open.
+     * A round-owned control may be waiting on the exact ACK_CONFIRM of an
+     * already retired result. Let that owner consume the proof before any
+     * successor control is exposed.
      */
-    finalize_result = gateway_survey_finalize_pair_observation();
-    if (finalize_result ==
-        GATEWAY_SURVEY_PAIR_FINALIZE_VALIDATION_EXPIRED) {
-        gateway_survey_auto_finish_status(
-            COMMAND_INTERNAL_ERROR,
-            GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-        goto out;
-    }
-    if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_TERMINAL) {
-        gateway_survey_auto_finish();
-        goto out;
-    }
-    if (finalize_result == GATEWAY_SURVEY_PAIR_FINALIZE_RETRY) {
-        goto out;
-    }
-    gateway_survey_service_cleanup();
-    if (gateway_survey_wait_for_discovery_collection()) {
-        return;
-    }
-    if (gateway_survey_cleanup_pending() &&
-        (gateway_survey_pair_observation_active ||
-         !survey_gateway_auto_no_unstarted_pairs(
-             &gateway_survey_auto, &gateway_survey_context))) {
+    if (gateway_survey_round_active() && gateway_survey_round_drive()) {
         goto out;
     }
 #endif
-    if (gateway_survey_auto.waiting) {
-        goto out;
-    }
 #if DEVICE_ROLE == ROLE_GATEWAY
-    if (!gateway_survey_auto.running && !gateway_survey_round_active()) {
+    if (!gateway_survey_round_active()) {
         if (!gateway_survey_context.pairs_planned) {
             ret = survey_gateway_plan_pairs(&gateway_survey_context);
             if (ret != PROTO_OK) {
@@ -2877,7 +3201,7 @@ static void gateway_survey_work_handler(struct k_work *work)
                     gateway_command_survey_failure_reason_merge(
                         gateway_survey_terminal_failure_reason,
                         GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-                gateway_survey_auto_finish();
+                gateway_survey_finish();
                 goto out;
             }
         }
@@ -2887,11 +3211,11 @@ static void gateway_survey_work_handler(struct k_work *work)
                 gateway_survey_operation_deadline_ms);
 
             /*
-             * Every pair serializes four accepted PREPARE/START response-ACK
-             * settle intervals, even when ranging itself runs in concurrent
-             * lanes. Reject an impossible plan before the first PREPARE can
-             * create remote state; observation, RF retry, and cleanup
-             * time only increase the required budget.
+             * Every pair reserves four bounded PREPARE/START custody
+             * windows, even when ranging itself runs in concurrent lanes.
+             * Reject an impossible plan before the first PREPARE can create
+             * remote state; observation, RF retry, and cleanup time only
+             * increase the required budget.
              */
             if (!survey_gateway_transaction_pair_plan_fits_minimum_budget(
                     gateway_survey_context.pair_count,
@@ -2902,7 +3226,7 @@ static void gateway_survey_work_handler(struct k_work *work)
                     (unsigned int)gateway_survey_context.pair_count,
                     remaining_ms,
                     SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS);
-                gateway_survey_auto_finish_status(
+                gateway_survey_finish_status(
                     COMMAND_TIMEOUT,
                     GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
                 goto out;
@@ -2941,63 +3265,10 @@ static void gateway_survey_work_handler(struct k_work *work)
     }
 #endif
 
-    ret = survey_gateway_auto_next_action(&gateway_survey_auto,
-                                          &gateway_survey_context,
-                                          &action);
-    if (ret == PROTO_OK && action.complete) {
-        gateway_survey_auto_finish();
-        goto out;
-    }
-    if (ret == PROTO_ERR_BUSY) {
-        goto out;
-    }
-    if (ret != PROTO_OK) {
-        LOG_WRN("gateway survey next action failed: survey=%u ret=%d",
-                gateway_survey_context.survey_id,
-                ret);
-        gateway_survey_auto_finish();
-        goto out;
-    }
-
-    ret = gateway_survey_auto_send_action(&action);
-    if (ret < 0) {
-        LOG_WRN("gateway survey auto send failed: cmd=0x%04x dst=0x%016llx ret=%d",
-                (unsigned int)action.command_id,
-                (unsigned long long)action.target_id,
-                ret);
-        if (ret == -ETIMEDOUT) {
-            gateway_survey_auto_finish_status(
-                COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
-            goto out;
-        }
-#if DEVICE_ROLE == ROLE_GATEWAY
-        if (gateway_survey_transaction.active.state == NODE_TRANSACTION_ACTIVE) {
-            (void)app_node_comm_cancel_delivery(
-                gateway_survey_transaction.active.request_delivery_handle);
-        }
-        survey_gateway_transaction_require_cleanup(
-            &gateway_survey_transaction, false, (uint64_t)k_uptime_get());
-#endif
-        gateway_survey_auto.waiting = false;
-        gateway_survey_auto.stage = SURVEY_GATEWAY_AUTO_LOAD_PAIR;
-        gateway_survey_auto_log_skipped_pair("send-failed",
-            ret == -EHOSTUNREACH ? COMMAND_TIMEOUT : COMMAND_RADIO_ERROR,
-            (uint8_t)(-ret),
-            ret == -EHOSTUNREACH || ret == -ENOTCONN ?
-                GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE :
-                ret == -ETIMEDOUT ?
-                    GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED :
-                    GATEWAY_COMMAND_EVENT_REASON_RADIO,
-            action.command_id,
-            action.target_id);
-#if DEVICE_ROLE == ROLE_GATEWAY
-        gateway_survey_begin_cleanup();
-#endif
-    }
-
 out:
 #if DEVICE_ROLE == ROLE_GATEWAY
     gateway_survey_schedule_drive();
+    gateway_survey_work_rearm_due();
 #endif
 }
 
@@ -3014,15 +3285,20 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
     return -ENOTSUP;
 #else
     struct mesh_outbound outbound = {0};
+    struct app_node_comm_reservation_lease control_reservation = {0};
     struct survey_pair pair = {0};
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t target_mask = 0u;
     size_t payload_len = 0u;
-    uint64_t absolute_deadline_ms;
+    uint64_t request_deadline_ms = 0u;
+    uint64_t transaction_deadline_ms = 0u;
     uint32_t delivery_handle = 0u;
     uint32_t client_token;
+    uint32_t pending_wait_reservation_token = 0u;
     uint16_t seq;
+    bool control_reserved = false;
     bool created_state = false;
+    bool pending_wait_reserved = false;
     int ret;
 
     if (host_packet == NULL ||
@@ -3039,8 +3315,7 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
         return -EINVAL;
     }
     gateway_manual_survey_pair_expire(k_uptime_get_32());
-    if (gateway_survey_active ||
-        gateway_assignment_publication_pending()
+    if (gateway_survey_active
 #if DEVICE_ROLE == ROLE_GATEWAY
         || gateway_survey_cleanup_pending()
 #endif
@@ -3083,8 +3358,18 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
         if (!gateway_manual_survey_pair_state.valid) {
             uint64_t operation_generation = 0u;
 
-            if (!gateway_operation_owner_claim(
-                    GATEWAY_OPERATION_OWNER_MANUAL_SURVEY)) {
+            if (!app_gateway_control_sequence_admission_available(
+                    APP_GATEWAY_CONTROL_SEQUENCE_SURVEY_ADMISSION_BUDGET)) {
+                gateway_emit_host_command_result(
+                    host_packet,
+                    command_id,
+                    COMMAND_BUSY,
+                    9u);
+                return -ENOSPC;
+            }
+            if (gateway_operation_owner_claim(
+                    APP_GATEWAY_OPERATION_OWNER_MANUAL_SURVEY,
+                    &gateway_manual_survey_operation_lease) < 0) {
                 gateway_emit_host_command_result(
                     host_packet,
                     command_id,
@@ -3092,11 +3377,81 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
                     8u);
                 return -EBUSY;
             }
-            ret = gateway_ram_reserve_survey_generation(
+            ret = app_node_comm_reserve_bounded_control(
+                gateway_manual_survey_operation_lease.generation,
+                &control_reservation);
+            if (ret < 0) {
+                (void)gateway_operation_owner_release(
+                    &gateway_manual_survey_operation_lease);
+                gateway_emit_host_command_result(
+                    host_packet,
+                    command_id,
+                    COMMAND_BUSY,
+                    (uint8_t)(-ret));
+                return ret;
+            }
+            control_reserved = true;
+            {
+                uint64_t now_ms = (uint64_t)k_uptime_get();
+                uint32_t request_timeout_ms =
+                    gateway_survey_natural_request_timeout_ms(
+                        host_packet->dst_id);
+                uint32_t result_timeout_ms =
+                    SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+                uint32_t transaction_timeout_ms =
+                    request_timeout_ms > UINT32_MAX - result_timeout_ms ?
+                        UINT32_MAX :
+                        request_timeout_ms + result_timeout_ms;
+
+                request_deadline_ms =
+                    UINT64_MAX - now_ms < request_timeout_ms ?
+                        UINT64_MAX : now_ms + request_timeout_ms;
+                transaction_deadline_ms =
+                    UINT64_MAX - now_ms < transaction_timeout_ms ?
+                        UINT64_MAX : now_ms + transaction_timeout_ms;
+                ret = gateway_command_result_wait_reserve(
+                    &pending_wait_reservation_token);
+            }
+            if (ret < 0) {
+                gateway_survey_cancel_control_reservation(
+                    &control_reservation);
+                (void)gateway_operation_owner_release(
+                    &gateway_manual_survey_operation_lease);
+                gateway_emit_host_command_result(
+                    host_packet,
+                    command_id,
+                    ret == -EBUSY ? COMMAND_BUSY :
+                                     COMMAND_INVALID_STATE,
+                    (uint8_t)(-ret));
+                return ret;
+            }
+            pending_wait_reserved = true;
+            outbound.packet.dst_id = host_packet->dst_id;
+            ret = gateway_survey_prepare_pair_control(&outbound, NULL);
+            if (ret < 0) {
+                (void)gateway_command_result_wait_cancel(
+                    pending_wait_reservation_token);
+                gateway_survey_cancel_control_reservation(
+                    &control_reservation);
+                (void)gateway_operation_owner_release(
+                    &gateway_manual_survey_operation_lease);
+                gateway_emit_host_command_result(
+                    host_packet,
+                    command_id,
+                    ret == -EHOSTUNREACH ? COMMAND_TIMEOUT :
+                                           COMMAND_RADIO_ERROR,
+                    (uint8_t)(-ret));
+                return ret;
+            }
+            ret = gateway_durable_reserve_survey_generation(
                 DEVICE_ID, &operation_generation);
             if (ret < 0) {
-                gateway_operation_owner_release(
-                    GATEWAY_OPERATION_OWNER_MANUAL_SURVEY);
+                (void)gateway_command_result_wait_cancel(
+                    pending_wait_reservation_token);
+                gateway_survey_cancel_control_reservation(
+                    &control_reservation);
+                (void)gateway_operation_owner_release(
+                    &gateway_manual_survey_operation_lease);
                 gateway_emit_host_command_result(
                     host_packet,
                     command_id,
@@ -3108,8 +3463,12 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
             ret = survey_pair_control_commitment_compute(
                 &pair, round_commitment);
             if (ret != PROTO_OK) {
-                gateway_operation_owner_release(
-                    GATEWAY_OPERATION_OWNER_MANUAL_SURVEY);
+                (void)gateway_command_result_wait_cancel(
+                    pending_wait_reservation_token);
+                gateway_survey_cancel_control_reservation(
+                    &control_reservation);
+                (void)gateway_operation_owner_release(
+                    &gateway_manual_survey_operation_lease);
                 gateway_emit_host_command_result(
                     host_packet,
                     command_id,
@@ -3240,6 +3599,14 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
             round_commitment);
     }
     if (ret != PROTO_OK) {
+        if (pending_wait_reserved) {
+            (void)gateway_command_result_wait_cancel(
+                pending_wait_reservation_token);
+        }
+        if (control_reserved) {
+            gateway_survey_cancel_control_reservation(
+                &control_reservation);
+        }
         gateway_emit_host_command_result(host_packet,
                                            command_id,
                                            COMMAND_INTERNAL_ERROR,
@@ -3271,6 +3638,14 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
         ret = PROTO_OK;
     }
     if (ret != PROTO_OK) {
+        if (pending_wait_reserved) {
+            (void)gateway_command_result_wait_cancel(
+                pending_wait_reservation_token);
+        }
+        if (control_reserved) {
+            gateway_survey_cancel_control_reservation(
+                &control_reservation);
+        }
         gateway_emit_host_command_result(host_packet,
                                            command_id,
                                            COMMAND_INTERNAL_ERROR,
@@ -3292,25 +3667,63 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
             command_id,
             COMMAND_INTERNAL_ERROR,
             (uint8_t)(-ret));
+        if (pending_wait_reserved) {
+            (void)gateway_command_result_wait_cancel(
+                pending_wait_reservation_token);
+        }
+        if (control_reserved) {
+            gateway_survey_cancel_control_reservation(
+                &control_reservation);
+        }
         if (created_state) {
             gateway_manual_survey_pair_reset();
         }
         return ret;
     }
-    {
-        uint32_t control_timeout_ms =
-            gateway_survey_natural_control_timeout_ms(
-                outbound.packet.dst_id);
-
-        absolute_deadline_ms = (uint64_t)k_uptime_get() +
-                               control_timeout_ms;
-        ret = gateway_begin_command_result_wait_for(
-            &outbound.packet,
+    if (pending_wait_reserved) {
+        ret = gateway_command_result_wait_commit(
+            pending_wait_reservation_token,
+            &outbound,
             command_id,
-            control_timeout_ms);
+            (uint32_t)transaction_deadline_ms);
+        if (ret == 0) {
+            pending_wait_reserved = false;
+            pending_wait_reservation_token = 0u;
+        }
+    } else {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+        uint32_t request_timeout_ms =
+            gateway_survey_natural_request_timeout_ms(
+                outbound.packet.dst_id);
+        uint32_t result_timeout_ms =
+            command_id == CMD_SURVEY_ABORT ?
+                SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS :
+                SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+        uint32_t transaction_timeout_ms =
+            request_timeout_ms > UINT32_MAX - result_timeout_ms ?
+                UINT32_MAX : request_timeout_ms + result_timeout_ms;
+
+        request_deadline_ms =
+            UINT64_MAX - now_ms < request_timeout_ms ?
+                UINT64_MAX : now_ms + request_timeout_ms;
+        transaction_deadline_ms =
+            UINT64_MAX - now_ms < transaction_timeout_ms ?
+                UINT64_MAX : now_ms + transaction_timeout_ms;
+        ret = gateway_begin_command_result_wait_for(
+            &outbound,
+            command_id,
+            transaction_timeout_ms);
     }
     client_token = ((uint32_t)command_id << 16) | seq;
     if (ret < 0) {
+        if (pending_wait_reservation_token != 0u) {
+            (void)gateway_command_result_wait_cancel(
+                pending_wait_reservation_token);
+        }
+        if (control_reserved) {
+            gateway_survey_cancel_control_reservation(
+                &control_reservation);
+        }
         gateway_emit_host_command_result(
             &outbound.packet,
             command_id,
@@ -3322,12 +3735,25 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
         return ret;
     }
 
-    ret = gateway_survey_send_pair_control(
-        &outbound,
-        absolute_deadline_ms,
-        client_token,
-        &delivery_handle);
+    if (control_reserved) {
+        ret = app_node_comm_commit_bounded_control_reservation(
+            &control_reservation,
+            &outbound,
+            request_deadline_ms,
+            client_token,
+            &delivery_handle);
+    } else {
+        ret = gateway_survey_send_pair_control(
+            &outbound,
+            request_deadline_ms,
+            client_token,
+            &delivery_handle);
+    }
     if (ret < 0) {
+        if (control_reserved) {
+            gateway_survey_cancel_control_reservation(
+                &control_reservation);
+        }
         if (!gateway_clear_pending_command_result(&outbound.packet)) {
             if (created_state) {
                 gateway_manual_survey_pair_reset();
@@ -3346,6 +3772,8 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
         }
         return ret;
     }
+    memset(&control_reservation, 0, sizeof(control_reservation));
+    control_reserved = false;
     if (command_id == CMD_SURVEY_PREPARE_PAIR) {
         gateway_manual_survey_pair_state.prepare_submitted_mask |=
             target_mask;
@@ -3358,11 +3786,25 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
         gateway_manual_survey_pair_state.abort_submitted_mask |=
             target_mask;
     }
-    ret = app_node_comm_auto_reap_delivery(delivery_handle);
+    gateway_manual_survey_pair_state.control_command = outbound.packet;
+    gateway_manual_survey_pair_state.control_transaction_deadline_ms =
+        transaction_deadline_ms;
+    gateway_manual_survey_pair_state.control_redrive_horizon_ms =
+        gateway_survey_natural_request_timeout_ms(outbound.packet.dst_id);
+    gateway_manual_survey_pair_state.control_delivery_handle = delivery_handle;
+    gateway_manual_survey_pair_state.control_command_id = command_id;
+    gateway_manual_survey_pair_state.control_target_mask = target_mask;
+    gateway_manual_survey_pair_state.control_delivery_active = true;
+    ret = gateway_survey_work_schedule(
+        SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+        GATEWAY_SURVEY_TRANSACTION_POLL_MS);
     if (ret < 0) {
         int cleanup_ret;
 
-        (void)app_node_comm_abandon_delivery(delivery_handle);
+        cleanup_ret = gateway_manual_survey_control_release();
+        if (cleanup_ret < 0) {
+            return cleanup_ret;
+        }
         cleanup_ret = gateway_manual_survey_pair_begin_cleanup();
         if (cleanup_ret < 0) {
             LOG_ERR("manual survey auto-reap cleanup admission failed: ret=%d",
@@ -3495,7 +3937,10 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_mesh_host_packet(
         return ret;
     }
     if (tracking_mode == GATEWAY_COMMAND_TRACK_LEGACY_RESULT) {
-        ret = gateway_begin_command_result_wait(&outbound->packet, command_id);
+        ret = gateway_begin_command_result_wait_for(
+            outbound,
+            command_id,
+            GATEWAY_COMMAND_RESULT_ROUND_TRIP_TIMEOUT_MS);
         if (ret < 0) {
             LOG_WRN("gateway command result tracker busy: cmd=0x%04x dst=0x%016llx ret=%d",
                     (unsigned int)command_id,
@@ -3604,7 +4049,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_handle_local_survey_abort(
         GATEWAY_CONTROL_VERBOSE_LOG(
             "gateway survey orchestration aborted by host: survey=%u",
             gateway_survey_context.survey_id);
-        ret = gateway_survey_auto_finish_status(
+        ret = gateway_survey_finish_status(
             COMMAND_DENIED, GATEWAY_COMMAND_EVENT_REASON_ABORTED);
         if (ret < 0) {
             gateway_emit_host_command_result_reserved(
@@ -3674,6 +4119,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
             packet->dst_id == DEVICE_ID) {
             struct app_operation_policy_candidate policy_candidate;
             uint32_t command_budget_ms;
+            uint32_t result_reservation_token;
             bool budget_explicit;
 
             ret = gateway_command_extract_budget_ms(
@@ -3698,7 +4144,7 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
             ret = app_operation_policy_prepare_payload(payload,
                                                        payload_len,
                                                        0u,
-                                                       0u,
+                                                       APP_OPERATION_POLICY_ALL_MASK,
                                                        &policy_candidate);
             if (ret < 0) {
                 gateway_emit_host_command_result(
@@ -3713,14 +4159,32 @@ static int GATEWAY_BLE_HOST_COMMAND_UNUSED gateway_route_host_packet(
                     GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST);
                 return ret;
             }
-            ret = app_node_comm_request_route_refresh_correlated_bounded(
-                0u,
-                "force-rediscovery-ble",
-                packet,
-                command_budget_ms);
-            if (ret == 0) {
+            result_reservation_token =
+                gateway_command_result_get_dispatch_token();
+            if (result_reservation_token == 0u) {
+                ret = -EINVAL;
+            } else if (gateway_route_refresh_result_token != 0u) {
+                ret = -EBUSY;
+            } else {
+                /*
+                 * The route worker may preempt this caller as soon as it is
+                 * scheduled. Publish its exact terminal-result owner first,
+                 * so even an inline completion can convert the reservation.
+                 */
                 gateway_route_refresh_result_token =
-                    gateway_command_result_get_dispatch_token();
+                    result_reservation_token;
+                ret = app_node_comm_request_route_refresh_correlated_bounded(
+                    0u,
+                    "force-rediscovery-ble",
+                    packet,
+                    command_budget_ms);
+                if (ret < 0 &&
+                    gateway_route_refresh_result_token ==
+                        result_reservation_token) {
+                    gateway_route_refresh_result_token = 0u;
+                }
+            }
+            if (ret == 0) {
                 app_operation_policy_commit_prepared(&policy_candidate);
             }
             if (ret < 0) {
@@ -4469,11 +4933,74 @@ static void gateway_host_command_work_handler(struct k_work *work)
     int ret;
 
     ARG_UNUSED(work);
+    dwm3000_driver_clear_receive_abort(
+        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     gateway_host_command_retry_pending = false;
 
     if (k_msgq_peek(&gateway_host_command_msgq, &item) != 0) {
         return;
     }
+    if (mesh_id_is_unicast(item.packet.dst_id) &&
+        item.packet.dst_id != DEVICE_ID &&
+        app_mesh_report_gateway_origin_confirmation_pending(
+            item.packet.dst_id, k_uptime_get_32())) {
+        uint32_t now_ms = k_uptime_get_32();
+
+        if (gateway_host_command_ack_confirm_wait_admission_id !=
+                item.admission_id) {
+            gateway_host_command_ack_confirm_wait_admission_id =
+                item.admission_id;
+            gateway_host_command_ack_confirm_wait_deadline_ms =
+                now_ms + GATEWAY_COMMAND_BUDGET_MAX_MS;
+        }
+        if (!uptime_deadline_reached(
+                now_ms,
+                gateway_host_command_ack_confirm_wait_deadline_ms)) {
+            uint32_t remaining_ms = uptime_ms_until_deadline(
+                now_ms,
+                gateway_host_command_ack_confirm_wait_deadline_ms);
+            uint32_t delay_ms = MIN(
+                remaining_ms,
+                GATEWAY_HOST_COMMAND_ACK_CONFIRM_POLL_MS);
+
+            gateway_host_command_retry_pending = true;
+            ret = k_work_reschedule(
+                &gateway_host_command_retry_work, K_MSEC(delay_ms));
+            if (ret < 0) {
+                gateway_host_command_retry_pending = false;
+                LOG_ERR("gateway command ACK-confirm barrier scheduling failed closed: admission=%u ret=%d",
+                        item.admission_id,
+                        ret);
+                app_watchdog_stop_feeding();
+            }
+            status_debug_printf(
+                "DBG_GATEWAY_COMMAND_ACK_CONFIRM_BARRIER dst=0x%016llx cmd=0x%04x remaining_ms=%u\n",
+                (unsigned long long)item.packet.dst_id,
+                (unsigned int)item.command_id,
+                remaining_ms);
+            return;
+        }
+
+        (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
+        gateway_emit_host_command_result_reserved(
+            item.result_reservation_token,
+            &item.packet,
+            item.command_id,
+            COMMAND_TIMEOUT,
+            ETIMEDOUT);
+        gateway_observe_host_terminal(
+            &item.packet,
+            item.command_id,
+            COMMAND_TIMEOUT,
+            GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
+        (void)gateway_host_command_lifecycle_discard_locked(&item);
+        gateway_host_command_ack_confirm_wait_admission_id = 0u;
+        gateway_host_command_ack_confirm_wait_deadline_ms = 0u;
+        gateway_host_command_submit_next_queued();
+        return;
+    }
+    gateway_host_command_ack_confirm_wait_admission_id = 0u;
+    gateway_host_command_ack_confirm_wait_deadline_ms = 0u;
     ret = gateway_host_command_lifecycle_begin_locked(&item, &dispatch);
     if (ret < 0) {
         (void)k_msgq_get(&gateway_host_command_msgq, &item, K_NO_WAIT);
@@ -4527,14 +5054,13 @@ static void gateway_host_command_work_handler(struct k_work *work)
      */
     app_mesh_command_orchestrator_mark_safe_boundary(
         mesh_gateway_command_orchestrator_context());
-    dwm3000_driver_clear_receive_abort(
-        DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY);
     gateway_observe_host_stage(&item.packet,
                                item.command_id,
                                GATEWAY_COMMAND_EVENT_STAGE_DISPATCHING);
     gateway_command_result_set_dispatch_token(
         item.result_reservation_token);
-    ret = gateway_route_host_packet(&item.packet, item.payload, item.payload_len);
+    ret = gateway_route_host_packet(
+        &item.packet, item.payload, item.payload_len);
     gateway_command_result_set_dispatch_token(0u);
     if (app_gateway_command_ingress_contention_retryable(ret)) {
         uint32_t delay_ms;
@@ -4635,15 +5161,17 @@ static void gateway_host_command_work_handler(struct k_work *work)
                                             &options) == PROTO_OK &&
             gateway_command_tracking_mode_from_options(&options) !=
                 GATEWAY_COMMAND_TRACK_LEGACY_RESULT &&
-            item.command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
+            item.command_id != CMD_ASSIGN_DISCOVERY_SLOTS &&
+            item.command_id != CMD_FORCE_REDISCOVERY) {
             /*
              * Collection and no-response commands have no later local
              * MSG_COMMAND_RESULT.  Their compact admission credit can be
              * released once routing has accepted the command.
              *
-             * Assignment is a local asynchronous orchestration command.  Its
-             * internally generated floods intentionally use no response, but
-             * the host reservation remains owned until assignment terminal.
+             * Assignment and route refresh are local asynchronous operations.
+             * Their internally generated floods intentionally use no
+             * response, but the host reservation remains owned until their
+             * local terminal callback converts it into MSG_COMMAND_RESULT.
              */
             gateway_command_result_release_reserved(
                 item.result_reservation_token,

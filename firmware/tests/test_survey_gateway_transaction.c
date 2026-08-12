@@ -16,6 +16,21 @@ struct test_scheduler {
     size_t max_occupied;
 };
 
+struct test_due_arm {
+    uint32_t delays[12];
+    size_t call_count;
+};
+
+static int due_arm(void *context, uint32_t delay_ms)
+{
+    struct test_due_arm *arm = context;
+
+    assert(arm != NULL);
+    assert(arm->call_count < sizeof(arm->delays) / sizeof(arm->delays[0]));
+    arm->delays[arm->call_count++] = delay_ms;
+    return 0;
+}
+
 static size_t scheduler_occupied(const struct test_scheduler *scheduler)
 {
     size_t occupied = 0u;
@@ -349,6 +364,7 @@ static void test_deadline_then_zero_rf_terminal_retires_possible_prepare(void)
 {
     struct survey_gateway_transaction context;
     struct survey_pair pair = test_pair();
+    struct survey_pair next_pair = test_pair();
     struct node_comm_terminal_event event = {
         .handle = 42u,
         .client_token = 142u,
@@ -374,10 +390,22 @@ static void test_deadline_then_zero_rf_terminal_retires_possible_prepare(void)
     assert(!context.active.remote_side_effect_possible);
     assert(context.possible_prepare_mask == 0u);
     assert(context.cleanup_mask == 0u);
+    assert(context.pair_loaded);
     assert(survey_gateway_transaction_note_cleanup_complete(
                &context, 0u, 1002u) == 0);
     assert(context.active.state == NODE_TRANSACTION_EMPTY);
     assert(!context.abandoning);
+    assert(context.pair_loaded);
+
+    /*
+     * Empty cleanup debt retires the request, not its pair identity. The
+     * orchestration owner may release that identity only after it observes
+     * the transaction's EMPTY state, then the next pair is admissible.
+     */
+    survey_gateway_transaction_pair_complete(&context, true, 1003u);
+    assert(!context.pair_loaded);
+    next_pair.survey_id++;
+    assert(survey_gateway_transaction_load_pair(&context, &next_pair) == 0);
 }
 
 static void test_duplicate_and_conflicting_history_fail_closed(void)
@@ -771,6 +799,115 @@ static void test_duplicate_cannot_replace_accepted_result_before_terminal(void)
     assert(context.prepared_mask == SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
 }
 
+static void test_close_intent_survives_cancel_take_poll_and_blocks_redrive(void)
+{
+    struct survey_gateway_transaction context;
+    struct survey_gateway_transaction before_redrive;
+    struct survey_pair pair = test_pair();
+    struct node_comm_terminal_event delivered = {
+        .handle = 180u,
+        .client_token = 280u,
+        .reason = NODE_COMM_TERMINAL_DELIVERED,
+        .attempts_started = 1u,
+    };
+    struct node_comm_terminal_event cancelled = {
+        .handle = 180u,
+        .client_token = 280u,
+        .reason = NODE_COMM_TERMINAL_CANCELLED,
+        .attempts_started = 1u,
+    };
+    enum node_transaction_action action =
+        NODE_TRANSACTION_ACTION_TERMINAL_SUCCESS;
+    uint8_t cleanup_mask;
+
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
+    begin_phase(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                280u, 380u, 180u, 5000u);
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE);
+    assert(survey_gateway_transaction_request_close(
+               &context, SURVEY_GATEWAY_TRANSACTION_CLOSE_TIMEOUT) == 0);
+
+    /*
+     * cancel/take may report -EAGAIN for several worker polls.  No terminal
+     * evidence has crossed this boundary, so the close request must remain
+     * the sole disposition owner and an ordinary delivery redrive is stale.
+     */
+    before_redrive = context;
+    assert(survey_gateway_transaction_note_delivery_redrive(
+               &context, &delivered, 100u, &action) == -ECANCELED);
+    assert(memcmp(&context, &before_redrive, sizeof(context)) == 0);
+    assert(action == NODE_TRANSACTION_ACTION_TERMINAL_SUCCESS);
+    assert(survey_gateway_transaction_request_close(
+               &context, SURVEY_GATEWAY_TRANSACTION_CLOSE_TIMEOUT) == 0);
+    assert(survey_gateway_transaction_request_close(
+               &context, SURVEY_GATEWAY_TRANSACTION_CLOSE_RADIO) ==
+           -EALREADY);
+    assert(!survey_gateway_transaction_service(&context, 101u, &action));
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_TIMEOUT);
+    assert(!context.active.request_delivery_terminal);
+
+    /* Exact cancel/take evidence is required before the owner may clear it. */
+    assert(survey_gateway_transaction_note_delivery_terminal(
+               &context, &cancelled, 102u, &action) == 0);
+    assert(context.active.request_delivery_terminal);
+    assert(context.active.state == NODE_TRANSACTION_ABANDONING);
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_TIMEOUT);
+    cleanup_mask = survey_gateway_transaction_cleanup_mask(&context);
+    assert(cleanup_mask == SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
+
+    survey_gateway_transaction_clear_close_request(&context);
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE);
+    assert(survey_gateway_transaction_note_cleanup_complete(
+               &context, cleanup_mask, 103u) == 0);
+    assert(context.active.state == NODE_TRANSACTION_EMPTY);
+}
+
+static void test_close_intent_clears_on_exact_phase_completion_or_reset(void)
+{
+    struct survey_gateway_transaction context;
+    struct survey_pair pair = test_pair();
+    struct node_comm_terminal_event terminal = {
+        .handle = 181u,
+        .client_token = 281u,
+        .reason = NODE_COMM_TERMINAL_CANCELLED,
+        .attempts_started = 1u,
+    };
+    enum node_transaction_action action;
+
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
+    begin_phase(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                281u, 381u, 181u, 5000u);
+    assert(note_result(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
+                       281u, 381u, 481u, 581u, COMMAND_OK, 100u,
+                       &action) ==
+           SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
+    assert(survey_gateway_transaction_request_close(
+               &context, SURVEY_GATEWAY_TRANSACTION_CLOSE_INTERNAL) == 0);
+    assert(survey_gateway_transaction_note_delivery_terminal(
+               &context, &terminal, 101u, &action) == 0);
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_INTERNAL);
+    assert(survey_gateway_transaction_phase_complete(&context) == 0);
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE);
+
+    begin_phase(&context, CMD_SURVEY_PREPARE_PAIR, RESPONDER_ID,
+                282u, 382u, 182u, 5000u);
+    assert(survey_gateway_transaction_request_close(
+               &context, SURVEY_GATEWAY_TRANSACTION_CLOSE_RADIO) == 0);
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_close_requested(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE);
+    assert(context.active.state == NODE_TRANSACTION_EMPTY);
+    assert(!context.pair_loaded);
+}
+
 static void test_cleanup_deadline_is_frozen_and_retirement_admits_next_pair(void)
 {
     struct survey_gateway_transaction context;
@@ -806,6 +943,34 @@ static void test_cleanup_deadline_is_frozen_and_retirement_admits_next_pair(void
 
     pair.survey_id++;
     assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
+}
+
+static void test_remote_lease_expiry_is_terminal_cleanup_authority(void)
+{
+    struct survey_gateway_transaction context;
+    struct survey_pair pair = test_pair();
+    uint64_t safe_release_ms =
+        100u + SURVEY_PAIR_PREPARED_LEASE_MS;
+
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
+    context.prepared_mask =
+        SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK |
+        SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK;
+    survey_gateway_transaction_pair_complete(&context, false, 100u);
+
+    assert(survey_gateway_transaction_note_cleanup_lease_expired(
+               &context,
+               SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK,
+               safe_release_ms) == 0);
+    assert(survey_gateway_transaction_cleanup_mask(&context) ==
+           SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK);
+    assert(survey_gateway_transaction_note_cleanup_lease_expired(
+               &context,
+               SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK,
+               safe_release_ms) == 0);
+    assert(!survey_gateway_transaction_cleanup_pending(&context));
+    assert(context.active.state == NODE_TRANSACTION_EMPTY);
 }
 
 static void test_d_minus_one_result_decides_before_failed_delivery_terminal(void)
@@ -855,77 +1020,6 @@ static void test_d_minus_one_result_decides_before_failed_delivery_terminal(void
            SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
 }
 
-static void test_d_minus_one_duplicate_validation_rearms_ack_settle(void)
-{
-    struct survey_gateway_transaction context;
-    struct gateway_command_result_validation_leases leases = {0};
-    struct survey_gateway_response_ack_settle settle;
-    struct survey_pair pair = test_pair();
-    enum node_transaction_action action;
-    const uint32_t operation_deadline_ms = 10000u;
-    const uint32_t accepted_at_ms = 1000u;
-    const uint32_t original_settle_deadline_ms =
-        accepted_at_ms + SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS;
-    const uint32_t duplicate_received_at_ms =
-        original_settle_deadline_ms - 1u;
-    uint32_t token = 0u;
-
-    survey_gateway_transaction_init(&context);
-    survey_gateway_response_ack_settle_init(&settle);
-    assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
-    begin_phase(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
-                270u, 370u, 170u, operation_deadline_ms);
-    assert(note_result(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
-                       270u, 370u, 470u, 570u, COMMAND_OK,
-                       accepted_at_ms, &action) ==
-           SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
-    survey_gateway_response_ack_settle_note_result(&settle,
-                                                   accepted_at_ms,
-                                                   operation_deadline_ms);
-
-    /*
-     * The exact retry is physically captured at D-1, but semantic validation
-     * remains queued when the original settle worker reaches D.
-     */
-    assert(gateway_command_result_validation_arm(
-               &leases, duplicate_received_at_ms,
-               operation_deadline_ms, &token) == PROTO_OK);
-    assert(gateway_command_result_validation_check_interval(
-               &leases, settle.started_at_ms, settle.deadline_ms,
-               original_settle_deadline_ms) ==
-           GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED);
-    assert(gateway_command_result_validation_complete(
-        &leases, token, duplicate_received_at_ms));
-    assert(gateway_command_result_validation_check_interval(
-               &leases, settle.started_at_ms, settle.deadline_ms,
-               original_settle_deadline_ms) ==
-           GATEWAY_COMMAND_RESULT_VALIDATION_BLOCKED);
-
-    assert(note_result(&context, CMD_SURVEY_PREPARE_PAIR, INITIATOR_ID,
-                       270u, 370u, 470u, 570u, COMMAND_OK,
-                       duplicate_received_at_ms, &action) ==
-           SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE);
-    survey_gateway_response_ack_settle_note_duplicate(
-        &settle, duplicate_received_at_ms, operation_deadline_ms);
-    assert(operation_deadline_ms == 10000u);
-    assert(settle.started_at_ms == accepted_at_ms);
-    assert(settle.deadline_ms ==
-           duplicate_received_at_ms +
-               SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS);
-    assert(survey_gateway_response_ack_settle_pending(
-        &settle, original_settle_deadline_ms));
-
-    assert(gateway_command_result_validation_release(&leases, token));
-    assert(gateway_command_result_validation_check_interval(
-               &leases, accepted_at_ms, original_settle_deadline_ms,
-               original_settle_deadline_ms) ==
-           GATEWAY_COMMAND_RESULT_VALIDATION_CLEAR);
-    assert(survey_gateway_response_ack_settle_pending(
-        &settle, settle.deadline_ms - 1u));
-    assert(survey_gateway_response_ack_settle_deadline_reached(
-        &settle, settle.deadline_ms));
-}
-
 static void test_completed_validation_uses_full_processing_hold_across_wrap(void)
 {
     struct gateway_command_result_validation_leases leases = {0};
@@ -970,6 +1064,8 @@ static void test_completed_validation_uses_full_processing_hold_across_wrap(void
 static void test_dense_pair_plan_is_rejected_before_partial_remote_state(void)
 {
     assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS == 12000u);
+    assert(SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS == 174000u);
+    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 900000u);
 
     /* The full 50-anchor planner capacity cannot fit either host budget. */
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
@@ -979,12 +1075,12 @@ static void test_dense_pair_plan_is_rejected_before_partial_remote_state(void)
         SURVEY_GATEWAY_MAX_PAIRS,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
 
-    /* Even 50 pairs consume the complete default before discovery or ranging. */
+    /* Seventy-five pairs consume the complete default before discovery/ranging. */
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        50u,
+        75u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        50u,
+        75u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS - 1u));
 
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
@@ -993,6 +1089,160 @@ static void test_dense_pair_plan_is_rejected_before_partial_remote_state(void)
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
         76u,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
+}
+
+static void test_due_registry_retains_earliest_observation_due(void)
+{
+    struct survey_gateway_due_registry registry;
+    struct test_due_arm arm = { 0 };
+    uint32_t delay_ms;
+    const uint32_t now_ms = 100u;
+
+    survey_gateway_due_registry_init(&registry);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_ROUND_OBSERVATION,
+               now_ms, 2u, due_arm, &arm) == 0);
+    assert(arm.call_count == 1u);
+    assert(arm.delays[0] == 2u);
+
+    /* A routine 50 ms poll must not replace the retained 2 ms observation. */
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+               now_ms, 50u, due_arm, &arm) == 0);
+    assert(arm.call_count == 2u);
+    assert(arm.delays[1] == 2u);
+    assert(survey_gateway_due_registry_next(&registry, now_ms, &delay_ms));
+    assert(delay_ms == 2u);
+
+    survey_gateway_due_registry_cancel(
+        &registry, SURVEY_GATEWAY_DUE_ROUND_OBSERVATION);
+    assert(survey_gateway_due_registry_next(&registry, now_ms, &delay_ms));
+    assert(delay_ms == 50u);
+    assert(survey_gateway_due_registry_rearm(
+               &registry, now_ms, due_arm, &arm) == 0);
+    assert(arm.call_count == 3u);
+    assert(arm.delays[2] == 50u);
+
+    /* Consuming the re-added observation exposes the same later poll. */
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_ROUND_OBSERVATION,
+               now_ms, 2u, due_arm, &arm) == 0);
+    survey_gateway_due_registry_consume_due(&registry, now_ms + 2u);
+    assert(survey_gateway_due_registry_next(
+        &registry, now_ms + 2u, &delay_ms));
+    assert(delay_ms == 48u);
+}
+
+static void test_due_registry_same_owner_only_moves_earlier(void)
+{
+    struct survey_gateway_due_registry registry;
+    struct test_due_arm arm = { 0 };
+    uint32_t delay_ms;
+    const uint32_t now_ms = 100u;
+
+    survey_gateway_due_registry_init(&registry);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms, 2u, due_arm, &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms, 50u, due_arm, &arm) == 0);
+    assert(arm.delays[0] == 2u);
+    assert(arm.delays[1] == 2u);
+    assert(survey_gateway_due_registry_next(&registry, now_ms, &delay_ms));
+    assert(delay_ms == 2u);
+
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms, 1u, due_arm, &arm) == 0);
+    assert(arm.delays[2] == 1u);
+
+    /* A due wake stays urgent until its owner explicitly consumes/cancels it. */
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms + 1u, 50u, due_arm, &arm) == 0);
+    assert(arm.delays[3] == 0u);
+    survey_gateway_due_registry_cancel(
+        &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms + 1u, 50u, due_arm, &arm) == 0);
+    assert(arm.delays[4] == 50u);
+}
+
+static void test_observation_origin_keeps_a_wrapped_zero_start(void)
+{
+    struct survey_gateway_observation_origin origin;
+
+    survey_gateway_observation_origin_reset(&origin);
+    assert(!origin.valid);
+    assert(origin.started_at_ms == 0u);
+    assert(survey_gateway_observation_origin_freeze(&origin, 0u));
+    assert(origin.valid);
+    assert(origin.started_at_ms == 0u);
+    assert(!survey_gateway_observation_origin_freeze(&origin, 17u));
+    assert(origin.valid);
+    assert(origin.started_at_ms == 0u);
+}
+
+static void test_due_registry_keeps_order_across_uptime_wrap(void)
+{
+    struct survey_gateway_due_registry registry;
+    struct test_due_arm arm = { 0 };
+    uint32_t delay_ms;
+    const uint32_t now_ms = UINT32_MAX - 1u;
+
+    survey_gateway_due_registry_init(&registry);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_ROUND_OBSERVATION,
+               now_ms, 2u, due_arm, &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+               now_ms, 50u, due_arm, &arm) == 0);
+    assert(arm.delays[0] == 2u);
+    assert(arm.delays[1] == 2u);
+
+    survey_gateway_due_registry_consume_due(&registry, 0u);
+    assert(survey_gateway_due_registry_next(&registry, 0u, &delay_ms));
+    assert(delay_ms == 48u);
+}
+
+static void test_same_owner_due_and_receive_interval_cross_uptime_wrap(void)
+{
+    struct survey_gateway_due_registry registry;
+    struct test_due_arm arm = { 0 };
+    uint32_t delay_ms;
+    const uint32_t now_ms = UINT32_MAX - 5u;
+    const uint32_t deadline_ms = 3u;
+
+    survey_gateway_due_registry_init(&registry);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms, 50u, due_arm, &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms, 2u, due_arm, &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
+               now_ms, 10u, due_arm, &arm) == 0);
+    assert(arm.delays[0] == 50u);
+    assert(arm.delays[1] == 2u);
+    assert(arm.delays[2] == 2u);
+    assert(survey_gateway_due_registry_next(&registry, now_ms, &delay_ms));
+    assert(delay_ms == 2u);
+
+    /* Closed-open [start, D): D-1 is accepted; D and D+1 are rejected. */
+    assert(survey_gateway_receive_in_interval(
+        (UINT64_C(1) << 32u) | (deadline_ms - 1u),
+        now_ms, deadline_ms));
+    assert(!survey_gateway_receive_in_interval(
+        (UINT64_C(1) << 32u) | deadline_ms,
+        now_ms, deadline_ms));
+    assert(!survey_gateway_receive_in_interval(
+        (UINT64_C(1) << 32u) | (deadline_ms + 1u),
+        now_ms, deadline_ms));
+    assert(!survey_gateway_receive_in_interval(
+        now_ms - 1u, now_ms, deadline_ms));
 }
 
 int main(void)
@@ -1010,11 +1260,18 @@ int main(void)
     test_conflict_and_deadline_abandonment_free_scheduler_slot();
     test_cleanup_cannot_retire_before_request_delivery_terminal();
     test_duplicate_cannot_replace_accepted_result_before_terminal();
+    test_close_intent_survives_cancel_take_poll_and_blocks_redrive();
+    test_close_intent_clears_on_exact_phase_completion_or_reset();
     test_cleanup_deadline_is_frozen_and_retirement_admits_next_pair();
+    test_remote_lease_expiry_is_terminal_cleanup_authority();
     test_d_minus_one_result_decides_before_failed_delivery_terminal();
-    test_d_minus_one_duplicate_validation_rearms_ack_settle();
     test_completed_validation_uses_full_processing_hold_across_wrap();
     test_dense_pair_plan_is_rejected_before_partial_remote_state();
+    test_due_registry_retains_earliest_observation_due();
+    test_due_registry_same_owner_only_moves_earlier();
+    test_observation_origin_keeps_a_wrapped_zero_start();
+    test_due_registry_keeps_order_across_uptime_wrap();
+    test_same_owner_due_and_receive_interval_cross_uptime_wrap();
     puts("survey gateway transaction tests passed");
     return 0;
 }

@@ -1,6 +1,7 @@
 #ifndef APP_MESH_CH9_ACK_H
 #define APP_MESH_CH9_ACK_H
 
+#include "app_mesh_c5_repair_authorization.h"
 #include "mesh_relay.h"
 #include "protocol.h"
 
@@ -69,6 +70,12 @@ enum app_mesh_ch9_ack_queue_result {
     APP_MESH_CH9_ACK_QUEUE_SEMANTIC_CONFLICT,
 };
 
+enum app_mesh_ch9_ack_owner {
+    APP_MESH_CH9_ACK_OWNER_GENERATED = 0,
+    APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE,
+    APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD,
+};
+
 struct app_mesh_ch9_ack_batch_entry {
     uint32_t session_id;
     uint32_t packet_id;
@@ -87,6 +94,7 @@ struct app_mesh_ch9_ack_batch {
     bool valid;
     bool preserve_payload;
     bool retry_deferred;
+    uint8_t owner;
 };
 
 /* One slot for the production upstream and one for the downstream peer. */
@@ -123,6 +131,10 @@ int app_mesh_ch9_ack_table_queue(
     const struct app_mesh_ch9_ack_batch_entry *entry,
     enum app_mesh_ch9_ack_queue_result *result);
 int app_mesh_ch9_ack_table_queue_forwarded(
+    struct app_mesh_ch9_ack_table *table,
+    const struct mesh_outbound *ack,
+    enum app_mesh_ch9_ack_queue_result *result);
+int app_mesh_ch9_ack_table_queue_late_forwarded(
     struct app_mesh_ch9_ack_table *table,
     const struct mesh_outbound *ack,
     enum app_mesh_ch9_ack_queue_result *result);
@@ -177,6 +189,27 @@ bool app_mesh_ch9_core_ack_wait_active(const struct mesh_pending_tx *pending,
                                        bool relay_tx_active);
 bool app_mesh_ch9_core_pending_allows_rx(const struct mesh_pending_tx *pending,
                                          bool relay_tx_active);
+bool app_mesh_ch9_c5_repair_authorization_capture(
+    struct app_mesh_c5_tx_authorization_token *authorization,
+    enum app_mesh_c5_tx_authorization kind,
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    const struct app_mesh_ch9_ack_batch *batch,
+    uint64_t repair_peer_id);
+bool app_mesh_ch9_c5_repair_owner_matches(
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    const struct app_mesh_ch9_ack_batch *batch);
+bool app_mesh_c5_tx_authorization_token_equal(
+    const struct app_mesh_c5_tx_authorization_token *a,
+    const struct app_mesh_c5_tx_authorization_token *b);
+bool app_mesh_ch9_c5_repair_allowed(
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    const struct mesh_pending_tx *pending,
+    bool relay_tx_active,
+    const struct app_mesh_ch9_ack_batch *batch,
+    const struct mesh_outbound *candidate);
 
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
                                       uint64_t next_hop_id,

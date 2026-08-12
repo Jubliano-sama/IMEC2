@@ -18,6 +18,10 @@ struct app_mesh_rx_handoff_state {
 
 bool app_mesh_rx_policy_should_drop(bool mesh_route_test_transmitter,
                                     uint8_t msg_type);
+bool app_mesh_rx_policy_postboot_route_adv_fresh(
+    uint8_t msg_type,
+    uint32_t message_age_ms,
+    uint64_t received_uptime_ms);
 bool app_mesh_rx_policy_role_uses_uwb_rx(bool permanent_receiver_role,
                                          bool scheduled_receiver_enabled,
                                          bool channel9_schedule_installed);

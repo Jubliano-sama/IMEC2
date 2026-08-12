@@ -73,14 +73,14 @@ static int schedule_work_ms(uint32_t delay_ms)
                     delay_ms,
                     ret);
             /*
-             * Every caller has already published either persistent report
-             * custody or an admitted survey generation.  With no worker owner
+             * Every caller has already published either retained RAM report
+             * custody or an admitted survey generation. With no worker owner
              * left, continued watchdog feeds would turn a rejected reschedule
              * into a permanent protocol stall.
              */
             app_watchdog_stop_feeding();
         }
-        return ret;
+        return ret < 0 ? ret : 0;
     }
     return -ENODEV;
 }
@@ -102,7 +102,7 @@ static uint32_t survey_delivery_next_retry_delay_ms(
     }
     if (outbound != NULL) {
         status_debug_printf(
-            "DBG_SURVEY_REPORT_BACKOFF survey=%u seq=%u round=%u ms=%u\n",
+            "DBG_SURVEY_REPORT_BACKOFF boot=%u seq=%u round=%u ms=%u\n",
             outbound->packet.session_id,
             outbound->packet.seq,
             survey_delivery_retry_round,
@@ -129,6 +129,7 @@ static int survey_delivery_save(
     void *ctx,
     const struct app_mesh_local_delivery_snapshot *snapshot)
 {
+    /* Volatile owner adapter: the snapshot already lives in bounded RAM. */
     ARG_UNUSED(ctx);
     ARG_UNUSED(snapshot);
     return 0;
@@ -136,6 +137,7 @@ static int survey_delivery_save(
 
 static int survey_delivery_clear(void *ctx)
 {
+    /* Volatile owner adapter: app_mesh_local_delivery clears its RAM state. */
     ARG_UNUSED(ctx);
     return 0;
 }
@@ -204,7 +206,7 @@ static int survey_delivery_attempt_complete(const struct proto_packet *packet,
         return -ESTALE;
     }
     /*
-     * Direct gateway ACK handling can durably commit the local journal while
+     * Direct gateway ACK handling can commit the RAM owner while
      * the communication facade is still unwinding the backend call. The ACK
      * proves RF started, so completion of that exact token is already
      * satisfied and must release the facade's backend guard.
@@ -222,7 +224,7 @@ static int survey_delivery_attempt_complete(const struct proto_packet *packet,
     if (ret == 0 && rf_started) {
         app_stack_workload_diag_anchor_survey_sample(packet, 1u, 1u);
         status_debug_printf(
-            "DBG_SURVEY_REPORT_RF_ATTEMPT survey=%u seq=%u token=%u remaining=%u\n",
+            "DBG_SURVEY_REPORT_RF_ATTEMPT boot=%u seq=%u token=%u remaining=%u\n",
             packet->session_id,
             packet->seq,
             attempt_token,
@@ -239,7 +241,8 @@ int app_anchor_survey_discovery_init(
         ops->abort_pair == NULL || ops->preempt_radio == NULL ||
         ops->admit_start == NULL || ops->queue_start == NULL ||
         ops->schedule_work_ms == NULL ||
-        ops->next_sequence == NULL || ops->seed_sequence == NULL) {
+        ops->boot_incarnation == NULL ||
+        ops->next_sequence == NULL) {
         return -EINVAL;
     }
 
@@ -279,69 +282,6 @@ int app_anchor_survey_discovery_init(
     }
 #endif
     return 0;
-}
-
-int app_anchor_survey_discovery_restore(bool *restored)
-{
-    struct app_mesh_local_delivery_recovery recovery = {0};
-    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
-    int ret;
-
-    if (restored == NULL) {
-        return -EINVAL;
-    }
-    *restored = false;
-    if (DEVICE_ROLE != ROLE_ANCHOR) {
-        return 0;
-    }
-    if (!discovery_initialized || delivery == NULL) {
-        return -EACCES;
-    }
-
-    SURVEY_DELIVERY_LOCK();
-    survey_delivery_handle = 0u;
-    survey_delivery_failed_abandon_handle = 0u;
-    survey_delivery_comm_owned = false;
-    memset(&survey_delivery_comm_identity, 0,
-           sizeof(survey_delivery_comm_identity));
-    survey_delivery_comm_identity_valid = false;
-    /* No persistent delivery: treat restore as "nothing restored" (absent). */
-    ret = app_mesh_local_delivery_recover(delivery,
-                                          &delivery->snapshot,
-                                          0,
-                                          &recovery);
-    if (recovery.restored) {
-        const struct mesh_outbound *outbound =
-            app_mesh_local_delivery_outbound(delivery);
-        uint16_t attempts_used = APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS -
-            delivery->snapshot.attempts_remaining;
-        int rebase_ret = app_mesh_local_delivery_rebase_after_boot(
-            delivery, k_uptime_get_32());
-
-        survey_delivery_retry_round = attempts_used;
-        if (outbound != NULL) {
-            discovery_ops.seed_sequence(outbound->packet.seq);
-        }
-        if (rebase_ret < 0) {
-            LOG_WRN("survey delivery boot-time rebase persistence deferred: ret=%d",
-                    rebase_ret);
-            status_debug_printf(
-                "DBG_SURVEY_DELIVERY_REBASE_DEFER ret=%d now=%u\n",
-                rebase_ret,
-                k_uptime_get_32());
-        }
-    }
-    *restored = recovery.restored || recovery.retry_required;
-    if (recovery.quarantined) {
-        LOG_ERR("survey delivery journal invalid/unavailable; continuing quarantined: restore=%d clear=%d",
-                recovery.source_error,
-                recovery.clear_error);
-        status_debug_printf("DBG_SURVEY_DELIVERY_JOURNAL_QUARANTINE restore=%d clear=%d\n",
-                            recovery.source_error,
-                            recovery.clear_error);
-    }
-    SURVEY_DELIVERY_UNLOCK();
-    return ret;
 }
 
 static bool survey_delivery_semantic_digest_matches(
@@ -406,7 +346,7 @@ int app_anchor_survey_delivery_gateway_confirmed(
     ret = app_mesh_local_delivery_commit_ack(
         delivery, packet, semantic_digest);
     if (ret < 0) {
-        LOG_ERR("survey delivery ACK journal commit failed: survey=%u seq=%u ret=%d",
+        LOG_ERR("survey delivery RAM-owner ACK commit failed: boot=%u seq=%u ret=%d",
                 packet->session_id, packet->seq, ret);
     } else {
         ack_committed = true;
@@ -417,11 +357,11 @@ int app_anchor_survey_delivery_gateway_confirmed(
         app_stack_workload_diag_anchor_survey_sample(packet, 0u, 0u);
         app_stack_workload_diag_anchor_survey_release(packet, 0, 0u, 0u);
         status_debug_printf(
-            "DBG_SURVEY_REPORT_ACK anchor=0x%016llx survey=%u seq=%u\n",
+            "DBG_SURVEY_REPORT_ACK anchor=0x%016llx boot=%u seq=%u\n",
             (unsigned long long)DEVICE_ID,
             packet->session_id,
             packet->seq);
-        LOG_INF("survey delivery gateway ACK committed: survey=%u seq=%u",
+        LOG_INF("survey delivery gateway ACK committed: boot=%u seq=%u",
                 packet->session_id, packet->seq);
     }
     if (ack_committed) {
@@ -494,6 +434,8 @@ static int prepare_discovery_report(
 {
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
     struct mesh_outbound outbound = {0};
+    uint32_t boot_incarnation = 0u;
+    uint16_t sequence;
     size_t report_payload_len = 0u;
     int ret;
 
@@ -504,6 +446,19 @@ static int prepare_discovery_report(
         (entries == NULL && entry_count != 0u) ||
         delivery == NULL || discovery_ops.next_sequence == NULL) {
         return -EINVAL;
+    }
+
+    ret = discovery_ops.boot_incarnation(&boot_incarnation);
+    if (ret < 0) {
+        return ret;
+    }
+    if (boot_incarnation == 0u) {
+        return -EIO;
+    }
+    sequence = discovery_ops.next_sequence();
+    if (sequence == 0u) {
+        LOG_ERR("survey discovery report sequence exhausted; reboot required");
+        return -EOVERFLOW;
     }
 
     ret = survey_append_reach_report_tlvs(outbound.payload,
@@ -524,6 +479,14 @@ static int prepare_discovery_report(
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
     }
+    ret = tlv_append_u32(outbound.payload,
+                         sizeof(outbound.payload),
+                         &report_payload_len,
+                         TLV_NODE_BOOT_COUNTER,
+                         boot_incarnation);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
     ret = tlv_append_u16(outbound.payload,
                          sizeof(outbound.payload),
                          &report_payload_len,
@@ -537,7 +500,8 @@ static int prepare_discovery_report(
                                               GATEWAY_ID,
                                               survey_id,
                                               operation_generation,
-                                              discovery_ops.next_sequence(),
+                                              boot_incarnation,
+                                              sequence,
                                               (uint8_t)report_payload_len);
     if (ret != PROTO_OK) {
         return mesh_errno_from_proto(ret);
@@ -565,7 +529,7 @@ static int prepare_discovery_report(
     SURVEY_DELIVERY_UNLOCK();
     if (ret == 0) {
         app_stack_workload_diag_anchor_survey_admit(&outbound.packet, 1u, 1u);
-        status_debug_printf("DBG_SURVEY_REPORT_STAGED anchor=0x%016llx survey=%u seq=%u peers=%u\n",
+        status_debug_printf("DBG_SURVEY_REPORT_STAGED anchor=0x%016llx boot=%u seq=%u peers=%u\n",
                             (unsigned long long)DEVICE_ID,
                             outbound.packet.session_id,
                             outbound.packet.seq,
@@ -673,7 +637,7 @@ static int survey_delivery_poll_comm_result(void)
     bool accepted = false;
     bool current_delivery = false;
     bool terminal_taken = false;
-    int persist_ret = 0;
+    int state_ret = 0;
 
     SURVEY_DELIVERY_LOCK();
     if (!survey_delivery_comm_owned) {
@@ -720,7 +684,7 @@ static int survey_delivery_poll_comm_result(void)
         (app_mesh_local_delivery_ack_committed(delivery) ||
          event.reason == NODE_COMM_TERMINAL_DELIVERED);
     if (current_delivery && !accepted) {
-        persist_ret = survey_delivery_retain_for_retry_locked(delivery);
+        state_ret = survey_delivery_retain_for_retry_locked(delivery);
     }
     SURVEY_DELIVERY_UNLOCK();
 
@@ -732,7 +696,7 @@ static int survey_delivery_poll_comm_result(void)
 
         /*
          * A terminal DELIVERED event is read-only until the exact local
-         * journal has durably entered ACK_COMMITTED.  If that NVS write
+         * RAM owner has entered ACK_COMMITTED. If that state transition
          * fails, the node-communication record and terminal event remain
          * untouched for the checked retry.
          */
@@ -761,10 +725,10 @@ static int survey_delivery_poll_comm_result(void)
             (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
             return -EAGAIN;
         }
-    } else if (!accepted && persist_ret < 0) {
-        LOG_ERR("survey delivery retry journal commit failed: survey=%u seq=%u reason=%u ret=%d",
+    } else if (!accepted && state_ret < 0) {
+        LOG_ERR("survey delivery retry-state commit failed: survey=%u seq=%u reason=%u ret=%d",
                 outbound.packet.session_id, outbound.packet.seq,
-                (unsigned int)event.reason, persist_ret);
+                (unsigned int)event.reason, state_ret);
         (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
         return -EAGAIN;
     }
@@ -790,28 +754,28 @@ static int survey_delivery_poll_comm_result(void)
            sizeof(survey_delivery_comm_identity));
     survey_delivery_comm_identity_valid = false;
     if (accepted) {
-        persist_ret = app_mesh_local_delivery_cleanup_ack(delivery);
+        state_ret = app_mesh_local_delivery_cleanup_ack(delivery);
     } else {
         retry_delay_ms = survey_delivery_next_retry_delay_ms(&outbound);
     }
     SURVEY_DELIVERY_UNLOCK();
 
     if (accepted) {
-        if (persist_ret < 0) {
+        if (state_ret < 0) {
             LOG_WRN("survey delivery ACK cleanup deferred: survey=%u seq=%u ret=%d",
                     outbound.packet.session_id, outbound.packet.seq,
-                    persist_ret);
+                    state_ret);
             (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
         }
         return 0;
     }
-    LOG_WRN("survey discovery report retained after transport terminal: survey=%u seq=%u reason=%u attempts=%u",
+    LOG_WRN("survey discovery report retained after transport terminal: boot=%u seq=%u reason=%u attempts=%u",
             outbound.packet.session_id,
             outbound.packet.seq,
             (unsigned int)event.reason,
             event.attempts_started);
     status_debug_printf(
-        "DBG_SURVEY_REPORT_TERMINAL survey=%u seq=%u reason=%u attempts=%u retained=%u\n",
+        "DBG_SURVEY_REPORT_TERMINAL boot=%u seq=%u reason=%u attempts=%u retained=%u\n",
         outbound.packet.session_id,
         outbound.packet.seq,
         (unsigned int)event.reason,
@@ -893,7 +857,7 @@ int app_anchor_survey_discovery_retry_report(void)
             survey_report_stage_retry_generation);
         if (ret == 0) {
             status_debug_printf(
-                "DBG_SURVEY_REPORT_STAGE_RETRY_OK survey=%u seq=%u\n",
+                "DBG_SURVEY_REPORT_STAGE_RETRY_OK boot=%u seq=%u\n",
                 survey_report_stage_retry_outbound.packet.session_id,
                 survey_report_stage_retry_outbound.packet.seq);
             memset(&survey_report_stage_retry_outbound, 0,
@@ -916,30 +880,6 @@ int app_anchor_survey_discovery_retry_report(void)
     if (!app_mesh_local_delivery_active(delivery)) {
         SURVEY_DELIVERY_UNLOCK();
         return 0;
-    }
-    if (delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_RECOVERY_WAIT) {
-        struct app_mesh_local_delivery_snapshot recovered_snapshot = {0};
-        struct app_mesh_local_delivery_recovery recovery = {0};
-
-        /* No persistent delivery: nothing to restore from flash. */
-        (void)app_mesh_local_delivery_recover(delivery,
-                                              &recovered_snapshot,
-                                              0,
-                                              &recovery);
-        if (recovery.quarantined) {
-            status_debug_printf("DBG_SURVEY_DELIVERY_JOURNAL_QUARANTINE restore=%d clear=%d\n",
-                                recovery.source_error,
-                                recovery.clear_error);
-        }
-        if (recovery.retry_required) {
-            SURVEY_DELIVERY_UNLOCK();
-            schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
-            return -EAGAIN;
-        }
-        if (!app_mesh_local_delivery_active(delivery)) {
-            SURVEY_DELIVERY_UNLOCK();
-            return 0;
-        }
     }
     if (app_mesh_local_delivery_outbound(delivery) == NULL) {
         SURVEY_DELIVERY_UNLOCK();
@@ -966,7 +906,7 @@ int app_anchor_survey_discovery_retry_report(void)
         }
         if (ret < 0) {
             SURVEY_DELIVERY_UNLOCK();
-            LOG_ERR("survey discovery response-slot retirement failed: survey=%u seq=%u ret=%d",
+            LOG_ERR("survey discovery response-slot retirement failed: boot=%u seq=%u ret=%d",
                     outbound.packet.session_id,
                     outbound.packet.seq,
                     ret);
@@ -975,8 +915,8 @@ int app_anchor_survey_discovery_retry_report(void)
         }
         /*
          * The initial response slot is source scheduling metadata, not part of
-         * the immutable packet. Every current and restored retry now starts
-         * from the durably cleared envelope before it can wait behind an
+         * the immutable packet. Every retry starts from the cleared transport
+         * envelope before it can wait behind an
          * unrelated reliable owner.
          */
         outbound = *app_mesh_local_delivery_outbound(delivery);
@@ -984,13 +924,13 @@ int app_anchor_survey_discovery_retry_report(void)
     ret = mesh_report_active_owner_matches_outbound(&outbound);
     if (ret > 0) {
         SURVEY_DELIVERY_UNLOCK();
-        mesh_report_resume_restored_outbox("survey-discovery-owner");
+        mesh_report_wake_active_outbox("survey-discovery-owner");
         schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
         return 0;
     }
     if (ret < 0) {
         SURVEY_DELIVERY_UNLOCK();
-        LOG_ERR("survey discovery active-owner collision: survey=%u seq=%u ret=%d",
+        LOG_ERR("survey discovery active-owner collision: boot=%u seq=%u ret=%d",
                 outbound.packet.session_id,
                 outbound.packet.seq,
                 ret);
@@ -1002,7 +942,7 @@ int app_anchor_survey_discovery_retry_report(void)
         ret = survey_delivery_retain_for_retry_locked(delivery);
         SURVEY_DELIVERY_UNLOCK();
         if (ret < 0) {
-            LOG_ERR("survey discovery failed-report custody retention failed: survey=%u seq=%u ret=%d",
+            LOG_ERR("survey discovery failed-report custody retention failed: boot=%u seq=%u ret=%d",
                     outbound.packet.session_id, outbound.packet.seq, ret);
             schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
             return -EAGAIN;
@@ -1029,7 +969,7 @@ int app_anchor_survey_discovery_retry_report(void)
         ret = survey_delivery_retain_for_retry_locked(delivery);
         SURVEY_DELIVERY_UNLOCK();
         if (ret < 0) {
-            LOG_ERR("survey discovery attempt rearm failed: survey=%u seq=%u ret=%d",
+            LOG_ERR("survey discovery attempt rearm failed: boot=%u seq=%u ret=%d",
                     outbound.packet.session_id, outbound.packet.seq, ret);
             schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
             return -EAGAIN;
@@ -1109,7 +1049,7 @@ int app_anchor_survey_discovery_retry_report(void)
         return still_current ? -EAGAIN : 0;
     }
     status_debug_printf(
-        "DBG_SURVEY_REPORT_COMM_SUBMIT survey=%u seq=%u handle=%u deadline=%llu\n",
+        "DBG_SURVEY_REPORT_COMM_SUBMIT boot=%u seq=%u handle=%u deadline=%llu\n",
         outbound.packet.session_id,
         outbound.packet.seq,
         delivery_handle,
@@ -1161,11 +1101,6 @@ int app_anchor_survey_discovery_report_custody_status(
     if (!app_mesh_local_delivery_occupied(delivery)) {
         SURVEY_DELIVERY_UNLOCK();
         return 0;
-    }
-    if (delivery->snapshot.state ==
-        APP_MESH_LOCAL_DELIVERY_RECOVERY_WAIT) {
-        SURVEY_DELIVERY_UNLOCK();
-        return -EBUSY;
     }
     ret = survey_operation_generation_extract_tlv(
         delivery->snapshot.outbound.payload,

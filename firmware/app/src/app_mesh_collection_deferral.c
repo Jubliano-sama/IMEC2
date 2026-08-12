@@ -20,10 +20,6 @@ bool app_mesh_collection_defer_active_result(
     }
 
     local_result.deferred = true;
-    if (ops != NULL && ops->save_outbox != NULL) {
-        local_result.save_ret = ops->save_outbox(relay, now_ms, ops->ctx);
-        local_result.outbox_saved = local_result.save_ret == 0;
-    }
     if (ops != NULL && ops->schedule_retry != NULL) {
         local_result.schedule_ret = ops->schedule_retry(ops->ctx);
         local_result.retry_scheduled = local_result.schedule_ret >= 0;

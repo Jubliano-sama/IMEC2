@@ -4,6 +4,7 @@ import unittest
 
 from tools.gateway_gui.operation_policy import (
     AssignmentOperationPolicy,
+    DISCOVERY_REPORT_CUSTODY_MAX_MS,
     DiscoveryOperationPolicy,
     OperationPolicyProfile,
     PairOperationPolicy,
@@ -20,11 +21,11 @@ class OperationPolicyTests(unittest.TestCase):
 
         self.assertEqual(
             assignment.hex(),
-            "0101000000c9960300e803",
+            "010100000064760b00e803",
         )
         self.assertEqual(
             discovery.hex(),
-            "0102007017000028000604fa000000c0270900",
+            "01020060ea000028000604fa000000a0bb0d00",
         )
         self.assertEqual(pair.hex(), "0103000219")
         self.assertEqual(
@@ -34,8 +35,8 @@ class OperationPolicyTests(unittest.TestCase):
 
     def test_each_family_round_trips_to_named_fields(self) -> None:
         profile = OperationPolicyProfile(
-            assignment=AssignmentOperationPolicy(5, 300_000, 750),
-            discovery=DiscoveryOperationPolicy(9_000, 80, 12, 3, 1_500, 500_000),
+            assignment=AssignmentOperationPolicy(5, 800_000, 750),
+            discovery=DiscoveryOperationPolicy(60_000, 80, 12, 3, 1_500, 500_000),
             pair=PairOperationPolicy(1, 8),
         )
 
@@ -58,13 +59,13 @@ class OperationPolicyTests(unittest.TestCase):
 
     def test_invalid_bounds_versions_flags_and_lengths_fail_closed(self) -> None:
         invalid_constructors = (
-            lambda: AssignmentOperationPolicy(51, 235_209, 1_000),
+            lambda: AssignmentOperationPolicy(51, 751_204, 1_000),
             lambda: AssignmentOperationPolicy(0, 999, 1_000),
-            lambda: AssignmentOperationPolicy(0, 235_208, 1_000),
-            lambda: DiscoveryOperationPolicy(5_999, 40, 6, 4, 250, 600_000),
-            lambda: DiscoveryOperationPolicy(6_000, 29, 6, 4, 250, 600_000),
-            lambda: DiscoveryOperationPolicy(6_000, 40, 6, 5, 250, 600_000),
-            lambda: DiscoveryOperationPolicy(6_000, 40, 6, 4, 250, 100_889),
+            lambda: AssignmentOperationPolicy(0, 751_203, 1_000),
+            lambda: DiscoveryOperationPolicy(59_999, 40, 6, 4, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(60_000, 29, 6, 4, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(60_000, 40, 6, 5, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(60_000, 40, 6, 4, 250, 179_992),
             lambda: PairOperationPolicy(3, 1),
             lambda: PairOperationPolicy(2, 26),
         )
@@ -72,13 +73,15 @@ class OperationPolicyTests(unittest.TestCase):
             with self.subTest(constructor=constructor), self.assertRaises(ValueError):
                 constructor()
 
-        self.assertEqual(233_249, assignment_required_budget_ms(20))
-        self.assertEqual(235_209, assignment_required_budget_ms(1_000))
-        self.assertEqual(253_209, assignment_required_budget_ms(10_000))
+        self.assertEqual(736_004, assignment_required_budget_ms(20))
+        self.assertEqual(751_204, assignment_required_budget_ms(1_000))
+        self.assertEqual(895_204, assignment_required_budget_ms(10_000))
+        self.assertLessEqual(assignment_required_budget_ms(10_000), 900_000)
         self.assertEqual(
-            100_993,
-            discovery_required_budget_ms(6_000, 40, 6, 4, 250),
+            179_993,
+            discovery_required_budget_ms(60_000, 40, 6, 4, 250),
         )
+        self.assertEqual(42_000, DISCOVERY_REPORT_CUSTODY_MAX_MS)
 
         for value in (b"\x01\x01", b"\x02\x01\x00" + b"\x00" * 8,
                       b"\x01\x01\x01" + b"\x00" * 8,

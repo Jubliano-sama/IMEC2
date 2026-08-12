@@ -12,12 +12,14 @@ from typing import Any, Literal
 from .ble_transport import BLEAK_IMPORT_ERROR, BleDeviceInfo, BleTransport
 from .cir_reassembly import CirAssemblyKey, CirReassembler, CirSample
 from .command_orchestration import (
+    GATEWAY_COMMAND_COMPLETION_GUARD_S,
     ROUTE_REFRESH_DEFAULT_BUDGET_MS,
     GatewayCommandDispatch,
     GatewayCommandPlan,
     GatewayCommandTransition,
 )
 from .delivery_dedup import (
+    CommandEventIdentity,
     GatewayPacketDeduplicator,
     PacketDisposition,
     is_host_delivery_packet,
@@ -32,6 +34,8 @@ from .operation_policy import (
     DISCOVERY_DEFAULT_SLOT_COUNT,
     DISCOVERY_DEFAULT_SLOT_MS,
     DISCOVERY_DEFAULT_START_DELAY_MS,
+    DISCOVERY_START_DELAY_MAX_MS,
+    DISCOVERY_START_DELAY_MIN_MS,
     PAIR_AUTO_MAX_PARALLEL_PAIRS,
     PAIR_DEFAULT_MAX_RERUNS,
     AssignmentOperationPolicy,
@@ -383,7 +387,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         self._labeled_spin(
             discovery, 2, "Start delay (ms)",
-            self.discovery_start_delay_text, 6000, 60000
+            self.discovery_start_delay_text,
+            DISCOVERY_START_DELAY_MIN_MS,
+            DISCOVERY_START_DELAY_MAX_MS,
         )
         self._labeled_spin(
             discovery, 3, "Discovery slot (ms)",
@@ -881,7 +887,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
             if command_budget_ms is None
             else command_budget_ms
         )
-        return effective_budget_ms / 1000.0 + 2.0
+        return (
+            effective_budget_ms / 1000.0
+            + GATEWAY_COMMAND_COMPLETION_GUARD_S
+        )
 
     def _survey_id_for_send(self) -> int:
         if not self.survey_id_auto.get():
@@ -976,6 +985,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
             session_id, seq = self._next_identity()
             operation_policy = self._operation_policy_profile()
             discovery_policy = operation_policy.discovery
+            expected_anchor_count = (
+                operation_policy.assignment.expected_anchor_count or None
+            )
             command_budget_ms = discovery_policy.operation_budget_ms
             survey_id = self._survey_id_for_send()
             command = build_anchor_discovery_command(
@@ -987,6 +999,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 duration_ms=discovery_policy.report_grace_ms,
                 discovery_slot_count=discovery_policy.slot_count,
                 sample_count=self._parse_int("Pair samples", self.sample_count_text.get()),
+                expected_anchor_count=expected_anchor_count,
                 command_budget_ms=command_budget_ms,
                 operation_policy=operation_policy,
             )
@@ -1285,7 +1298,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
         """Return whether a packet is a gateway stream record we can receipt."""
         return (
             packet.transport == "gateway-stream-v1"
-            and packet.msg_type != MSG_GATEWAY_COMMAND_EVENT
             and is_host_delivery_packet(packet)
         )
 
@@ -1403,26 +1415,47 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 packet, delivery, gateway_scope=receipt_gateway_scope
             )
             identity = delivery.identity
-            assert identity is not None
-            self._append_log(
-                "event",
-                f"Suppressed exact replay of {packet_label} "
-                f"src={format_device_id(identity.src_id)} "
-                f"session={identity.session_id} seq={identity.seq}; "
-                "host delivery is at-least-once",
-            )
+            if isinstance(identity, CommandEventIdentity):
+                self._append_log(
+                    "event",
+                    "Suppressed semantic replay of gateway command event "
+                    f"kind={identity.command_kind} stage={identity.stage} "
+                    f"anchor={format_device_id(identity.anchor_id) if identity.anchor_id else '-'} "
+                    f"slot={identity.discovery_slot}; host delivery is at-least-once",
+                )
+            elif identity is not None:
+                self._append_log(
+                    "event",
+                    f"Suppressed exact replay of {packet_label} "
+                    f"src={format_device_id(identity.src_id)} "
+                    f"session={identity.session_id} seq={identity.seq}; "
+                    "host delivery is at-least-once",
+                )
             return
         if delivery.disposition is PacketDisposition.CONFLICT:
             identity = delivery.identity
-            assert identity is not None
-            self._append_log(
-                "error",
-                f"Conflicting {packet_label} reused packet identity "
-                f"src={format_device_id(identity.src_id)} "
-                f"session={identity.session_id} seq={identity.seq}; "
-                "showing the forensic record without applying a second "
-                "semantic mutation",
-            )
+            if identity is None:
+                self._append_log(
+                    "error",
+                    f"Rejected malformed {packet_label}; no host receipt was sent",
+                )
+            elif isinstance(identity, CommandEventIdentity):
+                self._append_log(
+                    "error",
+                    "Conflicting gateway command event reused semantic identity "
+                    f"kind={identity.command_kind} stage={identity.stage} "
+                    f"anchor={format_device_id(identity.anchor_id) if identity.anchor_id else '-'} "
+                    f"slot={identity.discovery_slot}; no host receipt was sent",
+                )
+            else:
+                self._append_log(
+                    "error",
+                    f"Conflicting {packet_label} reused packet identity "
+                    f"src={format_device_id(identity.src_id)} "
+                    f"session={identity.session_id} seq={identity.seq}; "
+                    "showing the forensic record without applying a second "
+                    "semantic mutation",
+                )
         canonical_delivery = delivery.disposition is PacketDisposition.NEW
         if canonical_delivery:
             self._observe_diagnostic_packet(packet, received_at=received_at)

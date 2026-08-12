@@ -223,6 +223,114 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
             "app_node_comm_request_route_refresh_correlated_bounded(", route_host
         )
 
+    def test_here_i_am_accepts_full_policy_and_keeps_legacy_policy_optional(self):
+        route_host = function_body(self.anchor, "gateway_route_host_packet")
+        force_branch = route_host[
+            route_host.index("command_id == CMD_FORCE_REDISCOVERY") :
+            route_host.index("command_id == CMD_ASSIGN_DISCOVERY_SLOTS")
+        ]
+
+        self.assertEqual(
+            force_branch.count("app_operation_policy_prepare_payload("), 1
+        )
+        self.assertRegex(
+            force_branch,
+            re.compile(
+                r"app_operation_policy_prepare_payload\(\s*"
+                r"payload,\s*payload_len,\s*0u,\s*"
+                r"APP_OPERATION_POLICY_ALL_MASK,\s*&policy_candidate\s*\)"
+            ),
+        )
+
+    def test_here_i_am_retains_async_result_reservation_until_completion(self):
+        worker = function_body(self.anchor, "gateway_host_command_work_handler")
+        release = worker.index("gateway_command_result_release_reserved(")
+        retention_guard = worker[worker.rfind("if (", 0, release) : release]
+
+        self.assertIn(
+            "item.command_id != CMD_ASSIGN_DISCOVERY_SLOTS",
+            retention_guard,
+        )
+        self.assertIn(
+            "item.command_id != CMD_FORCE_REDISCOVERY",
+            retention_guard,
+        )
+
+    def test_route_refresh_completion_retains_full_host_command_identity(self):
+        state = self.refresh[
+            self.refresh.index("struct route_refresh_state {") :
+            self.refresh.index("struct route_refresh_operation {")
+        ]
+        route_host = function_body(self.anchor, "gateway_route_host_packet")
+        force_branch = route_host[
+            route_host.index("command_id == CMD_FORCE_REDISCOVERY") :
+            route_host.index("command_id == CMD_ASSIGN_DISCOVERY_SLOTS")
+        ]
+        request = function_body(self.refresh, "route_refresh_request_bounded")
+        prepare_event = function_body(
+            self.refresh, "refresh_event_prepare_locked"
+        )
+        complete = function_body(self.refresh, "refresh_complete")
+        observe = function_body(self.anchor, "gateway_route_refresh_observe")
+        completion_start = observe.index(
+            "if (refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_COMPLETE)"
+        )
+        terminal = observe[
+            completion_start :
+            observe.index(
+                "if (refresh->kind == APP_NODE_COMM_ROUTE_REFRESH_BACKOFF)",
+                completion_start,
+            )
+        ]
+
+        self.assertIn("struct proto_packet correlation;", state)
+        self.assertNotIn("struct route_refresh_correlation", self.refresh)
+        self.assertIn("route_refresh.correlation = *correlation;", request)
+        self.assertIn(
+            ".correlation = route_refresh.correlation",
+            prepare_event,
+        )
+        self.assertIn(
+            ".correlation = route_refresh.correlation",
+            complete,
+        )
+        self.assertIn("gateway_commit_host_command_result_reserved(", terminal)
+        self.assertIn("&refresh->correlation", terminal)
+
+        token_read = force_branch.index(
+            "gateway_command_result_get_dispatch_token()"
+        )
+        zero_rejection = force_branch.index(
+            "result_reservation_token == 0u", token_read
+        )
+        collision_rejection = force_branch.index(
+            "gateway_route_refresh_result_token != 0u", zero_rejection
+        )
+        request_call = force_branch.index(
+            "app_node_comm_request_route_refresh_correlated_bounded(",
+            collision_rejection,
+        )
+        token_publications = list(re.finditer(
+            r"gateway_route_refresh_result_token\s*=\s*"
+            r"result_reservation_token\s*;",
+            force_branch,
+        ))
+
+        self.assertEqual(len(token_publications), 1)
+        self.assertLess(token_read, zero_rejection)
+        self.assertLess(zero_rejection, collision_rejection)
+        self.assertLess(collision_rejection, token_publications[0].start())
+        self.assertLess(token_publications[0].start(), request_call)
+        self.assertRegex(
+            force_branch[request_call:],
+            re.compile(
+                r"if \(ret < 0 &&\s*"
+                r"gateway_route_refresh_result_token ==\s*"
+                r"result_reservation_token\)\s*{\s*"
+                r"gateway_route_refresh_result_token = 0u;"
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

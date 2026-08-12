@@ -1,5 +1,6 @@
 #include "app_gateway_assignment_publisher.h"
 #include "app_gateway_ble_stream.h"
+#include "discovery_assignment.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -20,6 +21,8 @@ struct mock_ble {
     bool connected;
     bool credit;
     bool priority_pending;
+    bool receipt_during_emit;
+    bool immediate_receipt_accepted;
 };
 
 static int mock_complete(const struct gateway_command_event *event, void *ctx)
@@ -28,6 +31,9 @@ static int mock_complete(const struct gateway_command_event *event, void *ctx)
 
     assert(event->kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION);
     assert(event->command_id == CMD_ASSIGN_DISCOVERY_SLOTS);
+    assert(event->stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
+    assert((event->flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u);
+    assert(event->event_seq != 0u);
     if (ble->completion_event_valid) {
         assert(event->correlation_id ==
                ble->completion_event.correlation_id);
@@ -57,10 +63,7 @@ static int mock_emit(struct gateway_command_event *event,
     struct mock_ble *ble = ctx;
     int ret;
 
-    if (event->event_seq == 0u) {
-        ble->durable_sequence_reservations++;
-        event->event_seq = ble->durable_sequence_reservations;
-    }
+    assert(event->event_seq != 0u);
     if (!ble->connected || !ble->credit || ble->priority_pending ||
         ble->queue_count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH) {
         return -EAGAIN;
@@ -75,6 +78,23 @@ static int mock_emit(struct gateway_command_event *event,
     if (ble->queue_count > ble->max_depth) {
         ble->max_depth = ble->queue_count;
     }
+    if (ble->receipt_during_emit) {
+        assert(app_gateway_assignment_publisher_note_host_receipt(event) > 0);
+        ble->immediate_receipt_accepted = true;
+    }
+    return 0;
+}
+
+static int mock_reserve_event_seq(struct gateway_command_event *event,
+                                  void *ctx)
+{
+    struct mock_ble *ble = ctx;
+
+    if (event == NULL || event->event_seq != 0u) {
+        return -EINVAL;
+    }
+    ble->durable_sequence_reservations++;
+    event->event_seq = ble->durable_sequence_reservations;
     return 0;
 }
 
@@ -89,6 +109,8 @@ static void remove_head(struct mock_ble *ble)
 static bool send_head(struct mock_ble *ble, bool preempt_after_send)
 {
     struct gateway_command_event event;
+    struct gateway_command_event drifted_event;
+    struct app_gateway_assignment_publisher_diagnostics diagnostics;
     size_t completed_batches;
     size_t queued_after_remove;
     bool advanced;
@@ -107,9 +129,15 @@ static bool send_head(struct mock_ble *ble, bool preempt_after_send)
     ble->priority_pending = preempt_after_send;
     completed_batches = ble->completed_batches;
     queued_after_remove = ble->queue_count;
-    assert(!app_gateway_assignment_publisher_note_sent(
-        event.event_seq ^ UINT32_C(0x80000000)));
-    advanced = app_gateway_assignment_publisher_note_sent(event.event_seq);
+    drifted_event = event;
+    drifted_event.event_seq ^= UINT32_C(0x80000000);
+    assert(app_gateway_assignment_publisher_note_host_receipt(
+               &drifted_event) == -ESTALE);
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    assert(diagnostics.inflight_event_seq == event.event_seq);
+    advanced = app_gateway_assignment_publisher_note_host_receipt(&event) > 0;
+    /* A retry after publisher advance is safe, but must not advance twice. */
+    assert(app_gateway_assignment_publisher_note_host_receipt(&event) > 0);
     assert(ble->completed_batches == completed_batches);
     assert(ble->queue_count == queued_after_remove);
     return advanced;
@@ -144,6 +172,7 @@ static void run_pressure_case(size_t count)
 {
     struct discovery_assignment_entry entries[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
     uint64_t anchor_ids[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
+    uint8_t slots[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
     struct app_gateway_assignment_publisher_diagnostics diagnostics;
     struct app_gateway_assignment_publisher_ops ops;
     struct gateway_command_event base = base_event((uint32_t)count);
@@ -156,6 +185,7 @@ static void run_pressure_case(size_t count)
     gateway_command_observability_init(&ble.observability);
     ops = (struct app_gateway_assignment_publisher_ops) {
         .emit_if_available = mock_emit,
+        .reserve_event_seq = mock_reserve_event_seq,
         .batch_completed = mock_complete,
         .ctx = &ble,
     };
@@ -167,16 +197,20 @@ static void run_pressure_case(size_t count)
     for (size_t i = 0u; i < count; i++) {
         entries[i].anchor_id = anchor_ids[i];
         entries[i].slot = (uint8_t)i;
+        slots[i] = (uint8_t)i;
     }
 
     ble.queue_count = GATEWAY_BLE_STREAM_QUEUE_DEPTH;
     ble.max_depth = ble.queue_count;
     ble.connected = true;
     ble.credit = false;
-    assert(app_gateway_assignment_publisher_stage_sorted_ids(
-               &base, anchor_ids, count, 2u) == 0);
-    assert(app_gateway_assignment_publisher_stage_sorted_ids(
-               &base, anchor_ids, count, 2u) == 1);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, count,
+               (UINT64_C(1) << count) - 1u, 2u) == 0);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, count,
+               (UINT64_C(1) << count) - 1u, 2u) == 1);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
     table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
     table.attempt = 1u;
     app_gateway_assignment_publisher_stage_table_ready(&table);
@@ -282,6 +316,7 @@ static void run_partial_publish_case(void)
     gateway_command_observability_init(&ble.observability);
     ops = (struct app_gateway_assignment_publisher_ops) {
         .emit_if_available = mock_emit,
+        .reserve_event_seq = mock_reserve_event_seq,
         .batch_completed = mock_complete,
         .ctx = &ble,
     };
@@ -293,9 +328,10 @@ static void run_partial_publish_case(void)
     ble.connected = true;
     ble.credit = true;
     ble.completion_failures = 1u;
-    assert(app_gateway_assignment_publisher_stage_table(
+    assert(app_gateway_assignment_publisher_prepare_table(
                &base, claimed_ids, claimed_slots, 3u,
                UINT64_C(0x11), 0u) == 0);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
     table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
     table.progress_count = 2u;
     table.total_count = 3u;
@@ -387,6 +423,7 @@ static void run_prepare_commit_atomicity_case(void)
     ble.credit = true;
     ops = (struct app_gateway_assignment_publisher_ops) {
         .emit_if_available = mock_emit,
+        .reserve_event_seq = mock_reserve_event_seq,
         .batch_completed = mock_complete,
         .ctx = &ble,
     };
@@ -417,6 +454,109 @@ static void run_prepare_commit_atomicity_case(void)
     assert(!app_gateway_assignment_publisher_abort_prepared_batch(&base));
 }
 
+static void run_immediate_host_receipt_case(void)
+{
+    const uint64_t anchor_ids[] = {UINT64_C(0x4100000000000001)};
+    const uint8_t slots[] = {0u};
+    struct app_gateway_assignment_publisher_diagnostics diagnostics;
+    struct app_gateway_assignment_publisher_ops ops;
+    struct gateway_command_event base = base_event(90u);
+    struct mock_ble ble;
+
+    memset(&ble, 0, sizeof(ble));
+    gateway_command_observability_init(&ble.observability);
+    ble.connected = true;
+    ble.credit = true;
+    ble.receipt_during_emit = true;
+    ops = (struct app_gateway_assignment_publisher_ops) {
+        .emit_if_available = mock_emit,
+        .reserve_event_seq = mock_reserve_event_seq,
+        .batch_completed = mock_complete,
+        .ctx = &ble,
+    };
+    assert(app_gateway_assignment_publisher_init(&ops) == 0);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, 1u, UINT64_C(1), 0u) == 0);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
+    assert(ble.immediate_receipt_accepted);
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    assert(diagnostics.active);
+    assert(diagnostics.inflight_event_seq == 0u);
+    assert(diagnostics.sent_mappings == 1u);
+
+    /* The receipt arrived while emit_if_available still owned the callback.
+     * The next event can nevertheless acquire a fresh exact inflight slot. */
+    ble.receipt_during_emit = false;
+    app_gateway_assignment_publisher_pump();
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    assert(diagnostics.inflight_event_seq == 2u);
+    assert(ble.queue_count == 2u);
+}
+
+static void run_durable_replay_batch_case(void)
+{
+    const uint64_t claimed_ids[] = {
+        UINT64_C(0x5100000000000001),
+        UINT64_C(0x5100000000000002),
+    };
+    const uint8_t claimed_slots[] = {0u, 4u};
+    struct app_gateway_assignment_publisher_ops ops;
+    struct gateway_command_event base = base_event(91u);
+    struct gateway_command_event table = base;
+    struct gateway_command_event terminal = base;
+    struct mock_ble ble;
+
+    memset(&ble, 0, sizeof(ble));
+    gateway_command_observability_init(&ble.observability);
+    ble.connected = true;
+    ble.credit = true;
+    ops = (struct app_gateway_assignment_publisher_ops) {
+        .emit_if_available = mock_emit,
+        .reserve_event_seq = mock_reserve_event_seq,
+        .batch_completed = mock_complete,
+        .ctx = &ble,
+    };
+    assert(app_gateway_assignment_publisher_init(&ops) == 0);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, claimed_ids, claimed_slots, 2u,
+               UINT64_C(0x11), 3u) == 0);
+    assert(app_gateway_assignment_publisher_mark_prepared_replay(&base) == 0);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
+
+    table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
+    table.attempt = 7u;
+    table.progress_count = 2u;
+    table.total_count = 2u;
+    table.success_count = 2u;
+    table.duplicate_count = 3u;
+    app_gateway_assignment_publisher_stage_table_ready(&table);
+    terminal = table;
+    terminal.stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE;
+    terminal.flags = GATEWAY_COMMAND_EVENT_FLAG_TERMINAL;
+    assert(app_gateway_assignment_publisher_capture_terminal(&terminal));
+
+    while (ble.sent_count < 5u) {
+        assert(ble.queue_count > 0u);
+        assert(send_head(&ble, false));
+        if (ble.sent_count < 5u) {
+            assert(route_owner_service() == 0);
+        }
+    }
+
+    for (size_t index = 0u; index < ble.sent_count; index++) {
+        assert((ble.sent[index].flags & GATEWAY_COMMAND_EVENT_FLAG_REPLAY) !=
+               0u);
+    }
+    assert(ble.sent[0].stage == GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+    assert(ble.sent[1].stage == GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+    assert(ble.sent[2].stage == GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE);
+    assert(ble.sent[3].stage == GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY);
+    assert(ble.sent[3].attempt == 7u);
+    assert(ble.sent[4].stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
+    assert((ble.sent[4].flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u);
+    assert(ble.sent[4].attempt == 7u);
+}
+
 int main(void)
 {
     run_pressure_case(3u);
@@ -424,5 +564,7 @@ int main(void)
     run_pressure_case(50u);
     run_partial_publish_case();
     run_prepare_commit_atomicity_case();
+    run_immediate_host_receipt_case();
+    run_durable_replay_batch_case();
     return 0;
 }

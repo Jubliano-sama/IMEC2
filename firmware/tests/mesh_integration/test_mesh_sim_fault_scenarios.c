@@ -737,7 +737,7 @@ static void test_route_change_rejects_stale_parent_ack(void)
     struct proto_packet gateway_ack;
     struct mesh_outbound outbound;
     struct mesh_pending_tx pending_before_stale_ack;
-    struct persistent_outbox_record outbox_before_stale_ack;
+    struct mesh_outbox_record outbox_before_stale_ack;
     struct mesh_relay_result result = {0};
     uint8_t packet_payload[] = {0x44u};
     uint8_t ack_payload[MESH_ACK_SINGLE_PAYLOAD_LEN];

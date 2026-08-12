@@ -1,0 +1,13 @@
+tests:
+  imec2.production_seam.click_handoff_repair:
+    tags:
+      - imec2
+      - mesh
+      - production_seam
+      - radio
+      - workqueue
+    platform_allow:
+      - native_sim/native/64
+    integration_platforms:
+      - native_sim/native/64
+    harness: ztest

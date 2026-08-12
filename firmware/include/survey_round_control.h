@@ -14,12 +14,17 @@ extern "C" {
 
 #define SURVEY_LEGACY_ROUND_ID 0u
 /*
- * START responder is confirmed before START initiator is sent. Reserve two
- * complete control-result horizons plus the local skew margin so both
- * targeted START packets can carry one age-compensated future release.
+ * The release is anchored before START responder is sent. Reserve the
+ * maximum request horizon to the responder, its complete result horizon and
+ * exact gateway-ACK confirmation settle, then the maximum request horizon to
+ * the initiator. The initiator result is not on the execution-critical path.
+ * This bound is shared on the wire so a legal deep route cannot age past a
+ * direct-route-only release instant.
  */
 #define SURVEY_ROUND_START_EXECUTE_DELAY_MS                               \
-    ((2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS) +                      \
+    ((2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS) +                 \
+     SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +                             \
+     SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS +                             \
      SURVEY_PAIR_START_SKEW_MARGIN_MS)
 
 struct survey_round_plan_entry {

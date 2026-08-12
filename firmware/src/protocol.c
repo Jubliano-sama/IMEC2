@@ -429,14 +429,69 @@ int tlv_find_unique(const uint8_t *payload,
 static bool gateway_host_receipt_identity_valid(
     const struct gateway_host_receipt_identity *identity)
 {
+    bool gateway_local;
+
     if (identity == NULL ||
-        !proto_packet_msg_type_allowed_over_uwb(identity->original_msg_type) ||
+        (identity->original_msg_type != MSG_GATEWAY_COMMAND_EVENT &&
+         !proto_packet_msg_type_allowed_over_uwb(identity->original_msg_type)) ||
         identity->src_id == 0u || identity->dst_id == 0u ||
-        identity->src_id == identity->dst_id || identity->session_id == 0u ||
-        identity->seq == 0u) {
+        identity->session_id == 0u || identity->seq == 0u) {
         return false;
     }
+
+    gateway_local = identity->original_msg_type == MSG_GATEWAY_COMMAND_EVENT ||
+                    (identity->original_msg_type == MSG_COMMAND_RESULT &&
+                     identity->src_id == identity->dst_id);
+    if (gateway_local && identity->src_id != identity->dst_id) {
+        return false;
+    }
+    if (!gateway_local && identity->src_id == identity->dst_id) {
+        return false;
+    }
+    if (identity->original_msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+        return identity->original_flags == FLAG_GATEWAY_ACK_REQUIRED;
+    }
+    if (identity->original_msg_type == MSG_COMMAND_RESULT) {
+        if ((identity->original_flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+            return false;
+        }
+        return !gateway_local ||
+               (identity->original_flags &
+                ~(FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC | FLAG_ERROR)) ==
+                   0u;
+    }
     return true;
+}
+
+bool gateway_local_command_result_valid(const struct proto_packet *packet,
+                                        const uint8_t *payload,
+                                        size_t payload_len)
+{
+    uint16_t command_id;
+    uint16_t status;
+
+    if (packet == NULL || payload == NULL ||
+        packet->msg_type != MSG_COMMAND_RESULT ||
+        packet->payload_len != payload_len ||
+        payload_len != PROTO_GATEWAY_LOCAL_COMMAND_RESULT_PAYLOAD_LEN ||
+        packet->src_id == 0u || packet->src_id != packet->dst_id ||
+        packet->session_id == 0u || packet->seq == 0u || packet->ttl != 1u ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        (packet->flags &
+         ~(FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC | FLAG_ERROR)) != 0u ||
+        payload[0] != TLV_COMMAND_ID || payload[1] != sizeof(uint16_t) ||
+        payload[4] != TLV_COMMAND_STATUS || payload[5] != sizeof(uint16_t) ||
+        payload[8] != TLV_REASON || payload[9] != sizeof(uint8_t)) {
+        return false;
+    }
+
+    command_id = proto_get_u16_le(&payload[2]);
+    status = proto_get_u16_le(&payload[6]);
+    if (command_id == 0u || status > COMMAND_INTERNAL_ERROR) {
+        return false;
+    }
+    return (status == COMMAND_OK) ==
+           ((packet->flags & FLAG_ERROR) == 0u);
 }
 
 int gateway_host_receipt_identity_encode(

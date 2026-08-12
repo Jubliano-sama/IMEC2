@@ -1,0 +1,13 @@
+tests:
+  imec2.production_seam.report_custody:
+    tags:
+      - imec2
+      - mesh
+      - production_seam
+      - custody
+      - capacity
+    platform_allow:
+      - native_sim/native/64
+    integration_platforms:
+      - native_sim/native/64
+    harness: ztest

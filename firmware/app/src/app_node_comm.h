@@ -76,6 +76,29 @@ struct app_node_comm_durable_attempt_ops {
                     bool rf_started);
 };
 
+/* Every reserved record belongs to one semantic producer generation. */
+enum app_node_comm_reservation_owner_kind {
+    APP_NODE_COMM_RESERVATION_OWNER_RELIABLE_UPLINK = 1,
+    APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT,
+    APP_NODE_COMM_RESERVATION_OWNER_COMMAND_RESPONSE,
+    APP_NODE_COMM_RESERVATION_OWNER_BOUNDED_CONTROL,
+};
+
+/*
+ * The complete capability for a bounded in-RAM reservation. Callers retain
+ * this exact value for commit or cancellation; a different generation, token,
+ * or expiry is stale and cannot affect a successor owner.
+ */
+struct app_node_comm_reservation_lease {
+    uint64_t expires_at_ms;
+    uint64_t owner_generation;
+    uint32_t token;
+    uint8_t owner_kind;
+};
+
+_Static_assert(sizeof(struct app_node_comm_reservation_lease) == 24u,
+               "reservation lease RAM budget changed");
+
 /*
  * Protocol-facing communication service boundary.
  *
@@ -93,6 +116,14 @@ enum app_node_comm_control_send_mode {
 };
 
 int app_node_comm_init(const app_node_comm_callbacks *callbacks);
+/*
+ * For production-boundary diagnostics and tests. The callback is invoked
+ * while node-comm holds its serialized ownership lock and must not re-enter
+ * the app_node_comm API.
+ */
+int app_node_comm_set_delivery_transition_trace(
+    node_comm_delivery_transition_trace_fn trace,
+    void *context);
 int app_node_comm_register_durable_attempt_ops(
     const struct app_node_comm_durable_attempt_ops *ops);
 void app_node_comm_stop_role_scan(void);
@@ -130,6 +161,11 @@ int app_node_comm_submit_delivery(
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
+int app_node_comm_redrive_delivered_control(
+    uint32_t handle,
+    uint64_t not_before_ms,
+    uint64_t absolute_deadline_ms,
+    struct node_comm_terminal_event *prior_terminal_out);
 int app_node_comm_submit_control_response(
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
@@ -144,18 +180,45 @@ int app_node_comm_submit_protocol_response(
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
+/*
+ * Retain a handle for exact application correlation while making terminal
+ * cleanup facade-owned from admission. This avoids a later caller-to-auto
+ * ownership transition after the semantic action has already been accepted.
+ */
+int app_node_comm_submit_protocol_response_auto_reap(
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+/*
+ * Reserve one ordinary-capacity bounded-control record before an infrequent
+ * durable operation identity is consumed. Commit is the first point at which
+ * RF work becomes visible; cancellation leaves no delivery behind.
+ */
+int app_node_comm_reserve_bounded_control(
+    uint64_t owner_generation,
+    struct app_node_comm_reservation_lease *reservation_out);
+int app_node_comm_commit_bounded_control_reservation(
+    const struct app_node_comm_reservation_lease *reservation,
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+int app_node_comm_cancel_bounded_control_reservation(
+    const struct app_node_comm_reservation_lease *reservation);
 int app_node_comm_reserve_reliable_uplinks(
+    uint64_t owner_generation,
     size_t reservation_count,
-    uint32_t *reservation_tokens,
-    size_t reservation_token_capacity);
+    struct app_node_comm_reservation_lease *reservation_leases,
+    size_t reservation_lease_capacity);
 int app_node_comm_commit_reliable_uplink_reservation(
-    uint32_t reservation_token,
+    const struct app_node_comm_reservation_lease *reservation,
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
 int app_node_comm_cancel_reliable_uplink_reservation(
-    uint32_t reservation_token);
+    const struct app_node_comm_reservation_lease *reservation);
 /*
  * Reserve the ordinary-capacity records for a complete durable burst while
  * retaining the protocol-response slot.  The committed records use the
@@ -163,31 +226,42 @@ int app_node_comm_cancel_reliable_uplink_reservation(
  * reserve merely by selecting that retry profile.
  */
 int app_node_comm_reserve_durable_reliable_uplinks(
+    uint64_t owner_generation,
     size_t reservation_count,
-    uint32_t *reservation_tokens,
-    size_t reservation_token_capacity);
+    struct app_node_comm_reservation_lease *reservation_leases,
+    size_t reservation_lease_capacity);
 int app_node_comm_commit_durable_reliable_uplink_reservation(
-    uint32_t reservation_token,
+    const struct app_node_comm_reservation_lease *reservation,
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
 int app_node_comm_cancel_durable_reliable_uplink_reservation(
-    uint32_t reservation_token);
-int app_node_comm_reserve_protocol_response(uint32_t *reservation_token);
+    const struct app_node_comm_reservation_lease *reservation);
+int app_node_comm_reserve_protocol_response(
+    uint64_t owner_generation,
+    struct app_node_comm_reservation_lease *reservation_out);
 int app_node_comm_commit_protocol_response(
-    uint32_t reservation_token,
+    const struct app_node_comm_reservation_lease *reservation,
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token,
+    uint32_t *handle_out);
+int app_node_comm_commit_protocol_response_auto_reap(
+    const struct app_node_comm_reservation_lease *reservation,
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
 int app_node_comm_cancel_protocol_response_reservation(
-    uint32_t reservation_token);
+    const struct app_node_comm_reservation_lease *reservation);
 int app_node_comm_service_deliveries(void);
 int app_node_comm_gateway_delivery_safe_boundary(void);
 int app_node_comm_cancel_delivery(uint32_t handle);
 int app_node_comm_abandon_delivery(uint32_t handle);
 int app_node_comm_auto_reap_delivery(uint32_t handle);
+/* Returns 1 while the exact facade record exists, 0 after retirement. */
+int app_node_comm_delivery_handle_state(uint32_t handle);
 /*
  * Mesh-route publishes an exact asynchronous backend-release completion, then
  * calls this wake edge so the communication owner can consume it. It does not
@@ -205,6 +279,9 @@ bool app_node_comm_peek_delivery_event_for(
     struct node_comm_terminal_event *event_out);
 int app_node_comm_delivery_attempts_started(uint32_t handle,
                                             uint8_t *attempts_out);
+/* The active delivery generation binds an asynchronous backend attempt. */
+int app_node_comm_delivery_generation(uint32_t handle,
+                                      uint32_t *generation_out);
 /*
  * Read the already-recorded attempt count without advancing delivery policy.
  * This is suitable for non-mutating semantic-admission preflight while the
@@ -231,13 +308,35 @@ int app_node_comm_backend_retry_preflight(const struct proto_packet *packet);
 int app_node_comm_backend_retry_preflight_until(
     const struct proto_packet *packet,
     uint64_t *absolute_deadline_ms_out);
+/*
+ * External backends retain this generation and return it with completion.
+ * Packet-only compatibility entry points assume callbacks remain serialized
+ * behind the one outstanding attempt; they cannot identify an older attempt
+ * after a logical control redrive.
+ */
+int app_node_comm_backend_retry_preflight_with_generation(
+    const struct proto_packet *packet,
+    uint32_t *delivery_generation_out,
+    uint64_t *absolute_deadline_ms_out);
 int app_node_comm_complete_backend_attempt(const struct proto_packet *packet,
                                            bool rf_started);
 int app_node_comm_complete_backend_attempt_at(
     const struct proto_packet *packet,
     bool rf_started,
     uint64_t rf_started_at_ms);
+int app_node_comm_complete_backend_attempt_for_generation(
+    const struct proto_packet *packet,
+    uint32_t delivery_generation,
+    bool rf_started);
+int app_node_comm_complete_backend_attempt_at_for_generation(
+    const struct proto_packet *packet,
+    uint32_t delivery_generation,
+    bool rf_started,
+    uint64_t rf_started_at_ms);
 int app_node_comm_note_backend_rf_started(const struct proto_packet *packet);
+int app_node_comm_note_backend_rf_started_for_generation(
+    const struct proto_packet *packet,
+    uint32_t delivery_generation);
 size_t app_node_comm_pending_delivery_count(void);
 size_t app_node_comm_reliable_delivery_targets(uint64_t *target_ids,
                                                size_t target_cap);

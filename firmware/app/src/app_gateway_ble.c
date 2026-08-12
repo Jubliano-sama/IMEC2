@@ -1,5 +1,7 @@
 #include "app_gateway_ble.h"
 #include "app_gateway_assignment_publisher.h"
+#include "app_gateway_control_sequence.h"
+#include "app_durable_state.h"
 
 #include "app_mesh_gateway_command_flow.h"
 #include "app_mesh_command_orchestrator.h"
@@ -8,6 +10,7 @@
 #include "app_board.h"
 #include "app_config.h"
 #include "app_gateway_collection_eack.h"
+#include "app_gateway_collection_recovery.h"
 #include "app_gateway_eack_retry.h"
 #include "app_gateway_eack_policy.h"
 #include "app_gateway_command_observability.h"
@@ -68,19 +71,35 @@ static int gateway_command_delivery_boundary(void *ctx,
 
 static uint16_t gateway_command_seq;
 static struct k_spinlock gateway_command_seq_lock;
-#define GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE 256u
-static uint32_t gateway_broadcast_command_sequence_next;
-static uint32_t gateway_broadcast_command_sequence_remaining;
-static uint32_t gateway_broadcast_command_sequence_reserved_through;
-K_MUTEX_DEFINE(gateway_broadcast_command_sequence_mutex);
 static struct gateway_ble_stream_state gateway_ble_stream_state;
 static struct gateway_command_observability_state gateway_command_observability_state;
 static struct k_spinlock gateway_ble_stream_lock;
 static struct k_spinlock gateway_command_observability_lock;
+#if DEVICE_ROLE == ROLE_GATEWAY
+/* RAM-only duplicate-receipt aid; no stream receipt history is persisted. */
+static struct proto_packet gateway_command_event_last_host_receipt;
+static uint8_t gateway_command_event_last_host_receipt_digest[
+    SEMANTIC_DIGEST_SHA256_LEN];
+static bool gateway_command_event_last_host_receipt_valid;
+#endif
 
 BUILD_ASSERT(GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH ==
              APP_GATEWAY_COMMAND_RESULT_QUEUE_DEPTH,
              "every accepted host result credit needs terminal event custody");
+/*
+ * A full durable assignment publishes at most one mapping per slot plus
+ * enumeration-complete, table-ready, and terminal events.  The receipt wire
+ * projection can burn one extra reserved identity at a low-word-zero
+ * boundary, so include it in the admission proof rather than borrowing the
+ * protected control-sequence runway after assignment has begun.
+ */
+#define GATEWAY_ASSIGNMENT_PUBLISHER_EVENT_BUDGET \
+    (APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES + 3u)
+#define GATEWAY_HOST_RECEIPT_SEQUENCE_SKIP_BUDGET 1u
+BUILD_ASSERT(APP_GATEWAY_CONTROL_SEQUENCE_ASSIGNMENT_ADMISSION_BUDGET >=
+                 GATEWAY_ASSIGNMENT_PUBLISHER_EVENT_BUDGET +
+                     GATEWAY_HOST_RECEIPT_SEQUENCE_SKIP_BUDGET,
+             "assignment admission must cover host-receipt sequence skip");
 
 static bool gateway_ble_stream_ready(void);
 static void gateway_ble_schedule_stream_drain(void);
@@ -93,6 +112,7 @@ static int gateway_observability_reserve_identity(
     struct gateway_command_event *event)
 {
     uint32_t event_seq;
+    int ret;
 
     if (event == NULL) {
         return -EINVAL;
@@ -101,11 +121,12 @@ static int gateway_observability_reserve_identity(
         return 0;
     }
 
-    /* This can take the RAM sequence allocator's mutex, so callers must run it
+    /* This takes only the RAM sequence allocator mutex, so callers must run it
      * before taking BLE, stream, or observability spinlocks. */
-    event_seq = gateway_next_broadcast_command_seq();
-    if (event_seq == 0u) {
-        return -EIO;
+    ret = app_gateway_control_sequence_next_receiptable(&event_seq);
+    if (ret < 0) {
+        LOG_ERR("gateway host-event sequence unavailable: %d", ret);
+        return ret;
     }
     event->event_seq = event_seq;
     return 0;
@@ -202,60 +223,12 @@ uint16_t gateway_next_command_seq(void)
     return sequence;
 }
 
-static uint32_t gateway_command_sequence_increment(uint32_t sequence)
-{
-    return sequence == UINT32_MAX ? 1u : sequence + 1u;
-}
-
-static uint32_t gateway_command_sequence_advance(uint32_t sequence,
-                                                 uint32_t count)
-{
-    uint64_t normalized;
-
-    if (sequence == 0u) {
-        return count;
-    }
-    normalized = (uint64_t)(sequence - 1u) + count;
-    return (uint32_t)(normalized % UINT32_MAX) + 1u;
-}
-
-static int gateway_broadcast_command_sequence_reserve_locked(void)
-{
-    uint32_t first_sequence;
-
-    if (gateway_broadcast_command_sequence_remaining != 0u) {
-        return 0;
-    }
-    /*
-     * RAM-only session: there is no durable watermark to restore, so the
-     * block always advances from the last reserved sequence. Persistence
-     * "save" is a no-op; the in-RAM counter keeps the sequence monotonic for
-     * the life of the session.
-     */
-    first_sequence = gateway_broadcast_command_sequence_reserved_through ==
-                     UINT32_MAX ? 1u :
-                     gateway_broadcast_command_sequence_reserved_through + 1u;
-    gateway_broadcast_command_sequence_next = first_sequence;
-    gateway_broadcast_command_sequence_remaining =
-        GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE;
-    gateway_broadcast_command_sequence_reserved_through =
-        gateway_command_sequence_advance(
-            gateway_broadcast_command_sequence_reserved_through,
-            GATEWAY_BROADCAST_COMMAND_SEQUENCE_BLOCK_SIZE);
-    return 0;
-}
-
 int gateway_broadcast_command_sequence_init(void)
 {
-    int ret;
-
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return -ENOTSUP;
     }
-    k_mutex_lock(&gateway_broadcast_command_sequence_mutex, K_FOREVER);
-    ret = gateway_broadcast_command_sequence_reserve_locked();
-    k_mutex_unlock(&gateway_broadcast_command_sequence_mutex);
-    return ret;
+    return app_gateway_control_sequence_init();
 }
 
 uint32_t gateway_next_broadcast_command_seq(void)
@@ -266,15 +239,7 @@ uint32_t gateway_next_broadcast_command_seq(void)
     if (DEVICE_ROLE != ROLE_GATEWAY) {
         return 0u;
     }
-    k_mutex_lock(&gateway_broadcast_command_sequence_mutex, K_FOREVER);
-    ret = gateway_broadcast_command_sequence_reserve_locked();
-    if (ret == 0) {
-        sequence = gateway_broadcast_command_sequence_next;
-        gateway_broadcast_command_sequence_next =
-            gateway_command_sequence_increment(sequence);
-        gateway_broadcast_command_sequence_remaining--;
-    }
-    k_mutex_unlock(&gateway_broadcast_command_sequence_mutex);
+    ret = app_gateway_control_sequence_next(&sequence);
     if (ret < 0) {
         LOG_ERR("gateway broadcast command sequence unavailable: %d", ret);
     }
@@ -300,6 +265,10 @@ static int gateway_observability_enqueue_prepared(
         return ret;
     }
     packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
+    /* Generic progress remains observable but never owns host receipt
+     * custody. The durable assignment publisher has its own explicit wrapper
+     * below, so a pre-commit claim cannot advance that publisher by accident. */
+    packet.flags = 0u;
     packet.src_id = DEVICE_ID;
     packet.dst_id = DEVICE_ID;
     packet.session_id = event->event_seq;
@@ -330,6 +299,17 @@ int gateway_observe_command_event(struct gateway_command_event *event,
         return ret;
     }
     return gateway_observability_enqueue_prepared(event);
+}
+
+int gateway_reserve_command_event_sequence(struct gateway_command_event *event,
+                                           void *ctx)
+{
+    ARG_UNUSED(ctx);
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    return gateway_observability_reserve_identity(event);
 }
 
 #if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
@@ -923,8 +903,16 @@ int gateway_ble_send_packet_frame(const uint8_t *frame, size_t frame_len)
 /* Packets whose BLE completion owns a source-custody ACK boundary. */
 static bool gateway_host_custody_supported(const struct proto_packet *packet)
 {
-    if (packet == NULL ||
-        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+    if (packet == NULL) {
+        return false;
+    }
+
+    /* Only the durable assignment publisher is command-event host custody.
+     * Generic observability packets are self-addressed best-effort telemetry. */
+    if (packet->msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+        return packet->flags == FLAG_GATEWAY_ACK_REQUIRED;
+    }
+    if ((packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
         return false;
     }
 
@@ -942,6 +930,152 @@ static bool gateway_host_custody_supported(const struct proto_packet *packet)
     default:
         return false;
     }
+}
+
+int gateway_command_event_finish_host_receipt(
+    const struct proto_packet *packet)
+{
+    if (packet == NULL) {
+        return -EINVAL;
+    }
+    if (packet->msg_type != MSG_GATEWAY_COMMAND_EVENT) {
+        return 0;
+    }
+
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE) && \
+    DEVICE_ROLE == ROLE_GATEWAY
+    struct gateway_command_event event;
+    struct gateway_ble_stream_item *head;
+    struct proto_packet head_packet;
+    const uint8_t *payload;
+    uint8_t record_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    k_spinlock_key_t key;
+    int publisher_ret;
+    int ret = 0;
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    if (gateway_ble_stream_state.count == 0u) {
+        ret = -ESTALE;
+        goto unlock;
+    }
+    head = &gateway_ble_stream_state.items[0];
+    if (!gateway_ble_packet_identity_matches(packet, &head->packet)) {
+        ret = -ESTALE;
+        goto unlock;
+    }
+    if (gateway_ble_stream_state.head_send_phase !=
+        GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED) {
+        ret = -EAGAIN;
+        goto unlock;
+    }
+    if (head->offset > gateway_ble_stream_state.pool_used ||
+        head->len < GATEWAY_BLE_STREAM_RECORD_HEADER_LEN ||
+        (size_t)head->len >
+            (size_t)gateway_ble_stream_state.pool_used - head->offset ||
+        head->packet.payload_len !=
+            (uint16_t)(head->len - GATEWAY_BLE_STREAM_RECORD_HEADER_LEN)) {
+        ret = -EPROTO;
+        goto unlock;
+    }
+    payload = &gateway_ble_stream_state.record_pool[
+        head->offset + GATEWAY_BLE_STREAM_RECORD_HEADER_LEN];
+    if (packet->flags != FLAG_GATEWAY_ACK_REQUIRED ||
+        gateway_command_event_decode(payload,
+                                     head->packet.payload_len,
+                                     &event) < 0 ||
+        event.event_seq == 0u ||
+        event.event_seq != head->packet.session_id ||
+        head->packet.seq != (uint16_t)event.event_seq ||
+        !app_gateway_assignment_publisher_event_is_reliable(&event)) {
+        ret = -EBADMSG;
+        goto unlock;
+    }
+    if (!semantic_digest_sha256(
+            &gateway_ble_stream_state.record_pool[head->offset],
+            head->len,
+            record_digest)) {
+        ret = -EIO;
+        goto unlock;
+    }
+    head_packet = head->packet;
+unlock:
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* The publisher is the semantic owner of assignment mapping progress.
+     * It must accept the exact event before the host-only stream head can be
+     * retired, otherwise a stream/publisher drift would strand publication. */
+    publisher_ret = app_gateway_assignment_publisher_note_host_receipt(&event);
+    if (publisher_ret <= 0) {
+        return publisher_ret < 0 ? publisher_ret : -ESTALE;
+    }
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    if (gateway_ble_stream_state.count == 0u ||
+        !gateway_ble_packet_identity_matches(
+            packet, &gateway_ble_stream_state.items[0].packet)) {
+        ret = -ESTALE;
+    } else if (gateway_ble_stream_state.head_send_phase !=
+               GATEWAY_BLE_STREAM_HEAD_HOST_ACCEPTED) {
+        ret = -EAGAIN;
+    } else {
+        gateway_command_event_last_host_receipt = head_packet;
+        memcpy(gateway_command_event_last_host_receipt_digest,
+               record_digest,
+               sizeof(record_digest));
+        gateway_command_event_last_host_receipt_valid = true;
+        gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
+                                     k_uptime_get_32());
+        ret = 0;
+    }
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret < 0) {
+        return ret;
+    }
+
+    gateway_observability_mark_sent_state(event.event_seq);
+    /* An exact receipt may arrive synchronously inside the publisher's emit
+     * callback.  At that point emit_attempt_active is still set, so querying
+     * work_pending would miss the successor event and strand the batch.
+     * Semantic publisher advancement itself is the reliable scheduling edge. */
+    if (publisher_ret > 0) {
+        gateway_schedule_persistence_retry(
+            "assignment-publication-host-receipt");
+    }
+    gateway_observability_flush(false);
+    gateway_ble_schedule_stream_drain();
+    return 0;
+#else
+    return -ENOTSUP;
+#endif
+}
+
+int gateway_command_event_duplicate_host_receipt_valid(
+    const struct gateway_host_receipt_identity *identity)
+{
+    if (identity == NULL ||
+        identity->original_msg_type != MSG_GATEWAY_COMMAND_EVENT) {
+        return -ESTALE;
+    }
+
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE) && \
+    DEVICE_ROLE == ROLE_GATEWAY
+    k_spinlock_key_t key;
+    bool matched;
+
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    matched = gateway_command_event_last_host_receipt_valid &&
+              gateway_host_receipt_identity_matches(
+                  identity,
+                  &gateway_command_event_last_host_receipt,
+                  gateway_command_event_last_host_receipt_digest);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    return matched ? 0 : -ESTALE;
+#else
+    return -ENOTSUP;
+#endif
 }
 
 static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
@@ -987,6 +1121,7 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
 
     if (completed_source == GATEWAY_BLE_TX_STREAM) {
         struct proto_packet completed_packet;
+        bool generic_command_event_sent = false;
         bool host_custody_pending = false;
         bool host_custody_supported = false;
         bool host_notification_transitioned = false;
@@ -1017,6 +1152,10 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
                                             host_notification_ret);
             }
         }
+        generic_command_event_sent =
+            packet_ret == 0 &&
+            completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT &&
+            !host_custody_supported;
         if (!host_custody_supported) {
             gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
                                          k_uptime_get_32());
@@ -1024,6 +1163,13 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
         uint16_t queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
         k_spin_unlock(&gateway_ble_stream_lock, key);
         if (packet_ret == 0) {
+            if (generic_command_event_sent) {
+                /* Best-effort observability has no host receipt boundary.
+                 * Its RAM snapshot retires only once ATT completed the exact
+                 * record, so a failed notification remains reconnectable. */
+                gateway_observability_mark_sent_state(
+                    completed_packet.session_id);
+            }
 #if DEVICE_ROLE == ROLE_GATEWAY
             if (host_custody_supported) {
                 if (!host_custody_pending) {
@@ -1044,10 +1190,6 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
                                                 receipt_schedule_ret);
                 }
             }
-            if (completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
-                gateway_observability_mark_sent_state(
-                    completed_packet.session_id);
-            }
             const struct app_stack_workload_diag_pressure pressure = {
                 .queue_depth = queue_depth,
                 .custody_depth = gateway_ble_tx_in_flight ? 1u : 0u,
@@ -1061,15 +1203,6 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
         }
         gateway_observability_flush(false);
 #if DEVICE_ROLE == ROLE_GATEWAY
-        if (packet_ret == 0 &&
-            completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
-            (void)app_gateway_assignment_publisher_note_sent(
-                completed_packet.session_id);
-        }
-        if (app_gateway_assignment_publisher_work_pending()) {
-            gateway_schedule_persistence_retry(
-                "assignment-publication-progress");
-        }
         (void)gateway_flush_host_command_results();
 #endif
     }
@@ -1568,6 +1701,13 @@ int gateway_ble_init(void)
         k_spin_unlock(&gateway_command_observability_lock, key);
     }
 #if DEVICE_ROLE == ROLE_GATEWAY
+    memset(&gateway_command_event_last_host_receipt,
+           0,
+           sizeof(gateway_command_event_last_host_receipt));
+    memset(gateway_command_event_last_host_receipt_digest,
+           0,
+           sizeof(gateway_command_event_last_host_receipt_digest));
+    gateway_command_event_last_host_receipt_valid = false;
     gateway_ble_stream_initialized = true;
     (void)gateway_flush_host_command_results();
     if (gateway_assignment_publication_pending()) {
@@ -1899,6 +2039,10 @@ int gateway_observe_command_event_if_available(
     }
     if (ret == 0) {
         packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
+        /* Generic observability is deliberately best effort.  Only the
+         * assignment publisher wrapper below sets ACK_REQUIRED and obtains
+         * host-receipt custody. */
+        packet.flags = 0u;
         packet.src_id = DEVICE_ID;
         packet.dst_id = DEVICE_ID;
         packet.session_id = event->event_seq;
@@ -1908,8 +2052,6 @@ int gateway_observe_command_event_if_available(
             &gateway_ble_stream_state, &packet, payload, payload_len,
             k_uptime_get_32(), k_uptime_get_32(), true);
         if (ret > 0) {
-            gateway_ble_stream_state.items[
-                gateway_ble_stream_state.count - 1u].retain_until_sent = true;
             gateway_observability_note_enqueue_state(
                 event->event_seq, ret);
             ret = 0;
@@ -1921,6 +2063,48 @@ int gateway_observe_command_event_if_available(
         gateway_ble_schedule_stream_drain();
     }
     return ret;
+#else
+    ARG_UNUSED(event);
+    ARG_UNUSED(terminal);
+    ARG_UNUSED(ctx);
+    return -EAGAIN;
+#endif
+}
+
+int gateway_publish_assignment_event_if_available(
+    struct gateway_command_event *event,
+    bool terminal,
+    void *ctx)
+{
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
+    struct proto_packet packet = {0};
+    uint8_t payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
+    size_t payload_len = 0u;
+    int ret;
+
+    ARG_UNUSED(ctx);
+    ARG_UNUSED(terminal);
+    if (DEVICE_ROLE != ROLE_GATEWAY || event == NULL ||
+        !app_gateway_assignment_publisher_event_is_reliable(event)) {
+        return -EINVAL;
+    }
+    if (!gateway_ble_stream_ready()) {
+        return -EAGAIN;
+    }
+    ret = gateway_command_event_encode(event, payload, sizeof(payload),
+                                       &payload_len);
+    if (ret < 0) {
+        return ret;
+    }
+    packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+    packet.src_id = DEVICE_ID;
+    packet.dst_id = DEVICE_ID;
+    packet.session_id = event->event_seq;
+    packet.seq = (uint16_t)event->event_seq;
+    packet.payload_len = (uint16_t)payload_len;
+    return gateway_ble_stream_packet(&packet, payload, payload_len,
+                                     k_uptime_get_32());
 #else
     ARG_UNUSED(event);
     ARG_UNUSED(terminal);

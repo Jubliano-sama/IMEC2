@@ -125,10 +125,9 @@ bool survey_pair_round_lane_armed(
     const struct survey_pair_round_lane *lane);
 
 /*
- * Demultiplexes one validated sample by the exact survey, ordered endpoints,
- * sample count, and reporter identity. A lower- or equal-priority duplicate
- * returns PROTO_OK with accepted_new false; a usable responder may return true
- * when it upgrades an initiator-only sample and cannot mutate another lane.
+ * Demultiplexes one responder-produced sample by the exact survey, ordered
+ * endpoints, and sample count. An exact duplicate returns PROTO_OK with
+ * accepted_new false and cannot mutate another lane.
  */
 int survey_pair_round_runtime_note_sample(
     struct survey_pair_round_runtime *runtime,

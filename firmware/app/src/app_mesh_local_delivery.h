@@ -149,6 +149,12 @@ int app_mesh_local_delivery_commit_ack(
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
 int app_mesh_local_delivery_cleanup_ack(
     struct app_mesh_local_delivery *delivery);
+/*
+ * Retire an exact source owner after a higher-level protocol cancellation has
+ * terminal authority. This never fabricates a gateway acknowledgement.
+ */
+int app_mesh_local_delivery_cancel(
+    struct app_mesh_local_delivery *delivery);
 int app_mesh_local_delivery_note_failed(
     struct app_mesh_local_delivery *delivery);
 /*

@@ -541,7 +541,14 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
                       uint32_t route_epoch,
                       uint8_t *node_index);
 struct mesh_sim_role_instance *mesh_sim_role(struct mesh_sim_world *world,
-                                             uint8_t node_index);
+                                              uint8_t node_index);
+/* Single authority for whether a queued wire image may run while the relay
+ * owns another pending transaction. Test drivers use this instead of
+ * reconstructing transient ACK_CONFIRM identity from pending.packet. */
+bool mesh_sim_relay_queue_entry_runnable(
+    const struct mesh_sim_role_instance *node,
+    const struct mesh_sim_queued_tx *queued,
+    uint64_t peer_id);
 int mesh_sim_set_tx_queue_capacity(struct mesh_sim_world *world,
                                    uint8_t node_index,
                                    size_t capacity);

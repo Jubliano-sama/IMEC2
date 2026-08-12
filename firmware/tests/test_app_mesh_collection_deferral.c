@@ -12,28 +12,9 @@
 #define GATEWAY 0x9000u
 
 struct deferral_test_ctx {
-    struct mesh_relay *saved_relay;
-    uint32_t saved_now_ms;
-    int save_ret;
     int schedule_ret;
-    int save_count;
     int schedule_count;
-    int save_order;
-    int schedule_order;
-    int next_order;
 };
-
-static int save_outbox(struct mesh_relay *relay, uint32_t now_ms, void *ctx)
-{
-    struct deferral_test_ctx *test = ctx;
-
-    assert(test != NULL);
-    test->saved_relay = relay;
-    test->saved_now_ms = now_ms;
-    test->save_count++;
-    test->save_order = ++test->next_order;
-    return test->save_ret;
-}
 
 static int schedule_retry(void *ctx)
 {
@@ -41,7 +22,6 @@ static int schedule_retry(void *ctx)
 
     assert(test != NULL);
     test->schedule_count++;
-    test->schedule_order = ++test->next_order;
     return test->schedule_ret;
 }
 
@@ -49,7 +29,6 @@ static struct app_mesh_collection_deferral_ops deferral_ops(
     struct deferral_test_ctx *ctx)
 {
     const struct app_mesh_collection_deferral_ops ops = {
-        .save_outbox = save_outbox,
         .schedule_retry = schedule_retry,
         .ctx = ctx,
     };
@@ -126,7 +105,7 @@ static void start_collection_result_tx(struct mesh_relay *relay,
     assert(mesh_relay_tx_active_local_collection_result(relay));
 }
 
-static void test_collection_result_defers_and_runs_hooks_in_order(void)
+static void test_collection_result_defers_in_ram_and_schedules_retry(void)
 {
     struct mesh_relay relay;
     struct mesh_outbound tx;
@@ -148,16 +127,9 @@ static void test_collection_result_defers_and_runs_hooks_in_order(void)
                                                   &ops,
                                                   &result));
     assert(result.deferred);
-    assert(result.outbox_saved);
     assert(result.retry_scheduled);
-    assert(result.save_ret == 0);
     assert(result.schedule_ret == 0);
-    assert(ctx.saved_relay == &relay);
-    assert(ctx.saved_now_ms == 5100u);
-    assert(ctx.save_count == 1);
     assert(ctx.schedule_count == 1);
-    assert(ctx.save_order == 1);
-    assert(ctx.schedule_order == 2);
     assert(mesh_relay_tx_active(&relay));
     assert(mesh_relay_tx_active_local_collection_result(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
@@ -169,14 +141,14 @@ static void test_collection_result_defers_and_runs_hooks_in_order(void)
     assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
 }
 
-static void test_collection_result_defers_even_when_snapshot_save_fails(void)
+static void test_collection_result_retains_ram_owner_when_schedule_fails(void)
 {
     struct mesh_relay relay;
     struct mesh_outbound tx;
     uint8_t payload[96];
     size_t payload_len;
     struct deferral_test_ctx ctx = {
-        .save_ret = -5,
+        .schedule_ret = -5,
     };
     const struct app_mesh_collection_deferral_ops ops = deferral_ops(&ctx);
     struct app_mesh_collection_deferral_result result;
@@ -193,11 +165,8 @@ static void test_collection_result_defers_even_when_snapshot_save_fails(void)
                                                   &ops,
                                                   &result));
     assert(result.deferred);
-    assert(!result.outbox_saved);
-    assert(result.retry_scheduled);
-    assert(result.save_ret == -5);
-    assert(result.schedule_ret == 0);
-    assert(ctx.save_count == 1);
+    assert(!result.retry_scheduled);
+    assert(result.schedule_ret == -5);
     assert(ctx.schedule_count == 1);
     assert(mesh_relay_tx_active_local_collection_result(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
@@ -248,11 +217,8 @@ static void test_forwarded_child_result_defers_and_preserves_outbox(void)
                                                   &ops,
                                                   &result));
     assert(result.deferred);
-    assert(result.outbox_saved);
     assert(result.retry_scheduled);
-    assert(result.save_ret == 0);
     assert(result.schedule_ret == 0);
-    assert(ctx.save_count == 1);
     assert(ctx.schedule_count == 1);
     assert(mesh_relay_tx_active(&relay));
     assert(!mesh_relay_tx_active_local_collection_result(&relay));
@@ -271,7 +237,7 @@ static void test_forwarded_child_result_defers_and_preserves_outbox(void)
     assert(!relay.outbox_record.gateway_acked);
 }
 
-static void test_generic_gateway_host_tx_uses_same_durable_deferral(void)
+static void test_generic_gateway_host_tx_uses_same_ram_deferral(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(7u);
@@ -300,9 +266,7 @@ static void test_generic_gateway_host_tx_uses_same_durable_deferral(void)
                                                   &ops,
                                                   &result));
     assert(result.deferred);
-    assert(result.outbox_saved);
     assert(result.retry_scheduled);
-    assert(ctx.save_count == 1);
     assert(ctx.schedule_count == 1);
     assert(mesh_relay_tx_active(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
@@ -312,7 +276,7 @@ static void test_generic_gateway_host_tx_uses_same_durable_deferral(void)
     assert(!mesh_relay_tx_active(&relay));
 }
 
-static void test_repeated_owned_deferrals_preserve_identity_and_escalate(void)
+static void test_repeated_owned_deferrals_preserve_identity_and_deadline(void)
 {
     static const uint32_t entropy[] = {
         UINT32_C(0x10203040),
@@ -330,7 +294,7 @@ static void test_repeated_owned_deferrals_preserve_identity_and_escalate(void)
     const struct app_mesh_collection_deferral_ops ops = deferral_ops(&ctx);
     struct app_mesh_collection_deferral_result result;
     uint32_t now_ms = 6000u;
-    uint32_t base_ms = RELAY_BUSY_RETRY_MIN_MS;
+    uint32_t retained_retry_at_ms = 0u;
 
     start_collection_result_tx(&relay,
                                &tx,
@@ -349,10 +313,16 @@ static void test_repeated_owned_deferrals_preserve_identity_and_escalate(void)
                                                        &ops,
                                                        &result));
         assert(result.deferred);
-        assert(relay.pending.busy_retry_round == i + 1u);
+        assert(relay.pending.busy_retry_round == 1u);
         delay_ms = relay.pending.retry_after_ms - now_ms;
-        assert(delay_ms >= base_ms);
-        assert(delay_ms <= base_ms + (base_ms / 2u));
+        if (i == 0u) {
+            retained_retry_at_ms = relay.pending.retry_after_ms;
+            assert(delay_ms >= RELAY_BUSY_RETRY_MIN_MS);
+            assert(delay_ms <= RELAY_BUSY_RETRY_MIN_MS +
+                               (RELAY_BUSY_RETRY_MIN_MS / 2u));
+        } else {
+            assert(relay.pending.retry_after_ms == retained_retry_at_ms);
+        }
         assert(relay.pending.packet.msg_type == frozen_packet.msg_type);
         assert(relay.pending.packet.src_id == frozen_packet.src_id);
         assert(relay.pending.packet.dst_id == frozen_packet.dst_id);
@@ -362,22 +332,16 @@ static void test_repeated_owned_deferrals_preserve_identity_and_escalate(void)
         assert(relay.pending.payload_len == payload_len);
         assert(memcmp(relay.pending.payload, frozen_payload, payload_len) == 0);
 
-        if (base_ms < RELAY_BUSY_RETRY_MAX_MS) {
-            base_ms *= 2u;
-            if (base_ms > RELAY_BUSY_RETRY_MAX_MS) {
-                base_ms = RELAY_BUSY_RETRY_MAX_MS;
-            }
-        }
         now_ms += 10u;
     }
 }
 
 int main(void)
 {
-    test_collection_result_defers_and_runs_hooks_in_order();
-    test_collection_result_defers_even_when_snapshot_save_fails();
+    test_collection_result_defers_in_ram_and_schedules_retry();
+    test_collection_result_retains_ram_owner_when_schedule_fails();
     test_forwarded_child_result_defers_and_preserves_outbox();
-    test_generic_gateway_host_tx_uses_same_durable_deferral();
-    test_repeated_owned_deferrals_preserve_identity_and_escalate();
+    test_generic_gateway_host_tx_uses_same_ram_deferral();
+    test_repeated_owned_deferrals_preserve_identity_and_deadline();
     return 0;
 }

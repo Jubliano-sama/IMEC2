@@ -1,5 +1,9 @@
 #include "app_gateway_survey_round.h"
 
+#include "protocol.h"
+#include "survey_gateway_transaction.h"
+
+#include <errno.h>
 #include <string.h>
 
 _Static_assert(SURVEY_GATEWAY_MAX_PAIRS == 150u,
@@ -7,9 +11,88 @@ _Static_assert(SURVEY_GATEWAY_MAX_PAIRS == 150u,
 _Static_assert(SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 25u,
                "gateway round wrapper must retain the runtime lane cap");
 
+void app_gateway_survey_incarnation_tracker_init(
+    struct app_gateway_survey_incarnation_tracker *tracker)
+{
+    if (tracker != NULL) {
+        memset(tracker, 0, sizeof(*tracker));
+    }
+}
+
+int app_gateway_survey_incarnation_tracker_classify(
+    const struct app_gateway_survey_incarnation_tracker *tracker,
+    uint64_t anchor_id,
+    uint32_t boot_incarnation,
+    uint32_t *previous_incarnation)
+{
+    uint32_t delta;
+
+    if (tracker == NULL || previous_incarnation == NULL || anchor_id == 0u ||
+        boot_incarnation == 0u ||
+        tracker->count > SURVEY_GATEWAY_MAX_REPORTS) {
+        return -EINVAL;
+    }
+    *previous_incarnation = 0u;
+    for (uint8_t i = 0u; i < tracker->count; i++) {
+        uint32_t retained;
+
+        if (tracker->anchor_ids[i] != anchor_id) {
+            continue;
+        }
+        retained = tracker->boot_incarnations[i];
+        if (retained == 0u) {
+            return -EIO;
+        }
+        *previous_incarnation = retained;
+        if (boot_incarnation == retained) {
+            return 0;
+        }
+        delta = boot_incarnation - retained;
+        if (delta >= UINT32_C(0x80000000)) {
+            return -ESTALE;
+        }
+        return 1;
+    }
+
+    if (tracker->count == SURVEY_GATEWAY_MAX_REPORTS) {
+        return -ENOSPC;
+    }
+    return 0;
+}
+
+int app_gateway_survey_incarnation_tracker_note(
+    struct app_gateway_survey_incarnation_tracker *tracker,
+    uint64_t anchor_id,
+    uint32_t boot_incarnation,
+    uint32_t *previous_incarnation)
+{
+    int ret = app_gateway_survey_incarnation_tracker_classify(
+        tracker, anchor_id, boot_incarnation, previous_incarnation);
+
+    if (ret < 0) {
+        return ret;
+    }
+    if (*previous_incarnation == 0u) {
+        tracker->anchor_ids[tracker->count] = anchor_id;
+        tracker->boot_incarnations[tracker->count] = boot_incarnation;
+        tracker->count++;
+        return 0;
+    }
+    if (ret == 1) {
+        for (uint8_t i = 0u; i < tracker->count; i++) {
+            if (tracker->anchor_ids[i] == anchor_id) {
+                tracker->boot_incarnations[i] = boot_incarnation;
+                return 1;
+            }
+        }
+        return -EIO;
+    }
+    return 0;
+}
+
 static int app_gateway_survey_round_stage_details(
     const struct survey_pair_round_lane *lane,
-    enum survey_gateway_auto_stage stage,
+    enum app_gateway_survey_control_stage stage,
     enum command_id *command_id,
     uint64_t *target_id,
     uint8_t *endpoint_mask)
@@ -20,22 +103,22 @@ static int app_gateway_survey_round_stage_details(
     }
 
     switch (stage) {
-    case SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR:
+    case APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR:
         *command_id = CMD_SURVEY_PREPARE_PAIR;
         *target_id = lane->pair.initiator_id;
         *endpoint_mask = SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK;
         return PROTO_OK;
-    case SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER:
+    case APP_GATEWAY_SURVEY_CONTROL_PREPARE_RESPONDER:
         *command_id = CMD_SURVEY_PREPARE_PAIR;
         *target_id = lane->pair.responder_id;
         *endpoint_mask = SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK;
         return PROTO_OK;
-    case SURVEY_GATEWAY_AUTO_START_RESPONDER:
+    case APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER:
         *command_id = CMD_SURVEY_START_PAIR;
         *target_id = lane->pair.responder_id;
         *endpoint_mask = SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK;
         return PROTO_OK;
-    case SURVEY_GATEWAY_AUTO_START_INITIATOR:
+    case APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR:
         *command_id = CMD_SURVEY_START_PAIR;
         *target_id = lane->pair.initiator_id;
         *endpoint_mask = SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK;
@@ -49,7 +132,7 @@ static void app_gateway_survey_round_start_dispatch(
     struct app_gateway_survey_round *round)
 {
     round->dispatch_lane_index = 0u;
-    round->dispatch_stage = SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR;
+    round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR;
     round->phase = APP_GATEWAY_SURVEY_ROUND_DISPATCHING;
 }
 
@@ -148,6 +231,210 @@ int app_gateway_survey_round_current_control(
     return PROTO_OK;
 }
 
+static uint32_t app_gateway_survey_round_control_session_id(
+    const struct survey_pair *pair)
+{
+    if (pair == NULL) {
+        return 0u;
+    }
+    return pair->operation_generation == 0u ? pair->survey_id :
+           survey_operation_session_id(pair->operation_generation);
+}
+
+static bool app_gateway_survey_round_control_equal(
+    const struct app_gateway_survey_round_control *left,
+    const struct app_gateway_survey_round_control *right)
+{
+    return left != NULL && right != NULL &&
+           left->command_id == right->command_id &&
+           left->target_id == right->target_id &&
+           left->lane_index == right->lane_index &&
+           left->stage == right->stage &&
+           left->pair.operation_generation == right->pair.operation_generation &&
+           left->pair.survey_id == right->pair.survey_id &&
+           left->pair.initiator_id == right->pair.initiator_id &&
+           left->pair.responder_id == right->pair.responder_id &&
+           left->pair.sample_count == right->pair.sample_count;
+}
+
+int app_gateway_survey_round_capture_control_result(
+    struct app_gateway_survey_round *round,
+    enum command_id command_id,
+    uint64_t target_id,
+    const struct node_transaction *transaction,
+    uint32_t started_at_ms,
+    enum command_status status)
+{
+    struct app_gateway_survey_round_control control;
+    struct app_gateway_survey_round_control_confirmation *confirmation;
+    uint32_t operation_session_id;
+    int ret;
+
+    if (round == NULL || transaction == NULL ||
+        status > COMMAND_INTERNAL_ERROR) {
+        return PROTO_ERR_ARG;
+    }
+    ret = app_gateway_survey_round_current_control(round, &control);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    operation_session_id = app_gateway_survey_round_control_session_id(
+        &control.pair);
+    if (command_id != control.command_id || target_id != control.target_id ||
+        transaction->state != NODE_TRANSACTION_SUCCEEDED ||
+        !transaction->request_delivery_terminal ||
+        transaction->spec.key.requester_id == 0u ||
+        transaction->spec.key.responder_id != control.target_id ||
+        transaction->spec.key.session_id != operation_session_id ||
+        transaction->spec.key.transaction_id == 0u ||
+        transaction->spec.key.operation_id != (uint16_t)command_id) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    confirmation = &round->control_confirmation;
+    if (confirmation->valid) {
+        return app_gateway_survey_round_control_equal(
+                   &confirmation->control, &control) &&
+               node_transaction_key_equal(&confirmation->result_key,
+                                          &transaction->spec.key) &&
+               confirmation->status == status &&
+               confirmation->started_at_ms == started_at_ms &&
+               confirmation->deadline_ms ==
+                   transaction->spec.absolute_deadline_ms &&
+               memcmp(confirmation->semantic_digest,
+                      transaction->accepted_result_digest,
+                      sizeof(confirmation->semantic_digest)) == 0 ?
+                   PROTO_OK : PROTO_ERR_BUSY;
+    }
+
+    memset(confirmation, 0, sizeof(*confirmation));
+    confirmation->control = control;
+    confirmation->result_key = transaction->spec.key;
+    memcpy(confirmation->semantic_digest,
+           transaction->accepted_result_digest,
+           sizeof(confirmation->semantic_digest));
+    confirmation->status = status;
+    confirmation->started_at_ms = started_at_ms;
+    confirmation->deadline_ms =
+        transaction->spec.absolute_deadline_ms;
+    confirmation->valid = true;
+    return PROTO_OK;
+}
+
+int app_gateway_survey_round_note_control_ack_confirm(
+    struct app_gateway_survey_round *round,
+    const struct app_gateway_survey_round_ack_confirm *confirm)
+{
+    struct app_gateway_survey_round_control_confirmation *confirmation;
+
+    if (round == NULL || confirm == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    confirmation = &round->control_confirmation;
+    if (!confirmation->valid) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (confirm->msg_type != MSG_COMMAND_RESULT ||
+        confirm->session_id != confirmation->result_key.session_id ||
+        confirm->seq != confirmation->result_key.transaction_id ||
+        confirm->source_id != confirmation->result_key.responder_id ||
+        confirm->destination_id != confirmation->result_key.requester_id) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (memcmp(confirm->semantic_digest,
+               confirmation->semantic_digest,
+               sizeof(confirmation->semantic_digest)) != 0) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (!confirmation->confirmed ||
+        confirm->first_received_at_ms < confirmation->confirmed_at_ms) {
+        confirmation->confirmed_at_ms = confirm->first_received_at_ms;
+    }
+    confirmation->confirmed = true;
+    return PROTO_OK;
+}
+
+bool app_gateway_survey_round_control_confirmation_pending(
+    const struct app_gateway_survey_round *round)
+{
+    return round != NULL && round->control_confirmation.valid &&
+           !round->control_confirmation.confirmed;
+}
+
+uint64_t app_gateway_survey_round_control_confirmation_deadline(
+    const struct app_gateway_survey_round *round)
+{
+    return round == NULL || !round->control_confirmation.valid ? 0u :
+        round->control_confirmation.deadline_ms;
+}
+
+bool app_gateway_survey_round_control_confirmation_expired(
+    const struct app_gateway_survey_round *round,
+    uint64_t now_ms)
+{
+    const uint64_t deadline_ms =
+        app_gateway_survey_round_control_confirmation_deadline(round);
+
+    return deadline_ms != 0u && now_ms >= deadline_ms;
+}
+
+bool app_gateway_survey_round_control_confirmation_received_in_interval(
+    const struct app_gateway_survey_round *round,
+    uint32_t started_at_ms,
+    uint32_t deadline_ms)
+{
+    return round != NULL && round->control_confirmation.valid &&
+           round->control_confirmation.confirmed &&
+           survey_gateway_receive_in_interval(
+               round->control_confirmation.confirmed_at_ms,
+               started_at_ms,
+               deadline_ms);
+}
+
+int app_gateway_survey_round_control_confirmation_ready(
+    const struct app_gateway_survey_round *round,
+    struct app_gateway_survey_round_control *control,
+    enum command_status *status)
+{
+    struct app_gateway_survey_round_control current;
+    const struct app_gateway_survey_round_control_confirmation *confirmation;
+    int ret;
+
+    if (round == NULL || control == NULL || status == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    confirmation = &round->control_confirmation;
+    if (!confirmation->valid || !confirmation->confirmed) {
+        return PROTO_ERR_BUSY;
+    }
+    if (!survey_gateway_receive_in_interval(
+            confirmation->confirmed_at_ms,
+            (uint32_t)confirmation->started_at_ms,
+            (uint32_t)confirmation->deadline_ms)) {
+        return -ETIMEDOUT;
+    }
+    ret = app_gateway_survey_round_current_control(round, &current);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!app_gateway_survey_round_control_equal(&current,
+                                                &confirmation->control)) {
+        return PROTO_ERR_STALE;
+    }
+    *control = confirmation->control;
+    *status = confirmation->status;
+    return PROTO_OK;
+}
+
+void app_gateway_survey_round_clear_control_confirmation(
+    struct app_gateway_survey_round *round)
+{
+    if (round != NULL) {
+        memset(&round->control_confirmation, 0,
+               sizeof(round->control_confirmation));
+    }
+}
+
 static bool app_gateway_survey_round_lane_attempt_terminal(
     const struct survey_pair_round_lane *lane)
 {
@@ -184,13 +471,13 @@ static void app_gateway_survey_round_advance_dispatch(
                                             round->dispatch_lane_index);
 
         if (!app_gateway_survey_round_lane_attempt_terminal(lane)) {
-            round->dispatch_stage = SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR;
+            round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR;
             round->phase = APP_GATEWAY_SURVEY_ROUND_DISPATCHING;
             return;
         }
         round->dispatch_lane_index++;
     }
-    round->dispatch_stage = SURVEY_GATEWAY_AUTO_IDLE;
+    round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR;
     if (app_gateway_survey_round_has_observing_lane(round)) {
         round->phase = APP_GATEWAY_SURVEY_ROUND_OBSERVING;
     } else if (survey_pair_round_runtime_batch_complete(&round->runtime)) {
@@ -204,6 +491,7 @@ int app_gateway_survey_round_note_control_success(
     uint64_t target_id,
     uint32_t survey_id)
 {
+    struct app_gateway_survey_round_control current_control;
     const struct survey_pair_round_lane *lane;
     enum command_id expected_command;
     uint64_t expected_target;
@@ -239,16 +527,29 @@ int app_gateway_survey_round_note_control_success(
         survey_id != operation_session_id) {
         return PROTO_ERR_NOT_FOUND;
     }
+    if (round->control_confirmation.valid) {
+        ret = app_gateway_survey_round_current_control(round,
+                                                        &current_control);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+        if (!round->control_confirmation.confirmed ||
+            !app_gateway_survey_round_control_equal(
+                &current_control,
+                &round->control_confirmation.control)) {
+            return PROTO_ERR_BUSY;
+        }
+    }
 
     switch (round->dispatch_stage) {
-    case SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR:
-    case SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER:
+    case APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR:
+    case APP_GATEWAY_SURVEY_CONTROL_PREPARE_RESPONDER:
         ret = survey_pair_round_runtime_note_prepared(&round->runtime,
                                                        round->dispatch_lane_index,
                                                        endpoint_mask);
         break;
-    case SURVEY_GATEWAY_AUTO_START_RESPONDER:
-    case SURVEY_GATEWAY_AUTO_START_INITIATOR:
+    case APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER:
+    case APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR:
         ret = survey_pair_round_runtime_note_started(&round->runtime,
                                                       round->dispatch_lane_index,
                                                       endpoint_mask);
@@ -261,16 +562,16 @@ int app_gateway_survey_round_note_control_success(
     }
 
     switch (round->dispatch_stage) {
-    case SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR:
-        round->dispatch_stage = SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER;
+    case APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR:
+        round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_PREPARE_RESPONDER;
         break;
-    case SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER:
-        round->dispatch_stage = SURVEY_GATEWAY_AUTO_START_RESPONDER;
+    case APP_GATEWAY_SURVEY_CONTROL_PREPARE_RESPONDER:
+        round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER;
         break;
-    case SURVEY_GATEWAY_AUTO_START_RESPONDER:
-        round->dispatch_stage = SURVEY_GATEWAY_AUTO_START_INITIATOR;
+    case APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER:
+        round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR;
         break;
-    case SURVEY_GATEWAY_AUTO_START_INITIATOR:
+    case APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR:
         ret = survey_pair_round_runtime_mark_observing(
             &round->runtime, round->dispatch_lane_index);
         if (ret != PROTO_OK) {
@@ -368,8 +669,7 @@ int app_gateway_survey_round_preflight_sample(
             SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT ||
         sample->sample_index >=
             SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT ||
-        (reporter_id != sample->pair.initiator_id &&
-         reporter_id != sample->pair.responder_id)) {
+        reporter_id != sample->pair.responder_id) {
         return PROTO_ERR_MALFORMED;
     }
     for (uint8_t i = 0u; i < round->runtime.lane_count; i++) {
@@ -391,8 +691,7 @@ int app_gateway_survey_round_preflight_sample(
         return PROTO_ERR_STALE;
     }
 
-    reporter_index =
-        reporter_id == sample->pair.responder_id ? 1u : 0u;
+    reporter_index = 1u;
     ret = survey_sample_observation_identity_capture(sample, &identity);
     if (ret != PROTO_OK) {
         return ret;
@@ -461,8 +760,7 @@ int app_gateway_survey_round_note_sample(
     if (ret != PROTO_OK) {
         return ret;
     }
-    reporter_index =
-        reporter_id == sample->pair.responder_id ? 1u : 0u;
+    reporter_index = 1u;
     ret = survey_sample_observation_identity_capture(sample, &identity);
     if (ret != PROTO_OK) {
         return ret;
@@ -599,7 +897,7 @@ int app_gateway_survey_round_begin_termination(
         }
     }
     round->dispatch_lane_index = 0u;
-    round->dispatch_stage = SURVEY_GATEWAY_AUTO_IDLE;
+    round->dispatch_stage = APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR;
     round->phase = APP_GATEWAY_SURVEY_ROUND_TERMINATING;
     if (active_lane_index != NULL) {
         *active_lane_index = matched_index;
@@ -713,6 +1011,9 @@ int app_gateway_survey_round_advance_batch(
     if (!app_gateway_survey_round_batch_complete(round)) {
         return PROTO_ERR_BUSY;
     }
+    if (round->outcome_event_pending) {
+        return PROTO_ERR_BUSY;
+    }
     if (survey_pair_round_runtime_complete(&round->runtime)) {
         round->phase = APP_GATEWAY_SURVEY_ROUND_COMPLETE;
         if (complete != NULL) {
@@ -741,4 +1042,60 @@ bool app_gateway_survey_round_complete(
     return round != NULL &&
            round->phase == APP_GATEWAY_SURVEY_ROUND_COMPLETE &&
            survey_pair_round_runtime_complete(&round->runtime);
+}
+
+int app_gateway_survey_round_outcome_event_seed(
+    const struct app_gateway_survey_round *round,
+    size_t lane_index,
+    uint32_t *event_seq)
+{
+    if (round == NULL || event_seq == NULL ||
+        lane_index >= app_gateway_survey_round_lane_count(round)) {
+        return PROTO_ERR_ARG;
+    }
+    if (round->outcome_event_pending &&
+        round->outcome_event_lane_index != lane_index) {
+        return PROTO_ERR_BUSY;
+    }
+    *event_seq = round->outcome_event_pending ?
+        round->outcome_event_seq : 0u;
+    return PROTO_OK;
+}
+
+int app_gateway_survey_round_outcome_event_retain(
+    struct app_gateway_survey_round *round,
+    size_t lane_index,
+    uint32_t event_seq)
+{
+    if (round == NULL || event_seq == 0u ||
+        lane_index >= app_gateway_survey_round_lane_count(round)) {
+        return PROTO_ERR_ARG;
+    }
+    if (round->outcome_event_pending &&
+        (round->outcome_event_lane_index != lane_index ||
+         round->outcome_event_seq != event_seq)) {
+        return PROTO_ERR_BUSY;
+    }
+    round->outcome_event_lane_index = lane_index;
+    round->outcome_event_seq = event_seq;
+    round->outcome_event_pending = true;
+    return PROTO_OK;
+}
+
+int app_gateway_survey_round_outcome_event_complete(
+    struct app_gateway_survey_round *round,
+    size_t lane_index)
+{
+    if (round == NULL ||
+        lane_index >= app_gateway_survey_round_lane_count(round)) {
+        return PROTO_ERR_ARG;
+    }
+    if (round->outcome_event_pending &&
+        round->outcome_event_lane_index != lane_index) {
+        return PROTO_ERR_BUSY;
+    }
+    round->outcome_event_lane_index = 0u;
+    round->outcome_event_seq = 0u;
+    round->outcome_event_pending = false;
+    return PROTO_OK;
 }

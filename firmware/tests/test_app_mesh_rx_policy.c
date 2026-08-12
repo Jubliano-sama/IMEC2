@@ -25,6 +25,26 @@ static void test_transmitter_image_keeps_other_mesh_packets(void)
                                            MSG_GATEWAY_ACK));
 }
 
+static void test_postboot_route_advertisement_requires_current_boot_age(void)
+{
+    const uint64_t received_uptime_ms = UINT64_C(500);
+
+    assert(!app_mesh_rx_policy_postboot_route_adv_fresh(
+        MSG_GATEWAY_ROUTE_ADV, 501u, received_uptime_ms));
+    assert(app_mesh_rx_policy_postboot_route_adv_fresh(
+        MSG_GATEWAY_ROUTE_ADV, 500u, received_uptime_ms));
+    assert(app_mesh_rx_policy_postboot_route_adv_fresh(
+        MSG_GATEWAY_ROUTE_ADV, 1u, received_uptime_ms));
+
+    /* The local proof remains 64-bit across the 32-bit uptime wrap. */
+    assert(app_mesh_rx_policy_postboot_route_adv_fresh(
+        MSG_GATEWAY_ROUTE_ADV,
+        UINT32_MAX,
+        UINT64_C(1) + UINT32_MAX));
+    assert(app_mesh_rx_policy_postboot_route_adv_fresh(
+        MSG_ROUTE_REPLY, UINT32_MAX, 1u));
+}
+
 static void test_permanent_receiver_roles_always_use_uwb_rx(void)
 {
     assert(app_mesh_rx_policy_role_uses_uwb_rx(true, false, false));
@@ -245,6 +265,7 @@ int main(void)
     test_transmitter_image_ignores_gateway_route_adv();
     test_only_transmitter_image_ignores_gateway_route_adv();
     test_transmitter_image_keeps_other_mesh_packets();
+    test_postboot_route_advertisement_requires_current_boot_age();
     test_permanent_receiver_roles_always_use_uwb_rx();
     test_scheduled_leaf_uses_rx_only_with_channel9_schedule();
     test_gateway_ch9_rx_recovers_from_sfd_timeout();

@@ -4,6 +4,10 @@
 #include "app_clicker.h"
 #include "app_config.h"
 #include "app_device_identity.h"
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+#include "app_durable_state.h"
+#include "device_identity.h"
+#endif
 #include "app_gateway_ble.h"
 #include "app_ml.h"
 #include "app_mesh_report.h"
@@ -14,6 +18,8 @@
 #include "app_stack_diag.h"
 #include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
+
+#define MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS 1000u
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "gateway_command.h"
@@ -29,6 +35,10 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
+
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+#include <hal/nrf_ficr.h>
+#endif
 
 LOG_MODULE_REGISTER(uwb_app, LOG_LEVEL_DBG);
 
@@ -215,6 +225,14 @@ BUILD_ASSERT(CLICK_REPORT_DEADLINE_MS + 2500u <
                  APP_WATCHDOG_PROGRESS_LEASE_MS,
              "normal click action must finish before its watchdog lease expires");
 
+#define RUNTIME_START_LATCH_HEARTBEAT_MS 30000u
+
+BUILD_ASSERT(RUNTIME_START_LATCH_HEARTBEAT_MS <
+                 APP_WATCHDOG_PROGRESS_LEASE_MS,
+             "latched startup failure must keep the watchdog lease current");
+
+static bool runtime_boot_checkpoint_attempted;
+
 static void watchdog_init_fail_closed(int error)
 {
     printk("fatal: hardware watchdog initialization failed: %d; rebooting in %u ms\n",
@@ -230,6 +248,20 @@ static void watchdog_init_fail_closed(int error)
 
 static void runtime_start_fail_closed(const char *phase, int error)
 {
+    if (runtime_boot_checkpoint_attempted) {
+        printk("fatal: %s failed after durable boot checkpoint: %d; latched for manual reset\n",
+               phase == NULL ? "runtime startup" : phase,
+               error);
+        for (;;) {
+            /*
+             * The system-work lease remains independently monitored. Keeping
+             * only the radio lease current makes this intentional fail-closed
+             * latch distinguishable from a dead scheduler, which must reset.
+             */
+            app_watchdog_note_radio_progress();
+            k_msleep(RUNTIME_START_LATCH_HEARTBEAT_MS);
+        }
+    }
     printk("fatal: %s failed: %d; rebooting in %u ms\n",
            phase == NULL ? "runtime startup" : phase,
            error,
@@ -240,6 +272,35 @@ static void runtime_start_fail_closed(const char *phase, int error)
     for (;;) {
         k_cpu_idle();
     }
+}
+
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+static uint64_t durable_state_physical_device_id(void)
+{
+    uint32_t word0 = nrf_ficr_deviceid_get(NRF_FICR, 0u);
+    uint32_t word1 = nrf_ficr_deviceid_get(NRF_FICR, 1u);
+    uint64_t device_id = device_identity_ficr_value(word0, word1);
+
+    /* All-zero and erased FICR identities cannot safely bind durable state. */
+    return device_id == 0u || device_id == UINT64_MAX ? 0u : device_id;
+}
+#endif
+
+static void mesh_node_identity_print(void)
+{
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    status_debug_printf(
+        "mesh node identity: ficr=0x%016llx node=0x%016llx preset=%s\n",
+        (unsigned long long)durable_state_physical_device_id(),
+        (unsigned long long)DEVICE_ID,
+        IMEC_BUILD_PRESET_NAME);
+#elif IMEC_USE_HARDWARE_DEVICE_ID
+    status_debug_printf(
+        "mesh node identity: ficr=0x%016llx node=0x%016llx preset=%s\n",
+        (unsigned long long)app_device_hardware_id(),
+        (unsigned long long)DEVICE_ID,
+        IMEC_BUILD_PRESET_NAME);
+#endif
 }
 
 int main(void)
@@ -271,17 +332,27 @@ int main(void)
     bool fatal_recovery_boot = false;
 #endif
 
-#if IMEC_USE_HARDWARE_ANCHOR_ID
+#if IMEC_USE_HARDWARE_DEVICE_ID
     ret = app_device_identity_init();
     if (ret < 0) {
         printk("fatal: invalid nRF FICR device identity: %d\n", ret);
         k_panic();
     }
-    printk("mesh anchor identity: ficr=0x%016llx node=0x%016llx preset=%s\n",
-           (unsigned long long)app_device_hardware_id(),
-           (unsigned long long)DEVICE_ID,
-           IMEC_BUILD_PRESET_NAME);
 #endif
+
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    if (durable_state_physical_device_id() == 0u) {
+        printk("fatal: invalid durable physical device identity\n");
+        k_panic();
+    }
+#if IMEC_USE_HARDWARE_DEVICE_ID
+    if (app_device_hardware_id() != durable_state_physical_device_id()) {
+        printk("fatal: protocol and durable physical identities disagree\n");
+        k_panic();
+    }
+#endif
+#endif
+    mesh_node_identity_print();
 
 #if IMEC_RETAIN_FATAL_BREADCRUMB
     if (mesh_route_test_fatal_magic == MESH_FATAL_BREADCRUMB_MAGIC) {
@@ -307,16 +378,14 @@ int main(void)
         watchdog_init_fail_closed(ret);
     }
 
-    battery_adc_ret = battery_adc_divider_disable();
-    if (DEVICE_ROLE == ROLE_CLICKER) {
-        ret = app_click_event_sequence_init();
-        if (ret < 0) {
-            printk("fatal: click event identity reservation unavailable: %d\n",
-                   ret);
-            k_panic();
-            return ret;
-        }
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    ret = app_durable_state_init(durable_state_physical_device_id());
+    if (ret < 0) {
+        runtime_start_fail_closed("durable state initialization", ret);
     }
+#endif
+
+    battery_adc_ret = battery_adc_divider_disable();
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     ret = status_leds_init();
     if (ret < 0) {
@@ -414,7 +483,19 @@ int main(void)
         LOG_INF("DWM3000 wake pin parked inactive; SYS_STATUS polling ready; radio init waits for UWB wake windows");
     }
 
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+    runtime_boot_checkpoint_attempted = true;
+    ret = app_durable_state_begin_boot();
+    if (ret < 0) {
+        runtime_start_fail_closed("boot incarnation reservation", ret);
+    }
+#endif
+
     if (DEVICE_ROLE == ROLE_CLICKER) {
+        ret = app_click_event_sequence_init();
+        if (ret < 0) {
+            runtime_start_fail_closed("click event identity reservation", ret);
+        }
 #if defined(CONFIG_IMEC_ML_CLICKER)
         ret = app_ml_init();
         if (ret < 0) {
@@ -468,10 +549,17 @@ int main(void)
             LOG_ERR("mesh-test runtime unavailable: %d", ret);
         }
         app_stack_diag_start();
+        k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);
+        mesh_node_identity_print();
 #else
         LOG_INF("ML anchor full-duty UWB scan active; connected mesh runtime disabled");
 #endif
     } else if (DEVICE_ROLE == ROLE_GATEWAY) {
+        ret = gateway_broadcast_command_sequence_init();
+        if (ret < 0) {
+            runtime_start_fail_closed(
+                "gateway command identity reservation", ret);
+        }
         ret = app_anchor_start_gateway_role();
         if (ret < 0) {
             runtime_start_fail_closed("gateway role startup", ret);
@@ -504,6 +592,8 @@ int main(void)
             runtime_start_fail_closed("gateway UWB mesh RX startup", ret);
         }
         app_stack_diag_start();
+        k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);
+        mesh_node_identity_print();
         LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",
                 gateway_ble_transport_enabled() ? "advertising" : "disabled");
     }

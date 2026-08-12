@@ -732,6 +732,93 @@ static void test_start_execution_deadline_zero_is_valid_at_wrap(void)
     assert(survey_pair_lease_invariant(&lease));
 }
 
+static void test_start_execution_lateness_is_bounded(void)
+{
+    const struct survey_pair pair = pair_with(160u, 1u);
+    const struct survey_pair_control_id prepare = control_id(160u, 60u);
+    const struct survey_pair_control_id start = control_id(160u, 61u);
+    const struct survey_pair_control_id prepare_wrap = control_id(160u, 62u);
+    const struct survey_pair_control_id start_wrap = control_id(160u, 63u);
+    struct survey_pair_lease lease = {0};
+
+    assert(survey_pair_lease_prepare_round(&lease, &pair, 14u, &prepare,
+                                           100u, PREPARE_LEASE_MS) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 14u, NULL, &start, 101u, 300u) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_release_start(&lease, &start));
+    assert(survey_pair_lease_mark_running_at(
+        &lease,
+        300u + SURVEY_PAIR_START_SKEW_MARGIN_MS - 1u,
+        NULL,
+        NULL));
+    assert(survey_pair_lease_finish(&lease));
+
+    assert(survey_pair_lease_prepare_round(&lease, &pair, 14u,
+                                           &prepare_wrap,
+                                           UINT32_MAX - 1100u,
+                                           PREPARE_LEASE_MS) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 14u, NULL, &start_wrap,
+               UINT32_MAX - 1000u,
+               UINT32_MAX - 500u) == SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_release_start(&lease, &start_wrap));
+    assert(!survey_pair_lease_mark_running_at(
+        &lease,
+        (UINT32_MAX - 500u) + SURVEY_PAIR_START_SKEW_MARGIN_MS,
+        NULL,
+        NULL));
+    assert(lease.phase == SURVEY_PAIR_LEASE_IDLE);
+    assert(survey_pair_lease_invariant(&lease));
+}
+
+static void test_responder_arms_before_the_shared_initiator_deadline(void)
+{
+    const struct survey_pair pair = pair_with(170u, 1u);
+    const struct survey_pair_control_id prepare = control_id(170u, 70u);
+    const struct survey_pair_control_id start = control_id(170u, 71u);
+    const struct survey_pair_control_id prepare_wrap = control_id(170u, 72u);
+    const struct survey_pair_control_id start_wrap = control_id(170u, 73u);
+    struct survey_pair_lease lease = {0};
+
+    assert(survey_pair_lease_prepare_round(&lease, &pair, 15u, &prepare,
+                                           100u, PREPARE_LEASE_MS) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 15u, NULL, &start, 101u, 1300u) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_release_start(&lease, &start));
+    assert(survey_pair_lease_execution_remaining_for_role_ms(
+               &lease, 299u, true) == 1u);
+    assert(survey_pair_lease_execution_remaining_for_role_ms(
+               &lease, 299u, false) == 1001u);
+    assert(!survey_pair_lease_mark_running_for_role_at(
+        &lease, 299u, true, NULL, NULL));
+    assert(survey_pair_lease_mark_running_for_role_at(
+        &lease, 300u, true, NULL, NULL));
+    assert(survey_pair_lease_finish(&lease));
+
+    assert(survey_pair_lease_prepare_round(
+               &lease, &pair, 15u, &prepare_wrap,
+               UINT32_MAX - 1200u, PREPARE_LEASE_MS) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_start_round_bound_at(
+               &lease, &pair, 15u, NULL, &start_wrap,
+               UINT32_MAX - 1100u, 500u) ==
+           SURVEY_PAIR_LEASE_ACCEPTED);
+    assert(survey_pair_lease_release_start(&lease, &start_wrap));
+    assert(survey_pair_lease_execution_remaining_for_role_ms(
+               &lease, UINT32_MAX - 500u, true) == 1u);
+    assert(!survey_pair_lease_mark_running_for_role_at(
+        &lease, UINT32_MAX - 500u, true, NULL, NULL));
+    assert(survey_pair_lease_mark_running_for_role_at(
+        &lease, UINT32_MAX - 499u, true, NULL, NULL));
+    assert(survey_pair_lease_finish(&lease));
+    assert(survey_pair_lease_invariant(&lease));
+}
+
 int main(void)
 {
     test_reset_clears_every_phase();
@@ -747,6 +834,8 @@ int main(void)
     test_round_mismatch_cannot_retarget_active_lease();
     test_start_execution_deadline_is_closed_and_does_not_slide();
     test_start_execution_deadline_zero_is_valid_at_wrap();
+    test_start_execution_lateness_is_bounded();
+    test_responder_arms_before_the_shared_initiator_deadline();
     test_operation_generation_and_commitment_isolate_stale_traffic();
     test_operation_generation_rejects_legacy_round_zero();
     test_new_generation_cannot_overwrite_running_radio_owner();

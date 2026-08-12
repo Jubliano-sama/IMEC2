@@ -9,10 +9,17 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 DISCOVERY = (ROOT / "app/src/app_anchor_survey_discovery.c").read_text()
+RESULT_DELIVERY = (
+    ROOT / "app/src/app_anchor_survey_result_delivery.c"
+).read_text()
 RUNTIME = (ROOT / "app/src/app_anchor_survey_runtime.c").read_text()
+RUNTIME_HEADER = (ROOT / "app/src/app_anchor_survey_runtime.h").read_text()
+ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
+MESH_REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 DRIVER = read_composed_source(ROOT / "app/src/dwm3000_driver.c")
 DRIVER_HEADER = (ROOT / "app/src/dwm3000_driver.h").read_text()
 CORE_SURVEY = (ROOT / "src/survey.c").read_text()
+STACK_BUDGET = (ROOT / "include/stack_budget.h").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -54,6 +61,17 @@ def braced_block_at(source: str, marker_index: int) -> str:
         if depth == 0:
             return source[brace : index + 1]
     raise AssertionError("unterminated block")
+
+
+for source, helper_name in (
+    (DISCOVERY, "schedule_work_ms"),
+    (RESULT_DELIVERY, "result_delivery_schedule"),
+):
+    schedule_helper = function_body(source, helper_name)
+    assert "return ret < 0 ? ret : 0;" in schedule_helper, (
+        f"{helper_name} must not expose Zephyr's positive accepted-work "
+        "status through terminal-cleanup callback APIs"
+    )
 
 
 run = function_body(DISCOVERY, "app_anchor_survey_discovery_run")
@@ -193,7 +211,7 @@ assert (
 )
 
 discovery_guard_index = worker.index(
-    'radio_guard_uwb_start("survey discovery")'
+    "radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,"
 )
 discovery_defer_index = worker.index("if (ret < 0)", discovery_guard_index)
 discovery_defer_block = braced_block_at(worker, discovery_defer_index)
@@ -217,7 +235,8 @@ assert "schedule_pair_rf_retry(" in pair_owner_busy_block
 assert "REPORT_TX_RETRY_DELAY_MS" not in pair_owner_busy_block
 
 result_custody_index = worker.index(
-    "if (app_anchor_survey_result_delivery_occupied_count() > 0u)"
+    "if (as_responder &&\n"
+    "        app_anchor_survey_result_delivery_occupied_count() > 0u)"
 )
 result_custody_block = braced_block_at(worker, result_custody_index)
 assert "app_anchor_survey_result_delivery_service()" in result_custody_block
@@ -233,17 +252,67 @@ reserve_failure_block = braced_block_at(worker, reserve_failure_index)
 assert "app_anchor_survey_result_delivery_service()" in reserve_failure_block
 assert "SURVEY_NON_RF_SERVICE_POLL_MS" in reserve_failure_block
 assert "schedule_pair_rf_retry(" not in reserve_failure_block
+reserve_owner_index = worker.rfind("if (as_responder)",
+                                   result_custody_index,
+                                   reserve_results_index)
+assert reserve_owner_index >= 0, (
+    "only the responder may reserve the five durable pair-result owners"
+)
+
+initiator = function_body(RUNTIME, "run_pair_initiator")
+responder = function_body(RUNTIME, "run_pair_responder")
+assert "queue_sample_result" not in initiator, (
+    "the initiator performs RF exchanges but must not create result custody"
+)
+assert "delivery_reservation_leases" not in initiator
+assert "queue_sample_result" in responder
+assert "delivery_reservation_leases" in responder
+assert "&delivery_reservation_leases[" in responder
+assert "memset(&delivery_reservation_leases[sample_index]" in responder
+assert (
+    "const struct app_node_comm_reservation_lease *delivery_reservation"
+    in RUNTIME_HEADER
+), "the runtime callback must transfer the complete reservation capability"
+assert (
+    "const struct app_node_comm_reservation_lease *delivery_reservation"
+    in ANCHOR
+), "the anchor adapter must stage through the exact reservation capability"
+assert (
+    "delivery_reservation->owner_generation != pair->operation_generation"
+    in ANCHOR
+), "the anchor adapter must reject a lease from another survey generation"
+stage_reserved = function_body(
+    RESULT_DELIVERY, "app_anchor_survey_result_delivery_stage_reserved"
+)
+assert "APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT" in stage_reserved
+assert "sample.pair.operation_generation !=\n            delivery_reservation->owner_generation" in stage_reserved
+assert "app_node_comm_commit_durable_reliable_uplink_reservation(\n        delivery_reservation" in stage_reserved
+reserve_call = worker[reserve_results_index:reserve_failure_index]
+assert "pair.operation_generation" in reserve_call
+assert reserve_call.index("pair.operation_generation") < reserve_call.index(
+    "pair.sample_count"
+), "survey reservations must belong to the pair operation generation"
 
 pair_guard_index = worker.index(
-    'radio_guard_uwb_start("survey pair DS-TWR")'
+    "radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,",
+    discovery_guard_index + 1,
 )
 pair_defer_index = worker.index("if (ret < 0)", pair_guard_index)
 pair_defer_block = braced_block_at(worker, pair_defer_index)
 assert "schedule_pair_rf_retry(" in pair_defer_block
 assert "REPORT_TX_RETRY_DELAY_MS" not in pair_defer_block
+pair_poison_index = pair_defer_block.index("if (radio_guard_uwb_poisoned())")
+pair_poison_block = braced_block_at(pair_defer_block, pair_poison_index)
+assert "app_anchor_survey_result_delivery_cancel_reservations(" in pair_poison_block
+assert "delivery_reservation_leases" in pair_poison_block
+assert "return;" in pair_poison_block, (
+    "a poisoned radio guard must release the exact outstanding survey "
+    "reservations before it suppresses retry/rearm"
+)
 claim = re.search(
-    r"survey_pair_lease_mark_running_at\s*\(\s*&pair_lease\s*,\s*"
+    r"survey_pair_lease_mark_running_for_role_at\s*\(\s*&pair_lease\s*,\s*"
     r"k_uptime_get_32\s*\(\s*\)\s*,\s*"
+    r"as_responder\s*,\s*"
     r"&pair\s*,\s*&pair_round_id\s*\)",
     worker,
 )
@@ -255,15 +324,18 @@ assert "survey_pair_lease_mark_running(&pair_lease" not in worker
 role_index = worker.index("as_responder = pair.responder_id == DEVICE_ID")
 assert (
     pair_owner_busy_index
+    < role_index
     < result_custody_index
     < reserve_results_index
     < pair_guard_index
     < pair_defer_index
     < claim.start()
-    < role_index
 )
-assert "as_responder =" not in worker[pair_guard_index : claim.start()], (
-    "the RF role must not be derived from a pre-claim lease snapshot"
+assert "as_responder != (pair.responder_id == DEVICE_ID)" in worker[
+    claim.start():
+], (
+    "the atomic RUNNING transition must revalidate the role used for result "
+    "capacity admission"
 )
 assert "pair_round_id = pair_lease.round_id" not in worker, (
     "the round generation must come from the atomic RUNNING transition"
@@ -322,5 +394,140 @@ assert stale_abandon_index < retain_index < stop_index
 assert "ret != -ENOENT && ret != -EALREADY" in report_retry[
     stale_abandon_index:retain_index
 ], "already-terminal handles are successful cleanup, not fatal abandonment"
+
+# A retained discovery command can be queued well before its synchronized RF
+# start.  That future timer is protocol state, not current radio ownership:
+# the relay must remain able to forward the same discovery start during the
+# lead interval so a forced-hop child can schedule the synchronized round.
+assert "app_anchor_survey_runtime_radio_active" in RUNTIME_HEADER
+discovery_radio_active = function_body(
+    RUNTIME, "app_anchor_survey_runtime_radio_active"
+)
+assert "survey_running" in discovery_radio_active
+assert "discovery_pending" not in discovery_radio_active, (
+    "the mesh arbitration predicate must describe a due/running RF owner, "
+    "not a future discovery timer"
+)
+
+queue_discovery = function_body(
+    RUNTIME, "app_anchor_survey_runtime_queue_discovery"
+)
+assert "discovery_pending = true" in queue_discovery
+assert "survey_running = true" not in queue_discovery, (
+    "queueing a future synchronized discovery must not claim the radio"
+)
+take_pending = worker.index("discovery_pending = false")
+claim_running = worker.index("survey_running = true", take_pending)
+claim_radio = worker.index(
+    "radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,",
+    claim_running,
+)
+assert take_pending < claim_running < claim_radio, (
+    "the discovery RF predicate must become active only when the due worker "
+    "takes pending ownership and approaches the radio guard"
+)
+
+assert "app_anchor_survey_runtime_discovery_is_pending()" not in ANCHOR, (
+    "heartbeat and low-duty scan arbitration must not treat a future survey "
+    "timer as current RF ownership"
+)
+assert (
+    ".anchor_survey_radio_active =\n"
+    "        app_anchor_survey_runtime_radio_active"
+) in ANCHOR, (
+    "the mesh callback boundary must publish the RF-owner predicate"
+)
+assert "mesh_report_anchor_survey_discovery_is_pending" not in MESH_REPORT
+assert "mesh_report_anchor_survey_radio_active" in MESH_REPORT
+coordinator = function_body(
+    MESH_REPORT, "mesh_coordinator_decide_for_c5_intent"
+)
+assert "mesh_report_anchor_survey_radio_active()" in coordinator
+c5_defer = function_body(MESH_REPORT, "mesh_c5_flood_defer_active_cb")
+assert "mesh_report_anchor_survey_radio_active()" in c5_defer
+assert "mesh_report_anchor_survey_discovery_is_pending" not in c5_defer
+assert "anchor_survey_discovery_is_pending" not in STACK_BUDGET, (
+    "the stack-root table must not retain the superseded callback identity"
+)
+assert "app_anchor_survey_runtime_radio_active" in STACK_BUDGET, (
+    "the address-taken survey RF-owner callback needs an explicit stack root"
+)
+
+# Only the responder creates or satisfies pair-result custody. The initiator
+# still performs all five DS-TWR exchanges, but it cannot consume durable
+# delivery slots or become a semantic reporter at any later layer.
+result_constructor = function_body(
+    CORE_SURVEY, "survey_init_result_packet_from_reporter"
+)
+default_constructor = function_body(
+    CORE_SURVEY, "survey_init_result_packet"
+)
+mask_admission = function_body(CORE_SURVEY, "survey_pair_note_sample_masks")
+assert "reporter_id != sample->pair.responder_id" in result_constructor
+assert "sample->pair.responder_id" in default_constructor
+assert "sample->pair.initiator_id" not in default_constructor
+assert "reporter_id != sample->pair.responder_id" in mask_admission
+
+gateway_preflight = function_body(
+    ANCHOR, "gateway_survey_preflight_pair_result"
+)
+gateway_apply = function_body(ANCHOR, "gateway_note_survey_pair_result")
+manual_match = function_body(
+    ANCHOR, "gateway_manual_survey_pair_matches_sample"
+)
+manual_note = function_body(ANCHOR, "gateway_manual_survey_pair_note_sample")
+for boundary in (gateway_preflight, gateway_apply, manual_match):
+    assert "responder_id" in boundary
+    assert "initiator_id &&" not in boundary
+assert "responder_result_mask" in manual_note
+assert "initiator_result_mask ==" not in manual_note
+
+# Exact ABORT owns stale local and transit result retirement even after the RF
+# lease ended. Pair-result wire identity is the operation generation, survey,
+# pair, sample count, round tuple, and RAM-retained round commitment. Different
+# tuples and a
+# gateway-accepted forwarded ACK remain untouched.
+abort_retire = function_body(
+    RESULT_DELIVERY, "app_anchor_survey_result_delivery_abort_round"
+)
+abort_match = function_body(
+    RESULT_DELIVERY, "result_delivery_matches_round_abort"
+)
+abort_service = function_body(
+    RESULT_DELIVERY, "result_delivery_service_slot"
+)
+runtime_abort = function_body(
+    RUNTIME, "app_anchor_survey_runtime_abort_pair_matching_round"
+)
+transit_abort = function_body(
+    MESH_REPORT, "mesh_retire_stale_transit_survey_result_for_abort"
+)
+transit_match = function_body(
+    MESH_REPORT, "mesh_survey_abort_matches_transit_result"
+)
+assert "survey_sample_matches_pair_run" in abort_match
+assert "survey_round_commitment_extract_tlv" not in abort_match
+assert "result_delivery_tombstone_equal" in abort_match
+assert abort_retire.index("result_abort_tombstone.abort_requested = true") < \
+       abort_retire.index("retirement_in_progress = true")
+assert abort_service.index("if (slot->retirement_in_progress)") < \
+       abort_service.index("app_node_comm_abandon_delivery(handle)")
+assert "app_anchor_survey_result_delivery_abort_round" in runtime_abort
+assert runtime_abort.index("survey_pair_lease_abort_matching_round_bound") < \
+       runtime_abort.index("app_anchor_survey_result_delivery_abort_round")
+assert "CMD_SURVEY_ABORT" in transit_match
+assert "survey_round_commitment_extract_tlv" in transit_match
+assert "result_packet->src_id == pair.responder_id" in transit_match
+assert "survey_sample_matches_pair_run" in transit_match
+assert "result_commitment" not in transit_match
+assert "!mesh_runtime.pending.gateway_ack_forward_pending" in transit_abort
+assert "MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD" in transit_abort
+assert "mesh_relay_cancel_tx" in transit_abort
+assert "mesh_route_waiting_tx_valid = false" in transit_abort
+assert "mesh_save_outbox_durable" not in transit_abort
+assert "mesh_deferred_outbox_pending" not in transit_abort
+assert MESH_REPORT.index(
+    "mesh_retire_stale_transit_survey_result_for_abort("
+) < MESH_REPORT.rindex("mesh_handle_result_actions(result")
 
 print("survey discovery failure source invariants passed")

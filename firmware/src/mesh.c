@@ -636,6 +636,7 @@ static int mesh_survey_discovery_report_payload_validate(
     const uint8_t *value = NULL;
     uint64_t operation_generation = 0u;
     uint64_t anchor_id = 0u;
+    uint32_t boot_incarnation = 0u;
     uint32_t survey_id = 0u;
     size_t offset = 0u;
     uint8_t value_len = 0u;
@@ -671,15 +672,25 @@ static int mesh_survey_discovery_report_payload_validate(
     operation_generation = proto_get_u64_le(value);
     ret = tlv_find_unique(payload,
                           payload_len,
+                          TLV_NODE_BOOT_COUNTER,
+                          &value,
+                          &value_len);
+    if (ret != PROTO_OK || value_len != sizeof(uint32_t)) {
+        return PROTO_ERR_MALFORMED;
+    }
+    boot_incarnation = proto_get_u32_le(value);
+    ret = tlv_find_unique(payload,
+                          payload_len,
                           TLV_COMMAND_STATUS,
                           &value,
                           &value_len);
     if (ret != PROTO_OK || value_len != sizeof(uint16_t) ||
         proto_get_u16_le(value) > COMMAND_INTERNAL_ERROR ||
         survey_id == 0u || anchor_id != packet->src_id ||
+        boot_incarnation == 0u ||
         operation_generation == 0u ||
-        (uint32_t)operation_generation == 0u ||
-        packet->session_id != (uint32_t)operation_generation) {
+        survey_operation_session_id(operation_generation) == 0u ||
+        packet->session_id != boot_incarnation) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -698,6 +709,7 @@ static int mesh_survey_discovery_report_payload_validate(
         }
         switch (type) {
         case TLV_SURVEY_ID:
+        case TLV_NODE_BOOT_COUNTER:
             if (len != sizeof(uint32_t)) {
                 return PROTO_ERR_MALFORMED;
             }
@@ -743,86 +755,21 @@ static int mesh_survey_pair_result_payload_validate(
     const uint8_t *payload,
     size_t payload_len)
 {
-    const uint8_t *value = NULL;
-    uint64_t operation_generation;
-    uint64_t initiator_id;
-    uint64_t responder_id;
-    uint32_t survey_id;
-    uint32_t expected_seq;
-    uint16_t sample_count;
-    uint16_t sample_index;
-    uint16_t round_id = 0u;
-    uint8_t value_len = 0u;
-    uint8_t quality;
-    uint8_t range_status;
-    int ret;
+    struct survey_sample sample = {0};
+    uint16_t expected_seq;
 
-    if (mesh_tlv_payload_framing_validate(payload, payload_len) !=
-        PROTO_OK) {
-        return PROTO_ERR_MALFORMED;
-    }
-#define REQUIRE_PAIR_TLV(_type, _size)                                      \
-    do {                                                                     \
-        ret = tlv_find_unique(payload, payload_len, (_type),                 \
-                              &value, &value_len);                            \
-        if (ret != PROTO_OK || value_len != (_size)) {                       \
-            return PROTO_ERR_MALFORMED;                                      \
-        }                                                                    \
-    } while (0)
-    REQUIRE_PAIR_TLV(TLV_SURVEY_ID, sizeof(uint32_t));
-    survey_id = proto_get_u32_le(value);
-    REQUIRE_PAIR_TLV(TLV_SURVEY_OPERATION_GENERATION, sizeof(uint64_t));
-    operation_generation = proto_get_u64_le(value);
-    REQUIRE_PAIR_TLV(TLV_INITIATOR_ID, sizeof(uint64_t));
-    initiator_id = proto_get_u64_le(value);
-    REQUIRE_PAIR_TLV(TLV_RESPONDER_ID, sizeof(uint64_t));
-    responder_id = proto_get_u64_le(value);
-    REQUIRE_PAIR_TLV(TLV_SAMPLE_COUNT, sizeof(uint16_t));
-    sample_count = proto_get_u16_le(value);
-    REQUIRE_PAIR_TLV(TLV_SAMPLE_INDEX, sizeof(uint16_t));
-    sample_index = proto_get_u16_le(value);
-    REQUIRE_PAIR_TLV(TLV_DISTANCE_MM, sizeof(uint32_t));
-    REQUIRE_PAIR_TLV(TLV_QUALITY, sizeof(uint8_t));
-    quality = value[0];
-    REQUIRE_PAIR_TLV(TLV_RANGE_STATUS, sizeof(uint8_t));
-    range_status = value[0];
-#undef REQUIRE_PAIR_TLV
-
-    ret = tlv_find_unique(payload,
-                          payload_len,
-                          TLV_SURVEY_ROUND_ID,
-                          &value,
-                          &value_len);
-    if (ret == PROTO_OK) {
-        if (value_len != sizeof(uint16_t)) {
-            return PROTO_ERR_MALFORMED;
-        }
-        round_id = proto_get_u16_le(value);
-        if (round_id == 0u) {
-            return PROTO_ERR_MALFORMED;
-        }
-    } else if (ret != PROTO_ERR_NOT_FOUND) {
-        return PROTO_ERR_MALFORMED;
-    }
-    expected_seq = round_id == 0u ?
-        (uint32_t)sample_index + 1u :
-        ((uint32_t)(round_id - 1u) *
-         SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) +
-            (uint32_t)sample_index + 1u;
-    if (survey_id == 0u || operation_generation == 0u ||
-        (uint32_t)operation_generation == 0u ||
-        packet->session_id != (uint32_t)operation_generation ||
-        initiator_id == 0u || responder_id == 0u ||
-        initiator_id == responder_id ||
-        (packet->src_id != initiator_id &&
-         packet->src_id != responder_id) ||
-        sample_count < SURVEY_MIN_SAMPLE_COUNT ||
-        sample_count > SURVEY_MAX_SAMPLE_COUNT ||
-        sample_index >= sample_count ||
-        quality > 100u || range_status > RANGE_TIMING_INVALID ||
-        range_status == RANGE_STS_QUALITY_FAIL ||
-        expected_seq == 0u || expected_seq > UINT16_MAX ||
-        packet->seq != (uint16_t)expected_seq) {
+    if (survey_pair_result_payload_validate(payload,
+                                            payload_len,
+                                            &sample) != PROTO_OK ||
+        sample.pair.operation_generation == 0u ||
+        packet->session_id != survey_operation_session_id(
+            sample.pair.operation_generation) ||
+        (packet->src_id != sample.pair.initiator_id &&
+         packet->src_id != sample.pair.responder_id) ||
+        survey_pair_result_transport_sequence(sample.round_id,
+                                              sample.sample_index,
+                                              &expected_seq) != PROTO_OK ||
+        packet->seq != expected_seq) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;

@@ -1430,7 +1430,7 @@ static void test_planned_pair_runs_full_bounded_exchange(
 
         stale_sample.pair.operation_generation++;
         CHECK(survey_pair_round_runtime_note_sample(
-                  &round_runtime, planned_pair->initiator_id, &stale_sample,
+                  &round_runtime, planned_pair->responder_id, &stale_sample,
                   NULL, NULL) == PROTO_ERR_STALE,
               "wrong-generation sample was admitted to the active round");
         lane = survey_pair_round_runtime_lane(&round_runtime, 0u);
@@ -1595,13 +1595,13 @@ static void test_planned_pair_runs_full_bounded_exchange(
             CHECK(survey_sample_distance_usable(&sample),
                   "positive short-range survey sample was rejected");
             CHECK(survey_pair_round_runtime_note_sample(
-                      &round_runtime, planned_pair->initiator_id, &sample,
+                      &round_runtime, planned_pair->responder_id, &sample,
                       &lane_index, &accepted_new) == PROTO_OK &&
                       lane_index == 0u && accepted_new,
                   "gateway did not accept a decoded survey sample once");
             if (sample_index == 0u) {
                 CHECK(survey_pair_round_runtime_note_sample(
-                          &round_runtime, planned_pair->initiator_id, &sample,
+                          &round_runtime, planned_pair->responder_id, &sample,
                           &lane_index, &accepted_new) == PROTO_OK &&
                           !accepted_new,
                       "duplicate decoded survey sample was not idempotent");
@@ -1692,20 +1692,12 @@ static void test_two_anchor_survey_lifecycle(void)
     };
     static struct mesh_sim_world world;
     static struct survey_gateway_context gateway_context;
-    struct survey_gateway_auto_context auto_context;
-    struct survey_gateway_auto_action action;
     struct survey_pair planned_pair;
     struct survey_discovery_attempt_schedule schedules[2];
     struct proto_packet start_packet;
     struct proto_packet report_packets[2];
     struct survey_reachability_entry reports[2] = {0};
     uint64_t anchor_ids[2] = {ANCHOR_ID, ANCHOR_2_ID};
-    const enum survey_gateway_auto_stage expected_stages[4] = {
-        SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR,
-        SURVEY_GATEWAY_AUTO_PREPARE_RESPONDER,
-        SURVEY_GATEWAY_AUTO_START_RESPONDER,
-        SURVEY_GATEWAY_AUTO_START_INITIATOR,
-    };
     uint8_t start_payload[64] = {0};
     uint8_t start_frame[PACKET_EXT_MAX_LEN] = {0};
     uint8_t report_payloads[2][64] = {{0}};
@@ -1725,8 +1717,6 @@ static void test_two_anchor_survey_lifecycle(void)
     uint32_t start_airtime_us;
     enum mesh_sim_phy start_tx_phy;
     enum mesh_sim_phy start_rx_phy;
-    bool pair_launched = false;
-    bool pair_skipped = false;
     int survey_work;
 
     preempt_ch9_for_survey(&survey_work);
@@ -1876,6 +1866,11 @@ static void test_two_anchor_survey_lifecycle(void)
                   sizeof(report_payloads[i]),
                   &report_payload_lens[i],
                   config.operation_generation) == PROTO_OK &&
+                  tlv_append_u32(report_payloads[i],
+                                 sizeof(report_payloads[i]),
+                                 &report_payload_lens[i],
+                                 TLV_NODE_BOOT_COUNTER,
+                                 (uint32_t)i + 1u) == PROTO_OK &&
                   tlv_append_u16(report_payloads[i],
                                  sizeof(report_payloads[i]),
                                  &report_payload_lens[i],
@@ -1885,6 +1880,7 @@ static void test_two_anchor_survey_lifecycle(void)
         CHECK(survey_init_discovery_report_packet(
                   &report_packets[i], anchor_ids[i], GATEWAY_ID, SURVEY_ID,
                   config.operation_generation,
+                  (uint32_t)i + 1u,
                   (uint16_t)(10u + i),
                   (uint8_t)report_payload_lens[i]) == PROTO_OK &&
                   report_packets[i].msg_type == MSG_SURVEY_DISCOVERY_REPORT,
@@ -1905,7 +1901,7 @@ static void test_two_anchor_survey_lifecycle(void)
                   proto_get_u16_le(status_raw) == COMMAND_OK &&
                   parsed_survey_id == SURVEY_ID &&
                   parsed_operation_generation == config.operation_generation &&
-                  report_packets[i].session_id == operation_session_id &&
+                  report_packets[i].session_id == (uint32_t)i + 1u &&
                   parsed_anchor_id == report_packets[i].src_id &&
                   parsed_count == 1u,
               "0x55 report identity or payload round trip failed");
@@ -1926,33 +1922,6 @@ static void test_two_anchor_survey_lifecycle(void)
                   SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
           "planned survey pair did not reconstruct context-wide fields");
 
-    CHECK(survey_gateway_auto_begin(&auto_context) == PROTO_OK,
-          "survey auto context setup failed");
-    for (uint8_t i = 0u; i < 4u; i++) {
-        enum command_id expected_command = i < 2u ?
-            CMD_SURVEY_PREPARE_PAIR : CMD_SURVEY_START_PAIR;
-        uint64_t expected_target =
-            expected_stages[i] == SURVEY_GATEWAY_AUTO_PREPARE_INITIATOR ||
-                    expected_stages[i] == SURVEY_GATEWAY_AUTO_START_INITIATOR ?
-                planned_pair.initiator_id : planned_pair.responder_id;
-
-        CHECK(survey_gateway_auto_next_action(&auto_context, &gateway_context,
-                                               &action) == PROTO_OK &&
-                  !action.complete && action.stage == expected_stages[i] &&
-                  action.command_id == expected_command &&
-                  action.target_id == expected_target,
-              "survey prepare/start action order drifted");
-        CHECK(survey_gateway_auto_mark_waiting(&auto_context) == PROTO_OK,
-              "survey auto action did not enter waiting state");
-        CHECK(survey_gateway_auto_note_result(
-                  &auto_context, action.command_id, action.target_id, SURVEY_ID,
-                  COMMAND_OK, &pair_launched, &pair_skipped) == PROTO_OK &&
-                  !pair_skipped && pair_launched == (i == 3u),
-              "survey auto action result did not advance deterministically");
-    }
-    CHECK(survey_gateway_auto_next_action(&auto_context, &gateway_context,
-                                           &action) == PROTO_OK && action.complete,
-          "survey auto lifecycle did not complete after one pair");
     test_planned_pair_runs_full_bounded_exchange(&planned_pair);
 }
 

@@ -80,6 +80,11 @@ static struct mesh_outbound make_report_from(uint64_t anchor_id,
                sizeof(outbound.payload),
                &payload_len,
                survey_id) == PROTO_OK);
+    assert(tlv_append_u32(outbound.payload,
+                          sizeof(outbound.payload),
+                          &payload_len,
+                          TLV_NODE_BOOT_COUNTER,
+                          1u) == PROTO_OK);
     assert(tlv_append_u16(outbound.payload,
                           sizeof(outbound.payload),
                           &payload_len,
@@ -91,6 +96,7 @@ static struct mesh_outbound make_report_from(uint64_t anchor_id,
                UINT64_C(0x8877665544332211),
                survey_id,
                survey_id,
+               1u,
                seq,
                (uint8_t)payload_len) == PROTO_OK);
     outbound.payload_len = (uint16_t)payload_len;
@@ -134,10 +140,49 @@ static struct mesh_outbound make_pair_result(uint32_t survey_id,
                                      sizeof(outbound.payload),
                                      &payload_len,
                                      &sample) == PROTO_OK);
+    assert(tlv_append_u64(outbound.payload,
+                          sizeof(outbound.payload),
+                          &payload_len,
+                          TLV_TIMESTAMP_MS,
+                          UINT64_C(0x0102030405060708)) == PROTO_OK);
+    assert(tlv_append_i8(outbound.payload,
+                         sizeof(outbound.payload),
+                         &payload_len,
+                         TLV_UWB_RSL_DBM,
+                         -73) == PROTO_OK);
+    assert(tlv_append_u16(outbound.payload,
+                          sizeof(outbound.payload),
+                          &payload_len,
+                          TLV_UWB_CLOCK_OFFSET_RAW,
+                          UINT16_C(0xfedc)) == PROTO_OK);
+    assert(tlv_append_u16(outbound.payload,
+                          sizeof(outbound.payload),
+                          &payload_len,
+                          TLV_CLICKER_CLOCK_OFFSET_RAW,
+                          UINT16_C(0x8123)) == PROTO_OK);
+    assert(tlv_append_i32(outbound.payload,
+                          sizeof(outbound.payload),
+                          &payload_len,
+                          TLV_UWB_CARRIER_INTEGRATOR,
+                          INT32_C(-1234567)) == PROTO_OK);
+    {
+        uint8_t raw_timestamps[6u * sizeof(uint32_t)];
+
+        for (size_t i = 0u; i < 6u; i++) {
+            proto_put_u32_le(&raw_timestamps[i * sizeof(uint32_t)],
+                             UINT32_C(0x10203040) + (uint32_t)i);
+        }
+        assert(tlv_append_bytes(outbound.payload,
+                                sizeof(outbound.payload),
+                                &payload_len,
+                                TLV_UWB_RAW_TIMESTAMPS,
+                                raw_timestamps,
+                                sizeof(raw_timestamps)) == PROTO_OK);
+    }
     assert(survey_init_result_packet_from_reporter(
                &outbound.packet,
                &sample,
-               sample.pair.initiator_id,
+               sample.pair.responder_id,
                UINT64_C(0x8877665544332211),
                seq,
                (uint8_t)payload_len) == PROTO_OK);
@@ -147,6 +192,43 @@ static struct mesh_outbound make_pair_result(uint32_t survey_id,
     outbound.queued_at_ms = 1234u;
     outbound.queued_at_valid = true;
     return outbound;
+}
+
+static size_t pair_result_core_len(const struct mesh_outbound *outbound)
+{
+    struct survey_sample sample = {0};
+    uint8_t canonical[SURVEY_SAMPLE_TLV_MAX_LEN];
+    size_t canonical_len = 0u;
+
+    assert(survey_extract_sample_tlvs(outbound->payload,
+                                      outbound->payload_len,
+                                      &sample) == PROTO_OK);
+    assert(survey_append_sample_tlvs(canonical,
+                                     sizeof(canonical),
+                                     &canonical_len,
+                                     &sample) == PROTO_OK);
+    return canonical_len;
+}
+
+static size_t find_tlv_offset(const uint8_t *payload,
+                              size_t payload_len,
+                              uint8_t wanted_type)
+{
+    size_t offset = 0u;
+
+    while (offset < payload_len) {
+        size_t value_len;
+
+        assert(payload_len - offset >= PROTO_TLV_HEADER_LEN);
+        value_len = payload[offset + 1u];
+        assert(value_len <= payload_len - offset - PROTO_TLV_HEADER_LEN);
+        if (payload[offset] == wanted_type) {
+            return offset;
+        }
+        offset += PROTO_TLV_HEADER_LEN + value_len;
+    }
+    assert(false);
+    return 0u;
 }
 
 static void outbound_digest(
@@ -350,6 +432,108 @@ static void test_pair_result_is_a_supported_exact_delivery_owner(void)
     assert(!store.present);
 }
 
+static void test_pair_result_accepts_exact_producer_extension_schema(void)
+{
+    struct journal_store full_store = {0};
+    struct journal_store timestamp_store = {0};
+    struct app_mesh_local_delivery full_delivery = make_delivery(&full_store);
+    struct app_mesh_local_delivery timestamp_delivery =
+        make_delivery(&timestamp_store);
+    struct mesh_outbound full = make_pair_result(222u, 22u);
+    struct mesh_outbound timestamp_only = full;
+    size_t core_len = pair_result_core_len(&full);
+    size_t timestamp_len = core_len + PROTO_TLV_U64_ENCODED_LEN;
+
+    assert(full.payload[core_len] == TLV_TIMESTAMP_MS);
+    assert(full.payload_len > timestamp_len);
+    assert(app_mesh_local_delivery_stage(
+               &full_delivery, &full, 222u) == 0);
+    assert(full_store.present);
+    assert(memcmp(full_store.persisted.outbound.payload,
+                  full.payload,
+                  full.payload_len) == 0);
+
+    timestamp_only.payload_len = (uint16_t)timestamp_len;
+    timestamp_only.packet.payload_len = (uint16_t)timestamp_len;
+    assert(app_mesh_local_delivery_stage(
+               &timestamp_delivery, &timestamp_only, 222u) == 0);
+    assert(timestamp_store.present);
+}
+
+static void test_pair_result_extension_schema_fails_closed(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct mesh_outbound canonical = make_pair_result(223u, 23u);
+    struct mesh_outbound mutation;
+    size_t core_len = pair_result_core_len(&canonical);
+    size_t timestamp_len = core_len + PROTO_TLV_U64_ENCODED_LEN;
+    size_t extension_offset;
+    size_t payload_len;
+
+    mutation = canonical;
+    mutation.payload_len = (uint16_t)core_len;
+    mutation.packet.payload_len = (uint16_t)core_len;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &mutation, 223u) == -EINVAL);
+
+    mutation = canonical;
+    mutation.payload[core_len + 1u] = sizeof(uint64_t) - 1u;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &mutation, 223u) == -EINVAL);
+
+    mutation = canonical;
+    extension_offset = find_tlv_offset(mutation.payload,
+                                       mutation.payload_len,
+                                       TLV_UWB_RSL_DBM);
+    mutation.payload[extension_offset] = UINT8_C(0x27);
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &mutation, 223u) == -EINVAL);
+
+    mutation = canonical;
+    mutation.payload_len = (uint16_t)timestamp_len;
+    mutation.packet.payload_len = (uint16_t)timestamp_len;
+    payload_len = timestamp_len;
+    assert(tlv_append_u64(mutation.payload,
+                          sizeof(mutation.payload),
+                          &payload_len,
+                          TLV_TIMESTAMP_MS,
+                          UINT64_C(0x1112131415161718)) == PROTO_OK);
+    mutation.payload_len = (uint16_t)payload_len;
+    mutation.packet.payload_len = (uint16_t)payload_len;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &mutation, 223u) == -EINVAL);
+
+    mutation = canonical;
+    mutation.payload_len = (uint16_t)timestamp_len;
+    mutation.packet.payload_len = (uint16_t)timestamp_len;
+    payload_len = timestamp_len;
+    assert(tlv_append_i32(mutation.payload,
+                          sizeof(mutation.payload),
+                          &payload_len,
+                          TLV_UWB_CARRIER_INTEGRATOR,
+                          INT32_C(-91)) == PROTO_OK);
+    assert(tlv_append_i8(mutation.payload,
+                         sizeof(mutation.payload),
+                         &payload_len,
+                         TLV_UWB_RSL_DBM,
+                         -81) == PROTO_OK);
+    mutation.payload_len = (uint16_t)payload_len;
+    mutation.packet.payload_len = (uint16_t)payload_len;
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &mutation, 223u) == -EINVAL);
+
+    mutation = canonical;
+    extension_offset = find_tlv_offset(mutation.payload,
+                                       core_len,
+                                       TLV_RANGE_STATUS);
+    mutation.payload[extension_offset + PROTO_TLV_HEADER_LEN] =
+        UINT8_C(0xff);
+    assert(app_mesh_local_delivery_stage(
+               &delivery, &mutation, 223u) == -EINVAL);
+    assert(!store.present);
+}
+
 static void test_canonical_payload_and_envelope_validation_fail_closed(void)
 {
     struct journal_store store = {0};
@@ -395,7 +579,10 @@ static void test_canonical_payload_and_envelope_validation_fail_closed(void)
     assert(app_mesh_local_delivery_stage(
                &delivery, &pair, 232u) == -EINVAL);
     pair = make_pair_result(232u, 24u);
-    pair.payload[pair.payload_len - 3u] ^= UINT8_C(0x80);
+    pair.payload[find_tlv_offset(pair.payload,
+                                pair_result_core_len(&pair),
+                                TLV_RANGE_STATUS) +
+                 PROTO_TLV_HEADER_LEN] = UINT8_C(0xff);
     assert(app_mesh_local_delivery_stage(
                &delivery, &pair, 232u) == -EINVAL);
 
@@ -996,6 +1183,29 @@ static void test_fifty_anchors_survive_back_to_back_survey_and_lost_acks(void)
     }
 }
 
+static void test_exact_protocol_cancellation_retires_without_ack(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    const struct mesh_outbound outbound = make_pair_result(91u, 7u);
+
+    assert(app_mesh_local_delivery_stage(&delivery, &outbound, 91u) == 0);
+    assert(app_mesh_local_delivery_active(&delivery));
+    assert(!app_mesh_local_delivery_ack_committed(&delivery));
+
+    store.clear_result = -EIO;
+    assert(app_mesh_local_delivery_cancel(&delivery) == -EIO);
+    assert(app_mesh_local_delivery_active(&delivery));
+    assert(!app_mesh_local_delivery_ack_committed(&delivery));
+    assert(store.present);
+
+    store.clear_result = 0;
+    assert(app_mesh_local_delivery_cancel(&delivery) == 0);
+    assert(!app_mesh_local_delivery_occupied(&delivery));
+    assert(!store.present);
+    assert(app_mesh_local_delivery_cancel(&delivery) == -ENOENT);
+}
+
 int main(void)
 {
     test_transactional_stage_and_back_to_back_rejection();
@@ -1003,6 +1213,8 @@ int main(void)
     test_reboot_clears_pretransport_delivery_times();
     test_elapsed_not_before_is_retired_before_long_resource_wait();
     test_pair_result_is_a_supported_exact_delivery_owner();
+    test_pair_result_accepts_exact_producer_extension_schema();
+    test_pair_result_extension_schema_fails_closed();
     test_canonical_payload_and_envelope_validation_fail_closed();
     test_ack_identity_rejects_header_flags_and_payload_aliases();
     test_blocked_start_does_not_consume_attempt();
@@ -1022,6 +1234,7 @@ int main(void)
     test_last_blocked_token_can_retry_send_and_ack();
     test_pending_delivery_rejects_replacement_until_ack();
     test_fifty_anchors_survive_back_to_back_survey_and_lost_acks();
+    test_exact_protocol_cancellation_retires_without_ack();
     puts("app mesh local delivery tests passed");
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "app_discovery_assignment_policy.h"
+#include "app_durable_state.h"
 #include "app_gateway_ble.h"
 #include "app_state.h"
 #include "dwm3000_driver.h"
@@ -12,8 +13,6 @@
 
 LOG_MODULE_REGISTER(app_state, LOG_LEVEL_DBG);
 
-bool uwb_rf_active;
-struct k_spinlock uwb_rf_lock;
 struct k_spinlock anchor_uwb_lock;
 bool anchor_uwb_busy;
 bool anchor_click_window_busy;
@@ -27,9 +26,6 @@ static uint16_t mesh_event_control_seq;
 static struct k_spinlock mesh_event_control_seq_lock;
 static uint64_t mesh_event_boot_nonce_value;
 static K_MUTEX_DEFINE(mesh_event_boot_nonce_lock);
-static const char *uwb_rf_owner_reason;
-static uint32_t uwb_rf_owner_since_ms;
-static bool uwb_rf_admission_paused;
 static struct k_spinlock anchor_discovery_assignment_lock;
 static struct app_discovery_assignment_policy anchor_discovery_assignment_policy;
 static uint8_t anchor_discovery_assignment_slot;
@@ -166,95 +162,6 @@ int mesh_errno_from_proto(int ret)
     }
 }
 
-int radio_guard_uwb_start(const char *reason)
-{
-    k_spinlock_key_t key;
-    bool already_active;
-    const char *owner_reason;
-    uint32_t owner_since_ms;
-    uint32_t now_ms = k_uptime_get_32();
-
-    key = k_spin_lock(&uwb_rf_lock);
-    if (uwb_rf_admission_paused) {
-        k_spin_unlock(&uwb_rf_lock, key);
-        return -ESHUTDOWN;
-    }
-    already_active = uwb_rf_active;
-    if (!already_active) {
-        uwb_rf_active = true;
-        uwb_rf_owner_reason = reason;
-        uwb_rf_owner_since_ms = now_ms;
-    }
-    owner_reason = uwb_rf_owner_reason;
-    owner_since_ms = uwb_rf_owner_since_ms;
-    k_spin_unlock(&uwb_rf_lock, key);
-
-    if (already_active) {
-        LOG_ERR("blocked nested UWB operation: %s owner=%s age_ms=%u",
-                reason,
-                owner_reason == NULL ? "unknown" : owner_reason,
-                now_ms - owner_since_ms);
-        return -EBUSY;
-    }
-
-#if defined(CONFIG_IMEC_GATEWAY_BLE)
-    gateway_ble_enter_uwb_quiet(reason);
-#endif
-    return 0;
-}
-
-void radio_guard_uwb_stop(void)
-{
-    k_spinlock_key_t key;
-
-    key = k_spin_lock(&uwb_rf_lock);
-    uwb_rf_active = false;
-    uwb_rf_owner_reason = NULL;
-    uwb_rf_owner_since_ms = 0u;
-    k_spin_unlock(&uwb_rf_lock, key);
-#if defined(CONFIG_IMEC_GATEWAY_BLE)
-    gateway_ble_exit_uwb_quiet("radio_guard");
-#endif
-}
-
-bool radio_guard_uwb_busy(void)
-{
-    k_spinlock_key_t key;
-    bool busy;
-
-    key = k_spin_lock(&uwb_rf_lock);
-    busy = uwb_rf_active;
-    k_spin_unlock(&uwb_rf_lock, key);
-    return busy;
-}
-
-void radio_guard_uwb_admission_pause(void)
-{
-    k_spinlock_key_t key = k_spin_lock(&uwb_rf_lock);
-
-    uwb_rf_admission_paused = true;
-    k_spin_unlock(&uwb_rf_lock, key);
-}
-
-void radio_guard_uwb_admission_resume(void)
-{
-    k_spinlock_key_t key = k_spin_lock(&uwb_rf_lock);
-
-    uwb_rf_admission_paused = false;
-    k_spin_unlock(&uwb_rf_lock, key);
-}
-
-bool radio_guard_uwb_admission_paused(void)
-{
-    k_spinlock_key_t key;
-    bool paused;
-
-    key = k_spin_lock(&uwb_rf_lock);
-    paused = uwb_rf_admission_paused;
-    k_spin_unlock(&uwb_rf_lock, key);
-    return paused;
-}
-
 bool anchor_uwb_window_active(void)
 {
     k_spinlock_key_t key;
@@ -365,11 +272,22 @@ uint64_t mesh_event_boot_nonce(void)
 
     k_mutex_lock(&mesh_event_boot_nonce_lock, K_FOREVER);
     if (mesh_event_boot_nonce_value == 0u) {
+#if defined(CONFIG_IMEC_DURABLE_STATE)
+        uint32_t boot_incarnation = 0u;
+        int ret = app_durable_state_boot_incarnation(&boot_incarnation);
+
+        if (ret < 0) {
+            LOG_ERR("mesh event boot incarnation unavailable: %d", ret);
+        } else {
+            mesh_event_boot_nonce_value = (uint64_t)boot_incarnation;
+        }
+#else
         mesh_event_boot_nonce_value = ((uint64_t)sys_rand32_get() << 32) |
                                       (uint64_t)sys_rand32_get();
         if (mesh_event_boot_nonce_value == 0u) {
             mesh_event_boot_nonce_value = UINT64_C(1);
         }
+#endif
     }
     value = mesh_event_boot_nonce_value;
     k_mutex_unlock(&mesh_event_boot_nonce_lock);

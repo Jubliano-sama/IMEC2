@@ -1138,7 +1138,7 @@ static bool run_forced_multihop_result_custody(void)
     CHECK(send_offer_and_result(&fixture, 1u, fixture.child_b));
     CHECK(start_bundle_custody(&fixture, &queued_bundle));
 
-    phase = "mutated bundle rejection and persisted collector reset recovery";
+    phase = "mutated bundle rejection and RAM snapshot restore";
     CHECK(reject_mutated_bundle_then_restore(&fixture, &queued_bundle));
 
     phase = "gateway accepts exact restored bundle once";

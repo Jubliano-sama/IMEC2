@@ -23,6 +23,7 @@ struct app_gateway_survey_observability_ops {
 struct app_gateway_survey_observability_state {
     struct gateway_command_event boundary_event;
     size_t report_cursor;
+    uint32_t pending_event_seq;
     bool collection_complete;
     bool schedule_complete;
     bool boundary_pending;

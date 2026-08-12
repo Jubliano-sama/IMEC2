@@ -132,12 +132,6 @@ static struct anchor_state *anchor_by_id(struct anchor_state *anchors,
     return NULL;
 }
 
-static size_t anchor_offset(const struct anchor_state *anchors,
-                            const struct anchor_state *anchor)
-{
-    return (size_t)(anchor - anchors);
-}
-
 static size_t decoded_state_count(const struct anchor_state *anchors,
                                   enum discovery_assignment_phase phase)
 {
@@ -433,43 +427,75 @@ static int validate_discovery_response(
     return 0;
 }
 
-static int verify_response_spread_is_hop_independent(void)
+static int verify_response_order_is_hop_then_slot(void)
 {
-    uint32_t first_delay = 0u;
+    uint32_t previous_delay = 0u;
+    uint32_t child_delay = 0u;
+    uint32_t relay_delay = 0u;
 
     for (uint8_t hop = DISCOVERY_ASSIGNMENT_MAX_HOPS; hop > 0u; hop--) {
         uint32_t delay_ms = 0u;
         int ret = discovery_assignment_response_delay_ms(
+                                                         3u,
+                                                         ANCHOR_COUNT,
+                                                         hop,
                                                          DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                                                          0u,
                                                          7u,
                                                          &delay_ms);
 
         REQUIRE(ret == PROTO_OK,
-                "spread helper hop=%u ret=%d", hop, ret);
-        if (hop == DISCOVERY_ASSIGNMENT_MAX_HOPS) {
-            first_delay = delay_ms;
-        } else {
-            REQUIRE(delay_ms == first_delay,
-                    "hop-ranked response delay hop=%u delay=%" PRIu32
-                    " first=%" PRIu32,
-                    hop, delay_ms, first_delay);
+                "hop-slot helper hop=%u ret=%d", hop, ret);
+        if (hop != DISCOVERY_ASSIGNMENT_MAX_HOPS) {
+            REQUIRE(delay_ms - previous_delay ==
+                        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                    "hop band hop=%u delay=%" PRIu32
+                    " previous=%" PRIu32,
+                    hop, delay_ms, previous_delay);
         }
+        previous_delay = delay_ms;
     }
+
+    REQUIRE(discovery_assignment_response_delay_ms(
+                0u, 30u, 2u,
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                0u, 32u, &child_delay) == PROTO_OK,
+            "bench child response delay rejected");
+    REQUIRE(discovery_assignment_response_delay_ms(
+                29u, 30u, 1u,
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                0u, 0u, &relay_delay) == PROTO_OK,
+            "bench relay response delay rejected");
+    REQUIRE(child_delay < relay_delay,
+            "bench G-A-B order child=%" PRIu32 " relay=%" PRIu32,
+            child_delay, relay_delay);
+
+    /* A complete farther-hop band must finish before the adjacent nearer-hop
+     * band starts, independent of the two provisional hash slots observed on
+     * the bench. */
+    REQUIRE(discovery_assignment_response_delay_ms(
+                29u, 30u, 2u,
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                0u, 32u, &child_delay) == PROTO_OK,
+            "last child slot response delay rejected");
+    REQUIRE(discovery_assignment_response_delay_ms(
+                0u, 30u, 1u,
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                0u, 0u, &relay_delay) == PROTO_OK,
+            "first relay slot response delay rejected");
+    REQUIRE(child_delay < relay_delay,
+            "hop bands overlap child=%" PRIu32 " relay=%" PRIu32,
+            child_delay, relay_delay);
     return 0;
 }
 
 static int initialize_world(struct mesh_sim_world *world,
                             struct anchor_state *anchors,
                             uint8_t *gateway_index,
-                            size_t claim_collision_pair[2],
-                            size_t ack_collision_pair[2])
+                            size_t claim_collision_pair[2])
 {
-    struct discovery_assignment_claim ordered[ANCHOR_COUNT];
     uint64_t candidate = ANCHOR_ID_BASE;
     uint8_t hop_mask = 0u;
-    size_t rank_to_anchor[ANCHOR_COUNT];
-    size_t ack_first_rank = SIZE_MAX;
     int ret;
 
     mesh_sim_init(world, SCENARIO_SEED);
@@ -502,10 +528,6 @@ static int initialize_world(struct mesh_sim_world *world,
         anchors[i].hop_count = (uint8_t)(1u + (i % DISCOVERY_ASSIGNMENT_MAX_HOPS));
         anchors[i].assignment_slot = UINT8_MAX;
         anchors[i].table_first_round = UINT8_MAX;
-        ordered[i] = (struct discovery_assignment_claim) {
-            .anchor_id = anchors[i].id,
-            .hash = anchors[i].hash,
-        };
         ret = mesh_sim_add_role(world,
                                 MESH_SIM_ROLE_ANCHOR,
                                 anchors[i].id,
@@ -530,34 +552,6 @@ static int initialize_world(struct mesh_sim_world *world,
     REQUIRE(anchors[0].claim_slot == anchors[1].claim_slot,
             "constructed claim collision slots=%u/%u",
             anchors[0].claim_slot, anchors[1].claim_slot);
-
-    ret = discovery_assignment_sort_claims(ordered, ANCHOR_COUNT);
-    REQUIRE(ret == PROTO_OK,
-            "preview claim sort ret=%d", ret);
-    for (size_t rank = 0u; rank < ANCHOR_COUNT; rank++) {
-        struct anchor_state *anchor = anchor_by_id(anchors, ordered[rank].anchor_id);
-
-        REQUIRE(anchor != NULL,
-                "preview rank=%zu missing anchor", rank);
-        rank_to_anchor[rank] = anchor_offset(anchors, anchor);
-    }
-    for (size_t rank = 1u; rank + 5u < ANCHOR_COUNT; rank++) {
-        size_t first = rank_to_anchor[rank];
-        size_t second = rank_to_anchor[rank + 5u];
-
-        if (rank % INITIAL_TABLE_MISS_DIVISOR != 0u &&
-            (rank + 5u) % INITIAL_TABLE_MISS_DIVISOR != 0u &&
-            first > 1u && second > 1u) {
-            ack_first_rank = rank;
-            break;
-        }
-    }
-    REQUIRE(ack_first_rank != SIZE_MAX,
-            "could not reserve deterministic ACK collision pair");
-    ack_collision_pair[0] = rank_to_anchor[ack_first_rank];
-    ack_collision_pair[1] = rank_to_anchor[ack_first_rank + 5u];
-    anchors[ack_collision_pair[0]].hop_count = 7u;
-    anchors[ack_collision_pair[1]].hop_count = 8u;
 
     for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
         REQUIRE(anchors[i].hop_count >= 1u &&
@@ -623,6 +617,9 @@ static int collect_claims(struct mesh_sim_world *world,
                 random_value = 0u;
             }
             ret = discovery_assignment_response_delay_ms(
+                anchors[i].claim_slot,
+                ANCHOR_COUNT,
+                anchors[i].hop_count,
                 DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                 round,
                 random_value,
@@ -930,7 +927,6 @@ static int publish_table_and_collect_acks(
     struct mesh_sim_world *world,
     struct anchor_state *anchors,
     uint8_t gateway_index,
-    const size_t ack_collision_pair[2],
     struct mesh_outbound *table_command,
     size_t expected_table_frame_len,
     struct scenario_summary *summary)
@@ -1084,11 +1080,10 @@ static int publish_table_and_collect_acks(
                     continue;
                 }
                 random_value = mesh_sim_random(world);
-                if (round == 0u &&
-                    (i == ack_collision_pair[0] || i == ack_collision_pair[1])) {
-                    random_value = 0u;
-                }
                 ret = discovery_assignment_response_delay_ms(
+                    anchors[i].assignment_slot,
+                    ANCHOR_COUNT,
+                    anchors[i].hop_count,
                     DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                     0u,
                     random_value,
@@ -1194,9 +1189,6 @@ static int publish_table_and_collect_acks(
             first_round_acked = decoded_state_count(
                 anchors,
                 DISCOVERY_ASSIGNMENT_PHASE_ACK);
-            REQUIRE(!anchors[ack_collision_pair[0]].acked &&
-                    !anchors[ack_collision_pair[1]].acked,
-                    "forced ACK collision decoded unexpectedly");
         }
         if (decoded_state_count(anchors, DISCOVERY_ASSIGNMENT_PHASE_ACK) ==
             ANCHOR_COUNT) {
@@ -1226,8 +1218,8 @@ static int publish_table_and_collect_acks(
             first_round_acked);
     REQUIRE(summary->table_rounds >= 2u &&
             summary->table_rounds <= TABLE_MAX_ROUNDS &&
-            summary->ack_collisions >= 2u,
-            "table retry evidence rounds=%u ACK collisions=%zu",
+            summary->ack_collisions == 0u,
+            "table retry/order evidence rounds=%u ACK collisions=%zu",
             summary->table_rounds, summary->ack_collisions);
     REQUIRE(decoded_state_count(anchors, DISCOVERY_ASSIGNMENT_PHASE_TABLE) ==
                 ANCHOR_COUNT &&
@@ -1245,7 +1237,6 @@ static int test_discovery_assignment_radio_scenario(struct scenario_summary *sum
     struct mesh_outbound table_command;
     struct anchor_state anchors[ANCHOR_COUNT] = {0};
     size_t claim_collision_pair[2] = { SIZE_MAX, SIZE_MAX };
-    size_t ack_collision_pair[2] = { SIZE_MAX, SIZE_MAX };
     size_t claim_count = 0u;
     size_t table_frame_len = 0u;
     uint8_t gateway_index = UINT8_MAX;
@@ -1256,15 +1247,14 @@ static int test_discovery_assignment_radio_scenario(struct scenario_summary *sum
     if (ret != 0) {
         return ret;
     }
-    ret = verify_response_spread_is_hop_independent();
+    ret = verify_response_order_is_hop_then_slot();
     if (ret != 0) {
         return ret;
     }
     ret = initialize_world(&world,
                            anchors,
                            &gateway_index,
-                           claim_collision_pair,
-                           ack_collision_pair);
+                           claim_collision_pair);
     if (ret != 0) {
         return ret;
     }
@@ -1290,7 +1280,6 @@ static int test_discovery_assignment_radio_scenario(struct scenario_summary *sum
     return publish_table_and_collect_acks(&world,
                                           anchors,
                                           gateway_index,
-                                          ack_collision_pair,
                                           &table_command,
                                           table_frame_len,
                                           summary);

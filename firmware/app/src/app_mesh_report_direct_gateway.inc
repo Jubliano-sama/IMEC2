@@ -163,6 +163,23 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                                                      previous_hop_id,
                                                      UWB_CHANNEL_MESH_PAYLOAD);
             }
+            if (!apply_tracked_ack &&
+                probe->packet.msg_type == MSG_GATEWAY_ROUTE_REQ) {
+                /*
+                 * A direct route probe consumes this exact ACK as its
+                 * synchronous contact proof.  The probe is intentionally not
+                 * retained in relay custody, so queueing the same ACK gives
+                 * RX no owner to advance and can block the relay C5 request
+                 * that must follow a forced-hop contact-only success.
+                 */
+                if (debug != NULL) {
+                    debug->queued_frame = false;
+                    debug->valid_frame = true;
+                    debug->previous_hop_id = previous_hop_id;
+                }
+                result_ret = 0;
+                break;
+            }
             {
                 bool queued = mesh_queue_from_frame_at(frame,
                                                        frame_len,
@@ -217,6 +234,15 @@ static int mesh_wait_for_direct_gateway_ack_configured(const struct mesh_outboun
                 debug->valid_frame = valid_mesh_frame;
                 debug->previous_hop_id = previous_hop_id;
             }
+            if (queued && valid_mesh_frame) {
+                /*
+                 * This valid frame belongs to another retained owner.  End
+                 * the synchronous direct-ACK wait now; its queued RX work
+                 * cannot run until the current radio turn yields.
+                 */
+                result_ret = -EAGAIN;
+                break;
+            }
         }
         if (result_ret == -ENOSPC) {
             break;
@@ -238,12 +264,14 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
 {
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
+    struct radio_guard_uwb_lease radio_lease = {0};
     uint32_t ack_deadline_ms;
     bool gateway_ack_required = false;
     bool ack_wait_started = false;
     bool keep_channel9_awake = false;
     bool functional_tx_completed = false;
     int ack_ret = -ENOTCONN;
+    int parking_ret;
     int release_ret;
     int ret;
 
@@ -261,7 +289,9 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
 
     k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh direct gateway payload");
+    ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_TX,
+                                     "mesh direct gateway payload",
+                                     &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         k_mutex_unlock(&mesh_send_scratch_lock);
@@ -292,7 +322,6 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
         }
         mesh_relay_note_tx_sent(&mesh_runtime, out, k_uptime_get_32());
         fw_delivery_loss_note_sent(&mesh_delivery_loss, out);
-        (void)mesh_save_outbox_durable("single-ch9-send");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_CH9_TX_SINGLE_SEND_OK\n");
         }
@@ -352,31 +381,31 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
     }
 
     if (keep_channel9_awake) {
-        release_ret = mesh_radio_idle_with_bounded_recovery(
+        parking_ret = mesh_radio_idle_with_bounded_recovery(
             "direct-gateway-payload");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DIRECT_GW_KEEP_CH9_AWAKE q=%u seq=%u ack_ret=%d release_ret=%d\n",
                                 report_tx_queue_used(),
                                 out->packet.seq,
                                 ack_ret,
-                                release_ret);
+                                parking_ret);
         }
     } else {
-        release_ret = mesh_release_radio_after_mesh_turn(
+        parking_ret = mesh_release_radio_after_mesh_turn(
             true, "direct-gateway-payload");
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
-    mesh_restart_role_scan();
-    k_mutex_unlock(&mesh_send_scratch_lock);
+    release_ret = mesh_transport_radio_finish(&radio_lease, parking_ret);
     if (release_ret < 0) {
         LOG_ERR("direct-gateway payload radio release failed: seq=%u ret=%d",
                 out->packet.seq,
                 release_ret);
-        if (ret >= 0) {
-            ret = release_ret;
-        }
-    } else if (functional_tx_completed &&
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        return release_ret;
+    }
+    mesh_restart_role_scan();
+    k_mutex_unlock(&mesh_send_scratch_lock);
+    if (functional_tx_completed &&
                (!gateway_ack_required ||
                 ack_debug.functional_rx_outcome)) {
         app_watchdog_note_radio_progress();
@@ -823,7 +852,6 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
         previous_frame_done_ms = done_ms;
     }
 
-    (void)mesh_save_outbox_durable("direct-ch9-batch");
 
     if (ack_wait_started) {
         mesh_ch9_event_note_persistent_ack_wait(next_hop_id,
@@ -901,9 +929,11 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
 {
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
+    struct radio_guard_uwb_lease radio_lease = {0};
     bool c5_activity = false;
     bool ack_wait_ran = false;
     bool functional_tx_completed = false;
+    int parking_ret;
     int release_ret;
     int ret;
 
@@ -928,7 +958,9 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
         attempt,
         probe->packet.seq);
     mesh_stop_role_scan();
-    ret = mesh_transport_radio_start("mesh direct gateway route probe");
+    ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_TX,
+                                     "mesh direct gateway route probe",
+                                     &radio_lease);
     if (ret < 0) {
         mesh_restart_role_scan();
         k_mutex_unlock(&mesh_send_scratch_lock);
@@ -954,10 +986,17 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
                             ret,
                             c5_activity ? 1u : 0u,
                             attempt);
-        (void)mesh_release_radio_after_mesh_turn(
+        parking_ret = mesh_release_radio_after_mesh_turn(
             true, "direct-gateway-probe-c5-yield");
-        radio_guard_uwb_stop();
-        mesh_restart_role_scan();
+        release_ret = mesh_transport_radio_finish(&radio_lease, parking_ret);
+        if (release_ret < 0) {
+            LOG_ERR("direct-gateway probe C5-yield radio release failed: seq=%u ret=%d",
+                    probe->packet.seq,
+                    release_ret);
+            ret = release_ret;
+        } else {
+            mesh_restart_role_scan();
+        }
         k_mutex_unlock(&mesh_send_scratch_lock);
         return ret;
     }
@@ -999,30 +1038,30 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
     }
 
     if (ret == 0) {
-        release_ret = mesh_radio_idle_with_bounded_recovery(
+        parking_ret = mesh_radio_idle_with_bounded_recovery(
             "direct-gateway-probe");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DIRECT_GW_PROBE_KEEP_CH9_AWAKE seq=%u attempt=%u release_ret=%d\n",
                                 probe->packet.seq,
                                 attempt,
-                                release_ret);
+                                parking_ret);
         }
     } else {
-        release_ret = mesh_release_radio_after_mesh_turn(
+        parking_ret = mesh_release_radio_after_mesh_turn(
             true, "direct-gateway-probe");
     }
     mesh_report_note_anchor_uwb_awake_since(uwb_window_start_ms, 0u);
-    radio_guard_uwb_stop();
-    mesh_restart_role_scan();
-    k_mutex_unlock(&mesh_send_scratch_lock);
+    release_ret = mesh_transport_radio_finish(&radio_lease, parking_ret);
     if (release_ret < 0) {
         LOG_ERR("direct-gateway probe radio release failed: seq=%u ret=%d",
                 probe->packet.seq,
                 release_ret);
-        if (ret >= 0) {
-            ret = release_ret;
-        }
-    } else if (functional_tx_completed &&
+        k_mutex_unlock(&mesh_send_scratch_lock);
+        return release_ret;
+    }
+    mesh_restart_role_scan();
+    k_mutex_unlock(&mesh_send_scratch_lock);
+    if (functional_tx_completed &&
                (!ack_wait_ran ||
                 ack_debug.functional_rx_outcome)) {
         app_watchdog_note_radio_progress();
@@ -1092,6 +1131,23 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
         uint32_t now_ms = k_uptime_get_32();
         uint8_t attempt = retry_state.attempts + 1u;
 
+        /*
+         * Route probing is background work.  A prior probe may have received
+         * and queued a valid frame that was not the probe's own direct ACK
+         * (for example, the forwarded gateway ACK that terminates retained
+         * ACK_CONFIRM custody).  Yield before another RF attempt so the
+         * causal RX record can drain and retire the owner that requested
+         * route repair.
+         */
+        if (k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
+            status_debug_printf(
+                "DBG_DIRECT_GW_PROBE_RX_YIELD q=%u attempt=%u phase=pre\n",
+                k_msgq_num_used_get(&mesh_rx_msgq),
+                (unsigned int)attempt);
+            last_ret = -EAGAIN;
+            break;
+        }
+
         memset(probe, 0, sizeof(*probe));
         probe->packet.msg_type = MSG_GATEWAY_ROUTE_REQ;
         probe->packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
@@ -1124,6 +1180,14 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                                                       attempt,
                                                       retry_mode ==
                                                           APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY);
+        if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
+            status_debug_printf(
+                "DBG_DIRECT_GW_PROBE_RX_YIELD q=%u attempt=%u phase=post\n",
+                k_msgq_num_used_get(&mesh_rx_msgq),
+                (unsigned int)attempt);
+            last_ret = -EAGAIN;
+            break;
+        }
         if (ret == 0) {
             (void)app_mesh_direct_gateway_retry_note(
                 &retry_state, APP_MESH_DIRECT_GATEWAY_ATTEMPT_SUCCESS, 0u,
@@ -1241,7 +1305,8 @@ static int mesh_request_route_owned(
     const char *reason,
     enum app_mesh_route_wait_tx_owner owner,
     const struct proto_packet *owner_packet,
-    uint32_t generation)
+    uint32_t generation,
+    const struct app_mesh_c5_tx_authorization_token *authorization)
 {
     struct mesh_outbound route_req;
     struct app_mesh_route_request_policy_state route_policy_state = {0};
@@ -1252,6 +1317,7 @@ static int mesh_request_route_owned(
     struct mesh_event_timing proposed_timing = {0};
     const struct mesh_event_timing *proposed_timing_ptr = NULL;
     uint32_t now_ms = k_uptime_get_32();
+    uint32_t route_backoff_remaining_ms = 0u;
     uint32_t timing_reference_ms = now_ms;
     uint32_t route_reply_window_ms = MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS;
     uint32_t route_random_value;
@@ -1291,6 +1357,30 @@ static int mesh_request_route_owned(
         return -EBUSY;
     }
 
+    /*
+     * The direct-gateway probe is part of a route-discovery attempt, not a
+     * free liveness poll.  Enforce the core's same-target backoff before any
+     * radio side effect; timeout service may submit the exact retained owner
+     * repeatedly while this deadline is in the future.
+     */
+    if (mesh_relay_route_discovery_backoff_pending(
+            &mesh_runtime,
+            target_id,
+            now_ms,
+            &route_backoff_remaining_ms)) {
+        mesh_schedule_route_waiting_retry_after(
+            reason == NULL ? "route-backoff" : reason,
+            route_backoff_remaining_ms);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf(
+                "DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x%llx delay=%u reason=%s\n",
+                (unsigned long long)target_id,
+                route_backoff_remaining_ms,
+                reason == NULL ? "route" : reason);
+        }
+        return -EAGAIN;
+    }
+
     route_policy_state.relay_required = relay_required_route_req;
     route_policy_state.direct_bulk_suppressed =
         mesh_direct_gateway_bulk_probe_install_suppressed(target_id, now_ms);
@@ -1309,6 +1399,15 @@ static int mesh_request_route_owned(
         target_id, reason, route_policy.install_direct_route_from_probe,
         retry_identity.mode,
         retry_identity.survey_id);
+    if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
+        /* The direct probe queued causal RX.  Do not continue into a relay
+         * wake train in the same route-work turn; let RX clear or advance the
+         * exact retained owner first, then re-evaluate route need. */
+        mesh_schedule_route_waiting_retry_after(
+            reason == NULL ? "route-rx-yield" : reason,
+            REPORT_TX_RETRY_DELAY_MS);
+        return -EBUSY;
+    }
     route_policy_state.direct_probe_ret = ret;
     app_mesh_route_request_policy_decide(&route_policy_state, &route_policy);
     app_mesh_test_note_direct_gateway_route_probe(target_id, ret);
@@ -1428,7 +1527,12 @@ static int mesh_request_route_owned(
                                      &route_req,
                                      &embedded_route_sent,
                                      C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
-                                     reason);
+                                     reason,
+                                     &route_req,
+                                     authorization,
+                                     FW_C5_TX_INTENT_BACKGROUND,
+                                     NULL,
+                                     NULL);
     if (ret < 0) {
         LOG_WRN("mesh route discovery wake train failed: target=0x%016llx attempt=%u ret=%d reason=%s",
                 (unsigned long long)target_id,
@@ -1495,7 +1599,10 @@ static int mesh_request_route_owned(
                              C5_CONTACT_PURPOSE_ROUTE_SOLICIT,
                              k_uptime_get_32() + route_reply_window_ms,
                              reason);
-    ret = mesh_send_outbound(&route_req, "route-request-control");
+    ret = mesh_send_outbound_authorized(
+        &route_req,
+        "route-request-control",
+        authorization);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ROUTE_REQ_CONTROL_TX ret=%d seq=%u ttl=%u\n",
                             ret,

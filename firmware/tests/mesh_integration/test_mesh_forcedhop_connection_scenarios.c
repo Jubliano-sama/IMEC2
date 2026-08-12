@@ -241,6 +241,25 @@ static size_t count_decoded_receptions(const struct mesh_sim_world *world,
     return count;
 }
 
+static size_t count_decoded_receptions_from(
+    const struct mesh_sim_world *world,
+    uint64_t receiver_id,
+    uint64_t source_id,
+    uint8_t msg_type)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < world->reception_count; i++) {
+        if (world->receptions[i].receiver_id == receiver_id &&
+            world->receptions[i].outcome == MESH_SIM_RX_DECODED &&
+            world->receptions[i].packet.src_id == source_id &&
+            world->receptions[i].packet.msg_type == msg_type) {
+            count++;
+        }
+    }
+    return count;
+}
+
 static struct mesh_event_params connection_params(uint32_t first_event_ms)
 {
     const struct mesh_event_params params = {
@@ -370,6 +389,10 @@ static int run_forcedhop_connection_scenario(void)
     CHECK(route_selected(&world.roles[transmitter].relay.upstream) == NULL);
     CHECK(!has_timing_for_peer(&world.roles[transmitter].relay, GATEWAY_ID));
     CHECK(world.connection_count == 0u);
+    CHECK(count_decoded_receptions_from(&world,
+                                        GATEWAY_ID,
+                                        TRANSMITTER_ID,
+                                        MSG_GATEWAY_ROUTE_REQ) == 1u);
 
     phase = "forced_duplicate_gateway_reply_contact_only";
     gateway_ack_receptions = count_decoded_receptions(
@@ -387,6 +410,10 @@ static int run_forcedhop_connection_scenario(void)
     CHECK(route_selected(&world.roles[transmitter].relay.upstream) == NULL);
     CHECK(!has_timing_for_peer(&world.roles[transmitter].relay, GATEWAY_ID));
     CHECK(world.connection_count == 0u);
+    CHECK(count_decoded_receptions_from(&world,
+                                        GATEWAY_ID,
+                                        TRANSMITTER_ID,
+                                        MSG_GATEWAY_ROUTE_REQ) == 1u);
 
     phase = "anchor_direct_probe_route";
     make_direct_probe(&direct_probe, ANCHOR_ID);
@@ -419,6 +446,10 @@ static int run_forcedhop_connection_scenario(void)
                             (uint64_t)ROUTE_REQUEST_START_MS * 1000u,
                             &route_request_tx) == MESH_SIM_OK);
     CHECK(world.transmission_count == transmission_count + 2u);
+    CHECK(count_decoded_receptions_from(&world,
+                                        GATEWAY_ID,
+                                        TRANSMITTER_ID,
+                                        MSG_GATEWAY_ROUTE_REQ) == 1u);
     route_reply_tx = (uint16_t)(transmission_count + 1u);
     CHECK(world.transmissions[route_reply_tx].has_outbound);
     CHECK(world.transmissions[route_reply_tx].outbound.packet.msg_type ==
@@ -1401,7 +1432,7 @@ static int run_targeted_gateway_control_bypasses_unrelated_custody_scenario(void
     struct proto_packet custody_packet = {0};
     struct mesh_outbound custody_tx;
     struct mesh_pending_tx pending_before;
-    struct persistent_outbox_record outbox_before;
+    struct mesh_outbox_record outbox_before;
     uint8_t custody_payload[96];
     size_t custody_payload_len = 0u;
 

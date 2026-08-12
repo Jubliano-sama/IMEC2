@@ -65,12 +65,21 @@ release = function_body(LEASE, "survey_pair_lease_release_start")
 assert "control_id_equal(&lease->start_id, control_id)" in release
 assert "lease->start_released = true" in release
 
-mark_running = function_body(LEASE, "survey_pair_lease_mark_running_at")
+mark_running = function_body(
+    LEASE, "survey_pair_lease_mark_running_for_role_at"
+)
 assert_ordered(
     mark_running,
     "survey_pair_lease_expire(lease, now_ms)",
     "!lease->start_execution_armed",
-    "!deadline_reached(now_ms, lease->start_execution_deadline_ms)",
+    "role_start_ms = lease->start_execution_deadline_ms",
+    "if (as_responder)",
+    "role_start_ms -= SURVEY_PAIR_START_SKEW_MARGIN_MS",
+    "!deadline_reached(now_ms, role_start_ms)",
+    "latest_start_ms = lease->start_execution_deadline_ms +",
+    "SURVEY_PAIR_START_SKEW_MARGIN_MS",
+    "deadline_reached(now_ms, latest_start_ms)",
+    "clear_active(lease)",
     "survey_pair_lease_mark_running(lease, pair, round_id)",
 )
 
@@ -92,22 +101,55 @@ assert_ordered(
     "survey_pair_lease_start_round_bound_at(",
 )
 
-# Exact START-result delivery remains a second barrier. A delivered result
-# releases custody, but the worker schedules the remaining delay and cannot
-# claim RUNNING until the synchronized deadline is reached.
+# Local START acceptance arms the synchronized run immediately. The status
+# packet keeps independent reliable custody, so its ACK_CONFIRM path cannot
+# suppress DS-TWR; only the immutable shared execution deadline remains a gate.
 delivery_gate = function_body(RUNTIME, "pair_start_delivery_ready")
 assert_ordered(
     delivery_gate,
-    "event.reason == NODE_COMM_TERMINAL_DELIVERED",
     "survey_pair_lease_release_start(&pair_lease",
-    "survey_pair_lease_execution_remaining_ms(",
-    "schedule_owned(K_MSEC(release_remaining_ms)",
+    "survey_pair_lease_execution_remaining_for_role_ms(",
+    "SURVEY_ANCHOR_DEADLINE_PHASE_SAFETY",
+    "release_remaining_ms",
 )
+result_submit = function_body(COMMANDS, "anchor_submit_command_result")
+assert "app_node_comm_commit_protocol_response_auto_reap(" in result_submit
+assert "app_node_comm_submit_protocol_response_auto_reap(" in result_submit
+assert "app_node_comm_auto_reap_delivery" not in delivery_gate
+assert "app_node_comm_take_delivery_event_for" not in delivery_gate
+assert "NODE_COMM_TERMINAL_DELIVERED" not in delivery_gate
 worker = function_body(RUNTIME, "survey_work_handler")
 assert_ordered(
     worker,
     "if (!pair_start_delivery_ready())",
-    "survey_pair_lease_mark_running_at(&pair_lease",
+    "survey_pair_lease_mark_running_for_role_at(&pair_lease",
+)
+
+# The responder executes START one skew window early so its RX is already open
+# at the immutable initiator timestamp. The packet's original delay remains
+# intact, so both endpoints still derive the same shared deadline.
+schedule_delay = function_body(
+    COMMANDS, "anchor_broadcast_command_schedule_delay_ms"
+)
+assert_ordered(
+    schedule_delay,
+    "command_id != CMD_SURVEY_START_PAIR",
+    "survey_extract_pair_tlvs(payload, payload_len, &pair)",
+    "pair.responder_id != DEVICE_ID",
+    "execution_remaining_ms - SURVEY_PAIR_START_SKEW_MARGIN_MS",
+)
+delayed_command = function_body(
+    COMMANDS, "anchor_schedule_broadcast_command_execution"
+)
+assert_ordered(
+    delayed_command,
+    "anchor_broadcast_command_schedule_delay_ms(",
+    "execute_at_ms =",
+    "received_at_ms + schedule_delay_ms",
+    "execute_deadline_ms =",
+    "received_at_ms + delay_ms +",
+    "mesh_route_work_reschedule(",
+    "schedule_delay_ms == 0u ? 1u : schedule_delay_ms",
 )
 
 # The retired broadcast GO command has no runtime handler or delayed-command

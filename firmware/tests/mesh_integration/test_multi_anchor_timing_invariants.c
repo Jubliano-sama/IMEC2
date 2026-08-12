@@ -3,6 +3,7 @@
 #include "gateway_command.h"
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
+#include "operation_policy.h"
 #include "survey.h"
 #include "uwb.h"
 #include "uwb_session.h"
@@ -26,10 +27,11 @@
 #define OLD_DISCOVERY_SLOT_US UINT64_C(1000)
 #define SURVEY_REPLY_OPPORTUNITY_COUNT 4u
 #define SURVEY_PAIR_GRAPH_SWEEP_SEEDS 512u
-#define SURVEY_GATEWAY_START_DELAY_MS 6000u
+#define SURVEY_GATEWAY_START_DELAY_MS \
+    OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS
 #define SURVEY_GATEWAY_REPORT_SLOT_MS \
     (ROUTE_GATEWAY_ACK_TIMEOUT_MS + 20u + 250u)
-#define SURVEY_GATEWAY_BENCH_BUDGET_MS 20000u
+#define SURVEY_GATEWAY_BENCH_BUDGET_MS 70000u
 
 static unsigned int failures;
 
@@ -51,6 +53,69 @@ struct survey_probe_event {
     uint8_t sender;
     bool collided;
 };
+
+static void test_survey_multihop_start_lead_covers_retained_forward(void)
+{
+    enum {
+        C5_DEFERRED_RETRY_COUNT = 8u,
+        C5_CONTROL_RETRY_BASE_MS = 200u,
+        C5_CONTROL_RETRY_SHIFT_CAP = 3u,
+        SURVEY_PHY_PREP_BUDGET_MS = 103u,
+    };
+    uint32_t retry_backoff_max_ms = 0u;
+    uint32_t per_relay_ms;
+    uint32_t full_ttl_lead_ms;
+    struct survey_discovery_config config = {
+        .survey_id = UINT32_C(0x53544152),
+        .operation_generation = UINT64_C(0x53544152544c4541),
+        .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+        .round_count = 4u,
+    };
+    struct survey_discovery_timing timing;
+
+    for (uint32_t round = 1u; round <= C5_DEFERRED_RETRY_COUNT; round++) {
+        uint32_t shift = round - 1u;
+        uint32_t base_ms;
+
+        if (shift > C5_CONTROL_RETRY_SHIFT_CAP) {
+            shift = C5_CONTROL_RETRY_SHIFT_CAP;
+        }
+        base_ms = C5_CONTROL_RETRY_BASE_MS << shift;
+        /* Production jitter is [-base/2, +base/2], inclusive. */
+        retry_backoff_max_ms += base_ms + (base_ms / 2u);
+    }
+    per_relay_ms = FLOOD_WAVE_MS + FLOOD_RELAY_REPEAT_MS +
+        retry_backoff_max_ms +
+        (C5_DEFERRED_RETRY_COUNT - 1u) *
+            (MESH_RADIO_WAKE_TRAIN_MS + FLOOD_RELAY_REPEAT_MS) +
+        MESH_RADIO_WAKE_TRAIN_MS + FLOOD_RELAY_REPEAT_MS +
+        (FLOOD_RELAY_REPEAT_COUNT - 1u) * FLOOD_RELAY_REPEAT_MS;
+    full_ttl_lead_ms = (SURVEY_DEFAULT_TTL - 1u) * per_relay_ms +
+                       SURVEY_PHY_PREP_BUDGET_MS;
+
+    CHECK(retry_backoff_max_ms == 14100u,
+          "retained C5 forward retry horizon changed unexpectedly");
+    CHECK(per_relay_ms == 19180u,
+          "per-relay timed-control horizon changed unexpectedly");
+    CHECK(full_ttl_lead_ms == 57643u,
+          "full-TTL timed-control horizon changed unexpectedly");
+    CHECK(config.start_delay_ms >= full_ttl_lead_ms,
+          "survey START lead cannot cover a retained full-TTL forward");
+    CHECK(survey_discovery_timing_from_age(
+              &config, full_ttl_lead_ms, &timing) == PROTO_OK &&
+              timing.pending && !timing.active && !timing.expired &&
+              timing.wait_ms >= SURVEY_PHY_PREP_BUDGET_MS,
+          "last-hop survey reception lacks its PHY preparation window");
+
+    /* The captured one-hop failure arrived at age 7518 ms.  Under the old
+     * 6000 ms lead its four discovery rounds had already ended at 6960 ms. */
+    config.start_delay_ms = 6000u;
+    CHECK(survey_discovery_timing_from_age(&config, 7518u, &timing) ==
+              PROTO_OK && timing.expired,
+          "hardware-trace late relay no longer reproduces the old expiry");
+}
 
 static bool fully_contained(struct interval frame, struct interval rx)
 {
@@ -650,6 +715,7 @@ static void test_survey_continuous_round_window_invariants(void)
 static void test_survey_partial_rounds_still_produce_reports(void)
 {
     const struct survey_discovery_config config = {
+        .operation_generation = UINT64_C(0x0102030405060708),
         .survey_id = UINT32_C(0x50666000),
         .start_delay_ms = 2000u,
         .slot_ms = 40u,
@@ -668,8 +734,10 @@ static void test_survey_partial_rounds_still_produce_reports(void)
     uint8_t payload[64];
     uint32_t survey_id = 0u;
     uint64_t decoded_anchor_id = 0u;
+    const uint8_t *boot_raw = NULL;
     size_t payload_len = 0u;
     size_t entry_count = 0u;
+    uint8_t boot_len = 0u;
     uint8_t rf_starts = 0u;
 
     for (uint8_t round = 0u; round < config.round_count; round++) {
@@ -689,19 +757,31 @@ static void test_survey_partial_rounds_still_produce_reports(void)
               payload, sizeof(payload), &payload_len,
               config.survey_id, anchor_id, &peer, 1u) == PROTO_OK,
           "partial discovery could not encode its useful peer report");
+    CHECK(survey_operation_generation_append_tlv(
+              payload, sizeof(payload), &payload_len,
+              config.operation_generation) == PROTO_OK &&
+              tlv_append_u32(payload, sizeof(payload), &payload_len,
+                             TLV_NODE_BOOT_COUNTER, 1u) == PROTO_OK &&
+              tlv_append_u16(payload, sizeof(payload), &payload_len,
+                             TLV_COMMAND_STATUS, COMMAND_OK) == PROTO_OK,
+          "partial discovery could not encode its report identity");
     CHECK(survey_init_discovery_report_packet(
               &packet, anchor_id, UINT64_C(0xa001000000000001),
-              config.survey_id, config.operation_generation, 77u,
+              config.survey_id, config.operation_generation, 1u, 77u,
               (uint8_t)payload_len) == PROTO_OK,
           "partial discovery could not wrap its report");
     CHECK(survey_extract_reach_report_tlvs(
               payload, payload_len, &survey_id, &decoded_anchor_id,
               decoded, ARRAY_SIZE(decoded), &entry_count) == PROTO_OK &&
+              tlv_find_unique(payload, payload_len,
+                              TLV_NODE_BOOT_COUNTER,
+                              &boot_raw, &boot_len) == PROTO_OK &&
+              boot_len == sizeof(uint32_t) &&
               survey_id == config.survey_id &&
               decoded_anchor_id == anchor_id &&
               entry_count == 1u &&
               decoded[0].peer_id == peer.peer_id &&
-              packet.session_id == survey_id,
+              packet.session_id == proto_get_u32_le(boot_raw),
           "partial discovery report did not survive wire decoding");
     CHECK(survey_gateway_begin(&gateway, config.survey_id, 1u) == PROTO_OK &&
               survey_gateway_note_reach_report(
@@ -927,16 +1007,16 @@ static void test_survey_gateway_collection_budget_sweep(void)
                             SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
-                        CHECK(first_report_ms == 6960u,
+                        CHECK(first_report_ms == 60960u,
                               "six-slot survey first-report timing drifted");
-                        CHECK(last_report_start_ms == 18310u,
+                        CHECK(last_report_start_ms == 72310u,
                               "six-slot survey final-report timing drifted");
-                        CHECK(no_anchor_evidence_ms == 21580u,
+                        CHECK(no_anchor_evidence_ms == 75580u,
                               "six-slot survey evidence horizon drifted");
                         CHECK(current_wake_ms ==
                                   SURVEY_GATEWAY_BENCH_BUDGET_MS &&
                                   current_wake_ms < no_anchor_evidence_ms,
-                              "20-second bench budget was not preserved as a generic timeout boundary");
+                              "70-second bench budget was not preserved as a generic timeout boundary");
                         if (old_three_phase_wake_ms < first_report_ms) {
                             reproduced_old_three_phase_close = true;
                         }
@@ -945,7 +1025,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                         config.slot_ms == 40u &&
                         report_grace_windows_ms[grace_index] == 1000u) {
                         covered_50_slot_case = true;
-                        CHECK(first_report_ms == 14000u &&
+                        CHECK(first_report_ms == 68000u &&
                                   first_report_ms <
                                       SURVEY_GATEWAY_BENCH_BUDGET_MS,
                               "runtime rounds did not shorten 50-slot discovery");
@@ -1380,6 +1460,7 @@ int main(void)
                                          UWB_WAKE_CLAIM_LEN) > 0u,
           "wake claim airtime unavailable");
     test_maintained_normal_click_phy_and_capacity_contract();
+    test_survey_multihop_start_lead_covers_retained_forward();
     test_survey_phase_sweep_and_old_defect_sensitivity();
     test_claim_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();

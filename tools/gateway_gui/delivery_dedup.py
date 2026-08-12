@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .protocol import (
+    DecodeError,
     FLAG_DIAGNOSTIC,
     FLAG_GATEWAY_ACK_REQUIRED,
     MSG_ANCHOR_HEARTBEAT,
@@ -26,6 +27,9 @@ from .protocol import (
     MSG_SURVEY_DISCOVERY_REPORT,
     MSG_SURVEY_PAIR_RESULT,
     Packet,
+    is_gateway_assignment_publisher_event,
+    validate_gateway_command_event_packet,
+    validate_gateway_local_command_result_packet,
 )
 
 
@@ -33,9 +37,9 @@ DEFAULT_MAX_ENTRIES = 1024
 DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024
 
 # These are the packet classes that the gateway treats as reliable host
-# output. The ACK flag remains part of admission for packets originating in
-# the mesh; gateway-local command events are already terminal host-visible
-# records and intentionally have no gateway-ACK flag on the wire.
+# output. Gateway-local assignment publication is the only command-event
+# class with ACK-required host custody; generic command telemetry remains
+# best effort and intentionally consumes no durable-delivery cache entry.
 GATEWAY_ACK_REQUIRED_MESSAGE_TYPES = frozenset(
     {
         MSG_CLICK_REPORT,
@@ -69,6 +73,33 @@ class PacketIdentity:
     gateway_id: int | None = None
 
 
+@dataclass(frozen=True)
+class CommandEventIdentity:
+    """Identity for a command event accepted into the host delivery cache.
+
+    Only the durable assignment-publication batch has this cross-reset
+    semantic identity. Other command events use their exact stream identity,
+    so a new live retry cannot be mistaken for a durable replay.
+    """
+
+    gateway_id: int | None
+    command_kind: int
+    command_id: int
+    gateway_epoch: int
+    correlation_id: int
+    gateway_sequence: int
+    host_session_id: int
+    host_sequence: int
+    stage: int
+    anchor_id: int
+    discovery_slot: int
+    pair_initiator_id: int
+    pair_responder_id: int
+
+
+DeliveryIdentity = PacketIdentity | CommandEventIdentity
+
+
 class PacketDisposition(str, Enum):
     NEW = "new"
     DUPLICATE = "duplicate"
@@ -78,7 +109,7 @@ class PacketDisposition(str, Enum):
 @dataclass(frozen=True)
 class PacketDeliveryDecision:
     disposition: PacketDisposition
-    identity: PacketIdentity | None
+    identity: DeliveryIdentity | None
     cached: bool
 
     @property
@@ -105,14 +136,13 @@ def is_host_delivery_packet(packet: Packet) -> bool:
 
     Mesh records enter this cache only when the protocol explicitly marks them
     as gateway-ACK-required.  Diagnostic mesh data must carry both the ACK and
-    diagnostic flags.  Gateway command events are generated locally for the
-    GUI and are reliable terminal telemetry even though their envelope flags
-    are zero.  Best-effort status/diagnostic traffic therefore remains visible
-    on every arrival and consumes no cache budget.
+    diagnostic flags. Assignment-publication command events must carry the
+    explicit ACK-required marker; generic status telemetry remains visible on
+    every arrival and consumes no cache budget.
     """
 
     if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
-        return True
+        return packet.flags == FLAG_GATEWAY_ACK_REQUIRED
     if packet.msg_type in GATEWAY_ACK_REQUIRED_MESSAGE_TYPES:
         return (packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0
     if packet.msg_type == MSG_MESH_DATA:
@@ -145,7 +175,7 @@ class GatewayPacketDeduplicator:
         self.max_entries = max_entries
         self.max_payload_bytes = max_payload_bytes
         self._gateway_id = self._validate_gateway_id(gateway_id)
-        self._entries: OrderedDict[PacketIdentity, _CachedPacket] = OrderedDict()
+        self._entries: OrderedDict[DeliveryIdentity, _CachedPacket] = OrderedDict()
         self._cached_payload_bytes = 0
 
     @staticmethod
@@ -187,6 +217,74 @@ class GatewayPacketDeduplicator:
             gateway_id=gateway_id,
         )
 
+    def _identity_and_candidate(
+        self, packet: Packet
+    ) -> tuple[DeliveryIdentity, _CachedPacket] | None:
+        if (
+            packet.msg_type == MSG_COMMAND_RESULT
+            and packet.src_id == packet.dst_id
+        ):
+            try:
+                validate_gateway_local_command_result_packet(packet)
+            except DecodeError:
+                return None
+            return (
+                self._identity(packet, self._gateway_id),
+                _CachedPacket(packet.flags, bytes(packet.payload)),
+            )
+        if packet.msg_type != MSG_GATEWAY_COMMAND_EVENT:
+            return (
+                self._identity(packet, self._gateway_id),
+                _CachedPacket(packet.flags, bytes(packet.payload)),
+            )
+
+        try:
+            event = validate_gateway_command_event_packet(packet)
+        except DecodeError:
+            return None
+
+        if packet.flags != FLAG_GATEWAY_ACK_REQUIRED:
+            # Live progress and retry events get a unique reserved stream
+            # identity. Snapshot/replay delivery bits are transport-only;
+            # every attempt, status, outcome, and progress field remains
+            # exact, so a same-event semantic mutation fails closed.
+            normalized = bytearray(packet.payload)
+            normalized[4] &= ~0x0E
+            return (
+                self._identity(packet, self._gateway_id),
+                _CachedPacket(packet.flags, bytes(normalized)),
+            )
+        if not is_gateway_assignment_publisher_event(event):
+            return None
+
+        identity = CommandEventIdentity(
+            gateway_id=self._gateway_id,
+            command_kind=event.command_kind,
+            command_id=event.command_id,
+            gateway_epoch=event.route_epoch,
+            correlation_id=event.correlation_id,
+            gateway_sequence=event.gateway_sequence,
+            host_session_id=event.host_session_id,
+            host_sequence=event.host_sequence,
+            stage=event.stage,
+            anchor_id=event.anchor_id,
+            discovery_slot=event.discovery_slot,
+            pair_initiator_id=event.pair_initiator_id,
+            pair_responder_id=event.pair_responder_id,
+        )
+
+        # A replayed assignment publication has a fresh stream/event sequence
+        # and marks only its delivery with REPLAY. Relay provenance and loss
+        # counters are likewise transport observations. Keep every persisted
+        # outcome/progress field, including the table-round attempt, so a
+        # changed publication remains a fail-closed conflict.
+        normalized = bytearray(packet.payload)
+        normalized[4] &= ~0x04
+        normalized[28:32] = b"\x00" * 4
+        normalized[56:64] = b"\x00" * 8
+        normalized[74:77] = b"\x00" * 3
+        return identity, _CachedPacket(packet.flags, bytes(normalized))
+
     @property
     def size(self) -> int:
         return len(self._entries)
@@ -217,8 +315,10 @@ class GatewayPacketDeduplicator:
         if not is_host_delivery_packet(packet):
             return PacketDeliveryDecision(PacketDisposition.NEW, None, False)
 
-        identity = self._identity(packet, self._gateway_id)
-        candidate = _CachedPacket(packet.flags, bytes(packet.payload))
+        binding = self._identity_and_candidate(packet)
+        if binding is None:
+            return PacketDeliveryDecision(PacketDisposition.CONFLICT, None, False)
+        identity, candidate = binding
         previous = self._entries.get(identity)
         if previous is not None:
             self._entries.move_to_end(identity)
@@ -246,10 +346,12 @@ class GatewayPacketDeduplicator:
             or not is_host_delivery_packet(packet)
         ):
             return True
-        identity = self._identity(packet, self._gateway_id)
+        binding = self._identity_and_candidate(packet)
+        if binding is None:
+            return False
+        identity, candidate = binding
         if decision.identity != identity:
             return False
-        candidate = _CachedPacket(packet.flags, bytes(packet.payload))
         previous = self._entries.get(identity)
         if previous is not None:
             return previous == candidate
@@ -257,7 +359,7 @@ class GatewayPacketDeduplicator:
         return True
 
     def _commit_candidate(
-        self, identity: PacketIdentity, candidate: _CachedPacket
+        self, identity: DeliveryIdentity, candidate: _CachedPacket
     ) -> None:
         self._evict_for(candidate)
         self._entries[identity] = candidate

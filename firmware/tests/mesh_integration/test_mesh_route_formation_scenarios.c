@@ -74,6 +74,23 @@ static void set_test_phase(const char *phase)
     }                                                                      \
 } while (0)
 
+static int pending_gateway_ack_confirm_packet(
+    const struct mesh_sim_world *world,
+    uint8_t node_index,
+    struct proto_packet *packet)
+{
+    uint8_t payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+    size_t payload_len = 0u;
+
+    return mesh_relay_pending_gateway_ack_confirm_wire(
+        &world->roles[node_index].relay,
+        mesh_sim_time_ms(world->now_us),
+        packet,
+        payload,
+        sizeof(payload),
+        &payload_len);
+}
+
 static uint64_t max_u64(uint64_t first, uint64_t second)
 {
     return first > second ? first : second;
@@ -1526,9 +1543,10 @@ static int run_ttl_ladder_data_case(void)
         }
     }
     CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[origin].relay.pending.packet.msg_type ==
-          MSG_GATEWAY_ACK_CONFIRM);
-    confirm_packet = world.roles[origin].relay.pending.packet;
+    CHECK(world.roles[origin].relay.pending.gateway_ack_confirm_pending);
+    CHECK(pending_gateway_ack_confirm_packet(&world,
+                                             origin,
+                                             &confirm_packet) == PROTO_OK);
     CHECK(confirm_packet.src_id == data_packet.src_id);
     CHECK(confirm_packet.dst_id == data_packet.dst_id);
     CHECK(confirm_packet.session_id == data_packet.session_id);
@@ -2185,9 +2203,10 @@ static int run_unseeded_click_route_custody_case(void)
           MESH_SIM_OK);
     CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[origin].relay.pending.packet.msg_type ==
-          MSG_GATEWAY_ACK_CONFIRM);
-    confirm_packet = world.roles[origin].relay.pending.packet;
+    CHECK(world.roles[origin].relay.pending.gateway_ack_confirm_pending);
+    CHECK(pending_gateway_ack_confirm_packet(&world,
+                                             origin,
+                                             &confirm_packet) == PROTO_OK);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[origin].id) == 0u);

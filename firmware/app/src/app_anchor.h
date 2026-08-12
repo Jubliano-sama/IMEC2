@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 struct app_mesh_report_callbacks;
+struct app_durable_state_gateway_assignment_identity;
 
 const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void);
 int app_anchor_init(void);
@@ -19,6 +20,13 @@ int app_anchor_start_gateway_role(void);
  * when retry is required.
  */
 int gateway_resume_pending_assignment_publication(void);
+/* Release the exact assignment lease only after publisher state is terminal. */
+int app_anchor_gateway_assignment_publication_complete(void);
+/* Same-boot ambiguous durable-save adoption retains this RAM-only token.  It
+ * may be converted once only after the exact durable identity is read back. */
+int app_anchor_gateway_assignment_adopted_result_commit(
+    const struct app_durable_state_gateway_assignment_identity *identity,
+    uint16_t acknowledged_count);
 int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                             const uint8_t *payload,
                                             size_t payload_len,
@@ -51,13 +59,13 @@ enum gateway_survey_result_preflight_outcome {
 };
 
 enum gateway_survey_result_preflight_outcome
-gateway_survey_auto_preflight_result(const struct proto_packet *packet,
-                                     const uint8_t *payload,
-                                     size_t payload_len,
-                                     uint64_t received_at_ms);
-void gateway_survey_auto_commit_preflight_result(void);
-void gateway_survey_auto_discard_preflight_result(void);
-bool gateway_survey_auto_owns_pending_command(
+gateway_survey_preflight_result(const struct proto_packet *packet,
+                                const uint8_t *payload,
+                                size_t payload_len,
+                                uint64_t received_at_ms);
+void gateway_survey_commit_preflight_result(void);
+void gateway_survey_discard_preflight_result(void);
+bool gateway_survey_owns_pending_control(
     const struct proto_packet *command,
     enum command_id command_id);
 #if defined(CONFIG_IMEC_GATEWAY_BLE)

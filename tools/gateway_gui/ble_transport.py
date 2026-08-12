@@ -56,6 +56,7 @@ class BleTransport:
         self._connecting_client: Any = None
         self._connection_generation = 0
         self._decoder = GatewayReceiveBuffer()
+        self._write_lock: asyncio.Lock | None = None
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -239,7 +240,10 @@ class BleTransport:
     ) -> None:
         if (
             generation != self._connection_generation
-            or self._client is not client
+            or (
+                self._client is not client
+                and self._connecting_client is not client
+            )
         ):
             return
         result = decoder.feed(bytes(data))
@@ -286,7 +290,13 @@ class BleTransport:
         self._submit(self._send_frame(frame, label), f"send {label}")
 
     async def _send_frame(self, frame: bytes, label: str) -> None:
+        if self._write_lock is None:
+            self._write_lock = asyncio.Lock()
+        # Bind a queued write to the connection that was current when the
+        # operation was submitted.  Sampling these after the lock wait lets a
+        # write queued behind another frame silently migrate to a reconnect.
         client = self._client
+        generation = self._connection_generation
         if client is None or not client.is_connected:
             raise RuntimeError("gateway is not connected")
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
@@ -294,21 +304,34 @@ class BleTransport:
             raise RuntimeError("packet RX characteristic disappeared")
         chunk_size = int(getattr(characteristic, "max_write_without_response_size", 20) or 20)
         chunk_size = max(1, min(chunk_size, 244))
-        chunks = 0
-        for offset in range(0, len(frame), chunk_size):
-            await client.write_gatt_char(
-                characteristic,
-                frame[offset:offset + chunk_size],
-                response=False,
+        async with self._write_lock:
+            if (
+                generation != self._connection_generation
+                or self._client is not client
+                or not client.is_connected
+            ):
+                raise RuntimeError("gateway connection changed while waiting to write frame")
+            chunks = 0
+            for offset in range(0, len(frame), chunk_size):
+                if (
+                    generation != self._connection_generation
+                    or self._client is not client
+                    or not client.is_connected
+                ):
+                    raise RuntimeError("gateway disconnected while writing frame")
+                await client.write_gatt_char(
+                    characteristic,
+                    frame[offset:offset + chunk_size],
+                    response=False,
+                )
+                chunks += 1
+            self._emit(
+                "tx_written",
+                label=label,
+                byte_count=len(frame),
+                chunks=chunks,
+                raw=frame,
             )
-            chunks += 1
-        self._emit(
-            "tx_written",
-            label=label,
-            byte_count=len(frame),
-            chunks=chunks,
-            raw=frame,
-        )
 
     def shutdown(self) -> None:
         if not self._thread.is_alive():

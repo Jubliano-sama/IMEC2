@@ -69,7 +69,7 @@ set(IMEC_STACK_STRESS_BUILD OFF CACHE BOOL
 set(IMEC_WATCHDOG_BYPASS_BUILD OFF CACHE BOOL
     "Disable watchdog reset policy for supervised bench captures")
 set(IMEC_DEPLOYABLE_MESH_PRESET OFF)
-set(IMEC_USE_HARDWARE_ANCHOR_ID OFF)
+set(IMEC_USE_HARDWARE_DEVICE_ID OFF)
 set(IMEC_DEVICE_ID "" CACHE STRING "Override DEVICE_ID, for example 0x1111222233334444ull")
 set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
 set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
@@ -91,6 +91,9 @@ if(IMEC_BUILD_PRESET)
     elseif(IMEC_BUILD_PRESET STREQUAL "mesh_clicker")
         set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway" FORCE)
         set(IMEC_PRESET_EXTRA_CONF "mesh-clicker.conf")
+        set(IMEC_DEVICE_ID "" CACHE STRING
+            "Production mesh clickers always use the hardware-derived ID" FORCE)
+        set(IMEC_USE_HARDWARE_DEVICE_ID ON)
         set(IMEC_MESH_ROUTE_TEST_BUILD ON CACHE BOOL
             "Build the connected-routing mesh runtime" FORCE)
         set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "IMEC Mesh Clicker" CACHE STRING
@@ -136,7 +139,7 @@ if(IMEC_BUILD_PRESET)
             "BLE device name for mesh-route test builds" FORCE)
         set(IMEC_DEVICE_ID "" CACHE STRING
             "Production mesh anchors always use the hardware-derived ID" FORCE)
-        set(IMEC_USE_HARDWARE_ANCHOR_ID ON)
+        set(IMEC_USE_HARDWARE_DEVICE_ID ON)
         set(IMEC_STACK_DIAGNOSTICS_BUILD ON CACHE BOOL "Enable exact-preset RTT stack diagnostics" FORCE)
         if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor")
             set(IMEC_DEPLOYABLE_MESH_PRESET ON)
@@ -189,7 +192,27 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             "CONFIG_BT_BUF_ACL_TX_SIZE=251\n"
             "CONFIG_BT_CTLR_DATA_LENGTH_MAX=251\n"
             "CONFIG_BT_LOG_LEVEL_WRN=y\n"
-            "CONFIG_IMEC_GATEWAY_BLE=y\n"
+            "CONFIG_IMEC_GATEWAY_BLE=y\n")
+        set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 4256)
+        if(IMEC_BUILD_PRESET STREQUAL "mesh_gateway")
+            # The exact production gateway does not sample ADC inputs and does
+            # not request a secured or bonded BLE link. Keep controller crypto
+            # available to the Bluetooth stack, but compile unused controller
+            # key exchange/encryption and GATT cache/read-multiple surfaces out.
+            # Service Changed remains explicit so the host can rediscover the
+            # new attribute table on the same physical gateway identity.
+            file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+                "CONFIG_ADC=n\n"
+                "CONFIG_BT_CTLR_ECDH=n\n"
+                "CONFIG_BT_CTLR_LE_ENC=n\n"
+                "CONFIG_BT_GATT_CACHING=n\n"
+                "CONFIG_BT_GATT_READ_MULTIPLE=n\n"
+                "CONFIG_BT_GATT_READ_MULT_VAR_LEN=n\n"
+                "CONFIG_BT_GATT_SERVICE_CHANGED=y\n"
+                "CONFIG_BT_CTLR_CRYPTO=y\n")
+            set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 4480)
+        endif()
+        file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             # The gateway is the flash-constrained production role. Typed RTT
             # records retain protocol/stack evidence; compile ordinary Zephyr
             # logs above errors out of this exact preset so safety validators
@@ -201,17 +224,18 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             # preserve the gateway's required static RAM reserve, including
             # the full broadcast-command replay commitment.
             "CONFIG_LOG_BUFFER_SIZE=1024\n"
-            # The exact compiler chain for gateway assignment-result encoding
-            # is 3152 bytes; retain the required 1024-byte runtime margin plus
-            # one alignment step without weakening the global RAM-headroom gate.
-            "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4256\n")
+            # The exact preset selects 4480 for its known 3440-byte application
+            # compiler chain plus the required 1024-byte runtime margin and one
+            # alignment step. Complete platform closure remains a promotion
+            # gate; generic gateway builds retain their prior 4256-byte setting.
+            "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=${IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE}\n")
     elseif(FIRMWARE_ROLE STREQUAL "anchor" AND
            NOT IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             # Typed stack/protocol evidence has its own RTT channel. Keep the
             # ordinary deferred warning/error ring bounded so the five-result
             # survey journal leaves the required 10 KiB static RAM reserve.
-            "CONFIG_LOG_BUFFER_SIZE=2048\n")
+            "CONFIG_LOG_BUFFER_SIZE=1920\n")
     endif()
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
@@ -251,12 +275,28 @@ if(IMEC_STACK_STRESS_BUILD)
 endif()
 
 if(IMEC_WATCHDOG_BYPASS_BUILD)
-    if(NOT IMEC_DEPLOYABLE_MESH_PRESET)
+    if(NOT IMEC_DEPLOYABLE_MESH_PRESET AND
+       NOT IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
         message(FATAL_ERROR
-            "IMEC_WATCHDOG_BYPASS_BUILD requires mesh_clicker, mesh_anchor, or mesh_gateway")
+            "IMEC_WATCHDOG_BYPASS_BUILD requires a deployable mesh preset or mesh_anchor_forcedhop")
     endif()
     list(APPEND EXTRA_CONF_FILE
         "${CMAKE_CURRENT_LIST_DIR}/conf/watchdog-bypass.conf")
+endif()
+
+if(IMEC_DEPLOYABLE_MESH_PRESET OR
+   IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
+    set(IMEC_DURABLE_STATE_CONF
+        "${CMAKE_CURRENT_BINARY_DIR}/imec-durable-state.conf")
+    file(WRITE "${IMEC_DURABLE_STATE_CONF}"
+        "CONFIG_FLASH=y\n"
+        "CONFIG_FLASH_MAP=y\n"
+        "CONFIG_FLASH_PAGE_LAYOUT=y\n"
+        "CONFIG_FLASH_LOAD_SIZE=0x7a000\n"
+        "CONFIG_NVS=y\n"
+        "CONFIG_NVS_DATA_CRC=y\n"
+        "CONFIG_IMEC_DURABLE_STATE=y\n")
+    list(APPEND EXTRA_CONF_FILE "${IMEC_DURABLE_STATE_CONF}")
 endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
@@ -274,7 +314,8 @@ elseif(FIRMWARE_ROLE STREQUAL "anchor")
 elseif(FIRMWARE_ROLE STREQUAL "gateway")
     target_compile_definitions(app PRIVATE
         DEVICE_ROLE=3
-        APP_NODE_COMM_GATEWAY_ROLE=1)
+        APP_NODE_COMM_GATEWAY_ROLE=1
+        IMEC_MESH_RELAY_GATEWAY_ONLY=1)
 else()
     message(FATAL_ERROR "FIRMWARE_ROLE must be clicker, anchor, or gateway")
 endif()
@@ -284,17 +325,19 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_click_event_sequence.c
     src/app_clicker_event_runtime.c
     src/app_state.c
+    src/app_radio_guard.c
     src/app_device_identity.c
     src/app_board.c
+    src/app_gateway_control_sequence.c
     src/app_gateway_ble.c
     src/app_gateway_ble_stream.c
     src/app_gateway_command_result.c
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
     src/app_gateway_survey_observability.c
-    src/app_gateway_survey_event_runtime.c
     src/app_gateway_survey_round.c
     src/app_gateway_collection_eack.c
+    src/app_gateway_collection_recovery.c
     src/app_gateway_eack_retry.c
     src/app_gateway_eack_policy.c
     src/app_clicker.c
@@ -347,6 +390,9 @@ set(IMEC_APP_LOCAL_SOURCES
     src/dwm3000_driver_handler_contract.c
 )
 
+target_sources_ifdef(CONFIG_IMEC_DURABLE_STATE app PRIVATE
+    src/app_durable_state.c)
+
 target_sources(app PRIVATE
     ../src/node_comm.c
     ../src/node_transaction.c
@@ -393,6 +439,7 @@ target_sources(app PRIVATE
     ../src/status.c
     ../src/route.c
     ../src/survey.c
+    ../src/survey_anchor_deadline.c
     ../src/survey_pair_planner.c
     ../src/survey_pair_round_runtime.c
     ../src/survey_round_control.c
@@ -427,11 +474,11 @@ target_compile_definitions(app PRIVATE
     IMEC_BUILD_TIMESTAMP="${IMEC_BUILD_TIMESTAMP}"
     IMEC_BOARD_TARGET="${BOARD}"
     IMEC_STACK_DIAG_BUILD_ID="${IMEC_STACK_DIAG_BUILD_ID}"
-    IMEC_USE_HARDWARE_ANCHOR_ID=$<BOOL:${IMEC_USE_HARDWARE_ANCHOR_ID}>
+    IMEC_USE_HARDWARE_DEVICE_ID=$<BOOL:${IMEC_USE_HARDWARE_DEVICE_ID}>
 )
-# The verifier consumes both compiler frame records and IPA call graphs.  The
-# latter is required for root-to-function attribution; missing graphs block a
-# deployable mesh capture or flash.
+# The verifier closes every application-owned frame and synchronous call edge.
+# Platform and controller code keeps its SDK-owned stack contract and is
+# covered by the required on-target whole-thread high-watermark capture.
 target_compile_options(app PRIVATE -fstack-usage -fdump-ipa-cgraph)
 if(IMEC_DEVICE_ID)
     target_compile_definitions(app PRIVATE DEVICE_ID=${IMEC_DEVICE_ID})

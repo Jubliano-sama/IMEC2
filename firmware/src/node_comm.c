@@ -81,78 +81,55 @@ _Static_assert(sizeof(profile_policies) / sizeof(profile_policies[0]) ==
                "every node communication profile needs immutable policy");
 
 /*
- * The request slot remains the only packet-custody record.  The shared
- * delivery machine is reconstructed from that record for each transition so
- * the architecture gains one explicit lifecycle contract without allocating
- * a second per-packet table (especially important for the gateway image).
+ * The state machine below is the live slot owner.  The other slot fields are
+ * physical scheduling/effect bookkeeping only: they describe a lease, a
+ * timer, or a backend guard, never a second delivery lifecycle.
  */
-static uint32_t delivery_event_generation(
-    const struct node_comm_request_slot *slot)
+static bool slot_is_terminal(const struct node_comm_request_slot *slot)
 {
-    /* The handle identifies the logical packet for its entire custody life;
-     * lease_generation is deliberately free to change on every RF lease. */
-    return slot != NULL && slot->handle != 0u ? slot->handle : 1u;
+    return slot != NULL && slot->terminal_pending;
 }
 
-static enum fw_delivery_state delivery_state_for_slot(
-    const struct node_comm_request_slot *slot)
+static bool slot_is_live(const struct node_comm_request_slot *slot)
+{
+    return slot != NULL && !slot->terminal_pending &&
+           slot->owner.delivery.identity.active;
+}
+
+static bool slot_is_in_use(const struct node_comm_request_slot *slot)
+{
+    return slot_is_terminal(slot) || slot_is_live(slot);
+}
+
+static uint32_t slot_handle(const struct node_comm_request_slot *slot)
 {
     if (slot == NULL) {
-        return FW_DELIVERY_EMPTY;
+        return 0u;
     }
-    switch (slot->state) {
-    case NODE_COMM_SLOT_READY:
-        return FW_DELIVERY_WAIT_TX;
-    case NODE_COMM_SLOT_WAIT_RETRY:
-        return slot->attempts_started != 0u ? FW_DELIVERY_RETRY :
-                                               FW_DELIVERY_WAIT_TX;
-    case NODE_COMM_SLOT_WAIT_RESOURCE:
-        return slot->attempts_started != 0u ? FW_DELIVERY_RETRY :
-                                               FW_DELIVERY_WAIT_TX;
-    case NODE_COMM_SLOT_LEASED:
-        if (slot->rf_started) {
-            return FW_DELIVERY_WAIT_ACK;
-        }
-        return FW_DELIVERY_WAIT_TX;
-    case NODE_COMM_SLOT_WAIT_CONFIRMATION:
-        return FW_DELIVERY_WAIT_ACK;
-    case NODE_COMM_SLOT_TERMINAL:
-        return FW_DELIVERY_FAILED;
-    case NODE_COMM_SLOT_FREE:
-    default:
-        return FW_DELIVERY_EMPTY;
-    }
+    return slot->terminal_pending ? slot->owner.terminal.handle :
+                                    (uint32_t)slot->owner.delivery.identity.operation_id;
 }
 
-static void delivery_machine_from_slot(
-    const struct node_comm_request_slot *slot,
-    struct fw_delivery_sm *machine)
+static uint32_t slot_delivery_generation(
+    const struct node_comm_request_slot *slot)
 {
-    uint16_t total_attempts;
-
-    fw_delivery_sm_init(machine);
-    if (slot == NULL || slot->state == NODE_COMM_SLOT_FREE) {
-        return;
-    }
-    machine->identity.operation_id = slot->handle;
-    machine->identity.generation = delivery_event_generation(slot);
-    machine->identity.active = true;
-    machine->state = delivery_state_for_slot(slot);
-    total_attempts = (uint16_t)slot->attempts_started +
-                     (uint16_t)slot->backend_attempts_started;
-    machine->attempts_started = total_attempts > UINT8_MAX ?
-                                UINT8_MAX : (uint8_t)total_attempts;
-    machine->owns_custody = true;
+    return slot_is_live(slot) ? slot->owner.delivery.identity.generation : 0u;
 }
 
-static struct fw_event delivery_event_for_slot(
-    const struct node_comm_request_slot *slot,
-    enum fw_event_type type,
-    uint8_t flags)
+static bool slot_lease_rf_started(const struct node_comm_request_slot *slot)
+{
+    return slot_is_live(slot) && slot->lease_active &&
+           slot->owner.delivery.state == FW_DELIVERY_WAIT_ACK;
+}
+
+static struct fw_event delivery_event(uint32_t handle,
+                                      uint32_t generation,
+                                      enum fw_event_type type,
+                                      uint8_t flags)
 {
     return (struct fw_event) {
-        .operation_id = slot == NULL ? 0u : slot->handle,
-        .generation = delivery_event_generation(slot),
+        .operation_id = handle,
+        .generation = generation,
         .target = FW_MACHINE_DELIVERY,
         .source = FW_EVENT_SOURCE_SERVICE,
         .type = type,
@@ -162,90 +139,149 @@ static struct fw_event delivery_event_for_slot(
     };
 }
 
-static int delivery_apply_machine(struct node_comm_request_slot *slot,
-                                  struct fw_delivery_sm *machine,
-                                  enum fw_event_type type,
-                                  uint8_t flags)
+static void delivery_trace(struct node_comm *comm,
+                           enum node_comm_delivery_trace_kind kind,
+                           const struct fw_event *event,
+                           const struct fw_transition *transition,
+                           const struct node_comm_terminal_event *terminal)
+{
+    if (comm != NULL && comm->delivery_trace != NULL) {
+        comm->delivery_trace(kind, event, transition, terminal,
+                             comm->delivery_trace_context);
+    }
+}
+
+static void delivery_resource_wait_trace(
+    struct node_comm *comm,
+    const struct node_comm_request_slot *slot,
+    const struct node_comm_resource_wait_owner *owner,
+    enum node_comm_delivery_trace_kind kind,
+    enum fw_sm_result result,
+    uint64_t now_ms)
 {
     struct fw_transition transition;
     struct fw_event event;
-    enum fw_sm_result result;
 
-    if (slot == NULL || machine == NULL || slot->handle == 0u) {
-        return -EINVAL;
+    if (comm == NULL || slot == NULL || owner == NULL ||
+        !slot_is_live(slot) ||
+        (kind != NODE_COMM_DELIVERY_TRACE_RESOURCE_BLOCKED &&
+         kind != NODE_COMM_DELIVERY_TRACE_RESOURCE_RESUMED)) {
+        return;
     }
-    event = delivery_event_for_slot(slot, type, flags);
-    result = fw_delivery_sm_handle(machine, &event, &transition);
-    return result == FW_SM_APPLIED || result == FW_SM_IGNORED ? 0 : -EPROTO;
+    event = delivery_event(
+        owner->handle,
+        owner->delivery_generation,
+        kind == NODE_COMM_DELIVERY_TRACE_RESOURCE_BLOCKED ?
+            FW_EVENT_RF_DEFERRED : FW_EVENT_RETRY_ALLOWED,
+        0u);
+    event.timestamp_ms = now_ms;
+    transition = (struct fw_transition) {
+        .machine = FW_MACHINE_DELIVERY,
+        .event = event.type,
+        .result = result,
+        .old_state = (uint16_t)slot->owner.delivery.state,
+        .new_state = (uint16_t)slot->owner.delivery.state,
+        .effect = {
+            .operation_id = owner->handle,
+            .generation = owner->delivery_generation,
+            .owner = FW_MACHINE_DELIVERY,
+            .type = FW_EFFECT_NONE,
+        },
+    };
+    delivery_trace(comm, kind, &event, &transition, NULL);
 }
 
-static int delivery_apply_slot(struct node_comm_request_slot *slot,
-                               enum fw_event_type type,
-                               uint8_t flags)
+static int delivery_handle_event(struct node_comm *comm,
+                                 struct node_comm_request_slot *slot,
+                                 const struct fw_event *event,
+                                 struct fw_transition *transition_out,
+                                 bool emit_trace)
 {
-    struct fw_delivery_sm machine;
-
-    delivery_machine_from_slot(slot, &machine);
-    return delivery_apply_machine(slot, &machine, type, flags);
-}
-
-static int delivery_begin(struct node_comm_request_slot *slot)
-{
-    struct fw_delivery_sm machine;
     struct fw_transition transition;
-    struct fw_event event;
     enum fw_sm_result result;
 
-    if (slot == NULL || slot->handle == 0u) {
+    if (comm == NULL || slot == NULL || event == NULL ||
+        !fw_event_validate(event)) {
         return -EINVAL;
     }
-    fw_delivery_sm_init(&machine);
-    /* Route and connection coordination are outside node_comm.  Its delivery
-     * lifecycle begins when a request enters this transport-ready queue. */
-    event = delivery_event_for_slot(
-        slot, FW_EVENT_PACKET_OWNED,
+    result = fw_delivery_sm_handle(&slot->owner.delivery, event, &transition);
+    if (emit_trace) {
+        delivery_trace(comm, NODE_COMM_DELIVERY_TRACE_TRANSITION,
+                       event, &transition, NULL);
+    }
+    if (transition_out != NULL) {
+        *transition_out = transition;
+    }
+    if (result == FW_SM_APPLIED || result == FW_SM_IGNORED) {
+        return 0;
+    }
+    return result == FW_SM_STALE ? -ESTALE : -EPROTO;
+}
+
+static int delivery_apply(struct node_comm *comm,
+                          struct node_comm_request_slot *slot,
+                          enum fw_event_type type,
+                          uint8_t flags)
+{
+    struct fw_event event;
+
+    if (!slot_is_live(slot)) {
+        return -ESTALE;
+    }
+    event = delivery_event(slot_handle(slot), slot_delivery_generation(slot),
+                           type, flags);
+    return delivery_handle_event(comm, slot, &event, NULL, true);
+}
+
+static int delivery_begin(struct node_comm *comm,
+                          struct node_comm_request_slot *slot,
+                          uint32_t handle,
+                          uint32_t generation)
+{
+    struct fw_event event;
+
+    if (comm == NULL || slot == NULL || handle == 0u || generation == 0u) {
+        return -EINVAL;
+    }
+    fw_delivery_sm_init(&slot->owner.delivery);
+    event = delivery_event(
+        handle, generation, FW_EVENT_PACKET_OWNED,
         FW_EVENT_FLAG_ROUTE_READY | FW_EVENT_FLAG_CONNECTION_READY);
-    result = fw_delivery_sm_handle(&machine, &event, &transition);
-    return result == FW_SM_APPLIED ? 0 : -EPROTO;
+    return delivery_handle_event(comm, slot, &event, NULL, true);
 }
 
 static int delivery_validate_transport_admission(
+    struct node_comm *comm,
     struct node_comm_request_slot *slot)
 {
-    struct fw_delivery_sm machine;
-
-    if (slot == NULL) {
-        return -EINVAL;
+    if (!slot_is_live(slot)) {
+        return -ESTALE;
     }
-    delivery_machine_from_slot(slot, &machine);
-    if (machine.state == FW_DELIVERY_RETRY) {
-        return delivery_apply_machine(slot, &machine,
-                                      FW_EVENT_RETRY_ALLOWED,
-                                      FW_EVENT_FLAG_PATH_USABLE);
+    if (slot->owner.delivery.state == FW_DELIVERY_RETRY) {
+        return delivery_apply(comm, slot, FW_EVENT_RETRY_ALLOWED,
+                              FW_EVENT_FLAG_PATH_USABLE);
     }
-    return machine.state == FW_DELIVERY_WAIT_TX ? 0 : -EPROTO;
+    return slot->owner.delivery.state == FW_DELIVERY_WAIT_TX ? 0 : -EPROTO;
 }
 
-static int delivery_backend_attempt(struct node_comm_request_slot *slot)
+static int delivery_backend_attempt(struct node_comm *comm,
+                                    struct node_comm_request_slot *slot)
 {
-    struct fw_delivery_sm machine;
     int ret;
 
-    if (slot == NULL) {
-        return -EINVAL;
+    if (!slot_is_live(slot)) {
+        return -ESTALE;
     }
-    delivery_machine_from_slot(slot, &machine);
-    ret = delivery_apply_machine(slot, &machine, FW_EVENT_ACK_TIMED_OUT,
-                                 0u);
+    ret = delivery_apply(comm, slot, FW_EVENT_ACK_TIMED_OUT, 0u);
     if (ret < 0) {
         return ret;
     }
-    ret = delivery_apply_machine(slot, &machine, FW_EVENT_RETRY_ALLOWED,
-                                 FW_EVENT_FLAG_PATH_USABLE);
+    ret = delivery_apply(comm, slot, FW_EVENT_RETRY_ALLOWED,
+                         FW_EVENT_FLAG_PATH_USABLE);
     if (ret < 0) {
         return ret;
     }
-    return delivery_apply_machine(slot, &machine, FW_EVENT_RF_STARTED, 0u);
+    return delivery_apply(comm, slot, FW_EVENT_RF_STARTED, 0u);
 }
 
 static uint64_t add_saturating_u64(uint64_t lhs, uint64_t rhs)
@@ -528,7 +564,7 @@ static void schedule_retry(struct node_comm_request_slot *slot,
         slot->retry_rounds++;
     }
     slot->retry_due_ms = add_saturating_u64(now_ms, retry_delay_ms(slot));
-    slot->state = NODE_COMM_SLOT_WAIT_RETRY;
+    slot->retry_due_active = true;
 }
 
 int node_comm_retry_backoff_ms(enum node_comm_delivery_profile profile,
@@ -567,8 +603,8 @@ static struct node_comm_request_slot *find_handle(struct node_comm *comm,
         return NULL;
     }
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
-        if (comm->slots[i].state != NODE_COMM_SLOT_FREE &&
-            comm->slots[i].handle == handle) {
+        if (slot_is_in_use(&comm->slots[i]) &&
+            slot_handle(&comm->slots[i]) == handle) {
             return &comm->slots[i];
         }
     }
@@ -578,8 +614,8 @@ static struct node_comm_request_slot *find_handle(struct node_comm *comm,
 static bool handle_in_use(const struct node_comm *comm, uint32_t handle)
 {
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
-        if (comm->slots[i].state != NODE_COMM_SLOT_FREE &&
-            comm->slots[i].handle == handle) {
+        if (slot_is_in_use(&comm->slots[i]) &&
+            slot_handle(&comm->slots[i]) == handle) {
             return true;
         }
     }
@@ -609,6 +645,15 @@ static uint32_t next_lease_generation(struct node_comm *comm)
     return comm->next_lease_generation;
 }
 
+static uint32_t next_delivery_generation(struct node_comm *comm)
+{
+    comm->next_delivery_generation++;
+    if (comm->next_delivery_generation == 0u) {
+        comm->next_delivery_generation++;
+    }
+    return comm->next_delivery_generation;
+}
+
 static uint32_t next_pause_generation(struct node_comm *comm)
 {
     comm->control.next_pause_generation++;
@@ -622,7 +667,7 @@ static void invalidate_lease(struct node_comm *comm,
                              struct node_comm_request_slot *slot)
 {
     slot->lease_generation = next_lease_generation(comm);
-    slot->rf_started = false;
+    slot->lease_active = false;
     slot->backend_guard_active = false;
     slot->backend_guard_expires_at_ms = 0u;
 }
@@ -630,14 +675,28 @@ static void invalidate_lease(struct node_comm *comm,
 static uint8_t total_attempts_started(
     const struct node_comm_request_slot *slot)
 {
-    uint16_t total;
-
     if (slot == NULL) {
         return 0u;
     }
-    total = (uint16_t)slot->attempts_started +
-            (uint16_t)slot->backend_attempts_started;
-    return total > UINT8_MAX ? UINT8_MAX : (uint8_t)total;
+    return slot->terminal_pending ? slot->owner.terminal.attempts_started :
+                                    slot->owner.delivery.attempts_started;
+}
+
+static uint8_t terminal_proof_for(
+    const struct node_comm_request_slot *slot,
+    enum node_comm_terminal_reason reason)
+{
+    if (slot == NULL || reason != NODE_COMM_TERMINAL_DELIVERED) {
+        return NODE_COMM_TERMINAL_PROOF_NONE;
+    }
+    switch (slot->request.profile) {
+    case NODE_COMM_PROFILE_RELIABLE_UPLINK:
+    case NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK:
+    case NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE:
+        return NODE_COMM_TERMINAL_PROOF_SEMANTIC;
+    default:
+        return NODE_COMM_TERMINAL_PROOF_TRANSPORT;
+    }
 }
 
 static bool terminalize(struct node_comm *comm,
@@ -646,12 +705,14 @@ static bool terminalize(struct node_comm *comm,
                         uint64_t terminal_at_ms)
 {
     enum fw_event_type event_type;
+    struct fw_event event;
+    struct fw_transition transition;
+    struct node_comm_terminal_event terminal;
 
     if (comm == NULL || slot == NULL) {
         return false;
     }
-    if (slot->state == NODE_COMM_SLOT_FREE ||
-        slot->state == NODE_COMM_SLOT_TERMINAL) {
+    if (!slot_is_in_use(slot) || slot_is_terminal(slot)) {
         return true;
     }
 
@@ -671,20 +732,27 @@ static bool terminalize(struct node_comm *comm,
         event_type = FW_EVENT_CANCEL;
         break;
     }
-    /* The slot remains authoritative for custody; this validates the shared
-     * lifecycle transition before the legacy terminal snapshot is committed. */
-    if (delivery_apply_slot(slot, event_type, 0u) < 0) {
+    event = delivery_event(slot_handle(slot), slot_delivery_generation(slot),
+                           event_type, 0u);
+    if (delivery_handle_event(comm, slot, &event, &transition, false) < 0) {
         return false;
     }
-    invalidate_lease(comm, slot);
-    slot->terminal = (struct node_comm_terminal_event) {
-        .handle = slot->handle,
+    terminal = (struct node_comm_terminal_event) {
+        .handle = slot_handle(slot),
+        .delivery_generation = event.generation,
         .client_token = slot->request.client_token,
         .terminal_at_ms = terminal_at_ms,
         .reason = reason,
         .attempts_started = total_attempts_started(slot),
+        .proof = terminal_proof_for(slot, reason),
     };
-    slot->state = NODE_COMM_SLOT_TERMINAL;
+    invalidate_lease(comm, slot);
+    slot->waiting_resource = false;
+    slot->retry_due_active = false;
+    slot->owner.terminal = terminal;
+    slot->terminal_pending = true;
+    delivery_trace(comm, NODE_COMM_DELIVERY_TRACE_TRANSITION,
+                   &event, &transition, &slot->owner.terminal);
     return true;
 }
 
@@ -698,8 +766,9 @@ static int validate_lease(struct node_comm *comm,
         return -EINVAL;
     }
     slot = find_handle(comm, lease->handle);
-    if (slot == NULL || slot->state != NODE_COMM_SLOT_LEASED ||
-        slot->lease_generation != lease->generation) {
+    if (!slot_is_live(slot) || !slot->lease_active ||
+        slot->lease_generation != lease->generation ||
+        slot_delivery_generation(slot) != lease->delivery_generation) {
         return -ESTALE;
     }
     *slot_out = slot;
@@ -726,7 +795,7 @@ static void rebase_retry_timers(struct node_comm *comm,
         struct node_comm_request_slot *slot = &comm->slots[i];
         uint64_t remaining;
 
-        if (slot->state != NODE_COMM_SLOT_WAIT_RETRY) {
+        if (!slot_is_live(slot) || !slot->retry_due_active) {
             continue;
         }
         remaining = slot->retry_due_ms > suspended_at_ms ?
@@ -787,6 +856,18 @@ void node_comm_init(struct node_comm *comm)
     }
     memset(comm, 0, sizeof(*comm));
     comm->control.state = NODE_COMM_STOPPED;
+}
+
+void node_comm_set_delivery_transition_trace(
+    struct node_comm *comm,
+    node_comm_delivery_transition_trace_fn trace,
+    void *context)
+{
+    if (comm == NULL) {
+        return;
+    }
+    comm->delivery_trace = trace;
+    comm->delivery_trace_context = context;
 }
 
 enum node_comm_lifecycle_state node_comm_state(const struct node_comm *comm)
@@ -947,8 +1028,7 @@ int node_comm_stop(struct node_comm *comm,
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         struct node_comm_request_slot *slot = &comm->slots[i];
 
-        if (slot->state == NODE_COMM_SLOT_FREE ||
-            slot->state == NODE_COMM_SLOT_TERMINAL) {
+        if (!slot_is_live(slot)) {
             continue;
         }
         if (mode == NODE_COMM_STOP_CANCEL_ALL) {
@@ -958,23 +1038,29 @@ int node_comm_stop(struct node_comm *comm,
             }
             continue;
         }
-        if (slot->state == NODE_COMM_SLOT_LEASED) {
-            bool rf_started = slot->rf_started;
+        if (slot->lease_active) {
+            bool rf_started = slot_lease_rf_started(slot);
 
             if (rf_started) {
-                if (slot->attempts_started >= slot->max_attempts) {
+                if (slot->owner.delivery.attempts_started >=
+                    slot->max_attempts) {
                     if (!terminalize(
                             comm, slot,
                             NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, now_ms)) {
                         terminalization_failed = true;
                     }
                 } else {
+                    if (delivery_apply(comm, slot, FW_EVENT_ACK_TIMED_OUT,
+                                       0u) < 0) {
+                        terminalization_failed = true;
+                        continue;
+                    }
                     invalidate_lease(comm, slot);
                     schedule_retry(slot, now_ms);
                 }
             } else {
                 invalidate_lease(comm, slot);
-                slot->state = NODE_COMM_SLOT_READY;
+                slot->retry_due_active = false;
             }
         }
     }
@@ -1009,7 +1095,7 @@ int node_comm_submit(struct node_comm *comm,
     }
     (void)node_comm_service(comm, now_ms);
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
-        if (comm->slots[i].state == NODE_COMM_SLOT_FREE) {
+        if (!slot_is_in_use(&comm->slots[i])) {
             slot = &comm->slots[i];
             break;
         }
@@ -1028,15 +1114,97 @@ int node_comm_submit(struct node_comm *comm,
     slot->retry_backoff_shift_cap =
         profile_policies[request->profile].retry_backoff_shift_cap;
     slot->priority = profile_policies[request->profile].priority;
-    slot->handle = handle;
     slot->enqueue_order = ++comm->enqueue_sequence;
-    slot->state = NODE_COMM_SLOT_READY;
-    if (delivery_begin(slot) < 0) {
+    if (delivery_begin(comm, slot, handle, next_delivery_generation(comm)) <
+        0) {
         memset(slot, 0, sizeof(*slot));
         return -EPROTO;
     }
     *handle_out = handle;
     return 0;
+}
+
+int node_comm_redrive_delivered(
+    struct node_comm *comm,
+    uint32_t handle,
+    uint64_t not_before_ms,
+    uint64_t absolute_deadline_ms,
+    uint64_t now_ms,
+    struct node_comm_terminal_event *prior_terminal_out)
+{
+    struct node_comm_request_slot before;
+    struct node_comm_request_slot *slot;
+    struct node_comm_request request;
+
+    if (comm == NULL || handle == 0u || prior_terminal_out == NULL ||
+        not_before_ms < now_ms || absolute_deadline_ms <= not_before_ms) {
+        return -EINVAL;
+    }
+    if (comm->control.state != NODE_COMM_RUNNING) {
+        return -ESHUTDOWN;
+    }
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot->request.profile != NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) {
+        return -EINVAL;
+    }
+    if (!slot_is_terminal(slot) ||
+        slot->owner.terminal.reason != NODE_COMM_TERMINAL_DELIVERED ||
+        slot->owner.terminal.attempts_started == 0u) {
+        return -EAGAIN;
+    }
+
+    before = *slot;
+    request = slot->request;
+    request.absolute_deadline_ms = absolute_deadline_ms;
+    memset(slot, 0, sizeof(*slot));
+    slot->request = request;
+    slot->retry_delay_ms =
+        profile_policies[request.profile].retry_delay_ms;
+    slot->max_attempts = profile_policies[request.profile].max_attempts;
+    slot->retry_backoff_shift_cap =
+        profile_policies[request.profile].retry_backoff_shift_cap;
+    slot->priority = profile_policies[request.profile].priority;
+    slot->lease_generation = next_lease_generation(comm);
+    slot->enqueue_order = ++comm->enqueue_sequence;
+    slot->retry_due_ms = not_before_ms;
+    slot->retry_due_active = true;
+    if (delivery_begin(comm, slot, handle, next_delivery_generation(comm)) <
+        0) {
+        *slot = before;
+        return -EPROTO;
+    }
+    *prior_terminal_out = before.owner.terminal;
+    return 0;
+}
+
+static bool same_priority_pre_rf_predecessor(
+    const struct node_comm *comm,
+    const struct node_comm_request_slot *candidate)
+{
+    if (comm == NULL || candidate == NULL) {
+        return false;
+    }
+    for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
+        const struct node_comm_request_slot *slot = &comm->slots[i];
+
+        if (slot == candidate || slot->priority != candidate->priority ||
+            slot->enqueue_order >= candidate->enqueue_order ||
+            !slot_is_live(slot)) {
+            continue;
+        }
+        if ((!slot->lease_active &&
+             slot->owner.delivery.state == FW_DELIVERY_WAIT_TX &&
+             !slot->retry_due_active) ||
+            (slot->owner.delivery.attempts_started == 0u &&
+             (slot->retry_due_active || slot->waiting_resource))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int node_comm_acquire(struct node_comm *comm,
@@ -1058,9 +1226,14 @@ int node_comm_acquire(struct node_comm *comm,
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         struct node_comm_request_slot *slot = &comm->slots[i];
 
-        if (slot->state != NODE_COMM_SLOT_READY &&
-            !(slot->state == NODE_COMM_SLOT_WAIT_RETRY &&
-              now_ms >= slot->retry_due_ms)) {
+        if (!slot_is_live(slot) || slot->lease_active ||
+            slot->waiting_resource ||
+            (slot->owner.delivery.state != FW_DELIVERY_WAIT_TX &&
+             slot->owner.delivery.state != FW_DELIVERY_RETRY) ||
+            (slot->retry_due_active && now_ms < slot->retry_due_ms)) {
+            continue;
+        }
+        if (same_priority_pre_rf_predecessor(comm, slot)) {
             continue;
         }
         if (selected == NULL ||
@@ -1073,17 +1246,19 @@ int node_comm_acquire(struct node_comm *comm,
     if (selected == NULL) {
         return -EAGAIN;
     }
-    if (delivery_validate_transport_admission(selected) < 0) {
+    if (delivery_validate_transport_admission(comm, selected) < 0) {
         return -EPROTO;
     }
     /* Bind only a successful path admission to the lease that will own RF. */
     selected->lease_generation = next_lease_generation(comm);
-    selected->state = NODE_COMM_SLOT_LEASED;
-    selected->rf_started = false;
+    selected->lease_active = true;
+    selected->retry_due_active = false;
     *lease_out = (struct node_comm_lease) {
-        .handle = selected->handle,
+        .handle = slot_handle(selected),
+        .delivery_generation = slot_delivery_generation(selected),
         .generation = selected->lease_generation,
-        .attempt_number = (uint8_t)(selected->attempts_started + 1u),
+        .attempt_number =
+            (uint8_t)(selected->owner.delivery.attempts_started + 1u),
     };
     return 0;
 }
@@ -1129,23 +1304,17 @@ int node_comm_lease_note_rf_started(struct node_comm *comm,
     if (comm->control.state == NODE_COMM_STOPPED) {
         return -ESHUTDOWN;
     }
-    if (slot->rf_started) {
+    if (slot_lease_rf_started(slot)) {
         return -EALREADY;
     }
-    if (slot->attempts_started >= slot->max_attempts) {
+    if (slot->owner.delivery.attempts_started >= slot->max_attempts) {
         if (!terminalize(comm, slot, NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
                          now_ms)) {
             return -EPROTO;
         }
         return -ENOSPC;
     }
-    ret = delivery_apply_slot(slot, FW_EVENT_RF_STARTED, 0u);
-    if (ret < 0) {
-        return ret;
-    }
-    slot->attempts_started++;
-    slot->rf_started = true;
-    return 0;
+    return delivery_apply(comm, slot, FW_EVENT_RF_STARTED, 0u);
 }
 
 int node_comm_lease_defer_pre_rf(struct node_comm *comm,
@@ -1162,19 +1331,19 @@ int node_comm_lease_defer_pre_rf(struct node_comm *comm,
     if (ret < 0) {
         return ret;
     }
-    if (slot->rf_started) {
+    if (slot_lease_rf_started(slot)) {
         return -EALREADY;
     }
-    ret = delivery_apply_slot(slot, FW_EVENT_RF_DEFERRED, 0u);
+    ret = delivery_apply(comm, slot, FW_EVENT_RF_DEFERRED, 0u);
     if (ret < 0) {
         return ret;
     }
     invalidate_lease(comm, slot);
     if (not_before_ms > now_ms) {
         slot->retry_due_ms = not_before_ms;
-        slot->state = NODE_COMM_SLOT_WAIT_RETRY;
+        slot->retry_due_active = true;
     } else {
-        slot->state = NODE_COMM_SLOT_READY;
+        slot->retry_due_active = false;
     }
     return 0;
 }
@@ -1193,10 +1362,10 @@ int node_comm_lease_defer_pre_rf_retry(
     if (ret < 0) {
         return ret;
     }
-    if (slot->rf_started) {
+    if (slot_lease_rf_started(slot)) {
         return -EALREADY;
     }
-    ret = delivery_apply_slot(slot, FW_EVENT_RF_DEFERRED, 0u);
+    ret = delivery_apply(comm, slot, FW_EVENT_RF_DEFERRED, 0u);
     if (ret < 0) {
         return ret;
     }
@@ -1209,44 +1378,130 @@ int node_comm_lease_wait_resource(struct node_comm *comm,
                                   const struct node_comm_lease *lease,
                                   uint64_t now_ms)
 {
+    struct node_comm_resource_wait_owner owner;
     struct node_comm_request_slot *slot;
     int ret;
 
-    release_backend_guard_for_lease(comm, lease);
+    ret = validate_lease(comm, lease, &slot);
+    if (ret < 0) {
+        return ret;
+    }
+    if (slot_lease_rf_started(slot)) {
+        return -EALREADY;
+    }
+    /* The backend callback is ending, so its publication guard no longer
+     * protects the lease. Service can now terminalize an expired owner before
+     * any resource-wait state is committed. */
+    slot->backend_guard_active = false;
+    slot->backend_guard_expires_at_ms = 0u;
     (void)node_comm_service(comm, now_ms);
     ret = validate_lease(comm, lease, &slot);
     if (ret < 0) {
         return ret;
     }
-    if (slot->rf_started) {
+    if (slot_lease_rf_started(slot)) {
         return -EALREADY;
     }
     invalidate_lease(comm, slot);
-    slot->state = NODE_COMM_SLOT_WAIT_RESOURCE;
+    slot->retry_due_active = false;
+    slot->waiting_resource = true;
+    owner = (struct node_comm_resource_wait_owner) {
+        .handle = slot_handle(slot),
+        .delivery_generation = slot_delivery_generation(slot),
+    };
+    delivery_resource_wait_trace(
+        comm, slot, &owner, NODE_COMM_DELIVERY_TRACE_RESOURCE_BLOCKED,
+        FW_SM_APPLIED, now_ms);
     return 0;
 }
 
+bool node_comm_resource_wait_owner_next(
+    const struct node_comm *comm,
+    size_t *cursor,
+    struct node_comm_resource_wait_owner *owner_out)
+{
+    if (comm == NULL || cursor == NULL || owner_out == NULL ||
+        *cursor > NODE_COMM_MAX_REQUESTS) {
+        return false;
+    }
+    for (size_t i = *cursor; i < NODE_COMM_MAX_REQUESTS; i++) {
+        const struct node_comm_request_slot *slot = &comm->slots[i];
+
+        if (!slot_is_live(slot) || !slot->waiting_resource) {
+            continue;
+        }
+        *owner_out = (struct node_comm_resource_wait_owner) {
+            .handle = slot_handle(slot),
+            .delivery_generation = slot_delivery_generation(slot),
+        };
+        *cursor = i + 1u;
+        return true;
+    }
+    *cursor = NODE_COMM_MAX_REQUESTS;
+    return false;
+}
+
 int node_comm_release_resource_wait(struct node_comm *comm,
-                                    uint32_t handle,
+                                    const struct node_comm_resource_wait_owner *owner,
                                     uint64_t now_ms)
 {
     struct node_comm_request_slot *slot;
 
-    if (comm == NULL || handle == 0u) {
+    if (comm == NULL || owner == NULL || owner->handle == 0u ||
+        owner->delivery_generation == 0u) {
         return -EINVAL;
     }
-    (void)node_comm_service(comm, now_ms);
-    slot = find_handle(comm, handle);
+    /* Reject an old resume before servicing time against a newer owner that
+     * happens to reuse the same logical handle. */
+    slot = find_handle(comm, owner->handle);
     if (slot == NULL) {
         return -ENOENT;
     }
-    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
-        return -EALREADY;
+    if (slot_is_terminal(slot)) {
+        return slot->owner.terminal.delivery_generation ==
+                       owner->delivery_generation ?
+                   -EALREADY : -ESTALE;
     }
-    if (slot->state != NODE_COMM_SLOT_WAIT_RESOURCE) {
+    if (!slot_is_live(slot)) {
         return -EAGAIN;
     }
-    slot->state = NODE_COMM_SLOT_READY;
+    if (slot_delivery_generation(slot) != owner->delivery_generation) {
+        delivery_resource_wait_trace(
+            comm, slot, owner, NODE_COMM_DELIVERY_TRACE_RESOURCE_RESUMED,
+            FW_SM_STALE, now_ms);
+        return -ESTALE;
+    }
+    if (!slot->waiting_resource) {
+        return -EAGAIN;
+    }
+
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, owner->handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot_is_terminal(slot)) {
+        return slot->owner.terminal.delivery_generation ==
+                       owner->delivery_generation ?
+                   -EALREADY : -ESTALE;
+    }
+    if (!slot_is_live(slot)) {
+        return -EAGAIN;
+    }
+    if (slot_delivery_generation(slot) != owner->delivery_generation) {
+        delivery_resource_wait_trace(
+            comm, slot, owner, NODE_COMM_DELIVERY_TRACE_RESOURCE_RESUMED,
+            FW_SM_STALE, now_ms);
+        return -ESTALE;
+    }
+    if (!slot->waiting_resource) {
+        return -EAGAIN;
+    }
+    slot->waiting_resource = false;
+    slot->retry_due_active = false;
+    delivery_resource_wait_trace(
+        comm, slot, owner, NODE_COMM_DELIVERY_TRACE_RESOURCE_RESUMED,
+        FW_SM_APPLIED, now_ms);
     return 0;
 }
 
@@ -1267,18 +1522,24 @@ int node_comm_lease_complete(struct node_comm *comm,
     if (ret < 0) {
         return ret;
     }
-    if (outcome == NODE_COMM_DELIVERY_SUCCEEDED && !slot->rf_started) {
+    if (outcome == NODE_COMM_DELIVERY_SUCCEEDED &&
+        !slot_lease_rf_started(slot)) {
         return -EPROTO;
     }
     if (outcome == NODE_COMM_DELIVERY_SUCCEEDED) {
         const struct node_comm_profile_policy *policy =
             &profile_policies[slot->request.profile];
 
-        if (slot->attempts_started < policy->successful_attempts_required) {
+        if (slot->owner.delivery.attempts_started <
+            policy->successful_attempts_required) {
+            ret = delivery_apply(comm, slot, FW_EVENT_ACK_TIMED_OUT, 0u);
+            if (ret < 0) {
+                return ret;
+            }
             invalidate_lease(comm, slot);
             slot->retry_due_ms = add_saturating_u64(
                 now_ms, policy->success_repeat_delay_ms);
-            slot->state = NODE_COMM_SLOT_WAIT_RETRY;
+            slot->retry_due_active = true;
             return 0;
         }
         return terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED, now_ms) ?
@@ -1294,15 +1555,15 @@ int node_comm_lease_complete(struct node_comm *comm,
                            NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, now_ms) ?
                0 : -EPROTO;
     }
-    if (!slot->rf_started) {
+    if (!slot_lease_rf_started(slot)) {
         return -EPROTO;
     }
-    if (slot->attempts_started >= slot->max_attempts) {
+    if (slot->owner.delivery.attempts_started >= slot->max_attempts) {
         return terminalize(comm, slot,
                            NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED, now_ms) ?
                0 : -EPROTO;
     }
-    ret = delivery_apply_slot(slot, FW_EVENT_ACK_TIMED_OUT, 0u);
+    ret = delivery_apply(comm, slot, FW_EVENT_ACK_TIMED_OUT, 0u);
     if (ret < 0) {
         return ret;
     }
@@ -1324,11 +1585,10 @@ int node_comm_lease_await_confirmation(struct node_comm *comm,
     if (ret < 0) {
         return ret;
     }
-    if (!slot->rf_started) {
+    if (!slot_lease_rf_started(slot)) {
         return -EPROTO;
     }
     invalidate_lease(comm, slot);
-    slot->state = NODE_COMM_SLOT_WAIT_CONFIRMATION;
     return 0;
 }
 
@@ -1346,14 +1606,117 @@ int node_comm_confirm_delivery(struct node_comm *comm,
     if (slot == NULL) {
         return -ENOENT;
     }
-    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+    if (slot_is_terminal(slot)) {
         return -EALREADY;
     }
-    if (slot->state == NODE_COMM_SLOT_LEASED && slot->rf_started) {
+    if (slot->lease_active && slot_lease_rf_started(slot)) {
         /* A synchronous backend confirmation will be committed at lease exit. */
         return -EINPROGRESS;
     }
-    if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+    if (!slot_is_live(slot) || slot->lease_active ||
+        slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK) {
+        return -EAGAIN;
+    }
+    return terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED, now_ms) ?
+           0 : -EPROTO;
+}
+
+int node_comm_confirm_delivery_external_proof(struct node_comm *comm,
+                                              uint32_t handle,
+                                              uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+
+    if (comm == NULL || handle == 0u) {
+        return -EINVAL;
+    }
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot_is_terminal(slot)) {
+        return -EALREADY;
+    }
+    return node_comm_confirm_delivery_external_proof_for_generation(
+        comm, handle, slot_delivery_generation(slot), now_ms);
+}
+
+static int validate_callback_generation(
+    struct node_comm *comm,
+    struct node_comm_request_slot *slot,
+    uint32_t handle,
+    uint32_t delivery_generation,
+    enum fw_event_type type)
+{
+    struct fw_event event;
+
+    if (slot_delivery_generation(slot) == delivery_generation) {
+        return 0;
+    }
+    /*
+     * A stale backend callback still traverses the authoritative machine so
+     * the trace records the rejected owner/generation pair.  Its identity
+     * mismatch prevents it from changing the persistent owner.
+     */
+    event = delivery_event(handle, delivery_generation, type, 0u);
+    (void)delivery_handle_event(comm, slot, &event, NULL, true);
+    return -ESTALE;
+}
+
+int node_comm_confirm_delivery_external_proof_for_generation(
+    struct node_comm *comm,
+    uint32_t handle,
+    uint32_t delivery_generation,
+    uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    if (comm == NULL || handle == 0u || delivery_generation == 0u) {
+        return -EINVAL;
+    }
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot_is_terminal(slot)) {
+        return -EALREADY;
+    }
+    if (!slot_is_live(slot)) {
+        return -EAGAIN;
+    }
+    ret = validate_callback_generation(comm, slot, handle,
+                                       delivery_generation,
+                                       FW_EVENT_GATEWAY_ACK_RECEIVED);
+    if (ret < 0) {
+        return ret;
+    }
+    if (slot->request.profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
+        slot->request.profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+        slot->request.profile !=
+            NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) {
+        return -ENOTSUP;
+    }
+    if (slot->lease_active) {
+        /* The application records the proof and resolves it at lease exit. */
+        return -EINPROGRESS;
+    }
+    if (slot->owner.delivery.state == FW_DELIVERY_RETRY) {
+        ret = delivery_apply(comm, slot, FW_EVENT_RETRY_ALLOWED,
+                             FW_EVENT_FLAG_PATH_USABLE);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX) {
+        ret = delivery_apply(comm, slot, FW_EVENT_RF_STARTED, 0u);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+    if (slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK) {
         return -EAGAIN;
     }
     return terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED, now_ms) ?
@@ -1378,10 +1741,11 @@ int node_comm_fail_delivery(struct node_comm *comm,
     if (slot == NULL) {
         return -ENOENT;
     }
-    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+    if (slot_is_terminal(slot)) {
         return -EALREADY;
     }
-    if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+    if (!slot_is_live(slot) || slot->lease_active ||
+        slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK) {
         return -EAGAIN;
     }
     return terminalize(comm, slot, reason, now_ms) ? 0 : -EPROTO;
@@ -1400,28 +1764,60 @@ int node_comm_note_backend_rf_started(struct node_comm *comm,
     if (slot == NULL) {
         return -ENOENT;
     }
-    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
-        /*
-         * A backend can pass its final preflight, lose the race to facade
-         * terminalization, and still have started RF before cancellation took
-         * effect. Preserve the terminal reason and state, but update the
-         * frozen terminal snapshot so every real RF start remains observable.
-         */
-        if (slot->backend_attempts_started != UINT8_MAX) {
-            slot->backend_attempts_started++;
+    if (slot_is_terminal(slot)) {
+        return node_comm_note_backend_rf_started_for_generation(
+            comm,
+            handle,
+            slot->owner.terminal.delivery_generation,
+            now_ms);
+    }
+    return node_comm_note_backend_rf_started_for_generation(
+        comm, handle, slot_delivery_generation(slot), now_ms);
+}
+
+int node_comm_note_backend_rf_started_for_generation(
+    struct node_comm *comm,
+    uint32_t handle,
+    uint32_t delivery_generation,
+    uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    if (comm == NULL || handle == 0u || delivery_generation == 0u) {
+        return -EINVAL;
+    }
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot_is_terminal(slot)) {
+        if (slot->owner.terminal.delivery_generation !=
+            delivery_generation) {
+            return -ESTALE;
         }
-        slot->terminal.attempts_started = total_attempts_started(slot);
+        /* Preserve a real RF edge that raced terminalization of this owner. */
+        if (slot->owner.terminal.attempts_started != UINT8_MAX) {
+            slot->owner.terminal.attempts_started++;
+        }
         return -EALREADY;
     }
-    if (slot->state != NODE_COMM_SLOT_WAIT_CONFIRMATION) {
+    if (!slot_is_live(slot)) {
         return -EAGAIN;
     }
-    /* External backend retries begin from the shared WAIT_ACK state. */
-    if (delivery_backend_attempt(slot) < 0) {
-        return -EPROTO;
+    ret = validate_callback_generation(comm, slot, handle,
+                                       delivery_generation,
+                                       FW_EVENT_RF_STARTED);
+    if (ret < 0) {
+        return ret;
     }
-    if (slot->backend_attempts_started != UINT8_MAX) {
-        slot->backend_attempts_started++;
+    if (slot->lease_active ||
+        slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK) {
+        return -EAGAIN;
+    }
+    /* External backend retries begin from the shared persistent WAIT_ACK. */
+    if (delivery_backend_attempt(comm, slot) < 0) {
+        return -EPROTO;
     }
     if (deadline_expired(slot, now_ms)) {
         if (!terminalize(comm, slot, NODE_COMM_TERMINAL_DEADLINE_EXPIRED,
@@ -1431,6 +1827,31 @@ int node_comm_note_backend_rf_started(struct node_comm *comm,
         return -ETIMEDOUT;
     }
     return 0;
+}
+
+int node_comm_delivery_generation(const struct node_comm *comm,
+                                  uint32_t handle,
+                                  uint32_t *generation_out)
+{
+    if (comm == NULL || handle == 0u || generation_out == NULL) {
+        return -EINVAL;
+    }
+    for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
+        const struct node_comm_request_slot *slot = &comm->slots[i];
+
+        if (!slot_is_in_use(slot) || slot_handle(slot) != handle) {
+            continue;
+        }
+        if (slot_is_terminal(slot)) {
+            return -EALREADY;
+        }
+        if (!slot_is_live(slot)) {
+            return -EAGAIN;
+        }
+        *generation_out = slot_delivery_generation(slot);
+        return 0;
+    }
+    return -ENOENT;
 }
 
 int node_comm_cancel(struct node_comm *comm,
@@ -1447,7 +1868,7 @@ int node_comm_cancel(struct node_comm *comm,
     if (slot == NULL) {
         return -ENOENT;
     }
-    if (slot->state == NODE_COMM_SLOT_TERMINAL) {
+    if (slot_is_terminal(slot)) {
         return -EALREADY;
     }
     return terminalize(comm, slot, NODE_COMM_TERMINAL_CANCELLED, now_ms) ?
@@ -1465,10 +1886,8 @@ size_t node_comm_service(struct node_comm *comm, uint64_t now_ms)
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         struct node_comm_request_slot *slot = &comm->slots[i];
 
-        if (slot->state != NODE_COMM_SLOT_FREE &&
-            slot->state != NODE_COMM_SLOT_TERMINAL &&
-            deadline_expired(slot, now_ms)) {
-            if (slot->state == NODE_COMM_SLOT_LEASED &&
+        if (slot_is_live(slot) && deadline_expired(slot, now_ms)) {
+            if (slot->lease_active &&
                 slot->backend_guard_active &&
                 now_ms < slot->backend_guard_expires_at_ms) {
                 continue;
@@ -1499,38 +1918,44 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
         const struct node_comm_request_slot *slot = &comm->slots[i];
         uint64_t slot_due_ms = UINT64_MAX;
 
-        if (slot->state == NODE_COMM_SLOT_READY) {
-            if (lease_active) {
-                if (slot->request.absolute_deadline_ms == 0u) {
-                    continue;
-                }
-                slot_due_ms = slot->request.absolute_deadline_ms;
-            } else {
-                slot_due_ms = now_ms;
-            }
-        } else if (slot->state == NODE_COMM_SLOT_WAIT_RETRY) {
-            if (lease_active) {
-                if (slot->request.absolute_deadline_ms == 0u) {
-                    continue;
-                }
-                slot_due_ms = slot->request.absolute_deadline_ms;
-            } else {
-                slot_due_ms = slot->retry_due_ms;
-            }
-        } else if (slot->state == NODE_COMM_SLOT_WAIT_CONFIRMATION ||
-                   slot->state == NODE_COMM_SLOT_WAIT_RESOURCE) {
+        if (!slot_is_live(slot)) {
+            continue;
+        }
+        if (slot->lease_active) {
             if (slot->request.absolute_deadline_ms == 0u) {
                 continue;
             }
             slot_due_ms = slot->request.absolute_deadline_ms;
-        } else if (slot->state != NODE_COMM_SLOT_LEASED) {
+        } else if (slot->owner.delivery.state == FW_DELIVERY_WAIT_ACK ||
+                   slot->waiting_resource) {
+            if (slot->request.absolute_deadline_ms == 0u) {
+                continue;
+            }
+            slot_due_ms = slot->request.absolute_deadline_ms;
+        } else if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX ||
+                   slot->owner.delivery.state == FW_DELIVERY_RETRY) {
+            if (same_priority_pre_rf_predecessor(comm, slot)) {
+                slot_due_ms = slot->request.absolute_deadline_ms;
+                if (slot_due_ms == 0u) {
+                    continue;
+                }
+            } else if (lease_active) {
+                if (slot->request.absolute_deadline_ms == 0u) {
+                    continue;
+                }
+                slot_due_ms = slot->request.absolute_deadline_ms;
+            } else {
+                slot_due_ms = slot->retry_due_active ? slot->retry_due_ms :
+                                                    now_ms;
+            }
+        } else {
             continue;
         }
         if (slot->request.absolute_deadline_ms != 0u &&
             slot->request.absolute_deadline_ms < slot_due_ms) {
             slot_due_ms = slot->request.absolute_deadline_ms;
         }
-        if (slot->state == NODE_COMM_SLOT_LEASED &&
+        if (slot->lease_active &&
             slot->backend_guard_active &&
             slot->request.absolute_deadline_ms != 0u &&
             now_ms >= slot->request.absolute_deadline_ms &&
@@ -1560,10 +1985,10 @@ bool node_comm_take_terminal_event_for(
         return false;
     }
     slot = find_handle(comm, handle);
-    if (slot == NULL || slot->state != NODE_COMM_SLOT_TERMINAL) {
+    if (slot == NULL || !slot_is_terminal(slot)) {
         return false;
     }
-    *event_out = slot->terminal;
+    *event_out = slot->owner.terminal;
     memset(slot, 0, sizeof(*slot));
     return true;
 }
@@ -1579,9 +2004,8 @@ bool node_comm_peek_terminal_event_for(
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         const struct node_comm_request_slot *slot = &comm->slots[i];
 
-        if (slot->state == NODE_COMM_SLOT_TERMINAL &&
-            slot->handle == handle) {
-            *event_out = slot->terminal;
+        if (slot_is_terminal(slot) && slot_handle(slot) == handle) {
+            *event_out = slot->owner.terminal;
             return true;
         }
     }
@@ -1597,8 +2021,8 @@ bool node_comm_take_terminal_event(struct node_comm *comm,
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
         struct node_comm_request_slot *slot = &comm->slots[i];
 
-        if (slot->state == NODE_COMM_SLOT_TERMINAL) {
-            *event_out = slot->terminal;
+        if (slot_is_terminal(slot)) {
+            *event_out = slot->owner.terminal;
             memset(slot, 0, sizeof(*slot));
             return true;
         }
@@ -1614,7 +2038,7 @@ size_t node_comm_pending_count(const struct node_comm *comm)
         return 0u;
     }
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
-        if (comm->slots[i].state != NODE_COMM_SLOT_FREE) {
+        if (slot_is_in_use(&comm->slots[i])) {
             count++;
         }
     }
@@ -1627,7 +2051,8 @@ bool node_comm_lease_active(const struct node_comm *comm)
         return false;
     }
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
-        if (comm->slots[i].state == NODE_COMM_SLOT_LEASED) {
+        if (slot_is_live(&comm->slots[i]) &&
+            comm->slots[i].lease_active) {
             return true;
         }
     }
@@ -1642,8 +2067,8 @@ int node_comm_attempts_started(const struct node_comm *comm,
         return -EINVAL;
     }
     for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
-        if (comm->slots[i].state != NODE_COMM_SLOT_FREE &&
-            comm->slots[i].handle == handle) {
+        if (slot_is_in_use(&comm->slots[i]) &&
+            slot_handle(&comm->slots[i]) == handle) {
             *attempts_out = total_attempts_started(&comm->slots[i]);
             return 0;
         }

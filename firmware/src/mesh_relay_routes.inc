@@ -519,6 +519,8 @@ static int mesh_relay_require_channel9_event_for_slot(const struct mesh_relay *r
                                                       bool require_local_tx,
                                                       struct mesh_event_plan *plan)
 {
+    struct mesh_event_timing tx_timing;
+    const struct mesh_event_timing *timing;
     int index;
     int ret;
 
@@ -532,7 +534,24 @@ static int mesh_relay_require_channel9_event_for_slot(const struct mesh_relay *r
         return PROTO_ERR_STALE;
     }
 
-    ret = mesh_event_plan_channel9(&relay->event_timings[index].timing,
+    timing = &relay->event_timings[index].timing;
+    if (require_local_tx && !mesh_event_timing_local_tx_slot(timing)) {
+        /*
+         * The retained cadence alternates ownership. A transmitter whose
+         * next event belongs to the peer must wait for the immediately
+         * following local-TX event, not report an unscheduled BUSY and fall
+         * into a slower outer retry cadence that can remain phase-locked to
+         * peer-RX slots forever. Keep the shared timing immutable; the RX
+         * owner or the normal elapsed-event service will advance it before
+         * the returned TX plan becomes due.
+         */
+        tx_timing = *timing;
+        tx_timing.next_event_time_ms += tx_timing.event_interval_ms;
+        tx_timing.event_counter++;
+        timing = &tx_timing;
+    }
+
+    ret = mesh_event_plan_channel9(timing,
                                    requirements,
                                    now_ms,
                                    plan);
@@ -542,7 +561,7 @@ static int mesh_relay_require_channel9_event_for_slot(const struct mesh_relay *r
     if (plan->action == MESH_EVENT_PLAN_START ||
         plan->action == MESH_EVENT_PLAN_CLIP) {
         if (require_local_tx &&
-            !mesh_event_timing_local_tx_slot(&relay->event_timings[index].timing)) {
+            !mesh_event_timing_local_tx_slot(timing)) {
             return PROTO_ERR_BUSY;
         }
         return PROTO_OK;
@@ -924,6 +943,28 @@ int mesh_relay_build_gateway_route_adv(struct mesh_relay *relay,
         relay, gateway_route_seq, now_ms, NULL, out);
 }
 
+bool mesh_relay_route_discovery_backoff_pending(
+    const struct mesh_relay *relay,
+    uint64_t target_id,
+    uint32_t now_ms,
+    uint32_t *remaining_ms)
+{
+    if (remaining_ms != NULL) {
+        *remaining_ms = 0u;
+    }
+    if (relay == NULL || !relay->route_discovery.active ||
+        relay->route_discovery.target_id != target_id ||
+        relay->route_discovery.attempts == 0u ||
+        deadline_reached(now_ms,
+                         relay->route_discovery.next_request_ms)) {
+        return false;
+    }
+    if (remaining_ms != NULL) {
+        *remaining_ms = relay->route_discovery.next_request_ms - now_ms;
+    }
+    return true;
+}
+
 int mesh_relay_prepare_route_request_with_timing_flags(
     struct mesh_relay *relay,
     uint64_t target_id,
@@ -959,8 +1000,10 @@ int mesh_relay_prepare_route_request_with_timing_flags(
         }
     }
 
-    if (relay->route_discovery.attempts > 0u &&
-        !deadline_reached(now_ms, relay->route_discovery.next_request_ms)) {
+    if (mesh_relay_route_discovery_backoff_pending(relay,
+                                                   target_id,
+                                                   now_ms,
+                                                   NULL)) {
         return PROTO_ERR_BUSY;
     }
 

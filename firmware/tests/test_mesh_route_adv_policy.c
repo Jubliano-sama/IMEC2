@@ -1,3 +1,4 @@
+#include "discovery_assignment.h"
 #include "mesh_relay.h"
 
 #include <assert.h>
@@ -23,9 +24,10 @@ static struct operation_policy_set complete_policy(void)
     policy.discovery_present = true;
     policy.pair_present = true;
     policy.assignment.expected_anchor_count = 12u;
-    policy.assignment.operation_budget_ms = 300000u;
+    policy.assignment.operation_budget_ms =
+        DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(750u);
     policy.assignment.response_spread_ms = 750u;
-    policy.discovery.start_delay_ms = 9000u;
+    policy.discovery.start_delay_ms = 60000u;
     policy.discovery.slot_ms = 75u;
     policy.discovery.slot_count = 10u;
     policy.discovery.round_count = 2u;
@@ -648,7 +650,6 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
                1u,
                &result) == PROTO_OK);
     assert(result.route_state_changed);
-    assert(result.route_state_previous_epoch == TEST_ROUTE_EPOCH + 1u);
     assert(receiver.upstream.current_epoch == TEST_ROUTE_EPOCH + 2u);
     assert(receiver.gateway_route_adv_seq == 0u);
     assert(!receiver.route_discovery.active);
@@ -695,7 +696,6 @@ static void test_route_request_epoch_transition_and_stale_rejection(void)
                1u,
                &result) == PROTO_OK);
     assert(result.route_state_changed);
-    assert(result.route_state_previous_epoch == UINT32_MAX);
     assert(wrap_receiver.upstream.current_epoch == 1u);
     assert(wrap_receiver.gateway_route_adv_seq == 0u);
     assert(!wrap_receiver.route_discovery.active);
@@ -727,8 +727,10 @@ static void test_gateway_adv_sequence_freshness_is_commit_late_and_wrap_safe(voi
     struct mesh_relay_result result;
     const struct route_candidate *selected;
 
-    older_policy.assignment.operation_budget_ms = 290000u;
-    newer_policy.assignment.operation_budget_ms = 310000u;
+    older_policy.assignment.operation_budget_ms =
+        DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(750u);
+    newer_policy.assignment.operation_budget_ms =
+        DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(750u) + 1000u;
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
                     TEST_GATEWAY_ID, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
     mesh_relay_init(&anchor, MESH_RELAY_ROLE_ANCHOR,

@@ -2,6 +2,7 @@
 #define DISCOVERY_ASSIGNMENT_H
 
 #include "protocol.h"
+#include "node_comm.h"
 #include "semantic_digest.h"
 #include "uwb.h"
 
@@ -20,15 +21,36 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS 20u
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS 10000u
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS 1000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(response_spread_ms, \
+                                                    slot_count) \
+    (((response_spread_ms) / (slot_count)) == 0u ? 1u : \
+                                                   ((response_spread_ms) / \
+                                                    (slot_count)))
+#define DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(response_spread_ms, \
+                                                  slot_count) \
+    ((uint32_t)(slot_count) * \
+     DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS((response_spread_ms), \
+                                                 (slot_count)))
 #define DISCOVERY_ASSIGNMENT_MAX_HOPS 8u
 #define DISCOVERY_ASSIGNMENT_RETRY_BASE_MS 100u
 #define DISCOVERY_ASSIGNMENT_RETRY_MAX_MS 4000u
+#define DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES 2u
+/* Retry rounds 0..1 contribute at most 199 + 399 ms. */
+#define DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS 598u
+#define DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES 3u
+/*
+ * The ACK owner retries rounds 0..2 before entering its minute-scale
+ * low-duty recovery.  Each retry_backoff result is in [base, 2*base), so the
+ * exact worst-case sum is 199 + 399 + 799 ms.
+ */
+#define DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS 1397u
 #define DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S 120u
 #define DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS 1u
 #define DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS 1u
 #define DISCOVERY_ASSIGNMENT_RETIRED_EPOCH_CAP 16u
 #define DISCOVERY_ASSIGNMENT_SCHEME_VERSION 2u
-#define DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS 10000u
+#define DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS \
+    NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS
 #define DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 3000u
 #define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS 1000u
 #define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS \
@@ -41,12 +63,23 @@ extern "C" {
     (DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS + \
      ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
       DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
-#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
+#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
+    response_spread_ms) \
     (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
-     DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS - 1u)
+     (DISCOVERY_ASSIGNMENT_MAX_HOPS * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS( \
+          (response_spread_ms), UWB_DISCOVERY_SLOT_COUNT)) - 1u)
+#define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
+    DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS \
     (DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS + \
      DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS)
+#define DISCOVERY_ASSIGNMENT_TABLE_RESPONSE_MAX_ROUTE_WINDOW_MS \
+    (DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS + \
+     ((1u + DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES) * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS) + \
+     DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS 5u
 #define DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT 2u
 #define DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS \
@@ -62,9 +95,17 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(response_spread_ms) \
     ((DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT *                          \
       DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS) +                  \
-     (2u * (DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS +               \
-            DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +                      \
-            (response_spread_ms) - 1u)) +                                \
+     (DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS +                     \
+      DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS(     \
+          (response_spread_ms))) +                                       \
+     (DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES *                   \
+      DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS) +                    \
+     DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS +              \
+     ((1u + DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES) *              \
+      DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS) +                    \
+     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS(      \
+         (response_spread_ms)) +                                         \
+     DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS +                \
      DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS +                      \
      DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +                       \
      DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS +       \
@@ -220,7 +261,10 @@ int discovery_assignment_append_table_commitment(
     size_t payload_cap,
     size_t *offset,
     const struct discovery_assignment_table_commitment *commitment);
-int discovery_assignment_response_delay_ms(uint16_t response_spread_ms,
+int discovery_assignment_response_delay_ms(uint8_t slot,
+                                           uint8_t slot_count,
+                                           uint8_t hop_count,
+                                           uint16_t response_spread_ms,
                                            uint8_t retry_round,
                                            uint32_t random_value,
                                            uint32_t *delay_ms);
@@ -233,6 +277,9 @@ uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
 uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch);
 uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
                                                    uint8_t max_hop_count);
+uint32_t discovery_assignment_table_collection_window_ms(
+    uint16_t response_spread_ms,
+    uint8_t max_hop_count);
 uint64_t discovery_assignment_control_flood_deadline_ms(
     uint64_t now_ms,
     uint64_t operation_deadline_ms);

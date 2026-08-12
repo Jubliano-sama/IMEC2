@@ -6,6 +6,9 @@
 #include "app_board.h"
 #include "app_clicker.h"
 #include "app_config.h"
+#include "app_durable_state.h"
+#include "app_gateway_assignment_publisher.h"
+#include "app_gateway_control_sequence.h"
 #include "app_gateway_ble.h"
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_direct_probe_diag.h"
@@ -49,6 +52,8 @@
 #include "report.h"
 #include "route.h"
 #include "semantic_digest.h"
+#include "survey.h"
+#include "survey_round_control.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -92,7 +97,6 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS 20u
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
 #define MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS 50u
-#define ANCHOR_RANGE_FRAGMENT_PERSISTENCE_RETRY_MS 10u
 #define MESH_ROUTE_WAIT_RX_SUPPRESS_MS 100u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS \
     MESH_ROUTE_TEST_ROUTE_REPLY_RX_GUARD_MS
@@ -115,12 +119,6 @@ BUILD_ASSERT(MESH_ROUTE_TEST_WAKE_TO_ROUTE_DELAY_MS +
 BUILD_ASSERT(MESH_ROUTE_REPLY_READY_POLL_MS <
              MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS,
              "route-ready listener polling must release channel 5 before the next channel-9 retry boundary");
-BUILD_ASSERT(ANCHOR_RANGE_FRAGMENT_PERSISTENCE_RETRY_MS <
-             ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS,
-             "range fragment retry interval must fit its post-range deadline");
-BUILD_ASSERT(ANCHOR_RANGE_REPORT_PERSISTENCE_DEADLINE_MS <
-             APP_WATCHDOG_PROGRESS_LEASE_MS,
-             "range fragment persistence deadline must fail before the watchdog progress lease");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP <= UWB_MESH_MAX_PAYLOAD_LEN,
              "direct gateway ACK scratch must fit the mesh payload limit");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_ACK_PAYLOAD_CAP >=
@@ -383,6 +381,7 @@ struct mesh_event_accept_retry_context {
     struct mesh_event_timing reservation_timing;
     uint64_t remote_boot_nonce;
     uint32_t predecessor_owner_generation;
+    struct app_mesh_c5_tx_authorization_token c5_repair_authorization;
     bool replay_existing_response;
     bool predecessor_owner_present;
     bool predecessor_owner_active;
@@ -433,10 +432,9 @@ K_MSGQ_DEFINE(mesh_rx_msgq, sizeof(struct mesh_rx_pending), MESH_RX_QUEUE_DEPTH,
 #if DEVICE_ROLE == ROLE_ANCHOR
 K_MSGQ_DEFINE(report_tx_msgq, sizeof(struct mesh_outbound), REPORT_TX_QUEUE_DEPTH, 4);
 
-/* In-RAM sequencing state for an anchor range-report batch. The flash
- * persistence codec (anchor_range_journal_control) and its NVS records are
- * removed; only the fragment identity/order needed for ACK matching and
- * acknowledged-mask accounting stays, held entirely in RAM. */
+/* In-RAM sequencing state for an anchor range-report batch. Only the
+ * fragment identity/order needed for ACK matching and acknowledged-mask
+ * accounting is retained; reset discards the batch. */
 struct anchor_range_report_control {
     uint64_t clicker_id;
     uint64_t anchor_id;
@@ -451,42 +449,37 @@ struct anchor_range_report_control {
 };
 
 struct anchor_range_report_batch_reservation {
-    struct anchor_range_report_control journal;
+    struct anchor_range_report_control control;
     uint64_t clicker_id;
     uint32_t event_seq;
-    uint32_t queue_count_before_batch;
     uint8_t attempt_index;
     uint8_t queued_fragment_count;
-    int persistence_error;
-    bool final_fragment_staged;
-    bool fragment_pending;
-    bool persistence_fail_closed;
+    int queue_error;
+    bool queue_admission_fail_closed;
+    bool rollback_scratch_owned;
     bool active;
 };
 
 static struct anchor_range_report_batch_reservation
     anchor_range_report_batch_reservation;
-struct anchor_range_report_journal_runtime {
+struct anchor_range_report_ack_runtime {
     struct anchor_range_report_control control;
+    uint64_t generation;
     uint16_t acknowledged_mask;
     bool active;
 };
 
-static struct anchor_range_report_journal_runtime
-    anchor_range_report_journal_runtime;
+static struct anchor_range_report_ack_runtime
+    anchor_range_report_ack_runtime;
+static uint64_t anchor_range_report_ack_generation;
 #endif
 static struct mesh_outbound mesh_route_waiting_tx;
 static bool mesh_route_waiting_tx_valid;
+static enum app_mesh_route_wait_tx_owner mesh_route_waiting_tx_owner;
 static struct k_work mesh_rx_work;
 static struct k_work_delayable mesh_uwb_rx_work;
 static struct k_work mesh_uwb_rx_rearm_work;
-static struct k_work_delayable mesh_persistence_retry_work;
 static struct k_work_delayable mesh_node_comm_cancel_work;
-static bool mesh_outbox_persistence_dirty;
-/* A deferred in-RAM copy is a live custody owner even while the relay is idle. */
-static bool mesh_deferred_outbox_pending;
-static bool mesh_child_custody_persistence_dirty;
-static uint8_t mesh_persistence_retry_round;
 struct mesh_node_comm_cancel_request {
     struct proto_packet packet;
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
@@ -502,6 +495,38 @@ static struct mesh_delivery_health mesh_delivery_health;
 static struct k_work_delayable mesh_tx_timeout_work;
 static struct k_work_delayable mesh_route_waiting_work;
 #if DEVICE_ROLE == ROLE_ANCHOR
+enum mesh_click_preempt_request_state {
+    MESH_CLICK_PREEMPT_REQUEST_IDLE = 0,
+    MESH_CLICK_PREEMPT_REQUEST_QUEUED,
+    MESH_CLICK_PREEMPT_REQUEST_RUNNING,
+    MESH_CLICK_PREEMPT_REQUEST_CANCELED,
+    MESH_CLICK_PREEMPT_REQUEST_COMPLETE,
+};
+
+/* One bounded bridge from the lower-priority click owner to mesh_route. */
+struct mesh_click_preempt_request {
+    uint32_t generation;
+    uint32_t bridge_deadline_ms;
+    int result;
+    uint8_t state;
+};
+
+BUILD_ASSERT(sizeof(struct mesh_click_preempt_request) <= 16u,
+             "click-preemption request metadata must stay compact");
+BUILD_ASSERT(sizeof(struct mesh_click_preempt_request) +
+                 sizeof(struct k_work) +
+                 sizeof(struct k_sem) +
+                 sizeof(struct k_spinlock) < 88u,
+             "click-preemption route bridge exceeds anchor RAM policy margin");
+
+static struct mesh_click_preempt_request mesh_click_preempt_request;
+static struct k_work mesh_click_preempt_work;
+static struct k_sem mesh_click_preempt_done;
+static struct k_spinlock mesh_click_preempt_request_lock;
+#if defined(CONFIG_ZTEST)
+/* Composed seam only: force the otherwise-impossible defensive rollback. */
+static void (*mesh_preempt_test_before_cancel_hook)(void);
+#endif
 static struct k_work_delayable report_tx_work;
 static struct k_work_delayable mesh_route_request_action_work;
 #endif
@@ -609,13 +634,13 @@ BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4184u,
 BUILD_ASSERT(sizeof(mesh_ch9_tx_batch_storage) == 4184u,
              "candidate/pending batch overlay RAM contract changed");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
-             "direct batching needs independent durable pending ownership");
+             "direct batching needs independent retained pending ownership");
 #endif
 #elif DEVICE_ROLE == ROLE_GATEWAY
 static struct mesh_gateway_ack_store mesh_gateway_ack_store;
 static bool mesh_gateway_ack_store_initialized;
 static bool mesh_gateway_ack_store_attached;
-BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 9432u,
+BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 9456u,
              "gateway ACK store RAM contract changed");
 #endif
 
@@ -661,6 +686,43 @@ int app_mesh_report_attach_gateway_ack_store(void)
 #endif
 }
 
+bool app_mesh_report_gateway_delivery_confirmation_pending(
+    uint64_t src_id,
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint32_t now_ms)
+{
+    return mesh_relay_gateway_delivery_confirmation_pending(
+        &mesh_runtime, src_id, msg_type, session_id, now_ms);
+}
+
+bool app_mesh_report_gateway_identity_confirmation_pending(
+    uint64_t src_id,
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint16_t seq,
+    uint32_t now_ms)
+{
+    return mesh_relay_gateway_identity_confirmation_pending(
+        &mesh_runtime, src_id, msg_type, session_id, seq, now_ms);
+}
+
+bool app_mesh_report_gateway_operation_confirmation_pending(
+    uint8_t msg_type,
+    uint32_t session_id,
+    uint32_t now_ms)
+{
+    return mesh_relay_gateway_operation_confirmation_pending(
+        &mesh_runtime, msg_type, session_id, now_ms);
+}
+
+bool app_mesh_report_gateway_origin_confirmation_pending(uint64_t src_id,
+                                                         uint32_t now_ms)
+{
+    return mesh_relay_gateway_origin_confirmation_pending(
+        &mesh_runtime, src_id, now_ms);
+}
+
 int app_mesh_report_attach_anchor_downlink_store(void)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -693,6 +755,7 @@ static uint32_t mesh_ch9_batch_next_id;
 
 struct mesh_ch9_slot_tx_context {
     int64_t uwb_window_start_ms;
+    struct radio_guard_uwb_lease radio_lease;
     bool active;
     bool functional_tx_completed;
 };
@@ -760,9 +823,47 @@ static bool mesh_route_request_action_pending;
 #endif
 static K_MUTEX_DEFINE(mesh_route_discovery_lock);
 static struct app_mesh_async_route_request mesh_route_discovery_request;
-static uint64_t mesh_route_ready_event_peer_id;
+struct app_mesh_route_ready_event_owner {
+    bool valid;
+    uint64_t peer_id;
+    uint32_t generation;
+};
+
+static struct app_mesh_route_ready_event_owner mesh_route_ready_event_owner;
+
+static void mesh_route_ready_event_owner_set(
+    struct app_mesh_route_ready_event_owner *owner,
+    uint64_t peer_id,
+    uint32_t generation)
+{
+    if (owner == NULL || !mesh_id_is_unicast(peer_id) || generation == 0u) {
+        return;
+    }
+    owner->peer_id = peer_id;
+    owner->generation = generation;
+    owner->valid = true;
+}
+
+static bool mesh_route_ready_event_owner_matches(
+    const struct app_mesh_route_ready_event_owner *owner,
+    uint64_t peer_id,
+    uint32_t generation)
+{
+    return owner != NULL && owner->valid && owner->peer_id == peer_id &&
+           owner->generation == generation;
+}
+
+static void mesh_route_ready_event_owner_clear(void)
+{
+    memset(&mesh_route_ready_event_owner, 0,
+           sizeof(mesh_route_ready_event_owner));
+}
 static struct mesh_event_control_record mesh_event_propose_record;
 static struct app_mesh_event_retry_state mesh_event_propose_retry;
+static struct app_mesh_c5_tx_authorization_token
+    mesh_forwarded_ack_event_repair_authorization;
+static struct app_mesh_c5_tx_authorization_token
+    mesh_deferred_forwarded_ack_event_repair_authorization;
 static struct mesh_event_accept_retry_context mesh_event_accept_retry;
 static struct mesh_event_accept_completed
     mesh_event_accept_completed[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS];
@@ -824,6 +925,9 @@ struct mesh_c5_flood_tx_context {
     struct app_mesh_tx_observation *observation;
     uint64_t absolute_deadline_ms;
     bool response_priority;
+    /* Only mesh_try_send_c5_flood_resume binds this to a frozen recovery
+     * EACK.  The defer callback rechecks the full owner state on every turn. */
+    const struct mesh_outbound *collection_recovery_candidate;
 };
 
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
@@ -850,6 +954,10 @@ static int mesh_event_negotiation_schedule_next(void);
 static int mesh_radio_idle_with_bounded_recovery(const char *reason);
 static int mesh_radio_standby_with_bounded_recovery(const char *reason);
 int mesh_schedule_route_request(uint64_t target_id, const char *reason);
+static int mesh_request_route_authorized(
+    uint64_t target_id,
+    const char *reason,
+    const struct app_mesh_c5_tx_authorization_token *authorization);
 static bool mesh_defer_active_collection_result(const char *reason);
 static bool mesh_channel9_next_required_activity(
     const struct mesh_relay_event_timing_entry *entry,
@@ -859,36 +967,41 @@ static bool mesh_channel9_next_required_activity(
 static uint32_t mesh_channel9_prepare_start_ms(const struct mesh_event_timing *timing);
 static int mesh_schedule_uwb_rx(uint32_t delay_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
-static int mesh_preempt_save_outbox(void *ctx);
-static int mesh_preempt_clear_outbox(void *ctx);
-static int mesh_preempt_stage_click_handoff(void *ctx,
-                                            const struct mesh_outbound *outbound);
-static int mesh_preempt_commit_click_handoff(void *ctx,
-                                             const struct mesh_outbound *outbound);
-static int mesh_preempt_rollback_click_handoff(void *ctx,
-                                               const struct mesh_outbound *outbound);
-static int mesh_preempt_cancel_timeout(void *ctx);
-static int mesh_preempt_schedule_timeout(void *ctx);
-static int mesh_preempt_requeue_click_report(void *ctx,
-                                              const struct mesh_outbound *outbound);
-static int mesh_preempt_discard_requeued_click_report(
+static int mesh_preempt_transfer_click_report_atomic(
     void *ctx,
     const struct mesh_outbound *outbound);
-static int mesh_preempt_cancel_active_tx(void *ctx);
-static void mesh_schedule_persistence_retry(const char *reason);
+static int mesh_preempt_defer_active_tx(void *ctx);
+static int mesh_preempt_schedule_timeout(void *ctx);
+static void mesh_preempt_fail_stop(void *ctx);
+static void mesh_click_preempt_work_handler(struct k_work *work);
+static void mesh_click_preempt_request_init(void);
 #endif
-static int mesh_handoff_save_child_custody(void *ctx);
+#if DEVICE_ROLE == ROLE_ANCHOR
 static void mesh_handoff_note_result_bundle_forwarded(const struct mesh_outbound *out,
                                                       void *ctx);
+#endif
 static int mesh_handoff_send_result_grant(const struct mesh_outbound *out,
                                           void *ctx);
 static void mesh_handoff_note_tx_sent(const struct mesh_outbound *out,
                                       void *ctx);
+static int mesh_send_outbound_causal_response(
+    const struct mesh_outbound *out,
+    const char *reason);
+static int mesh_send_c5_causal_response(
+    const struct mesh_outbound *out,
+    uint8_t purpose,
+    enum mesh_c5_control_send_mode mode,
+    const char *reason);
 static int mesh_send_route_wake_train(uint64_t target_id,
                                       const struct mesh_outbound *embedded_route_req,
                                       bool *embedded_sent,
                                       uint8_t purpose,
-                                      const char *reason);
+                                      const char *reason,
+                                      const struct mesh_outbound *authorization_candidate,
+                                      const struct app_mesh_c5_tx_authorization_token *authorization,
+                                      enum fw_c5_tx_intent c5_tx_intent,
+                                      bool *rf_started_out,
+                                      uint64_t *rf_started_at_ms_out);
 static bool mesh_frame_requires_anchor_click_handoff(
     const uint8_t *frame,
     size_t frame_len,
@@ -1004,10 +1117,14 @@ static int mesh_reschedule_owned_work(struct k_work_delayable *work,
                                       const char *owner);
 static int mesh_submit_owned_work(struct k_work *work, const char *owner);
 static bool mesh_transport_paused(void);
-static int mesh_transport_radio_start(const char *owner);
 static bool mesh_rx_handoff_control_active(void);
+static int mesh_propose_event_after_channel5_contact(uint64_t peer_id,
+                                                     const char *reason);
+static int mesh_propose_event_after_channel5_contact_authorized(
+    uint64_t peer_id,
+    const char *reason,
+    const struct app_mesh_c5_tx_authorization_token *authorization);
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
-static void mesh_persistence_retry_work_handler(struct k_work *work);
 static void mesh_node_comm_cancel_work_handler(struct k_work *work);
 static bool mesh_queue_from_frame_at(const uint8_t *frame,
                                      size_t frame_len,

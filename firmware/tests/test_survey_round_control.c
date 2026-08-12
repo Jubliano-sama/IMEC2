@@ -209,8 +209,16 @@ static void test_manual_pair_commitment_binds_generation_and_pair(void)
 static void test_start_release_reserves_both_control_horizons(void)
 {
     assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS ==
-           2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +
+           2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS +
+               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +
+               SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS +
                SURVEY_PAIR_START_SKEW_MARGIN_MS);
+    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS == 244000u);
+    assert(SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS == 174000u);
+    assert(SURVEY_PAIR_PREPARED_LEASE_MS == 1074000u);
+    assert(SURVEY_PAIR_PREPARED_LEASE_MS ==
+           SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS +
+               SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS);
     assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
            SURVEY_PAIR_PREPARED_LEASE_MS);
 }

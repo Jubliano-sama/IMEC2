@@ -5,7 +5,24 @@ static struct gateway_command_result_validation_leases
     gateway_command_result_validation_state;
 static struct app_gateway_command_result_queue gateway_host_command_results;
 static struct gateway_collection_state gateway_collection_state;
+static struct app_gateway_collection_recovery gateway_collection_recovery;
 static struct gateway_membership_roster gateway_membership_roster_state;
+/* One immutable assignment proof lives with the gateway roster, not with the
+ * collection ledger. Its opaque receipt is minted only by the NVS owner and
+ * must gate every roster activation, replay, retirement, or decommission. */
+static struct gateway_membership_snapshot gateway_membership_snapshot_state;
+static struct app_durable_state_gateway_assignment_identity
+    gateway_membership_assignment_identity;
+static struct app_durable_receipt gateway_membership_durable_receipt;
+static bool gateway_membership_durable_receipt_valid;
+/* A failed save may have committed before its readback failed. Keep the exact
+ * candidate in RAM and retry/adopt it before admitting any successor. */
+static bool gateway_membership_adoption_pending;
+static bool gateway_membership_publisher_activation_pending;
+/* A live assignment lease exists only in the pre-reset owner.  A replay has
+ * no old lease to release after it retires the durable publication debt. */
+static bool gateway_membership_publication_live_owner;
+static bool gateway_membership_publication_owner_release_pending;
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_work_delayable gateway_command_timeout_side_effect_work;
 static struct k_work_delayable gateway_command_timeout_side_effect_retry_work;
@@ -13,11 +30,6 @@ static struct k_work_delayable gateway_collection_eack_work;
 static struct app_gateway_eack_retry_state gateway_collection_eack_retry_state;
 static bool gateway_collection_eack_round_dirty;
 static struct k_work_delayable gateway_persistence_retry_work;
-static bool gateway_collection_persistence_dirty;
-static bool gateway_collection_clear_pending;
-static bool gateway_collection_restore_pending;
-static bool gateway_eack_custody_clear_pending;
-static bool gateway_membership_persistence_dirty;
 static bool gateway_membership_clear_pending;
 static bool gateway_membership_restore_pending;
 static atomic_t gateway_assignment_publication_pending_state =
@@ -36,13 +48,22 @@ K_MUTEX_DEFINE(gateway_command_pending_lock);
 static uint8_t gateway_persistence_retry_round;
 static uint32_t gateway_command_result_dispatch_token;
 static uint32_t gateway_pending_command_result_token;
+/* The singleton result-wait/timeout-dispatch owner retains one full command
+ * commitment until its route-owned terminal side effects finish. */
+static uint8_t
+    gateway_pending_command_semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+static bool gateway_pending_command_semantic_digest_valid;
+static uint32_t gateway_command_wait_reservation_next;
+static uint32_t gateway_command_wait_reservation_active;
 
 BUILD_ASSERT(APP_GATEWAY_COMMAND_RESULT_BUFFERED_INGRESS_DEPTH ==
                  GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH,
              "command result credits must cover every buffered GATT frame");
 
-void gateway_command_timeout_side_effects(const struct proto_packet *command,
-                                          enum command_id command_id);
+void gateway_command_timeout_side_effects(
+    const struct proto_packet *command,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    enum command_id command_id);
 void gateway_command_result_side_effects(const struct proto_packet *command,
                                          enum command_id command_id,
                                          enum command_status status,
@@ -51,7 +72,7 @@ void gateway_command_result_side_effects(const struct proto_packet *command,
 static bool gateway_collection_tracking_active(void);
 static void gateway_schedule_collection_eack_round(void);
 static int gateway_restore_membership_runtime(void);
-static int gateway_restore_collection_runtime(void);
+int gateway_replay_pending_assignment_publication(void);
 
 struct gateway_decoded_command_result {
     enum command_status status;
@@ -338,11 +359,8 @@ static void gateway_schedule_persistence_retry(const char *reason)
     if (gateway_persistence_retry_round < UINT8_MAX) {
         gateway_persistence_retry_round++;
     }
-    /*
-     * Collection persistence reads the same mutable snapshot as EACK
-     * generation.  Keep it on the mesh-route owner instead of allowing the
-     * system workqueue to race result ingestion or round advancement.
-     */
+    /* Durable membership writes and publisher completion share one route
+     * owner, so a reset replay cannot race roster activation or retirement. */
     schedule_ret = mesh_route_work_reschedule(
         &gateway_persistence_retry_work, delay_ms);
     if (schedule_ret < 0) {
@@ -364,35 +382,166 @@ static void gateway_schedule_persistence_retry(const char *reason)
             schedule_ret);
 }
 
-static int gateway_clear_eack_custody_or_defer(const char *reason)
-{
-    ARG_UNUSED(reason);
-
-    /* RAM-only build: the EACK custody lives only in memory, so clearing it is
-     * an immediate no-op and never needs to be deferred to an NVS delete. */
-    gateway_eack_custody_clear_pending = false;
-    return 0;
-}
-
 static void gateway_finalize_collection_clear(void)
 {
     gateway_collection_clear(&gateway_collection_state);
     gateway_collection_eack_round_dirty = false;
-    gateway_collection_persistence_dirty = false;
-    gateway_collection_clear_pending = false;
     app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
-    (void)gateway_clear_eack_custody_or_defer(
-        "collection-clear-eack-custody");
     atomic_clear(&gateway_collection_eack_schedule_deferred);
     atomic_clear(&gateway_collection_eack_deferred_delay_ms);
     (void)k_work_cancel_delayable(&gateway_collection_eack_work);
 }
 
+static void gateway_membership_clear_durable_evidence(void)
+{
+    memset(&gateway_membership_snapshot_state,
+           0,
+           sizeof(gateway_membership_snapshot_state));
+    memset(&gateway_membership_assignment_identity,
+           0,
+           sizeof(gateway_membership_assignment_identity));
+    memset(&gateway_membership_durable_receipt,
+           0,
+           sizeof(gateway_membership_durable_receipt));
+    gateway_membership_durable_receipt_valid = false;
+    gateway_membership_adoption_pending = false;
+    gateway_membership_publisher_activation_pending = false;
+}
+
+static int gateway_membership_identity_from_publication(
+    uint32_t assignment_epoch,
+    const struct gateway_membership_publication *publication,
+    struct app_durable_state_gateway_assignment_identity *identity)
+{
+    if (assignment_epoch == 0u || publication == NULL || identity == NULL ||
+        publication->host_command.session_id == 0u ||
+        publication->host_command.seq == 0u ||
+        publication->event_gateway_epoch == 0u) {
+        return -EINVAL;
+    }
+
+    *identity =
+        (struct app_durable_state_gateway_assignment_identity) {
+            .correlation_id = publication->host_command.session_id,
+            .gateway_sequence = assignment_epoch,
+            .host_session_id = publication->host_command.session_id,
+            .gateway_epoch = publication->event_gateway_epoch,
+            .host_seq = publication->host_command.seq,
+        };
+    return 0;
+}
+
+static bool gateway_membership_identity_matches_event(
+    const struct app_durable_state_gateway_assignment_identity *identity,
+    const struct gateway_command_event *event)
+{
+    return identity != NULL && event != NULL &&
+           event->kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION &&
+           event->command_id == CMD_ASSIGN_DISCOVERY_SLOTS &&
+           event->correlation_id == identity->correlation_id &&
+           event->gateway_sequence == identity->gateway_sequence &&
+           event->host_session_id == identity->host_session_id &&
+           event->gateway_epoch == identity->gateway_epoch &&
+           event->host_seq == identity->host_seq;
+}
+
+static int gateway_membership_receipt_validate(void)
+{
+    /* A receipt is minted only after the durable owner has written and read
+     * back this exact record.  Re-reading it here adds an NVS operation to
+     * every replay without strengthening the sole-owner capability: retire()
+     * and delete() revalidate their irreversible transitions themselves. */
+    return gateway_membership_durable_receipt_valid ? 0 : -EACCES;
+}
+
+static void gateway_membership_hold_adoption(
+    const struct gateway_membership_snapshot *snapshot,
+    const struct app_durable_state_gateway_assignment_identity *identity,
+    const char *reason)
+{
+    if (snapshot == NULL || identity == NULL) {
+        return;
+    }
+    gateway_membership_snapshot_state = *snapshot;
+    gateway_membership_assignment_identity = *identity;
+    memset(&gateway_membership_durable_receipt,
+           0,
+           sizeof(gateway_membership_durable_receipt));
+    gateway_membership_durable_receipt_valid = false;
+    gateway_membership_adoption_pending = true;
+    gateway_membership_publisher_activation_pending = false;
+    /* The prepared publisher and operation lease remain owned by the original
+     * assignment until this exact candidate is adopted and host-receipted. */
+    gateway_membership_publication_live_owner = true;
+    gateway_membership_publication_owner_release_pending = false;
+    atomic_set(&gateway_assignment_publication_pending_state, 0);
+    gateway_schedule_persistence_retry(reason);
+}
+
+static int gateway_membership_adopt_pending_commit(void)
+{
+    struct gateway_membership_roster restored = {0};
+    struct app_durable_receipt adopted_receipt;
+    uint16_t acknowledged_count;
+    int ret;
+
+    if (!gateway_membership_adoption_pending) {
+        return 0;
+    }
+    if (gateway_membership_snapshot_state.publication_table_round == 0u) {
+        return -EPROTO;
+    }
+
+    /* save() first rereads/adopts an exact committed candidate. If the first
+     * write did not land, this is the same semantic commit retry, never a
+     * new successor allocation. */
+    ret = app_durable_state_save_gateway_assignment_commit(
+        DEVICE_ID,
+        &gateway_membership_snapshot_state,
+        &gateway_membership_assignment_identity,
+        &adopted_receipt);
+    if (ret == APP_DURABLE_STATE_GATEWAY_ASSIGNMENT_SAVE_ADOPT_REQUIRED) {
+        return -EAGAIN;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gateway_membership_restore_snapshot(
+        &restored, &gateway_membership_snapshot_state);
+    if (ret != PROTO_OK) {
+        return -EPROTO;
+    }
+    acknowledged_count = (uint16_t)__builtin_popcountll(
+        gateway_membership_snapshot_state.publication_acknowledged_mask);
+    ret = app_anchor_gateway_assignment_adopted_result_commit(
+        &gateway_membership_assignment_identity, acknowledged_count);
+    if (ret < 0) {
+        /* The same RAM reservation stays with the inactive assignment owner
+         * until its exact local result has queue custody.  Do not activate
+         * the publisher or emit a durable-success terminal before then. */
+        return ret;
+    }
+
+    gateway_membership_roster_state = restored;
+    gateway_membership_durable_receipt = adopted_receipt;
+    gateway_membership_durable_receipt_valid = true;
+    gateway_membership_adoption_pending = false;
+    gateway_membership_publisher_activation_pending = true;
+    /* The original assignment deliberately retained its prepared publisher
+     * and lease. It is not a reboot replay, so terminal host receipt still
+     * has to release that live lease. */
+    gateway_membership_publication_owner_release_pending = false;
+    atomic_set(&gateway_assignment_publication_pending_state, 1);
+    return 0;
+}
+
 static void gateway_finalize_membership_clear(void)
 {
     gateway_membership_clear(&gateway_membership_roster_state);
-    gateway_membership_persistence_dirty = false;
+    gateway_membership_clear_durable_evidence();
     gateway_membership_clear_pending = false;
+    gateway_membership_publication_live_owner = false;
+    gateway_membership_publication_owner_release_pending = false;
     atomic_set(&gateway_assignment_publication_pending_state, 0);
 }
 
@@ -411,43 +560,42 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
             return;
         }
     }
-    if (gateway_collection_restore_pending) {
-        ret = gateway_restore_collection_runtime();
+    if (gateway_membership_adoption_pending) {
+        ret = gateway_membership_adopt_pending_commit();
         if (ret < 0) {
-            gateway_schedule_persistence_retry("collection-restore");
+            gateway_schedule_persistence_retry("membership-save-adopt");
             return;
         }
     }
-    if (gateway_eack_custody_clear_pending) {
-        ret = gateway_clear_eack_custody_or_defer(
-            "eack-custody-clear");
+    if (gateway_membership_publisher_activation_pending &&
+        gateway_ble_stream_initialized) {
+        ret = gateway_replay_pending_assignment_publication();
         if (ret < 0) {
+            gateway_schedule_persistence_retry(
+                "membership-adopt-publisher-activate");
             return;
         }
-        if (!gateway_collection_clear_pending &&
-            !gateway_collection_restore_pending &&
-            gateway_collection_tracking_active() &&
-            gateway_collection_state.eack_pending) {
-            gateway_schedule_collection_eack_round();
-        }
+        gateway_membership_publisher_activation_pending = false;
     }
     if (gateway_membership_clear_pending) {
-        /* RAM-only: clearing is immediate, no NVS tombstone to wait for. */
+        ret = app_durable_state_delete_gateway_assignment(
+            DEVICE_ID,
+            &gateway_membership_assignment_identity,
+            &gateway_membership_durable_receipt);
+        if (ret < 0) {
+            gateway_schedule_persistence_retry("membership-clear-delete");
+            return;
+        }
         gateway_finalize_membership_clear();
     }
-    if (gateway_collection_clear_pending) {
-        gateway_finalize_collection_clear();
-    }
-    if (gateway_collection_persistence_dirty) {
-        if (!gateway_collection_tracking_active()) {
-            gateway_collection_persistence_dirty = false;
-        } else {
-            /* RAM-only: the in-memory collection is already authoritative. */
-            gateway_collection_persistence_dirty = false;
+    if (gateway_membership_publication_owner_release_pending) {
+        ret = app_anchor_gateway_assignment_publication_complete();
+        if (ret < 0) {
+            gateway_schedule_persistence_retry(
+                "assignment-publication-owner-release");
+            return;
         }
-    }
-    if (gateway_membership_persistence_dirty) {
-        gateway_membership_persistence_dirty = false;
+        gateway_membership_publication_owner_release_pending = false;
     }
     if (gateway_ble_stream_initialized &&
         atomic_get(&gateway_assignment_publication_pending_state) != 0) {
@@ -460,6 +608,16 @@ static void gateway_persistence_retry_work_handler(struct k_work *work)
                 gateway_schedule_persistence_retry(
                     "assignment-publication-complete");
                 return;
+            }
+            if (ret > 0 &&
+                gateway_membership_publication_owner_release_pending) {
+                ret = app_anchor_gateway_assignment_publication_complete();
+                if (ret < 0) {
+                    gateway_schedule_persistence_retry(
+                        "assignment-publication-owner-release");
+                    return;
+                }
+                gateway_membership_publication_owner_release_pending = false;
             }
             if (ret == 0) {
                 app_gateway_assignment_publisher_pump();
@@ -547,22 +705,32 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
         gateway_ble_stream_classify_packet(packet->msg_type, packet->flags);
     ready = gateway_ble_stream_ready();
     retain_until_sent = false;
-    if (packet != NULL &&
-        packet->msg_type == MSG_GATEWAY_COMMAND_EVENT &&
-        payload != NULL) {
+    if (packet != NULL && packet->msg_type == MSG_GATEWAY_COMMAND_EVENT) {
         struct gateway_command_event event;
 
-        retain_until_sent =
-            packet->flags == 0u &&
-            packet->src_id != 0u &&
-            packet->src_id == packet->dst_id &&
-            gateway_command_event_decode(payload,
-                                         payload_len,
-                                         &event) == 0 &&
-            event.event_seq != 0u &&
-            packet->session_id == event.event_seq &&
-            packet->seq == (uint16_t)event.event_seq &&
-            (event.flags & GATEWAY_COMMAND_EVENT_FLAG_TERMINAL) != 0u;
+        if (packet->flags == 0u) {
+            /* Ordinary observability has no host-receipt owner.  It remains
+             * a best-effort stream item and must never reach publisher
+             * receipt advancement. */
+        } else if (packet->flags == FLAG_GATEWAY_ACK_REQUIRED &&
+                   payload != NULL && packet->src_id != 0u &&
+                   packet->src_id == packet->dst_id &&
+                   gateway_command_event_decode(payload,
+                                                payload_len,
+                                                &event) == 0 &&
+                   event.event_seq != 0u &&
+                   packet->session_id == event.event_seq &&
+                   packet->seq == (uint16_t)event.event_seq &&
+                   app_gateway_assignment_publisher_event_is_reliable(
+                       &event)) {
+            retain_until_sent = true;
+        } else {
+            /* ACK_REQUIRED is an explicit publisher-custody marker.  Do not
+             * silently downgrade an invalid marked event to best effort,
+             * because its future receipt could otherwise name a different
+             * mesh owner behind it. */
+            return -EBADMSG;
+        }
     }
     key = k_spin_lock(&gateway_ble_stream_lock);
     if (retain_until_sent) {
@@ -950,6 +1118,20 @@ static bool gateway_host_receipt_identity_matches(
                                  SEMANTIC_DIGEST_SHA256_LEN);
 }
 
+/* Gateway command results are synthesized locally from a host command and
+ * retained only by the BLE stream.  They share MSG_COMMAND_RESULT with mesh
+ * collection records, so require the exact local envelope before bypassing
+ * the mesh custody completion path. */
+static bool gateway_local_command_result_packet(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    return packet != NULL && packet->msg_type == MSG_COMMAND_RESULT &&
+           packet->src_id == DEVICE_ID && packet->dst_id == DEVICE_ID &&
+           gateway_local_command_result_valid(packet, payload, payload_len);
+}
+
 static int gateway_ble_accept_host_receipt(
     const struct proto_packet *receipt_packet,
     const uint8_t *payload,
@@ -961,6 +1143,8 @@ static int gateway_ble_accept_host_receipt(
     size_t record_len = 0u;
     uint8_t record_digest[SEMANTIC_DIGEST_SHA256_LEN];
     k_spinlock_key_t key;
+    bool local_command_result = false;
+    bool self_addressed_command_result = false;
     int ret;
 
     if (receipt_packet == NULL || payload == NULL) {
@@ -986,6 +1170,15 @@ static int gateway_ble_accept_host_receipt(
                                   &record_len);
     if (ret < 0) {
         k_spin_unlock(&gateway_ble_stream_lock, key);
+        if (ret == -ENOENT &&
+            identity.original_msg_type == MSG_GATEWAY_COMMAND_EVENT &&
+            gateway_command_event_duplicate_host_receipt_valid(
+                &identity) == 0) {
+            /* The command-event owner already consumed this exact receipt.
+             * Keep a retransmitted GUI receipt idempotent without pretending
+             * there is a generic mesh custody handoff to rearm. */
+            return 0;
+        }
         return ret;
     }
     ret = gateway_ble_stream_head_packet(&gateway_ble_stream_state,
@@ -997,6 +1190,22 @@ static int gateway_ble_accept_host_receipt(
                                                record_digest)) {
         k_spin_unlock(&gateway_ble_stream_lock, key);
         return -ESTALE;
+    }
+    if (record_len >= GATEWAY_BLE_STREAM_RECORD_HEADER_LEN) {
+        self_addressed_command_result =
+            head_packet.msg_type == MSG_COMMAND_RESULT &&
+            head_packet.src_id == head_packet.dst_id;
+        local_command_result = gateway_local_command_result_packet(
+            &head_packet,
+            &record[GATEWAY_BLE_STREAM_RECORD_HEADER_LEN],
+            record_len - GATEWAY_BLE_STREAM_RECORD_HEADER_LEN);
+    }
+    if (self_addressed_command_result && !local_command_result) {
+        /* Self-addressed results are gateway-local BLE custody only.  A bad
+         * local envelope may not fall through to the generic mesh callback,
+         * which would complete whichever unrelated mesh item is pending. */
+        k_spin_unlock(&gateway_ble_stream_lock, key);
+        return -EBADMSG;
     }
     if (gateway_ble_stream_state.head_send_phase ==
             GATEWAY_BLE_STREAM_HEAD_HOST_NOTIFIED) {
@@ -1011,6 +1220,25 @@ static int gateway_ble_accept_host_receipt(
     }
     k_spin_unlock(&gateway_ble_stream_lock, key);
     if (ret != 0 && ret != -EALREADY) {
+        return ret;
+    }
+    if (head_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+        /* Command telemetry is BLE-only. Retiring this head can expose an
+         * unrelated mesh-custody item behind it, so it must never also signal
+         * the generic mesh receipt owner. */
+        return gateway_command_event_finish_host_receipt(&head_packet);
+    }
+    if (local_command_result) {
+        /* A local host-command result was moved out of its admission queue
+         * into this exact retained BLE head.  It has no mesh RX owner, and
+         * signalling the generic callback could complete a different mesh
+         * item that happens to be waiting behind it. */
+        ret = gateway_ble_finish_host_delivery(&head_packet);
+        if (ret == 0) {
+#if DEVICE_ROLE == ROLE_GATEWAY
+            (void)gateway_flush_host_command_results();
+#endif
+        }
         return ret;
     }
     mesh_gateway_host_receipt_ready();
@@ -1280,7 +1508,7 @@ int gateway_preflight_result_semantic_delivery(
         GATEWAY_SURVEY_RESULT_PREFLIGHT_UNRECOGNIZED;
     bool pending_matches;
     bool token_valid = false;
-    bool auto_transaction_owned;
+    bool survey_transaction_owned;
     int ret;
 
     if (packet == NULL || (payload == NULL && payload_len != 0u) ||
@@ -1289,12 +1517,6 @@ int gateway_preflight_result_semantic_delivery(
          packet->msg_type != MSG_RESULT_BUNDLE)) {
         return -EINVAL;
     }
-    if (gateway_collection_restore_pending ||
-        gateway_collection_clear_pending ||
-        gateway_eack_custody_clear_pending) {
-        return -EAGAIN;
-    }
-
     if (packet->msg_type == MSG_RESULT_BUNDLE) {
         uint16_t accepted_count = 0u;
         uint16_t duplicate_count = 0u;
@@ -1305,9 +1527,17 @@ int gateway_preflight_result_semantic_delivery(
             return ret;
         }
         if (!gateway_collection_tracking_active()) {
-            /* The GUI owns history. Without an active collection there is no
-             * firmware proof that this result may release source custody. */
-            return -EAGAIN;
+            /* The raw packet is still held by its source.  A reboot removed
+             * the RAM collection ledger, so retain one exact host record and
+             * let only its later GUI receipt create the strict recovery EACK. */
+            ret = app_gateway_collection_recovery_preflight(
+                packet,
+                payload,
+                payload_len,
+                DEVICE_ID,
+                (uint16_t)mesh_runtime.upstream.current_epoch);
+            return ret < 0 ? ret :
+                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY;
         }
         ret = gateway_collection_preflight_bundle_from_hop(
             &gateway_collection_state,
@@ -1367,7 +1597,14 @@ int gateway_preflight_result_semantic_delivery(
             return ret;
         }
         if (!gateway_collection_tracking_active()) {
-            return -EAGAIN;
+            ret = app_gateway_collection_recovery_preflight(
+                packet,
+                payload,
+                payload_len,
+                DEVICE_ID,
+                (uint16_t)mesh_runtime.upstream.current_epoch);
+            return ret < 0 ? ret :
+                   APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY;
         }
         ret = gateway_collection_preflight_result_from_hop(
             &gateway_collection_state,
@@ -1421,20 +1658,20 @@ ordinary_command_result:
         return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
 
-    auto_transaction_owned = gateway_survey_auto_owns_pending_command(
+    survey_transaction_owned = gateway_survey_owns_pending_control(
         &pending_snapshot.command,
         pending_snapshot.command_id);
-    if (auto_transaction_owned || !pending_matches) {
-        survey_preflight = gateway_survey_auto_preflight_result(
+    if (survey_transaction_owned || !pending_matches) {
+        survey_preflight = gateway_survey_preflight_result(
             packet, payload, payload_len, first_received_at_ms);
     }
     admission = gateway_command_result_admit(
         &pending_snapshot,
         packet,
-        auto_transaction_owned,
+        survey_transaction_owned,
         survey_preflight ==
             GATEWAY_SURVEY_RESULT_PREFLIGHT_ACCEPTED);
-    gateway_survey_auto_discard_preflight_result();
+    gateway_survey_discard_preflight_result();
 
     if (admission == GATEWAY_COMMAND_RESULT_IGNORE) {
         return survey_preflight ==
@@ -1473,6 +1710,184 @@ ordinary_command_result:
 #endif
 }
 
+int gateway_collection_recovery_reserve_host_custody(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (gateway_collection_tracking_active()) {
+        return -EBUSY;
+    }
+    return app_gateway_collection_recovery_reserve_host_custody(
+        &gateway_collection_recovery,
+        packet,
+        payload,
+        payload_len,
+        DEVICE_ID,
+        (uint16_t)mesh_runtime.upstream.current_epoch);
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return -ENOTSUP;
+#endif
+}
+
+int gateway_collection_recovery_cancel_host_custody(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    return app_gateway_collection_recovery_cancel_host_custody(
+        &gateway_collection_recovery, packet, payload, payload_len);
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return -ENOTSUP;
+#endif
+}
+
+int gateway_collection_recovery_finish_host_delivery(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    return app_gateway_collection_recovery_finish_host_delivery(
+        &gateway_collection_recovery, packet, payload, payload_len);
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return -ENOTSUP;
+#endif
+}
+
+bool gateway_collection_recovery_active(void)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    return gateway_collection_recovery.active;
+#else
+    return false;
+#endif
+}
+
+bool gateway_collection_recovery_flood_matches(
+    const struct mesh_outbound *outbound)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    return app_gateway_collection_recovery_outbound_matches(
+        &gateway_collection_recovery, outbound);
+#else
+    ARG_UNUSED(outbound);
+    return false;
+#endif
+}
+
+int gateway_collection_recovery_after_host_receipt(
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    struct mesh_outbound outbound;
+    struct app_mesh_flood_result flood_result = {0};
+    uint32_t recovery_attempt_id = 0u;
+    bool rf_started = false;
+    int ret;
+
+    if (packet == NULL || (payload == NULL && payload_len != 0u) ||
+        packet->payload_len != payload_len) {
+        return -EINVAL;
+    }
+
+    if (!gateway_collection_recovery.active) {
+        /* The pre-receipt reservation is the ownership proof that this GUI
+         * receipt names the one stale packet that blocked new collections. */
+        if (!gateway_collection_recovery.host_custody_pending ||
+            !app_gateway_collection_recovery_matches(
+                &gateway_collection_recovery,
+                packet,
+                payload,
+                payload_len)) {
+            return -ESTALE;
+        }
+
+        /* packet_sequence is a 16-bit wire projection. Never transmit its
+         * zero value; consume the rare skipped shared control ID instead. */
+        do {
+            ret = app_gateway_control_sequence_next(&recovery_attempt_id);
+            if (ret < 0) {
+                return ret;
+            }
+        } while ((uint16_t)recovery_attempt_id == 0u);
+
+        ret = app_gateway_collection_recovery_begin(
+            &gateway_collection_recovery,
+            packet,
+            payload,
+            payload_len,
+            DEVICE_ID,
+            (uint16_t)mesh_runtime.upstream.current_epoch,
+            recovery_attempt_id);
+        if (ret < 0) {
+            return ret;
+        }
+    } else if (!app_gateway_collection_recovery_matches(
+                   &gateway_collection_recovery,
+                   packet,
+                   payload,
+                   payload_len)) {
+        return -ESTALE;
+    }
+
+    /* A failed BLE retirement may redrive this semantic completion. The
+     * frozen flood already happened, so preserve its owner and do not emit a
+     * second recovery attempt. */
+    if (gateway_collection_recovery.flood_progress.complete) {
+        return 0;
+    }
+
+    ret = app_gateway_collection_recovery_outbound(
+        &gateway_collection_recovery, &outbound);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = mesh_try_send_c5_flood_resume(
+        &outbound,
+        C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD,
+        "collection-recovery-eack-c5",
+        &gateway_collection_recovery.flood_progress,
+        &flood_result,
+        &rf_started);
+    if (ret < 0) {
+        return ret;
+    }
+    if (!gateway_collection_recovery.flood_progress.complete ||
+        gateway_collection_recovery.flood_progress.next_opportunity !=
+            app_mesh_flood_repeat_limit() ||
+        flood_result.sent_count != app_mesh_flood_repeat_limit()) {
+        return -EAGAIN;
+    }
+
+    recovery_attempt_id = gateway_collection_recovery.identity.recovery_attempt_id;
+    LOG_INF("gateway collection recovery EACK sent: src=0x%016llx session=%u seq=%u attempt=%u",
+            (unsigned long long)packet->src_id,
+            packet->session_id,
+            packet->seq,
+            recovery_attempt_id);
+    return 0;
+#else
+    ARG_UNUSED(packet);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return -ENOTSUP;
+#endif
+}
+
 int gateway_result_bundle_host_projection_mask(
     const struct proto_packet *packet,
     const uint8_t *payload,
@@ -1491,10 +1906,7 @@ int gateway_result_bundle_host_projection_mask(
         return -EINVAL;
     }
     *accepted_record_mask = 0u;
-    if (!gateway_collection_tracking_active() ||
-        gateway_collection_restore_pending ||
-        gateway_collection_clear_pending ||
-        gateway_eack_custody_clear_pending) {
+    if (!gateway_collection_tracking_active()) {
         return -EAGAIN;
     }
     ret = gateway_collection_preflight_bundle_projection_from_hop(
@@ -1673,7 +2085,7 @@ int gateway_emit_host_packet(const struct proto_packet *packet,
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
-void gateway_emit_host_command_result_reserved(
+int gateway_commit_host_command_result_reserved(
     uint32_t result_reservation_token,
     const struct proto_packet *command,
     enum command_id command_id,
@@ -1687,7 +2099,7 @@ void gateway_emit_host_command_result_reserved(
 
     if (command == NULL || DEVICE_ROLE != ROLE_GATEWAY ||
         result_reservation_token == 0u) {
-        return;
+        return -EINVAL;
     }
 
     ret = gateway_command_build_result(command,
@@ -1701,8 +2113,7 @@ void gateway_emit_host_command_result_reserved(
                                        sizeof(payload),
                                        &payload_len);
     if (ret != PROTO_OK) {
-        LOG_WRN("gateway command failure result build failed: %d", ret);
-        return;
+        return mesh_errno_from_proto(ret);
     }
 
     k_spinlock_key_t key =
@@ -1718,11 +2129,26 @@ void gateway_emit_host_command_result_reserved(
         payload_len);
     k_spin_unlock(&gateway_host_command_result_lock, key);
     if (ret < 0) {
+        return ret;
+    }
+    (void)gateway_flush_host_command_results();
+    return 0;
+}
+
+void gateway_emit_host_command_result_reserved(
+    uint32_t result_reservation_token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    enum command_status status,
+    uint8_t reason)
+{
+    int ret = gateway_commit_host_command_result_reserved(
+        result_reservation_token, command, command_id, status, reason);
+
+    if (ret < 0) {
         LOG_ERR("gateway command result custody unavailable: cmd=0x%04x ret=%d",
                 (unsigned int)command_id,
                 ret);
-    } else {
-        (void)gateway_flush_host_command_results();
     }
 }
 
@@ -1771,6 +2197,10 @@ bool gateway_clear_pending_command_result(const struct proto_packet *command)
     if (gateway_pending_command_matches(command)) {
         gateway_command_pending_clear(&gateway_command_pending_state);
         gateway_pending_command_result_token = 0u;
+        memset(gateway_pending_command_semantic_digest,
+               0,
+               sizeof(gateway_pending_command_semantic_digest));
+        gateway_pending_command_semantic_digest_valid = false;
         cleared = true;
     }
     k_mutex_unlock(&gateway_command_pending_lock);
@@ -1797,9 +2227,11 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
     bool pending_active = gateway_command_pending_state.active;
     bool timeout_side_effect_pending =
         gateway_command_timeout_dispatch_state.pending;
+    bool wait_reserved =
+        gateway_command_wait_reservation_active != 0u;
 
     k_mutex_unlock(&gateway_command_pending_lock);
-    if (pending_active || timeout_side_effect_pending ||
+    if (pending_active || timeout_side_effect_pending || wait_reserved ||
         gateway_collection_work_pending()) {
         return -EBUSY;
     }
@@ -1847,26 +2279,8 @@ int gateway_begin_command_collection(const struct gateway_command_options *optio
             gateway_collection_state.expected_count,
             gateway_collection_state.expected_node_id_count,
             (unsigned int)roster_source);
-    ret = gateway_persist_collection_state("collection-start");
-    if (ret < 0) {
-        /*
-         * The previous closed collection remains the durable snapshot.  Do
-         * not expose or schedule a new collection that exists only in RAM.
-         */
-        gateway_collection_rollback_failed_start();
-        return ret;
-    }
     app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
     gateway_collection_eack_round_dirty = false;
-    if (gateway_clear_eack_custody_or_defer(
-            "collection-start-eack-custody-clear") < 0) {
-        /*
-         * The new collection is already durable. Keep it blocked behind the
-         * old tombstone owner; the persistence worker will start its first
-         * EACK only after the prior key is positively absent.
-         */
-        return 0;
-    }
     gateway_schedule_collection_eack_round();
     return 0;
 }
@@ -1881,10 +2295,10 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
                                              const struct gateway_membership_publication *publication)
 {
     struct gateway_membership_roster candidate;
+    struct gateway_membership_snapshot candidate_snapshot;
+    struct app_durable_state_gateway_assignment_identity candidate_identity;
+    struct app_durable_receipt candidate_receipt;
     int ret;
-
-    ARG_UNUSED(assignment_epoch);
-    ARG_UNUSED(table_seq);
 
     if (DEVICE_ROLE != ROLE_GATEWAY || node_ids == NULL || slots == NULL ||
         table_commitment == NULL ||
@@ -1892,9 +2306,8 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
         return -EINVAL;
     }
     if (gateway_membership_restore_pending ||
-        gateway_collection_restore_pending ||
-        gateway_membership_persistence_dirty ||
         gateway_membership_clear_pending ||
+        gateway_membership_adoption_pending ||
         atomic_get(&gateway_assignment_publication_pending_state) != 0) {
         return -EAGAIN;
     }
@@ -1909,10 +2322,45 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
         return mesh_errno_from_proto(ret);
     }
 
-    /* RAM-only build: the roster lives only in memory, so registration commits
-     * directly to the in-RAM state and marks publication pending. */
+    ret = gateway_membership_export_assignment_snapshot(
+        &candidate,
+        assignment_epoch,
+        table_seq,
+        table_commitment,
+        publication,
+        &candidate_snapshot);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = gateway_membership_identity_from_publication(
+        assignment_epoch, publication, &candidate_identity);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = app_durable_state_save_gateway_assignment_commit(
+        DEVICE_ID,
+        &candidate_snapshot,
+        &candidate_identity,
+        &candidate_receipt);
+    if (ret == APP_DURABLE_STATE_GATEWAY_ASSIGNMENT_SAVE_ADOPT_REQUIRED) {
+        /* The write may be durable but its mandatory readback did not mint a
+         * receipt. Retain this prepared batch and original lease; ordinary
+         * failure/abort would emit a false terminal for a committed roster. */
+        gateway_membership_hold_adoption(&candidate_snapshot,
+                                         &candidate_identity,
+                                         "membership-save-adopt");
+        return GATEWAY_MEMBERSHIP_COMMIT_ADOPTION_PENDING;
+    }
+    if (ret < 0) {
+        return ret;
+    }
     gateway_membership_roster_state = candidate;
-    gateway_membership_persistence_dirty = false;
+    gateway_membership_snapshot_state = candidate_snapshot;
+    gateway_membership_assignment_identity = candidate_identity;
+    gateway_membership_durable_receipt = candidate_receipt;
+    gateway_membership_durable_receipt_valid = true;
+    gateway_membership_publication_live_owner = true;
+    gateway_membership_publication_owner_release_pending = false;
     atomic_set(&gateway_assignment_publication_pending_state, 1);
     return 0;
 }
@@ -1931,8 +2379,8 @@ int gateway_get_registered_membership_roster_with_slots(
         return -EINVAL;
     }
     if (gateway_membership_restore_pending ||
-        gateway_membership_persistence_dirty ||
-        gateway_membership_clear_pending) {
+        gateway_membership_clear_pending ||
+        gateway_membership_adoption_pending) {
         return -EAGAIN;
     }
     if (!gateway_membership_roster_state.valid) {
@@ -1956,6 +2404,10 @@ bool gateway_assignment_publication_pending(void)
 {
     return DEVICE_ROLE == ROLE_GATEWAY &&
            (gateway_membership_restore_pending ||
+            gateway_membership_clear_pending ||
+            gateway_membership_adoption_pending ||
+            gateway_membership_publisher_activation_pending ||
+            gateway_membership_publication_owner_release_pending ||
             atomic_get(&gateway_assignment_publication_pending_state) != 0);
 }
 
@@ -1963,6 +2415,10 @@ int gateway_complete_assignment_publication(
     const struct gateway_command_event *base_event,
     void *ctx)
 {
+    struct gateway_membership_snapshot retired_snapshot;
+    struct app_durable_receipt retired_receipt;
+    int ret;
+
     ARG_UNUSED(ctx);
     if (DEVICE_ROLE != ROLE_GATEWAY || base_event == NULL ||
         base_event->kind !=
@@ -1970,20 +2426,215 @@ int gateway_complete_assignment_publication(
         base_event->command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
         return -EINVAL;
     }
-    /* RAM-only build: the publication is already complete in memory. */
+    if (atomic_get(&gateway_assignment_publication_pending_state) == 0 ||
+        !gateway_membership_identity_matches_event(
+            &gateway_membership_assignment_identity, base_event)) {
+        return -ESTALE;
+    }
+
+    /* Do not pre-validate the old receipt here. A prior durable write may
+     * have committed before its readback failed; retire() deliberately
+     * recognizes that exact already-retired terminal and returns its new
+     * receipt. Pre-validating would turn that safe retry into a wedge. */
+    ret = app_durable_state_retire_gateway_assignment_commit(
+        DEVICE_ID,
+        &gateway_membership_durable_receipt,
+        base_event,
+        &retired_receipt);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gateway_membership_snapshot_retire_publication(
+        &gateway_membership_snapshot_state, &retired_snapshot);
+    if (ret != PROTO_OK) {
+        return -EPROTO;
+    }
+    gateway_membership_snapshot_state = retired_snapshot;
+    gateway_membership_durable_receipt = retired_receipt;
+    gateway_membership_durable_receipt_valid = true;
+    gateway_membership_publication_owner_release_pending =
+        gateway_membership_publication_live_owner;
+    gateway_membership_publication_live_owner = false;
     atomic_set(&gateway_assignment_publication_pending_state, 0);
     return 0;
 }
 
 void gateway_clear_registered_membership_roster(void)
 {
+    int ret;
+
     if (DEVICE_ROLE != ROLE_GATEWAY || gateway_membership_restore_pending ||
-        gateway_collection_restore_pending) {
+        gateway_membership_clear_pending) {
+        return;
+    }
+    if (gateway_assignment_publication_pending()) {
+        LOG_ERR("gateway membership decommission blocked by publication debt");
+        return;
+    }
+    if (!gateway_membership_roster_state.valid) {
         return;
     }
 
-    /* RAM-only build: clearing the roster is immediate, no NVS delete. */
+    ret = app_durable_state_delete_gateway_assignment(
+        DEVICE_ID,
+        &gateway_membership_assignment_identity,
+        &gateway_membership_durable_receipt);
+    if (ret < 0) {
+        LOG_ERR("gateway membership decommission retained: delete ret=%d", ret);
+        gateway_membership_clear_pending = true;
+        gateway_schedule_persistence_retry("membership-clear-delete");
+        return;
+    }
     gateway_finalize_membership_clear();
+}
+
+int gateway_replay_pending_assignment_publication(void)
+{
+    struct gateway_command_event base_event = {
+        .schema_version = GATEWAY_COMMAND_EVENT_SCHEMA_VERSION,
+        .record_len = GATEWAY_COMMAND_EVENT_WIRE_LEN,
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        .stage = GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+        .status = COMMAND_OK,
+        .reason = GATEWAY_COMMAND_EVENT_REASON_NONE,
+        .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
+        .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
+    };
+    struct gateway_command_event table_event;
+    struct gateway_command_event terminal_event;
+    uint64_t claimed_ids[GATEWAY_MEMBERSHIP_MAX_NODES];
+    uint8_t claimed_slots[GATEWAY_MEMBERSHIP_MAX_NODES];
+    uint16_t acknowledged_count;
+    size_t claimed_count = 0u;
+    bool cold_boot_replay;
+    bool activated_prepared = false;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    if (gateway_membership_restore_pending ||
+        gateway_membership_clear_pending) {
+        return -EAGAIN;
+    }
+    if (atomic_get(&gateway_assignment_publication_pending_state) == 0) {
+        return 0;
+    }
+    /* An ambiguous same-boot save keeps the original assignment lease and
+     * prepared publisher alive.  It must resume as the live operation, while
+     * a restored durable record has no predecessor lease and must identify
+     * every reconstructed event as REPLAY. */
+    cold_boot_replay = !gateway_membership_publication_live_owner;
+    ret = gateway_membership_receipt_validate();
+    if (ret < 0) {
+        return ret;
+    }
+    if (gateway_membership_snapshot_state.publication_table_round == 0u ||
+        gateway_membership_snapshot_state.publication_acknowledged_mask ==
+            0u) {
+        return -EPROTO;
+    }
+
+    for (uint8_t slot = 0u; slot < GATEWAY_MEMBERSHIP_MAX_NODES; slot++) {
+        uint64_t node_id =
+            gateway_membership_snapshot_state.publication_claimed_node_ids[
+                slot];
+
+        if (node_id == 0u) {
+            continue;
+        }
+        claimed_ids[claimed_count] = node_id;
+        claimed_slots[claimed_count] = slot;
+        claimed_count++;
+    }
+    if (claimed_count == 0u) {
+        return -EPROTO;
+    }
+
+    base_event.gateway_epoch =
+        gateway_membership_assignment_identity.gateway_epoch;
+    base_event.correlation_id =
+        gateway_membership_assignment_identity.correlation_id;
+    base_event.gateway_sequence =
+        gateway_membership_assignment_identity.gateway_sequence;
+    base_event.host_session_id =
+        gateway_membership_assignment_identity.host_session_id;
+    base_event.host_seq = gateway_membership_assignment_identity.host_seq;
+
+    acknowledged_count = (uint16_t)__builtin_popcountll(
+        gateway_membership_snapshot_state.publication_acknowledged_mask);
+    if (acknowledged_count > claimed_count) {
+        return -EPROTO;
+    }
+
+    ret = app_gateway_assignment_publisher_prepare_table(
+        &base_event,
+        claimed_ids,
+        claimed_slots,
+        claimed_count,
+        gateway_membership_snapshot_state.publication_acknowledged_mask,
+        gateway_membership_snapshot_state.publication_duplicate_count);
+    if (ret < 0) {
+        return ret;
+    }
+    if (ret > 0) {
+        ret = app_gateway_assignment_publisher_commit_prepared_batch(
+            &base_event);
+        if (ret == -ESTALE) {
+            /* A non-prepared matching publisher already owns the replay. */
+            app_gateway_assignment_publisher_pump();
+            return 1;
+        }
+        if (ret < 0) {
+            return ret;
+        }
+        activated_prepared = true;
+    } else {
+        if (cold_boot_replay) {
+            /* This is a fresh publisher reconstructed from durable
+             * publication debt after reset. Tag it before any event can
+             * leave the prepared batch so every mapping/table/terminal tells
+             * the GUI that it is a replay. A same-boot adoption keeps its
+             * original operation semantics even if it needs activation. */
+            ret = app_gateway_assignment_publisher_mark_prepared_replay(
+                &base_event);
+            if (ret < 0) {
+                (void)app_gateway_assignment_publisher_abort_prepared_batch(
+                    &base_event);
+                return ret;
+            }
+        }
+        ret = app_gateway_assignment_publisher_commit_prepared_batch(
+            &base_event);
+    }
+    if (ret < 0) {
+        if (!activated_prepared) {
+            (void)app_gateway_assignment_publisher_abort_prepared_batch(
+                &base_event);
+        }
+        return ret;
+    }
+
+    table_event = base_event;
+    table_event.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
+    table_event.attempt =
+        gateway_membership_snapshot_state.publication_table_round;
+    table_event.progress_count = acknowledged_count;
+    table_event.total_count = (uint16_t)claimed_count;
+    table_event.success_count = acknowledged_count;
+    table_event.failure_count =
+        (uint16_t)(claimed_count - acknowledged_count);
+    table_event.duplicate_count =
+        gateway_membership_snapshot_state.publication_duplicate_count;
+    app_gateway_assignment_publisher_stage_table_ready(&table_event);
+
+    terminal_event = table_event;
+    terminal_event.stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE;
+    terminal_event.flags = GATEWAY_COMMAND_EVENT_FLAG_TERMINAL;
+    if (!app_gateway_assignment_publisher_capture_terminal(&terminal_event)) {
+        return -ESTALE;
+    }
+    return 1;
 }
 
 void gateway_clear_command_collection(const struct gateway_command_options *options)
@@ -2004,9 +2655,11 @@ void gateway_clear_command_collection(const struct gateway_command_options *opti
 static void gateway_command_timeout_side_effect_handler(struct k_work *work)
 {
     struct proto_packet command = {0};
+    uint8_t command_digest[SEMANTIC_DIGEST_SHA256_LEN] = {0};
     enum command_id command_id = CMD_VENDOR_BASE;
     enum command_status status = COMMAND_TIMEOUT;
     uint8_t reason = 0u;
+    bool command_digest_valid = false;
     bool run_side_effects = false;
 
     ARG_UNUSED(work);
@@ -2026,6 +2679,13 @@ static void gateway_command_timeout_side_effect_handler(struct k_work *work)
         command_id = gateway_command_timeout_dispatch_state.command_id;
         status = gateway_command_timeout_dispatch_state.status;
         reason = gateway_command_timeout_dispatch_state.reason;
+        command_digest_valid =
+            gateway_pending_command_semantic_digest_valid;
+        if (command_digest_valid) {
+            memcpy(command_digest,
+                   gateway_pending_command_semantic_digest,
+                   sizeof(command_digest));
+        }
         gateway_command_timeout_dispatch_state.running = true;
         run_side_effects = true;
     }
@@ -2040,7 +2700,10 @@ static void gateway_command_timeout_side_effect_handler(struct k_work *work)
         mesh_relay_note_delivery_failure_at(&mesh_runtime,
                                             command.dst_id,
                                             k_uptime_get_32());
-        gateway_command_timeout_side_effects(&command, command_id);
+        gateway_command_timeout_side_effects(
+            &command,
+            command_digest_valid ? command_digest : NULL,
+            command_id);
     } else {
         gateway_command_result_side_effects(
             &command, command_id, status, reason);
@@ -2054,6 +2717,10 @@ static void gateway_command_timeout_side_effect_handler(struct k_work *work)
     gateway_command_timeout_dispatch_state.pending = false;
     gateway_command_timeout_dispatch_state.running = false;
     gateway_command_timeout_dispatch_state.result_reservation_token = 0u;
+    memset(gateway_pending_command_semantic_digest,
+           0,
+           sizeof(gateway_pending_command_semantic_digest));
+    gateway_pending_command_semantic_digest_valid = false;
     k_mutex_unlock(&gateway_command_pending_lock);
 }
 
@@ -2211,7 +2878,7 @@ int gateway_note_command_result(const struct proto_packet *packet,
     uint64_t result_received_at_ms = first_received_at_ms;
     uint32_t validation_token;
     uint32_t result_reservation_token = 0u;
-    bool auto_transaction_owned;
+    bool survey_transaction_owned;
     bool deadline_expired = false;
     bool validation_blocked = false;
     bool validation_failed = false;
@@ -2348,31 +3015,31 @@ int gateway_note_command_result(const struct proto_packet *packet,
                    APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE : -ENOENT;
     }
 
-    auto_transaction_owned = gateway_survey_auto_owns_pending_command(
+    survey_transaction_owned = gateway_survey_owns_pending_control(
         &pending_snapshot.command,
         pending_snapshot.command_id);
-    if (auto_transaction_owned || !pending_matches) {
-        survey_preflight = gateway_survey_auto_preflight_result(
+    if (survey_transaction_owned || !pending_matches) {
+        survey_preflight = gateway_survey_preflight_result(
             packet, payload, payload_len, result_received_at_ms);
     }
 
     admission = gateway_command_result_admit(&pending_snapshot,
                                               packet,
-                                              auto_transaction_owned,
+                                              survey_transaction_owned,
                                               survey_preflight ==
                                                   GATEWAY_SURVEY_RESULT_PREFLIGHT_ACCEPTED);
 
     if (admission == GATEWAY_COMMAND_RESULT_IGNORE) {
         if (survey_preflight ==
             GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED) {
-            gateway_survey_auto_commit_preflight_result();
+            gateway_survey_commit_preflight_result();
             LOG_DBG("gateway survey duplicate/late result reconciled: src=0x%016llx session=%u seq=%u",
                     packet == NULL ? 0ull :
                     (unsigned long long)packet->src_id,
                     packet == NULL ? 0u : packet->session_id,
                     packet == NULL ? 0u : packet->seq);
         } else {
-            gateway_survey_auto_discard_preflight_result();
+            gateway_survey_discard_preflight_result();
         }
         if (collection_ret >= 0) {
             gateway_command_result_validation_release_reserved(
@@ -2394,7 +3061,7 @@ int gateway_note_command_result(const struct proto_packet *packet,
     if (admission == GATEWAY_COMMAND_RESULT_WAIT) {
         if (survey_preflight ==
             GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED) {
-            gateway_survey_auto_commit_preflight_result();
+            gateway_survey_commit_preflight_result();
             LOG_DBG("gateway survey late/duplicate/conflicting result retained no pending ownership: src=0x%016llx session=%u seq=%u",
                     packet == NULL ? 0ull :
                     (unsigned long long)packet->src_id,
@@ -2405,7 +3072,7 @@ int gateway_note_command_result(const struct proto_packet *packet,
             return collection_ret >= 0 ? collection_ret :
                    APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
         }
-        gateway_survey_auto_discard_preflight_result();
+        gateway_survey_discard_preflight_result();
         LOG_WRN("gateway survey result identity rejected while wait remains active: src=0x%016llx session=%u seq=%u",
                 packet == NULL ? 0ull :
                 (unsigned long long)packet->src_id,
@@ -2434,7 +3101,7 @@ int gateway_note_command_result(const struct proto_packet *packet,
     if (ret == PROTO_OK) {
         ret = gateway_pending_command_lock();
         if (ret < 0) {
-            gateway_survey_auto_discard_preflight_result();
+            gateway_survey_discard_preflight_result();
             gateway_command_result_validation_release_reserved(
                 validation_token);
             return ret;
@@ -2465,13 +3132,19 @@ int gateway_note_command_result(const struct proto_packet *packet,
                 gateway_command_timeout_dispatch_state.reason = 0u;
                 gateway_command_timeout_dispatch_state.pending = true;
                 gateway_command_timeout_dispatch_state.running = false;
+            } else if (result_claim ==
+                       GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED) {
+                memset(gateway_pending_command_semantic_digest,
+                       0,
+                       sizeof(gateway_pending_command_semantic_digest));
+                gateway_pending_command_semantic_digest_valid = false;
             }
         }
 
         k_mutex_unlock(&gateway_command_pending_lock);
         if (result_claim ==
             GATEWAY_COMMAND_PENDING_RESULT_CLAIM_EXPIRED) {
-            gateway_survey_auto_discard_preflight_result();
+            gateway_survey_discard_preflight_result();
             (void)k_work_cancel_delayable(
                 &gateway_command_result_timeout_work);
             gateway_emit_host_command_result_reserved(
@@ -2488,12 +3161,12 @@ int gateway_note_command_result(const struct proto_packet *packet,
         }
         if (result_claim !=
             GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED) {
-            gateway_survey_auto_discard_preflight_result();
+            gateway_survey_discard_preflight_result();
             gateway_command_result_validation_release_reserved(
                 validation_token);
             return collection_ret >= 0 ? collection_ret : -ENOENT;
         }
-        gateway_survey_auto_commit_preflight_result();
+        gateway_survey_commit_preflight_result();
         (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
         if (result_reservation_token != 0u) {
             gateway_command_result_release_terminal_reserved(
@@ -2522,7 +3195,7 @@ int gateway_note_command_result(const struct proto_packet *packet,
         return collection_ret >= 0 ? collection_ret :
                APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
-    gateway_survey_auto_discard_preflight_result();
+    gateway_survey_discard_preflight_result();
     gateway_command_result_validation_release_reserved(validation_token);
     return collection_ret >= 0 ? collection_ret : mesh_errno_from_proto(ret);
 }
@@ -2548,14 +3221,14 @@ int gateway_note_command_result_bundle(const struct proto_packet *packet,
                                           previous_hop_id);
 }
 
-int gateway_begin_command_result_wait(const struct proto_packet *command,
+int gateway_begin_command_result_wait(const struct mesh_outbound *command,
                                       enum command_id command_id)
 {
     return gateway_begin_command_result_wait_for(
         command, command_id, GATEWAY_COMMAND_RESULT_TIMEOUT_MS);
 }
 
-int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+int gateway_begin_command_result_wait_for(const struct mesh_outbound *command,
                                           enum command_id command_id,
                                           uint32_t timeout_ms)
 {
@@ -2569,46 +3242,139 @@ int gateway_begin_command_result_wait_for(const struct proto_packet *command,
 }
 
 int gateway_begin_command_result_wait_until(
-    const struct proto_packet *command,
+    const struct mesh_outbound *command,
+    enum command_id command_id,
+    uint32_t absolute_deadline_ms)
+{
+    uint32_t reservation_token = 0u;
+    int ret = gateway_command_result_wait_reserve(&reservation_token);
+
+    if (ret < 0) {
+        return ret;
+    }
+    ret = gateway_command_result_wait_commit(
+        reservation_token,
+        command,
+        command_id,
+        absolute_deadline_ms);
+    if (ret < 0) {
+        (void)gateway_command_result_wait_cancel(reservation_token);
+    }
+    return ret;
+}
+
+int gateway_command_result_wait_reserve(uint32_t *reservation_token)
+{
+    int ret;
+
+    if (reservation_token == NULL) {
+        return -EINVAL;
+    }
+    *reservation_token = 0u;
+    if (gateway_collection_work_pending()) {
+        return -EBUSY;
+    }
+    ret = gateway_pending_command_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    if (gateway_command_pending_state.active ||
+        gateway_command_timeout_dispatch_state.pending ||
+        gateway_command_timeout_dispatch_state.running ||
+        gateway_command_wait_reservation_active != 0u) {
+        ret = -EBUSY;
+    } else {
+        gateway_command_wait_reservation_next++;
+        if (gateway_command_wait_reservation_next == 0u) {
+            gateway_command_wait_reservation_next = 1u;
+        }
+        gateway_command_wait_reservation_active =
+            gateway_command_wait_reservation_next;
+        *reservation_token = gateway_command_wait_reservation_active;
+        ret = 0;
+    }
+    k_mutex_unlock(&gateway_command_pending_lock);
+    return ret;
+}
+
+int gateway_command_result_wait_cancel(uint32_t reservation_token)
+{
+    int ret;
+
+    if (reservation_token == 0u) {
+        return -EINVAL;
+    }
+    ret = gateway_pending_command_lock();
+    if (ret < 0) {
+        return ret;
+    }
+    if (gateway_command_wait_reservation_active != reservation_token) {
+        ret = -ESTALE;
+    } else {
+        gateway_command_wait_reservation_active = 0u;
+        ret = 0;
+    }
+    k_mutex_unlock(&gateway_command_pending_lock);
+    return ret;
+}
+
+int gateway_command_result_wait_commit(
+    uint32_t reservation_token,
+    const struct mesh_outbound *command,
     enum command_id command_id,
     uint32_t absolute_deadline_ms)
 {
     struct gateway_command_pending started = {0};
+    uint8_t command_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t now_ms;
     uint32_t remaining_ms;
     int ret;
 
+    if (reservation_token == 0u || command == NULL ||
+        command->packet.payload_len != command->payload_len ||
+        !mesh_packet_semantic_digest(&command->packet,
+                                     command->payload,
+                                     command->payload_len,
+                                     command_digest)) {
+        return -EINVAL;
+    }
     now_ms = k_uptime_get_32();
     remaining_ms = absolute_deadline_ms - now_ms;
     if (remaining_ms == 0u || remaining_ms > (uint32_t)INT32_MAX) {
         return -EINVAL;
     }
-    if (gateway_collection_work_pending()) {
-        return -EBUSY;
-    }
-
     ret = gateway_pending_command_lock();
     if (ret < 0) {
         return ret;
     }
     now_ms = k_uptime_get_32();
     remaining_ms = absolute_deadline_ms - now_ms;
-    if (remaining_ms == 0u || remaining_ms > (uint32_t)INT32_MAX) {
+    if (gateway_command_wait_reservation_active != reservation_token) {
+        ret = -ESTALE;
+    } else if (remaining_ms == 0u ||
+               remaining_ms > (uint32_t)INT32_MAX) {
         ret = -ETIMEDOUT;
-    } else if (gateway_command_timeout_dispatch_state.pending) {
+    } else if (gateway_command_pending_state.active ||
+               gateway_command_timeout_dispatch_state.pending ||
+               gateway_command_timeout_dispatch_state.running) {
         ret = -EBUSY;
     } else {
         ret = gateway_command_pending_start_until(
             &gateway_command_pending_state,
-            command,
+            &command->packet,
             command_id,
             now_ms,
             absolute_deadline_ms);
     }
     if (ret == PROTO_OK) {
+        gateway_command_wait_reservation_active = 0u;
         started = gateway_command_pending_state;
         gateway_pending_command_result_token =
             gateway_command_result_dispatch_token;
+        memcpy(gateway_pending_command_semantic_digest,
+               command_digest,
+               sizeof(gateway_pending_command_semantic_digest));
+        gateway_pending_command_semantic_digest_valid = true;
     }
     k_mutex_unlock(&gateway_command_pending_lock);
     if (ret != PROTO_OK) {
@@ -2634,6 +3400,10 @@ int gateway_begin_command_result_wait_until(
                 gateway_command_pending_clear(
                     &gateway_command_pending_state);
                 gateway_pending_command_result_token = 0u;
+                memset(gateway_pending_command_semantic_digest,
+                       0,
+                       sizeof(gateway_pending_command_semantic_digest));
+                gateway_pending_command_semantic_digest_valid = false;
             }
             k_mutex_unlock(&gateway_command_pending_lock);
         }
@@ -2644,17 +3414,46 @@ int gateway_begin_command_result_wait_until(
 
 static int gateway_restore_membership_runtime(void)
 {
-    /* RAM-only build: there is no durable membership snapshot to restore. */
-    atomic_set(&gateway_assignment_publication_pending_state, 0);
-    gateway_membership_restore_pending = false;
-    return 0;
-}
+    struct gateway_membership_roster restored = {0};
+    bool replay_debt = false;
+    int ret;
 
-static int gateway_restore_collection_runtime(void)
-{
-    /* RAM-only build: there is no durable collection or EACK custody to
-     * restore, so a restore just clears the admission-recovery owners. */
-    gateway_collection_restore_pending = false;
+    gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_clear_durable_evidence();
+    gateway_membership_clear_pending = false;
+    gateway_membership_publication_live_owner = false;
+    gateway_membership_publication_owner_release_pending = false;
+    atomic_set(&gateway_assignment_publication_pending_state, 0);
+
+    ret = app_durable_state_restore_gateway_assignment_commit(
+        DEVICE_ID,
+        &gateway_membership_snapshot_state,
+        &gateway_membership_assignment_identity,
+        &replay_debt,
+        &gateway_membership_durable_receipt);
+    if (ret < 0) {
+        gateway_membership_clear_durable_evidence();
+        return ret;
+    }
+    if (ret == 0) {
+        gateway_membership_restore_pending = false;
+        return 0;
+    }
+
+    ret = gateway_membership_restore_snapshot(
+        &restored, &gateway_membership_snapshot_state);
+    if (ret != PROTO_OK ||
+        replay_debt !=
+            (gateway_membership_snapshot_state.publication_table_round !=
+             0u)) {
+        gateway_membership_clear_durable_evidence();
+        return -EPROTO;
+    }
+    gateway_membership_roster_state = restored;
+    gateway_membership_durable_receipt_valid = true;
+    gateway_membership_restore_pending = false;
+    atomic_set(&gateway_assignment_publication_pending_state,
+               replay_debt ? 1 : 0);
     return 0;
 }
 
@@ -2667,11 +3466,19 @@ void gateway_command_result_tracking_init(void)
         &gateway_command_result_validation_state);
     gateway_command_result_dispatch_token = 0u;
     gateway_pending_command_result_token = 0u;
+    memset(gateway_pending_command_semantic_digest,
+           0,
+           sizeof(gateway_pending_command_semantic_digest));
+    gateway_pending_command_semantic_digest_valid = false;
+    gateway_command_wait_reservation_next = 0u;
+    gateway_command_wait_reservation_active = 0u;
     app_gateway_command_result_queue_init(&gateway_host_command_results);
     gateway_collection_clear(&gateway_collection_state);
+    app_gateway_collection_recovery_reset(&gateway_collection_recovery);
     app_gateway_eack_retry_reset(&gateway_collection_eack_retry_state);
     gateway_collection_eack_round_dirty = false;
     gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_clear_durable_evidence();
     memset(&gateway_command_timeout_dispatch_state,
            0,
            sizeof(gateway_command_timeout_dispatch_state));
@@ -2686,13 +3493,10 @@ void gateway_command_result_tracking_init(void)
                           gateway_collection_eack_work_handler);
     k_work_init_delayable(&gateway_persistence_retry_work,
                           gateway_persistence_retry_work_handler);
-    gateway_collection_persistence_dirty = false;
-    gateway_collection_clear_pending = false;
-    gateway_collection_restore_pending = true;
-    gateway_eack_custody_clear_pending = false;
-    gateway_membership_persistence_dirty = false;
     gateway_membership_clear_pending = false;
     gateway_membership_restore_pending = true;
+    gateway_membership_publication_live_owner = false;
+    gateway_membership_publication_owner_release_pending = false;
     atomic_set(&gateway_assignment_publication_pending_state, 0);
     gateway_ble_stream_initialized = false;
     atomic_clear(&gateway_persistence_retry_schedule_deferred);
@@ -2709,13 +3513,23 @@ void gateway_command_result_tracking_init(void)
         gateway_schedule_persistence_retry("membership-restore");
         return;
     }
-
-    ret = gateway_restore_collection_runtime();
-    if (ret < 0) {
-        gateway_schedule_persistence_retry("collection-restore");
-    }
 }
 #else
+int gateway_commit_host_command_result_reserved(
+    uint32_t result_reservation_token,
+    const struct proto_packet *command,
+    enum command_id command_id,
+    enum command_status status,
+    uint8_t reason)
+{
+    ARG_UNUSED(result_reservation_token);
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(status);
+    ARG_UNUSED(reason);
+    return -ENOTSUP;
+}
+
 void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_id command_id,
                                       enum command_status status,
@@ -2751,7 +3565,7 @@ uint32_t gateway_command_result_get_dispatch_token(void)
     return 0u;
 }
 
-int gateway_begin_command_result_wait(const struct proto_packet *command,
+int gateway_begin_command_result_wait(const struct mesh_outbound *command,
                                       enum command_id command_id)
 {
     ARG_UNUSED(command);
@@ -2760,7 +3574,7 @@ int gateway_begin_command_result_wait(const struct proto_packet *command,
 }
 
 int gateway_begin_command_result_wait_until(
-    const struct proto_packet *command,
+    const struct mesh_outbound *command,
     enum command_id command_id,
     uint32_t absolute_deadline_ms)
 {
@@ -2813,13 +3627,38 @@ void gateway_command_result_validation_release_reserved(uint32_t token)
     ARG_UNUSED(token);
 }
 
-int gateway_begin_command_result_wait_for(const struct proto_packet *command,
+int gateway_begin_command_result_wait_for(const struct mesh_outbound *command,
                                           enum command_id command_id,
                                           uint32_t timeout_ms)
 {
     ARG_UNUSED(command);
     ARG_UNUSED(command_id);
     ARG_UNUSED(timeout_ms);
+    return -ENOTSUP;
+}
+
+int gateway_command_result_wait_reserve(uint32_t *reservation_token)
+{
+    ARG_UNUSED(reservation_token);
+    return -ENOTSUP;
+}
+
+int gateway_command_result_wait_commit(
+    uint32_t reservation_token,
+    const struct mesh_outbound *command,
+    enum command_id command_id,
+    uint32_t absolute_deadline_ms)
+{
+    ARG_UNUSED(reservation_token);
+    ARG_UNUSED(command);
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(absolute_deadline_ms);
+    return -ENOTSUP;
+}
+
+int gateway_command_result_wait_cancel(uint32_t reservation_token)
+{
+    ARG_UNUSED(reservation_token);
     return -ENOTSUP;
 }
 
@@ -2882,6 +3721,11 @@ int gateway_get_registered_membership_roster_with_slots(
 bool gateway_assignment_publication_pending(void)
 {
     return false;
+}
+
+int gateway_replay_pending_assignment_publication(void)
+{
+    return -ENOTSUP;
 }
 
 int gateway_complete_assignment_publication(

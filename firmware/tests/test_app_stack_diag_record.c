@@ -33,7 +33,8 @@ static void test_long_typed_records_are_complete(void)
         (unsigned long long)UINT64_MAX, (unsigned long long)UINT64_MAX,
         UINT32_MAX, UINT16_MAX, UINT8_MAX, UINT32_MAX, UINT32_MAX,
         UINT32_MAX, UINT32_MAX);
-    assert(length > 300);
+    assert(length == APP_STACK_DIAG_MAX_FORMATTED_LENGTH);
+    assert((size_t)length + 1u <= sizeof(record));
     assert((size_t)length == strlen(record));
     assert(record[length - 1] == '\n');
 }

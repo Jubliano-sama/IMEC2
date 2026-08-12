@@ -4,8 +4,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 180000u
-#define APP_WATCHDOG_PROGRESS_LEASE_MS 120000u
+/*
+ * Connected-routing operations deliberately include multi-minute discovery,
+ * control-delivery, and retry horizons.  Keep the watchdog as a last-resort
+ * liveness reset instead of making a slow but bounded custody recovery look
+ * like a dead system.
+ */
+#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 900000u
+#define APP_WATCHDOG_PROGRESS_LEASE_MS 600000u
 #define APP_WATCHDOG_STARTUP_GRACE_MS 30000u
 #define APP_WATCHDOG_INIT_RETRY_DELAY_MS 1000u
 

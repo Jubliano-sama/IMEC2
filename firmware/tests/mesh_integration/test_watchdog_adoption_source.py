@@ -199,6 +199,15 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         self.assertIn("config IMEC_WATCHDOG_BYPASS", KCONFIG)
         self.assertIn("CONFIG_IMEC_WATCHDOG_BYPASS=y", BYPASS_CONF)
         self.assertIn("IMEC_WATCHDOG_BYPASS_BUILD", CMAKE)
+        bypass_gate = CMAKE[
+            CMAKE.index("if(IMEC_WATCHDOG_BYPASS_BUILD)") :
+            CMAKE.index("find_package(Zephyr", CMAKE.index("if(IMEC_WATCHDOG_BYPASS_BUILD)"))
+        ]
+        self.assertIn(
+            'NOT IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop"',
+            bypass_gate,
+        )
+        self.assertNotIn("mesh_transmitter_forcedhop", bypass_gate)
 
     def test_reset_cause_is_captured_before_hardware_latches_are_cleared(self) -> None:
         capture = SOURCE.find("hwinfo_get_reset_cause(&watchdog_health.reset_cause)")
@@ -212,7 +221,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         handler = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
         progress = "app_watchdog_note_radio_progress();"
         acquire = handler.index(
-            'ret = radio_guard_uwb_start("anchor low-duty UWB wake scan");'
+            "ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN,"
         )
         failure = handler.index("if (ret < 0)", acquire)
         failure_end = braced_statement_end(handler, failure)
@@ -227,7 +236,11 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         low_power = handler.index(
             "low_power_ret = anchor_enter_low_power(", receive
         )
-        release = handler.index("radio_guard_uwb_stop();", low_power)
+        release = handler.index(
+            "release_ret = radio_guard_uwb_release_finish(&radio_lease,",
+            low_power,
+        )
+        release_failure = handler.index("if (release_ret < 0)", release)
         feed = handler.index(progress, release)
 
         self.assertEqual(
@@ -256,6 +269,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             "the RX-attempt marker must describe the bounded receive call",
         )
         self.assertLess(low_power, release)
+        self.assertLess(release_failure, feed)
         self.assertLess(release, feed)
         self.assertRegex(
             handler[release:],
@@ -282,12 +296,12 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
 
         gateway_acquire = handler.index(
-            'ret = mesh_rx_radio_start("mesh gateway continuous channel9 RX");'
+            'ret = mesh_rx_radio_claim("mesh gateway continuous channel9 RX",'
         )
         gateway_failure = handler.index("if (ret < 0)", gateway_acquire)
         gateway_failure_end = braced_statement_end(handler, gateway_failure)
         scheduled_acquire = handler.index(
-            "ret = mesh_rx_radio_start(channel9_event ?", gateway_failure_end
+            "ret = mesh_rx_radio_claim(channel9_event ?", gateway_failure_end
         )
         continuous_begin = handler.rindex(
             "bool functional_rx_outcome = false;", 0, gateway_acquire
@@ -301,7 +315,8 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             gateway_configure,
         )
         gateway_stop = continuous.index(
-            "mesh_rx_radio_stop();", gateway_receive
+            "release_ret = mesh_rx_radio_finish(&radio_lease, parking_ret);",
+            gateway_receive,
         )
         gateway_feed = continuous.index(progress, gateway_stop)
 
@@ -349,7 +364,8 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             scheduled_configure,
         )
         scheduled_stop = handler.index(
-            "mesh_rx_radio_stop();", scheduled_first_receive
+            "radio_release_ret = mesh_rx_radio_finish(&radio_lease, radio_release_ret);",
+            scheduled_first_receive,
         )
         scheduled_feed = handler.index(progress, scheduled_stop)
 
@@ -423,29 +439,30 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             "ret = dwm3000_driver_send_frame_tracked_until("
         )
         idle_release = released.index(
-            "release_ret = mesh_radio_idle_with_bounded_recovery(",
+            "parking_ret = mesh_radio_idle_with_bounded_recovery(",
             released_send,
         )
         mesh_release = released.index(
-            "mesh_release_radio_after_mesh_turn(true, reason);",
+            "parking_ret = mesh_release_radio_after_mesh_turn(true, reason);",
             idle_release,
         )
         standby_release = released.index(
-            "release_ret = mesh_radio_standby_with_bounded_recovery(",
+            "parking_ret = mesh_radio_standby_with_bounded_recovery(",
             mesh_release,
         )
         released_stop = released.index(
-            "radio_guard_uwb_stop();", standby_release
+            "release_ret = radio_guard_uwb_release_finish(&radio_lease, parking_ret);",
+            standby_release,
         )
-        released_failure = released.index("if (ret < 0)", released_stop)
-        released_failure_end = braced_statement_end(released, released_failure)
         release_failure = released.index(
-            "if (release_ret < 0)", released_failure_end
+            "if (release_ret < 0)", released_stop
         )
         release_failure_end = braced_statement_end(released, release_failure)
         release_failure_branch = released[
             release_failure:release_failure_end
         ]
+        released_failure = released.index("if (ret < 0)", release_failure_end)
+        released_failure_end = braced_statement_end(released, released_failure)
         released_progress = released.index(progress, release_failure_end)
 
         self.assertEqual(
@@ -456,8 +473,8 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         self.assertLess(idle_release, released_stop)
         self.assertLess(mesh_release, released_stop)
         self.assertLess(standby_release, released_stop)
-        self.assertLess(released_stop, released_failure)
-        self.assertLess(released_failure_end, release_failure)
+        self.assertLess(released_stop, release_failure)
+        self.assertLess(release_failure_end, released_failure)
         self.assertIn(
             "goto out_unlock;",
             released[released_failure:released_failure_end],
@@ -471,7 +488,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
         self.assertGreater(released_progress, release_failure_end)
 
-    def test_ch9_route_adv_keep_awake_has_successful_default_release(self) -> None:
+    def test_ch9_release_policy_has_transactional_default_release(self) -> None:
         released = function_body(
             MESH_TRANSPORT,
             "mesh_send_outbound_with_release_on_channel_until",
@@ -480,18 +497,27 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         ch9_release = released.index(
             "if (ret == 0 && radio_channel == UWB_CHANNEL_MESH_PAYLOAD)"
         )
-        route_adv_guard = released.index(
-            "else if (out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV)",
+        idle_policy = released.index(
+            "if (release_policy == MESH_RADIO_RELEASE_IDLE)",
             ch9_release,
         )
-        release_failure = released.index("if (release_ret < 0)", route_adv_guard)
+        finish = released.index(
+            "release_ret = radio_guard_uwb_release_finish(&radio_lease, parking_ret);",
+            idle_policy,
+        )
+        release_failure = released.index("if (release_ret < 0)", finish)
         ch9_release_body = released[ch9_release:release_failure]
 
         self.assertLess(release_default, ch9_release)
-        self.assertLess(ch9_release, route_adv_guard)
-        self.assertLess(route_adv_guard, release_failure)
+        self.assertLess(ch9_release, idle_policy)
+        self.assertLess(idle_policy, finish)
+        self.assertLess(finish, release_failure)
         self.assertIn(
-            "release_ret =\n                mesh_release_radio_after_mesh_turn(",
+            "parking_ret = mesh_radio_idle_with_bounded_recovery(",
+            ch9_release_body,
+        )
+        self.assertIn(
+            "parking_ret = mesh_release_radio_after_mesh_turn(true, reason);",
             ch9_release_body,
         )
 
@@ -504,15 +530,18 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             "functional_tx_completed = ctx->functional_tx_completed;"
         )
         release = slot_end.index(
-            "release_ret =\n        mesh_release_radio_after_mesh_turn(",
+            "parking_ret = mesh_release_radio_after_mesh_turn(true, \"ch9-slot-tx\");",
             snapshot,
         )
-        radio_stop = slot_end.index("radio_guard_uwb_stop();", release)
-        clear = slot_end.index(
-            "ctx->functional_tx_completed = false;", radio_stop
+        radio_stop = slot_end.index(
+            "release_ret = radio_guard_uwb_release_finish(&ctx->radio_lease,",
+            release,
         )
-        release_failure = slot_end.index("if (release_ret < 0)", clear)
+        release_failure = slot_end.index("if (release_ret < 0)", radio_stop)
         release_failure_end = braced_statement_end(slot_end, release_failure)
+        clear = slot_end.index(
+            "ctx->functional_tx_completed = false;", release_failure_end
+        )
         functional_gate = slot_end.index(
             "if (functional_tx_completed)", release_failure_end
         )
@@ -525,8 +554,8 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
         self.assertLess(snapshot, release)
         self.assertLess(release, radio_stop)
-        self.assertLess(radio_stop, clear)
-        self.assertLess(clear, release_failure)
+        self.assertLess(radio_stop, release_failure)
+        self.assertLess(release_failure_end, clear)
         self.assertIn(
             "return release_ret;",
             slot_end[release_failure:release_failure_end],
@@ -646,7 +675,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         self.assertEqual(single.count(progress), 1)
         self.assertRegex(
             single[single_release_failure_end:],
-            r"else\s+if\s*\(\s*functional_tx_completed\s*&&\s*"
+            r"if\s*\(\s*functional_tx_completed\s*&&\s*"
             r"\(\s*!gateway_ack_required\s*\|\|\s*"
             r"ack_debug\.functional_rx_outcome\s*\)\s*\)\s*\{\s*"
             r"app_watchdog_note_radio_progress\s*\(\s*\)\s*;\s*\}",
@@ -667,7 +696,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         self.assertEqual(probe.count(progress), 1)
         self.assertRegex(
             probe[probe_release_failure_end:],
-            r"else\s+if\s*\(\s*functional_tx_completed\s*&&\s*"
+            r"if\s*\(\s*functional_tx_completed\s*&&\s*"
             r"\(\s*!ack_wait_ran\s*\|\|\s*"
             r"ack_debug\.functional_rx_outcome\s*\)\s*\)\s*\{\s*"
             r"app_watchdog_note_radio_progress\s*\(\s*\)\s*;\s*\}",
@@ -676,7 +705,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
         self.assertGreater(probe_feed, probe_release_failure_end)
 
-    def test_max_survey_discovery_requires_periodic_radio_progress(self) -> None:
+    def test_max_survey_discovery_fits_relaxed_progress_lease(self) -> None:
         max_slots = uint_macro(
             SURVEY_HEADER, "SURVEY_DISCOVERY_MAX_SLOT_COUNT"
         )
@@ -690,10 +719,10 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             WATCHDOG_HEADER, "APP_WATCHDOG_PROGRESS_LEASE_MS"
         )
 
-        self.assertGreater(
+        self.assertLess(
             max_slots * max_slot_ms * max_rounds,
             lease_ms,
-            "the maximum discovery must continue exercising the long-operation lease",
+            "a valid maximum discovery must not be reset by the watchdog",
         )
         self.assertLess(
             max_slots * max_slot_ms,
@@ -710,7 +739,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         discovery_end = braced_statement_end(runtime, discovery_start)
         discovery = runtime[discovery_start:discovery_end]
         acquire = discovery.index(
-            'ret = radio_guard_uwb_start("survey discovery");'
+            "ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,"
         )
         failure = discovery.index("if (ret < 0)", acquire)
         failure_end = braced_statement_end(discovery, failure)
@@ -720,7 +749,11 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         low_power = discovery.index(
             "low_power_ret = runtime_ops.enter_low_power(", operation
         )
-        release = discovery.index("radio_guard_uwb_stop();", low_power)
+        release = discovery.index(
+            "release_ret = survey_radio_release(&radio_lease, low_power_ret);",
+            low_power,
+        )
+        release_failure = discovery.index("if (release_ret < 0)", release)
         feed = discovery.index(progress, release)
 
         self.assertEqual(
@@ -740,6 +773,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
         self.assertLess(operation, low_power)
         self.assertLess(low_power, release)
+        self.assertLess(release_failure, feed)
         self.assertLess(release, feed)
         self.assertRegex(
             discovery[release:],

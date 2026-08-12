@@ -23,13 +23,12 @@ BOUNDARY_IMPLEMENTATION = {
     "app_mesh_report_encode.c",
     "app_node_comm.c",
 }
-# This module is part of the mesh transport boundary: it persists the relay's
-# epoch/freshness ordering state and deliberately has no protocol-client API.
-# Local delivery likewise owns transport custody identities and validates the
-# exact semantic packet before handing it to a protocol consumer.
+# Local delivery owns transport custody identities and validates the exact
+# semantic packet before handing it to a protocol consumer. Route freshness is
+# RAM-owned by the relay; no storage facade is part of this boundary.
 TRANSPORT_STATE_IMPLEMENTATION = {
+    "app_gateway_collection_recovery.h",
     "app_mesh_local_delivery.c",
-    "app_mesh_route_state_persistence.c",
 }
 LEGACY_TRANSPORT_CLIENTS = {
     "app_anchor.c",
@@ -56,6 +55,114 @@ LEGACY_TRANSPORT_CLIENTS = {
 
 
 class NodeCommSourceBoundaryTests(unittest.TestCase):
+    def test_facade_async_handoff_has_exact_pre_rf_cancel_and_rf_observation(self):
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+
+        tx_start = report.index(
+            "static int mesh_start_tracked_tx_with_retry("
+        )
+        tx_end = report.index("\nint mesh_start_tracked_tx(", tx_start)
+        tracked_tx = report[tx_start:tx_end]
+        self.assertIn("mesh_cancel_observation_owned_pre_rf_tx(", tracked_tx)
+        self.assertGreaterEqual(
+            tracked_tx.count("mesh_cancel_observation_owned_pre_rf_tx("), 2
+        )
+        slot_full = tracked_tx.index('"channel9-slot-full"')
+        send_failure = tracked_tx.index('"send-failure"', slot_full)
+        self.assertIn("observation != NULL", tracked_tx[:slot_full])
+        self.assertIn("!observation->rf_started", tracked_tx[:send_failure])
+
+        result_offer = tracked_tx.index("if (send_prepared_c5_control)")
+        result_offer_end = tracked_tx.index(
+            "} else if (direct_gateway_tx_pending)", result_offer
+        )
+        result_offer_send = tracked_tx[result_offer:result_offer_end]
+        self.assertIn("mesh_send_c5_control_attempt(", result_offer_send)
+        self.assertIn("absolute_deadline_ms", result_offer_send)
+        self.assertIn("observation", result_offer_send)
+
+        c5_start = report.index("static int mesh_send_c5_control_attempt(")
+        c5_end = report.index("\nint mesh_send_c5_control(", c5_start)
+        c5_attempt = report[c5_start:c5_end]
+        self.assertIn("wake_rf_started_at_ms", c5_attempt)
+        self.assertIn("&wake_rf_started", c5_attempt)
+        self.assertIn("&wake_rf_started_at_ms", c5_attempt)
+        self.assertNotIn("payload_observation", c5_attempt)
+        payload_send = c5_attempt.index(
+            "mesh_send_outbound_with_release_on_channel_until("
+        )
+        wake_merge = c5_attempt.index(
+            "observation->rf_started = true", payload_send
+        )
+        self.assertIn("observation", c5_attempt[payload_send:wake_merge])
+        self.assertLess(payload_send, wake_merge)
+        self.assertIn("observation->rf_started = true", c5_attempt)
+        self.assertIn(
+            "observation->rf_started_at_ms = wake_rf_started_at_ms",
+            c5_attempt,
+        )
+
+    def test_exact_relay_terminal_commit_precedes_facade_backend_release(self):
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+
+        complete_start = report.index(
+            "static int mesh_complete_gateway_ack_confirm("
+        )
+        complete_end = report.index(
+            "static int mesh_complete_terminal_release(", complete_start
+        )
+        complete = report[complete_start:complete_end]
+        producer_cleanup = complete.index(
+            "anchor_survey_delivery_gateway_confirmed"
+        )
+        facade_proof = complete.index(
+            "app_node_comm_note_gateway_confirmed_digest_at("
+        )
+        relay_commit = complete.index(
+            "mesh_relay_commit_gateway_ack_confirm_terminal("
+        )
+        self.assertLess(producer_cleanup, relay_commit)
+        self.assertLess(relay_commit, facade_proof)
+        self.assertNotIn("mesh_save_outbox_durable", complete)
+        self.assertNotIn("mesh_deferred_outbox_pending", complete)
+
+    def test_rx_snapshots_transient_confirm_before_core_handles_its_ack(self):
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+
+        drain_start = report.index(
+            "static uint32_t mesh_drain_rx_queue_locked("
+        )
+        drain_end = report.index(
+            "static void mesh_rx_work_handler(", drain_start
+        )
+        drain = report[drain_start:drain_end]
+        transient_state = drain.index(
+            "mesh_runtime.pending.gateway_ack_confirm_pending"
+        )
+        transient_snapshot = drain.index(
+            "mesh_relay_pending_gateway_ack_confirm_wire(", transient_state
+        )
+        immutable_fallback = drain.index(
+            "confirmed_packet = mesh_runtime.pending.packet;",
+            transient_snapshot,
+        )
+        handle_rx = drain.index(
+            "mesh_relay_handle_rx_with_random(", immutable_fallback
+        )
+        action_handoff = drain.index(
+            "mesh_handle_result_actions(", handle_rx
+        )
+
+        self.assertLess(transient_state, transient_snapshot)
+        self.assertLess(transient_snapshot, immutable_fallback)
+        self.assertLess(immutable_fallback, handle_rx)
+        self.assertLess(handle_rx, action_handoff)
+        self.assertIn(
+            "confirmed_payload_len > 0u ?\n"
+            "                                           confirmed_payload : NULL",
+            drain[action_handoff:],
+        )
+
     def test_new_protocol_clients_cannot_include_mesh_report_directly(self):
         direct_clients = set()
         include_pattern = re.compile(
@@ -108,7 +215,27 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             with self.subTest(call=call):
                 self.assertIn(call, source)
 
-        self.assertNotRegex(source, r"MSG_[A-Z0-9_]+")
+        # Gateway ACK is the one facade-level semantic class: its producer
+        # allocates a fresh outer reply sequence for every replay, while the
+        # ACK payload commits the stable acknowledged packet.  Coalescing is
+        # deliberately closed to this profile/type and exact reverse edge.
+        self.assertEqual(
+            ["MSG_GATEWAY_ACK", "MSG_GATEWAY_ACK"],
+            re.findall(r"MSG_[A-Z0-9_]+", source),
+        )
+        coalescer = source[
+            source.index("static bool app_node_comm_gateway_ack_response_matches(") :
+            source.index(
+                "static struct app_node_comm_delivery_record *\n"
+                "app_node_comm_gateway_ack_response_record("
+            )
+        ]
+        self.assertEqual(2, coalescer.count("MSG_GATEWAY_ACK"))
+        self.assertEqual(2, coalescer.count("NODE_COMM_PROFILE_CONTROL_RESPONSE"))
+        self.assertIn("record->packet.session_id == envelope->packet.session_id", coalescer)
+        self.assertIn("memcmp(payload, envelope->payload", coalescer)
+        self.assertIn("record->next_hop_id == envelope->next_hop_id", coalescer)
+        self.assertNotIn("record->packet.seq == envelope->packet.seq", coalescer)
         self.assertNotIn("TLV_", source)
         self.assertNotIn('#include "app_mesh_report.h"', header)
 
@@ -223,6 +350,80 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             with self.subTest(name=name):
                 protocol_source = (APP_SRC / name).read_text(encoding="utf-8")
                 self.assertNotIn("node_comm_submit(", protocol_source)
+
+    def test_production_delivery_trace_is_installed_and_fits_formatter(self):
+        source = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+        board = (APP_SRC / "app_board.c").read_text(encoding="utf-8")
+
+        # The compact record has fixed-width hex fields and a compile-time
+        # rendered-width calculation, while the board formatter owns 128 bytes.
+        self.assertIn("char line[128];", board)
+        self.assertIn(
+            "k_mutex_lock(&status_debug_rtt_mutex, K_NO_WAIT)", board
+        )
+        self.assertIn("DBG_NC o=%016llx g=%08x", source)
+        self.assertIn("w=%02x e=%08x", source)
+        self.assertIn("q=%04x>%04x", source)
+        self.assertIn("t=%08x p=%08x a=%02x", source)
+        self.assertIn("DBG_NC_RSVX i=%01x k=%02x", source)
+        self.assertIn(
+            "#define APP_NODE_COMM_DELIVERY_TRACE_MAX_CHARS", source
+        )
+        self.assertIn(
+            "#define APP_NODE_COMM_RESERVATION_EXPIRED_TRACE_MAX_CHARS",
+            source,
+        )
+        self.assertIn(
+            "APP_NODE_COMM_DELIVERY_TRACE_MAX_CHARS == 125u", source
+        )
+        self.assertIn(
+            "APP_NODE_COMM_RESERVATION_EXPIRED_TRACE_MAX_CHARS == 89u",
+            source,
+        )
+        self.assertIn(
+            "APP_NODE_COMM_DELIVERY_TRACE_MAX_CHARS < 128u", source
+        )
+
+        init_start = source.index("int app_node_comm_init(")
+        init_end = source.index("void app_node_comm_stop_role_scan", init_start)
+        init = source[init_start:init_end]
+        trace_install = init.index("node_comm_set_delivery_transition_trace(")
+        self.assertLess(init.index("node_comm_init(&node_comm_policy)"),
+                        trace_install)
+        self.assertIn(
+            "app_node_comm_production_delivery_transition_trace", init
+        )
+
+        trace_start = source.index(
+            "static void app_node_comm_production_delivery_transition_trace("
+        )
+        trace_end = source.index(
+            "static bool app_node_comm_transport_quiesced", trace_start
+        )
+        trace = source[trace_start:trace_end]
+        self.assertIn("APP_NODE_COMM_DELIVERY_TRACE_FORMAT", trace)
+        self.assertIn("status_debug_printf(", trace)
+        self.assertNotIn("k_work_", trace)
+        self.assertNotIn("app_node_comm_sync_", trace)
+        self.assertNotIn("app_node_comm_", trace[trace.index("{") + 1 :])
+
+    def test_resource_wait_owner_is_core_generation_bound(self):
+        header = (ROOT / "include" / "node_comm.h").read_text(
+            encoding="utf-8"
+        )
+        core = (ROOT / "src" / "node_comm.c").read_text(encoding="utf-8")
+        adapter = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+
+        self.assertIn("struct node_comm_resource_wait_owner", header)
+        self.assertIn("uint32_t delivery_generation;", header)
+        self.assertIn("node_comm_resource_wait_owner_next(", header)
+        self.assertIn("NODE_COMM_DELIVERY_TRACE_RESOURCE_BLOCKED", header)
+        self.assertIn("NODE_COMM_DELIVERY_TRACE_RESOURCE_RESUMED", header)
+        self.assertIn("node_comm_resource_wait_owner_next(", core)
+        self.assertIn("owner->delivery_generation", core)
+        self.assertNotIn("waiting_for_reliable_owner", adapter)
+        self.assertIn("node_comm_resource_wait_owner_next(", adapter)
+        self.assertIn("node_comm_release_resource_wait(", adapter)
 
     def test_large_control_payload_has_one_gateway_only_exact_owner(self):
         header = (APP_SRC / "app_node_comm.h").read_text(encoding="utf-8")
@@ -426,7 +627,11 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         reconcile = facade[reconcile_start:reconcile_end]
         peek = reconcile.index("node_comm_peek_terminal_event_for")
         request = reconcile.index("mesh_request_reliable_uplink_cancel")
+        immediate_poll = reconcile.index(
+            "app_node_comm_poll_backend_release_locked(", request
+        )
         self.assertLess(peek, request)
+        self.assertLess(request, immediate_poll)
         self.assertIn("record->backend_attempt_outstanding", reconcile[:peek])
         self.assertIn("record->backend_release_request_outstanding", reconcile)
         self.assertIn("mesh_packet_semantic_digest(", reconcile)
@@ -436,9 +641,14 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         route_cancel_start = report.index(
             "static int mesh_cancel_reliable_uplink_route_owned("
         )
-        route_cancel_end = report.index(
-            "static void mesh_node_comm_cancel_work_handler",
+        complete_start = report.index(
+            "static bool mesh_node_comm_cancel_complete(",
             route_cancel_start,
+        )
+        route_cancel_end = complete_start
+        complete_end = report.index(
+            "static void mesh_node_comm_cancel_work_handler",
+            complete_start,
         )
         route_cancel = report[route_cancel_start:route_cancel_end]
         matcher_start = report.index(
@@ -452,26 +662,113 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertIn("mesh_node_comm_packet_matches_cancel(", route_cancel)
         self.assertIn("mesh_relay_cancel_tx(&mesh_runtime)", route_cancel)
         self.assertIn("mesh_route_waiting_tx_valid = false", route_cancel)
-        self.assertIn("mesh_save_outbox_durable(", route_cancel)
+        self.assertNotIn("mesh_save_outbox_durable", route_cancel)
+        self.assertNotIn("mesh_deferred_outbox_pending", route_cancel)
 
-        worker_start = route_cancel_end
+        complete_path = report[complete_start:complete_end]
+        complete_lock = complete_path.index(
+            "k_spin_lock(&mesh_node_comm_cancel_lock)"
+        )
+        complete_match = complete_path.index(
+            "mesh_node_comm_cancel_request_matches(", complete_lock
+        )
+        result_publish = complete_path.index(
+            "mesh_node_comm_cancel_request.result = result", complete_match
+        )
+        completion_publish = complete_path.index(
+            "mesh_node_comm_cancel_request.complete = true", result_publish
+        )
+        complete_unlock = complete_path.index(
+            "k_spin_unlock(&mesh_node_comm_cancel_lock", completion_publish
+        )
+        self.assertLess(complete_lock, complete_match)
+        self.assertLess(complete_match, result_publish)
+        self.assertLess(result_publish, completion_publish)
+        self.assertLess(completion_publish, complete_unlock)
+        self.assertIn("mesh_node_comm_cancel_request.pending", complete_path)
+        self.assertIn("!mesh_node_comm_cancel_request.complete", complete_path)
+        self.assertIn("request->delivery_handle", complete_path)
+        self.assertIn("request->request_token", complete_path)
+
+        worker_start = complete_end
         worker_end = report.index(
             "int mesh_request_reliable_uplink_cancel(", worker_start
         )
         worker = report[worker_start:worker_end]
-        self.assertLess(
-            worker.index("mesh_cancel_reliable_uplink_route_owned("),
-            worker.index("mesh_node_comm_cancel_request.complete = true"),
+        worker_cancel = worker.index(
+            "mesh_cancel_reliable_uplink_route_owned("
         )
+        worker_complete = worker.index(
+            "mesh_node_comm_cancel_complete(&request, ret)", worker_cancel
+        )
+        publish_gate = worker.index("if (publish)", worker_complete)
+        release_callback = worker.index(
+            "app_node_comm_backend_release_ready(", publish_gate
+        )
+        self.assertLess(
+            worker_cancel,
+            worker_complete,
+        )
+        self.assertLess(worker_complete, publish_gate)
+        self.assertLess(publish_gate, release_callback)
+
         request_start = worker_end
         request_end = report.index(
             "int mesh_take_reliable_uplink_cancel_result(", request_start
         )
         request_path = report[request_start:request_end]
-        self.assertIn(
-            "mesh_route_owner_work_reschedule(&mesh_node_comm_cancel_work",
-            request_path,
+        publish_request = request_path.index(
+            "mesh_node_comm_cancel_request ="
         )
+        snapshot_request = request_path.index(
+            "request = mesh_node_comm_cancel_request", publish_request
+        )
+        publish_unlock = request_path.index(
+            "k_spin_unlock(&mesh_node_comm_cancel_lock", snapshot_request
+        )
+        dedicated_gate = request_path.index(
+            "#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)",
+            publish_unlock,
+        )
+        same_owner = request_path.index(
+            "k_current_get() == k_work_queue_thread_get(&mesh_route_work_q)",
+            dedicated_gate,
+        )
+        inline_cancel = request_path.index(
+            "mesh_cancel_reliable_uplink_route_owned(&request)", same_owner
+        )
+        inline_complete = request_path.index(
+            "mesh_node_comm_cancel_complete(&request, ret)", inline_cancel
+        )
+        async_schedule = request_path.index(
+            "mesh_route_owner_work_reschedule(&mesh_node_comm_cancel_work",
+            inline_complete,
+        )
+        self.assertLess(publish_request, snapshot_request)
+        self.assertLess(snapshot_request, publish_unlock)
+        self.assertLess(publish_unlock, dedicated_gate)
+        self.assertLess(dedicated_gate, same_owner)
+        self.assertLess(same_owner, inline_cancel)
+        self.assertLess(inline_cancel, inline_complete)
+        self.assertLess(inline_complete, async_schedule)
+        self.assertIn("? 0 : -ESTALE", request_path[inline_complete:async_schedule])
+        self.assertNotIn(
+            "app_node_comm_backend_release_ready(",
+            request_path[same_owner:async_schedule],
+            "the inline route-owner path runs under the facade lock, so it "
+            "must publish only the polled result and never recurse by callback",
+        )
+
+        schedule_failure = request_path.index("if (ret >= 0)", async_schedule)
+        cleanup_match = request_path.index(
+            "mesh_node_comm_cancel_request_matches(", schedule_failure
+        )
+        cleanup_clear = request_path.index(
+            "memset(&mesh_node_comm_cancel_request", cleanup_match
+        )
+        self.assertLess(async_schedule, schedule_failure)
+        self.assertLess(schedule_failure, cleanup_match)
+        self.assertLess(cleanup_match, cleanup_clear)
 
         account_start = facade.index("int app_node_comm_complete_backend_attempt")
         account_end = facade.index(
@@ -583,6 +880,28 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
                 "workqueue"
             )
 
+    def test_caller_terminal_watchdog_owns_an_idle_deadline(self):
+        facade = (APP_SRC / "app_node_comm.c").read_text(encoding="utf-8")
+        start = facade.index(
+            "static bool app_node_comm_next_required_service_due_locked("
+        )
+        end = facade.index(
+            "static struct app_node_comm_delivery_record *", start
+        )
+        due = facade[start:end]
+
+        for required in (
+            "record->auto_reap_terminal",
+            "record->backend_attempt_outstanding",
+            "node_comm_delivery_backend_active_handle == record->handle",
+            "app_node_comm_terminal_backend_released(record)",
+            "node_comm_peek_terminal_event_for(",
+            "APP_NODE_COMM_CALLER_TERMINAL_OWNER_TIMEOUT_MS",
+            "terminal.terminal_at_ms",
+            "have_record_due = true",
+        ):
+            self.assertIn(required, due)
+
     def test_mesh_clicker_uses_dedicated_communication_queue(self):
         report = read_composed_source(APP_SRC / "app_mesh_report.c")
         cmake = (ROOT / "app" / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -647,7 +966,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", immediate_action
         )
         immediate_send = ack_path.index(
-            "mesh_send_outbound_keep_channel9_awake(", guard
+            "mesh_send_causal_channel9_response(", guard
         )
         send_success = ack_path.index("if (ret == 0)", immediate_send)
         success_exit = ack_path.index("goto after_gateway_ack", send_success)
@@ -660,6 +979,15 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertLess(immediate_send, send_success)
         self.assertLess(send_success, success_exit)
         self.assertLess(success_exit, fallback_admission)
+        probe_retry_owned = ack_path.index(
+            "rx->packet.msg_type == MSG_GATEWAY_ROUTE_REQ", success_exit
+        )
+        probe_exit = ack_path.index(
+            "goto after_gateway_ack;", probe_retry_owned
+        )
+        self.assertLess(success_exit, probe_retry_owned)
+        self.assertLess(probe_retry_owned, probe_exit)
+        self.assertLess(probe_exit, fallback_admission)
         self.assertNotIn("mesh_store_route_waiting_tx(", ack_path)
         self.assertNotIn("mesh_propose_event_after_channel5_contact(", ack_path)
         self.assertIn("NODE_COMM_PROFILE_CONTROL_RESPONSE", facade)
@@ -667,8 +995,12 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertIn("app_node_comm_reap_auto_terminal_events_locked()", facade)
 
     def test_global_radio_admission_gate_closes_legacy_role_bypasses(self):
-        state_header = (APP_SRC / "app_state.h").read_text(encoding="utf-8")
-        state_source = (APP_SRC / "app_state.c").read_text(encoding="utf-8")
+        guard_header = (APP_SRC / "app_radio_guard.h").read_text(
+            encoding="utf-8"
+        )
+        guard_source = (APP_SRC / "app_radio_guard.c").read_text(
+            encoding="utf-8"
+        )
         report_source = read_composed_source(APP_SRC / "app_mesh_report.c")
 
         for declaration in (
@@ -676,28 +1008,45 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "void radio_guard_uwb_admission_resume(void);",
             "bool radio_guard_uwb_admission_paused(void);",
         ):
-            self.assertIn(declaration, state_header)
+            self.assertIn(declaration, guard_header)
 
-        start = re.search(
-            r"int radio_guard_uwb_start\([^)]*\)\s*\{(?P<body>.*?)\n\}",
-            state_source,
+        claim = re.search(
+            r"int radio_guard_uwb_claim\([^)]*\)\s*\{(?P<body>.*?)\n\}",
+            guard_source,
             re.DOTALL,
         )
-        self.assertIsNotNone(start)
-        body = start.group("body")
+        self.assertIsNotNone(claim)
+        body = claim.group("body")
         pause_check = body.index("if (uwb_rf_admission_paused)")
-        owner_claim = body.index("uwb_rf_active = true")
+        poison_check = body.index("phase == RADIO_GUARD_UWB_POISONED")
+        owner_claim = body.index("uwb_rf_owner =")
         self.assertLess(pause_check, owner_claim)
-        self.assertIn("return -ESHUTDOWN", body[pause_check:owner_claim])
+        self.assertLess(poison_check, owner_claim)
+        self.assertIn("ret = -ESHUTDOWN", body[pause_check:owner_claim])
+        self.assertIn(
+            "ret = uwb_rf_poison_error < 0 ? uwb_rf_poison_error : -EIO",
+            body[poison_check:owner_claim],
+        )
+
+        legacy_start = re.search(
+            r"int radio_guard_uwb_start\([^)]*\)\s*\{(?P<body>.*?)\n\}",
+            guard_source,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(legacy_start)
+        self.assertIn(
+            "radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_LEGACY",
+            legacy_start.group("body"),
+        )
 
         pause = re.search(
             r"void radio_guard_uwb_admission_pause\(void\)\s*\{(?P<body>.*?)\n\}",
-            state_source,
+            guard_source,
             re.DOTALL,
         )
         resume = re.search(
             r"void radio_guard_uwb_admission_resume\(void\)\s*\{(?P<body>.*?)\n\}",
-            state_source,
+            guard_source,
             re.DOTALL,
         )
         self.assertIsNotNone(pause)

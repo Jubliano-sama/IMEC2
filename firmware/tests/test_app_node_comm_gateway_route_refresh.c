@@ -13,18 +13,18 @@ enum {
     GATEWAY_ID = 0x6601u,
 };
 
-struct durable_sequence_cursor {
-    uint32_t reserved_through;
-    uint32_t reserve_calls;
-    int reserve_result;
+struct gateway_sequence_cursor {
+    uint32_t next_sequence;
+    uint32_t next_calls;
+    int next_result;
 };
 
 struct refresh_fixture {
     struct app_node_comm_gateway_route_refresh_config config;
     struct k_work_delayable *work;
     struct app_node_comm_route_refresh_event events[32];
-    struct durable_sequence_cursor local_sequence_cursor;
-    struct durable_sequence_cursor *sequence_cursor;
+    struct gateway_sequence_cursor local_sequence_cursor;
+    struct gateway_sequence_cursor *sequence_cursor;
     uint32_t message_ages[64];
     uint32_t now_ms;
     uint32_t boot_random;
@@ -81,37 +81,24 @@ static uint32_t fixture_random(void *ctx)
     return ((struct refresh_fixture *)ctx)->boot_random;
 }
 
-static uint32_t sequence_advance(uint32_t sequence, uint32_t count)
-{
-    uint64_t normalized;
-
-    if (sequence == 0u) {
-        return count;
-    }
-    normalized = (uint64_t)(sequence - 1u) + count;
-    return (uint32_t)(normalized % UINT32_MAX) + 1u;
-}
-
-static int fixture_reserve_sequences(void *ctx,
-                                     uint32_t count,
-                                     uint32_t *first_sequence)
+static int fixture_next_sequence(void *ctx, uint32_t *sequence)
 {
     struct refresh_fixture *fixture = ctx;
-    struct durable_sequence_cursor *cursor = fixture->sequence_cursor;
-    uint32_t previous;
+    struct gateway_sequence_cursor *cursor = fixture->sequence_cursor;
 
     assert(cursor != NULL);
-    assert(count == APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE);
-    assert(first_sequence != NULL);
-    cursor->reserve_calls++;
-    *first_sequence = 0u;
-    if (cursor->reserve_result < 0) {
-        return cursor->reserve_result;
+    assert(sequence != NULL);
+    cursor->next_calls++;
+    *sequence = 0u;
+    if (cursor->next_result < 0) {
+        return cursor->next_result;
     }
-
-    previous = cursor->reserved_through;
-    cursor->reserved_through = sequence_advance(previous, count);
-    *first_sequence = previous == UINT32_MAX ? 1u : previous + 1u;
+    if (cursor->next_sequence == 0u) {
+        cursor->next_sequence = 1u;
+    }
+    *sequence = cursor->next_sequence;
+    cursor->next_sequence = cursor->next_sequence == UINT32_MAX ?
+                            1u : cursor->next_sequence + 1u;
     return 0;
 }
 
@@ -292,7 +279,7 @@ static void fixture_observe(
 static void fixture_init_with_boot_state(struct refresh_fixture *fixture,
                                          uint32_t now_ms,
                                          uint32_t boot_random,
-                                         struct durable_sequence_cursor *cursor)
+                                         struct gateway_sequence_cursor *cursor)
 {
     memset(fixture, 0, sizeof(*fixture));
     fixture->now_ms = now_ms;
@@ -322,7 +309,7 @@ static void fixture_init_with_boot_state(struct refresh_fixture *fixture,
         .stop_role_scan = fixture_stop,
         .restart_role_scan = fixture_restart,
         .schedule = fixture_schedule,
-        .reserve_sequences = fixture_reserve_sequences,
+        .next_sequence = fixture_next_sequence,
         .observe = fixture_observe,
         .ctx = fixture,
     };
@@ -700,11 +687,11 @@ static void test_response_priority_deadline_zero_at_wrap_remains_armed(void)
         fixture.now_ms));
 }
 
-static void test_gateway_reboot_keeps_warm_anchor_sequence_domain_live(void)
+static void test_shared_sequence_keeps_warm_anchor_route_domain_live(void)
 {
     struct refresh_fixture first_boot;
     struct refresh_fixture second_boot;
-    struct durable_sequence_cursor sequence_cursor = {0};
+    struct gateway_sequence_cursor sequence_cursor = {0};
     struct proto_packet command = correlated_command();
     struct mesh_relay gateway;
     struct mesh_relay warm_anchor;
@@ -724,9 +711,8 @@ static void test_gateway_reboot_keeps_warm_anchor_sequence_domain_live(void)
     first_sequence =
         first_boot.events[first_boot.event_count - 1u].gateway_sequence;
     assert(first_sequence != 0u);
-    assert(sequence_cursor.reserve_calls == 1u);
-    assert(sequence_cursor.reserved_through ==
-           APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE);
+    assert(sequence_cursor.next_calls == 1u);
+    assert(sequence_cursor.next_sequence == first_sequence + 1u);
 
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
                     GATEWAY_ID, GATEWAY_ID, 1u);
@@ -757,12 +743,9 @@ static void test_gateway_reboot_keeps_warm_anchor_sequence_domain_live(void)
     assert(second_boot.event_count > 0u);
     second_sequence =
         second_boot.events[second_boot.event_count - 1u].gateway_sequence;
-    assert(second_sequence ==
-           sequence_advance(first_sequence,
-                            APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE));
-    assert(sequence_cursor.reserve_calls == 2u);
-    assert(sequence_cursor.reserved_through ==
-           2u * APP_NODE_COMM_ROUTE_REFRESH_SEQUENCE_BLOCK_SIZE);
+    assert(second_sequence == first_sequence + 1u);
+    assert(sequence_cursor.next_calls == 2u);
+    assert(sequence_cursor.next_sequence == second_sequence + 1u);
 
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
                     GATEWAY_ID, GATEWAY_ID, 1u);
@@ -776,17 +759,17 @@ static void test_gateway_reboot_keeps_warm_anchor_sequence_domain_live(void)
                GATEWAY_ID) == PROTO_OK);
 }
 
-static void test_sequence_reservation_failure_never_reaches_rf(void)
+static void test_sequence_allocation_failure_never_reaches_rf(void)
 {
     struct refresh_fixture fixture;
-    struct durable_sequence_cursor sequence_cursor = {
-        .reserve_result = -EIO,
+    struct gateway_sequence_cursor sequence_cursor = {
+        .next_result = -EIO,
     };
     struct proto_packet command = correlated_command();
     size_t steps = 0u;
 
     fixture_init_with_boot_state(&fixture, 0u, 0u, &sequence_cursor);
-    sequence_cursor.reserve_result = -EIO;
+    sequence_cursor.next_result = -EIO;
     assert(app_node_comm_gateway_route_refresh_request(
                0u, "reserve-failure", true, &command) == 0);
     do {
@@ -802,8 +785,8 @@ static void test_sequence_reservation_failure_never_reaches_rf(void)
 
     assert(steps < 16u);
     assert(fixture.events[fixture.event_count - 1u].result == -EIO);
-    assert(sequence_cursor.reserved_through == 0u);
-    assert(sequence_cursor.reserve_calls > 1u);
+    assert(sequence_cursor.next_sequence == 0u);
+    assert(sequence_cursor.next_calls > 1u);
 }
 
 int main(void)
@@ -819,7 +802,7 @@ int main(void)
     test_prepublication_scan_handoff_rolls_back_on_schedule_failure();
     test_explicit_budget_bounds_forced_refresh();
     test_response_priority_deadline_zero_at_wrap_remains_armed();
-    test_gateway_reboot_keeps_warm_anchor_sequence_domain_live();
-    test_sequence_reservation_failure_never_reaches_rf();
+    test_shared_sequence_keeps_warm_anchor_route_domain_live();
+    test_sequence_allocation_failure_never_reaches_rf();
     return 0;
 }

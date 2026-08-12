@@ -15,6 +15,8 @@ Channel both "measure twice, cut once" and "yagni". Fight scope creep. Try to ho
 
 The rest of this document is meant to help you navigate the codebase and make changes effectively. Think of these instructions less as "hard rules", more as "good defaults". The developer's preferences should be able to override anything here.
 
+After you notice that a debugging process is taking longer than it should, try to improve your debugging process by modifying what you log, when you log, and how you filter the logs, but do not bound your debugging improvement step by this rule.
+
 ## Gateway BLE GUI (tools/gateway_gui)
 
 This repo contains a Python desktop GUI (`tools/gateway_gui/`, Tkinter) that connects to the gateway over BLE GATT. It is a first-class part of the system, not a debug throwaway: it scans and connects to `IMEC Gateway`, subscribes to gateway packet notifications, sends gateway commands, and decodes click reports, CIR samples, geometry, and survey diagnostics.

@@ -94,7 +94,7 @@ static int drive_schedule_locked(
                                          &transition);
         if (ret >= 0) {
             pending_work = NULL;
-            return ret;
+            return 0;
         }
         if (transition.effect.type == FW_EFFECT_RADIO_CLEAR_ABORT) {
             if (failed_generation != NULL) {
