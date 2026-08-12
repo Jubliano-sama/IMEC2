@@ -30,6 +30,7 @@ from .protocol import (
     is_gateway_assignment_publisher_event,
     validate_gateway_command_event_packet,
     validate_gateway_local_command_result_packet,
+    validate_self_test_report_packet,
 )
 
 
@@ -220,6 +221,11 @@ class GatewayPacketDeduplicator:
     def _identity_and_candidate(
         self, packet: Packet
     ) -> tuple[DeliveryIdentity, _CachedPacket] | None:
+        if packet.msg_type == MSG_SELF_TEST_REPORT:
+            try:
+                validate_self_test_report_packet(packet)
+            except DecodeError:
+                return None
         if (
             packet.msg_type == MSG_COMMAND_RESULT
             and packet.src_id == packet.dst_id

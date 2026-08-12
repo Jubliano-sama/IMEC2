@@ -3365,6 +3365,30 @@ static int mesh_reschedule_owned_work(struct k_work_delayable *work,
         mesh_route_owner_work_reschedule(work, delay_ms), owner, false);
 }
 
+/*
+ * A role-scan restart can race the asynchronous cancellation of the previous
+ * receive window.  In that one case -EBUSY is not ownership loss: the caller
+ * immediately transfers the requested deadline into mesh_uwb_rx_rearm_work.
+ * Keep the normal fail-stop policy for every other error and for a rejected
+ * fallback submission.
+ */
+static int mesh_reschedule_owned_work_with_busy_handoff(
+    struct k_work_delayable *work,
+    uint32_t delay_ms,
+    const char *owner)
+{
+    int ret;
+
+    if (mesh_transport_paused()) {
+        return mesh_owned_schedule_result(-ESHUTDOWN, owner, true);
+    }
+    ret = mesh_route_owner_work_reschedule(work, delay_ms);
+    if (ret == -EBUSY) {
+        return ret;
+    }
+    return mesh_owned_schedule_result(ret, owner, false);
+}
+
 static int mesh_submit_owned_work(struct k_work *work, const char *owner)
 {
     int ret;

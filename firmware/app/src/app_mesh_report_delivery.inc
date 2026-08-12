@@ -4250,7 +4250,7 @@ after_gateway_ack:
             (void)mesh_schedule_tx_timeout();
         }
     }
-#if DEVICE_ROLE == ROLE_ANCHOR
+#if DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_CLICKER
     if (result->actions &
         MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING) {
         LOG_INF("gateway ACK-confirm RAM custody retained");

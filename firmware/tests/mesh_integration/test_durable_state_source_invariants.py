@@ -499,7 +499,7 @@ class DurableStateSourceInvariants(unittest.TestCase):
             action_handler.index("case BUTTON_ACTION_SELF_TEST_CANCELLED:")
         ]
         self.assertLess(
-            normal.index("app_clicker_run_normal_click()"),
+            normal.index("app_clicker_run_normal_click(&normal_click_anchor_observed)"),
             normal.index("clicker_hold_terminal_status(ret)"),
         )
         self.assertLess(

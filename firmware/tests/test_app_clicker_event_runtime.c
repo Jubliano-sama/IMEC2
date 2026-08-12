@@ -109,6 +109,37 @@ static void test_button_long_press_and_expiry(void)
     assert(app_clicker_event_runtime_button_state(&runtime) == FW_BUTTON_IDLE);
 }
 
+static void test_button_long_press_and_short_confirm(void)
+{
+    struct app_clicker_event_runtime runtime;
+    enum button_action action;
+
+    app_clicker_event_runtime_init(&runtime);
+    assert(app_clicker_event_runtime_button_signal(&runtime,
+                                                   BUTTON_SIGNAL_PRESS,
+                                                   100u,
+                                                   &action) == 0);
+    drain_effects(&runtime);
+    assert(app_clicker_event_runtime_button_signal(&runtime,
+                                                   BUTTON_SIGNAL_RELEASE,
+                                                   1600u,
+                                                   &action) == 0);
+    assert(action == BUTTON_ACTION_SELF_TEST_ARMED);
+    drain_effects(&runtime);
+    assert(app_clicker_event_runtime_button_signal(&runtime,
+                                                   BUTTON_SIGNAL_PRESS,
+                                                   1700u,
+                                                   &action) == 0);
+    assert(action == BUTTON_ACTION_NONE);
+    drain_effects(&runtime);
+    assert(app_clicker_event_runtime_button_signal(&runtime,
+                                                   BUTTON_SIGNAL_RELEASE,
+                                                   1750u,
+                                                   &action) == 0);
+    assert(action == BUTTON_ACTION_SELF_TEST_START);
+    assert(app_clicker_event_runtime_button_state(&runtime) == FW_BUTTON_IDLE);
+}
+
 static void test_click_events_are_generation_bound(void)
 {
     struct app_clicker_event_runtime runtime;
@@ -274,6 +305,7 @@ int main(void)
     test_button_normal_click_is_explicit();
     test_button_short_release_cancels_debounce();
     test_button_long_press_and_expiry();
+    test_button_long_press_and_short_confirm();
     test_click_events_are_generation_bound();
     test_retryable_radio_failure_keeps_generation();
     test_late_rf_started_after_wake_does_not_count();

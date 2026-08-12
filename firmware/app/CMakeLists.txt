@@ -393,6 +393,10 @@ set(IMEC_APP_LOCAL_SOURCES
 target_sources_ifdef(CONFIG_IMEC_DURABLE_STATE app PRIVATE
     src/app_durable_state.c)
 
+target_sources_ifdef(CONFIG_IMEC_CLICKER_RTT_CONTROL app PRIVATE
+    src/app_clicker_rtt_control.c
+    ../src/clicker_rtt_command.c)
+
 target_sources(app PRIVATE
     ../src/node_comm.c
     ../src/node_transaction.c

@@ -533,9 +533,10 @@ static void mesh_uwb_rx_rearm_work_handler(struct k_work *work)
         return;
     }
 
-    ret = mesh_reschedule_owned_work(&mesh_uwb_rx_work,
-                                     delay_ms,
-                                     "role-scan-rearm");
+    ret = mesh_reschedule_owned_work_with_busy_handoff(
+        &mesh_uwb_rx_work,
+        delay_ms,
+        "role-scan-rearm");
     if (ret == -EBUSY) {
         (void)mesh_defer_uwb_rx_rearm(delay_ms);
         return;
@@ -565,9 +566,10 @@ static int mesh_schedule_uwb_rx(uint32_t delay_ms)
     }
 
     mesh_uwb_rx_active = true;
-    ret = mesh_reschedule_owned_work(&mesh_uwb_rx_work,
-                                     delay_ms,
-                                     "role-scan");
+    ret = mesh_reschedule_owned_work_with_busy_handoff(
+        &mesh_uwb_rx_work,
+        delay_ms,
+        "role-scan");
     if (ret == -EBUSY) {
         defer_ret = mesh_defer_uwb_rx_rearm(delay_ms);
     }

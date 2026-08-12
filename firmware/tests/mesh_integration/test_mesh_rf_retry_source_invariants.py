@@ -63,6 +63,34 @@ def braced_block_after(source: str, marker: str) -> str:
 
 
 class MeshRfRetrySourceInvariantTests(unittest.TestCase):
+    def test_role_scan_busy_restart_transfers_to_rearm_owner_before_watchdog(self):
+        schedule = function_body(REPORT, "mesh_schedule_uwb_rx")
+        rearm = function_body(REPORT, "mesh_uwb_rx_rearm_work_handler")
+        handoff = function_body(
+            REPORT, "mesh_reschedule_owned_work_with_busy_handoff"
+        )
+
+        self.assertIn("mesh_route_owner_work_reschedule(work, delay_ms)", handoff)
+        self.assertIn("if (ret == -EBUSY)", handoff)
+        busy_return = handoff.index("return ret;", handoff.index("if (ret == -EBUSY)"))
+        failstop = handoff.index("mesh_owned_schedule_result(ret, owner, false)")
+        self.assertLess(busy_return, failstop)
+
+        for owner in (schedule, rearm):
+            primary = owner.index(
+                "mesh_reschedule_owned_work_with_busy_handoff("
+            )
+            busy = owner.index("if (ret == -EBUSY)", primary)
+            fallback = owner.index("mesh_defer_uwb_rx_rearm(delay_ms)", busy)
+            self.assertLess(primary, busy)
+            self.assertLess(busy, fallback)
+
+        self.assertIn(
+            'mesh_submit_owned_work(&mesh_uwb_rx_rearm_work,\n'
+            '                                 "role-scan-rearm")',
+            REPORT,
+        )
+
     def test_inline_channel9_responses_publish_gateway_control_handoff(self):
         helper = function_body(
             REPORT, "mesh_send_causal_channel9_response"

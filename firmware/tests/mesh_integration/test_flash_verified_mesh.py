@@ -59,6 +59,7 @@ class MockTarget:
         self.failures: dict[str, int] = {}
         self.corrupt_restore = False
         self.mutate_nvs_on_reset = False
+        self.mutate_nvs_after_storage_erase = False
         self.reset_count = 0
         self.before_west: object = None
         self.before_storage_erase: object = None
@@ -100,6 +101,32 @@ class MockTarget:
                         changed[-1] ^= 0x33
                         self.target = bytes(changed)
                         self.mutate_nvs_on_reset = False
+                    continue
+                if words[0] == "erase":
+                    if callable(self.before_storage_erase):
+                        self.before_storage_erase()
+                    if words[1:] != [
+                        f"0x{flash.STORAGE_PARTITION_ADDRESS:x}",
+                        f"0x{flash.STORAGE_PARTITION_SIZE:x}",
+                    ]:
+                        return self._result(
+                            command, 1, stderr=f"unexpected erase command {raw}"
+                        )
+                    if self._fails("storage_erase"):
+                        return self._result(
+                            command, 1, stderr="storage erase failed"
+                        )
+                    target = bytearray(self.target)
+                    target[
+                        flash.STORAGE_PARTITION_ADDRESS:
+                        flash.STORAGE_PARTITION_END
+                    ] = b"\xff" * flash.STORAGE_PARTITION_SIZE
+                    if self.mutate_nvs_after_storage_erase:
+                        target[-1] ^= 0x5a
+                        self.mutate_nvs_after_storage_erase = False
+                    self.target = bytes(target)
+                    continue
+                if words[0] == "halt":
                     continue
                 if words[0] == "savemem":
                     destination = Path(words[3])
@@ -155,6 +182,9 @@ class MockTarget:
             target[
                 flash.STORAGE_PARTITION_ADDRESS:flash.STORAGE_PARTITION_END
             ] = b"\xff" * flash.STORAGE_PARTITION_SIZE
+            if self.mutate_nvs_after_storage_erase:
+                target[-1] ^= 0x5a
+                self.mutate_nvs_after_storage_erase = False
             self.target = bytes(target)
             return self._result(command)
         if command[0] == str(self.west):
@@ -587,6 +617,7 @@ class VerifiedFlashTests(unittest.TestCase):
         self.target.failures.clear()
         self.target.corrupt_restore = False
         self.target.mutate_nvs_on_reset = False
+        self.target.mutate_nvs_after_storage_erase = False
         self.target.reset_count = 0
         self.target.before_west = None
         self.target.before_storage_erase = None
@@ -757,25 +788,8 @@ class VerifiedFlashTests(unittest.TestCase):
 
     def test_initialize_storage_requires_exact_initial_stage_readback(self) -> None:
         build, _ = self._valid()
-        read_target_flash = flash._read_target_flash
-
-        def mutate_storage_before_readback(
-            probe_id: str,
-            destination: Path,
-            **kwargs: object,
-        ) -> str:
-            if destination.name == "staged-readback.bin":
-                changed = bytearray(self.target.target)
-                changed[-1] ^= 0x5a
-                self.target.target = bytes(changed)
-            return read_target_flash(probe_id, destination, **kwargs)
-
-        with mock.patch.object(
-            flash,
-            "_read_target_flash",
-            side_effect=mutate_storage_before_readback,
-        ):
-            self.assertEqual(1, self._stage_with_storage_initialization(build))
+        self.target.mutate_nvs_after_storage_erase = True
+        self.assertEqual(1, self._stage_with_storage_initialization(build))
 
         journal = json.loads(self.journal.read_text(encoding="utf-8"))
         self.assertEqual("staged", journal["state"])
@@ -876,8 +890,9 @@ class VerifiedFlashTests(unittest.TestCase):
         self.assertLess(readback_index, reset_index)
         self.assertEqual([
             str(self.pyocd), "erase", "--no-config", "-t", "nrf52833",
-            "-u", "TEST-PROBE", "-f", "4000000", "-M", "halt",
-            "--sector", "0x7a000-0x80000",
+            "-u", "TEST-PROBE", "-f", "4000000", "-M", "under-reset",
+            "-O", "resume_on_disconnect=false", "--sector",
+            "0x7a000-0x80000",
         ], self.target.calls[erase_index])
 
     def test_initialize_storage_erase_failure_retains_journal_and_recovers_without_reflash(self) -> None:

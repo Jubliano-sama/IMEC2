@@ -133,6 +133,8 @@ CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_SURVEY_GO_RETIRED_ID = 0x0105
 
 TLV_EVENT_SEQ = 0x06
+TLV_BATTERY_MV = 0x02
+TLV_ERROR_CODE = 0x04
 TLV_TIMESTAMP_MS = 0x07
 TLV_ANCHOR_ID = 0x0A
 TLV_CLICKER_ID = 0x0B
@@ -1649,6 +1651,51 @@ def validate_gateway_local_command_result_packet(packet: Packet) -> None:
         raise DecodeError("gateway local command result error flag disagrees with status")
 
 
+def validate_self_test_report_packet(packet: Packet) -> None:
+    """Validate the exact clicker self-test record before host acceptance."""
+
+    if (
+        packet.msg_type != MSG_SELF_TEST_REPORT
+        or packet.flags != (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC)
+        or packet.src_id == 0
+        or packet.dst_id == 0
+        or packet.src_id == packet.dst_id
+        or packet.session_id == 0
+        or packet.seq == 0
+        or (packet.ttl is not None and packet.ttl == 0)
+    ):
+        raise DecodeError("self-test report envelope is invalid")
+
+    expected = {
+        TLV_CLICKER_ID: 8,
+        TLV_EVENT_SEQ: 4,
+        TLV_ERROR_CODE: 2,
+        TLV_BATTERY_MV: 2,
+    }
+    values: dict[int, TlvValue] = {}
+    for tlv in packet.tlvs:
+        width = expected.get(tlv.type_id)
+        if width is None or tlv.type_id in values or len(tlv.raw) != width:
+            raise DecodeError("self-test report TLVs are not canonical")
+        values[tlv.type_id] = tlv
+    if values.keys() != expected.keys():
+        raise DecodeError("self-test report TLVs are incomplete")
+
+    clicker_id = int.from_bytes(values[TLV_CLICKER_ID].raw, "little")
+    event_seq = int.from_bytes(values[TLV_EVENT_SEQ].raw, "little")
+    failure_code = int.from_bytes(values[TLV_ERROR_CODE].raw, "little")
+    expected_seq = event_seq & 0xFFFF
+    if expected_seq == 0:
+        expected_seq = 1
+    if (
+        clicker_id != packet.src_id
+        or event_seq != packet.session_id
+        or expected_seq != packet.seq
+        or failure_code > 6
+    ):
+        raise DecodeError("self-test report identity or result is invalid")
+
+
 class GatewayReceiveBuffer:
     """Reassembles packet notifications split at arbitrary ATT boundaries."""
 
@@ -1665,6 +1712,8 @@ class GatewayReceiveBuffer:
         # reliable records whose host receipt commits semantic acceptance.
         if packet.msg_type == MSG_CLICK_REPORT:
             validate_click_payload(packet)
+        elif packet.msg_type == MSG_SELF_TEST_REPORT:
+            validate_self_test_report_packet(packet)
         elif packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT:
             validate_survey_discovery_report(packet)
         elif packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:

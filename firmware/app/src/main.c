@@ -2,6 +2,7 @@
 #include "app_board.h"
 #include "app_click_event_sequence.h"
 #include "app_clicker.h"
+#include "app_clicker_rtt_control.h"
 #include "app_config.h"
 #include "app_device_identity.h"
 #if defined(CONFIG_IMEC_DURABLE_STATE)
@@ -510,6 +511,12 @@ int main(void)
         if (ret < 0) {
             LOG_WRN("click button unavailable: %d", ret);
         }
+#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+        ret = app_clicker_rtt_control_start();
+        if (ret < 0) {
+            runtime_start_fail_closed("clicker RTT control", ret);
+        }
+#endif
         if (boot_button_action != BUTTON_ACTION_NONE) {
             app_clicker_submit_button_action(boot_button_action);
         } else if (clicker_systemon_retained_idle_enabled() ||

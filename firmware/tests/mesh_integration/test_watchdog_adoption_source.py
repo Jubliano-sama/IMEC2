@@ -78,6 +78,22 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         if needle not in SOURCE:
             self.fail(f"app_watchdog.c is missing required invariant: {needle}")
 
+    def test_production_watchdog_is_a_last_resort_not_an_operation_timer(self) -> None:
+        hardware_ms = uint_macro(
+            WATCHDOG_HEADER, "APP_WATCHDOG_HARDWARE_TIMEOUT_MS"
+        )
+        lease_ms = uint_macro(
+            WATCHDOG_HEADER, "APP_WATCHDOG_PROGRESS_LEASE_MS"
+        )
+        startup_ms = uint_macro(
+            WATCHDOG_HEADER, "APP_WATCHDOG_STARTUP_GRACE_MS"
+        )
+
+        self.assertGreaterEqual(hardware_ms, 4 * 60 * 60 * 1000)
+        self.assertGreaterEqual(lease_ms, 3 * 60 * 60 * 1000)
+        self.assertGreaterEqual(startup_ms, 5 * 60 * 1000)
+        self.assertLess(lease_ms, hardware_ms)
+
     def test_running_hardware_is_detected_before_zephyr_setup(self) -> None:
         detect = SOURCE.find("nrf_wdt_started_check(NRF_WDT0)")
         install = SOURCE.find("wdt_install_timeout(watchdog_device, &timeout)")

@@ -176,6 +176,7 @@ static bool gateway_discovery_assignment_abandon_active_delivery_locked(void)
     gateway_discovery_assignment_state.delivery_handle = 0u;
     gateway_discovery_assignment_state.delivery_kind =
         GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_NONE;
+    gateway_discovery_assignment_state.table_delivery_is_redrive = false;
     return true;
 }
 
@@ -1843,6 +1844,7 @@ static int gateway_discovery_assignment_publish_table(void)
     size_t entry_count = 0u;
     size_t payload_len;
     uint8_t slot_count = 0u;
+    bool immutable_redrive;
     int ret;
 
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
@@ -1850,6 +1852,8 @@ static int gateway_discovery_assignment_publish_table(void)
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return -ENOENT;
     }
+    immutable_redrive =
+        gateway_discovery_assignment_state.late_table_redrive_pending;
 
     /*
      * A prior durable roster is already in slot order.  Keep that prefix
@@ -1934,6 +1938,8 @@ static int gateway_discovery_assignment_publish_table(void)
             GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE,
             "discovery-slot-assignment-table");
         if (ret == 0) {
+            gateway_discovery_assignment_state.table_delivery_is_redrive =
+                immutable_redrive;
             gateway_discovery_assignment_state.stage =
                 GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS;
         }
@@ -1981,6 +1987,7 @@ static bool gateway_discovery_assignment_service_delivery(void)
     struct node_comm_terminal_event event;
     enum gateway_discovery_assignment_delivery_kind kind;
     bool effective_delivered;
+    bool table_delivery_is_redrive;
     bool semantic_terminal_success;
     uint32_t handle;
     uint32_t retry_ms;
@@ -1988,6 +1995,8 @@ static bool gateway_discovery_assignment_service_delivery(void)
 
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
     kind = gateway_discovery_assignment_state.delivery_kind;
+    table_delivery_is_redrive =
+        gateway_discovery_assignment_state.table_delivery_is_redrive;
     handle = gateway_discovery_assignment_state.delivery_handle;
     if (handle == 0u) {
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
@@ -2028,6 +2037,7 @@ static bool gateway_discovery_assignment_service_delivery(void)
     gateway_discovery_assignment_state.delivery_handle = 0u;
     gateway_discovery_assignment_state.delivery_kind =
         GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_NONE;
+    gateway_discovery_assignment_state.table_delivery_is_redrive = false;
     status_debug_printf("DBG_DISCOVERY_SLOT_FLOOD_TERMINAL kind=%u handle=%u reason=%u attempts=%u\n",
                         (unsigned int)kind,
                         handle,
@@ -2071,10 +2081,11 @@ static bool gateway_discovery_assignment_service_delivery(void)
             gateway_discovery_assignment_state.claim_delivery_succeeded = true;
         }
     } else if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE) {
-        if (event.attempts_started > 0u &&
-            gateway_discovery_assignment_state.table_round < UINT8_MAX) {
-            gateway_discovery_assignment_state.table_round++;
-        }
+        gateway_discovery_assignment_state.table_round =
+            app_discovery_assignment_table_round_after_delivery(
+                gateway_discovery_assignment_state.table_round,
+                event.attempts_started,
+                table_delivery_is_redrive);
         if (effective_delivered) {
             gateway_discovery_assignment_state.table_delivery_succeeded = true;
         }
@@ -2401,7 +2412,19 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         }
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
-    if (gateway_discovery_assignment_state.round_open) {
+    if (gateway_discovery_assignment_state.round_open &&
+        gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
+        gateway_discovery_assignment_state.late_table_redrive_pending) {
+        /*
+         * A TABLE-correlated late CLAIM is a live receiver proving that the
+         * listed anchor still does not own the table. Do not strand that
+         * explicit recovery request behind the original response window;
+         * close this round and let the publisher immediately redrive the
+         * same immutable table.
+         */
+        gateway_discovery_assignment_state.round_open = false;
+    } else if (gateway_discovery_assignment_state.round_open) {
         bool expected_claims_settling =
             gateway_discovery_assignment_state.stage ==
                 GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS &&

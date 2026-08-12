@@ -53,6 +53,7 @@ from .protocol import (
     GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_STREAM_FLAG_TRUNCATED,
     MSG_CLICK_REPORT,
+    MSG_SELF_TEST_REPORT,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
@@ -60,6 +61,7 @@ from .protocol import (
     STREAM_CLASS_NAMES,
     TLV_ANCHOR_DIAG_BYTES,
     TLV_ANCHOR_ID,
+    TLV_BATTERY_MV,
     TLV_BURST_DURATION_MS,
     TLV_BURST_ID,
     TLV_CHANNEL9_REPORT_LATENCY_MS,
@@ -83,6 +85,7 @@ from .protocol import (
     TLV_DISCOVERY_ASSIGNMENT_TABLE,
     TLV_DISTANCE_MM,
     TLV_EVENT_SEQ,
+    TLV_ERROR_CODE,
     TLV_EXCHANGE_STRIDE_US,
     TLV_GATEWAY_ACK_LATENCY_MS,
     TLV_MESH_CH9_REPORT_LATENCY_MS,
@@ -1561,6 +1564,17 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"clicker={format_device_id(clicker) if isinstance(clicker, int) else '-'} "
                 f"event={event_seq if event_seq is not None else '-'} "
                 f"distance={distance if distance is not None else '-'} mm samples={len(chunk_rows)}"
+            )
+        if packet.msg_type == MSG_SELF_TEST_REPORT:
+            clicker = packet.value(TLV_CLICKER_ID)
+            event_seq = packet.value(TLV_EVENT_SEQ)
+            failure = packet.value(TLV_ERROR_CODE)
+            battery_mv = packet.value(TLV_BATTERY_MV)
+            return (
+                f"clicker={format_device_id(clicker) if isinstance(clicker, int) else '-'} "
+                f"event={event_seq if event_seq is not None else '-'} "
+                f"failure={failure if failure is not None else '-'} "
+                f"battery={battery_mv if battery_mv is not None else '-'} mV"
             )
         if packet.msg_type == MSG_COMMAND_RESULT:
             command_id = packet.value(TLV_COMMAND_ID)

@@ -2066,7 +2066,7 @@ static int clicker_build_and_send_schedule_for_event(
     return ret;
 }
 
-int app_clicker_run_normal_click(void)
+int app_clicker_run_normal_click(bool *anchor_observed)
 {
     uint32_t event_seq;
     uint8_t attempted_count = 0u;
@@ -2076,6 +2076,10 @@ int app_clicker_run_normal_click(void)
     struct uwb_clicker_config config;
     int last_ret = -ETIMEDOUT;
     int ret;
+
+    if (anchor_observed != NULL) {
+        *anchor_observed = false;
+    }
 
     ret = app_click_event_sequence_next(&event_seq);
     if (ret < 0) {
@@ -2187,6 +2191,9 @@ int app_clicker_run_normal_click(void)
 
         ret = app_clicker_discover_uwb_anchors_until(&session,
                                                      click_deadline_ms);
+        if (anchor_observed != NULL && session.candidate_count > 0u) {
+            *anchor_observed = true;
+        }
         if (ret < 0 && !radio_guard_uwb_rearm_allowed()) {
             (void)clicker_runtime_abort_click();
             return ret;
@@ -3205,7 +3212,9 @@ void app_clicker_handle_button_action(enum button_action action)
     enum self_test_failure failure;
     uint32_t self_test_event_seq;
     bool self_test_event_allocated;
+    int report_ret;
     int ret;
+    bool normal_click_anchor_observed;
 
     if (action != BUTTON_ACTION_NONE) {
         ret = clicker_connect_status_leds_for_action();
@@ -3217,10 +3226,13 @@ void app_clicker_handle_button_action(enum button_action action)
 
     switch (action) {
     case BUTTON_ACTION_NORMAL_CLICK:
-        ret = app_clicker_run_normal_click();
+        status_debug_printf("DBG_CLICKER_CLICK state=START");
+        normal_click_anchor_observed = false;
+        ret = app_clicker_run_normal_click(&normal_click_anchor_observed);
         status.click_accepted = ret == 0;
         if (ret != 0) {
-            status.click_failure = (ret == -ETIMEDOUT) ?
+            status.click_failure =
+                (ret == -ETIMEDOUT && !normal_click_anchor_observed) ?
                                     CLICK_FAILURE_NO_ANCHOR :
                                     CLICK_FAILURE_INSUFFICIENT_RANGES;
         }
@@ -3230,6 +3242,7 @@ void app_clicker_handle_button_action(enum button_action action)
         } else {
             LOG_WRN("normal click MVP failed: %d", ret);
         }
+        status_debug_printf("DBG_CLICKER_CLICK state=COMPLETE ret=%d", ret);
         clicker_hold_terminal_status(ret);
         break;
     case BUTTON_ACTION_SELF_TEST_ARMED:
@@ -3237,6 +3250,8 @@ void app_clicker_handle_button_action(enum button_action action)
         status_apply(&status);
         app_clicker_arm_self_test_timeout();
         LOG_INF("self-test armed");
+        status_debug_printf("DBG_CLICKER_SELF_TEST state=ARMED window_ms=%u",
+                            SELF_TEST_ARM_WINDOW_MS);
         break;
     case BUTTON_ACTION_SELF_TEST_START:
         app_clicker_cancel_self_test_timeout();
@@ -3248,22 +3263,31 @@ void app_clicker_handle_button_action(enum button_action action)
             LOG_ERR("self-test identity allocation failed closed: %d", ret);
             failure = SELF_TEST_FAILURE_INTERNAL;
         } else {
+            status_debug_printf("DBG_CLICKER_SELF_TEST state=START event_seq=%u",
+                                self_test_event_seq);
             failure = app_clicker_run_self_test(self_test_event_seq);
         }
         status.self_test_running = false;
         status.failure = failure;
         status.self_test_passed = failure == SELF_TEST_FAILURE_NONE;
         status_apply(&status);
+        report_ret = -ENODATA;
         if (self_test_event_allocated) {
-            (void)app_clicker_emit_self_test_report(self_test_event_seq,
-                                                    failure);
+            report_ret = app_clicker_emit_self_test_report(self_test_event_seq,
+                                                           failure);
         }
+        status_debug_printf(
+            "DBG_CLICKER_SELF_TEST state=COMPLETE event_seq=%u failure=%u report_ret=%d",
+            self_test_event_allocated ? self_test_event_seq : 0u,
+            (unsigned int)failure,
+            report_ret);
         clicker_hold_terminal_status(
             failure == SELF_TEST_FAILURE_NONE ? 0 : -EIO);
         break;
     case BUTTON_ACTION_SELF_TEST_CANCELLED:
         status_apply(&status);
         LOG_INF("self-test arm cancelled");
+        status_debug_printf("DBG_CLICKER_SELF_TEST state=CANCELLED");
         break;
     case BUTTON_ACTION_NONE:
     default:
@@ -4067,6 +4091,41 @@ static void click_button_handle_signal(enum button_signal signal,
     click_button_handle_signal_at(signal, k_uptime_get_32(), source);
 }
 
+int app_clicker_inject_button_gesture(enum app_clicker_test_gesture gesture)
+{
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t held_ms;
+    enum button_action action;
+    int ret;
+
+    switch (gesture) {
+    case APP_CLICKER_TEST_GESTURE_SHORT:
+        held_ms = BUTTON_DEBOUNCE_MS;
+        break;
+    case APP_CLICKER_TEST_GESTURE_LONG:
+        held_ms = BUTTON_LONG_PRESS_MS;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    ret = click_button_gesture_handle(BUTTON_SIGNAL_PRESS,
+                                      now_ms - held_ms,
+                                      &action);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    app_clicker_submit_button_action(action);
+    ret = click_button_gesture_handle(BUTTON_SIGNAL_RELEASE,
+                                      now_ms,
+                                      &action);
+    if (ret != PROTO_OK) {
+        return -EINVAL;
+    }
+    app_clicker_submit_button_action(action);
+    return 0;
+}
+
 static void click_button_recovery_reset(const char *source, int error)
 {
     LOG_ERR("click button recovery exhausted or lost its work owner: source=%s error=%d reboot_delay_ms=%u",
@@ -4464,6 +4523,12 @@ void app_clicker_enter_idle(void)
 
 int app_clicker_button_init(void)
 {
+    return -ENODEV;
+}
+
+int app_clicker_inject_button_gesture(enum app_clicker_test_gesture gesture)
+{
+    ARG_UNUSED(gesture);
     return -ENODEV;
 }
 

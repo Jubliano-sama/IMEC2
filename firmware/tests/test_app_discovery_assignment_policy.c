@@ -845,6 +845,17 @@ static void test_table_retry_budget_preserves_every_ack_window(void)
     assert(app_discovery_assignment_table_windows_remaining(0u, 4u) == 0u);
     assert(app_discovery_assignment_table_windows_remaining(5u, 4u) == 0u);
 
+    assert(app_discovery_assignment_table_round_after_delivery(
+               0u, 4u, false) == 1u);
+    assert(app_discovery_assignment_table_round_after_delivery(
+               1u, 4u, true) == 1u);
+    assert(app_discovery_assignment_table_round_after_delivery(
+               1u, 0u, false) == 1u);
+    assert(app_discovery_assignment_table_windows_remaining(
+               app_discovery_assignment_table_round_after_delivery(
+                   1u, 4u, true),
+               1u) == 1u);
+
     assert(app_discovery_assignment_table_retry_backoff_required(
         true, 3u, 1u, 4u));
     assert(app_discovery_assignment_table_retry_backoff_required(

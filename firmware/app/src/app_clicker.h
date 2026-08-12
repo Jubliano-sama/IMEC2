@@ -78,6 +78,11 @@ struct app_clicker_range_tx_config {
     bool prepare_range_mode_after_schedule;
 };
 
+enum app_clicker_test_gesture {
+    APP_CLICKER_TEST_GESTURE_SHORT = 1,
+    APP_CLICKER_TEST_GESTURE_LONG = 2,
+};
+
 int app_clicker_init(const struct app_clicker_callbacks *callbacks);
 static inline bool clicker_systemon_retained_idle_enabled(void)
 {
@@ -92,6 +97,7 @@ uint8_t app_clicker_debug_samples_per_anchor(void);
 uint8_t app_clicker_debug_session_flags(void);
 void app_clicker_prepare_startup_idle(enum button_action *boot_action);
 int app_clicker_button_init(void);
+int app_clicker_inject_button_gesture(enum app_clicker_test_gesture gesture);
 void app_clicker_handle_button_action(enum button_action action);
 void app_clicker_submit_button_action(enum button_action action);
 void app_clicker_enter_idle(void);
@@ -134,6 +140,6 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
                                         int64_t schedule_tx_ms,
                                         int64_t click_deadline_ms,
                                         uint8_t *attempted_count);
-int app_clicker_run_normal_click(void);
+int app_clicker_run_normal_click(bool *anchor_observed);
 
 #endif

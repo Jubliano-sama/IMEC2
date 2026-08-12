@@ -25,11 +25,11 @@ if str(ROOT) not in sys.path:
 from tools.gateway_gui.delivery_dedup import is_host_delivery_packet  # noqa: E402
 from tools.gateway_gui.protocol import (  # noqa: E402
     GATEWAY_IDENTITY_UUID,
-    MSG_GATEWAY_COMMAND_EVENT,
     PACKET_RX_UUID,
     build_gateway_host_receipt,
     decode_gateway_identity,
     parse_stream_record as parse_gateway_stream_record,
+    validate_self_test_report_packet,
 )
 
 try:
@@ -665,11 +665,10 @@ async def run(args: argparse.Namespace) -> int:
             return
         try:
             delivery_packet = parse_gateway_stream_record(record)
-            if (
-                delivery_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT
-                or not is_host_delivery_packet(delivery_packet)
-            ):
+            if not is_host_delivery_packet(delivery_packet):
                 return
+            if delivery_packet.msg_type == 0x21:
+                validate_self_test_report_packet(delivery_packet)
             receipt = build_gateway_host_receipt(
                 delivery_packet,
                 host_id=args.host_id,
@@ -690,7 +689,7 @@ async def run(args: argparse.Namespace) -> int:
                         await gateway_client.write_gatt_char(
                             packet_rx_characteristic,
                             receipt.frame[offset:offset + receipt_chunk_size],
-                            response=True,
+                            response=False,
                         )
                 if args.verbose:
                     print(
@@ -762,6 +761,8 @@ async def run(args: argparse.Namespace) -> int:
                         f"seq={packet.seq} src={format_id64(packet.src_id)}",
                         flush=True,
                     )
+                if parser is parse_stream_record:
+                    schedule_host_receipt(frame)
                 continue
 
             stats.synthetic_seen += 1

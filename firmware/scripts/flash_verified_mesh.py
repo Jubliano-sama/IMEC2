@@ -220,11 +220,22 @@ def _probe_is_visible(probe_id: str) -> None:
         raise TransactionError(f"requested probe {probe_id} is not attached")
 
 
-def _commander(probe_id: str, *commands: str) -> None:
+def _commander(
+    probe_id: str,
+    *commands: str,
+    connect_mode: str = "halt",
+    resume_on_disconnect: bool | None = None,
+) -> None:
     command = [
         str(PYOCD_EXECUTABLE), "commander", "--no-config", "-t", TARGET_NAME,
-        "-u", probe_id, "-f", str(FLASH_FREQUENCY_HZ), "-M", "halt",
+        "-u", probe_id, "-f", str(FLASH_FREQUENCY_HZ), "-M", connect_mode,
     ]
+    if resume_on_disconnect is not None:
+        command.extend([
+            "-O",
+            "resume_on_disconnect=" +
+            ("true" if resume_on_disconnect else "false"),
+        ])
     for item in commands:
         command.extend(["-c", item])
     result = _run(command, capture_output=True)
@@ -242,6 +253,8 @@ def _read_target_flash(
     *,
     reset_after: bool = False,
     resume_after: bool = False,
+    connect_mode: str = "halt",
+    keep_halted: bool = False,
 ) -> str:
     if reset_after and resume_after:
         raise TransactionError("target readback cannot both reset and resume")
@@ -255,12 +268,21 @@ def _read_target_flash(
         # pyOCD commander connects in halt mode. Keep resume separate so a
         # failed savemem cannot skip the best-effort release in this finally.
         try:
-            _commander(probe_id, save)
+            _commander(probe_id, save, connect_mode=connect_mode)
         finally:
             _commander(probe_id, "continue")
     else:
         commands = (save, "reset") if reset_after else (save,)
-        _commander(probe_id, *commands)
+        _commander(
+            probe_id,
+            *commands,
+            connect_mode=connect_mode,
+            resume_on_disconnect=False if keep_halted else None,
+        )
+    return _verified_readback_sha256(destination)
+
+
+def _verified_readback_sha256(destination: Path) -> str:
     if not destination.is_file() or destination.stat().st_size != TARGET_FLASH_SIZE:
         actual = destination.stat().st_size if destination.is_file() else 0
         raise TransactionError(
@@ -274,16 +296,19 @@ def _read_target_flash(
 
 
 def _erase_storage_partition(probe_id: str) -> None:
-    """Erase exactly the durable-state partition without releasing reset."""
+    """Erase storage while preventing the application from resuming."""
     command = [
         str(PYOCD_EXECUTABLE), "erase", "--no-config", "-t", TARGET_NAME,
-        "-u", probe_id, "-f", str(FLASH_FREQUENCY_HZ), "-M", "halt",
+        "-u", probe_id, "-f", str(FLASH_FREQUENCY_HZ),
+        "-M", "under-reset", "-O", "resume_on_disconnect=false",
         "--sector",
         f"0x{STORAGE_PARTITION_ADDRESS:x}-0x{STORAGE_PARTITION_END:x}",
     ]
     result = _run(command, capture_output=True)
     combined = f"{result.stdout}\n{result.stderr}"
-    if result.returncode or re.search(r"(?:^|\n)\s*(?:Error|Traceback)\b", combined, re.IGNORECASE):
+    if result.returncode or re.search(
+        r"(?:^|\n)\s*(?:Error|Traceback)\b", combined, re.IGNORECASE
+    ):
         detail = result.stderr.strip() or result.stdout.strip()
         raise TransactionError(
             f"pyOCD storage erase failed with exit status {result.returncode}: {detail}"
@@ -621,21 +646,34 @@ def _write_journal(data: dict[str, object]) -> None:
     _atomic_json(_journal_path(str(data["probe_id"])), data)
 
 
-def _erase_initialized_storage(data: dict[str, object], probe_id: str) -> None:
+def _erase_initialized_storage(
+    data: dict[str, object],
+    probe_id: str,
+    readback: Path | None = None,
+) -> str | None:
     """Durably record the exact erase before asking pyOCD to perform it."""
     storage = _storage_initialization(data)
     if storage is None:
-        return
+        return None
     if storage.get("erase_started_at_utc") is None:
         storage["erase_started_at_utc"] = _utc_text()
         storage["phase"] = "erase_started"
         _write_journal(data)
         _checkpoint("storage_erase_started_durable")
     _erase_storage_partition(probe_id)
+    staged_sha256 = None
+    if readback is not None:
+        staged_sha256 = _read_target_flash(
+            probe_id,
+            readback,
+            connect_mode="under-reset",
+            keep_halted=True,
+        )
     storage["erase_completed_at_utc"] = _utc_text()
     storage["phase"] = "erased_not_verified"
     _write_journal(data)
     _checkpoint("storage_erase_completed_durable")
+    return staged_sha256
 
 
 def _record_verified_storage_erase(
@@ -795,8 +833,14 @@ def _recover_interrupted_transaction(probe_id: str) -> str:
                     # repeat the idempotent sector erase under the same intent.
                     if (storage_initialization.get("erase_completed_at_utc") is None
                             or not _storage_is_erased(readback, data)):
-                        _erase_initialized_storage(data, probe_id)
-                        staged_sha256 = _read_target_flash(probe_id, readback)
+                        erased_sha256 = _erase_initialized_storage(
+                            data, probe_id, readback
+                        )
+                        if erased_sha256 is None:
+                            raise TransactionError(
+                                "storage recovery erase produced no target readback"
+                            )
+                        staged_sha256 = erased_sha256
                     _record_verified_storage_erase(data, readback, staged_sha256)
                 _mark_awaiting_qualification(data, staged_sha256, probe_id)
                 return "awaiting_qualification"
@@ -1313,11 +1357,13 @@ def _stage_for_qualification(
         _write_journal(data)
         _checkpoint("candidate_staged")
 
-        if storage_initialization is not None:
-            _erase_initialized_storage(data, probe_id)
-
         staged = transaction_directory / "staged-readback.bin"
-        staged_sha256 = _read_target_flash(probe_id, staged)
+        if storage_initialization is not None:
+            staged_sha256 = _erase_initialized_storage(data, probe_id, staged)
+            if staged_sha256 is None:
+                raise TransactionError("storage erase produced no target readback")
+        else:
+            staged_sha256 = _read_target_flash(probe_id, staged)
         if not _code_sectors_match(staged, data["code_sector_sha256"]):
             raise TransactionError(
                 "staged code sectors do not match the immutable cohort"

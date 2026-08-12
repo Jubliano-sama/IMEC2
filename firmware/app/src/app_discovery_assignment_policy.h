@@ -635,6 +635,18 @@ static inline uint8_t app_discovery_assignment_table_windows_remaining(
     return (uint8_t)(round_limit - current_round + 1u);
 }
 
+static inline uint8_t app_discovery_assignment_table_round_after_delivery(
+    uint8_t current_round,
+    uint8_t attempts_started,
+    bool immutable_redrive)
+{
+    if (immutable_redrive || attempts_started == 0u ||
+        current_round == UINT8_MAX) {
+        return current_round;
+    }
+    return (uint8_t)(current_round + 1u);
+}
+
 static inline bool app_discovery_assignment_table_retry_backoff_required(
     bool ack_window_open,
     uint8_t missing_ack_count,

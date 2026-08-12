@@ -46,6 +46,18 @@ config IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
       low-current System ON sleep. The system-off path remains available by
       disabling this option.
 
+config IMEC_CLICKER_RTT_CONTROL
+    bool "Accept supervised click gestures over RTT"
+    default n
+    depends on IMEC_MESH_ROUTE_TEST && IMEC_CLICKER_SYSTEMON_RETAINED_IDLE
+    depends on USE_SEGGER_RTT
+    help
+      Add the exact CLICK and LONG commands on RTT down-channel 0. They enter
+      the same debounced button gesture state machine and bounded action FIFO
+      as the physical button. This is an opt-in hardware qualification aid;
+      keep it disabled in normal battery deployments because polling RTT keeps
+      a periodic System ON work item active.
+
 endmenu
 
 menu "IMEC ML data collection"

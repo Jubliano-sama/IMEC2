@@ -135,7 +135,7 @@
 #define UWB_RANGE_FIRST_POLL_DELAY_MS 50u
 #define UWB_SAMPLES_PER_ANCHOR 2u
 #define UWB_MAX_DISCOVERY_WINDOW_MS \
-    (((MAX_SCHEDULED_ANCHORS * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
+    (((UWB_DISCOVERY_SLOT_COUNT * UWB_DISCOVERY_SLOT_US) + 999u) / 1000u)
 #define UWB_CLICKER_MAX_SAMPLES_PER_ANCHOR UWB_RANGING_REQUESTS_MAX_PER_ANCHOR
 #define UWB_SCHEDULED_RANGE_SPAN_MS \
     (UWB_RANGE_FIRST_POLL_DELAY_MS + UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS + \
@@ -331,18 +331,18 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
 #define MESH_TEST_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
 #if IS_ENABLED(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
 /*
- * The current clicker route owner reaches 5288 bytes synchronously; the
- * verifier's 20% free-space rule requires 6620 bytes, so 6656 is the
- * smallest 32-byte-aligned queue that clears the measured chain.
+ * The current clicker route owner reaches 5392 bytes synchronously; the
+ * verifier's 20% free-space rule requires more than 6724 bytes, so 6784 is
+ * the smallest reviewed 32-byte-aligned queue with additional rounding room.
  */
 #if DEVICE_ROLE == ROLE_CLICKER
-#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 6656u
+#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 6784u
 #elif DEVICE_ROLE == ROLE_GATEWAY
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8192u
 #else
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8576u
 #endif
-BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 6656u,
+BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 6784u,
              "mesh route worker needs the verified clicker stack floor");
 #define MESH_ROUTE_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
 #else

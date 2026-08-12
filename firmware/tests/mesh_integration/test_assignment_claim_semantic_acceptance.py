@@ -415,6 +415,25 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertLess(pending, table)
         self.assertLess(table, normal_limit)
 
+        finalize = function_body(
+            ANCHOR, "gateway_discovery_assignment_finalize_work_handler"
+        )
+        urgent = finalize.index(
+            "gateway_discovery_assignment_state.late_table_redrive_pending"
+        )
+        response_wait = finalize.index(
+            "response-window-deadline", urgent
+        )
+        submit = finalize.index(
+            "mesh_gateway_command_priority_submit(", urgent
+        )
+        self.assertLess(urgent, response_wait)
+        self.assertLess(response_wait, submit)
+        self.assertIn(
+            "gateway_discovery_assignment_state.round_open = false",
+            finalize[urgent:response_wait],
+        )
+
         self.assertRegex(
             ANCHOR,
             r"gateway_build_discovery_assignment_command\s*\("
@@ -436,6 +455,25 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         )
         retry_schedule = table_publish.index("table-admission-retry", retry_branch)
         self.assertLess(retry_branch, retry_schedule)
+
+        service = function_body(
+            ANCHOR, "gateway_discovery_assignment_service_delivery"
+        )
+        table_delivery = service.index(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE"
+        )
+        round_update = service.index(
+            "app_discovery_assignment_table_round_after_delivery(",
+            table_delivery,
+        )
+        self.assertIn(
+            "table_delivery_is_redrive",
+            service[table_delivery:round_update + 200],
+        )
+        self.assertNotIn(
+            "table_round++",
+            service[table_delivery:round_update + 200],
+        )
 
     def test_assignment_host_command_retains_async_result_reservation(self):
         start = function_body(ANCHOR, "gateway_start_discovery_assignment")

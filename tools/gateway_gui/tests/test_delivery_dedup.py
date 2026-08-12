@@ -22,6 +22,7 @@ from tools.gateway_gui.protocol import (
     Packet,
     click_report_session_id,
     parse_stream_record,
+    parse_tlvs,
 )
 from tools.gateway_gui.tests.test_protocol import (
     gateway_assignment_event_payload,
@@ -77,6 +78,40 @@ def host_packet(
             flags=flags,
         ),
         msg_type=msg_type,
+    )
+
+
+def self_test_packet(
+    *,
+    clicker_id: int = 0x1111,
+    gateway_id: int = 0x2222,
+    event_seq: int = 7,
+    failure: int = 0,
+) -> Packet:
+    payload = b"".join(
+        (
+            bytes((0x0B, 8)) + clicker_id.to_bytes(8, "little"),
+            bytes((0x06, 4)) + event_seq.to_bytes(4, "little"),
+            bytes((0x04, 2)) + failure.to_bytes(2, "little"),
+            bytes((0x02, 2)) + (3000).to_bytes(2, "little"),
+        )
+    )
+    seq = event_seq & 0xFFFF or 1
+    return Packet(
+        transport="gateway-stream-v1",
+        raw_transport=b"",
+        raw_packet=None,
+        msg_type=MSG_SELF_TEST_REPORT,
+        flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        src_id=clicker_id,
+        dst_id=gateway_id,
+        session_id=event_seq,
+        seq=seq,
+        ttl=None,
+        age_ms=0,
+        age_kind="gateway_queue_age_ms",
+        payload=payload,
+        tlvs=parse_tlvs(payload),
     )
 
 
@@ -323,7 +358,7 @@ class GatewayPacketDeduplicatorTests(unittest.TestCase):
         cache = GatewayPacketDeduplicator(gateway_id=0xAAA, max_entries=16)
         packets = (
             host_packet(MSG_CLICK_REPORT),
-            host_packet(MSG_SELF_TEST_REPORT, seq=4),
+            self_test_packet(),
             host_packet(MSG_ANCHOR_HEARTBEAT, seq=5),
             host_packet(MSG_COMMAND_RESULT, seq=6),
             host_packet(MSG_RESULT_BUNDLE, seq=7),

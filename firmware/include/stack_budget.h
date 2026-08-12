@@ -21,7 +21,7 @@ extern "C" {
  */
 /* STACK_BUDGET_POLICY_BEGIN */
 #define STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X)                              \
-    X(CLICKER, "mesh_clicker", 4096u, 6144u, 6656u, 8192u, 320u, 2048u, 1536u,   \
+    X(CLICKER, "mesh_clicker", 4096u, 6144u, 6784u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 6144u, 8576u, 8192u, 320u, 2048u, 0u,        \
       0u, 10240u, true, true, true, true, false)                              \
@@ -91,6 +91,7 @@ extern "C" {
     X("app_clicker.c", "click_button_rearm_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_work_handler", "system_workqueue")       \
     X("app_clicker.c", "self_test_arm_timeout_handler", "system_workqueue")   \
+    X("app_clicker_rtt_control.c", "app_clicker_rtt_poll_work_handler", "system_workqueue") \
     X("app_clicker.c", "click_button_isr", "isr")                              \
     X("app_anchor.c", "anchor_discovery_claim_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_collection_result_work_handler", "system_workqueue") \

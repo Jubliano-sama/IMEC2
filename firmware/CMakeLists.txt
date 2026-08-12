@@ -10,6 +10,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(core
     src/debug_log.c
+    src/clicker_rtt_command.c
     src/device_identity.c
     src/discovery_assignment.c
     src/dwm3000_runtime.c
@@ -86,6 +87,13 @@ add_test(NAME app_clicker_event_runtime
     COMMAND test_app_clicker_event_runtime)
 set_tests_properties(app_clicker_event_runtime PROPERTIES
     LABELS "mesh_integration;hardware_models;state;click")
+
+add_executable(test_clicker_rtt_command
+    tests/test_clicker_rtt_command.c)
+target_link_libraries(test_clicker_rtt_command PRIVATE core)
+add_test(NAME clicker_rtt_command COMMAND test_clicker_rtt_command)
+set_tests_properties(clicker_rtt_command PROPERTIES
+    LABELS "mesh_integration;hardware_models;click;protocol")
 
 add_executable(test_app_anchor_click_event_runtime
     tests/test_app_anchor_click_event_runtime.c

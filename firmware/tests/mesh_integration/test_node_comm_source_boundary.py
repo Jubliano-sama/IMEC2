@@ -126,6 +126,35 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertNotIn("mesh_save_outbox_durable", complete)
         self.assertNotIn("mesh_deferred_outbox_pending", complete)
 
+    def test_clicker_self_test_ack_confirm_reaches_terminal_commit(self):
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+
+        actions_start = report.index(
+            "static void mesh_handle_result_actions("
+        )
+        actions_end = report.index(
+            "void mesh_gateway_host_receipt_ready(", actions_start
+        )
+        actions = report[actions_start:actions_end]
+        role_gate = actions.index(
+            "#if DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_CLICKER"
+        )
+        pending = actions.index(
+            "MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING", role_gate
+        )
+        confirmed = actions.index(
+            "MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED", pending
+        )
+        exact_complete = actions.index(
+            "mesh_complete_gateway_ack_confirm(", confirmed
+        )
+        gate_end = actions.index("\n#endif", exact_complete)
+
+        self.assertLess(role_gate, pending)
+        self.assertLess(pending, confirmed)
+        self.assertLess(confirmed, exact_complete)
+        self.assertLess(exact_complete, gate_end)
+
     def test_rx_snapshots_transient_confirm_before_core_handles_its_ack(self):
         report = read_composed_source(APP_SRC / "app_mesh_report.c")
 

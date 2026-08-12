@@ -9,6 +9,7 @@ RADIO_RECOVERY = (
     ROOT / "app/src/app_radio_recovery.c"
 ).read_text()
 MAIN = (ROOT / "app/src/main.c").read_text()
+APP_CONFIG = (ROOT / "app/src/app_config.h").read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 DRIVER_RADIO = (ROOT / "app/src/dwm3000_driver_radio.inc").read_text()
 MESH_ARBITRATION = (
@@ -94,6 +95,18 @@ for release_helper, park_call in (
 wake = function_body("clicker_send_wake_claim_train_until")
 tail = function_body("app_clicker_wake_train_opportunity_tail_ms")
 assert "post_wake_claimed_duration_ms" in tail
+# The clicker advertises every discovery slot on the wire.  Its absolute
+# wake-claim epoch must therefore reserve the full 50-slot reply window, not
+# merely the four anchors eventually selected for ranging.
+discovery_window = re.search(
+    r"#define UWB_MAX_DISCOVERY_WINDOW_MS\s+\\\s*\n\s*"
+    r"\(\(\((.*?)\) \+ 999u\) / 1000u\)",
+    APP_CONFIG,
+    re.DOTALL,
+)
+assert discovery_window is not None
+assert "UWB_DISCOVERY_SLOT_COUNT * UWB_DISCOVERY_SLOT_US" in discovery_window.group(1)
+assert "MAX_SCHEDULED_ANCHORS" not in discovery_window.group(1)
 admission = wake.index("app_wake_train_deadline_fits")
 radio = wake.index("radio_guard_uwb_claim", admission)
 pre_sniff = wake.index("clicker_wake_train_sniff_activity", radio)

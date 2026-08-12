@@ -7,10 +7,11 @@ import argparse
 import asyncio
 from dataclasses import dataclass, field
 import pathlib
+import re
 import secrets
 import sys
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -32,6 +33,7 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
+    SERVICE_UUID,
     SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
@@ -84,6 +86,47 @@ DISCOVERY_SLOT_UNAVAILABLE = 0xFF
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
 SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S = 5.0
 SURVEY_TERMINAL_DRAIN_MAX_S = 90.0
+
+
+def _is_ble_address(value: str) -> bool:
+    return re.fullmatch(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}", value) is not None
+
+
+async def _resolve_gateway_target(name_or_address: str, timeout_s: float) -> object:
+    """Resolve a friendly gateway name once and hand Bleak its device object."""
+    if _is_ble_address(name_or_address):
+        return name_or_address
+
+    discovered = await BleakScanner.discover(timeout=timeout_s, return_adv=True)
+    entries = discovered.values() if isinstance(discovered, dict) else discovered
+    named_without_service = False
+    for entry in entries:
+        if isinstance(entry, tuple) and len(entry) == 2:
+            device, advertisement = entry
+        else:
+            device = entry
+            advertisement = None
+        address = str(getattr(device, "address", ""))
+        name = (
+            getattr(advertisement, "local_name", None)
+            or getattr(device, "name", None)
+            or ""
+        )
+        if name_or_address.casefold() not in (address.casefold(), name.casefold()):
+            continue
+        service_uuids = {
+            str(uuid).lower()
+            for uuid in (getattr(advertisement, "service_uuids", None) or [])
+        }
+        if SERVICE_UUID in service_uuids:
+            return device
+        named_without_service = True
+
+    if named_without_service:
+        raise RuntimeError(
+            f"gateway {name_or_address!r} was found but did not advertise the IMEC service"
+        )
+    raise RuntimeError(f"gateway {name_or_address!r} was not found during BLE scan")
 
 
 def _survey_custody_record_retained(packet: Packet) -> bool:
@@ -892,8 +935,12 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 raise_transport_errors(f"{label} terminal drain")
         current.validate()
 
-    async with BleakClient(
+    gateway_target = await _resolve_gateway_target(
         args.gateway,
+        args.connect_timeout,
+    )
+    async with BleakClient(
+        gateway_target,
         timeout=args.connect_timeout,
         disconnected_callback=on_disconnect,
     ) as client:

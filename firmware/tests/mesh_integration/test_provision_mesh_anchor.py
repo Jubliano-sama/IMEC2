@@ -1144,6 +1144,36 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         FakeBleakClient.notification_count = 0
         FakeBleakClient.write_notification_counts = []
 
+    async def test_friendly_gateway_name_resolves_to_matching_service_device(self) -> None:
+        device = types.SimpleNamespace(
+            address="EF:BD:42:B8:83:0C",
+            name="cached gateway name",
+        )
+        advertisement = types.SimpleNamespace(
+            local_name="IMEC Mesh Test Gateway",
+            service_uuids=[host_protocol.SERVICE_UUID.upper()],
+        )
+        scanner = mock.AsyncMock(
+            return_value={device.address: (device, advertisement)}
+        )
+        with mock.patch.object(provision.BleakScanner, "discover", scanner):
+            resolved = await provision._resolve_gateway_target(
+                "IMEC Mesh Test Gateway",
+                1.5,
+            )
+        self.assertIs(device, resolved)
+        scanner.assert_awaited_once_with(timeout=1.5, return_adv=True)
+
+    async def test_gateway_address_skips_scan(self) -> None:
+        scanner = mock.AsyncMock()
+        with mock.patch.object(provision.BleakScanner, "discover", scanner):
+            resolved = await provision._resolve_gateway_target(
+                "EF:BD:42:B8:83:0C",
+                1.5,
+            )
+        self.assertEqual("EF:BD:42:B8:83:0C", resolved)
+        scanner.assert_not_awaited()
+
     async def _run_unqualified_command_with_packets(
         self,
         packets: list[Packet],

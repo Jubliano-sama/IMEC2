@@ -253,6 +253,7 @@ struct gateway_discovery_assignment_state {
     bool response_ack_settle_armed;
     bool response_window_deadline_valid;
     bool late_table_redrive_pending;
+    bool table_delivery_is_redrive;
     bool active;
 };
 #endif

@@ -34,6 +34,7 @@ from tools.gateway_gui.protocol import (
     MSG_GATEWAY_COMMAND_EVENT,
     MSG_GATEWAY_HOST_RECEIPT,
     MSG_MESH_DATA,
+    MSG_SELF_TEST_REPORT,
     MSG_SURVEY_DISCOVERY_REPORT,
     PACKET_EXT_MAX_PAYLOAD_LEN,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
@@ -102,6 +103,7 @@ from tools.gateway_gui.protocol import (
     parse_tlvs,
     validate_click_payload,
     validate_gateway_local_command_result_packet,
+    validate_self_test_report_packet,
     validate_survey_discovery_report,
 )
 
@@ -354,6 +356,19 @@ def synthetic_truncated_payload() -> bytes:
     payload.extend(b"\xa5" * (255 - len(payload)))
     assert len(payload) == 255
     return bytes(payload)
+
+
+def self_test_report_payload(
+    *, clicker_id: int, event_seq: int, failure: int = 0, battery_mv: int = 3000
+) -> bytes:
+    return b"".join(
+        (
+            tlv(TLV_CLICKER_ID, clicker_id.to_bytes(8, "little")),
+            tlv(TLV_EVENT_SEQ, event_seq.to_bytes(4, "little")),
+            tlv(0x04, failure.to_bytes(2, "little")),
+            tlv(0x02, battery_mv.to_bytes(2, "little")),
+        )
+    )
 
 
 def extended_stream_payload() -> bytes:
@@ -674,6 +689,70 @@ class ProtocolTests(unittest.TestCase):
         for record in malformed_cases:
             with self.subTest(record=record[:16]):
                 rejected = GatewayReceiveBuffer().feed(record)
+                self.assertEqual(rejected.packets, ())
+                self.assertEqual(len(rejected.errors), 1)
+
+    def test_self_test_report_is_validated_before_live_host_receipt(self) -> None:
+        clicker_id = 0xA2603D21D805AE52
+        gateway_id = 0x9999888877776666
+        event_seq = 0x01020304
+        payload = self_test_report_payload(
+            clicker_id=clicker_id, event_seq=event_seq
+        )
+        record = stream_record(
+            payload,
+            msg_type=MSG_SELF_TEST_REPORT,
+            packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+            packet_src_id=clicker_id,
+            packet_dst_id=gateway_id,
+            packet_session_id=event_seq,
+            packet_seq=event_seq & 0xFFFF,
+        )
+        accepted = GatewayReceiveBuffer().feed(record)
+        self.assertEqual(accepted.errors, ())
+        self.assertEqual(len(accepted.packets), 1)
+        validate_self_test_report_packet(accepted.packets[0])
+        receipt = build_gateway_host_receipt(
+            accepted.packets[0],
+            host_id=DEFAULT_HOST_ID,
+            gateway_id=gateway_id,
+        )
+        self.assertEqual(receipt.identity.original_msg_type, MSG_SELF_TEST_REPORT)
+
+        malformed = (
+            stream_record(
+                payload,
+                msg_type=MSG_SELF_TEST_REPORT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=clicker_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_seq,
+                packet_seq=event_seq & 0xFFFF,
+            ),
+            stream_record(
+                self_test_report_payload(
+                    clicker_id=clicker_id, event_seq=event_seq, failure=7
+                ),
+                msg_type=MSG_SELF_TEST_REPORT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+                packet_src_id=clicker_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_seq,
+                packet_seq=event_seq & 0xFFFF,
+            ),
+            stream_record(
+                payload + tlv(0x02, (3000).to_bytes(2, "little")),
+                msg_type=MSG_SELF_TEST_REPORT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+                packet_src_id=clicker_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_seq,
+                packet_seq=event_seq & 0xFFFF,
+            ),
+        )
+        for candidate in malformed:
+            with self.subTest(candidate=candidate[:16]):
+                rejected = GatewayReceiveBuffer().feed(candidate)
                 self.assertEqual(rejected.packets, ())
                 self.assertEqual(len(rejected.errors), 1)
 

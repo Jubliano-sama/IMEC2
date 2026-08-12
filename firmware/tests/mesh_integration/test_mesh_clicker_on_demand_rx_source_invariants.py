@@ -80,7 +80,9 @@ assert_order(
     "if (!mesh_role_uses_uwb_rx())",
     "return -EINVAL",
     "mesh_uwb_rx_active = true",
-    "mesh_reschedule_owned_work(&mesh_uwb_rx_work",
+    "mesh_reschedule_owned_work_with_busy_handoff(",
+    "&mesh_uwb_rx_work",
+    "mesh_defer_uwb_rx_rearm(delay_ms)",
 )
 
 tracked_tx = function_body(REPORT, "mesh_start_tracked_tx_with_retry")
