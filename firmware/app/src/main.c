@@ -511,6 +511,14 @@ int main(void)
         if (ret < 0) {
             LOG_WRN("click button unavailable: %d", ret);
         }
+        /*
+         * A clicker can enter retained idle before a trusted RTT reader has
+         * attached.  Keep one bounded boot window and repeat the exact
+         * identity record so qualification can bind the running target to
+         * its staged artifact without weakening normal low-power behavior.
+         */
+        k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);
+        mesh_node_identity_print();
 #if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
         ret = app_clicker_rtt_control_start();
         if (ret < 0) {

@@ -18,6 +18,9 @@ REPORT_ROUTE_CONTROL = (
 REPORT_DELIVERY = (
     ROOT / "app" / "src" / "app_mesh_report_delivery.inc"
 ).read_text(encoding="utf-8")
+REPORT_ENCODER = (
+    ROOT / "app" / "src" / "app_mesh_report_encode.c"
+).read_text(encoding="utf-8")
 REPORT_TRANSPORT = (
     ROOT / "app" / "src" / "app_mesh_report_transport.inc"
 ).read_text(encoding="utf-8")
@@ -512,6 +515,77 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(call, handled)
         self.assertLess(handled, stop)
 
+    def test_cir_fragment_encoding_runs_only_after_anchor_scan_release(self):
+        start = function_body(REPORT_ENCODER, "anchor_cir_report_start")
+        refill_wrapper = function_body(
+            REPORT_ENCODER, "app_mesh_report_encode_queue_next_cir"
+        )
+        report_worker = function_body(REPORT, "report_tx_work_handler")
+
+        self.assertIn("anchor_cir_report_stream.active = true", start)
+        for forbidden in (
+            "anchor_cir_report_queue_next(",
+            "app_mesh_report_encode_queue_next_cir(",
+            "report_tx_work_handler(",
+            "report_tx_schedule(",
+            "report_encode_ops.queue_cir_fragment",
+            "struct mesh_outbound",
+            "PACKET_EXT_MAX_PAYLOAD_LEN",
+        ):
+            self.assertNotIn(forbidden, start)
+
+        self.assertIn("return anchor_cir_report_queue_next();", refill_wrapper)
+        self.assertEqual(REPORT_ENCODER.count("anchor_cir_report_queue_next("), 2)
+
+        refill_call_sites = []
+        app_source = ROOT / "app" / "src"
+        for source_path in sorted(app_source.iterdir()):
+            if source_path.suffix not in (".c", ".inc"):
+                continue
+            source = source_path.read_text(encoding="utf-8")
+            refill_call_sites.extend(
+                source_path.name
+                for _ in re.finditer(
+                    r"\bapp_mesh_report_encode_queue_next_cir\s*\(\s*\)",
+                    source,
+                )
+            )
+        self.assertEqual(refill_call_sites, ["app_mesh_report_delivery.inc"])
+        self.assertEqual(
+            report_worker.count("app_mesh_report_encode_queue_next_cir()"), 1
+        )
+
+        for scan_function in (
+            "anchor_run_mesh_click_wake_claim",
+            "anchor_uwb_scan_work_handler",
+        ):
+            scan = function_body(ANCHOR_RADIO, scan_function)
+            release_finish = scan.index("radio_guard_uwb_release_finish(")
+            release_failure = scan.index("if (release_ret < 0)", release_finish)
+            report_schedule = scan.index("report_tx_schedule(0u)", release_failure)
+
+            self.assertEqual(scan.count("report_tx_schedule(0u)"), 1)
+            self.assertLess(release_finish, release_failure)
+            self.assertLess(release_failure, report_schedule)
+            self.assertIn(
+                "return",
+                braced_block_after(scan, "if (release_ret < 0)"),
+            )
+
+    def test_anchor_claim_turn_reuses_the_exclusive_scan_frame(self):
+        claim = function_body(ANCHOR_RADIO, "anchor_handle_uwb_claim")
+
+        self.assertIn(
+            "uint8_t *const frame = anchor_uwb_scan_frame;",
+            claim,
+        )
+        self.assertNotIn("uint8_t frame[UWB_MESH_MAX_FRAME_LEN]", claim)
+        self.assertNotIn("sizeof(frame)", claim)
+        self.assertGreaterEqual(
+            claim.count("sizeof(anchor_uwb_scan_frame)"),
+            4,
+        )
+
     def test_deferred_gateway_ack_separates_plan_wait_from_send_failure(self):
         send_body = function_body(
             REPORT, "mesh_try_deferred_gateway_ack_on_channel9"
@@ -916,7 +990,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(retry, success)
         self.assertIn("DBG_ANCHOR_CH9_REARM", body)
 
-    def test_anchor_low_duty_scan_blocks_live_channel9_ack_owner_before_ch5(self):
+    def test_anchor_low_duty_scan_yields_passive_ack_custody_between_rf_turns(self):
         owner = function_body(
             REPORT_DELIVERY, "mesh_report_ch9_ack_wait_active"
         )
@@ -945,7 +1019,13 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         arm = scan.index("DBG_ANCHOR_CH5_SCAN_ARM", claim)
         configure = scan.index("dwm3000_driver_configure_wake_mode()", arm)
 
-        self.assertIn("ch9_ack_wait_active", blocked_path[:schedule])
+        # The ACK snapshot remains diagnostic evidence, but passive custody
+        # alone cannot suppress a physical click scan for the full 2 s relay
+        # timeout. The real Channel-9 horizon and radio lease still veto it.
+        self.assertNotIn("ch9_ack_wait_active ||", blocked_path[:schedule])
+        self.assertIn("ch9_rx_conflict ||", blocked_path[:schedule])
+        self.assertIn("uwb_radio_busy", blocked_path[:schedule])
+        self.assertIn("ch9_ack_wait_active ? 1u : 0u", blocked_path)
         self.assertLess(schedule, leave)
         self.assertLess(claim, arm)
         self.assertLess(arm, configure)

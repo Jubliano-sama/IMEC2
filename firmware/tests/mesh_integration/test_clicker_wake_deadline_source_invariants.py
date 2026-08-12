@@ -227,6 +227,76 @@ assert (
 )
 assert "clicker_range_schedule_deadline_budget_ms" in schedule_send
 
+# A normal click must leave the DWM3000 awake and in range mode across the
+# RANGE_SCHEDULE -> first DS-TWR slot handoff. Re-entering from standby uses
+# most of the advertised 50 ms first-poll delay on hardware, so the default
+# cannot inherit the ML clicker's conditional standby behavior.
+range_tx_initializer = re.search(
+    r"static const struct app_clicker_range_tx_config\s+"
+    r"clicker_range_tx_config\s*=\s*\{(?P<body>.*?)\};",
+    CLICKER,
+    re.DOTALL,
+)
+assert range_tx_initializer is not None
+assert re.search(
+    r"\.prepare_range_mode_after_schedule\s*=\s*true\s*,",
+    range_tx_initializer.group("body"),
+), "normal click must prepare range mode immediately after RANGE_SCHEDULE"
+
+prepare_branch = schedule_send.index(
+    "if (ret == 0 && config->prepare_range_mode_after_schedule)"
+)
+prepare_range_mode = schedule_send.index(
+    "dwm3000_driver_configure_range_mode()", prepare_branch
+)
+prepared_idle_release = schedule_send.index(
+    "clicker_release_radio_to_idle", prepare_range_mode
+)
+fallback_standby_release = schedule_send.index(
+    "clicker_release_radio_to_standby", prepared_idle_release
+)
+assert (
+    prepare_branch
+    < prepare_range_mode
+    < prepared_idle_release
+    < fallback_standby_release
+)
+
+# ML builds retain their runtime override: each path starts from the safe
+# normal default, then may explicitly choose the ML runtime's handoff policy.
+for ml_schedule_builder_name in (
+    "clicker_collect_uwb_attempt_with_options_until",
+    "clicker_build_and_send_schedule_for_event",
+):
+    ml_schedule_builder = function_body(ml_schedule_builder_name)
+    inherited_config = ml_schedule_builder.index(
+        "range_tx_config = clicker_range_tx_config"
+    )
+    ml_override_guard = ml_schedule_builder.index(
+        "if (clicker_callbacks.ml_runtime_active != NULL)", inherited_config
+    )
+    ml_override = ml_schedule_builder.index(
+        "range_tx_config.prepare_range_mode_after_schedule =",
+        ml_override_guard,
+    )
+    ml_runtime_value = ml_schedule_builder.index(
+        "clicker_callbacks.ml_runtime_active()", ml_override
+    )
+    configured_schedule_send = ml_schedule_builder.index(
+        "clicker_send_range_schedule_until", ml_runtime_value
+    )
+    configured_schedule_argument = ml_schedule_builder.index(
+        "&range_tx_config", configured_schedule_send
+    )
+    assert (
+        inherited_config
+        < ml_override_guard
+        < ml_override
+        < ml_runtime_value
+        < configured_schedule_send
+        < configured_schedule_argument
+    )
+
 range_burst = function_body("app_clicker_range_scheduled_anchors")
 assert "int64_t schedule_tx_ms" in range_burst
 assert "schedule_tx_ms = k_uptime_get()" not in range_burst
@@ -249,6 +319,26 @@ burst_loop = range_burst.index(
 )
 burst_loop_end = braced_statement_end(range_burst, burst_loop)
 burst_loop_body = range_burst[burst_loop:burst_loop_end]
+next_step = burst_loop_body.index("uwb_clicker_next_range_step")
+schedule_complete = burst_loop_body.index(
+    "if (ret == PROTO_ERR_NOT_FOUND)", next_step
+)
+schedule_complete_end = braced_statement_end(
+    burst_loop_body, schedule_complete
+)
+schedule_complete_body = burst_loop_body[
+    schedule_complete:schedule_complete_end
+]
+success_at_schedule_end = schedule_complete_body.index(
+    "session->state == UWB_CLICKER_SUCCEEDED"
+)
+clear_stale_sample_error = schedule_complete_body.index(
+    "last_ret = 0", success_at_schedule_end
+)
+schedule_end_break = schedule_complete_body.index(
+    "break", clear_stale_sample_error
+)
+assert success_at_schedule_end < clear_stale_sample_error < schedule_end_break
 target = range_burst.index("target_us =", burst_loop)
 target_budget = range_burst.index("latest_start_ms", target)
 sleep_to_target = range_burst.index("sleep_until_us(target_us)", target_budget)

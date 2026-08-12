@@ -1615,11 +1615,7 @@ static void report_tx_work_handler(struct k_work *work)
     struct mesh_outbound *outbound = &report_tx_worker_scratch;
     struct fw_radio_activity_decision coordinator_decision;
     bool anchor_busy;
-    bool survey_busy;
-    bool relay_tx_active;
-    bool ch9_ack_wait_active;
     bool ch9_ack_send_pending;
-    bool route_waiting_active;
     bool report_queue_pending;
     bool rx_queue_pending;
     bool route_handoff_active;
@@ -1659,13 +1655,8 @@ static void report_tx_work_handler(struct k_work *work)
     }
 #endif
     anchor_busy = anchor_uwb_window_active();
-    survey_busy = mesh_report_anchor_survey_radio_active();
-    relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
-    ch9_ack_wait_active = mesh_ch9_tx_pending.active;
     ch9_ack_send_pending =
         app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table);
-    route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                           mesh_route_waiting_tx_active();
     report_queue_pending = report_tx_queue_used() > 0u;
     rx_queue_pending = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                         k_msgq_num_used_get(&mesh_rx_msgq) > 0u;
@@ -1675,23 +1666,8 @@ static void report_tx_work_handler(struct k_work *work)
         route_handoff_active) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             report_queue_pending) {
-            if (anchor_busy) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_ANCHOR\n");
-            } else if (rx_queue_pending) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_RX\n");
-            } else if (route_handoff_active) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_HANDOFF\n");
-            } else if (ch9_ack_send_pending) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_QACK\n");
-            } else if (route_waiting_active) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_ROUTE\n");
-            } else if (ch9_ack_wait_active) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_ACK\n");
-            } else if (relay_tx_active) {
-                status_debug_note("DBG_REPORT_WORK_BUSY_TX\n");
-            } else {
-                status_debug_note("DBG_REPORT_WORK_BUSY_SURVEY\n");
-            }
+            /* Each underlying owner logs its own lifecycle. Repeating the
+             * selected busy reason here can starve the useful packet trace. */
             if (mesh_tx_handoff_gate_yields(
                     APP_MESH_TX_HANDOFF_WORK_REPORT_QUEUE,
                     report_queue_pending,
@@ -4807,6 +4783,16 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 (unsigned long long)pending->previous_hop_id,
                 result->actions,
                 result->status);
+#if DEVICE_ROLE == ROLE_GATEWAY
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+            pending->packet.msg_type == MSG_CLICK_REPORT) {
+            status_debug_printf("DBG_GW_CLK_H s=%llx q=%u a=%x t=%d\n",
+                                (unsigned long long)pending->packet.src_id,
+                                pending->packet.seq,
+                                result->actions,
+                                result->status);
+        }
+#endif
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             (pending->packet.msg_type == MSG_ROUTE_REQ ||
              pending->packet.msg_type == MSG_GATEWAY_ROUTE_ADV ||

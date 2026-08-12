@@ -1305,8 +1305,18 @@ static void test_schedule_rejects_unsafe_ranging_params(void)
     uint8_t buf[UWB_RANGE_SCHEDULE_MAX_LEN];
     size_t written = 0u;
 
+    assert(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 50000u);
+    assert(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS == 400u);
+    assert(((uint32_t)UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS * 1000u) /
+               UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US ==
+           8u);
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     schedule.entries[1].anchor_id = 11u;
+    schedule.exchange_stride_us =
+        UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US - 1u;
+    assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) ==
+           PROTO_ERR_MALFORMED);
+    schedule.exchange_stride_us = UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US;
     schedule.poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS - 1u;
     assert(uwb_encode_range_schedule(&schedule, buf, sizeof(buf), &written) == PROTO_ERR_MALFORMED);
     schedule.poll_spacing_ms = UWB_RANGE_SCHEDULE_MIN_POLL_SPACING_MS;

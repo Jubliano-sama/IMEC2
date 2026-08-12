@@ -104,10 +104,12 @@ assert "printk(" not in identity_print
 assert len(identity_formats) == 2
 assert len(set(identity_formats)) == 1
 assert MAIN.count(identity_formats[0]) == len(identity_formats)
-assert main.count("mesh_node_identity_print();") == 3
+assert main.count("mesh_node_identity_print();") == 4
 
+clicker_start = main.index("if (DEVICE_ROLE == ROLE_CLICKER)")
 anchor_start = main.index("if (DEVICE_ROLE == ROLE_ANCHOR)")
 gateway_start = main.index("} else if (DEVICE_ROLE == ROLE_GATEWAY)", anchor_start)
+clicker = main[clicker_start:anchor_start]
 anchor = main[anchor_start:gateway_start]
 non_ml_anchor_start = anchor.index("#if !defined(CONFIG_IMEC_ML_ANCHOR)")
 ml_anchor_start = anchor.index(
@@ -123,6 +125,18 @@ assert re.search(
     non_ml_anchor,
 )
 assert "mesh_node_identity_print();" not in ml_anchor
+
+assert clicker.count("mesh_node_identity_print();") == 1
+clicker_identity_delay = clicker.index(
+    "k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);"
+)
+clicker_identity = clicker.index("mesh_node_identity_print();")
+clicker_rtt_start = clicker.index("app_clicker_rtt_control_start()")
+clicker_action_dispatch = clicker.index(
+    "if (boot_button_action != BUTTON_ACTION_NONE)"
+)
+assert clicker_identity_delay < clicker_identity < clicker_rtt_start
+assert clicker_identity < clicker_action_dispatch
 
 gateway = main[gateway_start:]
 assert re.search(

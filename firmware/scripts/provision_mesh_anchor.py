@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 import pathlib
 import re
@@ -45,7 +46,11 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     decode_gateway_identity,
     validate_survey_discovery_report,
 )
-from tools.gateway_gui.delivery_dedup import is_host_delivery_packet  # noqa: E402
+from tools.gateway_gui.delivery_dedup import (  # noqa: E402
+    GatewayPacketDeduplicator,
+    PacketDisposition,
+    is_host_delivery_packet,
+)
 from tools.gateway_gui.operation_policy import (  # noqa: E402
     DISCOVERY_DEFAULT_ROUND_COUNT,
     DISCOVERY_DEFAULT_SLOT_MS,
@@ -719,12 +724,32 @@ def _next_identity(previous: int = 0) -> int:
 Qualification = SurveyQualification | AssignmentQualification | RouteRefreshQualification
 
 
+@asynccontextmanager
+async def _ble_client_session(*args: object, **kwargs: object):
+    """Ignore only BlueZ teardown EOF after the whole session completed.
+
+    ``dbus-fast`` can observe EOF while Bleak's context manager disconnects a
+    link whose peer has already closed. An EOF raised by connect, transfer, or
+    the session body remains fatal; only the context-manager exit after a
+    successful body is treated as completed transport teardown.
+    """
+    body_completed = False
+    try:
+        async with BleakClient(*args, **kwargs) as client:
+            yield client
+            body_completed = True
+    except EOFError:
+        if not body_completed:
+            raise
+        print("BLE_DISCONNECT_COMPLETE peer already closed D-Bus transport", flush=True)
+
+
 async def run(args: argparse.Namespace) -> Qualification | None:
     decoder = GatewayReceiveBuffer()
+    delivery_dedup = GatewayPacketDeduplicator()
     write_lock = asyncio.Lock()
     receipt_tasks: set[asyncio.Task[None]] = set()
     receipt_in_flight: set[object] = set()
-    accepted_host_records: dict[object, Packet] = {}
     survey_custody_activity = asyncio.Event()
     command_budget_ms = getattr(args, "command_budget_ms", None)
     received = 0
@@ -779,7 +804,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             return False
         if receipt.identity in receipt_in_flight:
             return True
-        accepted_host_records[receipt.identity] = packet
         receipt_in_flight.add(receipt.identity)
 
         async def write_receipt() -> None:
@@ -825,6 +849,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             transport_failed.set()
         for packet in result.packets:
             accepted_for_receipt = False
+            survey_custody_record = False
             received += 1
             print(
                 f"BLE_PACKET type=0x{packet.msg_type:02x} src=0x{packet.src_id:016x} "
@@ -835,7 +860,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             if isinstance(qualification, SurveyQualification):
                 qualification.observe_packet(packet)
             try:
-                accepted_for_receipt = _survey_custody_record_retained(packet)
+                survey_custody_record = _survey_custody_record_retained(packet)
             except DecodeError as exc:
                 message = str(exc)
                 print(f"BLE_DECODE_ERROR {message}", flush=True)
@@ -861,6 +886,25 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
                 if qualification is not None and qualification.observe(event):
                     qualification_done.set()
+            if isinstance(packet, Packet):
+                delivery = delivery_dedup.observe(packet, commit=False)
+                if delivery.disposition in (
+                    PacketDisposition.NEW,
+                    PacketDisposition.DUPLICATE,
+                ) and delivery.cached:
+                    accepted_for_receipt = (
+                        delivery.disposition is PacketDisposition.DUPLICATE
+                        or delivery_dedup.commit(packet, delivery)
+                    )
+                elif delivery.disposition is PacketDisposition.CONFLICT:
+                    print(
+                        "BLE_HOST_CONFLICT "
+                        f"type=0x{packet.msg_type:02x} "
+                        f"src=0x{packet.src_id:016x} "
+                        f"session={packet.session_id} seq={packet.seq}; "
+                        "no receipt sent",
+                        flush=True,
+                    )
             if schedule_host_receipt(
                 packet,
                 accepted=accepted_for_receipt,
@@ -869,7 +913,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 gateway_id=gateway_id,
                 chunk_size=chunk_size,
             ):
-                survey_custody_activity.set()
+                if survey_custody_record:
+                    survey_custody_activity.set()
 
     def on_disconnect(_client: object) -> None:
         disconnect_errors.append("gateway disconnected during active command or monitoring")
@@ -939,7 +984,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         args.gateway,
         args.connect_timeout,
     )
-    async with BleakClient(
+    async with _ble_client_session(
         gateway_target,
         timeout=args.connect_timeout,
         disconnected_callback=on_disconnect,
@@ -947,6 +992,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         gateway_id = decode_gateway_identity(
             bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
         )
+        delivery_dedup.set_gateway_id(gateway_id)
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
         if characteristic is None:
             raise RuntimeError("gateway packet RX characteristic is unavailable")
@@ -1053,7 +1099,10 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 assignment_identity & 0xFFFF,
                 assignment_identity,
                 args.expected_anchors,
-                require_hop_evidence=True,
+                require_hop_evidence=(
+                    args.expected_direct_anchors is not None
+                    or args.expected_multihop_anchors is not None
+                ),
                 expected_direct_anchors=args.expected_direct_anchors,
                 expected_multihop_anchors=args.expected_multihop_anchors,
             )

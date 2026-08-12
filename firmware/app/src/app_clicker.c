@@ -99,7 +99,13 @@ static const struct app_clicker_wake_train_config clicker_wake_train_config = {
 
 static const struct app_clicker_range_tx_config clicker_range_tx_config = {
     .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
-    .prepare_range_mode_after_schedule = false,
+    /*
+     * Keep the radio awake across RANGE_SCHEDULE -> first DS-TWR poll.  A
+     * standby/wake round trip consumes most of the 50 ms first-poll delay on
+     * real hardware and can make the initiator enter every slot late while
+     * the anchors follow the advertised schedule exactly.
+     */
+    .prepare_range_mode_after_schedule = true,
 };
 
 #define SELF_TEST_REPORT_DELIVERY_TIMEOUT_MS CLICK_REPORT_DEADLINE_MS
@@ -1091,7 +1097,7 @@ static int clicker_send_range_schedule_until(
         int prep_ret = dwm3000_driver_configure_range_mode();
 
         if (prep_ret < 0) {
-            LOG_WRN("ML clicker range-mode prep after RANGE_SCHEDULE failed: %d",
+            LOG_WRN("clicker range-mode prep after RANGE_SCHEDULE failed: %d",
                     prep_ret);
             ret = prep_ret;
         }
@@ -1290,6 +1296,13 @@ static int clicker_discover_uwb_anchors_until(
         decoded_replies++;
         ret = uwb_clicker_note_discovery_reply(session, &reply);
         if (ret == PROTO_OK) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_CLICKER_DISCOVERY_REPLY anchor=0x%llx slot=%u quality=%u candidates=%u\n",
+                                    (unsigned long long)reply.anchor_id,
+                                    reply.anchor_slot,
+                                    reply.rx_quality,
+                                    session->candidate_count);
+            }
 #if defined(CONFIG_IMEC_ML_CLICKER)
             if (clicker_callbacks.ml_cache_note_discovery_reply != NULL) {
                 clicker_callbacks.ml_cache_note_discovery_reply(&reply);
@@ -1315,6 +1328,16 @@ static int clicker_discover_uwb_anchors_until(
     }
 
     ret = session->candidate_count > 0u ? (int)session->candidate_count : last_ret;
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf("DBG_CLICKER_DISCOVERY rx=%u decoded=%u candidates=%u malformed=%u rejected=%u window=%u ret=%d\n",
+                            rx_frames,
+                            decoded_replies,
+                            session->candidate_count,
+                            malformed_frames,
+                            rejected_replies,
+                            reply_window_ms,
+                            ret);
+    }
     LOG_INF("clicker UWB discovery complete: rx_frames=%u decoded_replies=%u candidates=%u malformed_frames=%u rejected_replies=%u window_ms=%u ret=%d",
             rx_frames,
             decoded_replies,
@@ -1574,6 +1597,9 @@ int app_clicker_range_scheduled_anchors(struct uwb_clicker_session *session,
 
         ret = uwb_clicker_next_range_step(session, &step);
         if (ret == PROTO_ERR_NOT_FOUND) {
+            if (session->state == UWB_CLICKER_SUCCEEDED) {
+                last_ret = 0;
+            }
             break;
         }
         if (ret != PROTO_OK) {

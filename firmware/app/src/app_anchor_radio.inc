@@ -990,7 +990,13 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     int64_t selected_rx_ms;
     int64_t collect_deadline_ms;
     uint8_t selected_quality = first_quality;
-    uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    /*
+     * The scan workqueue exclusively owns this buffer for the complete
+     * receive/claim turn.  Reuse it after the first WAKE_CLAIM is decoded;
+     * retaining a second 1 KiB frame here needlessly consumed the measured
+     * anchor scan stack during the nested ranging/report path.
+     */
+    uint8_t *const frame = anchor_uwb_scan_frame;
     size_t frame_len = 0u;
     uint32_t range_sleep_us;
     int range_report_ret = 0;
@@ -1075,7 +1081,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
         ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
                                                       frame,
-                                                      sizeof(frame),
+                                                      sizeof(anchor_uwb_scan_frame),
                                                       &frame_len,
                                                       &quality,
                                                       NULL,
@@ -1227,7 +1233,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
         ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
                                                       frame,
-                                                      sizeof(frame),
+                                                      sizeof(anchor_uwb_scan_frame),
                                                       &frame_len,
                                                       &quality,
                                                       NULL,
@@ -1272,6 +1278,13 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 
         last_discovery_decode_ret = uwb_decode_discover(frame, frame_len, &discover);
         if (last_discovery_decode_ret == PROTO_OK) {
+            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                status_debug_printf("DBG_ANCHOR_DISC_DECODE evt=%u attempt=%u slots=%u flags=0x%02x\n",
+                                    discover.click_event_id,
+                                    discover.attempt_index,
+                                    discover.discovery_slot_count,
+                                    discover.flags);
+            }
             selected_quality = quality;
             discover_received = true;
             break;
@@ -1335,6 +1348,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
 discovery_miss:
     if (discover_received) {
         struct uwb_discovery_reply_frame reply;
+        uint32_t reply_assignment_state = 0u;
 #if defined(CONFIG_IMEC_ML_ANCHOR)
         uint16_t discovery_battery_mv = ml_anchor_cached_battery_mv();
 #else
@@ -1359,6 +1373,8 @@ discovery_miss:
 #else
         enum app_discovery_assignment_provisioning_state provisioning_state =
             local_anchor_discovery_assignment_provisioning_state();
+
+        reply_assignment_state = (uint32_t)provisioning_state;
 
         ret = local_anchor_discovery_slot(discover.discovery_slot_count,
                                           &reply.anchor_slot);
@@ -1398,8 +1414,18 @@ discovery_miss:
         }
 #endif
 
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ANCHOR_DISC_REPLY_ARM evt=%u attempt=%u slot=%u state=%u\n",
+                                discover.click_event_id,
+                                discover.attempt_index,
+                                reply.anchor_slot,
+                                (unsigned int)reply_assignment_state);
+        }
         sleep_precise_us((uint32_t)reply.anchor_slot * UWB_DISCOVERY_SLOT_US);
-        ret = uwb_encode_discovery_reply(&reply, frame, sizeof(frame), &frame_len);
+        ret = uwb_encode_discovery_reply(&reply,
+                                         frame,
+                                         sizeof(anchor_uwb_scan_frame),
+                                         &frame_len);
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY encode failed: %d", ret);
             anchor_click_event_abort_if_needed("discovery-reply-encode");
@@ -1413,6 +1439,13 @@ discovery_miss:
         ret = dwm3000_driver_send_frame(frame,
                                         frame_len,
                                         UWB_DISCOVERY_REPLY_TX_TIMEOUT_MS);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ANCHOR_DISC_REPLY_TX evt=%u attempt=%u slot=%u ret=%d\n",
+                                discover.click_event_id,
+                                discover.attempt_index,
+                                reply.anchor_slot,
+                                ret);
+        }
         if (ret < 0) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY TX failed: %d", ret);
             anchor_click_event_abort_if_needed("discovery-reply-tx");
@@ -1454,7 +1487,7 @@ discovery_miss:
 
             ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
                                                           frame,
-                                                          sizeof(frame),
+                                                          sizeof(anchor_uwb_scan_frame),
                                                           &frame_len,
                                                           NULL,
                                                           NULL,
@@ -2053,15 +2086,15 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uwb_radio_busy = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                      radio_guard_uwb_busy();
     /*
-     * Relay and route-wait records are passive custody between attempts.
-     * They must not suppress the Channel-5 contact scan needed to refresh a
-     * stale child timing. Actual RX/TX ownership is fenced below by the mesh
-     * response, Channel-9 horizon, and radio guard states.
+     * Relay, route-wait, and gateway-ACK records are passive custody between
+     * physical attempts. They must not suppress the Channel-5 contact scan:
+     * the synchronous direct-ACK window has already ended, and an unscheduled
+     * ACK owner is not listening on Channel 9. Actual RX/TX ownership remains
+     * fenced by the mesh response, Channel-9 horizon, and radio guard states.
      */
     if (anchor_uwb_window_active() ||
         app_anchor_survey_runtime_radio_active() ||
         mesh_rx_active ||
-        ch9_ack_wait_active ||
         ch9_rx_conflict ||
         uwb_radio_busy) {
         uint32_t retry_ms = mesh_rx_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :

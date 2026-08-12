@@ -424,7 +424,15 @@ static int anchor_cir_report_start(uint64_t clicker_id,
     anchor_cir_report_stream.active = true;
     k_spin_unlock(&anchor_cir_report_lock, key);
 
-    return anchor_cir_report_queue_next();
+    /*
+     * The range result is built while the anchor scan owner still carries
+     * the complete UWB exchange frame.  Encoding a CIR fragment here would
+     * stack another full mesh outbound and extended payload on top of that
+     * frame.  Leave the stream as the retained owner; report_tx_work_handler
+     * queues the first fragment after the scan turn releases the radio and
+     * unwinds.
+     */
+    return 0;
 }
 #endif
 

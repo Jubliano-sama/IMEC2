@@ -358,6 +358,16 @@ static void test_multi_anchor_claim_and_range_schedule_invariants(void)
             CHECK(schedule.exchange_stride_us ==
                       UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
                   "multi-anchor spacing path mismatch");
+            CHECK(schedule.exchange_stride_us == 50000u,
+                  "multi-anchor exchange stride is shorter than the hardware handoff");
+            CHECK(schedule.burst_window_ms == 400u,
+                  "multi-anchor schedule no longer uses the shared 400 ms burst");
+            CHECK(schedule.max_exchanges == 8u,
+                  "400 ms burst does not contain exactly eight 50 ms exchanges");
+            CHECK((uint32_t)schedule.max_exchanges *
+                          schedule.exchange_stride_us ==
+                      (uint32_t)schedule.burst_window_ms * 1000u,
+                  "multi-anchor exchange capacity does not exactly fill its burst");
             for (uint8_t i = 0u; i < schedule.selected_count; i++) {
                 uint8_t index = (uint8_t)(schedule.entries[i].anchor_id -
                                           UINT64_C(0xa700000000000001));
@@ -1448,6 +1458,17 @@ static void test_maintained_normal_click_phy_and_capacity_contract(void)
           "the generic schedule wire capacity must remain eight anchors");
     CHECK(UWB_NORMAL_CLICK_MAX_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
           "normal click capacity must fit the generic schedule frame");
+    CHECK(UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US == 50000u,
+          "multi-anchor DS-TWR exchanges need a 50 ms minimum stride");
+    CHECK(UWB_RANGE_SCHEDULE_SINGLE_ANCHOR_MIN_EXCHANGE_STRIDE_US ==
+              UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
+          "single- and multi-anchor schedules must share the safe stride");
+    CHECK(UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS == 400u,
+          "normal clicks must retain the 400 ms ranging burst");
+    CHECK(((uint32_t)UWB_RANGE_SCHEDULE_DEFAULT_BURST_WINDOW_MS * 1000u) /
+                  UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US ==
+              8u,
+          "the maintained 400 ms burst must hold eight safe exchanges");
 }
 
 int main(void)

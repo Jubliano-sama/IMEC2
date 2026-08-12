@@ -262,6 +262,49 @@ def gateway_stream_packet(
     )
 
 
+def gateway_stream_click_packet(
+    sequence: int,
+    *,
+    anchor_id: int = 0x1020304050607080,
+    clicker_id: int = 0x8877665544332211,
+    event_seq: int = 0x10203040,
+) -> Packet:
+    payload = bytearray()
+    for type_id, value in (
+        (host_protocol.TLV_CLICKER_ID, clicker_id.to_bytes(8, "little")),
+        (host_protocol.TLV_ANCHOR_ID, anchor_id.to_bytes(8, "little")),
+        (host_protocol.TLV_EVENT_SEQ, event_seq.to_bytes(4, "little")),
+        (host_protocol.TLV_TIMESTAMP_MS, (123456).to_bytes(8, "little")),
+        (host_protocol.TLV_DISTANCE_MM, (2345).to_bytes(4, "little")),
+        (host_protocol.TLV_QUALITY, bytes((100,))),
+        (host_protocol.TLV_RANGE_STATUS, bytes((0,))),
+        (host_protocol.TLV_SAMPLE_COUNT, (1).to_bytes(2, "little")),
+        (host_protocol.TLV_DISTANCE_SAMPLES_MM, (2345).to_bytes(4, "little")),
+        (host_protocol.TLV_RANGE_ROUND_INDICES, bytes((0,))),
+        (
+            host_protocol.TLV_SEQUENCE_START_TIMESTAMPS_MS,
+            (123456).to_bytes(8, "little"),
+        ),
+        (host_protocol.TLV_ATTEMPT_INDEX, bytes((1,))),
+        (
+            host_protocol.TLV_DETECTION_SOURCE,
+            bytes((host_protocol.DETECTION_SOURCE_UWB_WAKE_CLAIM,)),
+        ),
+        (host_protocol.TLV_BURST_ID, (1).to_bytes(4, "little")),
+    ):
+        host_protocol.append_tlv(payload, type_id, value)
+    packet = gateway_stream_packet(
+        sequence,
+        msg_type=MSG_CLICK_REPORT,
+        payload=bytes(payload),
+        flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+        src_id=anchor_id,
+        session_id=host_protocol.click_report_session_id(clicker_id, event_seq),
+    )
+    host_protocol.validate_click_payload(packet)
+    return packet
+
+
 def gateway_stream_command_event_packet(
     event: object,
     *,
@@ -1174,6 +1217,51 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("EF:BD:42:B8:83:0C", resolved)
         scanner.assert_not_awaited()
 
+    async def test_completed_monitor_tolerates_bluez_disconnect_eof_only(self) -> None:
+        class TeardownEofClient(FakeBleakClient):
+            async def __aexit__(self, *_args: object) -> None:
+                self.operations.append(("disconnect", self.gateway))
+                raise EOFError
+
+        with (
+            mock.patch.object(provision, "BleakClient", TeardownEofClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch("builtins.print") as printed,
+        ):
+            await provision.run(
+                args(
+                    command="monitor",
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+
+        printed.assert_any_call("BLE_COMPLETE packets=0", flush=True)
+        printed.assert_any_call(
+            "BLE_DISCONNECT_COMPLETE peer already closed D-Bus transport",
+            flush=True,
+        )
+
+        class ActiveEofClient(FakeBleakClient):
+            async def read_gatt_char(self, _uuid: object) -> bytes:
+                raise EOFError
+
+        with (
+            mock.patch.object(provision, "BleakClient", ActiveEofClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch("builtins.print"),
+            self.assertRaises(EOFError),
+        ):
+            await provision.run(
+                args(
+                    command="monitor",
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+
     async def _run_unqualified_command_with_packets(
         self,
         packets: list[Packet],
@@ -1330,7 +1418,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(write[1])
 
     async def test_unretained_gateway_stream_packets_are_not_receipted(self) -> None:
-        receiptable = gateway_delivery_packet(7)
+        unretained = dataclasses.replace(gateway_delivery_packet(7), flags=0)
         command_event_packet = gateway_stream_command_event_packet(
             command_event(
                 1,
@@ -1343,7 +1431,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         non_stream = gateway_delivery_packet(
             9, transport="cobs-shared-packet"
         )
-        FakeDecoder.packets = [receiptable, command_event_packet, non_stream]
+        FakeDecoder.packets = [unretained, command_event_packet, non_stream]
         FakeBleakClient.notification_count = len(FakeDecoder.packets)
         with (
             mock.patch.object(provision, "BleakClient", FakeBleakClient),
@@ -1462,9 +1550,9 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            5,
+            6,
             len(writes),
-            "command plus all four survey-phase result receipts",
+            "command plus every ACK-required command-result receipt",
         )
         self.assertEqual(
             [
@@ -1472,10 +1560,10 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 self._expected_receipt(prepare),
                 self._expected_receipt(start),
                 self._expected_receipt(abort),
+                self._expected_receipt(unrelated),
             ],
-            writes[-4:],
+            writes[-5:],
         )
-        self.assertNotIn(self._expected_receipt(unrelated), writes)
 
     async def test_local_route_and_assignment_results_are_receipted(self) -> None:
         def local_result(sequence: int, command_id: int) -> Packet:
@@ -1511,10 +1599,10 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             [
                 self._expected_receipt(route_refresh),
                 self._expected_receipt(assignment),
+                self._expected_receipt(unrelated),
             ],
             writes,
         )
-        self.assertNotIn(self._expected_receipt(unrelated), writes)
 
     async def test_only_ack_required_assignment_publisher_event_is_receipted(
         self,
@@ -1585,11 +1673,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             msg_type=MSG_COMMAND_RESULT,
             payload=bytes((provision.TLV_COMMAND_ID, 2, 0x03, 0x01)),
         )
-        unrelated_click = gateway_stream_packet(
-            80,
-            msg_type=MSG_CLICK_REPORT,
-            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
-        )
+        unrelated_click = gateway_stream_click_packet(80)
         retained_heartbeat = gateway_stream_packet(
             81,
             msg_type=MSG_ANCHOR_HEARTBEAT,
@@ -1691,7 +1775,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             writes,
             "the delayed exact ABORT must be receipted before the host leaves",
         )
-        self.assertNotIn(self._expected_receipt(unrelated_click), writes)
+        self.assertIn(self._expected_receipt(unrelated_click), writes)
         self.assertIn(self._expected_receipt(retained_heartbeat), writes)
         receipt_index = next(
             index
@@ -1813,11 +1897,13 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                     0x01,
                 )
             ),
+            flags=0,
         )
         unrelated_result = gateway_stream_packet(
             40,
             msg_type=MSG_COMMAND_RESULT,
             payload=bytes((provision.TLV_COMMAND_ID, 2, 0x02, 0x00)),
+            flags=0,
         )
         gateway_local_reachability_result = dataclasses.replace(
             gateway_stream_packet(
@@ -1844,22 +1930,27 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                     0x01,
                 )
             ),
+            flags=0,
         )
         malformed_abort_id = gateway_stream_packet(
             43,
             msg_type=MSG_COMMAND_RESULT,
             payload=bytes((provision.TLV_COMMAND_ID, 1, 0x03)),
+            flags=0,
         )
         missing_command_id = gateway_stream_packet(
             44,
             msg_type=MSG_COMMAND_RESULT,
             payload=bytes((0x05, 1, 0x00)),
+            flags=0,
         )
-        result_bundle = gateway_stream_packet(45, msg_type=MSG_RESULT_BUNDLE)
+        result_bundle = gateway_stream_packet(
+            45, msg_type=MSG_RESULT_BUNDLE, flags=0
+        )
         click = gateway_stream_packet(
             46,
             msg_type=MSG_CLICK_REPORT,
-            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
+            flags=0,
         )
         writes = await self._run_monitor_with_packets(
             [
@@ -1876,14 +1967,10 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([], writes)
 
-    async def test_retained_heartbeat_releases_head_without_admitting_click_or_result(
+    async def test_all_retained_host_records_release_in_stream_order(
         self,
     ) -> None:
-        click = gateway_stream_packet(
-            35,
-            msg_type=MSG_CLICK_REPORT,
-            flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
-        )
+        click = gateway_stream_click_packet(35)
         unrelated_result = gateway_stream_packet(
             36,
             msg_type=MSG_COMMAND_RESULT,
@@ -1898,7 +1985,14 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             [click, unrelated_result, heartbeat]
         )
 
-        self.assertEqual([self._expected_receipt(heartbeat)], writes)
+        self.assertEqual(
+            [
+                self._expected_receipt(click),
+                self._expected_receipt(unrelated_result),
+                self._expected_receipt(heartbeat),
+            ],
+            writes,
+        )
 
     async def test_concurrent_notifications_serialize_exact_receipt_writes(self) -> None:
         packets = [
@@ -2097,6 +2191,57 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(qualification, provision.AssignmentQualification)
         assert isinstance(qualification, provision.AssignmentQualification)
         self.assertEqual(3, len(qualification.anchors))
+
+    async def test_combined_reachability_accepts_durable_mapping_without_optional_hops(
+        self,
+    ) -> None:
+        route_events = successful_route_events(
+            session_id=0x11111, retries=0, first_sequence=1
+        )
+        assignment_events = [
+            dataclasses.replace(event, hop_count=0, previous_hop_id=0)
+            if event.stage == provision.GATEWAY_COMMAND_STAGE_ANCHOR_REPORT
+            else event
+            for event in successful_assignment_events(
+                3,
+                session_id=0x22222,
+                direct_count=1,
+                first_sequence=100,
+            )
+        ]
+        events = route_events + assignment_events
+        FakeDecoder.events = events
+        FakeBleakClient.notification_count = len(route_events)
+        FakeBleakClient.write_notification_counts = [len(assignment_events)]
+
+        def fake_decode(payload: bytes, **_kwargs: object) -> object:
+            return events[payload[0]]
+
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "decode_gateway_command_event", fake_decode),
+            mock.patch.object(
+                provision, "_new_identity", side_effect=[0x11111, 0x22222]
+            ),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await provision.run(
+                args(
+                    command="qualify-reachability",
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                    expected_direct_anchors=None,
+                    expected_multihop_anchors=None,
+                )
+            )
+
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+        assert isinstance(qualification, provision.AssignmentQualification)
+        self.assertFalse(qualification.require_hop_evidence)
+        self.assertEqual(3, len(qualification.anchors))
+        self.assertEqual(3, len(qualification.assigned_slots))
+        self.assertEqual(0, len(qualification.hop_paths))
 
     async def test_strict_assignment_disconnect_fails_immediately(self) -> None:
         class DisconnectingClient(FakeBleakClient):
