@@ -298,6 +298,97 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             capacity_and_insert, "APP_GATEWAY_SEMANTIC_ACCEPT_NEW"
         ))
 
+    def test_retained_roster_table_acks_refresh_reliable_hop_projection(self):
+        start = function_body(ANCHOR, "gateway_start_discovery_assignment")
+        reset = start.index(
+            "memset(&gateway_discovery_assignment_state"
+        )
+        retained = start.index("if (prior_anchor_count != 0u)", reset)
+        activate = start.index(
+            "gateway_discovery_assignment_state.active = true", retained
+        )
+        retained_roster = start[reset:activate]
+
+        self.assertIn(
+            "memcpy(gateway_discovery_assignment_state.anchor_ids",
+            retained_roster,
+        )
+        self.assertIn(
+            "memcpy(gateway_discovery_assignment_state.anchor_slots",
+            retained_roster,
+        )
+        self.assertNotIn(
+            "memcpy(gateway_discovery_assignment_state.anchor_hop_counts",
+            retained_roster,
+            "a new assignment must not borrow stale route evidence",
+        )
+
+        claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
+        decoded = claim.index(
+            "hop_count = assignment_result.hop_count_present"
+        )
+        valid_depth = claim.index(
+            "if (hop_count != 0u && "
+            "hop_count <= DISCOVERY_ASSIGNMENT_MAX_HOPS)",
+            decoded,
+        )
+        observed = claim.index("observed_hop_count = hop_count", valid_depth)
+        roster_lookup = claim.index("for (size_t i = 0u", observed)
+        ack_validation = claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)", roster_lookup
+        )
+        reserve = claim.index(
+            "mesh_relay_reserve_gateway_ack_candidate(", ack_validation
+        )
+        ack_start = claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)", reserve
+        )
+        ack_end = claim.index("if (anchor_index != SIZE_MAX)", ack_start)
+        ack = claim[ack_start:ack_end]
+        duplicate_check = ack.index("ack_already_recorded =")
+        nonzero_guard = ack.index(
+            "if (!ack_already_recorded && observed_hop_count != 0u)",
+            duplicate_check,
+        )
+        projection = ack.index(
+            "gateway_discovery_assignment_state.anchor_hop_counts[",
+            nonzero_guard,
+        )
+        projection_value = ack.index(
+            "anchor_index] = observed_hop_count", projection
+        )
+        ack_commit = ack.index("ack_mask |=", projection_value)
+
+        self.assertLess(decoded, valid_depth)
+        self.assertLess(valid_depth, observed)
+        self.assertLess(observed, roster_lookup)
+        self.assertLess(ack_validation, reserve)
+        self.assertLess(reserve, ack_start)
+        self.assertLess(duplicate_check, nonzero_guard)
+        self.assertLess(nonzero_guard, projection)
+        self.assertLess(projection_value, ack_commit)
+        self.assertNotIn(
+            "anchor_hop_counts[\n                anchor_index] = hop_count",
+            ack,
+            "zero or out-of-range wire values cannot become route evidence",
+        )
+
+        complete = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_complete_success_locked",
+        )
+        prepare = complete.index(
+            "app_gateway_assignment_publisher_prepare_table("
+        )
+        persist = complete.index(
+            "gateway_set_registered_membership_roster(", prepare
+        )
+        publisher_call = complete[prepare:persist]
+        self.assertIn(
+            "gateway_discovery_assignment_state.anchor_hop_counts",
+            publisher_call,
+        )
+
     def test_expected_count_uses_current_operation_claim_responders(self):
         self.assertIsNotNone(
             re.search(r"\buint64_t\s+claim_response_mask\s*;", ANCHOR),

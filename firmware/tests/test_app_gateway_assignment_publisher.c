@@ -409,6 +409,55 @@ static void run_partial_publish_case(void)
     }
 }
 
+static void run_retained_roster_ack_hop_projection_case(void)
+{
+    const uint64_t retained_ids[3] = {
+        UINT64_C(0x2200000000000001),
+        UINT64_C(0x2200000000000002),
+        UINT64_C(0x2200000000000003),
+    };
+    const uint8_t retained_slots[3] = {0u, 1u, 2u};
+    const uint8_t exact_ack_hop_counts[3] = {1u, 2u, 3u};
+    struct app_gateway_assignment_publisher_ops ops;
+    struct gateway_command_event base = base_event(78u);
+    struct mock_ble ble;
+
+    memset(&ble, 0, sizeof(ble));
+    gateway_command_observability_init(&ble.observability);
+    ble.connected = true;
+    ble.credit = true;
+    ops = (struct app_gateway_assignment_publisher_ops) {
+        .emit_if_available = mock_emit,
+        .reserve_event_seq = mock_reserve_event_seq,
+        .batch_completed = mock_complete,
+        .ctx = &ble,
+    };
+    assert(app_gateway_assignment_publisher_init(&ops) == 0);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base,
+               retained_ids,
+               retained_slots,
+               exact_ack_hop_counts,
+               3u,
+               UINT64_C(0x7),
+               0u) == 0);
+    assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
+
+    for (size_t index = 0u; index < 3u; index++) {
+        assert(ble.queue_count > 0u);
+        assert(send_head(&ble, false));
+        assert(ble.sent[index].stage ==
+               GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
+        assert(ble.sent[index].anchor_id == retained_ids[index]);
+        assert(ble.sent[index].slot == retained_slots[index]);
+        assert(ble.sent[index].hop_count == exact_ack_hop_counts[index]);
+        assert(ble.sent[index].status == COMMAND_OK);
+        if (index + 1u < 3u) {
+            assert(route_owner_service() == 0);
+        }
+    }
+}
+
 static void run_prepare_commit_atomicity_case(void)
 {
     uint64_t anchor_ids[2] = {
@@ -572,6 +621,7 @@ int main(void)
     run_pressure_case(20u);
     run_pressure_case(50u);
     run_partial_publish_case();
+    run_retained_roster_ack_hop_projection_case();
     run_prepare_commit_atomicity_case();
     run_immediate_host_receipt_case();
     run_durable_replay_batch_case();

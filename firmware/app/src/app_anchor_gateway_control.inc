@@ -1651,6 +1651,19 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
         ack_already_recorded =
             (gateway_discovery_assignment_state.ack_mask &
              (UINT64_C(1) << anchor_index)) != 0u;
+        /*
+         * Prior roster members begin a new assignment with stable IDs and
+         * slots but no borrowed route sidecar.  Their exact TABLE ACK is the
+         * first reliable, operation-bound proof of the route depth that
+         * actually delivered this table.  Preserve that first nonzero depth
+         * for the durable mapping publisher; otherwise a successful retained
+         * roster is reported to the host with hop_count=0 whenever the
+         * best-effort CLAIM telemetry is delayed or dropped.
+         */
+        if (!ack_already_recorded && observed_hop_count != 0u) {
+            gateway_discovery_assignment_state.anchor_hop_counts[
+                anchor_index] = observed_hop_count;
+        }
         gateway_discovery_assignment_state.ack_mask |=
             UINT64_C(1) << anchor_index;
         missing_ack_count =
