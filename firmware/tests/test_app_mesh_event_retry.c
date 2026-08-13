@@ -272,6 +272,40 @@ static void test_delayed_legacy_accept_cannot_complete_newer_proposal(void)
            APP_MESH_EVENT_ACCEPT_LEGACY);
 }
 
+static void test_reanchored_accept_preserves_received_phase_and_local_tx_parity(void)
+{
+    struct mesh_event_timing proposed = {
+        .mesh_channel = MESH_EVENT_CHANNEL,
+        .next_event_time_ms = 1000u,
+        .event_interval_ms = EVENT_INTERVAL_MS,
+        .event_window_ms = 20u,
+        .event_counter = UINT32_C(0x13579bdf),
+        .guard_ms = 5u,
+        .peer_clock_skew_estimate_ppm = 10,
+        .max_missed_events = 4u,
+        .supervision_timeout_ms = 1000u,
+        .local_tx_on_even_events = false,
+    };
+    struct mesh_event_timing accepted = proposed;
+    uint32_t accepted_next_event_time_ms;
+
+    /*
+     * An ACCEPT may move the first event after a delayed control response.
+     * That phase is intentionally excluded from proposal compatibility: the
+     * immutable schedule parameters still identify the same negotiation.
+     */
+    accepted.next_event_time_ms += EVENT_INTERVAL_MS;
+    accepted.local_tx_on_even_events = true;
+    assert(accepted.next_event_time_ms != proposed.next_event_time_ms);
+    assert(app_mesh_event_accept_timing_compatible(&accepted, &proposed));
+
+    accepted_next_event_time_ms = accepted.next_event_time_ms;
+    mesh_event_timing_set_local_first_slot_tx(&accepted, true);
+
+    assert(accepted.next_event_time_ms == accepted_next_event_time_ms);
+    assert(mesh_event_timing_local_tx_slot(&accepted));
+}
+
 static void test_legacy_accept_survives_wire_validation_before_app_correlation(void)
 {
     const uint32_t proposal_session = UINT32_C(0x13579bdf);
@@ -785,6 +819,7 @@ int main(void)
     test_old_fnv_collision_is_a_digest_conflict();
     test_accept_correlates_with_exact_and_stable_release_identities();
     test_delayed_legacy_accept_cannot_complete_newer_proposal();
+    test_reanchored_accept_preserves_received_phase_and_local_tx_parity();
     test_legacy_accept_survives_wire_validation_before_app_correlation();
     test_pre_rf_and_actual_failures_share_backoff_without_identity_loss();
     test_duplicate_proposal_reuses_response_and_installs_once();

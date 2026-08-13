@@ -2024,8 +2024,13 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             status_debug_note("DBG_EVENT_ACCEPT_REPLAY_NO_TIMING_CHANGE\n");
             return true;
         }
-        /* ACCEPT confirms the phase from our successful PROPOSE RF send. */
-        timing = mesh_event_propose_record.timing;
+        /*
+         * ACCEPT confirms the immutable parameters from our successful
+         * PROPOSE, but its sender may have reanchored the first event after a
+         * delayed channel-5 response.  Correlation above already proved the
+         * parameters compatible; retain the decoded ACCEPT phase so both
+         * peers enter the same physical event.
+         */
         mesh_event_timing_set_local_first_slot_tx(&timing, true);
     }
 

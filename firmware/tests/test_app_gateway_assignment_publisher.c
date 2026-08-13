@@ -205,10 +205,10 @@ static void run_pressure_case(size_t count)
     ble.connected = true;
     ble.credit = false;
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, anchor_ids, slots, count,
+               &base, anchor_ids, slots, NULL, count,
                (UINT64_C(1) << count) - 1u, 2u) == 0);
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, anchor_ids, slots, count,
+               &base, anchor_ids, slots, NULL, count,
                (UINT64_C(1) << count) - 1u, 2u) == 1);
     assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
     table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
@@ -306,6 +306,7 @@ static void run_partial_publish_case(void)
         UINT64_C(0x2100000000000003),
     };
     const uint8_t claimed_slots[3] = {0u, 1u, 4u};
+    const uint8_t claimed_hop_counts[3] = {1u, 2u, 3u};
     struct app_gateway_assignment_publisher_ops ops;
     struct gateway_command_event base = base_event(77u);
     struct gateway_command_event table = base;
@@ -329,7 +330,7 @@ static void run_partial_publish_case(void)
     ble.credit = true;
     ble.completion_failures = 1u;
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, claimed_ids, claimed_slots, 3u,
+               &base, claimed_ids, claimed_slots, claimed_hop_counts, 3u,
                UINT64_C(0x11), 0u) == 0);
     assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
     table.stage = GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY;
@@ -356,15 +357,18 @@ static void run_partial_publish_case(void)
            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
     assert(ble.sent[0].anchor_id == claimed_ids[0]);
     assert(ble.sent[0].slot == 0u);
+    assert(ble.sent[0].hop_count == 1u);
     assert(ble.sent[0].status == COMMAND_OK);
     assert(ble.sent[1].stage ==
            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED);
     assert(ble.sent[1].anchor_id == claimed_ids[1]);
     assert(ble.sent[1].slot == 1u);
+    assert(ble.sent[1].hop_count == 2u);
     assert(ble.sent[1].status == COMMAND_TIMEOUT);
     assert(ble.sent[1].failure_count == 1u);
     assert(ble.sent[2].anchor_id == claimed_ids[2]);
     assert(ble.sent[2].slot == 4u);
+    assert(ble.sent[2].hop_count == 3u);
     assert(ble.sent[2].status == COMMAND_OK);
     assert(ble.sent[5].stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE);
     assert(ble.sent[5].status == COMMAND_OK);
@@ -393,6 +397,7 @@ static void run_partial_publish_case(void)
                    &other,
                    claimed_ids,
                    claimed_slots,
+                   NULL,
                    3u,
                    UINT64_C(0x11),
                    0u) == -EBUSY);
@@ -411,6 +416,7 @@ static void run_prepare_commit_atomicity_case(void)
         UINT64_C(0x3100000000000002),
     };
     const uint8_t slots[2] = {0u, 1u};
+    const uint8_t invalid_hop_counts[2] = {1u, 9u};
     struct app_gateway_assignment_publisher_diagnostics diagnostics;
     struct app_gateway_assignment_publisher_ops ops;
     struct gateway_command_event base = base_event(88u);
@@ -428,13 +434,16 @@ static void run_prepare_commit_atomicity_case(void)
         .ctx = &ble,
     };
     assert(app_gateway_assignment_publisher_init(&ops) == 0);
+    assert(app_gateway_assignment_publisher_prepare_table(
+               &base, anchor_ids, slots, invalid_hop_counts, 2u,
+               UINT64_C(0x3), 0u) == -EINVAL);
 
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == 0);
+               &base, anchor_ids, slots, NULL, 2u, UINT64_C(0x3), 0u) == 0);
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == 1);
+               &base, anchor_ids, slots, NULL, 2u, UINT64_C(0x3), 0u) == 1);
     assert(app_gateway_assignment_publisher_prepare_table(
-               &other, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == -EBUSY);
+               &other, anchor_ids, slots, NULL, 2u, UINT64_C(0x3), 0u) == -EBUSY);
     app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
     assert(diagnostics.active);
     assert(ble.queue_count == 0u);
@@ -445,7 +454,7 @@ static void run_prepare_commit_atomicity_case(void)
     assert(!diagnostics.active);
 
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, anchor_ids, slots, 2u, UINT64_C(0x3), 0u) == 0);
+               &base, anchor_ids, slots, NULL, 2u, UINT64_C(0x3), 0u) == 0);
     assert(app_gateway_assignment_publisher_commit_prepared_batch(&other) ==
            -ESTALE);
     assert(ble.queue_count == 0u);
@@ -476,7 +485,7 @@ static void run_immediate_host_receipt_case(void)
     };
     assert(app_gateway_assignment_publisher_init(&ops) == 0);
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, anchor_ids, slots, 1u, UINT64_C(1), 0u) == 0);
+               &base, anchor_ids, slots, NULL, 1u, UINT64_C(1), 0u) == 0);
     assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);
     assert(ble.immediate_receipt_accepted);
     app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
@@ -518,7 +527,7 @@ static void run_durable_replay_batch_case(void)
     };
     assert(app_gateway_assignment_publisher_init(&ops) == 0);
     assert(app_gateway_assignment_publisher_prepare_table(
-               &base, claimed_ids, claimed_slots, 2u,
+               &base, claimed_ids, claimed_slots, NULL, 2u,
                UINT64_C(0x11), 3u) == 0);
     assert(app_gateway_assignment_publisher_mark_prepared_replay(&base) == 0);
     assert(app_gateway_assignment_publisher_commit_prepared_batch(&base) == 0);

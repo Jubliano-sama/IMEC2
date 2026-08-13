@@ -63,12 +63,19 @@ extern "C" {
     (DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS + \
      ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
       DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
+#define DISCOVERY_ASSIGNMENT_RESPONSE_PRIOR_HOP_CUSTODY_MAX_MS \
+    (((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS) + \
+     ((((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+        (DISCOVERY_ASSIGNMENT_MAX_HOPS - 2u)) / 2u) * \
+      DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
     response_spread_ms) \
     (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
      (DISCOVERY_ASSIGNMENT_MAX_HOPS * \
       DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS( \
-          (response_spread_ms), UWB_DISCOVERY_SLOT_COUNT)) - 1u)
+          (response_spread_ms), UWB_DISCOVERY_SLOT_COUNT)) - 1u + \
+     DISCOVERY_ASSIGNMENT_RESPONSE_PRIOR_HOP_CUSTODY_MAX_MS)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS)
@@ -190,9 +197,11 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
                                          size_t anchor_count);
 /*
  * Preserve the durable roster prefix (and therefore its slots), while
- * deterministically ordering only newly discovered suffix members.
+ * deterministically ordering only newly discovered suffix members. When
+ * hop_counts is non-NULL, move that live per-anchor sidecar with each ID.
  */
 int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
+                                                 uint8_t *hop_counts,
                                                  size_t anchor_count,
                                                  size_t prior_anchor_count);
 int discovery_assignment_entries_from_claims(

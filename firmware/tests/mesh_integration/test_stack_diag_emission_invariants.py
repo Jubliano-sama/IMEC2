@@ -108,16 +108,13 @@ assert len(identity_formats) == 2
 assert len(set(identity_formats)) == 1
 assert MAIN.count(identity_formats[0]) == len(identity_formats)
 assert main.count("mesh_node_identity_print();") == 2
-assert re.search(
-    r"mesh_node_identity_print\(\);\s*"
-    r"#if !defined\(CONFIG_IMEC_ML_ANCHOR\)\s*"
-    r"/\*.*?\*/\s*"
-    r"k_msleep\(MESH_NODE_IDENTITY_CAPTURE_WINDOW_MS\);\s*"
-    r"mesh_node_identity_print\(\);\s*"
-    r"#endif",
-    main,
-    re.DOTALL,
+first_identity = main.index("mesh_node_identity_print();")
+watchdog_adoption = main.index("ret = app_watchdog_init();", first_identity)
+capture_sleep = main.index(
+    "k_msleep(MESH_NODE_IDENTITY_CAPTURE_WINDOW_MS);", watchdog_adoption
 )
+second_identity = main.index("mesh_node_identity_print();", capture_sleep)
+assert first_identity < watchdog_adoption < capture_sleep < second_identity
 
 clicker_start = main.index("if (DEVICE_ROLE == ROLE_CLICKER)")
 anchor_start = main.index("if (DEVICE_ROLE == ROLE_ANCHOR)")

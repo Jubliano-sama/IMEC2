@@ -284,7 +284,7 @@ static void test_start_reliable_assignment_publisher(void)
 
     test_publisher_stream_reset();
     zassert_ok(app_gateway_assignment_publisher_prepare_table(
-        &base_event, &anchor_id, &slot, 1u, UINT64_C(1), 0u));
+        &base_event, &anchor_id, &slot, NULL, 1u, UINT64_C(1), 0u));
     zassert_ok(app_gateway_assignment_publisher_commit_prepared_batch(
         &base_event));
 }
@@ -983,7 +983,7 @@ ZTEST(production_seam_gateway_host_recovery,
     /* This is the exact prepared publisher/assignment ownership that exists
      * just before the durable commit in the real completion path. */
     zassert_ok(app_gateway_assignment_publisher_prepare_table(
-        &base_event, node_ids, slots, ARRAY_SIZE(node_ids),
+        &base_event, node_ids, slots, NULL, ARRAY_SIZE(node_ids),
         publication.acknowledged_mask, publication.duplicate_count));
     zassert_ok(gateway_command_result_reserve_ingress(&reservation_token));
     zassert_ok(gateway_command_result_bind_ingress(

@@ -342,6 +342,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         &event,
         gateway_discovery_assignment_state.anchor_ids,
         gateway_discovery_assignment_state.anchor_slots,
+        gateway_discovery_assignment_state.anchor_hop_counts,
         gateway_discovery_assignment_state.claim_count,
         published_slot_mask,
         gateway_discovery_assignment_state.duplicate_count);
@@ -1390,6 +1391,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     struct discovery_assignment_result assignment_result;
     enum discovery_assignment_phase phase = 0;
     uint8_t hop_count = 0u;
+    uint8_t observed_hop_count = 0u;
     uint64_t hash = 0u;
     struct discovery_assignment_table_commitment table_commitment = {0};
     uint32_t epoch = 0u;
@@ -1420,6 +1422,9 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     table_commitment = assignment_result.table_commitment;
     hop_count = assignment_result.hop_count_present ?
                 assignment_result.hop_count : 0u;
+    if (hop_count != 0u && hop_count <= DISCOVERY_ASSIGNMENT_MAX_HOPS) {
+        observed_hop_count = hop_count;
+    }
     if (packet->src_id == 0u ||
         hash != discovery_assignment_hash(packet->src_id)) {
         status_debug_printf("DBG_DISCOVERY_SLOT_CLAIM_REJECT src=0x%016llx epoch=%u ret=%d\n",
@@ -1718,6 +1723,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
 
             gateway_discovery_assignment_state.claim_response_mask |=
                 response_bit;
+            gateway_discovery_assignment_state.anchor_hop_counts[
+                anchor_index] = observed_hop_count;
             event = gateway_observability_event(
                 GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
                 GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
@@ -1725,8 +1732,9 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                 &gateway_discovery_assignment_state.host_command,
                 gateway_discovery_assignment_state.epoch);
             event.anchor_id = packet->src_id;
-            event.previous_hop_id = previous_hop_id;
-            event.hop_count = hop_count;
+            event.previous_hop_id = observed_hop_count == 0u ?
+                0u : previous_hop_id;
+            event.hop_count = observed_hop_count;
             event.progress_count =
                 (uint16_t)
                     gateway_discovery_assignment_current_claim_count_locked();
@@ -1781,6 +1789,8 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     gateway_discovery_assignment_state.anchor_slots[
         gateway_discovery_assignment_state.claim_count] =
             GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE;
+    gateway_discovery_assignment_state.anchor_hop_counts[
+        gateway_discovery_assignment_state.claim_count] = observed_hop_count;
     gateway_discovery_assignment_state.claim_response_mask |=
         UINT64_C(1) << gateway_discovery_assignment_state.claim_count;
     gateway_discovery_assignment_state.claim_count++;
@@ -1793,8 +1803,9 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
             gateway_discovery_assignment_state.epoch);
 
         event.anchor_id = packet->src_id;
-        event.previous_hop_id = previous_hop_id;
-        event.hop_count = hop_count;
+        event.previous_hop_id = observed_hop_count == 0u ?
+            0u : previous_hop_id;
+        event.hop_count = observed_hop_count;
         event.progress_count =
             (uint16_t)
                 gateway_discovery_assignment_current_claim_count_locked();
@@ -1853,6 +1864,7 @@ static int gateway_discovery_assignment_publish_table(void)
      */
     ret = discovery_assignment_order_roster_extension(
         gateway_discovery_assignment_state.anchor_ids,
+        gateway_discovery_assignment_state.anchor_hop_counts,
         gateway_discovery_assignment_state.claim_count,
         gateway_discovery_assignment_state.prior_anchor_count);
     if (ret == PROTO_OK) {

@@ -54,7 +54,7 @@ MESH_NETWORK_MAX_HOPS = 8
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
 GATEWAY_COMMAND_BUDGET_MAX_MS = 3_600_000
-DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 751204
+DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 1_591_204
 ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
 SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 3_600_000
 SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 5
@@ -2335,7 +2335,14 @@ def build_assign_discovery_slots_command(
             if operation_policy is not None
             else ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
         )
-        required_budget_ms = assignment_required_budget_ms(response_spread_ms)
+        required_budget_ms = assignment_required_budget_ms(
+            response_spread_ms,
+            (
+                operation_policy.assignment.expected_anchor_count
+                if operation_policy is not None
+                else expected_anchor_count or 0
+            ),
+        )
         if command_budget_ms < required_budget_ms:
             raise ValueError(
                 "command budget must cover the selected assignment policy: "

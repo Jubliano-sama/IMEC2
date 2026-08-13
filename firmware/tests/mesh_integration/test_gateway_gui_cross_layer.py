@@ -333,8 +333,8 @@ def main() -> None:
     assignment_budget_hex = profile.assignment.operation_budget_ms.to_bytes(
         4, "little"
     ).hex()
-    assert profile.assignment.operation_budget_ms == 751_204
-    assert assignment_budget_hex == "64760b00"
+    assert profile.assignment.operation_budget_ms == 1_591_204
+    assert assignment_budget_hex == "a4471800"
     policy_values = profile.encoded_values()
     full_policy_suffix = operation_policy_suffix(policy_values)
     assignment_policy_suffix = operation_policy_suffix(policy_values[:1])

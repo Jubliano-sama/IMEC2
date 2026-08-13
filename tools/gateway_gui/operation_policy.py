@@ -14,7 +14,7 @@ OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY = 2
 OPERATION_POLICY_FAMILY_SURVEY_PAIR = 3
 
 COMMAND_BUDGET_MIN_MS = 1_000
-COMMAND_BUDGET_MAX_MS = 900_000
+COMMAND_BUDGET_MAX_MS = 1_800_000
 EXPECTED_ANCHOR_COUNT_MAX = 50
 ASSIGNMENT_RESPONSE_SPREAD_MIN_MS = 20
 ASSIGNMENT_RESPONSE_SPREAD_MAX_MS = 10_000
@@ -35,6 +35,7 @@ ASSIGNMENT_CONTROL_PHASE_COUNT = 2
 ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS = 10_000
 ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS = 100_000
 ASSIGNMENT_RESPONSE_BASE_MS = 100
+ASSIGNMENT_RESPONSE_PRIOR_HOP_CUSTODY_MAX_MS = 420_000
 ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES = 2
 ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS = 598
 ASSIGNMENT_ACK_FAST_HANDLE_RETRIES = 3
@@ -49,7 +50,7 @@ DISCOVERY_REPORT_DELIVERY_TAIL_MS = 63_060
 DISCOVERY_TERMINAL_SCHEDULING_GUARD_MS = 102
 DISCOVERY_TERMINAL_GUARD_MS = 1
 
-ASSIGNMENT_DEFAULT_BUDGET_MS = 751_204
+ASSIGNMENT_DEFAULT_BUDGET_MS = 1_591_204
 ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS = 1_000
 DISCOVERY_DEFAULT_START_DELAY_MS = 60_000
 DISCOVERY_DEFAULT_SLOT_MS = 40
@@ -70,32 +71,52 @@ def _bounded(label: str, value: int, minimum: int, maximum: int) -> None:
         raise ValueError(f"{label} must be in {minimum}..{maximum}")
 
 
-def assignment_required_budget_ms(response_spread_ms: int) -> int:
+def assignment_required_budget_ms(
+    response_spread_ms: int,
+    expected_anchor_count: int = 0,
+) -> int:
     _bounded(
         "assignment response spread",
         response_spread_ms,
         ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
         ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
     )
+    _bounded(
+        "expected anchor count",
+        expected_anchor_count,
+        0,
+        EXPECTED_ANCHOR_COUNT_MAX,
+    )
+    effective_hop_count = min(expected_anchor_count or 8, 8)
+    prior_hop_count = effective_hop_count - 1
+    prior_hop_custody_ms = (
+        prior_hop_count * 30_000
+        + prior_hop_count * (prior_hop_count - 1) // 2 * 10_000
+    )
+    response_custody_ms = 30_000 + prior_hop_count * 10_000
+    claim_ack_settle_ms = 3_000 + prior_hop_count * 1_000
     slot_width_ms = max(1, response_spread_ms // 50)
     max_initial_delay_ms = (
-        ASSIGNMENT_RESPONSE_BASE_MS + 8 * 50 * slot_width_ms - 1
+        ASSIGNMENT_RESPONSE_BASE_MS
+        + effective_hop_count * 50 * slot_width_ms
+        - 1
+        + prior_hop_custody_ms
     )
     return (
         ASSIGNMENT_CONTROL_PHASE_COUNT
         * ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS
         + (
-            ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS
+            response_custody_ms
             + max_initial_delay_ms
         )
         + ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES
-        * ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS
+        * response_custody_ms
         + ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS
         + (1 + ASSIGNMENT_ACK_FAST_HANDLE_RETRIES)
-        * ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS
+        * response_custody_ms
         + max_initial_delay_ms
         + ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS
-        + ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS
+        + claim_ack_settle_ms
         + ASSIGNMENT_RESPONSE_ACK_SETTLE_MS
         + ASSIGNMENT_CONTROL_PHASE_COUNT * ASSIGNMENT_TERMINAL_POLL_MS
         + ASSIGNMENT_TERMINAL_GUARD_MS
@@ -149,7 +170,8 @@ class AssignmentOperationPolicy:
             ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
         )
         required_budget_ms = assignment_required_budget_ms(
-            self.response_spread_ms
+            self.response_spread_ms,
+            self.expected_anchor_count,
         )
         if self.operation_budget_ms < required_budget_ms:
             raise ValueError(

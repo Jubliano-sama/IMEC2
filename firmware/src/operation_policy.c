@@ -360,6 +360,9 @@ int operation_policy_assignment_required_budget_ms(
     const struct operation_policy_assignment *policy,
     uint32_t *required_budget_ms)
 {
+    uint8_t effective_hop_count;
+    uint32_t response_custody_ms;
+    uint32_t claim_ack_settle_ms;
     uint64_t collection_ms;
     uint64_t table_collection_ms;
     uint64_t total_ms;
@@ -374,19 +377,34 @@ int operation_policy_assignment_required_budget_ms(
         return PROTO_ERR_ARG;
     }
 
+    /*
+     * An N-anchor cohort cannot contain a route deeper than N hops.  Keep the
+     * zero/unknown profile conservative at the protocol maximum, but do not
+     * force a declared small deployment to reserve time for anchors that the
+     * same command explicitly says cannot exist.
+     */
+    effective_hop_count = policy->expected_anchor_count == 0u ?
+        DISCOVERY_ASSIGNMENT_MAX_HOPS :
+        policy->expected_anchor_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+            DISCOVERY_ASSIGNMENT_MAX_HOPS :
+            (uint8_t)policy->expected_anchor_count;
+    response_custody_ms = discovery_assignment_response_custody_ms(
+        effective_hop_count);
+    claim_ack_settle_ms = DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
+        ((uint32_t)(effective_hop_count - 1u) *
+         DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS);
     collection_ms = discovery_assignment_collection_window_ms(
-        policy->response_spread_ms, DISCOVERY_ASSIGNMENT_MAX_HOPS);
+        policy->response_spread_ms, effective_hop_count);
     table_collection_ms = discovery_assignment_table_collection_window_ms(
-        policy->response_spread_ms, DISCOVERY_ASSIGNMENT_MAX_HOPS);
+        policy->response_spread_ms, effective_hop_count);
     total_ms =
         (uint64_t)DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT *
             DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS +
         collection_ms + table_collection_ms +
         ((uint64_t)DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES *
-         discovery_assignment_response_custody_ms(
-             DISCOVERY_ASSIGNMENT_MAX_HOPS)) +
+         response_custody_ms) +
         DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS +
-        DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS +
+        claim_ack_settle_ms +
         DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
         DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS +
         DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS;

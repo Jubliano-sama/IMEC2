@@ -188,9 +188,9 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
         self.assertIsNotNone(gui_default)
         self.assertIsNotNone(gui_discovery_policy_max)
         self.assertIsNotNone(gui_command_max)
-        self.assertEqual(751_204, firmware_default)
+        self.assertEqual(1_591_204, firmware_default)
         self.assertEqual(firmware_default, int(gui_default.group(1).replace("_", "")))
-        self.assertEqual(900_000, discovery_policy_max)
+        self.assertEqual(1_800_000, discovery_policy_max)
         self.assertEqual(
             discovery_policy_max,
             int(gui_discovery_policy_max.group(1).replace("_", "")),
@@ -199,7 +199,7 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
         self.assertEqual(
             command_max, int(gui_command_max.group(1).replace("_", ""))
         )
-        self.assertLessEqual(895_204, discovery_policy_max)
+        self.assertLessEqual(1_735_204, discovery_policy_max)
 
     def test_analogous_local_result_owners_rearm_same_identity(self):
         discovery_retry = function_body(

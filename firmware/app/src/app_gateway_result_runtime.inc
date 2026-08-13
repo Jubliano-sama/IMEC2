@@ -2583,6 +2583,7 @@ int gateway_replay_pending_assignment_publication(void)
         &base_event,
         claimed_ids,
         claimed_slots,
+        NULL,
         claimed_count,
         gateway_membership_snapshot_state.publication_acknowledged_mask,
         gateway_membership_snapshot_state.publication_duplicate_count);

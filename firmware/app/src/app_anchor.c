@@ -218,6 +218,7 @@ struct gateway_discovery_assignment_state {
     uint32_t result_reservation_token;
     uint64_t anchor_ids[UWB_DISCOVERY_SLOT_COUNT];
     uint8_t anchor_slots[UWB_DISCOVERY_SLOT_COUNT];
+    uint8_t anchor_hop_counts[UWB_DISCOVERY_SLOT_COUNT];
     uint64_t ack_mask;
     uint64_t claim_response_mask;
     uint32_t epoch;

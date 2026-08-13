@@ -43,12 +43,15 @@ int app_gateway_assignment_publisher_init(
 /*
  * Reserve the complete mapping without making any part visible to the host.
  * The caller may then perform its irreversible durable commit and either
- * publish or abort this exact prepared batch.
+ * publish or abort this exact prepared batch. A non-NULL hop_counts array
+ * carries live, validated route depth into the reliable mapping events; cold
+ * replay passes NULL because route evidence is intentionally not durable.
  */
 int app_gateway_assignment_publisher_prepare_table(
     const struct gateway_command_event *base_event,
     const uint64_t *anchor_ids,
     const uint8_t *slots,
+    const uint8_t *hop_counts,
     size_t anchor_count,
     uint64_t acknowledged_mask,
     uint16_t duplicate_count);

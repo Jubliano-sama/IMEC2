@@ -97,7 +97,7 @@ Enumeration uses three phases:
 
 The gateway first sends a wake flood followed by separate CLAIM frames. Every eligible anchor that hears the CLAIM repeats it for more distant anchors, recursively within the TTL and local retry limits.
 
-The anchors respond with their unique hardware derived hash, following their known route. As established by the independent mesh connection protocol, each response retains custody and uses bounded retries until it is acknowledged or fails explicitly. The time budget depends on the network size.
+The anchors respond with their unique hardware derived hash, following their known route. As established by the independent mesh connection protocol, each response retains custody and uses bounded retries until it is acknowledged or fails explicitly. Response windows run from the nearest hop level outward; each farther level starts only after every nearer level's bounded custody window, so a half-duplex relay is no longer asked to receive a child response while it still owns its own response. The time budget depends on the network size.
 
 The gateway sends another wake flood, then publishes one immutable table of stable identities, hashes, and explicit slots in separate TABLE frames. Each listed anchor validates and stores the whole table. TABLE has no overall acknowledgement: each upstream forwarding anchor retries its downstream delivery locally, and the gateway completes publication after its planned transmissions rather than waiting for every listed anchor to confirm receipt.
 

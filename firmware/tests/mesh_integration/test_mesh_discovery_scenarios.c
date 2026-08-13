@@ -429,63 +429,95 @@ static int validate_discovery_response(
 
 static int verify_response_order_is_hop_then_slot(void)
 {
-    uint32_t previous_delay = 0u;
-    uint32_t child_delay = 0u;
-    uint32_t relay_delay = 0u;
+    static const uint16_t spreads[] = {
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
+    };
+    static const uint8_t bench_slots[] = {0u, 10u, 29u};
 
-    for (uint8_t hop = DISCOVERY_ASSIGNMENT_MAX_HOPS; hop > 0u; hop--) {
-        uint32_t delay_ms = 0u;
-        int ret = discovery_assignment_response_delay_ms(
-                                                         3u,
-                                                         ANCHOR_COUNT,
-                                                         hop,
-                                                         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                                                         0u,
-                                                         7u,
-                                                         &delay_ms);
+    for (size_t spread_index = 0u;
+         spread_index < sizeof(spreads) / sizeof(spreads[0]);
+         spread_index++) {
+        uint16_t spread_ms = spreads[spread_index];
+        uint32_t slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
+            spread_ms, ANCHOR_COUNT);
 
-        REQUIRE(ret == PROTO_OK,
-                "hop-slot helper hop=%u ret=%d", hop, ret);
-        if (hop != DISCOVERY_ASSIGNMENT_MAX_HOPS) {
-            REQUIRE(delay_ms - previous_delay ==
-                        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                    "hop band hop=%u delay=%" PRIu32
-                    " previous=%" PRIu32,
-                    hop, delay_ms, previous_delay);
+        for (uint8_t hop = 1u; hop < DISCOVERY_ASSIGNMENT_MAX_HOPS; hop++) {
+            uint32_t latest_ms = 0u;
+            uint32_t next_earliest_ms = 0u;
+            uint64_t latest_deadline_ms;
+            int ret = discovery_assignment_response_delay_ms(
+                ANCHOR_COUNT - 1u,
+                ANCHOR_COUNT,
+                hop,
+                spread_ms,
+                0u,
+                slot_width_ms - 1u,
+                &latest_ms);
+
+            REQUIRE(ret == PROTO_OK,
+                    "latest hop response hop=%u spread=%u ret=%d",
+                    hop, spread_ms, ret);
+            ret = discovery_assignment_response_delay_ms(
+                0u,
+                ANCHOR_COUNT,
+                hop + 1u,
+                spread_ms,
+                0u,
+                0u,
+                &next_earliest_ms);
+            REQUIRE(ret == PROTO_OK,
+                    "next hop response hop=%u spread=%u ret=%d",
+                    hop + 1u, spread_ms, ret);
+            latest_deadline_ms = discovery_assignment_response_deadline_ms(
+                0u, latest_ms, hop);
+            REQUIRE(latest_deadline_ms < next_earliest_ms,
+                    "hop custody overlap hop=%u spread=%u deadline=%" PRIu64
+                    " next=%" PRIu32,
+                    hop, spread_ms, latest_deadline_ms, next_earliest_ms);
         }
-        previous_delay = delay_ms;
     }
 
-    REQUIRE(discovery_assignment_response_delay_ms(
-                0u, 30u, 2u,
-                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                0u, 32u, &child_delay) == PROTO_OK,
-            "bench child response delay rejected");
-    REQUIRE(discovery_assignment_response_delay_ms(
-                29u, 30u, 1u,
-                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                0u, 0u, &relay_delay) == PROTO_OK,
-            "bench relay response delay rejected");
-    REQUIRE(child_delay < relay_delay,
-            "bench G-A-B order child=%" PRIu32 " relay=%" PRIu32,
-            child_delay, relay_delay);
+    for (size_t index = 0u; index + 1u < 3u; index++) {
+        uint8_t hop = (uint8_t)index + 1u;
+        uint32_t slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 30u);
+        uint32_t latest_ms = 0u;
+        uint32_t next_earliest_ms = 0u;
+        uint64_t latest_deadline_ms;
+        int ret = discovery_assignment_response_delay_ms(
+            bench_slots[index],
+            30u,
+            hop,
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+            0u,
+            slot_width_ms - 1u,
+            &latest_ms);
 
-    /* A complete farther-hop band must finish before the adjacent nearer-hop
-     * band starts, independent of the two provisional hash slots observed on
-     * the bench. */
-    REQUIRE(discovery_assignment_response_delay_ms(
-                29u, 30u, 2u,
-                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                0u, 32u, &child_delay) == PROTO_OK,
-            "last child slot response delay rejected");
-    REQUIRE(discovery_assignment_response_delay_ms(
-                0u, 30u, 1u,
-                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                0u, 0u, &relay_delay) == PROTO_OK,
-            "first relay slot response delay rejected");
-    REQUIRE(child_delay < relay_delay,
-            "hop bands overlap child=%" PRIu32 " relay=%" PRIu32,
-            child_delay, relay_delay);
+        REQUIRE(ret == PROTO_OK,
+                "bench hop=%u slot=%u latest rejected ret=%d",
+                hop, bench_slots[index], ret);
+        ret = discovery_assignment_response_delay_ms(
+            bench_slots[index + 1u],
+            30u,
+            hop + 1u,
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+            0u,
+            0u,
+            &next_earliest_ms);
+        REQUIRE(ret == PROTO_OK,
+                "bench hop=%u slot=%u earliest rejected ret=%d",
+                hop + 1u, bench_slots[index + 1u], ret);
+        latest_deadline_ms = discovery_assignment_response_deadline_ms(
+            0u, latest_ms, hop);
+        REQUIRE(latest_deadline_ms < next_earliest_ms,
+                "bench hop=%u slot=%u overlaps hop=%u slot=%u"
+                " deadline=%" PRIu64 " next=%" PRIu32,
+                hop, bench_slots[index], hop + 1u,
+                bench_slots[index + 1u], latest_deadline_ms,
+                next_earliest_ms);
+    }
     return 0;
 }
 

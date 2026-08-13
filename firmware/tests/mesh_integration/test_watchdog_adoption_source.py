@@ -160,6 +160,35 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         self.assertGreater(reboot, delay)
         self.assertGreater(idle, reboot)
 
+    def test_inherited_watchdog_is_adopted_before_any_boot_delay(self) -> None:
+        main = function_body(MAIN, "main")
+        identity_call = "mesh_node_identity_print();"
+        first_identity = main.index(identity_call)
+        init = main.index("ret = app_watchdog_init();", first_identity)
+        failure = main.index("if (ret < 0)", init)
+        failure_end = braced_statement_end(main, failure)
+        capture_sleep = main.index(
+            "k_msleep(MESH_NODE_IDENTITY_CAPTURE_WINDOW_MS)", failure_end
+        )
+        second_identity = main.index(identity_call, capture_sleep)
+        fatal_recovery_delay = main.index(
+            "k_msleep(recovery_delay_ms)", second_identity
+        )
+        durable_init = main.index("app_durable_state_init(", second_identity)
+        gap = main[first_identity + len(identity_call) : init]
+
+        # Comments may explain this edge, but no executable boot work may run
+        # between the first observable identity and watchdog adoption.
+        gap = re.sub(r"/\*.*?\*/", "", gap, flags=re.DOTALL)
+        gap = re.sub(r"//[^\n]*", "", gap)
+        self.assertEqual(gap.strip(), "")
+        self.assertLess(first_identity, init)
+        self.assertLess(init, failure)
+        self.assertLess(failure_end, capture_sleep)
+        self.assertLess(capture_sleep, second_identity)
+        self.assertLess(init, fatal_recovery_delay)
+        self.assertLess(init, durable_init)
+
     def test_required_runtime_startup_failures_reboot_fail_closed(self) -> None:
         helper_start = MAIN.find("static void runtime_start_fail_closed")
         helper_end = MAIN.find("\n}\n", helper_start)

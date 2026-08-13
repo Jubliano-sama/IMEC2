@@ -990,6 +990,67 @@ static bool gateway_ack_targets_pending_transit_origin(
            packet->dst_id == relay->pending.packet.src_id;
 }
 
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+static bool gateway_ack_exactly_targets_pending_transit_origin(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id)
+{
+    int status = PROTO_OK;
+
+    return gateway_ack_targets_pending_transit_origin(relay, packet) &&
+           pending_ack_matches(relay,
+                               packet,
+                               payload,
+                               payload_len,
+                               previous_hop_id,
+                               &status) &&
+           status == PROTO_OK;
+}
+
+static bool gateway_ack_exactly_targets_pending_transit_confirm(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id)
+{
+    struct proto_packet confirm;
+    uint8_t confirm_payload[MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN];
+    size_t confirm_payload_len = 0u;
+    bool contains = false;
+
+    if (!gateway_ack_targets_pending_transit_origin(relay, packet) ||
+        previous_hop_id != relay->pending.next_hop_id ||
+        packet->session_id != relay->pending.packet.session_id ||
+        mesh_gateway_ack_confirm_payload_build(
+            &relay->pending.packet,
+            relay->pending.payload,
+            relay->pending.payload_len,
+            confirm_payload,
+            sizeof(confirm_payload),
+            &confirm_payload_len) != PROTO_OK ||
+        mesh_init_gateway_ack_confirm(&confirm,
+                                      relay->pending.packet.src_id,
+                                      relay->gateway_id,
+                                      relay->pending.packet.session_id,
+                                      relay->pending.packet.seq) != PROTO_OK ||
+        mesh_ack_payload_contains_packet(packet,
+                                         payload,
+                                         payload_len,
+                                         &confirm,
+                                         confirm_payload,
+                                         confirm_payload_len,
+                                         &contains) != PROTO_OK) {
+        return false;
+    }
+
+    return contains;
+}
+#endif
+
 static void refresh_downlink(struct mesh_relay *relay,
                              uint64_t target_id,
                              uint64_t next_hop_id,

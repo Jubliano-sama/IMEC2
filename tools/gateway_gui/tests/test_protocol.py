@@ -1470,7 +1470,7 @@ class ProtocolTests(unittest.TestCase):
             "gateway_id": 0xAABBCCDDEEFF0011,
             "session_id": 1,
             "seq": 2,
-            "command_budget_ms": 800000,
+            "command_budget_ms": 1_600_000,
         }
         commands = (
             build_here_i_am_command(**common),
@@ -1484,7 +1484,9 @@ class ProtocolTests(unittest.TestCase):
         )
         for command in commands:
             with self.subTest(command=command.label):
-                self.assertEqual(command.packet.value(TLV_COMMAND_BUDGET_MS), 800000)
+                self.assertEqual(
+                    command.packet.value(TLV_COMMAND_BUDGET_MS), 1_600_000
+                )
                 budget_tlv = next(
                     value for value in command.packet.tlvs
                     if value.type_id == TLV_COMMAND_BUDGET_MS
@@ -1506,7 +1508,7 @@ class ProtocolTests(unittest.TestCase):
             build_assign_discovery_slots_command(**common).packet.value(
                 TLV_COMMAND_BUDGET_MS
             ),
-            800000,
+            1_600_000,
         )
 
         maximum = {**common, "command_budget_ms": GATEWAY_COMMAND_BUDGET_MAX_MS}
@@ -1536,6 +1538,15 @@ class ProtocolTests(unittest.TestCase):
                     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS - 1
                 ),
             )
+        three_anchor = build_assign_discovery_slots_command(
+            **common,
+            expected_anchor_count=3,
+            command_budget_ms=751_204,
+        )
+        self.assertEqual(
+            three_anchor.packet.value(TLV_COMMAND_BUDGET_MS),
+            751_204,
+        )
 
         with self.assertRaisesRegex(
             ValueError, "survey discovery policy: minimum 179993"
@@ -1557,7 +1568,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_v1_operation_policy_is_repeated_decoded_and_phase_budget_is_independent(self) -> None:
         profile = OperationPolicyProfile(
-            assignment=AssignmentOperationPolicy(5, 800_000, 750),
+            assignment=AssignmentOperationPolicy(5, 1_600_000, 750),
             discovery=DiscoveryOperationPolicy(
                 60_000, 80, 12, 3, 1_500, 500_000
             ),
@@ -1583,7 +1594,7 @@ class ProtocolTests(unittest.TestCase):
             session_id=13,
             seq=14,
             expected_anchor_count=5,
-            command_budget_ms=800_000,
+            command_budget_ms=1_600_000,
         )
         here_i_am = build_here_i_am_command(
             **common,
@@ -1622,7 +1633,9 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(survey.packet.value(TLV_DISCOVERY_SLOT_COUNT), 12)
         self.assertEqual(survey.packet.value(TLV_COMMAND_BUDGET_MS), 500_000)
         self.assertEqual(assignment.packet.value(TLV_EXPECTED_NODE_COUNT), 5)
-        self.assertEqual(assignment.packet.value(TLV_COMMAND_BUDGET_MS), 800_000)
+        self.assertEqual(
+            assignment.packet.value(TLV_COMMAND_BUDGET_MS), 1_600_000
+        )
 
         with self.assertRaisesRegex(ValueError, "legacy duration"):
             build_anchor_discovery_command(
@@ -1655,12 +1668,12 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legacy expected"):
             build_assign_discovery_slots_command(
                 **common, session_id=23, seq=24,
-                expected_anchor_count=4, command_budget_ms=800_000,
+                expected_anchor_count=4, command_budget_ms=1_600_000,
             )
         with self.assertRaisesRegex(ValueError, "legacy command budget"):
             build_assign_discovery_slots_command(
                 **common, session_id=23, seq=24,
-                expected_anchor_count=5, command_budget_ms=800_001,
+                expected_anchor_count=5, command_budget_ms=1_600_001,
             )
 
     def test_discovery_assignment_tlvs_and_clock_offsets_decode_exact_wire_shapes(self) -> None:

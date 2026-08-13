@@ -498,6 +498,7 @@ def successful_assignment_events(
         )
         sequence += 1
     for index in range(anchor_count):
+        hop_count = 1 if index < direct_count else 2 + (index % 3)
         events.append(
             command_event(
                 6,
@@ -509,6 +510,7 @@ def successful_assignment_events(
                 correlation_id=session_id,
                 anchor_id=0x1000 + index,
                 progress_count=index + 1,
+                hop_count=hop_count,
                 discovery_slot=index,
             )
         )
@@ -799,6 +801,25 @@ class CommandBudgetContractTests(unittest.TestCase):
             r"GATEWAY_COMMAND_BUDGET_MAX_MS",
         )
 
+    def test_cli_accepts_declared_three_anchor_assignment_budget(self) -> None:
+        argv = [
+            "provision_mesh_anchor.py",
+            "--gateway",
+            "test-gateway",
+            "--command",
+            "assign-slots",
+            "--expected-anchors",
+            "3",
+            "--command-budget-ms",
+            "751204",
+        ]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(provision.asyncio, "run") as async_run,
+        ):
+            provision.main()
+        async_run.assert_called_once()
+
     def test_qualification_timeout_covers_firmware_budget_and_delivery_guard(self) -> None:
         self.assertEqual(
             5.0,
@@ -976,6 +997,7 @@ class AssignmentQualificationTests(unittest.TestCase):
     def test_zero_hop_is_absent_route_evidence_and_cannot_count_as_direct(self) -> None:
         events = successful_assignment_events(3, direct_count=1)
         events[1] = dataclasses.replace(events[1], hop_count=0)
+        events[4] = dataclasses.replace(events[4], hop_count=0)
         qualification = provision.AssignmentQualification(
             0x12345,
             0x2345,
@@ -992,6 +1014,26 @@ class AssignmentQualificationTests(unittest.TestCase):
             qualification.validate()
         self.assertEqual(0, qualification.direct_count)
         self.assertEqual(2, qualification.multihop_count)
+
+    def test_reliable_mapping_depth_qualifies_when_live_claim_events_drop(self) -> None:
+        events = successful_assignment_events(3, direct_count=1)
+        qualification = provision.AssignmentQualification(
+            0x12345,
+            0x2345,
+            0x12345,
+            3,
+            require_hop_evidence=True,
+            expected_direct_anchors=1,
+            expected_multihop_anchors=2,
+            expected_anchor_hops={0x1000: 1, 0x1001: 3, 0x1002: 4},
+        )
+        for event in (events[0], events[1], *events[4:]):
+            qualification.observe(event)
+
+        qualification.validate()
+        self.assertEqual((1, 0x1000), qualification.hop_paths[0x1000])
+        self.assertEqual((3, 0), qualification.hop_paths[0x1001])
+        self.assertEqual((4, 0), qualification.hop_paths[0x1002])
 
     def test_duplicate_claims_are_deduplicated_but_conflicting_slots_fail(self) -> None:
         events = successful_assignment_events(3, direct_count=1)

@@ -206,8 +206,10 @@ static bool anchor_id_before(uint64_t left, uint64_t right)
            (left_hash == right_hash && left < right);
 }
 
-int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
-                                         size_t anchor_count)
+static int discovery_assignment_sort_anchor_ids_with_hops(
+    uint64_t *anchor_ids,
+    uint8_t *hop_counts,
+    size_t anchor_count)
 {
     if ((anchor_ids == NULL && anchor_count != 0u) ||
         anchor_count > UWB_DISCOVERY_SLOT_COUNT) {
@@ -215,6 +217,7 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
     }
     for (size_t i = 0u; i < anchor_count; i++) {
         uint64_t current = anchor_ids[i];
+        uint8_t current_hop_count = hop_counts == NULL ? 0u : hop_counts[i];
         size_t j = i;
 
         if (current == 0u) {
@@ -222,9 +225,15 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
         }
         while (j > 0u && anchor_id_before(current, anchor_ids[j - 1u])) {
             anchor_ids[j] = anchor_ids[j - 1u];
+            if (hop_counts != NULL) {
+                hop_counts[j] = hop_counts[j - 1u];
+            }
             j--;
         }
         anchor_ids[j] = current;
+        if (hop_counts != NULL) {
+            hop_counts[j] = current_hop_count;
+        }
     }
     for (size_t i = 1u; i < anchor_count; i++) {
         if (anchor_ids[i - 1u] == anchor_ids[i]) {
@@ -234,7 +243,15 @@ int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
     return PROTO_OK;
 }
 
+int discovery_assignment_sort_anchor_ids(uint64_t *anchor_ids,
+                                         size_t anchor_count)
+{
+    return discovery_assignment_sort_anchor_ids_with_hops(
+        anchor_ids, NULL, anchor_count);
+}
+
 int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
+                                                 uint8_t *hop_counts,
                                                  size_t anchor_count,
                                                  size_t prior_anchor_count)
 {
@@ -258,8 +275,9 @@ int discovery_assignment_order_roster_extension(uint64_t *anchor_ids,
             }
         }
     }
-    ret = discovery_assignment_sort_anchor_ids(
+    ret = discovery_assignment_sort_anchor_ids_with_hops(
         &anchor_ids[prior_anchor_count],
+        hop_counts == NULL ? NULL : &hop_counts[prior_anchor_count],
         anchor_count - prior_anchor_count);
     return ret;
 }
@@ -826,6 +844,28 @@ int discovery_assignment_append_table_commitment(
                             sizeof(commitment->bytes));
 }
 
+static uint32_t response_prior_hop_custody_ms(uint32_t effective_hop_count)
+{
+    uint32_t prior_hop_count = effective_hop_count - 1u;
+    uint32_t additional_hop_pairs = prior_hop_count > 1u ?
+        (prior_hop_count * (prior_hop_count - 1u)) / 2u : 0u;
+
+    return prior_hop_count *
+               DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS +
+           additional_hop_pairs *
+               DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS;
+}
+
+static uint32_t response_max_initial_delay_ms(uint16_t response_spread_ms,
+                                              uint32_t effective_hop_count)
+{
+    return DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+           (effective_hop_count *
+            DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(
+                response_spread_ms, UWB_DISCOVERY_SLOT_COUNT)) - 1u +
+           response_prior_hop_custody_ms(effective_hop_count);
+}
+
 int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint8_t slot_count,
                                            uint8_t hop_count,
@@ -835,7 +875,8 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint32_t *delay_ms)
 {
     uint32_t effective_hop_count;
-    uint32_t farthest_first_hop_band;
+    uint32_t prior_hop_count;
+    uint32_t prior_hop_custody_ms;
     uint32_t slot_width_ms;
     uint32_t hop_band_ms;
     uint32_t retry_base;
@@ -851,15 +892,23 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
     effective_hop_count = hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
                           hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
                           DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
-    farthest_first_hop_band =
-        DISCOVERY_ASSIGNMENT_MAX_HOPS - effective_hop_count;
+    prior_hop_count = effective_hop_count - 1u;
+    prior_hop_custody_ms =
+        response_prior_hop_custody_ms(effective_hop_count);
     slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
         response_spread_ms, slot_count);
     hop_band_ms = DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(
         response_spread_ms, slot_count);
     retry_base = retry_base_ms(retry_round);
+    /*
+     * A response retains the relay's channel-9 radio until it is delivered or
+     * fails terminally.  Start at hop one and place every farther hop after all
+     * nearer custody windows, so adjacent levels can never demand the same
+     * half-duplex relay concurrently even at opposite jitter/slot extremes.
+     */
     delay = DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-            ((uint64_t)farthest_first_hop_band * hop_band_ms) +
+            ((uint64_t)prior_hop_count * hop_band_ms) +
+            prior_hop_custody_ms +
             ((uint64_t)slot * slot_width_ms) +
             (retry_round == 0u ? 0u : retry_base) +
             (random_value % slot_width_ms);
@@ -915,6 +964,7 @@ uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
                                                    uint8_t max_hop_count)
 {
     uint32_t effective_hop_count;
+    uint32_t max_initial_delay_ms;
 
     if (response_spread_ms < DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
         response_spread_ms > DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
@@ -923,10 +973,11 @@ uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
     effective_hop_count = max_hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
                           max_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
                           DISCOVERY_ASSIGNMENT_MAX_HOPS : max_hop_count;
+    max_initial_delay_ms = response_max_initial_delay_ms(
+        response_spread_ms, effective_hop_count);
     return discovery_assignment_response_custody_ms(
                (uint8_t)effective_hop_count) +
-           DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS(
-               response_spread_ms);
+           max_initial_delay_ms;
 }
 
 uint32_t discovery_assignment_table_collection_window_ms(

@@ -1,4 +1,5 @@
 #include "app_gateway_assignment_publisher.h"
+#include "discovery_assignment.h"
 
 #include <errno.h>
 #include <string.h>
@@ -28,6 +29,7 @@ struct app_gateway_assignment_publisher_state {
     struct app_gateway_assignment_publisher_identity identity;
     struct app_gateway_assignment_publisher_ops ops;
     uint64_t anchor_ids[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
+    uint8_t hop_counts[APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES];
     uint64_t acknowledged_mask;
     uint32_t inflight_event_seq;
     uint32_t pending_event_seq;
@@ -154,6 +156,9 @@ static bool same_table(const uint64_t *anchor_ids,
                        size_t anchor_count,
                        uint64_t acknowledged_mask)
 {
+    /* Live hop depth is diagnostic evidence, not durable batch identity.
+     * Same-boot ambiguous-save adoption deliberately retries with no durable
+     * hop sidecar and must preserve the already prepared live projection. */
     if (anchor_count != publisher.entry_count ||
         acknowledged_mask != publisher.acknowledged_mask) {
         return false;
@@ -247,6 +252,7 @@ static bool build_next_event(struct gateway_command_event *event,
         reset_event_progress(event);
         event->stage = GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED;
         event->anchor_id = publisher.anchor_ids[slot];
+        event->hop_count = publisher.hop_counts[slot];
         event->slot = slot;
         event->progress_count = (uint16_t)(publisher.cursor + 1u);
         event->success_count =
@@ -316,6 +322,7 @@ int app_gateway_assignment_publisher_prepare_table(
     const struct gateway_command_event *base_event,
     const uint64_t *anchor_ids,
     const uint8_t *slots,
+    const uint8_t *hop_counts,
     size_t anchor_count,
     uint64_t acknowledged_mask,
     uint16_t duplicate_count)
@@ -335,7 +342,9 @@ int app_gateway_assignment_publisher_prepare_table(
     }
     for (size_t i = 0u; i < anchor_count; i++) {
         if (anchor_ids[i] == 0u ||
-            slots[i] >= APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES) {
+            slots[i] >= APP_GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES ||
+            (hop_counts != NULL &&
+             hop_counts[i] > DISCOVERY_ASSIGNMENT_MAX_HOPS)) {
             return -EINVAL;
         }
         for (size_t prior = 0u; prior < i; prior++) {
@@ -381,8 +390,11 @@ int app_gateway_assignment_publisher_prepare_table(
     publisher.duplicate_count = duplicate_count;
     publisher.acknowledged_mask = acknowledged_mask;
     memset(publisher.anchor_ids, 0, sizeof(publisher.anchor_ids));
+    memset(publisher.hop_counts, 0, sizeof(publisher.hop_counts));
     for (size_t i = 0u; i < anchor_count; i++) {
         publisher.anchor_ids[slots[i]] = anchor_ids[i];
+        publisher.hop_counts[slots[i]] =
+            hop_counts == NULL ? 0u : hop_counts[i];
     }
     publisher.cursor = 0u;
     publisher.inflight_event_seq = 0u;

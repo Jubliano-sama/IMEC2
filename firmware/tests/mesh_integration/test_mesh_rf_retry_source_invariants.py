@@ -66,6 +66,51 @@ def braced_block_after(source: str, marker: str) -> str:
 
 
 class MeshRfRetrySourceInvariantTests(unittest.TestCase):
+    def test_rx_worker_lock_collision_defers_to_direct_drain_owner(self):
+        worker = function_body(REPORT, "mesh_rx_work_handler")
+        direct = function_body(REPORT, "mesh_process_queued_rx_now")
+
+        collision = braced_block_after(worker, "if (lock_ret != 0)")
+        self.assertIn("return", collision)
+        self.assertIn("DBG_MESH_RX_WORK_LOCK_BUSY", collision)
+        for immediate_retry in (
+            "mesh_submit_owned_work(",
+            "mesh_route_owner_work_reschedule(",
+            "mesh_route_work_reschedule(",
+            "k_work_submit(",
+            "k_work_reschedule(",
+        ):
+            self.assertNotIn(
+                immediate_retry,
+                collision,
+                "a worker that collided with the direct RX owner must return "
+                "instead of monopolizing its system workqueue with retries",
+            )
+
+        # The direct caller that acquired the mutex owns the complete drain
+        # transaction.  If processing leaves a remainder, publish follow-up
+        # work only after releasing the mutex so the worker can make progress.
+        acquired = direct.index("atomic_set(&mesh_rx_handler_active_state, 1)")
+        drain = direct.index("mesh_drain_rx_queue_locked(", acquired)
+        inactive = direct.index(
+            "atomic_set(&mesh_rx_handler_active_state, 0)", drain
+        )
+        clear_owner = direct.index(
+            "mesh_rx_handler_lock_clear_owner()", inactive
+        )
+        unlock = direct.index("k_mutex_unlock(&mesh_rx_handler_lock)", clear_owner)
+        remainder = direct.index(
+            "k_msgq_num_used_get(&mesh_rx_msgq) > 0u", unlock
+        )
+        followup = direct.index("mesh_submit_owned_work(", remainder)
+        self.assertLess(acquired, drain)
+        self.assertLess(drain, inactive)
+        self.assertLess(inactive, clear_owner)
+        self.assertLess(clear_owner, unlock)
+        self.assertLess(unlock, remainder)
+        self.assertLess(remainder, followup)
+        self.assertIn('"rx-drain-remainder"', direct[followup:])
+
     def test_role_scan_busy_restart_transfers_to_rearm_owner_before_watchdog(self):
         schedule = function_body(REPORT, "mesh_schedule_uwb_rx")
         rearm = function_body(REPORT, "mesh_uwb_rx_rearm_work_handler")
@@ -1699,7 +1744,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(persist, preempt)
         self.assertLess(preempt, generic_busy)
 
-    def test_accept_confirms_retained_proposal_phase_and_duplicates_are_inert(self):
+    def test_accept_preserves_reanchored_phase_and_duplicates_are_inert(self):
         classify = function_body(REPORT, "mesh_event_accept_rx_match")
         propose = function_body(
             REPORT, "mesh_propose_event_after_channel5_contact_authorized"
@@ -1715,25 +1760,39 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             REPORT.rindex("static bool mesh_handle_event_control") :
         ]
         handler = function_body(handler_source, "mesh_handle_event_control")
+        parsed_phase = handler.index("mesh_event_timing_from_tlvs_at(&timing")
+        accept_branch = handler.index(
+            "} else if (packet->msg_type == MSG_MESH_EVENT_ACCEPT)"
+        )
         duplicate = handler.index(
-            "accept_match == APP_MESH_EVENT_REQUEST_DUPLICATE"
+            "accept_match == APP_MESH_EVENT_REQUEST_DUPLICATE", accept_branch
         )
         replay_exit = handler.index("if (replayed_event_accept)", duplicate)
-        retained_phase = handler.index(
-            "timing = mesh_event_propose_record.timing", replay_exit
+        replay_block = braced_block_after(
+            handler[replay_exit:], "if (replayed_event_accept)"
+        )
+        local_first_tx = handler.index(
+            "mesh_event_timing_set_local_first_slot_tx(&timing, true)",
+            replay_exit,
         )
         fresh_install = handler.index(
-            "mesh_install_channel9_timing_direction", retained_phase
+            "mesh_install_channel9_timing_direction", local_first_tx
         )
         fresh_schedule = handler.index("mesh_schedule_uwb_rx", fresh_install)
+        fresh_accept = handler[replay_exit:fresh_install]
 
         self.assertIn("return match", classify)
         self.assertLess(propose_send, propose_failure)
         self.assertLess(propose_failure, retain_phase)
         self.assertLess(retain_phase, accept_listen)
-        self.assertIn("return true", handler[replay_exit:retained_phase])
-        self.assertLess(replay_exit, retained_phase)
-        self.assertLess(retained_phase, fresh_install)
+        self.assertLess(parsed_phase, accept_branch)
+        self.assertIn("return true", replay_block)
+        self.assertNotIn("mesh_install_channel9_timing", replay_block)
+        self.assertNotIn("mesh_event_timing_set_local_first_slot_tx", replay_block)
+        self.assertLess(replay_exit, local_first_tx)
+        self.assertLess(local_first_tx, fresh_install)
+        self.assertNotIn("timing = mesh_event_propose_record.timing", handler)
+        self.assertNotRegex(fresh_accept, r"timing\.next_event_time_ms\s*=")
         self.assertIn(
             "&timing",
             handler[fresh_install : fresh_install + 300],

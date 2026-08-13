@@ -21,7 +21,7 @@ class OperationPolicyTests(unittest.TestCase):
 
         self.assertEqual(
             assignment.hex(),
-            "010100000064760b00e803",
+            "0101000000a4471800e803",
         )
         self.assertEqual(
             discovery.hex(),
@@ -35,7 +35,7 @@ class OperationPolicyTests(unittest.TestCase):
 
     def test_each_family_round_trips_to_named_fields(self) -> None:
         profile = OperationPolicyProfile(
-            assignment=AssignmentOperationPolicy(5, 800_000, 750),
+            assignment=AssignmentOperationPolicy(5, 1_600_000, 750),
             discovery=DiscoveryOperationPolicy(60_000, 80, 12, 3, 1_500, 500_000),
             pair=PairOperationPolicy(1, 8),
         )
@@ -59,9 +59,10 @@ class OperationPolicyTests(unittest.TestCase):
 
     def test_invalid_bounds_versions_flags_and_lengths_fail_closed(self) -> None:
         invalid_constructors = (
-            lambda: AssignmentOperationPolicy(51, 751_204, 1_000),
+            lambda: AssignmentOperationPolicy(51, 1_591_204, 1_000),
             lambda: AssignmentOperationPolicy(0, 999, 1_000),
-            lambda: AssignmentOperationPolicy(0, 751_203, 1_000),
+            lambda: AssignmentOperationPolicy(0, 1_591_203, 1_000),
+            lambda: AssignmentOperationPolicy(3, 526_203, 1_000),
             lambda: DiscoveryOperationPolicy(59_999, 40, 6, 4, 250, 600_000),
             lambda: DiscoveryOperationPolicy(60_000, 29, 6, 4, 250, 600_000),
             lambda: DiscoveryOperationPolicy(60_000, 40, 6, 5, 250, 600_000),
@@ -73,10 +74,13 @@ class OperationPolicyTests(unittest.TestCase):
             with self.subTest(constructor=constructor), self.assertRaises(ValueError):
                 constructor()
 
-        self.assertEqual(736_004, assignment_required_budget_ms(20))
-        self.assertEqual(751_204, assignment_required_budget_ms(1_000))
-        self.assertEqual(895_204, assignment_required_budget_ms(10_000))
-        self.assertLessEqual(assignment_required_budget_ms(10_000), 900_000)
+        self.assertEqual(1_576_004, assignment_required_budget_ms(20))
+        self.assertEqual(1_591_204, assignment_required_budget_ms(1_000))
+        self.assertEqual(1_735_204, assignment_required_budget_ms(10_000))
+        self.assertEqual(526_204, assignment_required_budget_ms(1_000, 3))
+        self.assertEqual(580_204, assignment_required_budget_ms(10_000, 3))
+        self.assertEqual(1_591_204, assignment_required_budget_ms(1_000, 50))
+        self.assertLessEqual(assignment_required_budget_ms(10_000), 1_800_000)
         self.assertEqual(
             179_993,
             discovery_required_budget_ms(60_000, 40, 6, 4, 250),

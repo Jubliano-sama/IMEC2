@@ -355,6 +355,15 @@ int main(void)
 #endif
     mesh_node_identity_print();
 
+    /* A running nRF watchdog survives soft reset and may have only a narrow
+     * reload margin left.  Adopt and feed it before any diagnostic capture
+     * sleep or retained-fault delay; otherwise a watchdog reset can loop
+     * forever before the role runtime gets a chance to start. */
+    ret = app_watchdog_init();
+    if (ret < 0) {
+        watchdog_init_fail_closed(ret);
+    }
+
 #if !defined(CONFIG_IMEC_ML_ANCHOR)
     /*
      * A pre-reset RTT reader needs a short interval to rediscover the control
@@ -385,11 +394,6 @@ int main(void)
         k_msleep(recovery_delay_ms);
     }
 #endif
-    ret = app_watchdog_init();
-    if (ret < 0) {
-        watchdog_init_fail_closed(ret);
-    }
-
 #if defined(CONFIG_IMEC_DURABLE_STATE)
     ret = app_durable_state_init(durable_state_physical_device_id());
     if (ret < 0) {

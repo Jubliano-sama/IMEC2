@@ -68,7 +68,6 @@ static void mesh_rx_work_handler(struct k_work *work)
 {
     uint32_t handled_count;
     int lock_ret;
-    int submit_ret = 0;
 
     ARG_UNUSED(work);
 
@@ -82,16 +81,17 @@ static void mesh_rx_work_handler(struct k_work *work)
     }
     lock_ret = k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT);
     if (lock_ret != 0) {
-        submit_ret = mesh_submit_owned_work(&mesh_rx_work,
-                                            "rx-lock-retry");
+        /* The direct lock owner drains the queue and schedules any remainder.
+         * Requeueing this worker here can monopolize its workqueue while that
+         * owner is waiting for a different work item to make progress.
+         */
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_MESH_RX_WORK_LOCK_BUSY ret=%d q=%u owner=%s since=%u submit=%d\n",
+            status_debug_printf("DBG_MESH_RX_WORK_LOCK_BUSY ret=%d q=%u owner=%s since=%u\n",
                                 lock_ret,
                                 k_msgq_num_used_get(&mesh_rx_msgq),
                                 mesh_rx_handler_lock_owner == NULL ?
                                 "unknown" : mesh_rx_handler_lock_owner,
-                                mesh_rx_handler_lock_since_ms,
-                                submit_ret);
+                                mesh_rx_handler_lock_since_ms);
         }
         return;
     }

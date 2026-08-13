@@ -56,6 +56,8 @@ from tools.gateway_gui.operation_policy import (  # noqa: E402
     DISCOVERY_DEFAULT_ROUND_COUNT,
     DISCOVERY_DEFAULT_SLOT_MS,
     DISCOVERY_DEFAULT_START_DELAY_MS,
+    ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+    assignment_required_budget_ms,
     discovery_required_budget_ms,
 )
 from tools.gateway_gui.command_telemetry import (  # noqa: E402
@@ -422,7 +424,18 @@ class AssignmentQualification:
                 else:
                     path = (event.hop_count, event.previous_hop_id)
                     prior_path = self.hop_paths.get(event.anchor_id)
-                    if event.previous_hop_id == 0:
+                    mapping_depth_only = (
+                        event.discovery_slot != DISCOVERY_SLOT_UNAVAILABLE
+                        and event.previous_hop_id == 0
+                    )
+                    if mapping_depth_only:
+                        if prior_path is None:
+                            self.hop_paths[event.anchor_id] = path
+                        elif prior_path[0] != event.hop_count:
+                            self._error(
+                                f"anchor 0x{event.anchor_id:016x} changed hop evidence"
+                            )
+                    elif event.previous_hop_id == 0:
                         self._error(
                             f"anchor 0x{event.anchor_id:016x} has hop count "
                             "without previous hop"
@@ -441,11 +454,17 @@ class AssignmentQualification:
                             f"multihop anchor 0x{event.anchor_id:016x} "
                             "claims itself as the previous hop"
                         )
-                    if prior_path is not None and prior_path != path:
+                    elif prior_path is not None and (
+                        prior_path[0] != event.hop_count
+                        or (
+                            prior_path[1] != 0
+                            and prior_path[1] != event.previous_hop_id
+                        )
+                    ):
                         self._error(
                             f"anchor 0x{event.anchor_id:016x} changed hop evidence"
                         )
-                    else:
+                    elif not mapping_depth_only:
                         self.hop_paths[event.anchor_id] = path
         elif event.stage == GATEWAY_COMMAND_STAGE_ENUMERATION_COMPLETE:
             if event.command_status != 0 or event.reason != 0:
@@ -501,7 +520,11 @@ class AssignmentQualification:
                 f"got {len(self.hop_paths)}"
             )
         for anchor_id, (hop_count, previous_hop_id) in self.hop_paths.items():
-            if hop_count > 1 and previous_hop_id not in self.anchors:
+            if (
+                hop_count > 1
+                and previous_hop_id != 0
+                and previous_hop_id not in self.anchors
+            ):
                 self._error(
                     f"anchor 0x{anchor_id:016x} has multihop predecessor "
                     f"0x{previous_hop_id:016x} outside the qualified roster"
@@ -1402,13 +1425,16 @@ def main() -> None:
     if (
         args.command in ("assign-slots", "qualify-reachability")
         and args.command_budget_ms is not None
-        and args.command_budget_ms <
-            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS
     ):
-        parser.error(
-            "assignment --command-budget-ms must be at least "
-            f"{DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS}"
+        required_assignment_budget_ms = assignment_required_budget_ms(
+            ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            args.expected_anchors,
         )
+        if args.command_budget_ms < required_assignment_budget_ms:
+            parser.error(
+                "assignment --command-budget-ms must be at least "
+                f"{required_assignment_budget_ms}"
+            )
     if args.command == "survey" and args.command_budget_ms is not None:
         required_survey_budget_ms = discovery_required_budget_ms(
             DISCOVERY_DEFAULT_START_DELAY_MS,

@@ -1282,6 +1282,37 @@ static bool late_gateway_ack_can_forward_independently(
            downlink->next_hop_id != previous_hop_id;
 }
 
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+static bool gateway_ack_confirm_can_forward_independently(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    uint64_t previous_hop_id)
+{
+    uint64_t next_hop_id = 0u;
+
+    if (relay == NULL || packet == NULL ||
+        packet->msg_type != MSG_GATEWAY_ACK_CONFIRM ||
+        packet->src_id == relay->local_id ||
+        packet->src_id == relay->gateway_id ||
+        packet->dst_id != relay->gateway_id ||
+        packet->ttl <= 1u ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        mesh_relay_select_next_hop(relay,
+                                   relay->gateway_id,
+                                   &next_hop_id) != PROTO_OK) {
+        return false;
+    }
+
+    /* ACK_CONFIRM has its own bounded gateway-bound queue owner in the app.
+     * It can therefore pass an unrelated core TX owner without replacing it.
+     * This is also the terminal proof that may overtake a duplicate gateway
+     * ACK still queued toward the source, so requiring the core owner to go
+     * idle first would deadlock that source behind redundant ACK custody. */
+    return next_hop_id != previous_hop_id;
+}
+#endif
+
 int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                      const struct proto_packet *packet,
                                      const uint8_t *payload,
@@ -1470,8 +1501,17 @@ clicker_leaf_rx_allowed:
 
     if ((packet->msg_type == MSG_GATEWAY_ACK ||
          packet->msg_type == MSG_MESH_HOP_ACK) &&
-        (packet->dst_id == relay->local_id ||
-         gateway_ack_targets_pending_transit_origin(relay, packet))) {
+        (packet->dst_id == relay->local_id
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+         ||
+         gateway_ack_exactly_targets_pending_transit_origin(
+             relay,
+             packet,
+             payload,
+             payload_len,
+             previous_hop_id)
+#endif
+        )) {
         (void)handle_local_ack(relay,
                                packet,
                                payload,
@@ -1481,6 +1521,22 @@ clicker_leaf_rx_allowed:
                                result);
         return PROTO_OK;
     }
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+    if (gateway_ack_targets_pending_transit_origin(relay, packet) &&
+        !gateway_ack_exactly_targets_pending_transit_confirm(
+            relay,
+            packet,
+            payload,
+            payload_len,
+            previous_hop_id)) {
+        /* A gateway ACK addressed to this transit origin is either the exact
+         * ACK for its retained original, handled above, or the exact terminal
+         * ACK for that original's ACK_CONFIRM, allowed to continue below.
+         * Any other same-destination ACK must not escape through the late-ACK
+         * forwarding lane while this core owner is live. */
+        return PROTO_OK;
+    }
+#endif
 
     if (packet->msg_type == MSG_ROUTE_REPLY_ACK) {
         ret = handle_route_reply_ack(relay,
@@ -1662,6 +1718,10 @@ clicker_leaf_rx_allowed:
         if (mesh_relay_tx_active(relay) &&
             !late_gateway_ack_can_forward_independently(
                 relay, packet, previous_hop_id) &&
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+            !gateway_ack_confirm_can_forward_independently(
+                relay, packet, previous_hop_id) &&
+#endif
             !gateway_targeted_control_can_forward_independently(
                 relay, packet, previous_hop_id)) {
             bool same_pending_identity =
@@ -1748,6 +1808,10 @@ clicker_leaf_rx_allowed:
         !gateway_delivery_requires_commit(relay, packet) &&
         !late_gateway_ack_can_forward_independently(
             relay, packet, previous_hop_id) &&
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+        !gateway_ack_confirm_can_forward_independently(
+            relay, packet, previous_hop_id) &&
+#endif
         !gateway_targeted_control_can_forward_independently(
             relay, packet, previous_hop_id) &&
         mesh_relay_tx_active(relay)) {
