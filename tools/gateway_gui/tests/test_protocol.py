@@ -20,6 +20,7 @@ from tools.gateway_gui.protocol import (
     FLAG_DIAGNOSTIC,
     FLAG_ERROR,
     FLAG_GATEWAY_ACK_REQUIRED,
+    GATEWAY_COMMAND_BUDGET_MAX_MS,
     GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN,
     GATEWAY_HOST_RECEIPT_TLV_LEN,
     GATEWAY_STREAM_MAGIC,
@@ -1508,15 +1509,15 @@ class ProtocolTests(unittest.TestCase):
             800000,
         )
 
-        maximum = {**common, "command_budget_ms": 900000}
+        maximum = {**common, "command_budget_ms": GATEWAY_COMMAND_BUDGET_MAX_MS}
         self.assertEqual(
             build_assign_discovery_slots_command(**maximum).packet.value(
                 TLV_COMMAND_BUDGET_MS
             ),
-            900000,
+            GATEWAY_COMMAND_BUDGET_MAX_MS,
         )
 
-        for invalid in (999, 900001):
+        for invalid in (999, GATEWAY_COMMAND_BUDGET_MAX_MS + 1):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(ValueError, "command budget"):
                     build_here_i_am_command(**{**common, "command_budget_ms": invalid})
@@ -1554,7 +1555,7 @@ class ProtocolTests(unittest.TestCase):
         route = build_here_i_am_command(**common, command_budget_ms=1_000)
         self.assertEqual(route.packet.value(TLV_COMMAND_BUDGET_MS), 1_000)
 
-    def test_v1_operation_policy_is_repeated_decoded_and_legacy_equal(self) -> None:
+    def test_v1_operation_policy_is_repeated_decoded_and_phase_budget_is_independent(self) -> None:
         profile = OperationPolicyProfile(
             assignment=AssignmentOperationPolicy(5, 800_000, 750),
             discovery=DiscoveryOperationPolicy(
@@ -1637,13 +1638,20 @@ class ProtocolTests(unittest.TestCase):
                 sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
                 command_budget_ms=500_000,
             )
-        with self.assertRaisesRegex(ValueError, "legacy command budget"):
-            build_anchor_discovery_command(
-                **common, session_id=20, seq=21, survey_id=22,
-                duration_ms=1_500, discovery_slot_count=12,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                command_budget_ms=499_999,
-            )
+        independent_budget = build_anchor_discovery_command(
+            **common, session_id=20, seq=21, survey_id=22,
+            duration_ms=1_500, discovery_slot_count=12,
+            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+            command_budget_ms=499_999,
+        )
+        self.assertEqual(
+            independent_budget.packet.value(TLV_COMMAND_BUDGET_MS), 499_999
+        )
+        discovery_policy = tuple(
+            value.raw for value in independent_budget.packet.tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )[0]
+        self.assertEqual(int.from_bytes(discovery_policy[15:19], "little"), 500_000)
         with self.assertRaisesRegex(ValueError, "legacy expected"):
             build_assign_discovery_slots_command(
                 **common, session_id=23, seq=24,

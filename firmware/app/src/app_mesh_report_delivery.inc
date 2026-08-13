@@ -985,6 +985,11 @@ int mesh_range_report_batch_reserve(uint64_t clicker_id,
         ret = -EAGAIN;
         goto out;
     }
+    if (app_mesh_report_encode_cir_pending() ||
+        mesh_ch9_tx_pending_is_active()) {
+        ret = -EAGAIN;
+        goto out;
+    }
     queue_count = (uint32_t)k_msgq_num_used_get(&report_tx_msgq);
     if (!report_tx_queue_recovery_valid &&
         !app_mesh_queue_head_owned(&report_tx_queue_head_owner) &&
@@ -1567,7 +1572,8 @@ bool mesh_report_tx_backlog_active(void)
         range_batch_active = anchor_range_report_batch_reservation.active;
         k_mutex_unlock(&report_tx_queue_overflow_lock);
     }
-    return range_batch_active || report_tx_queue_used() > 0u ||
+    return range_batch_active || app_mesh_report_encode_cir_pending() ||
+           report_tx_queue_used() > 0u ||
            mesh_ch9_tx_pending_is_active();
 #else
     return mesh_ch9_tx_pending_is_active();
@@ -4739,6 +4745,22 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         if (mesh_gateway_route_test_should_reject_route_request(pending)) {
             goto mesh_rx_item_cleanup;
         }
+#if DEVICE_ROLE == ROLE_GATEWAY
+        /* Queue admission already validated the full mesh semantics. Observe
+         * a source reboot before ACK-history capacity admission, otherwise
+         * four obsolete confirmation debts can reject their own boot proof. */
+        if (mesh_report_callbacks != NULL &&
+            mesh_report_callbacks->gateway_note_anchor_boot_observation !=
+                NULL &&
+            (pending->packet.msg_type == MSG_ANCHOR_HEARTBEAT ||
+             pending->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT)) {
+            mesh_report_callbacks->gateway_note_anchor_boot_observation(
+                &pending->packet,
+                pending->payload,
+                pending->payload_len,
+                pending->first_received_at_ms);
+        }
+#endif
         ret = mesh_relay_handle_rx_with_random(&mesh_runtime,
                                                &pending->packet,
                                                pending->payload,
@@ -4878,31 +4900,19 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
              */
             mesh_rx_pending_refresh_age(pending, k_uptime_get_32());
             gateway_semantic_delivery_processed = true;
+            semantic_ret = mesh_gateway_preflight_semantic_delivery(pending);
+            semantic_preflight_complete = true;
             if (internal_control) {
                 host_custody_ready = true;
+                /* Assignment control results do not need host projection,
+                 * but they still need the same pure admission pass as every
+                 * other command result. A reboot can leave an anchor retrying
+                 * an exact old assignment result after the gateway's volatile
+                 * operation owner is gone. Preflight classifies that packet
+                 * as RECOVERED_RAW, allowing only the transport ACK that
+                 * retires source custody; a live matching assignment still
+                 * reaches the mutating dispatcher below. */
             } else {
-                semantic_ret = mesh_gateway_preflight_semantic_delivery(pending);
-                semantic_preflight_complete = true;
-                if (semantic_ret >= 0 &&
-                    mesh_report_callbacks != NULL &&
-                    mesh_report_callbacks->
-                        gateway_note_anchor_boot_observation != NULL &&
-                    (pending->packet.msg_type == MSG_ANCHOR_HEARTBEAT ||
-                     pending->packet.msg_type ==
-                         MSG_SURVEY_DISCOVERY_REPORT)) {
-                    /*
-                     * A validated physical boot observation must invalidate
-                     * an affected survey without waiting for GUI custody.
-                     * This callback only retains a compact generation event;
-                     * semantic commit and ACK ownership remain below.
-                     */
-                    mesh_report_callbacks->
-                        gateway_note_anchor_boot_observation(
-                            &pending->packet,
-                            pending->payload,
-                            pending->payload_len,
-                            pending->first_received_at_ms);
-                }
                 if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
                     pending->packet.msg_type == MSG_RESULT_BUNDLE) {
                     int projection_ret = gateway_result_bundle_host_projection_mask(
@@ -4932,12 +4942,6 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                             GATEWAY_BLE_STREAM_RESERVATION_ACQUIRED;
                     host_custody_ready = stream_reservation_acquired;
                 }
-            }
-            if (internal_control &&
-                IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_GATEWAY_INTERNAL_CONTROL_ACCEPT src=0x%llx seq=%u\n",
-                                    (unsigned long long)pending->packet.src_id,
-                                    pending->packet.seq);
             }
             if (!host_custody_ready) {
                 LOG_WRN("gateway semantic delivery deferred for BLE custody: msg=0x%02x src=0x%016llx ret=%d",

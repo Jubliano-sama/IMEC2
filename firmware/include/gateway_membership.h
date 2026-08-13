@@ -45,7 +45,11 @@ struct gateway_membership_publication {
     struct proto_packet host_command;
     /* Durable membership may retain a prior member that missed this round. */
     uint64_t committed_mask;
-    /* Exact current TABLE acknowledgements used for host success telemetry. */
+    /*
+     * Host-visible TABLE success mask.  Schema-4 keeps the historical field
+     * name on flash, but current publication success follows completion of
+     * the planned immutable flood and does not require per-anchor responses.
+     */
     uint64_t acknowledged_mask;
     uint16_t command_id;
     uint16_t event_gateway_epoch;

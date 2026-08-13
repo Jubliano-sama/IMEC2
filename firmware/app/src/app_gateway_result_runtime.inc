@@ -2157,6 +2157,18 @@ void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_status status,
                                       uint8_t reason)
 {
+    /*
+     * The serialized host-command worker owns retryable admission pressure.
+     * A local handler reports that pressure as COMMAND_BUSY while the exact
+     * dispatch token remains published.  Do not convert the sole reserved
+     * result slot at that intermediate boundary: the worker emits BACKOFF and
+     * either retries the same command or converts the reservation once when
+     * its bounded retry budget is exhausted.
+     */
+    if (status == COMMAND_BUSY &&
+        gateway_command_result_dispatch_token != 0u) {
+        return;
+    }
     gateway_emit_host_command_result_reserved(
         gateway_command_result_dispatch_token,
         command,

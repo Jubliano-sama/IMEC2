@@ -34,6 +34,35 @@ def function_body(source: str, name: str) -> str:
 
 
 class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
+    def test_gateway_orchestration_budget_is_independent_from_anchor_discovery_phase(self) -> None:
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+        policy_branch = route[
+            route.index("if (policy_candidate.updates.discovery_present)") :
+            route.index("config.survey_id = survey_id;")
+        ]
+
+        self.assertNotIn("command_budget_ms !=", policy_branch)
+        self.assertNotIn("command_budget_ms =", policy_branch)
+        self.assertNotIn("budget_explicit =", policy_branch)
+        self.assertIn(
+            ".operation_budget_ms =\n"
+            "            policy_candidate.resolved.discovery.operation_budget_ms",
+            route,
+        )
+        self.assertIn(
+            "admitted_discovery.operation_budget_ms <\n"
+            "                               required_budget_ms",
+            route,
+        )
+        self.assertIn(
+            "gateway_survey_operation_deadline_ms = command_origin_ms + command_budget_ms",
+            route,
+        )
+        self.assertIn(
+            ".value.discovery = policy_candidate.resolved.discovery",
+            route,
+        )
+
     def test_pair_control_separates_request_and_semantic_deadlines(self) -> None:
         request_timeout = function_body(
             SURVEY, "gateway_survey_request_timeout_ms"

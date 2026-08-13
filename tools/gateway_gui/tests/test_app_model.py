@@ -34,6 +34,7 @@ from tools.gateway_gui.protocol import (
     Packet,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
+    TLV_COMMAND_BUDGET_MS,
     TLV_COMMAND_STATUS,
     TLV_DISCOVERY_ASSIGNMENT_EPOCH,
     TLV_DISCOVERY_ASSIGNMENT_PHASE,
@@ -760,7 +761,9 @@ class AppModelTests(unittest.TestCase):
         gui.survey_id_auto = FakeVariable(True)  # type: ignore[assignment]
         gui.survey_id_text = FakeVariable("100")  # type: ignore[assignment]
         gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
+        gui.command_budget_text = FakeVariable(  # type: ignore[assignment]
+            str(GATEWAY_COMMAND_BUDGET_MAX_MS)
+        )
         self.set_default_policy_variables(gui, expected_anchors="2")
         gui.sample_count_text = FakeVariable("5")  # type: ignore[assignment]
         gui.status_text = FakeVariable()  # type: ignore[assignment]
@@ -817,6 +820,15 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(
             parse_cobs_packet(target.frame).value(TLV_EXPECTED_NODE_COUNT),
             2,
+        )
+        self.assertEqual(
+            parse_cobs_packet(target.frame).value(TLV_COMMAND_BUDGET_MS),
+            GATEWAY_COMMAND_BUDGET_MAX_MS,
+        )
+        self.assertEqual(
+            target.timeout_s,
+            GATEWAY_COMMAND_BUDGET_MAX_MS / 1000.0
+            + GATEWAY_COMMAND_COMPLETION_GUARD_S,
         )
         gui.geometry_model.begin_survey.assert_called_once_with(
             101,

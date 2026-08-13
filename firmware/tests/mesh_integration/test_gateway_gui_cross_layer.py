@@ -21,6 +21,7 @@ from tools.gateway_gui.protocol import (
     FLAG_GATEWAY_ACK_REQUIRED,
     GatewayReceiveBuffer,
     MSG_CLICK_REPORT,
+    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     TLV_ANCHOR_ID,
     TLV_BURST_ID,
     TLV_CLICKER_ID,
@@ -377,12 +378,12 @@ def main() -> None:
         discovery_slot_count=profile.discovery.slot_count,
         sample_count=5,
         expected_anchor_count=5,
-        command_budget_ms=profile.discovery.operation_budget_ms,
+        command_budget_ms=SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
         operation_policy=profile,
     )
     expected_survey_payload = (
         "100200011504070000001a04fa0000000f0205004c0106"
-        "78020500ab04a0bb0d00" + survey_policy_suffix
+        "78020500ab0480ee3600" + survey_policy_suffix
     )
     policy_survey_parsed = firmware_parse(oracle, policy_survey.frame)
     assert "command_id=256" in policy_survey_parsed

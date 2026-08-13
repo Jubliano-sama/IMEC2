@@ -1061,33 +1061,33 @@ static void test_completed_validation_uses_full_processing_hold_across_wrap(void
            GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED);
 }
 
-static void test_dense_pair_plan_is_rejected_before_partial_remote_state(void)
+static void test_pair_plan_minimum_budget_scales_to_one_hour(void)
 {
     assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS == 12000u);
     assert(SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS == 174000u);
-    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 900000u);
+    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 3600000u);
 
-    /* The full 50-anchor planner capacity cannot fit either host budget. */
-    assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
+    /* Every legal 50-anchor plan fits its four serialized control floors. */
+    assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
         SURVEY_GATEWAY_MAX_PAIRS,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));
-    assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
+    assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
         SURVEY_GATEWAY_MAX_PAIRS,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
 
-    /* Seventy-five pairs consume the complete default before discovery/ranging. */
+    /* Three hundred pair floors consume the complete one-hour boundary. */
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        75u,
+        300u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        75u,
+        300u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS - 1u));
 
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        75u,
+        300u,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        76u,
+        301u,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
 }
 
@@ -1266,7 +1266,7 @@ int main(void)
     test_remote_lease_expiry_is_terminal_cleanup_authority();
     test_d_minus_one_result_decides_before_failed_delivery_terminal();
     test_completed_validation_uses_full_processing_hold_across_wrap();
-    test_dense_pair_plan_is_rejected_before_partial_remote_state();
+    test_pair_plan_minimum_budget_scales_to_one_hour();
     test_due_registry_retains_earliest_observation_due();
     test_due_registry_same_owner_only_moves_earlier();
     test_observation_origin_keeps_a_wrapped_zero_start();

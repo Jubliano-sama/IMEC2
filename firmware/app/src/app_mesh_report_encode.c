@@ -267,7 +267,13 @@ uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity)
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     k_spinlock_key_t key = k_spin_lock(&anchor_cir_report_lock);
 
-    anchor_cir_report_stream.active = false;
+    if (anchor_cir_report_stream.active) {
+        k_spin_unlock(&anchor_cir_report_lock, key);
+        if (capacity != NULL) {
+            *capacity = 0u;
+        }
+        return NULL;
+    }
     anchor_cir_report_stream.generation++;
     k_spin_unlock(&anchor_cir_report_lock, key);
     if (capacity != NULL) {
@@ -279,6 +285,19 @@ uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity)
         *capacity = 0u;
     }
     return NULL;
+#endif
+}
+
+bool app_mesh_report_encode_cir_pending(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    k_spinlock_key_t key = k_spin_lock(&anchor_cir_report_lock);
+    bool pending = anchor_cir_report_stream.active;
+
+    k_spin_unlock(&anchor_cir_report_lock, key);
+    return pending;
+#else
+    return false;
 #endif
 }
 

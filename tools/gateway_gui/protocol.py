@@ -52,10 +52,10 @@ GATEWAY_STREAM_FLAG_TRUNCATED = 0x01
 MESH_BROADCAST_ID = 0
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
-GATEWAY_COMMAND_BUDGET_MAX_MS = 900000
+GATEWAY_COMMAND_BUDGET_MAX_MS = 3_600_000
 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 751204
 ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
-SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 900000
+SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 3_600_000
 SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 5
 
 MSG_CLICK_REPORT = 0x20
@@ -2197,10 +2197,6 @@ def build_anchor_discovery_command(
         if discovery_slot_count != discovery.slot_count:
             raise ValueError(
                 "legacy discovery slot count must equal operation policy"
-            )
-        if command_budget_ms != discovery.operation_budget_ms:
-            raise ValueError(
-                "legacy command budget must equal discovery operation policy"
             )
 
     payload = bytearray()

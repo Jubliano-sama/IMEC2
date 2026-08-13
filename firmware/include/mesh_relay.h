@@ -699,6 +699,15 @@ int mesh_relay_attach_gateway_ack_store(struct mesh_relay *relay,
 int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
                                              uint64_t candidate_id,
                                              uint32_t now_ms);
+/*
+ * A strictly validated RFC1982-newer source boot proves that the source can
+ * no longer emit ACK_CONFIRM for gateway ACKs accepted before that reboot.
+ * Preserve those exact semantic identities for duplicate repair, but make
+ * them source-locally replaceable and discard any nonsemantic reservation.
+ * The caller must serialize this with gateway RX and supply the boot proof.
+ */
+int mesh_relay_note_gateway_origin_reboot(struct mesh_relay *relay,
+                                          uint64_t source_id);
 int mesh_relay_reconcile_gateway_ack_membership(
     struct mesh_relay *relay,
     const uint64_t *member_ids,

@@ -10,9 +10,9 @@
  * liveness reset instead of making a slow but bounded custody recovery look
  * like a dead system.
  */
-#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 14400000u
-#define APP_WATCHDOG_PROGRESS_LEASE_MS 10800000u
-#define APP_WATCHDOG_STARTUP_GRACE_MS 300000u
+#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 86400000u
+#define APP_WATCHDOG_PROGRESS_LEASE_MS 43200000u
+#define APP_WATCHDOG_STARTUP_GRACE_MS 3600000u
 #define APP_WATCHDOG_INIT_RETRY_DELAY_MS 1000u
 
 struct app_watchdog_health {

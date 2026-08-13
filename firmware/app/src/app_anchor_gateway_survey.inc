@@ -473,6 +473,16 @@ static void gateway_note_anchor_boot_observation(
                 ret);
     } else if (ret == 0) {
         return;
+    } else {
+        int release_ret = mesh_relay_note_gateway_origin_reboot(
+            &mesh_runtime, packet->src_id);
+
+        if (release_ret != PROTO_OK) {
+            LOG_ERR("gateway reboot ACK debt release failed: %d",
+                    release_ret);
+            app_watchdog_stop_feeding();
+            return;
+        }
     }
 
     if (!gateway_survey_anchor_affects_active(packet->src_id)) {
@@ -898,7 +908,9 @@ static void gateway_observe_host_terminal(
     enum gateway_command_event_kind kind = gateway_observability_kind(command_id);
     struct gateway_command_event event;
 
-    if (kind == 0 || host_command == NULL) {
+    if (kind == 0 || host_command == NULL ||
+        (status == COMMAND_BUSY &&
+         gateway_command_result_get_dispatch_token() != 0u)) {
         return;
     }
     event = gateway_observability_event(kind,
@@ -1235,10 +1247,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         if (duration_ms !=
                 policy_candidate.updates.discovery.report_grace_ms ||
             config.slot_count !=
-                policy_candidate.updates.discovery.slot_count ||
-            (budget_explicit &&
-             command_budget_ms !=
-                policy_candidate.updates.discovery.operation_budget_ms)) {
+                policy_candidate.updates.discovery.slot_count) {
             return gateway_reject_survey_request(
                 host_packet, COMMAND_MALFORMED_PAYLOAD, EINVAL,
                 GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
@@ -1250,9 +1259,6 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         config.round_count = policy_candidate.updates.discovery.round_count;
         duration_ms =
             policy_candidate.updates.discovery.report_grace_ms;
-        command_budget_ms =
-            policy_candidate.updates.discovery.operation_budget_ms;
-        budget_explicit = true;
     }
     config.survey_id = survey_id;
     discovery_duration_ms = survey_discovery_duration_ms(&config);
@@ -1297,7 +1303,8 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         .slot_count = config.slot_count,
         .round_count = config.round_count,
         .report_grace_ms = duration_ms,
-        .operation_budget_ms = command_budget_ms,
+        .operation_budget_ms =
+            policy_candidate.resolved.discovery.operation_budget_ms,
     };
     budget_terms = (struct operation_policy_discovery_budget_terms) {
         .report_slot_ms = SURVEY_RESULT_MESH_SLOT_MS,
@@ -1309,7 +1316,8 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     };
     ret = operation_policy_discovery_required_budget_ms(
         &admitted_discovery, &budget_terms, &required_budget_ms);
-    if (ret != PROTO_OK || command_budget_ms < required_budget_ms) {
+    if (ret != PROTO_OK || admitted_discovery.operation_budget_ms <
+                               required_budget_ms) {
         return gateway_reject_survey_request(
             host_packet, COMMAND_MALFORMED_PAYLOAD, EINVAL,
             GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
@@ -2395,8 +2403,6 @@ static int gateway_survey_finish_status(
            sizeof(gateway_survey_discovery_report_sequences));
 #endif
     gateway_survey_active = false;
-    gateway_survey_operation_started_at_ms = 0u;
-    gateway_survey_operation_deadline_ms = 0u;
 #if DEVICE_ROLE == ROLE_GATEWAY
     survey_gateway_observation_origin_reset(
         &gateway_survey_round_observation_origin);
@@ -3490,6 +3496,13 @@ static void gateway_survey_finish_cleanup_if_complete(uint64_t now_ms)
         }
     }
     if (!gateway_survey_active) {
+        /*
+         * The operation interval is part of the immutable round commitment
+         * carried by every terminal ABORT.  Retain it until all cleanup
+         * lanes have transferred and retired their exact packet custody.
+         */
+        gateway_survey_operation_started_at_ms = 0u;
+        gateway_survey_operation_deadline_ms = 0u;
         gateway_survey_round_reset();
         if (gateway_survey_finish_pending) {
             gateway_observe_survey_terminal(

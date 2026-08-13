@@ -14270,6 +14270,100 @@ static void test_gateway_ack_confirm_history_survives_deadline_and_safe_reuse(vo
     }
 }
 
+static void test_gateway_origin_reboot_releases_unconfirmable_ack_debt(void)
+{
+    static struct mesh_gateway_ack_store ack_store;
+    struct mesh_relay gateway;
+    struct mesh_relay_result result;
+    struct proto_packet records[5];
+    uint8_t payloads[5][8];
+    size_t payload_lens[5] = {0u};
+    const uint32_t now_ms = 19000u;
+
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    921u);
+    assert(mesh_relay_attach_gateway_ack_store(&gateway, &ack_store) ==
+           PROTO_OK);
+    for (uint16_t i = 0u; i < 5u; i++) {
+        build_gateway_ack_history_self_test(&records[i],
+                                            payloads[i],
+                                            sizeof(payloads[i]),
+                                            &payload_lens[i],
+                                            ANCHOR_A,
+                                            (uint16_t)(120u + i));
+    }
+    for (uint16_t i = 0u;
+         i < MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN;
+         i++) {
+        assert(mesh_relay_handle_rx(&gateway,
+                                    &records[i],
+                                    payloads[i],
+                                    payload_lens[i],
+                                    ANCHOR_A,
+                                    90u,
+                                    now_ms + i,
+                                    &result) == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+        assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                                  &records[i],
+                                                  payloads[i],
+                                                  payload_lens[i],
+                                                  ANCHOR_A,
+                                                  now_ms + i,
+                                                  &result) == PROTO_OK);
+    }
+
+    assert(mesh_relay_handle_rx(&gateway,
+                                &records[4],
+                                payloads[4],
+                                payload_lens[4],
+                                ANCHOR_A,
+                                90u,
+                                now_ms + 10u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_NO_SPACE);
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+
+    assert(mesh_relay_note_gateway_origin_reboot(&gateway, ANCHOR_A) ==
+           PROTO_OK);
+    assert(mesh_relay_handle_rx(&gateway,
+                                &records[4],
+                                payloads[4],
+                                payload_lens[4],
+                                ANCHOR_A,
+                                90u,
+                                now_ms + 11u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    assert(mesh_relay_commit_gateway_delivery(&gateway,
+                                              &records[4],
+                                              payloads[4],
+                                              payload_lens[4],
+                                              ANCHOR_A,
+                                              now_ms + 11u,
+                                              &result) == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+
+    /* The surviving pre-reboot commitments remain duplicate authority. */
+    assert(mesh_relay_handle_rx(&gateway,
+                                &records[1],
+                                payloads[1],
+                                payload_lens[1],
+                                ANCHOR_A,
+                                90u,
+                                now_ms + 12u,
+                                &result) == PROTO_OK);
+    assert(result.status == PROTO_ERR_STALE);
+    assert(has_action(&result, MESH_RELAY_ACTION_SEND_GATEWAY_ACK));
+    assert(has_action(&result, MESH_RELAY_ACTION_DROP));
+    assert(!has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
+}
+
 static void test_gateway_ack_batch_and_roster_transitions_preserve_live_debt(void)
 {
     static struct mesh_gateway_ack_store ack_store;
@@ -20847,6 +20941,7 @@ int main(void)
     test_gateway_ack_confirm_barrier_requires_exact_accepted_history();
     test_gateway_confirmation_pending_queries_isolate_exact_records();
     test_gateway_ack_confirm_history_survives_deadline_and_safe_reuse();
+    test_gateway_origin_reboot_releases_unconfirmable_ack_debt();
     test_gateway_ack_batch_and_roster_transitions_preserve_live_debt();
     test_relay_rejects_conflicting_duplicate_before_gateway();
     test_gateway_ordinary_command_result_duplicate_remains_sticky();

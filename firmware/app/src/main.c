@@ -20,7 +20,7 @@
 #include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
 
-#define MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS 1000u
+#define MESH_NODE_IDENTITY_CAPTURE_WINDOW_MS 1000u
 #include "dwm3000_driver.h"
 #include "dwm3000_port.h"
 #include "gateway_command.h"
@@ -355,6 +355,17 @@ int main(void)
 #endif
     mesh_node_identity_print();
 
+#if !defined(CONFIG_IMEC_ML_ANCHOR)
+    /*
+     * A pre-reset RTT reader needs a short interval to rediscover the control
+     * block after reset.  Repeat the identity before role workers start: the
+     * later mesh debug stream is deliberately lossy and must not be the only
+     * source of the deployment identity record.
+     */
+    k_msleep(MESH_NODE_IDENTITY_CAPTURE_WINDOW_MS);
+    mesh_node_identity_print();
+#endif
+
 #if IMEC_RETAIN_FATAL_BREADCRUMB
     if (mesh_route_test_fatal_magic == MESH_FATAL_BREADCRUMB_MAGIC) {
         uint32_t recovery_delay_ms = mesh_route_test_fatal_count >= 6u ?
@@ -517,8 +528,6 @@ int main(void)
          * identity record so qualification can bind the running target to
          * its staged artifact without weakening normal low-power behavior.
          */
-        k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);
-        mesh_node_identity_print();
 #if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
         ret = app_clicker_rtt_control_start();
         if (ret < 0) {
@@ -564,8 +573,6 @@ int main(void)
             LOG_ERR("mesh-test runtime unavailable: %d", ret);
         }
         app_stack_diag_start();
-        k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);
-        mesh_node_identity_print();
 #else
         LOG_INF("ML anchor full-duty UWB scan active; connected mesh runtime disabled");
 #endif
@@ -607,8 +614,6 @@ int main(void)
             runtime_start_fail_closed("gateway UWB mesh RX startup", ret);
         }
         app_stack_diag_start();
-        k_msleep(MESH_NODE_IDENTITY_LATE_PRINT_DELAY_MS);
-        mesh_node_identity_print();
         LOG_INF("gateway reactive mesh root active; BLE packet/log link %s",
                 gateway_ble_transport_enabled() ? "advertising" : "disabled");
     }

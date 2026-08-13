@@ -586,6 +586,58 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             4,
         )
 
+    def test_anchor_reserves_report_custody_before_discovery_or_ranging(self):
+        claim = function_body(ANCHOR_RADIO, "anchor_handle_uwb_claim")
+        reserve = function_body(
+            REPORT_DELIVERY, "mesh_range_report_batch_reserve"
+        )
+        backlog = function_body(
+            REPORT_DELIVERY, "mesh_report_tx_backlog_active"
+        )
+        capture = function_body(
+            REPORT_ENCODER, "mesh_anchor_click_cir_capture_begin"
+        )
+        pending = function_body(
+            REPORT_ENCODER, "app_mesh_report_encode_cir_pending"
+        )
+
+        preempt = claim.index("mesh_preempt_for_click_event_until(")
+        reservation = claim.index("mesh_range_report_batch_reserve(", preempt)
+        discovery_config = claim.index(
+            "dwm3000_driver_configure_wake_mode", reservation
+        )
+        discovery_reply = claim.index(
+            "dwm3000_driver_send_frame(", discovery_config
+        )
+        ranging = claim.index(
+            "anchor_run_scheduled_uwb_ranges(", discovery_reply
+        )
+        cleanup = claim.index("mesh_range_report_batch_abort(", ranging)
+
+        self.assertLess(preempt, reservation)
+        self.assertLess(reservation, discovery_config)
+        self.assertLess(discovery_config, discovery_reply)
+        self.assertLess(discovery_reply, ranging)
+        self.assertLess(ranging, cleanup)
+        self.assertIn("goto claim_complete;", claim[reservation:cleanup])
+
+        self.assertIn("app_mesh_report_encode_cir_pending()", reserve)
+        self.assertIn("mesh_ch9_tx_pending_is_active()", reserve)
+        self.assertLess(
+            reserve.index("app_mesh_report_encode_cir_pending()"),
+            reserve.index("k_msgq_num_used_get(&report_tx_msgq)"),
+        )
+        self.assertIn("app_mesh_report_encode_cir_pending()", backlog)
+
+        active = capture.index("if (anchor_cir_report_stream.active)")
+        reject = capture.index("return NULL;", active)
+        generation = capture.index("anchor_cir_report_stream.generation++")
+        self.assertLess(active, reject)
+        self.assertLess(reject, generation)
+        self.assertNotIn("anchor_cir_report_stream.active = false", capture)
+        self.assertIn("anchor_cir_report_stream.active", pending)
+        self.assertIn("k_spin_lock(&anchor_cir_report_lock)", pending)
+
     def test_deferred_gateway_ack_separates_plan_wait_from_send_failure(self):
         send_body = function_body(
             REPORT, "mesh_try_deferred_gateway_ack_on_channel9"

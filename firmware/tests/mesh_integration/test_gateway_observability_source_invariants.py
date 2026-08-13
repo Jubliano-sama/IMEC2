@@ -52,6 +52,44 @@ admit = function_body(ANCHOR, "gateway_host_command_admit")
 assert "k_msgq_get" not in admit
 assert admit.index("gateway_observe_host_acceptance") < admit.index("k_msgq_put")
 
+# A retryable local BUSY belongs to the serialized command worker, not to the
+# host-visible terminal stream.  Keep the exact reservation alive while its
+# dispatch token is published; the worker emits BACKOFF and owns the sole
+# terminal conversion after success or bounded exhaustion.
+emit_result = function_body(RESULT_RUNTIME, "gateway_emit_host_command_result")
+busy_result_gate = emit_result.index("status == COMMAND_BUSY")
+busy_result_token = emit_result.index(
+    "gateway_command_result_dispatch_token != 0u", busy_result_gate
+)
+reserved_conversion = emit_result.index(
+    "gateway_emit_host_command_result_reserved(", busy_result_token
+)
+assert busy_result_gate < busy_result_token < reserved_conversion
+
+host_terminal = function_body(ANCHOR, "gateway_observe_host_terminal")
+assert "status == COMMAND_BUSY" in host_terminal
+assert "gateway_command_result_get_dispatch_token() != 0u" in host_terminal
+
+host_worker = function_body(ANCHOR, "gateway_host_command_work_handler")
+dispatch_publish = host_worker.index("gateway_command_result_set_dispatch_token(")
+route_call = host_worker.index("gateway_route_host_packet(", dispatch_publish)
+dispatch_clear = host_worker.index(
+    "gateway_command_result_set_dispatch_token(0u)", route_call
+)
+retry_gate = host_worker.index(
+    "app_gateway_command_ingress_contention_retryable(ret)", dispatch_clear
+)
+backoff = host_worker.index(
+    "GATEWAY_COMMAND_EVENT_STAGE_BACKOFF", retry_gate
+)
+retry_exhaustion = host_worker.index(
+    "GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED", retry_gate
+)
+assert (
+    dispatch_publish < route_call < dispatch_clear < retry_gate <
+    retry_exhaustion < backoff
+)
+
 survey_work = function_body(ANCHOR, "gateway_survey_work_handler")
 boundary_gate = survey_work.index(
     "if (!gateway_survey_flush_boundary_event())"

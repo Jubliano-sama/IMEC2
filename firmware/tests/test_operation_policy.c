@@ -68,7 +68,7 @@ static void test_defaults_are_valid_and_preserve_robust_baseline(void)
     assert(discovery.value.discovery.report_grace_ms == 250u);
     assert(discovery.value.discovery.operation_budget_ms == 900000u);
     assert(pair.value.pair.max_reruns == 2u);
-    assert(pair.value.pair.max_parallel_pairs == 1u);
+    assert(pair.value.pair.max_parallel_pairs == 25u);
 
     memset(&set, 0xa5, sizeof(set));
     assert(operation_policy_set_from_tlvs(NULL, 0u, &set) == PROTO_OK);
@@ -77,7 +77,7 @@ static void test_defaults_are_valid_and_preserve_robust_baseline(void)
     assert(!set.pair_present);
     assert(set.assignment.response_spread_ms == 1000u);
     assert(set.discovery.round_count == 4u);
-    assert(set.pair.max_parallel_pairs == 1u);
+    assert(set.pair.max_parallel_pairs == 25u);
 }
 
 static void test_all_families_round_trip_in_one_payload(void)

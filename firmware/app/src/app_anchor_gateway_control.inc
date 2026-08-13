@@ -248,10 +248,9 @@ static void gateway_discovery_assignment_complete_success_locked(void)
     struct gateway_command_event event;
     size_t committed_count = 0u;
     uint64_t committed_slot_mask = 0u;
-    uint64_t acknowledged_slot_mask = 0u;
+    uint64_t published_slot_mask = 0u;
     uint8_t claimed_slot_span = 0u;
-    uint8_t failure_count;
-    uint8_t acknowledged_count;
+    uint8_t published_count;
     uint16_t membership_epoch;
     int membership_ret;
     int publish_ret;
@@ -271,39 +270,31 @@ static void gateway_discovery_assignment_complete_success_locked(void)
             "table-complete")) {
         return;
     }
-    failure_count = gateway_discovery_assignment_missing_ack_count_locked();
     for (size_t i = 0u;
          i < gateway_discovery_assignment_state.claim_count;
          i++) {
-        bool acknowledged =
-            (gateway_discovery_assignment_state.ack_mask &
-             (UINT64_C(1) << i)) != 0u;
         uint8_t slot =
             gateway_discovery_assignment_state.anchor_slots[i];
 
         /*
-         * A prior durable member keeps its reserved slot even when it is
-         * offline for this TABLE.  That missing ACK is reported to the host,
-         * but it cannot veto ACKed new anchors or make the old slot reusable.
+         * TABLE has no aggregate acknowledgement.  Once the immutable table
+         * has completed its planned control flood, every listed anchor owns
+         * the published mapping.  Newer per-anchor responses remain useful
+         * transport evidence, but an older anchor that implements the base
+         * no-overall-ACK contract cannot be excluded from the durable roster.
          */
-        if (i >= gateway_discovery_assignment_state.prior_anchor_count &&
-            !acknowledged) {
-            continue;
-        }
         committed_anchor_ids[committed_count] =
             gateway_discovery_assignment_state.anchor_ids[i];
         committed_slots[committed_count] = slot;
         committed_slot_mask |= UINT64_C(1) << slot;
-        if (acknowledged) {
-            acknowledged_slot_mask |= UINT64_C(1) << slot;
-        }
+        published_slot_mask |= UINT64_C(1) << slot;
         committed_count++;
     }
-    acknowledged_count =
-        (uint8_t)__builtin_popcountll(acknowledged_slot_mask);
-    if (acknowledged_count == 0u) {
-        gateway_discovery_assignment_fail_locked(COMMAND_TIMEOUT,
-                                                 failure_count);
+    published_count =
+        (uint8_t)__builtin_popcountll(published_slot_mask);
+    if (published_count != gateway_discovery_assignment_state.claim_count) {
+        gateway_discovery_assignment_fail_locked(COMMAND_INTERNAL_ERROR,
+                                                 EPROTO);
         return;
     }
     membership_epoch = discovery_assignment_membership_epoch(
@@ -329,7 +320,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
     publication.host_command =
         gateway_discovery_assignment_state.host_command;
     publication.committed_mask = committed_slot_mask;
-    publication.acknowledged_mask = acknowledged_slot_mask;
+    publication.acknowledged_mask = published_slot_mask;
     publication.command_id = CMD_ASSIGN_DISCOVERY_SLOTS;
     publication.event_gateway_epoch = event.gateway_epoch;
     publication.duplicate_count =
@@ -352,7 +343,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         gateway_discovery_assignment_state.anchor_ids,
         gateway_discovery_assignment_state.anchor_slots,
         gateway_discovery_assignment_state.claim_count,
-        acknowledged_slot_mask,
+        published_slot_mask,
         gateway_discovery_assignment_state.duplicate_count);
     if (publish_ret < 0) {
         LOG_ERR("discovery assignment final telemetry staging failed: epoch=%u ret=%d",
@@ -417,11 +408,11 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         gateway_discovery_assignment_state.epoch);
     table_event.attempt = gateway_discovery_assignment_state.table_round;
     table_event.progress_count =
-        acknowledged_count;
+        published_count;
     table_event.total_count =
         (uint16_t)gateway_discovery_assignment_state.claim_count;
-    table_event.success_count = acknowledged_count;
-    table_event.failure_count = failure_count;
+    table_event.success_count = published_count;
+    table_event.failure_count = 0u;
     table_event.status = COMMAND_OK;
     table_event.reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
     table_event.duplicate_count =
@@ -432,7 +423,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         &gateway_discovery_assignment_state.host_command,
         CMD_ASSIGN_DISCOVERY_SLOTS,
         COMMAND_OK,
-        acknowledged_count);
+        published_count);
     event = gateway_observability_event(
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
         GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
@@ -440,11 +431,11 @@ static void gateway_discovery_assignment_complete_success_locked(void)
         &gateway_discovery_assignment_state.host_command,
         gateway_discovery_assignment_state.epoch);
     event.progress_count =
-        acknowledged_count;
+        published_count;
     event.total_count =
         (uint16_t)gateway_discovery_assignment_state.claim_count;
-    event.success_count = acknowledged_count;
-    event.failure_count = failure_count;
+    event.success_count = published_count;
+    event.failure_count = 0u;
     event.duplicate_count =
         gateway_discovery_assignment_state.duplicate_count;
     (void)gateway_observe_command_event(&event, true);
@@ -482,7 +473,7 @@ static bool gateway_discovery_assignment_adoption_identity_matches_locked(
 
 int app_anchor_gateway_assignment_adopted_result_commit(
     const struct app_durable_state_gateway_assignment_identity *identity,
-    uint16_t acknowledged_count)
+    uint16_t published_count)
 {
     uint32_t token;
     int ret;
@@ -504,9 +495,8 @@ int app_anchor_gateway_assignment_adopted_result_commit(
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return 0;
     }
-    if (acknowledged_count == 0u ||
-        acknowledged_count != (uint16_t)__builtin_popcountll(
-                                  gateway_discovery_assignment_state.ack_mask)) {
+    if (published_count == 0u ||
+        published_count != gateway_discovery_assignment_state.claim_count) {
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return -EPROTO;
     }
@@ -519,7 +509,7 @@ int app_anchor_gateway_assignment_adopted_result_commit(
         &gateway_discovery_assignment_state.host_command,
         CMD_ASSIGN_DISCOVERY_SLOTS,
         COMMAND_OK,
-        (uint8_t)acknowledged_count);
+        (uint8_t)published_count);
     if (ret == 0) {
         gateway_discovery_assignment_state.result_reservation_token = 0u;
     }
@@ -2133,8 +2123,9 @@ static bool gateway_discovery_assignment_service_delivery(void)
                 gateway_discovery_assignment_claim_ack_settle_remaining_locked(
                     (uint64_t)k_uptime_get());
             response_window_origin_ms = (uint64_t)k_uptime_get();
-        } else if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE &&
-                   gateway_discovery_assignment_missing_ack_count_locked() == 0u) {
+        } else if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE) {
+            /* TABLE completes after its planned flood. Per-anchor responses
+             * are an optional extension and never gate publication. */
             wait_ms = 0u;
         } else {
             wait_ms = gateway_discovery_assignment_window_ms_locked();
@@ -2358,7 +2349,7 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
     if (gateway_discovery_assignment_state.stage ==
             GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
         gateway_discovery_assignment_state.round_open &&
-        missing_ack_count == 0u) {
+        gateway_discovery_assignment_state.table_delivery_succeeded) {
         uint32_t completion_deadline =
             gateway_discovery_assignment_state
                     .response_window_deadline_valid ?

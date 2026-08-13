@@ -1,6 +1,7 @@
 #ifndef APP_MESH_REPORT_ENCODE_H
 #define APP_MESH_REPORT_ENCODE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 struct mesh_outbound;
@@ -12,6 +13,7 @@ struct app_mesh_report_encode_ops {
 
 void app_mesh_report_encode_init(
     const struct app_mesh_report_encode_ops *ops);
+bool app_mesh_report_encode_cir_pending(void);
 int app_mesh_report_encode_queue_next_cir(void);
 
 #endif

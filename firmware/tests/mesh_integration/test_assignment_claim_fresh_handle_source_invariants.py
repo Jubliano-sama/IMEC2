@@ -21,7 +21,13 @@ POLICY_HEADER = (ROOT / "include/discovery_assignment.h").read_text(
 OPERATION_HEADER = (ROOT / "include/operation_policy.h").read_text(
     encoding="utf-8"
 )
+GATEWAY_COMMAND_HEADER = (ROOT / "include/gateway_command.h").read_text(
+    encoding="utf-8"
+)
 GUI_POLICY = (ROOT.parent / "tools/gateway_gui/operation_policy.py").read_text(
+    encoding="utf-8"
+)
+GUI_PROTOCOL = (ROOT.parent / "tools/gateway_gui/protocol.py").read_text(
     encoding="utf-8"
 )
 
@@ -163,14 +169,37 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
             GUI_POLICY,
             re.MULTILINE,
         )
-        command_max = macro_value(
+        discovery_policy_max = macro_value(
             OPERATION_HEADER, "OPERATION_POLICY_COMMAND_BUDGET_MAX_MS"
         )
+        command_max = macro_value(
+            GATEWAY_COMMAND_HEADER, "GATEWAY_COMMAND_BUDGET_MAX_MS"
+        )
+        gui_discovery_policy_max = re.search(
+            r"^COMMAND_BUDGET_MAX_MS\s*=\s*([\d_]+)\s*$",
+            GUI_POLICY,
+            re.MULTILINE,
+        )
+        gui_command_max = re.search(
+            r"^GATEWAY_COMMAND_BUDGET_MAX_MS\s*=\s*([\d_]+)\s*$",
+            GUI_PROTOCOL,
+            re.MULTILINE,
+        )
         self.assertIsNotNone(gui_default)
+        self.assertIsNotNone(gui_discovery_policy_max)
+        self.assertIsNotNone(gui_command_max)
         self.assertEqual(751_204, firmware_default)
         self.assertEqual(firmware_default, int(gui_default.group(1).replace("_", "")))
-        self.assertEqual(900_000, command_max)
-        self.assertLessEqual(895_204, command_max)
+        self.assertEqual(900_000, discovery_policy_max)
+        self.assertEqual(
+            discovery_policy_max,
+            int(gui_discovery_policy_max.group(1).replace("_", "")),
+        )
+        self.assertEqual(3_600_000, command_max)
+        self.assertEqual(
+            command_max, int(gui_command_max.group(1).replace("_", ""))
+        )
+        self.assertLessEqual(895_204, discovery_policy_max)
 
     def test_analogous_local_result_owners_rearm_same_identity(self):
         discovery_retry = function_body(

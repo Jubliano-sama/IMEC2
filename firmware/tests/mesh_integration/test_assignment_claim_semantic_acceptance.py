@@ -710,6 +710,35 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertLess(admission_call, dispatch)
         self.assertIn("return -EAGAIN;", semantic[admission_call:dispatch])
 
+    def test_assignment_control_preflights_stale_result_before_ack(self):
+        delivery = function_body(
+            REPORT,
+            "mesh_drain_rx_queue_locked",
+        )
+        preflight = delivery.index(
+            "semantic_ret = mesh_gateway_preflight_semantic_delivery(pending)"
+        )
+        internal = delivery.index("if (internal_control) {")
+        ordinary = delivery.index("} else {", internal)
+        internal_block = delivery[internal:ordinary]
+        finalize = delivery.index(
+            "APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW ?",
+            ordinary,
+        )
+        relay_commit = delivery.index(
+            "mesh_relay_commit_gateway_delivery(",
+            finalize,
+        )
+
+        self.assertLess(preflight, internal)
+        self.assertIn("host_custody_ready = true;", internal_block)
+        self.assertIn(
+            "semantic_preflight_complete = true;",
+            delivery[preflight:internal],
+        )
+        self.assertLess(internal, finalize)
+        self.assertLess(finalize, relay_commit)
+
     def test_append_only_roster_has_no_production_clear_caller(self):
         start = function_body(ANCHOR, "gateway_start_discovery_assignment")
         complete = function_body(
@@ -721,11 +750,9 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "        prior_anchor_count",
             start,
         )
-        self.assertIn(
-            "i >= gateway_discovery_assignment_state.prior_anchor_count",
-            complete,
-        )
-        self.assertIn("!acknowledged", complete)
+        self.assertIn("published_slot_mask |=", complete)
+        self.assertNotIn("gateway_discovery_assignment_state.ack_mask", complete)
+        self.assertNotIn("!acknowledged", complete)
 
         for path in (ROOT / "app/src").glob("*"):
             if path.suffix not in {".c", ".inc"}:
@@ -741,6 +768,48 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
                     r"\bvoid\s+$",
                     f"production clear caller remains in {path.name}",
                 )
+
+    def test_table_publication_does_not_wait_for_optional_anchor_acks(self):
+        service = function_body(
+            ANCHOR, "gateway_discovery_assignment_service_delivery"
+        )
+        finalize = function_body(
+            ANCHOR, "gateway_discovery_assignment_finalize_work_handler"
+        )
+        complete = function_body(
+            ANCHOR, "gateway_discovery_assignment_complete_success_locked"
+        )
+
+        response_window = service.index(
+            "gateway_discovery_assignment_state.round_open = true"
+        )
+        table_wait = service.index(
+            "} else if (kind == "
+            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE)",
+            response_window,
+        )
+        self.assertIn("wait_ms = 0u", service[table_wait:table_wait + 300])
+
+        fast_complete = finalize.index(
+            "gateway_discovery_assignment_state.table_delivery_succeeded"
+        )
+        completion = finalize.index(
+            "gateway_discovery_assignment_complete_success_locked()",
+            fast_complete,
+        )
+        self.assertNotIn(
+            "missing_ack_count == 0u",
+            finalize[fast_complete:completion],
+        )
+
+        self.assertIn("published_slot_mask |=", complete)
+        self.assertIn(
+            "publication.acknowledged_mask = published_slot_mask",
+            complete,
+        )
+        self.assertIn("event.success_count = published_count", complete)
+        self.assertIn("event.failure_count = 0u", complete)
+        self.assertNotIn("gateway_discovery_assignment_state.ack_mask", complete)
 
     def test_duplicate_claim_restarts_settle_to_immutable_horizon(self):
         self.assertIsNotNone(

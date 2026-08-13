@@ -660,6 +660,13 @@ class CommandBudgetContractTests(unittest.TestCase):
             operation_header,
             "OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS",
         )
+        operation_max = self._literal_macro(
+            operation_header, "OPERATION_POLICY_COMMAND_BUDGET_MAX_MS"
+        )
+        discovery_default = self._literal_macro(
+            operation_header,
+            "OPERATION_POLICY_DISCOVERY_DEFAULT_BUDGET_MS",
+        )
         survey_default = self._literal_macro(
             survey_header, "SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS"
         )
@@ -674,7 +681,9 @@ class CommandBudgetContractTests(unittest.TestCase):
         self.assertEqual(firmware_min, host_protocol.GATEWAY_COMMAND_BUDGET_MIN_MS)
         self.assertEqual(firmware_max, host_protocol.GATEWAY_COMMAND_BUDGET_MAX_MS)
         self.assertEqual(firmware_min, host_operation_policy.COMMAND_BUDGET_MIN_MS)
-        self.assertEqual(firmware_max, host_operation_policy.COMMAND_BUDGET_MAX_MS)
+        self.assertEqual(
+            operation_max, host_operation_policy.COMMAND_BUDGET_MAX_MS
+        )
         self.assertEqual(
             assignment_default,
             host_protocol.DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
@@ -687,8 +696,12 @@ class CommandBudgetContractTests(unittest.TestCase):
             host_protocol.SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
         )
         self.assertEqual(
-            survey_default, host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS
+            discovery_default,
+            host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS,
         )
+        self.assertEqual(3_600_000, survey_default)
+        self.assertEqual(900_000, discovery_default)
+        self.assertGreater(survey_default, discovery_default)
         self.assertEqual(
             route_refresh_default,
             host_protocol.ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
@@ -778,7 +791,7 @@ class CommandBudgetContractTests(unittest.TestCase):
         self.assertEqual(
             int(maximum.group(1)), provision.GATEWAY_COMMAND_BUDGET_MAX_MS
         )
-        self.assertEqual(900000, provision.GATEWAY_COMMAND_BUDGET_MAX_MS)
+        self.assertEqual(3_600_000, provision.GATEWAY_COMMAND_BUDGET_MAX_MS)
         self.assertRegex(
             anchor_source,
             r"BUILD_ASSERT\s*\(\s*"

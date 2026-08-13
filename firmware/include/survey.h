@@ -25,7 +25,7 @@ extern "C" {
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 5u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_DEFAULT_TTL 4u
-#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 900000u
+#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 3600000u
 /*
  * A known reverse path gets a route-depth-aware natural control deadline.
  * The base covers one complete gateway-ACK custody/retry horizon; each

@@ -214,6 +214,14 @@ assert finish_inactive < finish_latch_clear < finish_preparation_clear, (
     "terminal survey cancellation must clear both result replay latches"
 )
 begin_cleanup = finish.index("gateway_survey_begin_cleanup()", finish_preparation_clear)
+for retained_round_identity in (
+    "gateway_survey_operation_started_at_ms = 0u",
+    "gateway_survey_operation_deadline_ms = 0u",
+):
+    assert retained_round_identity not in finish, (
+        "terminal ABORT construction must retain the operation interval used "
+        "by the immutable round commitment until cleanup is complete"
+    )
 assert (
     defer_return < finish_inactive < observation_cancel <
     finish_latch_clear < finish_preparation_clear < begin_cleanup
@@ -491,12 +499,21 @@ pending_clear = finish_cleanup.index(
 owner_release = finish_cleanup.index(
     "gateway_operation_owner_release(", pending_clear
 )
+started_retire = finish_cleanup.index(
+    "gateway_survey_operation_started_at_ms = 0u", inactive
+)
+deadline_retire = finish_cleanup.index(
+    "gateway_survey_operation_deadline_ms = 0u", started_retire
+)
+round_reset = finish_cleanup.index(
+    "gateway_survey_round_reset()", deadline_retire
+)
 assert (
-    pair_complete < round_cleanup < inactive < terminal <
-    pending_clear < owner_release
+    pair_complete < round_cleanup < inactive < started_retire <
+    deadline_retire < round_reset < terminal < pending_clear < owner_release
 ), (
-    "terminal observability and owner release must wait until every retained "
-    "round cleanup lane has retired"
+    "the round commitment interval may retire only after every retained "
+    "cleanup lane, before round reset, terminal observability, and owner release"
 )
 
 prepare_cleanup = function_body(

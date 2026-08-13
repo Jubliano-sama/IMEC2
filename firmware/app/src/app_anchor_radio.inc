@@ -1009,6 +1009,7 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     enum uwb_anchor_claim_decision selected_decision = UWB_ANCHOR_CLAIM_ACCEPTED;
     bool discover_received = false;
     bool schedule_frame_ready = false;
+    bool claim_handled = false;
     int64_t schedule_rx_ms = -1;
     struct uwb_discover_frame discover = {0};
     bool discovery_uses_extended_phr;
@@ -1190,6 +1191,20 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         anchor_click_event_abort_if_needed("mesh-preemption");
         return false;
     }
+    if (click_priority) {
+        ret = mesh_range_report_batch_reserve(selected_claim.clicker_id,
+                                              selected_claim.click_event_id,
+                                              selected_claim.attempt_index);
+        if (ret < 0) {
+            status_debug_printf("DBG_ANCHOR_CLICK_REPORT_CAPACITY_BUSY evt=%u attempt=%u ret=%d release=0\n",
+                                selected_claim.click_event_id,
+                                selected_claim.attempt_index,
+                                ret);
+            anchor_click_window_set_active(false);
+            anchor_click_event_abort_if_needed("click-report-capacity");
+            return false;
+        }
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_ANCHOR_CLICK_WINDOW active=%u flags=0x%02x\n",
                             anchor_click_window_active() ? 1u : 0u,
@@ -1327,7 +1342,8 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
                     continue;
                 }
                 anchor_click_event_abort_if_needed("mesh-frame-during-discovery");
-                return true;
+                claim_handled = true;
+                goto claim_complete;
             }
             status_debug_printf("DBG_ANCHOR_MESH_AFTER_WAKE_REJECT len=%u type=0x%02x q=%u discover_ret=%d valid=%u queued=%u\n",
                                 (unsigned int)frame_len,
@@ -1364,7 +1380,8 @@ discovery_miss:
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY build rejected: %d", ret);
             anchor_click_event_abort_if_needed("discovery-reply-build");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
 #if defined(CONFIG_IMEC_ML_ANCHOR)
         if (discover.discovery_slot_count > 0u) {
@@ -1400,7 +1417,8 @@ discovery_miss:
                         ret);
             }
             anchor_click_event_abort_if_needed("discovery-slot");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
         if (provisioning_state == APP_DISCOVERY_ASSIGNMENT_UNPROVISIONED) {
             status_debug_printf("DBG_DISCOVERY_ASSIGNMENT_STATUS state=UNPROVISIONED event=%u attempt=%u reply=fallback slot=%u\n",
@@ -1429,12 +1447,13 @@ discovery_miss:
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY encode failed: %d", ret);
             anchor_click_event_abort_if_needed("discovery-reply-encode");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
         if (!anchor_click_event_authorize_discovery_reply(
                 "discovery-reply-send")) {
             anchor_click_event_abort_if_needed("discovery-reply-transition");
-            return false;
+            goto claim_complete;
         }
         ret = dwm3000_driver_send_frame(frame,
                                         frame_len,
@@ -1449,7 +1468,8 @@ discovery_miss:
         if (ret < 0) {
             LOG_WRN("anchor UWB DISCOVERY_REPLY TX failed: %d", ret);
             anchor_click_event_abort_if_needed("discovery-reply-tx");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
         LOG_INF("anchor UWB DISCOVERY_REPLY sent: clicker=0x%016llx slot=%u source=%s quality=%u",
                 (unsigned long long)reply.selected_clicker_id,
@@ -1470,7 +1490,8 @@ discovery_miss:
                 last_discovery_decode_ret,
                 UWB_DISCOVERY_LISTEN_MS);
         anchor_click_event_abort_if_needed("discovery-timeout");
-        return true;
+        claim_handled = true;
+        goto claim_complete;
     }
 
     if (!schedule_frame_ready) {
@@ -1540,14 +1561,16 @@ discovery_miss:
             if (ret != PROTO_OK) {
                 LOG_WRN("anchor UWB RANGE_RELEASE decode failed: %d", ret);
                 anchor_click_event_abort_if_needed("range-release-decode");
-                return true;
+                claim_handled = true;
+                goto claim_complete;
             }
 
             ret = uwb_anchor_accept_range_release(&anchor_uwb_session, &release);
             if (ret != PROTO_OK) {
                 LOG_WRN("anchor rejected UWB RANGE_RELEASE: %d", ret);
                 anchor_click_event_abort_if_needed("range-release-reject");
-                return true;
+                claim_handled = true;
+                goto claim_complete;
             }
 
             LOG_INF("anchor UWB RANGE_RELEASE accepted: clicker=0x%016llx event_seq=%u discovered=%u min=%u reason=%u",
@@ -1557,7 +1580,8 @@ discovery_miss:
                     release.min_anchor_count,
                     release.reason);
             anchor_click_event_abort_if_needed("range-release");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
 
 #if defined(CONFIG_IMEC_ML_ANCHOR)
@@ -1569,13 +1593,15 @@ discovery_miss:
             if (ret != PROTO_OK) {
                 LOG_WRN("anchor pair-survey schedule decode failed: %d", ret);
                 anchor_click_event_abort_if_needed("pair-schedule-decode");
-                return true;
+                claim_handled = true;
+                goto claim_complete;
             }
             if (!anchor_pair_schedule_matches_epoch(&pair_schedule)) {
                 LOG_WRN("anchor rejected pair-survey schedule identity: survey=%u",
                         pair_schedule.survey_id);
                 anchor_click_event_abort_if_needed("pair-schedule-identity");
-                return true;
+                claim_handled = true;
+                goto claim_complete;
             }
             if (retained_sleep_us != NULL) {
                 *retained_sleep_us = u32_saturating_add(
@@ -1585,7 +1611,8 @@ discovery_miss:
                 (void)anchor_run_clicker_pair_survey(&pair_schedule, schedule_rx_ms);
             }
             anchor_click_event_abort_if_needed("pair-survey-complete");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
 #endif
 
@@ -1593,7 +1620,8 @@ discovery_miss:
         if (ret != PROTO_OK) {
             LOG_WRN("anchor UWB RANGE_SCHEDULE decode failed: %d", ret);
             anchor_click_event_abort_if_needed("range-schedule-decode");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
 
         ret = uwb_anchor_accept_range_schedule(&anchor_uwb_session,
@@ -1605,12 +1633,14 @@ discovery_miss:
                     (unsigned long long)schedule.clicker_id,
                     schedule.click_event_id);
             anchor_click_event_abort_if_needed("range-schedule-not-selected");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
         if (ret != PROTO_OK) {
             LOG_WRN("anchor rejected UWB RANGE_SCHEDULE: %d", ret);
             anchor_click_event_abort_if_needed("range-schedule-reject");
-            return true;
+            claim_handled = true;
+            goto claim_complete;
         }
 
         {
@@ -1630,11 +1660,11 @@ discovery_miss:
         if (ret < 0) {
             LOG_ERR("anchor accepted UWB RANGE_SCHEDULE but event phase could not advance");
             anchor_click_event_abort_if_needed("range-schedule-transition");
-            return false;
+            goto claim_complete;
         }
         if (!anchor_click_event_authorize_range("range-schedule-due")) {
             anchor_click_event_abort_if_needed("range-due-transition");
-            return false;
+            goto claim_complete;
         }
 
         range_sleep_us = anchor_run_scheduled_uwb_ranges(
@@ -1654,13 +1684,21 @@ discovery_miss:
              * while the queue-admission boundary forces watchdog recovery.
              */
             anchor_click_event_abort_if_needed("range-report-retention");
-            return false;
+            goto claim_complete;
         }
     } else {
         LOG_WRN("anchor UWB RANGE_SCHEDULE not received: ret=%d", ret);
         anchor_click_event_abort_if_needed("range-schedule-timeout");
     }
-    return true;
+    claim_handled = true;
+
+claim_complete:
+    if (click_priority) {
+        mesh_range_report_batch_abort(selected_claim.clicker_id,
+                                      selected_claim.click_event_id,
+                                      selected_claim.attempt_index);
+    }
+    return claim_handled;
 }
 #endif /* !APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY */
 

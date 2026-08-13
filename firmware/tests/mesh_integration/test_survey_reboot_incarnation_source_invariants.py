@@ -204,23 +204,31 @@ class SurveyRebootIncarnationSourceInvariants(unittest.TestCase):
 
     def test_boot_observation_precedes_host_custody_and_has_a_wake_owner(self) -> None:
         drain = function_body(MESH_DELIVERY, "mesh_drain_rx_queue_locked")
+        early_observe = drain.index("gateway_note_anchor_boot_observation")
+        relay = drain.index("mesh_relay_handle_rx_with_random", early_observe)
         preflight = drain.index("mesh_gateway_preflight_semantic_delivery(pending)")
-        nonnegative = drain.index("if (semantic_ret >= 0", preflight)
-        observe = drain.index("gateway_note_anchor_boot_observation", nonnegative)
-        reserve = drain.index("gateway_ble_reserve_stream_packet", observe)
-        self.assertLess(preflight, nonnegative)
-        self.assertLess(nonnegative, observe)
-        self.assertLess(observe, reserve)
+        reserve = drain.index("gateway_ble_reserve_stream_packet", preflight)
+        self.assertLess(early_observe, relay)
+        self.assertLess(relay, preflight)
+        self.assertLess(preflight, reserve)
+        self.assertEqual(
+            drain.count("->gateway_note_anchor_boot_observation("), 1
+        )
         self.assertIn(".gateway_note_anchor_boot_observation", RADIO)
 
         callback = function_body(
             GATEWAY_SURVEY, "gateway_note_anchor_boot_observation"
         )
         note = callback.index("app_gateway_survey_incarnation_tracker_note")
+        release = callback.index(
+            "mesh_relay_note_gateway_origin_reboot", note
+        )
         retain = callback.index("gateway_survey_incarnation_event =", note)
         schedule = callback.index("gateway_survey_work_schedule(", retain)
         fail_check = callback.index("< 0", schedule)
         fail_stop = callback.index("app_watchdog_stop_feeding()", fail_check)
+        self.assertLess(note, release)
+        self.assertLess(release, retain)
         self.assertLess(note, retain)
         self.assertLess(retain, schedule)
         self.assertLess(schedule, fail_check)

@@ -2722,6 +2722,45 @@ int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+int mesh_relay_note_gateway_origin_reboot(struct mesh_relay *relay,
+                                          uint64_t source_id)
+{
+    struct mesh_gateway_ack_store *store;
+    int origin_index;
+
+    if (relay == NULL || relay->role != MESH_RELAY_ROLE_GATEWAY ||
+        relay->local_id != relay->gateway_id ||
+        relay->gateway_ack_store == NULL || !id_is_unicast(source_id) ||
+        source_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    store = relay->gateway_ack_store;
+    origin_index = gateway_ack_history_find_origin_index(relay, source_id);
+    if (origin_index < 0) {
+        return PROTO_OK;
+    }
+
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_CAPACITY; i++) {
+        struct mesh_gateway_ack_identity_entry *identity =
+            &store->identities[i];
+
+        if (!gateway_ack_identity_valid(identity) ||
+            gateway_ack_identity_owner_index(identity) !=
+                (uint8_t)origin_index) {
+            continue;
+        }
+        if ((identity->owner_state &
+             GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) != 0u) {
+            gateway_ack_identity_set_confirmed_bit(store, i);
+        } else {
+            gateway_ack_identity_clear(store, i);
+        }
+    }
+    store->origin_batch_ids[origin_index] = 0u;
+    return PROTO_OK;
+}
+
 int mesh_relay_reconcile_gateway_ack_membership(
     struct mesh_relay *relay,
     const uint64_t *member_ids,

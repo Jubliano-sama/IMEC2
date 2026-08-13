@@ -26,7 +26,7 @@ int app_anchor_gateway_assignment_publication_complete(void);
  * may be converted once only after the exact durable identity is read back. */
 int app_anchor_gateway_assignment_adopted_result_commit(
     const struct app_durable_state_gateway_assignment_identity *identity,
-    uint16_t acknowledged_count);
+    uint16_t published_count);
 int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                             const uint8_t *payload,
                                             size_t payload_len,

@@ -38,6 +38,7 @@ from .operation_policy import (
     DISCOVERY_START_DELAY_MIN_MS,
     PAIR_AUTO_MAX_PARALLEL_PAIRS,
     PAIR_DEFAULT_MAX_RERUNS,
+    COMMAND_BUDGET_MAX_MS as OPERATION_POLICY_COMMAND_BUDGET_MAX_MS,
     AssignmentOperationPolicy,
     DiscoveryOperationPolicy,
     OperationPolicyProfile,
@@ -409,8 +410,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
             discovery, 6, "Report grace (ms)", self.duration_text, 1, 60000
         )
         self._labeled_spin(
-            discovery, 7, "Survey budget (ms)",
-            self.discovery_budget_text, 1000, GATEWAY_COMMAND_BUDGET_MAX_MS
+            discovery, 7, "Discovery phase budget (ms)",
+            self.discovery_budget_text, 1000,
+            OPERATION_POLICY_COMMAND_BUDGET_MAX_MS,
         )
         self._labeled_spin(
             discovery, 8, "Pair reruns", self.pair_max_reruns_text, 0, 2
@@ -991,7 +993,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             expected_anchor_count = (
                 operation_policy.assignment.expected_anchor_count or None
             )
-            command_budget_ms = discovery_policy.operation_budget_ms
+            # The host command limit owns the complete gateway orchestration,
+            # while the discovery policy bounds only the flooded discovery
+            # phase that every anchor must decode.  Keeping these independent
+            # lets the robust one-hour gateway operation coexist with the
+            # bounded 15-minute anchor policy wire contract.
+            command_budget_ms = self._command_budget_ms()
             survey_id = self._survey_id_for_send()
             command = build_anchor_discovery_command(
                 host_id=host_id,
