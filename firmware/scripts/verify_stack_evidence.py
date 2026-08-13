@@ -73,6 +73,11 @@ CAPTURE_WORKFLOW = "pyocd-rtt-pre-reset-v1"
 MAX_CAPTURE_AGE = timedelta(hours=24)
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 MAX_CAPTURE_DURATION = timedelta(minutes=15)
+# ``capture_stack_evidence.py`` bounds the RTT child itself to 15 minutes.
+# Its UTC timestamps wrap process startup/teardown and are serialized only to
+# whole seconds, so the observed wall clock can legitimately be a few seconds
+# longer without extending the hardware workload.
+MAX_CAPTURE_PROCESS_OVERHEAD = timedelta(seconds=5)
 
 
 @dataclass(frozen=True)
@@ -2325,7 +2330,9 @@ def _load_hardware_manifest(path: Path, build: BuildEvidence, policy: PresetPoli
         now = datetime.now(timezone.utc)
         if ended > now + MAX_FUTURE_SKEW:
             raise EvidenceError("capture timestamp is in the future")
-        if started > ended or ended - started > MAX_CAPTURE_DURATION:
+        if (started > ended or
+                ended - started >
+                MAX_CAPTURE_DURATION + MAX_CAPTURE_PROCESS_OVERHEAD):
             raise EvidenceError("capture wall-clock bounds are invalid")
         if ended < now - MAX_CAPTURE_AGE:
             raise EvidenceError("capture is stale")

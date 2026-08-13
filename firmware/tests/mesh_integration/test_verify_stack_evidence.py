@@ -1989,6 +1989,46 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         captures, _ = verifier.verify_hardware([manifest], [build], self.policies, True, {policy.preset})
         self.assertTrue(any("SHA-256" in issue for issue in captures[0].issues))
 
+    def test_capture_wall_clock_allows_only_bounded_process_teardown(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        build = verifier.verify_build(
+            self._write_build(policy), self.policies, self.frame_limit
+        )
+
+        manifest = self._manifest(policy, build)
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        ended = datetime.fromisoformat(
+            data["provenance"]["ended_at_utc"].replace("Z", "+00:00")
+        )
+        data["provenance"]["started_at_utc"] = (
+            ended - verifier.MAX_CAPTURE_DURATION - timedelta(seconds=1)
+        ).isoformat().replace("+00:00", "Z")
+        data["capture_id"] = verifier._capture_id(data)
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        captures, _ = verifier.verify_hardware(
+            [manifest], [build], self.policies, True, {policy.preset}
+        )
+        self.assertFalse(
+            any("wall-clock bounds" in issue for issue in captures[0].issues),
+            captures[0].issues,
+        )
+
+        data["provenance"]["started_at_utc"] = (
+            ended
+            - verifier.MAX_CAPTURE_DURATION
+            - verifier.MAX_CAPTURE_PROCESS_OVERHEAD
+            - timedelta(seconds=1)
+        ).isoformat().replace("+00:00", "Z")
+        data["capture_id"] = verifier._capture_id(data)
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+        captures, _ = verifier.verify_hardware(
+            [manifest], [build], self.policies, True, {policy.preset}
+        )
+        self.assertTrue(
+            any("wall-clock bounds" in issue for issue in captures[0].issues),
+            captures[0].issues,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
