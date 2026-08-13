@@ -257,10 +257,15 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
     node->node_index = *node_index;
     node->work_epoch = 1u;
     node->tx_queue_capacity = MESH_SIM_TX_QUEUE_CAPACITY;
-    if (role != MESH_SIM_ROLE_CLICKER) {
+    {
+        enum mesh_relay_role relay_role = role == MESH_SIM_ROLE_GATEWAY ?
+                                          MESH_RELAY_ROLE_GATEWAY :
+                                          role == MESH_SIM_ROLE_CLICKER ?
+                                          MESH_RELAY_ROLE_CLICKER :
+                                          MESH_RELAY_ROLE_ANCHOR;
+
         mesh_relay_init(&node->relay,
-                        role == MESH_SIM_ROLE_GATEWAY ?
-                        MESH_RELAY_ROLE_GATEWAY : MESH_RELAY_ROLE_ANCHOR,
+                        relay_role,
                         id,
                         gateway_id,
                         route_epoch);
@@ -272,7 +277,8 @@ int mesh_sim_add_role(struct mesh_sim_world *world,
             memset(node, 0, sizeof(*node));
             return mesh_sim_fail(world, MESH_SIM_ERR_ARG);
         }
-        if (role != MESH_SIM_ROLE_GATEWAY && id != gateway_id &&
+        if (role != MESH_SIM_ROLE_GATEWAY &&
+            role != MESH_SIM_ROLE_CLICKER && id != gateway_id &&
             mesh_relay_attach_anchor_downlink_store(
                 &node->relay,
                 &node->anchor_route_store) != PROTO_OK) {
@@ -416,7 +422,9 @@ int mesh_sim_set_route_request_flags(struct mesh_sim_world *world,
                                      uint8_t flags)
 {
     if (!mesh_sim_node_index_valid(world, node_index) ||
-        (flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
+        (flags & ~MESH_ROUTE_REQ_ALLOWED_FLAGS) != 0u ||
+        MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(flags) >
+            MESH_NETWORK_MAX_HOPS) {
         return MESH_SIM_ERR_ARG;
     }
 

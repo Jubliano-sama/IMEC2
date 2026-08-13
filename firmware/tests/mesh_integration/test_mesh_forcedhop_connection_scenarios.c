@@ -340,6 +340,12 @@ static int run_forcedhop_connection_scenario(void)
     uint8_t transmitter;
     uint8_t anchor;
     uint8_t gateway;
+    const uint8_t exact_two_hop_flags =
+        MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED |
+        MESH_ROUTE_REQ_REQUIRED_HOPS_ENCODE(2u);
+    const uint8_t too_deep_flags =
+        MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED |
+        MESH_ROUTE_REQ_REQUIRED_HOPS_ENCODE(MESH_NETWORK_MAX_HOPS + 1u);
     size_t transmission_count;
     size_t gateway_ack_receptions;
 
@@ -353,12 +359,36 @@ static int run_forcedhop_connection_scenario(void)
     CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
                             GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
                             &gateway) == MESH_SIM_OK);
-    CHECK(mesh_sim_set_link(&world, transmitter, anchor, 98u, 5u) == MESH_SIM_OK);
-    CHECK(mesh_sim_set_link(&world, anchor, gateway, 98u, 5u) == MESH_SIM_OK);
-    CHECK(mesh_sim_set_link(&world, transmitter, gateway, 98u, 5u) == MESH_SIM_OK);
+
+    phase = "route_request_flag_validation";
+    CHECK(mesh_sim_set_route_request_flags(
+              &world, transmitter, exact_two_hop_flags) == MESH_SIM_OK);
+    CHECK(world.roles[transmitter].route_request_flags == exact_two_hop_flags);
+    CHECK(MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(
+              world.roles[transmitter].route_request_flags) == 2u);
+    CHECK(mesh_sim_set_route_request_flags(
+              &world,
+              transmitter,
+              (uint8_t)(MESH_ROUTE_REQ_ALLOWED_FLAGS | UINT8_C(0x80))) ==
+          MESH_SIM_ERR_ARG);
+    CHECK(world.roles[transmitter].route_request_flags == exact_two_hop_flags);
+    CHECK(MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(too_deep_flags) ==
+          MESH_NETWORK_MAX_HOPS + 1u);
+    CHECK(mesh_sim_set_route_request_flags(
+              &world, transmitter, too_deep_flags) == MESH_SIM_ERR_ARG);
+    CHECK(world.roles[transmitter].route_request_flags == exact_two_hop_flags);
+    /* Depth zero is the supported legacy "any non-direct relay" policy. */
+    CHECK(MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(
+              MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) == 0u);
     CHECK(mesh_sim_set_route_request_flags(
               &world, transmitter, MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) ==
           MESH_SIM_OK);
+    CHECK(world.roles[transmitter].route_request_flags ==
+          MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED);
+
+    CHECK(mesh_sim_set_link(&world, transmitter, anchor, 98u, 5u) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, anchor, gateway, 98u, 5u) == MESH_SIM_OK);
+    CHECK(mesh_sim_set_link(&world, transmitter, gateway, 98u, 5u) == MESH_SIM_OK);
     CHECK(mesh_sim_init_anchor_session(&world, anchor, &anchor_config) == PROTO_OK);
 
     phase = "forced_direct_probe_contact_only";
