@@ -480,6 +480,7 @@ static int build_range_report_samples(uint64_t clicker_id,
     uint8_t encoded[PACKET_MAX_LEN];
     uint16_t sample_index = 0u;
     uint16_t packet_index = 0u;
+    uint8_t fragment_capacity;
     bool fragmented;
     int ret;
 
@@ -494,9 +495,14 @@ static int build_range_report_samples(uint64_t clicker_id,
         sample_count > RANGE_REPORT_MAX_DISTANCE_SAMPLES) {
         return -EINVAL;
     }
-    ret = mesh_range_report_batch_reserve(clicker_id,
-                                          event_seq,
-                                          attempt_index);
+    fragment_capacity = (uint8_t)(1u +
+        (sample_count > 0u ?
+         ((sample_count - 1u + RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT - 1u) /
+          RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT) : 0u));
+    ret = mesh_range_report_batch_reserve_capacity(clicker_id,
+                                                   event_seq,
+                                                   attempt_index,
+                                                   fragment_capacity);
     if (ret < 0) {
         return ret;
     }

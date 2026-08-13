@@ -273,6 +273,10 @@ bool mesh_report_ch9_ack_wait_active(void);
 int mesh_range_report_batch_reserve(uint64_t clicker_id,
                                     uint32_t event_seq,
                                     uint8_t attempt_index);
+int mesh_range_report_batch_reserve_capacity(uint64_t clicker_id,
+                                    uint32_t event_seq,
+                                    uint8_t attempt_index,
+                                    uint8_t fragment_capacity);
 void mesh_range_report_batch_abort(uint64_t clicker_id,
                                    uint32_t event_seq,
                                    uint8_t attempt_index);

@@ -589,8 +589,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
     def test_anchor_reserves_report_custody_before_discovery_or_ranging(self):
         claim = function_body(ANCHOR_RADIO, "anchor_handle_uwb_claim")
         reserve = function_body(
-            REPORT_DELIVERY, "mesh_range_report_batch_reserve"
+            REPORT_DELIVERY, "mesh_range_report_batch_reserve_capacity"
         )
+        abort = function_body(REPORT_DELIVERY, "mesh_range_report_batch_abort")
         backlog = function_body(
             REPORT_DELIVERY, "mesh_report_tx_backlog_active"
         )
@@ -602,7 +603,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         )
 
         preempt = claim.index("mesh_preempt_for_click_event_until(")
-        reservation = claim.index("mesh_range_report_batch_reserve(", preempt)
+        reservation = claim.index(
+            "mesh_range_report_batch_reserve_capacity(", preempt
+        )
         discovery_config = claim.index(
             "dwm3000_driver_configure_wake_mode", reservation
         )
@@ -621,11 +624,27 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(ranging, cleanup)
         self.assertIn("goto claim_complete;", claim[reservation:cleanup])
 
-        self.assertIn("app_mesh_report_encode_cir_pending()", reserve)
-        self.assertIn("mesh_ch9_tx_pending_is_active()", reserve)
-        self.assertLess(
-            reserve.index("app_mesh_report_encode_cir_pending()"),
-            reserve.index("k_msgq_num_used_get(&report_tx_msgq)"),
+        self.assertIn(
+            "k_msgq_num_free_get(&report_tx_msgq) < fragment_capacity",
+            reserve,
+        )
+        self.assertIn(
+            ".queue_prefix_count = (uint8_t)queue_count",
+            reserve,
+        )
+        capacity_gate = reserve[: reserve.index("memset(&control")]
+        self.assertNotIn(
+            "if (app_mesh_report_encode_cir_pending()", capacity_gate
+        )
+        self.assertNotIn(
+            "||\n        mesh_ch9_tx_pending_is_active()", capacity_gate
+        )
+        self.assertIn(
+            ".queue_prefix_count +\n                                     i",
+            abort,
+        )
+        self.assertIn(
+            "MESH_RANGE_REPORT_BATCH_ABORT_ROTATE_PUT", abort
         )
         self.assertIn("app_mesh_report_encode_cir_pending()", backlog)
 

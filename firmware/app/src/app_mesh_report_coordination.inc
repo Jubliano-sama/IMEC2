@@ -2162,10 +2162,10 @@ static int report_tx_queue_append(const struct mesh_outbound *outbound)
     }
     if (anchor_range_report_batch_reservation.active) {
         /*
-         * The batch owns every nominal queue slot until its final fragment is
-         * visible.  Letting a retry append here would interleave unrelated
-         * custody with a partial batch, and abort could then remove that retry
-         * while rotating away the batch prefix.
+         * The batch freezes the proven queue prefix and owns its reserved
+         * suffix until the final fragment is visible. Letting a retry append
+         * here would interleave unrelated custody with that suffix and make an
+         * exact rollback impossible.
          */
         ret = -EAGAIN;
     } else {

@@ -70,20 +70,23 @@ static void test_normal_click_phase_and_custody(void)
     /* Abort cannot discard the retained report owner. */
     assert(app_anchor_click_event_runtime_abort(210u, NULL) == 0);
     assert(app_anchor_click_event_runtime_result_owned());
-    assert(app_anchor_click_event_runtime_claim(&second, 220u, NULL) ==
-           -EBUSY);
-    assert(app_anchor_click_event_runtime_custody_released(
-               second.clicker_id, second.click_event_id, second.attempt_index,
-               221u, NULL) == -ESTALE);
-    assert(app_anchor_click_event_runtime_custody_released(
-               claim.clicker_id, claim.click_event_id, claim.attempt_index,
-               300u, &transition) == 0);
-    assert(!app_anchor_click_event_runtime_active());
-    assert(app_anchor_click_event_runtime_state() == FW_ANCHOR_CLICK_IDLE);
-    assert(app_anchor_click_event_runtime_claim(&second, 301u,
+    /* An exact replay cannot detach its own retained phase. */
+    assert(app_anchor_click_event_runtime_claim(&claim, 215u, NULL) == 0);
+    assert(app_anchor_click_event_runtime_result_owned());
+
+    /* The transport already owns the old bytes, so a distinct click may
+     * detach the phase guard without discarding report custody. */
+    assert(app_anchor_click_event_runtime_claim(&second, 230u,
                                                 &transition) == 0);
     assert(app_anchor_click_event_runtime_state() ==
            FW_ANCHOR_CLICK_CLAIMED);
+    assert(app_anchor_click_event_runtime_custody_released(
+               second.clicker_id, second.click_event_id, second.attempt_index,
+               231u, NULL) == 0);
+    assert(app_anchor_click_event_runtime_custody_released(
+               claim.clicker_id, claim.click_event_id, claim.attempt_index,
+               300u, &transition) == 0);
+    assert(app_anchor_click_event_runtime_state() == FW_ANCHOR_CLICK_CLAIMED);
     assert(app_anchor_click_event_runtime_abort(305u, NULL) == 0);
     assert(app_anchor_click_event_runtime_handle(FW_EVENT_RANGE_DUE, 310u,
                                                  NULL) == -ESTALE);

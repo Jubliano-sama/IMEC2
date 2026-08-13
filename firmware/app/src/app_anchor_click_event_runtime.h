@@ -43,7 +43,10 @@ int app_anchor_click_event_runtime_abort(
     uint32_t now_ms,
     struct fw_transition *transition);
 
-/* The journal callback must pass the exact retained report identity. */
+/*
+ * The report owner must pass the exact active identity. Completion is
+ * idempotent after that phase has detached and a successor has started.
+ */
 int app_anchor_click_event_runtime_custody_released(
     uint64_t clicker_id,
     uint32_t click_event_id,

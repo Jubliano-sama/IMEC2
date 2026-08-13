@@ -351,6 +351,7 @@ static void report_owner_reset(void)
            sizeof(report_tx_queue_rotation_scratch));
     memset(&mesh_send_scratch_tx, 0, sizeof(mesh_send_scratch_tx));
     memset(&mesh_ch9_tx_batch_storage, 0, sizeof(mesh_ch9_tx_batch_storage));
+    memset(&mesh_ch9_tx_pending, 0, sizeof(mesh_ch9_tx_pending));
     report_tx_queue_recovery_valid = false;
     report_tx_backoff_until_ms = 0u;
     report_tx_backoff_active = false;
@@ -1099,7 +1100,7 @@ ZTEST(production_seam_report_custody,
 }
 
 ZTEST(production_seam_report_custody,
-      test_range_batch_reserve_proves_empty_queue_and_restores_transit)
+      test_click_sized_batch_preserves_existing_queue_and_independent_owners)
 {
     const uint64_t clicker_id = UINT64_C(0x1111222233334444);
     const uint32_t event_seq = 0x10203040u;
@@ -1107,40 +1108,95 @@ ZTEST(production_seam_report_custody,
     const struct mesh_outbound local = queued_report(DEVICE_ID, 901u);
     const struct mesh_outbound transit = queued_report(
         UINT64_C(0x4545000000000001), 902u);
+    const struct mesh_outbound first = range_fragment(
+        clicker_id, event_seq, attempt_index, 0u);
+    const struct mesh_outbound second = range_fragment(
+        clicker_id, event_seq, attempt_index, 1u);
     struct mesh_outbound queued = {0};
 
     report_owner_reset();
     anchor_uwb_busy = true;
     zassert_ok(k_msgq_put(&report_tx_msgq, &local, K_NO_WAIT));
-    zassert_equal(mesh_range_report_batch_reserve(clicker_id,
-                                                  event_seq,
-                                                  attempt_index),
-                  -EAGAIN,
-                  "local queue bytes were displaced for a batch");
-    zassert_false(anchor_range_report_batch_reservation.active);
-    zassert_ok(k_msgq_peek(&report_tx_msgq, &queued));
-    zassert_mem_equal(&queued, &local, sizeof(queued));
-
-    report_owner_reset();
-    anchor_uwb_busy = true;
     zassert_ok(k_msgq_put(&report_tx_msgq, &transit, K_NO_WAIT));
-    zassert_ok(mesh_range_report_batch_reserve(clicker_id,
-                                               event_seq,
-                                               attempt_index));
-    zassert_equal(k_msgq_num_used_get(&report_tx_msgq), 0u,
-                  "reservation did not establish an empty real queue");
-    zassert_true(report_tx_queue_recovery_valid);
-    zassert_mem_equal(&report_tx_queue_overflow_dropped,
-                      &transit,
-                      sizeof(transit));
+    mesh_ch9_tx_pending.active = true;
+    mesh_ch9_tx_pending.count = 1u;
+    zassert_ok(mesh_range_report_batch_reserve_capacity(clicker_id,
+                                                        event_seq,
+                                                        attempt_index,
+                                                        2u));
+    zassert_equal(anchor_range_report_batch_reservation.queue_prefix_count, 2u);
+    zassert_equal(anchor_range_report_batch_reservation.fragment_capacity, 2u);
+    zassert_equal(k_msgq_num_used_get(&report_tx_msgq), 2u,
+                  "reservation displaced the exact pre-existing prefix");
+    zassert_ok(queue_anchor_range_report_fragment(&first,
+                                                  clicker_id,
+                                                  event_seq,
+                                                  attempt_index,
+                                                  false));
+    zassert_ok(queue_anchor_range_report_fragment(&second,
+                                                  clicker_id,
+                                                  event_seq,
+                                                  attempt_index,
+                                                  false));
 
     mesh_range_report_batch_abort(clicker_id, event_seq, attempt_index);
     zassert_false(anchor_range_report_batch_reservation.active);
     zassert_false(report_tx_queue_recovery_valid);
-    zassert_equal(k_msgq_num_used_get(&report_tx_msgq), 1u);
-    zassert_ok(k_msgq_peek(&report_tx_msgq, &queued));
+    zassert_equal(k_msgq_num_used_get(&report_tx_msgq), 2u);
+    zassert_ok(k_msgq_get(&report_tx_msgq, &queued, K_NO_WAIT));
+    zassert_mem_equal(&queued, &local, sizeof(queued));
+    zassert_ok(k_msgq_get(&report_tx_msgq, &queued, K_NO_WAIT));
     zassert_mem_equal(&queued, &transit, sizeof(queued));
+    zassert_true(mesh_ch9_tx_pending.active,
+                 "new range reservation released the older ACK-wait owner");
     zassert_equal(watchdog_stop_calls, 0u);
+
+    report_owner_reset();
+    for (uint8_t i = 0u; i < REPORT_TX_QUEUE_DEPTH - 1u; i++) {
+        queued = queued_report(DEVICE_ID, (uint16_t)(910u + i));
+        zassert_ok(k_msgq_put(&report_tx_msgq, &queued, K_NO_WAIT));
+    }
+    zassert_equal(mesh_range_report_batch_reserve_capacity(clicker_id,
+                                                           event_seq,
+                                                           attempt_index,
+                                                           2u),
+                  -EAGAIN,
+                  "click reservation exceeded the actual free suffix");
+}
+
+ZTEST(production_seam_report_custody,
+      test_range_batch_prefix_rotation_failure_retains_exact_scratch_owner)
+{
+    const uint64_t clicker_id = UINT64_C(0x1111222233334444);
+    const uint32_t event_seq = 0x10203040u;
+    const uint8_t attempt_index = 2u;
+    const struct mesh_outbound prefix = queued_report(DEVICE_ID, 930u);
+    const struct mesh_outbound fragment = range_fragment(
+        clicker_id, event_seq, attempt_index, 0u);
+
+    report_owner_reset();
+    anchor_uwb_busy = true;
+    zassert_ok(k_msgq_put(&report_tx_msgq, &prefix, K_NO_WAIT));
+    zassert_ok(mesh_range_report_batch_reserve_capacity(clicker_id,
+                                                        event_seq,
+                                                        attempt_index,
+                                                        1u));
+    zassert_ok(queue_anchor_range_report_fragment(&fragment,
+                                                  clicker_id,
+                                                  event_seq,
+                                                  attempt_index,
+                                                  false));
+    range_abort_queue_fault_arm(
+        MESH_RANGE_REPORT_BATCH_ABORT_ROTATE_PUT, 0u);
+    mesh_range_report_batch_abort(clicker_id, event_seq, attempt_index);
+    assert_range_abort_failed_closed();
+    zassert_true(anchor_range_report_batch_reservation.rollback_scratch_owned);
+    zassert_mem_equal(&report_tx_queue_rotation_scratch,
+                      &prefix,
+                      sizeof(prefix),
+                      "failed prefix rotation lost the dequeued owner");
+    zassert_equal(k_msgq_num_used_get(&report_tx_msgq), 1u,
+                  "failed prefix rotation changed the reserved suffix");
 }
 
 ZTEST(production_seam_report_custody,
@@ -1439,6 +1495,73 @@ ZTEST(production_seam_report_custody,
     zassert_true(anchor_range_report_control_matches(
         &anchor_range_report_ack_runtime.control, &retired_control));
     zassert_equal(anchor_range_report_ack_runtime.acknowledged_mask, 0u);
+    zassert_true(app_anchor_click_event_runtime_result_owned());
+}
+
+ZTEST(production_seam_report_custody,
+      test_new_click_detaches_delivered_phase_without_dropping_old_transport)
+{
+    const uint64_t old_clicker_id = UINT64_C(0x1111222233334444);
+    const uint32_t old_event_seq = 0x10203040u;
+    const uint8_t old_attempt_index = 2u;
+    const uint64_t successor_clicker_id = old_clicker_id;
+    const uint32_t successor_event_seq = old_event_seq + 1u;
+    const uint8_t successor_attempt_index = 1u;
+    const uint64_t successor_nonce = UINT64_C(0x4142434445464748);
+    const struct mesh_outbound old_fragment = prepare_range_ack_runtime(
+        old_clicker_id,
+        old_event_seq,
+        old_attempt_index,
+        UINT64_C(0x0102030405060708));
+    const struct uwb_wake_claim_frame successor_claim = range_lifecycle_claim(
+        successor_clicker_id,
+        successor_event_seq,
+        successor_attempt_index,
+        successor_nonce);
+    const struct mesh_outbound successor_fragment = range_fragment(
+        successor_clicker_id,
+        successor_event_seq,
+        successor_attempt_index,
+        0u);
+    uint8_t old_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint64_t successor_generation;
+
+    zassert_true(anchor_range_report_ack_runtime.active);
+    zassert_equal(anchor_range_report_ack_runtime.acknowledged_mask, 0u);
+    zassert_true(app_anchor_click_event_runtime_result_owned());
+    zassert_ok(app_anchor_click_event_runtime_claim(
+        &successor_claim, k_uptime_get_32(), NULL));
+    zassert_equal(app_anchor_click_event_runtime_state(),
+                  FW_ANCHOR_CLICK_CLAIMED,
+                  "new click remained blocked by an independently owned report");
+
+    /* The old queue entry was already transferred to the relay by the helper.
+     * Replacing its lifecycle ledger cannot release those transport bytes. */
+    zassert_ok(mesh_range_report_batch_reserve(successor_clicker_id,
+                                               successor_event_seq,
+                                               successor_attempt_index));
+    zassert_ok(queue_anchor_range_report_fragment(&successor_fragment,
+                                                  successor_clicker_id,
+                                                  successor_event_seq,
+                                                  successor_attempt_index,
+                                                  true));
+    successor_generation = anchor_range_report_ack_runtime.generation;
+    range_lifecycle_install_result_owner(successor_clicker_id,
+                                         successor_event_seq,
+                                         successor_attempt_index,
+                                         successor_nonce);
+    zassert_true(mesh_packet_semantic_digest(&old_fragment.packet,
+                                             old_fragment.payload,
+                                             old_fragment.payload_len,
+                                             old_digest));
+    zassert_ok(mesh_anchor_range_report_note_gateway_confirmed(
+        &old_fragment.packet, old_digest));
+    zassert_true(anchor_range_report_ack_runtime.active,
+                 "late old ACK erased successor report custody");
+    zassert_equal(anchor_range_report_ack_runtime.generation,
+                  successor_generation);
+    zassert_equal(anchor_range_report_ack_runtime.control.event_seq,
+                  successor_event_seq);
     zassert_true(app_anchor_click_event_runtime_result_owned());
 }
 

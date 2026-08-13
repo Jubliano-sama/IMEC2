@@ -927,16 +927,18 @@ static int anchor_range_report_fragment_digest_match_locked(
 }
 #endif
 
-int mesh_range_report_batch_reserve(uint64_t clicker_id,
-                                    uint32_t event_seq,
-                                    uint8_t attempt_index)
+int mesh_range_report_batch_reserve_capacity(uint64_t clicker_id,
+                                             uint32_t event_seq,
+                                             uint8_t attempt_index,
+                                             uint8_t fragment_capacity)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
     struct anchor_range_report_control control;
     uint32_t queue_count;
     int ret;
 
-    if (clicker_id == 0u || event_seq == 0u) {
+    if (clicker_id == 0u || event_seq == 0u || fragment_capacity == 0u ||
+        fragment_capacity > RANGE_REPORT_MAX_PACKET_FRAGMENTS) {
         return -EINVAL;
     }
     ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
@@ -953,8 +955,12 @@ int mesh_range_report_batch_reserve(uint64_t clicker_id,
                       -EIO;
             goto out;
         }
-        ret = anchor_range_report_batch_reservation.queued_fragment_count == 0u ?
-              0 : -EALREADY;
+        ret = fragment_capacity <=
+                      anchor_range_report_batch_reservation.fragment_capacity ?
+                  (anchor_range_report_batch_reservation
+                           .queued_fragment_count == 0u ?
+                       0 : -EALREADY) :
+                  -ENOSPC;
         goto out;
     }
     if (anchor_range_report_batch_reservation.active) {
@@ -969,48 +975,38 @@ int mesh_range_report_batch_reserve(uint64_t clicker_id,
         if (all_acknowledged == 0u ||
             anchor_range_report_ack_runtime.acknowledged_mask !=
                 all_acknowledged) {
-            ret = -EBUSY;
-            goto out;
+            if (app_anchor_click_event_runtime_result_owned()) {
+                ret = -EBUSY;
+                goto out;
+            }
         }
-        if (app_anchor_click_event_runtime_result_owned()) {
-            ret = -EAGAIN;
-            goto out;
-        }
+        /*
+         * The old packets remain owned by the report queue or relay.  Once
+         * their phase owner has detached, this lifecycle-only ACK ledger may
+         * be replaced; exact per-packet transport custody is unaffected.
+         */
         memset(&anchor_range_report_ack_runtime, 0,
                sizeof(anchor_range_report_ack_runtime));
     }
-    if (report_tx_queue_recovery_valid &&
-        mesh_outbound_is_local_origin_priority(
-            &report_tx_queue_overflow_dropped)) {
-        ret = -EAGAIN;
-        goto out;
-    }
-    if (app_mesh_report_encode_cir_pending() ||
-        mesh_ch9_tx_pending_is_active()) {
-        ret = -EAGAIN;
-        goto out;
-    }
+    (void)report_tx_queue_restore_recovery_locked();
     queue_count = (uint32_t)k_msgq_num_used_get(&report_tx_msgq);
-    if (!report_tx_queue_recovery_valid &&
-        !app_mesh_queue_head_owned(&report_tx_queue_head_owner) &&
-        queue_count == 1u &&
-        k_msgq_num_free_get(&report_tx_msgq) + 1u >=
-            RANGE_REPORT_MAX_PACKET_FRAGMENTS &&
-        k_msgq_peek(&report_tx_msgq,
-                    &report_tx_queue_rotation_scratch) == 0 &&
-        !mesh_outbound_is_local_origin_priority(
-            &report_tx_queue_rotation_scratch)) {
-        if (k_msgq_get(&report_tx_msgq,
-                       &report_tx_queue_overflow_dropped,
-                       K_NO_WAIT) == 0) {
-            report_tx_queue_recovery_valid = true;
-            queue_count = 0u;
-        }
-    }
     if (app_mesh_queue_head_owned(&report_tx_queue_head_owner) ||
-        queue_count != 0u ||
-        k_msgq_num_free_get(&report_tx_msgq) <
-            RANGE_REPORT_MAX_PACKET_FRAGMENTS) {
+        report_tx_queue_recovery_valid ||
+        queue_count > UINT8_MAX ||
+        k_msgq_num_free_get(&report_tx_msgq) < fragment_capacity) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_RANGE_BATCH_RESERVE_BUSY evt=%u attempt=%u q=%u free=%u cap=%u head=%u recovery=%u cir=%u ackwait=%u\n",
+                                event_seq,
+                                attempt_index,
+                                queue_count,
+                                k_msgq_num_free_get(&report_tx_msgq),
+                                fragment_capacity,
+                                app_mesh_queue_head_owned(
+                                    &report_tx_queue_head_owner) ? 1u : 0u,
+                                report_tx_queue_recovery_valid ? 1u : 0u,
+                                app_mesh_report_encode_cir_pending() ? 1u : 0u,
+                                mesh_ch9_tx_pending_is_active() ? 1u : 0u);
+        }
         ret = -EAGAIN;
         goto out;
     }
@@ -1026,6 +1022,8 @@ int mesh_range_report_batch_reserve(uint64_t clicker_id,
             .clicker_id = clicker_id,
             .event_seq = event_seq,
             .attempt_index = attempt_index,
+            .fragment_capacity = fragment_capacity,
+            .queue_prefix_count = (uint8_t)queue_count,
             .active = true,
         };
     ret = 0;
@@ -1037,13 +1035,25 @@ out:
     ARG_UNUSED(clicker_id);
     ARG_UNUSED(event_seq);
     ARG_UNUSED(attempt_index);
+    ARG_UNUSED(fragment_capacity);
     return 0;
 #endif
+}
+
+int mesh_range_report_batch_reserve(uint64_t clicker_id,
+                                    uint32_t event_seq,
+                                    uint8_t attempt_index)
+{
+    return mesh_range_report_batch_reserve_capacity(
+        clicker_id, event_seq, attempt_index,
+        RANGE_REPORT_MAX_PACKET_FRAGMENTS);
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_ZTEST)
 enum mesh_range_report_batch_abort_queue_operation {
     MESH_RANGE_REPORT_BATCH_ABORT_PREFLIGHT_PEEK = 0,
+    MESH_RANGE_REPORT_BATCH_ABORT_ROTATE_GET,
+    MESH_RANGE_REPORT_BATCH_ABORT_ROTATE_PUT,
     MESH_RANGE_REPORT_BATCH_ABORT_REMOVE_GET,
     MESH_RANGE_REPORT_BATCH_ABORT_POST_GET,
 };
@@ -1098,9 +1108,11 @@ void mesh_range_report_batch_abort(uint64_t clicker_id,
         anchor_range_report_batch_reservation.control.fragment_count !=
             anchor_range_report_batch_reservation.queued_fragment_count ||
         queue_count !=
-            anchor_range_report_batch_reservation.queued_fragment_count) {
-        LOG_ERR("range report batch queue ownership corrupted: queued=%u expected=%u recovery=%u head=%u",
+            (uint32_t)anchor_range_report_batch_reservation.queue_prefix_count +
+                anchor_range_report_batch_reservation.queued_fragment_count) {
+        LOG_ERR("range report batch queue ownership corrupted: queued=%u prefix=%u expected=%u recovery=%u head=%u",
                 queue_count,
+                anchor_range_report_batch_reservation.queue_prefix_count,
                 anchor_range_report_batch_reservation.queued_fragment_count,
                 report_tx_queue_recovery_valid ? 1u : 0u,
                 app_mesh_queue_head_owned(&report_tx_queue_head_owner) ? 1u : 0u);
@@ -1125,7 +1137,9 @@ void mesh_range_report_batch_abort(uint64_t clicker_id,
         {
             ret = k_msgq_peek_at(&report_tx_msgq,
                                  &report_tx_queue_rotation_scratch,
-                                 i);
+                                 anchor_range_report_batch_reservation
+                                         .queue_prefix_count +
+                                     i);
         }
         if (ret != 0 ||
             !anchor_range_report_fragment_matches_control_locked(
@@ -1142,6 +1156,61 @@ void mesh_range_report_batch_abort(uint64_t clicker_id,
             app_watchdog_stop_feeding();
             k_mutex_unlock(&report_tx_queue_overflow_lock);
             return;
+        }
+    }
+    /* Move the proven pre-existing prefix behind this batch. Removing the
+     * batch from the head then restores the prefix byte-for-byte and in order.
+     * The queue mutex prevents either owner from changing during the rotation. */
+    if (fragments_to_remove > 0u) {
+        for (uint8_t i = 0u;
+             i < anchor_range_report_batch_reservation.queue_prefix_count;
+             i++) {
+#if defined(CONFIG_ZTEST)
+            ret = mesh_range_report_batch_abort_test_queue_fault != NULL ?
+                      mesh_range_report_batch_abort_test_queue_fault(
+                          MESH_RANGE_REPORT_BATCH_ABORT_ROTATE_GET, i) :
+                      0;
+            if (ret == 0)
+#endif
+            {
+                ret = k_msgq_get(&report_tx_msgq,
+                                 &report_tx_queue_rotation_scratch,
+                                 K_NO_WAIT);
+            }
+            if (ret != 0) {
+                LOG_ERR("range report batch abort could not rotate prefix %u: %d",
+                        i, ret);
+                anchor_range_report_batch_reservation.queue_error = ret;
+                anchor_range_report_batch_reservation
+                    .queue_admission_fail_closed = true;
+                app_watchdog_stop_feeding();
+                k_mutex_unlock(&report_tx_queue_overflow_lock);
+                return;
+            }
+            anchor_range_report_batch_reservation.rollback_scratch_owned = true;
+#if defined(CONFIG_ZTEST)
+            ret = mesh_range_report_batch_abort_test_queue_fault != NULL ?
+                      mesh_range_report_batch_abort_test_queue_fault(
+                          MESH_RANGE_REPORT_BATCH_ABORT_ROTATE_PUT, i) :
+                      0;
+            if (ret == 0)
+#endif
+            {
+                ret = k_msgq_put(&report_tx_msgq,
+                                 &report_tx_queue_rotation_scratch,
+                                 K_NO_WAIT);
+            }
+            if (ret != 0) {
+                LOG_ERR("range report batch abort could not restore prefix %u: %d",
+                        i, ret);
+                anchor_range_report_batch_reservation.queue_error = ret;
+                anchor_range_report_batch_reservation
+                    .queue_admission_fail_closed = true;
+                app_watchdog_stop_feeding();
+                k_mutex_unlock(&report_tx_queue_overflow_lock);
+                return;
+            }
+            anchor_range_report_batch_reservation.rollback_scratch_owned = false;
         }
     }
     for (uint8_t i = 0u; i < fragments_to_remove; i++) {
@@ -1210,11 +1279,8 @@ void mesh_range_report_batch_abort(uint64_t clicker_id,
                           .fragments[0]));
         anchor_range_report_batch_reservation.rollback_scratch_owned = false;
     }
-    /*
-     * Reservation may have moved the only pre-existing transit record into
-     * the explicit recovery owner.  Restore it before deciding whether work
-     * remains, including the zero-fragment work-submit failure path.
-     */
+    /* Reconcile any independent recovery owner before resuming the frozen
+     * prefix. Normally none can appear while the reservation is active. */
     ret = report_tx_queue_restore_recovery_locked();
     if (ret == 0) {
         ret = report_tx_queue_promote_local_locked();
@@ -1270,7 +1336,7 @@ int queue_anchor_range_report_fragment(
                                                   event_seq,
                                                   attempt_index) ||
         anchor_range_report_batch_reservation.queued_fragment_count >=
-            RANGE_REPORT_MAX_PACKET_FRAGMENTS) {
+            anchor_range_report_batch_reservation.fragment_capacity) {
         ret = -ESTALE;
         goto out;
     }

@@ -38,6 +38,13 @@ static bool claim_key_matches(
            context->nonce == claim->nonce;
 }
 
+static bool claim_is_valid(const struct uwb_wake_claim_frame *claim)
+{
+    return claim != NULL && claim->clicker_id != 0u &&
+           claim->click_event_id != 0u && claim->attempt_index != 0u &&
+           claim->nonce != 0u && claim->priority_id != 0u;
+}
+
 static int result_to_errno(enum fw_sm_result result)
 {
     switch (result) {
@@ -104,9 +111,7 @@ int app_anchor_click_event_runtime_claim(
     struct fw_event event;
     int ret;
 
-    if (claim == NULL || claim->clicker_id == 0u ||
-        claim->click_event_id == 0u || claim->attempt_index == 0u ||
-        claim->nonce == 0u || claim->priority_id == 0u) {
+    if (!claim_is_valid(claim)) {
         return -EINVAL;
     }
 
@@ -114,7 +119,17 @@ int app_anchor_click_event_runtime_claim(
         return 0;
     }
     if (app_anchor_click_event_runtime_result_owned()) {
-        return -EBUSY;
+        /*
+         * RESULT_RETAINED means the report queue/relay has already accepted
+         * the immutable bytes. Keep that transport custody, but release this
+         * phase-only owner so a later physical click can start while the old
+         * report finishes its independent gateway-ACK path.
+         */
+        ret = app_anchor_click_event_runtime_handle(
+            FW_EVENT_RESULT_CUSTODY_RELEASED, now_ms, NULL);
+        if (ret != 0) {
+            return ret;
+        }
     }
     if (runtime.machine.identity.active) {
         ret = app_anchor_click_event_runtime_abort(now_ms, NULL);
@@ -216,8 +231,11 @@ int app_anchor_click_event_runtime_custody_released(
     struct fw_transition *transition)
 {
     if (!runtime.machine.identity.active ||
-        runtime.machine.state != FW_ANCHOR_CLICK_RESULT_OWNED ||
-        !runtime.key_valid || runtime.clicker_id != clicker_id ||
+        runtime.machine.state != FW_ANCHOR_CLICK_RESULT_OWNED) {
+        /* The transport owner may finish after a successor phase started. */
+        return 0;
+    }
+    if (!runtime.key_valid || runtime.clicker_id != clicker_id ||
         runtime.click_event_id != click_event_id ||
         runtime.attempt_index != attempt_index) {
         return -ESTALE;

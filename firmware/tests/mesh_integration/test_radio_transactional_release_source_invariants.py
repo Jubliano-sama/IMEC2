@@ -27,6 +27,9 @@ ANCHOR = (ROOT / "app" / "src" / "app_anchor_radio.inc").read_text(
 ANCHOR_APP = (ROOT / "app" / "src" / "app_anchor.c").read_text(
     encoding="utf-8"
 )
+ANCHOR_CLICK_EVENT_RUNTIME = (
+    ROOT / "app" / "src" / "app_anchor_click_event_runtime.c"
+).read_text(encoding="utf-8")
 COORDINATION = (
     ROOT / "app" / "src" / "app_mesh_report_coordination.inc"
 ).read_text(encoding="utf-8")
@@ -409,7 +412,12 @@ class RadioTransactionalReleaseSourceInvariantTests(unittest.TestCase):
         )
 
         claim = handoff.index("radio_guard_uwb_claim(")
-        reserve = handoff.index("mesh_range_report_batch_reserve(", claim)
+        phase_claim = handoff.index(
+            "app_anchor_click_event_runtime_claim(", claim
+        )
+        reserve = handoff.index(
+            "mesh_range_report_batch_reserve_capacity(", phase_claim
+        )
         transfer = handoff.index(
             "anchor_pending_click_handoff.radio_lease = radio_lease", reserve
         )
@@ -420,6 +428,8 @@ class RadioTransactionalReleaseSourceInvariantTests(unittest.TestCase):
         )
 
         self.assertLess(claim, reserve)
+        self.assertLess(claim, phase_claim)
+        self.assertLess(phase_claim, reserve)
         self.assertLess(reserve, transfer)
         self.assertLess(transfer, submit)
         self.assertLess(submit, queue_failure)
@@ -429,7 +439,7 @@ class RadioTransactionalReleaseSourceInvariantTests(unittest.TestCase):
         )
         self.assertNotIn("radio_guard_uwb_claim(", worker)
         self.assertNotIn("mesh_preempt_for_click_event(", worker)
-        self.assertNotIn("mesh_range_report_batch_reserve(", worker)
+        self.assertNotIn("mesh_range_report_batch_reserve_capacity(", worker)
         self.assertIn("&pending.radio_lease", worker)
         self.assertIn("radio_generation = pending.radio_lease.generation", worker)
         self.assertLess(
@@ -442,6 +452,117 @@ class RadioTransactionalReleaseSourceInvariantTests(unittest.TestCase):
             scan,
         )
         self.assertIn("struct radio_guard_uwb_lease radio_lease;", ANCHOR_APP)
+
+    def test_fast_click_detaches_old_phase_before_capacity_and_cleans_failures(self) -> None:
+        handoff = function_body(ANCHOR, "anchor_handle_mesh_click_wake_claim")
+        runtime_claim = function_body(
+            ANCHOR_CLICK_EVENT_RUNTIME,
+            "app_anchor_click_event_runtime_claim",
+        )
+        custody_release = function_body(
+            ANCHOR_CLICK_EVENT_RUNTIME,
+            "app_anchor_click_event_runtime_custody_released",
+        )
+
+        pending_duplicate = braced_block_after(
+            handoff, "if (anchor_pending_click_handoff.active)"
+        )
+        radio_claim = handoff.index("radio_guard_uwb_claim(")
+        phase_claim = handoff.index(
+            "app_anchor_click_event_runtime_claim(", radio_claim
+        )
+        phase_failure = handoff.index("if (ret < 0)", phase_claim)
+        phase_failure_block = braced_block_after(
+            handoff, "if (ret < 0)", phase_claim
+        )
+        reserve = handoff.index(
+            "mesh_range_report_batch_reserve_capacity(", phase_failure
+        )
+        reserve_failure = handoff.index("if (ret < 0)", reserve)
+        reserve_failure_block = braced_block_after(
+            handoff, "if (ret < 0)", reserve
+        )
+        transfer = handoff.index(
+            "anchor_pending_click_handoff.radio_lease = radio_lease", reserve
+        )
+        replaced = handoff.index("if (!pending_matches)", transfer)
+        replaced_block = braced_block_after(
+            handoff, "if (!pending_matches)", transfer
+        )
+        submit = handoff.index("k_work_submit_to_queue(", replaced)
+        queue_abort = handoff.index("mesh_range_report_batch_abort(", submit)
+        queue_phase_abort = handoff.index(
+            "anchor_click_event_abort_if_needed(", queue_abort
+        )
+        queue_release = handoff.index(
+            "anchor_release_unstarted_click_lease(", queue_phase_abort
+        )
+
+        self.assertNotIn("radio_guard_uwb_claim(", pending_duplicate)
+        self.assertNotIn(
+            "app_anchor_click_event_runtime_claim(", pending_duplicate
+        )
+        self.assertNotIn(
+            "mesh_range_report_batch_reserve_capacity(", pending_duplicate
+        )
+        self.assertIn("return true;", pending_duplicate)
+        self.assertLess(radio_claim, phase_claim)
+        self.assertLess(phase_claim, phase_failure)
+        self.assertLess(phase_failure, reserve)
+        self.assertIn(
+            "anchor_release_unstarted_click_lease(", phase_failure_block
+        )
+        self.assertNotIn("mesh_range_report_batch_abort(", phase_failure_block)
+
+        self.assertLess(reserve, reserve_failure)
+        self.assertLess(reserve_failure, transfer)
+        self.assertIn(
+            'anchor_click_event_abort_if_needed("click-report-capacity")',
+            reserve_failure_block,
+        )
+        self.assertIn(
+            "anchor_release_unstarted_click_lease(", reserve_failure_block
+        )
+        self.assertIn("return false;", reserve_failure_block)
+        self.assertNotIn("mesh_range_report_batch_abort(", reserve_failure_block)
+        for cleanup in (
+            "mesh_range_report_batch_abort(",
+            "anchor_click_event_abort_if_needed(",
+            "anchor_release_unstarted_click_lease(",
+        ):
+            self.assertIn(cleanup, replaced_block)
+        self.assertLess(submit, queue_abort)
+        self.assertLess(queue_abort, queue_phase_abort)
+        self.assertLess(queue_phase_abort, queue_release)
+
+        # The phase owner detaches RESULT_OWNED without reaching into the
+        # independent report queue/relay custody. Replaying the accepted key
+        # is a no-op, and a delayed old transport completion cannot mutate a
+        # successor phase.
+        exact_replay = runtime_claim.index("if (claim_key_matches(")
+        replay_return = runtime_claim.index("return 0;", exact_replay)
+        result_owned = runtime_claim.index(
+            "if (app_anchor_click_event_runtime_result_owned())", replay_return
+        )
+        detach = runtime_claim.index(
+            "FW_EVENT_RESULT_CUSTODY_RELEASED", result_owned
+        )
+        successor_generation = runtime_claim.index(
+            "runtime.next_generation++", detach
+        )
+        self.assertLess(exact_replay, replay_return)
+        self.assertLess(replay_return, result_owned)
+        self.assertLess(result_owned, detach)
+        self.assertLess(detach, successor_generation)
+        self.assertNotIn("mesh_range_report", runtime_claim)
+        self.assertNotIn("report_tx", runtime_claim)
+        detached = custody_release.index(
+            "runtime.machine.state != FW_ANCHOR_CLICK_RESULT_OWNED"
+        )
+        detached_return = custody_release.index("return 0;", detached)
+        identity_check = custody_release.index("if (!runtime.key_valid", detached_return)
+        self.assertLess(detached, detached_return)
+        self.assertLess(detached_return, identity_check)
 
     def test_reserved_handoff_freezes_claim_identity_during_collection(self) -> None:
         collection = function_body(ANCHOR, "anchor_handle_uwb_claim")

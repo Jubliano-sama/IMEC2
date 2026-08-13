@@ -325,6 +325,13 @@ BUILD_ASSERT(MESH_CH9_TX_BATCH_MAX <= REPORT_TX_QUEUE_DEPTH,
 #if !defined(CONFIG_IMEC_ML_ANCHOR)
 BUILD_ASSERT(REPORT_TX_QUEUE_DEPTH >= RANGE_REPORT_MAX_PACKET_FRAGMENTS,
              "one maximum range report must fit in an empty report queue");
+BUILD_ASSERT(UWB_DEFAULT_CLICK_MAX_EXCHANGES > 0u &&
+             UWB_DEFAULT_CLICK_MAX_EXCHANGES <=
+                 RANGE_REPORT_MAX_DISTANCE_SAMPLES,
+             "default click exchange count must fit the range report model");
+BUILD_ASSERT(ANCHOR_CLICK_RANGE_REPORT_FRAGMENT_CAPACITY <=
+                 RANGE_REPORT_MAX_PACKET_FRAGMENTS,
+             "default click fragment reservation exceeds the report model");
 #endif
 #endif
 #endif
@@ -454,6 +461,8 @@ struct anchor_range_report_batch_reservation {
     uint32_t event_seq;
     uint8_t attempt_index;
     uint8_t queued_fragment_count;
+    uint8_t fragment_capacity;
+    uint8_t queue_prefix_count;
     int queue_error;
     bool queue_admission_fail_closed;
     bool rollback_scratch_owned;

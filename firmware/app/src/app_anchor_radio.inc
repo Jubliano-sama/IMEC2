@@ -1192,9 +1192,11 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
         return false;
     }
     if (click_priority) {
-        ret = mesh_range_report_batch_reserve(selected_claim.clicker_id,
-                                              selected_claim.click_event_id,
-                                              selected_claim.attempt_index);
+        ret = mesh_range_report_batch_reserve_capacity(
+            selected_claim.clicker_id,
+            selected_claim.click_event_id,
+            selected_claim.attempt_index,
+            ANCHOR_CLICK_RANGE_REPORT_FRAGMENT_CAPACITY);
         if (ret < 0) {
             status_debug_printf("DBG_ANCHOR_CLICK_REPORT_CAPACITY_BUSY evt=%u attempt=%u ret=%d release=0\n",
                                 selected_claim.click_event_id,
@@ -1928,9 +1930,9 @@ static bool anchor_handle_mesh_click_wake_claim(
         return false;
     }
 
-    ret = mesh_range_report_batch_reserve(claim->clicker_id,
-                                          claim->click_event_id,
-                                          claim->attempt_index);
+    ret = app_anchor_click_event_runtime_claim(claim,
+                                               k_uptime_get_32(),
+                                               NULL);
     if (ret < 0) {
         key = k_spin_lock(&anchor_pending_click_handoff_lock);
         pending_matches = anchor_pending_click_handoff.active &&
@@ -1943,6 +1945,34 @@ static bool anchor_handle_mesh_click_wake_claim(
                    sizeof(anchor_pending_click_handoff));
         }
         k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+        release_ret = anchor_release_unstarted_click_lease(
+            &radio_lease, "click-phase-claim");
+        status_debug_printf("DBG_ANCHOR_CLICK_PHASE_CLAIM_FAIL evt=%u attempt=%u ret=%d release=%d\n",
+                            claim->click_event_id,
+                            claim->attempt_index,
+                            ret,
+                            release_ret);
+        return false;
+    }
+
+    ret = mesh_range_report_batch_reserve_capacity(
+        claim->clicker_id,
+        claim->click_event_id,
+        claim->attempt_index,
+        ANCHOR_CLICK_RANGE_REPORT_FRAGMENT_CAPACITY);
+    if (ret < 0) {
+        key = k_spin_lock(&anchor_pending_click_handoff_lock);
+        pending_matches = anchor_pending_click_handoff.active &&
+            anchor_pending_click_handoff.claim.clicker_id == claim->clicker_id &&
+            anchor_pending_click_handoff.claim.click_event_id == claim->click_event_id &&
+            anchor_pending_click_handoff.claim.attempt_index == claim->attempt_index &&
+            anchor_pending_click_handoff.radio_lease.generation == 0u;
+        if (pending_matches) {
+            memset(&anchor_pending_click_handoff, 0,
+                   sizeof(anchor_pending_click_handoff));
+        }
+        k_spin_unlock(&anchor_pending_click_handoff_lock, key);
+        anchor_click_event_abort_if_needed("click-report-capacity");
         release_ret = anchor_release_unstarted_click_lease(
             &radio_lease, "click-report-capacity");
         status_debug_printf("DBG_ANCHOR_CLICK_REPORT_CAPACITY_BUSY evt=%u attempt=%u ret=%d release=%d\n",
@@ -1967,6 +1997,7 @@ static bool anchor_handle_mesh_click_wake_claim(
         mesh_range_report_batch_abort(claim->clicker_id,
                                       claim->click_event_id,
                                       claim->attempt_index);
+        anchor_click_event_abort_if_needed("click-handoff-replaced");
         (void)anchor_release_unstarted_click_lease(
             &radio_lease, "click-handoff-replaced");
         return false;
@@ -2000,6 +2031,7 @@ static bool anchor_handle_mesh_click_wake_claim(
     mesh_range_report_batch_abort(claim->clicker_id,
                                   claim->click_event_id,
                                   claim->attempt_index);
+    anchor_click_event_abort_if_needed("click-handoff-queue");
     release_ret = pending_matches ?
         anchor_release_unstarted_click_lease(&radio_lease,
                                              "click-handoff-queue") :

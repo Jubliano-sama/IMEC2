@@ -28,6 +28,7 @@ LOG_MODULE_REGISTER(production_seam_click_handoff, LOG_LEVEL_INF);
 #define HARNESS_REPAIR_WORKQUEUE_STACK_SIZE 8576u
 #define HARNESS_CLICK_WORKQUEUE_STACK_SIZE 7168u
 #define ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS 20u
+#define ANCHOR_CLICK_RANGE_REPORT_FRAGMENT_CAPACITY 2u
 #define ROLE_ANCHOR 2
 #define APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY 1
 
@@ -107,6 +108,7 @@ static int repair_last_result;
 static uint32_t watchdog_stop_calls;
 static uint32_t node_comm_reschedules;
 static uint32_t click_scan_reschedules;
+static uint32_t click_phase_claims;
 
 void status_debug_printf(const char *fmt, ...);
 
@@ -148,6 +150,18 @@ static void anchor_note_uwb_awake_since(int64_t start_ms,
 static void anchor_click_event_abort_if_needed(const char *reason)
 {
     ARG_UNUSED(reason);
+}
+
+int app_anchor_click_event_runtime_claim(
+    const struct uwb_wake_claim_frame *claim,
+    uint32_t now_ms,
+    struct fw_transition *transition)
+{
+    ARG_UNUSED(now_ms);
+    ARG_UNUSED(transition);
+    zassert_not_null(claim);
+    click_phase_claims++;
+    return 0;
 }
 
 static int anchor_enter_low_power(enum app_radio_low_power_mode mode,
@@ -342,6 +356,17 @@ int mesh_range_report_batch_reserve(uint64_t requested_clicker_id,
         reserved_attempt_index = attempt_index;
     }
     return ret;
+}
+
+int mesh_range_report_batch_reserve_capacity(uint64_t requested_clicker_id,
+                                             uint32_t event_seq,
+                                             uint8_t attempt_index,
+                                             uint8_t fragment_capacity)
+{
+    ARG_UNUSED(fragment_capacity);
+    return mesh_range_report_batch_reserve(requested_clicker_id,
+                                           event_seq,
+                                           attempt_index);
 }
 
 void mesh_range_report_batch_abort(uint64_t requested_clicker_id,
@@ -707,6 +732,7 @@ static void fixture_reset(void)
     watchdog_stop_calls = 0u;
     node_comm_reschedules = 0u;
     click_scan_reschedules = 0u;
+    click_phase_claims = 0u;
     k_sem_reset(&click_queue_barrier_entered);
     k_sem_reset(&click_queue_barrier_release);
     k_sem_reset(&click_rf_entered);
@@ -770,6 +796,8 @@ ZTEST(production_seam_click_handoff,
     zassert_true(anchor_handle_mesh_click_wake_claim(
         &claim, 211u, k_uptime_get()),
         "real anchor click handoff rejected the claim");
+    zassert_equal(click_phase_claims, 1u,
+                  "handoff did not claim its phase before capacity");
     zassert_true(anchor_click_handoff_pending());
     zassert_true(anchor_click_window_active());
     zassert_true(radio_guard_uwb_busy());

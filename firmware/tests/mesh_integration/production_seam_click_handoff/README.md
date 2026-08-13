@@ -15,12 +15,13 @@ This is deliberately labeled `composition` and `future_facade`: its
 nine-slot report queue.
 
 The `report_custody` ztest links the exact production `app_mesh_report.c`
-reservation, fragment, journal, and immutable-head helpers. It proves that a
-maximum nine-fragment click reserves all nine report slots, rejects a competing
-batch, preserves the click identity in its journal, and returns a byte-identical
-head after the same abort/reacquire operation used by the transient retry path.
-Only committing that head exposes fragment two, so the test also guards FIFO
-custody and exact-once removal.
+reservation, fragment, RAM ACK-ledger, and immutable-head helpers. It proves
+both the maximum nine-fragment encoder case and the normal click's smaller
+bounded reservation. A new click may append behind a proven older queue prefix
+and independent ACK/CIR owners; abort removes only the new suffix and restores
+the prefix byte-for-byte. It also rejects a competing batch and returns a
+byte-identical head after the same abort/reacquire operation used by transient
+retry, so FIFO custody and exact-once removal stay executable.
 
 The `gateway_result_actions` ztest builds the real gateway relay and
 result-handoff helper. It proves that a direct anchor's large result offer is
