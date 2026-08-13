@@ -54,7 +54,8 @@ static struct operation_policy_set complete_route_operation_policy(void)
     policy.assignment.operation_budget_ms =
         DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(750u);
     policy.assignment.response_spread_ms = 750u;
-    policy.discovery.start_delay_ms = 60000u;
+    policy.discovery.start_delay_ms =
+        OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS;
     policy.discovery.slot_ms = 75u;
     policy.discovery.slot_count = 10u;
     policy.discovery.round_count = 2u;

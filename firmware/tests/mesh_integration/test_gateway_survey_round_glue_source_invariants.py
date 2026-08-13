@@ -33,6 +33,7 @@ NODE_COMM = (ROOT / "src/node_comm.c").read_text(encoding="utf-8")
 OPERATION_POLICY = (ROOT / "include/operation_policy.h").read_text(
     encoding="utf-8"
 )
+SURVEY_HEADER = (ROOT / "include/survey.h").read_text(encoding="utf-8")
 GUI_OPERATION_POLICY = (
     ROOT.parent / "tools/gateway_gui/operation_policy.py"
 ).read_text(encoding="utf-8")
@@ -254,8 +255,9 @@ assert "survey_pair_lease_mark_running_for_role_at(&pair_lease" in survey_worker
 # Discovery START is a timed broadcast, so every relay must forward it before
 # claiming its own discovery RF window.  A retryable forward is retained in
 # the eight-retry C5 lane; its worst-case lead is materially larger than the
-# nominal flood wave.  Keep the firmware and GUI floor at the 60 s wire limit,
-# which covers three relays at SURVEY_DEFAULT_TTL=4:
+# nominal flood wave. Four fixed-origin redrives occur at 10, 20, 30, and
+# 40 seconds. The 90-second execution delay leaves the last wave a complete
+# four-hop path guard plus the measured PHY preparation budget before RF:
 #
 #   one relay = 1400 ms flood wave + 40 ms initial failed turnaround
 #             + (300 + 600 + 1200 + 5 * 2400) ms retry backoff
@@ -275,17 +277,34 @@ per_relay_ms = 1400 + 40 + sum(retry_maxima_ms) + 7 * (400 + 40) + 400 + 40 + 3 
 full_ttl_lead_ms = 3 * per_relay_ms + 103
 assert per_relay_ms == 19_180
 assert full_ttl_lead_ms == 57_643
-assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 60000u" in OPERATION_POLICY
-assert "OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 60000u" in OPERATION_POLICY
-assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 60000u" in OPERATION_POLICY
+origin_redrive_count = 4
+control_hop_budget_ms = 10_000
+phy_prep_budget_ms = 103
+default_start_delay_ms = 90_000
+origin_redrive_offsets_ms = [
+    wave * control_hop_budget_ms
+    for wave in range(1, origin_redrive_count + 1)
+]
+assert origin_redrive_offsets_ms == [10_000, 20_000, 30_000, 40_000]
+assert (
+    origin_redrive_offsets_ms[-1]
+    + 4 * control_hop_budget_ms
+    + phy_prep_budget_ms
+    < default_start_delay_ms
+)
+assert full_ttl_lead_ms < default_start_delay_ms
+assert "#define SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT 4u" in SURVEY_HEADER
+assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 90000u" in OPERATION_POLICY
+assert "OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 90000u" in OPERATION_POLICY
+assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 90000u" in OPERATION_POLICY
 assert re.search(
     r"#define\s+SURVEY_DISCOVERY_START_DELAY_MS\s+\\?\s*"
     r"OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS",
     APP_CONFIG,
 )
-assert "DISCOVERY_START_DELAY_MIN_MS = 60_000" in GUI_OPERATION_POLICY
-assert "DISCOVERY_DEFAULT_START_DELAY_MS = 60_000" in GUI_OPERATION_POLICY
-assert 60_000 >= full_ttl_lead_ms
+assert "DISCOVERY_START_DELAY_MIN_MS = 90_000" in GUI_OPERATION_POLICY
+assert "DISCOVERY_START_DELAY_MAX_MS = 90_000" in GUI_OPERATION_POLICY
+assert "DISCOVERY_DEFAULT_START_DELAY_MS = 90_000" in GUI_OPERATION_POLICY
 
 # No production runtime retains a separate GO phase, codec, delivery handle, or
 # broadcast submit path. Only the explicit retired wire ID may remain elsewhere.

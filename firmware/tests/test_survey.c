@@ -816,7 +816,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 60000u,
+        .start_delay_ms = 90000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 4u,
@@ -878,7 +878,7 @@ static void test_discovery_start_rejects_conflicting_singletons(void)
     };
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 60000u,
+        .start_delay_ms = 90000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 4u,
@@ -910,7 +910,7 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 60000u,
+        .start_delay_ms = 90000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 2u,
@@ -918,7 +918,7 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
     const struct operation_policy policy = {
         .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
         .value.discovery = {
-            .start_delay_ms = 60000u,
+            .start_delay_ms = 90000u,
             .slot_ms = 40u,
             .slot_count = 50u,
             .round_count = 2u,
@@ -1262,7 +1262,7 @@ static void test_multi_output_survey_parsers_fail_atomically(void)
     const struct survey_discovery_config config = {
         .operation_generation = UINT64_C(0x1234000000000001),
         .survey_id = 0x10203040u,
-        .start_delay_ms = 60000u,
+        .start_delay_ms = 90000u,
         .slot_ms = 40u,
         .slot_count = 4u,
         .round_count = 2u,

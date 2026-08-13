@@ -31,7 +31,7 @@
     OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS
 #define SURVEY_GATEWAY_REPORT_SLOT_MS \
     (ROUTE_GATEWAY_ACK_TIMEOUT_MS + 20u + 250u)
-#define SURVEY_GATEWAY_BENCH_BUDGET_MS 70000u
+#define SURVEY_GATEWAY_BENCH_BUDGET_MS 100000u
 
 static unsigned int failures;
 
@@ -1017,16 +1017,16 @@ static void test_survey_gateway_collection_budget_sweep(void)
                             SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
-                        CHECK(first_report_ms == 60960u,
+                        CHECK(first_report_ms == 90960u,
                               "six-slot survey first-report timing drifted");
-                        CHECK(last_report_start_ms == 72310u,
+                        CHECK(last_report_start_ms == 102310u,
                               "six-slot survey final-report timing drifted");
-                        CHECK(no_anchor_evidence_ms == 75580u,
+                        CHECK(no_anchor_evidence_ms == 105580u,
                               "six-slot survey evidence horizon drifted");
                         CHECK(current_wake_ms ==
                                   SURVEY_GATEWAY_BENCH_BUDGET_MS &&
                                   current_wake_ms < no_anchor_evidence_ms,
-                              "70-second bench budget was not preserved as a generic timeout boundary");
+                              "100-second bench budget was not preserved as a generic timeout boundary");
                         if (old_three_phase_wake_ms < first_report_ms) {
                             reproduced_old_three_phase_close = true;
                         }
@@ -1035,7 +1035,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                         config.slot_ms == 40u &&
                         report_grace_windows_ms[grace_index] == 1000u) {
                         covered_50_slot_case = true;
-                        CHECK(first_report_ms == 68000u &&
+                        CHECK(first_report_ms == 98000u &&
                                   first_report_ms <
                                       SURVEY_GATEWAY_BENCH_BUDGET_MS,
                               "runtime rounds did not shorten 50-slot discovery");

@@ -293,7 +293,7 @@ static uint32_t gateway_survey_operation_deadline_ms;
 static uint32_t gateway_survey_discovery_delivery_handle;
 static uint64_t gateway_survey_discovery_origin_uptime_ms;
 static uint64_t gateway_survey_discovery_start_deadline_ms;
-static bool gateway_survey_discovery_redrive_started;
+static uint8_t gateway_survey_discovery_redrive_count;
 static uint32_t gateway_survey_collection_deadline_ms;
 static uint32_t gateway_survey_collection_emission_deadline_ms;
 static uint32_t gateway_survey_collection_duration_ms;

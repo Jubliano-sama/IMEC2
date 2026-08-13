@@ -756,7 +756,7 @@ class CommandBudgetContractTests(unittest.TestCase):
             host_operation_policy.DISCOVERY_DEFAULT_ROUND_COUNT,
             1_000,
         )
-        self.assertEqual(180_743, required_ms)
+        self.assertEqual(210_743, required_ms)
 
         argv = [
             "provision_mesh_anchor.py",

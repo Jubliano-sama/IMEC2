@@ -95,7 +95,7 @@ static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
 static void test_exact_minimum_budget_leaves_terminal_scheduling_guard(void)
 {
     const struct operation_policy_discovery policy = {
-        .start_delay_ms = 60000u,
+        .start_delay_ms = 90000u,
         .slot_ms = 40u,
         .slot_count = 6u,
         .round_count = 4u,

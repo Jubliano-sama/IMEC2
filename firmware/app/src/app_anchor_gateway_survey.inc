@@ -1561,7 +1561,7 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     gateway_survey_discovery_origin_uptime_ms = command_origin_uptime_ms;
     gateway_survey_discovery_start_deadline_ms =
         command_origin_uptime_ms + config.start_delay_ms;
-    gateway_survey_discovery_redrive_started = false;
+    gateway_survey_discovery_redrive_count = 0u;
     /*
      * The validated collection budget is measured from command admission.
      * Freeze that absolute horizon before the flood starts; arming collection
@@ -2404,7 +2404,7 @@ static int gateway_survey_finish_status(
         gateway_survey_discovery_delivery_handle = 0u;
         gateway_survey_discovery_origin_uptime_ms = 0u;
         gateway_survey_discovery_start_deadline_ms = 0u;
-        gateway_survey_discovery_redrive_started = false;
+        gateway_survey_discovery_redrive_count = 0u;
     }
     if (gateway_survey_transaction.active.state != NODE_TRANSACTION_EMPTY &&
         !gateway_survey_transaction.active.request_delivery_terminal) {
@@ -2428,7 +2428,7 @@ static int gateway_survey_finish_status(
     gateway_survey_collection_started_at_ms = 0u;
     gateway_survey_discovery_origin_uptime_ms = 0u;
     gateway_survey_discovery_start_deadline_ms = 0u;
-    gateway_survey_discovery_redrive_started = false;
+    gateway_survey_discovery_redrive_count = 0u;
     gateway_survey_collection_deadline_ms = 0u;
     gateway_survey_collection_emission_deadline_ms = 0u;
     gateway_survey_collection_finalize_cutoff_ms = 0u;

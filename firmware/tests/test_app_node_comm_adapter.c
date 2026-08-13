@@ -55,10 +55,10 @@ static atomic_bool rx_response_active;
 static uint32_t send_calls;
 static struct mesh_outbound last_control_flood;
 static uint32_t try_flood_calls;
-static int try_flood_results[16];
-static bool try_flood_sent[16];
-static bool try_flood_wake_train[16];
-static struct mesh_outbound try_flood_envelopes[16];
+static int try_flood_results[32];
+static bool try_flood_sent[32];
+static bool try_flood_wake_train[32];
+static struct mesh_outbound try_flood_envelopes[32];
 static uint32_t try_response_calls;
 static int try_response_results[64];
 static bool try_response_sent[64];
@@ -4635,6 +4635,54 @@ test_redrive_rejects_delayed_old_generation_rf_evidence(void)
     assert(terminal.attempts_started == 4u);
 }
 
+static void test_delivered_control_supports_four_same_handle_redrives(void)
+{
+    struct mesh_outbound control = delivery_envelope(613u);
+    struct node_comm_terminal_event prior_terminal;
+    struct node_comm_terminal_event terminal;
+    uint32_t handle = 0u;
+    uint32_t prior_generation = 0u;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+               &control, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+               2000u, 613u, &handle) == 0);
+    assert(app_node_comm_delivery_generation(handle, &prior_generation) == 0);
+
+    for (uint32_t wave = 0u; wave <= 4u; wave++) {
+        const uint64_t wave_start_ms = (uint64_t)wave * 200u;
+
+        for (uint64_t now_ms = wave_start_ms;
+             now_ms < wave_start_ms + 160u;
+             now_ms += 40u) {
+            atomic_store(&fake_now_ms, (int64_t)now_ms);
+            assert(app_node_comm_service_deliveries() == 0);
+        }
+        assert(try_flood_calls == (wave + 1u) * 4u);
+
+        if (wave < 4u) {
+            uint32_t next_generation = 0u;
+
+            assert(app_node_comm_redrive_delivered_control(
+                       handle,
+                       (uint64_t)(wave + 1u) * 200u,
+                       2000u,
+                       &prior_terminal) == 0);
+            assert(prior_terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
+            assert(prior_terminal.attempts_started == 4u);
+            assert(app_node_comm_delivery_generation(
+                       handle, &next_generation) == 0);
+            assert(next_generation != prior_generation);
+            prior_generation = next_generation;
+        }
+    }
+
+    assert(app_node_comm_take_delivery_event_for(handle, &terminal));
+    assert(terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(terminal.proof == NODE_COMM_TERMINAL_PROOF_TRANSPORT);
+    assert(terminal.attempts_started == 4u);
+}
+
 static void test_production_six_slot_exhaustion_keeps_unique_trace_owners(void)
 {
     struct app_delivery_trace_capture capture = {0};
@@ -5301,6 +5349,7 @@ int main(void)
     test_auto_reap_protocol_response_returns_correlation_handle();
     test_adapter_trace_distinguishes_transport_and_semantic_proof();
     test_redrive_rejects_delayed_old_generation_rf_evidence();
+    test_delivered_control_supports_four_same_handle_redrives();
     test_production_six_slot_exhaustion_keeps_unique_trace_owners();
     test_delivery_rejects_unbounded_or_over_capacity_work();
     test_delivery_queue_survives_stop_and_restart();

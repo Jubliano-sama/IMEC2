@@ -291,10 +291,11 @@ BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >=
              SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS,
              "default survey start delay must allow early PHY preparation");
 BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >
-             (SURVEY_DEFAULT_TTL + 1u) *
+             (SURVEY_DEFAULT_TTL +
+              SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
                  SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
                  SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS,
-             "survey start delay must leave an independent redrive wave before the full-path guard");
+             "survey start delay must leave every origin redrive before the full-path guard");
 #define SURVEY_DISCOVERY_SLOT_MS 40u
 #define SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT 6u
 #define SURVEY_RESULT_MESH_SLOT_MS \

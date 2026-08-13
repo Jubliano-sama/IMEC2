@@ -260,7 +260,7 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertLess(same_deadline, result)
         self.assertLess(result, abandon)
 
-    def test_discovery_start_gets_one_fixed_origin_redrive_before_execution(self) -> None:
+    def test_discovery_start_gets_four_fixed_origin_redrives_before_execution(self) -> None:
         admission = function_body(SURVEY, "gateway_route_survey_reachability")
         service = function_body(
             CONTROL, "gateway_survey_wait_for_discovery_collection"
@@ -281,12 +281,37 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
             r"DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS\s+\\\s*"
             r"NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS",
         )
-        self.assertIn(
-            "SURVEY_DISCOVERY_START_DELAY_MS >\n"
-            "             (SURVEY_DEFAULT_TTL + 1u) *\n"
-            "                 SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +\n"
-            "                 SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS",
+        self.assertRegex(
+            SURVEY_HEADER,
+            r"#define\s+SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT\s+4u\b",
+        )
+        self.assertRegex(
             APP_CONFIG,
+            r"BUILD_ASSERT\(SURVEY_DISCOVERY_START_DELAY_MS\s*>\s*"
+            r"\(SURVEY_DEFAULT_TTL\s*\+\s*"
+            r"SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT\)\s*\*\s*"
+            r"SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS\s*\+\s*"
+            r"SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS",
+        )
+        self.assertIn(
+            "static uint8_t gateway_survey_discovery_redrive_count;",
+            (ROOT / "app/src/app_anchor.c").read_text(),
+        )
+
+        hop_budget_ms = 10_000
+        origin_redrive_count = 4
+        start_delay_ms = 90_000
+        phy_prep_ms = 103
+        due_offsets_ms = [
+            (count + 1) * hop_budget_ms
+            for count in range(origin_redrive_count)
+        ]
+        self.assertEqual(due_offsets_ms, [10_000, 20_000, 30_000, 40_000])
+        self.assertLess(
+            due_offsets_ms[-1]
+            + 4 * hop_budget_ms
+            + phy_prep_ms,
+            start_delay_ms,
         )
 
         handle = admission.index(
@@ -300,7 +325,7 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
             "command_origin_uptime_ms + config.start_delay_ms", origin
         )
         arm = admission.index(
-            "gateway_survey_discovery_redrive_started = false", execution
+            "gateway_survey_discovery_redrive_count = 0u", execution
         )
         self.assertLess(handle, origin)
         self.assertLess(origin, execution)
@@ -318,20 +343,23 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         )
         fixed_due = service.index(
             "gateway_survey_discovery_origin_uptime_ms +\n"
-            "            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS",
+            "            ((uint64_t)gateway_survey_discovery_redrive_count + 1u) *\n"
+            "                SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS",
             latest,
         )
         clamp = service.index("if (redrive_due_ms < now_uptime_ms)", fixed_due)
         delivered = service.index(
             "event.reason == NODE_COMM_TERMINAL_DELIVERED", clamp
         )
-        one_shot = service.index(
-            "!gateway_survey_discovery_redrive_started", delivered
+        bounded_waves = service.index(
+            "gateway_survey_discovery_redrive_count <\n"
+            "                SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT",
+            delivered,
         )
         overflow_guard = service.index(
             "redrive_due_ms <=\n"
             "                UINT64_MAX - SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS",
-            one_shot,
+            bounded_waves,
         )
         strict_fit = service.index(
             "redrive_due_ms + SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS <\n"
@@ -343,9 +371,11 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         )
         same_handle = service.index("handle,", redrive)
         immutable_deadline = service.index("latest_gateway_start_ms", same_handle)
+        success = service.index("if (redrive_ret == 0)", immutable_deadline)
         publish = service.index(
-            "gateway_survey_discovery_redrive_started = true", immutable_deadline
+            "gateway_survey_discovery_redrive_count++", success
         )
+        retain_terminal = service.index("return true;", publish)
         take = service.index("app_node_comm_take_delivery_event_for(", publish)
 
         self.assertLess(peek, path_guard)
@@ -353,14 +383,26 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertLess(latest, fixed_due)
         self.assertLess(fixed_due, clamp)
         self.assertLess(clamp, delivered)
-        self.assertLess(delivered, one_shot)
-        self.assertLess(one_shot, overflow_guard)
+        self.assertLess(delivered, bounded_waves)
+        self.assertLess(bounded_waves, overflow_guard)
         self.assertLess(overflow_guard, strict_fit)
         self.assertLess(strict_fit, redrive)
         self.assertLess(redrive, same_handle)
         self.assertLess(same_handle, immutable_deadline)
-        self.assertLess(immutable_deadline, publish)
-        self.assertLess(publish, take)
+        self.assertLess(immutable_deadline, success)
+        self.assertLess(success, publish)
+        self.assertLess(publish, retain_terminal)
+        self.assertLess(retain_terminal, take)
+        before_terminal_take = service[peek:take]
+        self.assertNotIn(
+            "gateway_survey_discovery_delivery_handle =", before_terminal_take
+        )
+        self.assertNotIn(
+            "gateway_survey_discovery_origin_uptime_ms =", before_terminal_take
+        )
+        self.assertNotIn(
+            "gateway_survey_discovery_start_deadline_ms =", before_terminal_take
+        )
         self.assertNotIn(
             "gateway_survey_discovery_start_deadline_ms = now_uptime_ms",
             service,
@@ -374,7 +416,7 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
             "gateway_survey_discovery_start_deadline_ms = 0u", clear_origin
         )
         clear_redrive = finish.index(
-            "gateway_survey_discovery_redrive_started = false", clear_execution
+            "gateway_survey_discovery_redrive_count = 0u", clear_execution
         )
         self.assertLess(abandon, clear_origin)
         self.assertLess(clear_origin, clear_execution)

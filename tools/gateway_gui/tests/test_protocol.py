@@ -1549,7 +1549,7 @@ class ProtocolTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            ValueError, "survey discovery policy: minimum 179993"
+            ValueError, "survey discovery policy: minimum 209993"
         ):
             build_anchor_discovery_command(
                 **common,
@@ -1557,7 +1557,7 @@ class ProtocolTests(unittest.TestCase):
                 duration_ms=250,
                 discovery_slot_count=6,
                 sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                command_budget_ms=179_992,
+                command_budget_ms=209_992,
             )
 
         # Route refresh is different: firmware accepts a shorter explicit
@@ -1570,7 +1570,7 @@ class ProtocolTests(unittest.TestCase):
         profile = OperationPolicyProfile(
             assignment=AssignmentOperationPolicy(5, 1_600_000, 750),
             discovery=DiscoveryOperationPolicy(
-                60_000, 80, 12, 3, 1_500, 500_000
+                90_000, 80, 12, 3, 1_500, 500_000
             ),
             pair=PairOperationPolicy(1, 8),
         )

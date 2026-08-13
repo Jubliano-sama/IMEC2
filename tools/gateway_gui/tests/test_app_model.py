@@ -126,7 +126,9 @@ class AppModelTests(unittest.TestCase):
             str(gateway_app.ASSIGNMENT_DEFAULT_BUDGET_MS)
         )  # type: ignore[assignment]
         gui.assignment_response_spread_text = FakeVariable("1000")  # type: ignore[assignment]
-        gui.discovery_start_delay_text = FakeVariable("60000")  # type: ignore[assignment]
+        gui.discovery_start_delay_text = FakeVariable(  # type: ignore[assignment]
+            str(gateway_app.DISCOVERY_DEFAULT_START_DELAY_MS)
+        )
         gui.discovery_slot_ms_text = FakeVariable("40")  # type: ignore[assignment]
         gui.discovery_slots_text = FakeVariable("6")  # type: ignore[assignment]
         gui.discovery_round_count_text = FakeVariable("4")  # type: ignore[assignment]

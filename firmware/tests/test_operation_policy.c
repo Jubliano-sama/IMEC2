@@ -61,7 +61,7 @@ static void test_defaults_are_valid_and_preserve_robust_baseline(void)
     assert(assignment.value.assignment.expected_anchor_count == 0u);
     assert(assignment.value.assignment.operation_budget_ms == 1591204u);
     assert(assignment.value.assignment.response_spread_ms == 1000u);
-    assert(discovery.value.discovery.start_delay_ms == 60000u);
+    assert(discovery.value.discovery.start_delay_ms == 90000u);
     assert(discovery.value.discovery.slot_ms == 40u);
     assert(discovery.value.discovery.slot_count == 6u);
     assert(discovery.value.discovery.round_count == 4u);
@@ -92,7 +92,7 @@ static void test_all_families_round_trip_in_one_payload(void)
     assignment.value.assignment.expected_anchor_count = 5u;
     assignment.value.assignment.operation_budget_ms = 1600000u;
     assignment.value.assignment.response_spread_ms = 400u;
-    discovery.value.discovery.start_delay_ms = 60000u;
+    discovery.value.discovery.start_delay_ms = 90000u;
     discovery.value.discovery.slot_ms = 75u;
     discovery.value.discovery.slot_count = 10u;
     discovery.value.discovery.round_count = 2u;
@@ -121,7 +121,7 @@ static void test_all_families_round_trip_in_one_payload(void)
     assert(decoded.assignment.expected_anchor_count == 5u);
     assert(decoded.assignment.operation_budget_ms == 1600000u);
     assert(decoded.assignment.response_spread_ms == 400u);
-    assert(decoded.discovery.start_delay_ms == 60000u);
+    assert(decoded.discovery.start_delay_ms == 90000u);
     assert(decoded.discovery.slot_ms == 75u);
     assert(decoded.discovery.slot_count == 10u);
     assert(decoded.discovery.round_count == 2u);
@@ -327,7 +327,7 @@ static void test_discovery_bounds_include_configurable_rounds(void)
     assert(operation_policy_discovery_required_budget_ms(
                &policy.value.discovery, &terms, &required_budget_ms) ==
            PROTO_OK);
-    assert(required_budget_ms == 154993u);
+    assert(required_budget_ms == 184993u);
     policy.value.discovery.operation_budget_ms = required_budget_ms;
     assert(operation_policy_validate(&policy) == PROTO_OK);
     policy.value.discovery.operation_budget_ms = required_budget_ms - 1u;
@@ -346,7 +346,7 @@ static void test_discovery_bounds_include_configurable_rounds(void)
     assert(operation_policy_discovery_required_budget_ms(
                &policy.value.discovery, &terms, &required_budget_ms) ==
            PROTO_OK);
-    assert(required_budget_ms == 513663u);
+    assert(required_budget_ms == 543663u);
     policy.value.discovery.operation_budget_ms = required_budget_ms;
     assert(operation_policy_validate(&policy) == PROTO_OK);
 

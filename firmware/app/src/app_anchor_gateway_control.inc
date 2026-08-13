@@ -2949,12 +2949,14 @@ static bool gateway_survey_wait_for_discovery_collection(void)
                 gateway_survey_discovery_start_deadline_ms - path_guard_ms :
                 0u;
         redrive_due_ms = gateway_survey_discovery_origin_uptime_ms +
-            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS;
+            ((uint64_t)gateway_survey_discovery_redrive_count + 1u) *
+                SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS;
         if (redrive_due_ms < now_uptime_ms) {
             redrive_due_ms = now_uptime_ms;
         }
         if (event.reason == NODE_COMM_TERMINAL_DELIVERED &&
-            !gateway_survey_discovery_redrive_started &&
+            gateway_survey_discovery_redrive_count <
+                SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT &&
             gateway_survey_discovery_start_deadline_ms != 0u &&
             redrive_due_ms <=
                 UINT64_MAX - SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS &&
@@ -2966,15 +2968,12 @@ static bool gateway_survey_wait_for_discovery_collection(void)
                 latest_gateway_start_ms,
                 &event);
             if (redrive_ret == 0) {
-                gateway_survey_discovery_redrive_started = true;
+                gateway_survey_discovery_redrive_count++;
                 status_debug_printf(
-                    "DBG_SURVEY_DISCOVERY_FLOOD_REDRIVE handle=%u due=%llu latest=%llu execute=%llu attempts=%u\n",
+                    "DBG_SURVEY_DISCOVERY_REDRIVE h=%u n=%u due=%llu\n",
                     handle,
-                    (unsigned long long)redrive_due_ms,
-                    (unsigned long long)latest_gateway_start_ms,
-                    (unsigned long long)
-                        gateway_survey_discovery_start_deadline_ms,
-                    event.attempts_started);
+                    gateway_survey_discovery_redrive_count,
+                    (unsigned long long)redrive_due_ms);
                 (void)gateway_survey_work_schedule(
                     SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
                     GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS);
@@ -2997,7 +2996,7 @@ static bool gateway_survey_wait_for_discovery_collection(void)
         gateway_survey_discovery_delivery_handle = 0u;
         gateway_survey_discovery_origin_uptime_ms = 0u;
         gateway_survey_discovery_start_deadline_ms = 0u;
-        gateway_survey_discovery_redrive_started = false;
+        gateway_survey_discovery_redrive_count = 0u;
         status_debug_printf("DBG_SURVEY_DISCOVERY_FLOOD_TERMINAL handle=%u reason=%u attempts=%u\n",
                             handle,
                             (unsigned int)event.reason,
@@ -3009,7 +3008,7 @@ static bool gateway_survey_wait_for_discovery_collection(void)
             gateway_survey_collection_started_at_ms = 0u;
             gateway_survey_discovery_origin_uptime_ms = 0u;
             gateway_survey_discovery_start_deadline_ms = 0u;
-            gateway_survey_discovery_redrive_started = false;
+            gateway_survey_discovery_redrive_count = 0u;
             gateway_survey_collection_deadline_ms = 0u;
             gateway_survey_collection_finalize_cutoff_ms = 0u;
             gateway_survey_collection_finalize_cutoff_valid = false;
@@ -3097,7 +3096,7 @@ static bool gateway_survey_wait_for_discovery_collection(void)
     gateway_survey_collection_started_at_ms = 0u;
     gateway_survey_discovery_origin_uptime_ms = 0u;
     gateway_survey_discovery_start_deadline_ms = 0u;
-    gateway_survey_discovery_redrive_started = false;
+    gateway_survey_discovery_redrive_count = 0u;
     gateway_survey_collection_deadline_ms = 0u;
     gateway_survey_collection_emission_deadline_ms = 0u;
     gateway_survey_collection_finalize_cutoff_ms = 0u;
