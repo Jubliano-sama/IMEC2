@@ -196,15 +196,12 @@ Default timing values:
 
 #### Self-Test Checks
 
-Self-test verifies:
-
-1. MCU wake from button interrupt.
-2. RGB LED drive.
-3. Battery voltage and charger status pins.
-4. DWM3000 wake/init and diagnostic UWB wake/discovery.
-5. At least one diagnostic discovery reply.
-6. At least one diagnostic range exchange.
-7. Return to low-power idle.
+The implemented self-test verifies DWM3000 wake/init, diagnostic UWB
+wake/discovery, at least one discovery reply, at least one diagnostic range,
+report handoff, and return to low-power idle. The LEDs display the outcome, but
+the firmware does not electrically verify the LED drive. It also does not yet
+measure battery voltage or charger status, and an RTT-injected gesture exercises
+the same action state machine without proving the physical button IRQ path.
 
 Self-test traffic uses diagnostic flags and never sets the normal click flag. Anchors may forward diagnostic events for maintenance logs, but the server must not count them as user clicks.
 
@@ -264,6 +261,14 @@ Channel 9 is the payload lane:
 ### Channel-9 Mesh Events
 
 See the [[Mesh Connected Routing Contract]] for details.
+
+Reliable gateway delivery does not finish at BLE notification. The GUI first
+validates and commits the retained stream record in bounded RAM, then returns an
+exact identity-and-digest host receipt. Only that accepted receipt lets the
+gateway acknowledge the mesh owner. The source retains its original immutable
+record until the corresponding semantic ACK/ACK-confirmation exchange completes;
+a BLE disconnect or missing receipt therefore causes replay rather than silent
+loss. Best-effort telemetry is deliberately outside this receipt boundary.
 
 ### Click Priority Over Mesh
 
@@ -363,5 +368,4 @@ Assumptions:
 Low-duty UWB wake scanning is the dominant anchor idle cost. The current 5 ms RX setting is about 1.29% RX-window duty over the full wake/sleep cycle, or 1.32% against the configured 380 ms sleep interval. It is about 1.98% conservative DWM3000 awake-time duty once startup and PLL time are charged at the same 75 mA estimate. Active route/report traffic adds about 13.45 mAh/day under the 1000 selected-events/day assumption. Higher-duty Stage 1 debug scans must not be treated as the production anchor setting.
 
 The IRQ-free runtime does not change the configured DWM3000 awake windows in the table above. It adds MCU and SPI energy while firmware waits for UWB TX/RX completion because the nRF polls `SYS_STATUS` every 50 us instead of sleeping until a DWM3000 IRQ edge. The additional daily cost is approximately `MCU_active_current_mA * status_polled_seconds_per_day / 3600`. For the normal 5 ms periodic anchor scan baseline, the conservative awake-time model is about 1709 status-polled seconds/day, so a 4-6 mA MCU active-current delta adds roughly 1.90-2.85 mAh/day before margin. Higher-duty debug profiles must be measured directly rather than extrapolated into production. Hardware power validation should measure this separately from the DWM3000 RX/TX current.
-
 
