@@ -4,7 +4,7 @@ from dataclasses import replace
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import tools.gateway_gui.app as gateway_app
@@ -264,7 +264,7 @@ class AppModelTests(unittest.TestCase):
         gui._add_packet(canonical)
         gui._add_packet(conflict)
 
-        gui._observe_diagnostic_packet.assert_called_once_with(
+        cast(Mock, gui._observe_diagnostic_packet).assert_called_once_with(
             canonical, received_at=None
         )
         gui.cir_reassembler.ingest.assert_called_once_with(canonical)
@@ -272,7 +272,7 @@ class AppModelTests(unittest.TestCase):
         self.assertIs(gui.packet_by_iid["packet-2"], conflict)
         self.assertTrue(any(
             "Conflicting click report" in call.args[1]
-            for call in gui._append_log.call_args_list
+            for call in cast(Mock, gui._append_log).call_args_list
         ))
 
     def test_reliable_non_click_replay_is_suppressed_and_conflict_stays_forensic(
@@ -324,7 +324,7 @@ class AppModelTests(unittest.TestCase):
         gui._add_packet(canonical)
         gui._add_packet(replay)
 
-        gui._observe_diagnostic_packet.assert_called_once_with(
+        cast(Mock, gui._observe_diagnostic_packet).assert_called_once_with(
             canonical, received_at=None
         )
         gui.cir_reassembler.ingest.assert_called_once_with(canonical)
@@ -335,7 +335,7 @@ class AppModelTests(unittest.TestCase):
 
         # The conflicting packet remains visible, but it cannot trigger a
         # second diagnostic/model or CIR mutation.
-        gui._observe_diagnostic_packet.assert_called_once_with(
+        cast(Mock, gui._observe_diagnostic_packet).assert_called_once_with(
             canonical, received_at=None
         )
         gui.cir_reassembler.ingest.assert_called_once_with(canonical)
@@ -344,7 +344,7 @@ class AppModelTests(unittest.TestCase):
         self.assertIs(gui.packet_by_iid["packet-2"], conflict)
         self.assertTrue(any(
             "Conflicting command result" in call.args[1]
-            for call in gui._append_log.call_args_list
+            for call in cast(Mock, gui._append_log).call_args_list
         ))
 
     def test_host_receipt_retries_after_reconnect_but_conflict_stays_unreceipted(
@@ -423,7 +423,7 @@ class AppModelTests(unittest.TestCase):
                 (b"exact-cobs-receipt", "gateway host receipt"),
             ],
         )
-        gui._observe_diagnostic_packet.assert_called_once_with(
+        cast(Mock, gui._observe_diagnostic_packet).assert_called_once_with(
             canonical, received_at=None
         )
         self.assertEqual(gui.cir_reassembler.ingest.call_count, 1)
@@ -431,7 +431,7 @@ class AppModelTests(unittest.TestCase):
         self.assertIs(gui.packet_by_iid["packet-2"], conflict)
         self.assertTrue(any(
             "Conflicting command result" in call.args[1]
-            for call in gui._append_log.call_args_list
+            for call in cast(Mock, gui._append_log).call_args_list
         ))
 
     def test_command_event_semantic_replay_receipts_without_reapplying_gui_state(
@@ -487,7 +487,7 @@ class AppModelTests(unittest.TestCase):
             gui._add_packet(canonical)
             gui._add_packet(replay)
 
-        gui._observe_diagnostic_packet.assert_called_once_with(
+        cast(Mock, gui._observe_diagnostic_packet).assert_called_once_with(
             canonical, received_at=None
         )
         self.assertEqual(gui.packet_tree.insert.call_count, 1)
@@ -673,11 +673,11 @@ class AppModelTests(unittest.TestCase):
             # receipt, so the replay must apply normally and become receipted.
             self.assertEqual(gui.delivery_dedup.size, 0)
             gui.transport.send_frame.assert_not_called()
-            gui._observe_diagnostic_packet.side_effect = None
+            cast(Mock, gui._observe_diagnostic_packet).side_effect = None
             gui._add_packet(packet)
 
         self.assertEqual(gui.delivery_dedup.size, 1)
-        self.assertEqual(gui._observe_diagnostic_packet.call_count, 2)
+        self.assertEqual(cast(Mock, gui._observe_diagnostic_packet).call_count, 2)
         builder.assert_called_once_with(
             packet,
             host_id=DEFAULT_HOST_ID,
