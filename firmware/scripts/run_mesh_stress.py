@@ -22,6 +22,7 @@ import tempfile
 UINT32_MASK = (1 << 32) - 1
 DEFAULT_FAULT_SEED_XOR = 0xF4175EED
 DEFAULT_MAX_FAILURE_ARTIFACTS = 25
+DEFAULT_MAX_STEPS = 800
 
 
 def uint32(value: str) -> int:
@@ -121,7 +122,7 @@ def parse_args() -> argparse.Namespace:
         type=nonnegative,
         help="reset the middle node at this busy-line simulator step",
     )
-    parser.add_argument("--max-steps", type=positive, default=300)
+    parser.add_argument("--max-steps", type=positive, default=DEFAULT_MAX_STEPS)
     parser.add_argument(
         "--case-timeout-s",
         type=positive_seconds,

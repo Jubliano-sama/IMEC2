@@ -222,6 +222,55 @@ def main() -> int:
             print(str(error), file=sys.stderr)
             return 1
 
+        # This exact fault stream delivers every payload by step 296, then
+        # needs another 22 turns to retire bounded gateway-ACK custody.  The
+        # campaign default must preserve the simulator's 800-step horizon;
+        # a 300-step wrapper cap reports a false liveness failure while the
+        # protocol remains well inside its physical-time bound.
+        default_horizon_failure_dir = Path(temporary) / "default-horizon"
+        default_horizon = run(
+            [
+                sys.executable,
+                str(runner),
+                "--build-dir",
+                str(executable.parent),
+                "--failure-dir",
+                str(default_horizon_failure_dir),
+                "--scenario",
+                "busy-line",
+                "--seed-start",
+                "0x1",
+                "--count",
+                "1",
+                "--jobs",
+                "1",
+                "--packets",
+                "2",
+                "--loss",
+                "50",
+                "--ack-loss",
+                "300",
+                "--duplicate",
+                "300",
+                "--delay",
+                "500",
+                "--max-delay-us",
+                "4000",
+            ],
+            repo_root,
+        )
+        if (
+            default_horizon.returncode != 0
+            or "PASS: 1 deterministic cases" not in default_horizon.stdout
+            or default_horizon_failure_dir.exists()
+        ):
+            print(
+                "campaign default truncated bounded post-delivery custody\n"
+                f"{default_horizon.stdout}\n{default_horizon.stderr}",
+                file=sys.stderr,
+            )
+            return 1
+
         timeout_build = Path(temporary) / "timeout-build"
         timeout_build.mkdir()
         timeout_executable = timeout_build / "mesh_stress"
