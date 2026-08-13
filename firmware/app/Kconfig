@@ -162,6 +162,17 @@ config IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL
       companion to relay-required route acquisition and leaves normal mesh
       role presets unchanged.
 
+config IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS
+    int "Require an exact number of gateway relay hops"
+    depends on IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ
+    default 1
+    range 1 8
+    help
+      Bench-only exact route-depth policy. Route discovery accepts a gateway
+      route only when the authenticated route reply reports this many relay
+      anchors, and gateway controls must have crossed the same number of
+      relays. Normal mesh role presets leave this policy disabled.
+
 config IMEC_MESH_ROUTE_TEST_TX_INTERVAL_MS
     int "Synthetic mesh-test packet interval in milliseconds"
     depends on IMEC_MESH_ROUTE_TEST_TRANSMITTER

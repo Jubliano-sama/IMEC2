@@ -1382,6 +1382,12 @@ static int mesh_request_route_owned(
     }
 
     route_policy_state.relay_required = relay_required_route_req;
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+    if (relay_required_route_req) {
+        route_policy_state.required_gateway_relay_hops =
+            CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS;
+    }
+#endif
     route_policy_state.direct_bulk_suppressed =
         mesh_direct_gateway_bulk_probe_install_suppressed(target_id, now_ms);
     route_policy_state.direct_probe_ret = -ENOTCONN;
@@ -1426,8 +1432,9 @@ static int mesh_request_route_owned(
                           "DBG_ROUTE_REQ_DIRECT_CONTACT_BULK_SUPPRESSED\n");
     }
     if (relay_required_route_req && IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        status_debug_printf("DBG_ROUTE_REQ_RELAY_REQUIRED target=0x%llx reason=%s\n",
+        status_debug_printf("DBG_ROUTE_REQ_RELAY_REQUIRED target=0x%llx hops=%u reason=%s\n",
                             (unsigned long long)target_id,
+                            route_policy_state.required_gateway_relay_hops,
                             reason == NULL ? "route" : reason);
     }
     now_ms = k_uptime_get_32();

@@ -530,6 +530,9 @@ struct mesh_relay_outbox_snapshot {
 struct mesh_route_discovery_state {
     uint64_t target_id;
     uint8_t attempts;
+    /* Zero accepts any route depth; otherwise the current request requires
+     * this exact number of relay anchors between the origin and target. */
+    uint8_t required_hop_count;
     uint32_t next_request_id;
     uint32_t current_request_id;
     uint32_t next_request_ms;

@@ -45,6 +45,17 @@ int app_anchor_survey_result_delivery_cancel_reservations(
     const char *reason);
 
 /*
+ * A strictly newer, durably admitted survey generation is the explicit
+ * source-side repair boundary for obsolete pair results.  Matching records
+ * retain custody until their exact node-communication handles are abandoned;
+ * this never synthesizes a gateway acknowledgement.  Returns -EINPROGRESS
+ * while one or more older records are still retiring.
+ */
+int app_anchor_survey_result_delivery_supersede_before(
+    uint64_t operation_generation,
+    size_t *retiring_count);
+
+/*
  * Retire only responder records bound to the exact ABORT operation, survey,
  * pair, sample-count, and round tuple. The control path validates the ABORT's
  * full-round commitment; pair-result records do not carry that commitment.

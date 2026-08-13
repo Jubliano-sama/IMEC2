@@ -904,6 +904,45 @@ class RouteRefreshQualificationTests(unittest.TestCase):
 
 
 class AssignmentQualificationTests(unittest.TestCase):
+    def test_exact_per_anchor_hop_map_passes_and_mismatch_fails(self) -> None:
+        events = successful_assignment_events(3, direct_count=1)
+        expected = {0x1000: 1, 0x1001: 3, 0x1002: 4}
+        qualification = provision.AssignmentQualification(
+            0x12345,
+            0x2345,
+            0x12345,
+            3,
+            require_hop_evidence=True,
+            expected_anchor_hops=expected,
+        )
+        for event in events:
+            qualification.observe(event)
+        qualification.validate()
+
+        mismatched = provision.AssignmentQualification(
+            0x12345,
+            0x2345,
+            0x12345,
+            3,
+            require_hop_evidence=True,
+            expected_anchor_hops={**expected, 0x1001: 2},
+        )
+        for event in events:
+            mismatched.observe(event)
+        with self.assertRaisesRegex(RuntimeError, "expected hop count 2, got 3"):
+            mismatched.validate()
+
+    def test_expected_anchor_hop_parser_uses_gui_protocol_bound(self) -> None:
+        self.assertEqual(
+            (0x36E3C2FE6CAC46B2, 3),
+            provision._parse_expected_anchor_hop("0x36e3c2fe6cac46b2=3"),
+        )
+        for invalid in ("broken", "0=1", "1=0", "1=9"):
+            with self.subTest(invalid=invalid), self.assertRaises(
+                argparse.ArgumentTypeError
+            ):
+                provision._parse_expected_anchor_hop(invalid)
+
     def test_exact_success_sweeps_3_20_and_50_with_mixed_hops(self) -> None:
         for anchor_count in (3, 20, 50):
             with self.subTest(anchor_count=anchor_count):
@@ -1184,6 +1223,7 @@ def args(**overrides: object) -> argparse.Namespace:
         "expected_pairs": 3,
         "expected_direct_anchors": None,
         "expected_multihop_anchors": None,
+        "expected_anchor_hops": {},
         "route_refresh_timeout": 1.0,
         "assignment_timeout": 1.0,
     }

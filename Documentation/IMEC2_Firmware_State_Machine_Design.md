@@ -358,6 +358,8 @@ stateDiagram-v2
 
 Pair selection can remain a normal function that receives the partial graph and pending jobs. It may choose pairs in parallel only when their endpoints and known neighbour sets do not overlap.
 
+The gateway's durable survey generation is also the explicit restart-repair boundary. When an anchor accepts a strictly newer generation, it aborts the older producer, abandons any exact older discovery or pair-result communication handles, and only then releases their RAM custody. Same-generation redrives remain idempotent, lower generations remain stale, and this cancellation never masquerades as a gateway acknowledgement.
+
 Pair arming follows the fixed order:
 
 ```mermaid

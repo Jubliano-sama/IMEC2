@@ -32,6 +32,7 @@ struct survey_pair_result_delivery_slot {
 };
 
 struct survey_pair_result_abort_tombstone {
+    uint64_t operation_generation;
     uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
     bool active;
     bool abort_requested;
@@ -42,6 +43,7 @@ static struct app_anchor_survey_result_delivery_ops result_delivery_ops;
 static struct survey_pair_result_delivery_slot result_delivery_slots[
     APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS];
 static struct survey_pair_result_abort_tombstone result_abort_tombstone;
+static uint64_t result_delivery_generation_floor;
 static bool result_delivery_initialized;
 
 BUILD_ASSERT(APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS ==
@@ -189,6 +191,7 @@ static bool result_delivery_tombstone_equal(
 {
     return tombstone != NULL && tombstone->active && pair != NULL &&
            round_commitment != NULL &&
+           tombstone->operation_generation == pair->operation_generation &&
            pair->responder_id == DEVICE_ID &&
            pair->operation_generation != 0u &&
            session_id == survey_operation_session_id(
@@ -457,6 +460,7 @@ int app_anchor_survey_result_delivery_init(
         app_mesh_local_delivery_init(
             &result_delivery_slots[i].delivery, &delivery_ops);
     }
+    result_delivery_generation_floor = 0u;
     RESULT_DELIVERY_UNLOCK();
     {
         const struct app_node_comm_durable_attempt_ops attempt_ops = {
@@ -491,6 +495,90 @@ size_t app_anchor_survey_result_delivery_occupied_count(void)
     }
     RESULT_DELIVERY_UNLOCK();
     return count;
+}
+
+int app_anchor_survey_result_delivery_supersede_before(
+    uint64_t operation_generation,
+    size_t *retiring_count)
+{
+    size_t retiring = 0u;
+
+    if (retiring_count == NULL || operation_generation == 0u ||
+        (uint32_t)operation_generation == 0u) {
+        return -EINVAL;
+    }
+    *retiring_count = 0u;
+    if (DEVICE_ROLE != ROLE_ANCHOR || !result_delivery_initialized) {
+        return 0;
+    }
+
+    RESULT_DELIVERY_LOCK();
+    if (operation_generation < result_delivery_generation_floor) {
+        RESULT_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
+    if (result_abort_tombstone.active &&
+        result_abort_tombstone.operation_generation > operation_generation) {
+        RESULT_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
+    /* Validate every owner before mutating any of them. */
+    for (size_t i = 0u;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
+         i++) {
+        const struct survey_pair_result_delivery_slot *slot =
+            &result_delivery_slots[i];
+
+        if (!app_mesh_local_delivery_occupied(&slot->delivery)) {
+            continue;
+        }
+        if (slot->reservation_owner_generation == 0u) {
+            RESULT_DELIVERY_UNLOCK();
+            app_watchdog_stop_feeding();
+            return -EBADMSG;
+        }
+        if (slot->reservation_owner_generation > operation_generation) {
+            RESULT_DELIVERY_UNLOCK();
+            return -ESTALE;
+        }
+    }
+
+    result_delivery_generation_floor = operation_generation;
+    if (result_abort_tombstone.active &&
+        result_abort_tombstone.operation_generation < operation_generation) {
+        /* The generation advance is now the terminal producer authority. */
+        result_abort_tombstone.abort_requested = true;
+        result_abort_tombstone.producer_active = false;
+    }
+    for (size_t i = 0u;
+         i < APP_MESH_SURVEY_PAIR_RESULT_DELIVERY_SLOTS;
+         i++) {
+        struct survey_pair_result_delivery_slot *slot =
+            &result_delivery_slots[i];
+
+        if (!app_mesh_local_delivery_occupied(&slot->delivery) ||
+            slot->reservation_owner_generation >= operation_generation) {
+            continue;
+        }
+        slot->retirement_in_progress = true;
+        retiring++;
+        status_debug_printf(
+            "DBG_SURVEY_PAIR_RESULT_SUPERSEDE_OWNED old_generation=%llu new_generation=%llu seq=%u slot=%u handle=%u\n",
+            (unsigned long long)slot->reservation_owner_generation,
+            (unsigned long long)operation_generation,
+            slot->delivery.snapshot.outbound.packet.seq,
+            (unsigned int)i,
+            slot->handle);
+    }
+    result_delivery_tombstone_clear_if_done_locked();
+    RESULT_DELIVERY_UNLOCK();
+
+    *retiring_count = retiring;
+    if (retiring != 0u) {
+        (void)result_delivery_schedule(0u);
+        return -EINPROGRESS;
+    }
+    return 0;
 }
 
 int app_anchor_survey_result_delivery_stage_reserved(
@@ -533,6 +621,11 @@ int app_anchor_survey_result_delivery_stage_reserved(
     absolute_deadline_ms = SURVEY_PAIR_RESULT_SOURCE_DEADLINE_MS;
 
     RESULT_DELIVERY_LOCK();
+    if (sample.pair.operation_generation <
+        result_delivery_generation_floor) {
+        RESULT_DELIVERY_UNLOCK();
+        return -ECANCELED;
+    }
     result_delivery_tombstone_clear_if_done_locked();
     if (result_abort_tombstone.active &&
         !result_delivery_tombstone_equal(&result_abort_tombstone,
@@ -549,6 +642,8 @@ int app_anchor_survey_result_delivery_stage_reserved(
         return -ECANCELED;
     }
     if (!result_abort_tombstone.active) {
+        result_abort_tombstone.operation_generation =
+            sample.pair.operation_generation;
         memcpy(result_abort_tombstone.round_commitment,
                round_commitment,
                sizeof(result_abort_tombstone.round_commitment));
@@ -728,6 +823,8 @@ int app_anchor_survey_result_delivery_abort_round(
         return -EBUSY;
     }
     if (!result_abort_tombstone.active) {
+        result_abort_tombstone.operation_generation =
+            pair->operation_generation;
         memcpy(result_abort_tombstone.round_commitment,
                round_commitment,
                sizeof(result_abort_tombstone.round_commitment));
@@ -936,7 +1033,7 @@ static int result_delivery_service_slot(
             return ret;
         }
         status_debug_printf(
-            "DBG_SURVEY_PAIR_RESULT_ABORT_RETIRED survey=%u seq=%u slot=%u\n",
+            "DBG_SURVEY_PAIR_RESULT_RETIRED survey=%u seq=%u slot=%u\n",
             outbound.packet.session_id,
             outbound.packet.seq,
             slot->index);

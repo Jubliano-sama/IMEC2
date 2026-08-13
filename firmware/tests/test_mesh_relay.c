@@ -17156,6 +17156,165 @@ static void test_relay_required_route_request_ignores_direct_gateway_copy(void)
     assert(!has_action(&relay_result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
 }
 
+static void test_exact_required_route_hops_filter_responder_and_origin(void)
+{
+    struct mesh_relay responder;
+    struct mesh_relay gateway;
+    struct mesh_relay first_hop;
+    struct mesh_relay second_hop;
+    struct mesh_relay origin;
+    struct mesh_relay origin_before;
+    struct mesh_outbound exact_one_request;
+    struct mesh_outbound exact_two_request;
+    struct mesh_relay_result exact_one_result;
+    struct mesh_relay_result exact_two_result;
+    struct mesh_relay_result gateway_adv_first_result;
+    struct mesh_relay_result gateway_adv_second_result;
+    struct mesh_relay_result rejected_reply_result;
+    struct mesh_outbound gateway_adv;
+    struct mesh_outbound exact_two_reply;
+    struct route_candidate route = direct_gateway_route(GATEWAY, 1u, 90u);
+    const uint8_t exact_one_flags =
+        MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED |
+        MESH_ROUTE_REQ_REQUIRED_HOPS_ENCODE(1u);
+    const uint8_t exact_two_flags =
+        MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED |
+        MESH_ROUTE_REQ_REQUIRED_HOPS_ENCODE(2u);
+
+    mesh_relay_init(&responder,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_B,
+                    GATEWAY,
+                    1u);
+    mesh_relay_init(&origin,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_A,
+                    GATEWAY,
+                    1u);
+    assert(route_upsert_candidate(&responder.upstream, &route) == PROTO_OK);
+
+    assert(mesh_relay_build_route_request_with_timing_flags(
+               &origin,
+               GATEWAY,
+               NULL,
+               0u,
+               exact_one_flags,
+               0u,
+               &exact_one_request,
+               1200u) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&responder,
+                                &exact_one_request.packet,
+                                exact_one_request.payload,
+                                exact_one_request.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1210u,
+                                &exact_one_result) == PROTO_OK);
+    assert(exact_one_result.status == PROTO_OK);
+    assert(has_action(&exact_one_result,
+                      MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(require_tlv_u8(exact_one_result.route_reply.payload,
+                          exact_one_result.route_reply.payload_len,
+                          TLV_HOP_COUNT) == 1u);
+
+    mesh_relay_init(&responder,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_B,
+                    GATEWAY,
+                    1u);
+    assert(route_upsert_candidate(&responder.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_build_route_request_with_timing_flags(
+               &origin,
+               GATEWAY,
+               NULL,
+               0u,
+               exact_two_flags,
+               0u,
+               &exact_two_request,
+               1300u) == PROTO_OK);
+    exact_two_request.packet.ttl = 2u;
+    assert(mesh_relay_handle_rx(&responder,
+                                &exact_two_request.packet,
+                                exact_two_request.payload,
+                                exact_two_request.payload_len,
+                                ANCHOR_A,
+                                80u,
+                                1310u,
+                                &exact_two_result) == PROTO_OK);
+    assert(!has_action(&exact_two_result,
+                       MESH_RELAY_ACTION_SEND_ROUTE_REPLY));
+    assert(has_action(&exact_two_result, MESH_RELAY_ACTION_SEND_ROUTE_REQ));
+
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY,
+                    GATEWAY,
+                    1u);
+    mesh_relay_init(&first_hop,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_B,
+                    GATEWAY,
+                    1u);
+    mesh_relay_init(&second_hop,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    ANCHOR_C,
+                    GATEWAY,
+                    1u);
+    assert(mesh_relay_build_gateway_route_adv(&gateway,
+                                              77u,
+                                              1400u,
+                                              &gateway_adv) == PROTO_OK);
+    assert(mesh_relay_handle_rx(&first_hop,
+                                &gateway_adv.packet,
+                                gateway_adv.payload,
+                                gateway_adv.payload_len,
+                                GATEWAY,
+                                90u,
+                                1410u,
+                                &gateway_adv_first_result) == PROTO_OK);
+    assert(has_action(&gateway_adv_first_result,
+                      MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV));
+    assert(mesh_relay_handle_rx(
+               &second_hop,
+               &gateway_adv_first_result.gateway_route_adv.packet,
+               gateway_adv_first_result.gateway_route_adv.payload,
+               gateway_adv_first_result.gateway_route_adv.payload_len,
+               ANCHOR_B,
+               85u,
+               1420u,
+               &gateway_adv_second_result) == PROTO_OK);
+    assert(mesh_relay_build_route_reply_for_request(
+               &second_hop,
+               &exact_two_request.packet,
+               exact_two_request.payload,
+               exact_two_request.payload_len,
+               ANCHOR_A,
+               1430u,
+               0u,
+               &exact_two_reply) == PROTO_OK);
+    assert(require_tlv_u8(exact_two_reply.payload,
+                          exact_two_reply.payload_len,
+                          TLV_HOP_COUNT) == 2u);
+
+    origin.route_discovery.active = true;
+    origin.route_discovery.target_id = GATEWAY;
+    origin.route_discovery.current_request_id =
+        exact_one_result.route_reply.packet.session_id;
+    origin.route_discovery.required_hop_count = 2u;
+    origin_before = origin;
+    assert(mesh_relay_handle_rx(&origin,
+                                &exact_one_result.route_reply.packet,
+                                exact_one_result.route_reply.payload,
+                                exact_one_result.route_reply.payload_len,
+                                ANCHOR_B,
+                                80u,
+                                1320u,
+                                &rejected_reply_result) == PROTO_OK);
+    assert(rejected_reply_result.status == PROTO_ERR_STALE);
+    assert(rejected_reply_result.actions == MESH_RELAY_ACTION_DROP);
+    assert(memcmp(&origin, &origin_before, sizeof(origin)) == 0);
+}
+
 static void test_route_request_carries_reply_rx_eta(void)
 {
     struct mesh_relay origin;
@@ -20972,6 +21131,7 @@ int main(void)
     test_multihop_route_reply_forward_uses_channel_five();
     test_concurrent_route_replies_use_their_discovery_predecessor();
     test_relay_required_route_request_ignores_direct_gateway_copy();
+    test_exact_required_route_hops_filter_responder_and_origin();
     test_gateway_route_request_without_upstream_waits_for_route();
     test_malformed_route_request_does_not_poison_downlink_route();
     test_duplicate_route_advertisement_field_does_not_mutate_route();

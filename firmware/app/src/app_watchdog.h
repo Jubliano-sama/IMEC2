@@ -8,11 +8,12 @@
  * Connected-routing operations deliberately include multi-minute discovery,
  * control-delivery, and retry horizons.  Keep the watchdog as a last-resort
  * liveness reset instead of making a slow but bounded custody recovery look
- * like a dead system.
+ * like a dead system.  One hour leaves ample margin around every normal
+ * progress interval without postponing recovery for an entire workday.
  */
-#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 86400000u
-#define APP_WATCHDOG_PROGRESS_LEASE_MS 43200000u
-#define APP_WATCHDOG_STARTUP_GRACE_MS 3600000u
+#define APP_WATCHDOG_HARDWARE_TIMEOUT_MS 3600000u
+#define APP_WATCHDOG_PROGRESS_LEASE_MS 2700000u
+#define APP_WATCHDOG_STARTUP_GRACE_MS 900000u
 #define APP_WATCHDOG_INIT_RETRY_DELAY_MS 1000u
 
 struct app_watchdog_health {

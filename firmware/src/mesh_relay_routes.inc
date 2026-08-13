@@ -649,7 +649,9 @@ static int build_route_request_with_timing_flags_id(
         target_id == relay->local_id ||
         (relay->role == MESH_RELAY_ROLE_CLICKER &&
          target_id != relay->gateway_id) ||
-        (request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
+        (request_flags & ~MESH_ROUTE_REQ_ALLOWED_FLAGS) != 0u ||
+        MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(request_flags) >
+            MESH_NETWORK_MAX_HOPS) {
         return PROTO_ERR_ARG;
     }
 
@@ -984,15 +986,21 @@ int mesh_relay_prepare_route_request_with_timing_flags(
         target_id == relay->local_id ||
         (relay->role == MESH_RELAY_ROLE_CLICKER &&
          target_id != relay->gateway_id) ||
-        (request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
+        (request_flags & ~MESH_ROUTE_REQ_ALLOWED_FLAGS) != 0u ||
+        MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(request_flags) >
+            MESH_NETWORK_MAX_HOPS) {
         return PROTO_ERR_ARG;
     }
 
     if (!relay->route_discovery.active ||
-        relay->route_discovery.target_id != target_id) {
+        relay->route_discovery.target_id != target_id ||
+        relay->route_discovery.required_hop_count !=
+            MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(request_flags)) {
         memset(&relay->route_discovery, 0, sizeof(relay->route_discovery));
         relay->route_discovery.active = true;
         relay->route_discovery.target_id = target_id;
+        relay->route_discovery.required_hop_count =
+            MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(request_flags);
         relay->route_discovery.next_request_id = now_ms != 0u ? now_ms :
                                                  relay->upstream.current_epoch;
         if (relay->route_discovery.next_request_id == 0u) {
@@ -1179,6 +1187,12 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
         (selected->next_hop_id == previous_hop_id ||
          selected_path == NULL ||
          mesh_route_paths_intersect(selected_path, &fields.path))) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (!route_request_reply_hops_allowed(
+            &fields,
+            fields.target_id == relay->gateway_id && selected != NULL ?
+                (uint8_t)(selected->hop_count + 1u) : 0u)) {
         return PROTO_ERR_NOT_FOUND;
     }
 

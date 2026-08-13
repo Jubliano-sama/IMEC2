@@ -8,6 +8,7 @@ struct app_mesh_route_request_policy_state {
     bool relay_required;
     bool direct_bulk_suppressed;
     int direct_probe_ret;
+    uint8_t required_gateway_relay_hops;
 };
 
 struct app_mesh_route_request_policy_decision {
@@ -64,5 +65,9 @@ void app_mesh_route_request_defer_decide(
     struct app_mesh_route_request_defer_decision *decision);
 uint32_t app_mesh_route_request_defer_delay_ms(uint32_t now_ms,
                                                uint32_t due_ms);
+bool app_mesh_gateway_control_relay_hops_allowed(
+    uint8_t origin_ttl,
+    uint8_t packet_ttl,
+    uint8_t required_gateway_relay_hops);
 
 #endif

@@ -18,6 +18,9 @@ ANCHOR_SOURCE = APP_ROOT / "src" / "app_anchor.c"
 APP_CONFIG = APP_ROOT / "src" / "app_config.h"
 MESH_TEST_SOURCE = APP_ROOT / "src" / "app_mesh_test.c"
 APP_CMAKE = APP_ROOT / "CMakeLists.txt"
+APP_KCONFIG = APP_ROOT / "Kconfig"
+DIRECT_GATEWAY_SOURCE = APP_ROOT / "src" / "app_mesh_report_direct_gateway.inc"
+ROUTE_CONTROL_SOURCE = APP_ROOT / "src" / "app_mesh_report_route_control.inc"
 POLICY_HEADER = FIRMWARE_ROOT / "include" / "stack_budget.h"
 VERIFIER_PATH = FIRMWARE_ROOT / "scripts" / "verify_stack_evidence.py"
 
@@ -147,6 +150,36 @@ class ForcedHopRamPolicyTests(unittest.TestCase):
             mesh_test,
         )
         self.assertIn("mesh_test_tx_thread_entry", mesh_test)
+
+    def test_forced_anchor_requires_configurable_exact_gateway_depth(self) -> None:
+        cmake = APP_CMAKE.read_text(encoding="utf-8")
+        kconfig = APP_KCONFIG.read_text(encoding="utf-8")
+        direct_gateway = DIRECT_GATEWAY_SOURCE.read_text(encoding="utf-8")
+        route_control = ROUTE_CONTROL_SOURCE.read_text(encoding="utf-8")
+
+        self.assertIn('set(IMEC_FORCED_GATEWAY_RELAY_HOPS "1" CACHE STRING', cmake)
+        forced_anchor = cmake.split(
+            'if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")', 1
+        )[1].split('list(APPEND EXTRA_CONF_FILE', 1)[0]
+        self.assertIn("IMEC_FORCED_GATEWAY_RELAY_HOPS MATCHES", forced_anchor)
+        self.assertIn(
+            "CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS=",
+            forced_anchor,
+        )
+        self.assertIn(
+            "config IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS", kconfig
+        )
+        self.assertIn("range 1 8", kconfig)
+        self.assertIn(
+            "route_policy_state.required_gateway_relay_hops", direct_gateway
+        )
+        hop_gate = route_control.index(
+            "app_mesh_gateway_control_relay_hops_allowed("
+        )
+        reverse_route = route_control.index(
+            "mesh_relay_note_gateway_control_reverse_route("
+        )
+        self.assertLess(hop_gate, reverse_route)
 
 
 if __name__ == "__main__":

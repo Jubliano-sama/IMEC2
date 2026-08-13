@@ -89,9 +89,10 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             WATCHDOG_HEADER, "APP_WATCHDOG_STARTUP_GRACE_MS"
         )
 
-        self.assertEqual(hardware_ms, 24 * 60 * 60 * 1000)
-        self.assertEqual(lease_ms, 12 * 60 * 60 * 1000)
-        self.assertEqual(startup_ms, 60 * 60 * 1000)
+        self.assertEqual(hardware_ms, 60 * 60 * 1000)
+        self.assertEqual(lease_ms, 45 * 60 * 1000)
+        self.assertEqual(startup_ms, 15 * 60 * 1000)
+        self.assertLessEqual(hardware_ms, 0x07CFFFFF)
         self.assertLess(lease_ms, hardware_ms)
 
     def test_running_hardware_is_detected_before_zephyr_setup(self) -> None:

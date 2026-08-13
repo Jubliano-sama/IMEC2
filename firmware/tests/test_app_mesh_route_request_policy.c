@@ -58,6 +58,37 @@ static void test_forced_relay_duplicate_probe_replies_stay_contact_only(void)
     }
 }
 
+static void test_forced_route_encodes_exact_gateway_relay_hops(void)
+{
+    const struct app_mesh_route_request_policy_state state = {
+        .relay_required = true,
+        .direct_probe_ret = 0,
+        .required_gateway_relay_hops = 2u,
+    };
+    struct app_mesh_route_request_policy_decision decision;
+
+    decide(&state, &decision);
+
+    assert(!decision.install_direct_route_from_probe);
+    assert(!decision.direct_probe_satisfies_request);
+    assert((decision.route_request_flags &
+            MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u);
+    assert(MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(
+               decision.route_request_flags) == 2u);
+}
+
+static void test_gateway_control_requires_exact_relay_depth(void)
+{
+    assert(app_mesh_gateway_control_relay_hops_allowed(8u, 8u, 0u));
+    assert(app_mesh_gateway_control_relay_hops_allowed(8u, 7u, 1u));
+    assert(app_mesh_gateway_control_relay_hops_allowed(8u, 6u, 2u));
+    assert(!app_mesh_gateway_control_relay_hops_allowed(8u, 8u, 1u));
+    assert(!app_mesh_gateway_control_relay_hops_allowed(8u, 7u, 2u));
+    assert(!app_mesh_gateway_control_relay_hops_allowed(8u, 5u, 2u));
+    assert(!app_mesh_gateway_control_relay_hops_allowed(0u, 0u, 1u));
+    assert(!app_mesh_gateway_control_relay_hops_allowed(7u, 8u, 1u));
+}
+
 static void test_direct_bulk_suppression_keeps_probe_contact_only(void)
 {
     const struct app_mesh_route_request_policy_state state = {
@@ -215,6 +246,8 @@ int main(void)
     test_normal_direct_probe_can_satisfy_route_request();
     test_forced_relay_probe_is_contact_only();
     test_forced_relay_duplicate_probe_replies_stay_contact_only();
+    test_forced_route_encodes_exact_gateway_relay_hops();
+    test_gateway_control_requires_exact_relay_depth();
     test_direct_bulk_suppression_keeps_probe_contact_only();
     test_failed_probe_does_not_satisfy_route_request();
     test_wake_train_radio_busy_defers_without_counting_attempt();

@@ -746,8 +746,9 @@ static int survey_generation_admit_locked(uint64_t generation, bool *advanced)
 {
     uint32_t superseded_delivery_handle = 0u;
     uint64_t superseded_generation = 0u;
+    size_t retiring_pair_results = 0u;
+    bool retiring_discovery_report = false;
     bool cancel_start_kick = false;
-    int custody_status;
     int ret;
 
     if (generation == 0u || (uint32_t)generation == 0u ||
@@ -764,16 +765,8 @@ static int survey_generation_admit_locked(uint64_t generation, bool *advanced)
         }
     }
     *advanced = false;
-    custody_status =
-        app_anchor_survey_discovery_report_custody_status(generation);
-    if (custody_status < 0 && custody_status != -EALREADY) {
-        return custody_status;
-    }
     if (generation < survey_generation_high_watermark) {
         return -ESTALE;
-    }
-    if (generation == survey_generation_active) {
-        return 0;
     }
     if (generation > survey_generation_high_watermark) {
         /*
@@ -844,8 +837,35 @@ static int survey_generation_admit_locked(uint64_t generation, bool *advanced)
         survey_rf_retry_reset(&pair_rf_retry);
         survey_rf_retry_reset(&discovery_rf_retry);
     }
-    survey_generation_active = generation;
-    *advanced = true;
+    if (survey_generation_active != generation) {
+        survey_generation_active = generation;
+        *advanced = true;
+    }
+    /*
+     * The new generation is durable and the predecessor producer is aborted
+     * before any old source record is released.  Each delivery module then
+     * abandons its exact communication handle before clearing RAM custody.
+     * Returning busy keeps the successor control out of executable state
+     * until that explicit repair boundary has drained.
+     */
+    ret = app_anchor_survey_result_delivery_supersede_before(
+        generation, &retiring_pair_results);
+    if (ret < 0 && ret != -EINPROGRESS) {
+        return ret;
+    }
+    ret = app_anchor_survey_discovery_supersede_before(
+        generation, &retiring_discovery_report);
+    if (ret < 0 && ret != -EINPROGRESS) {
+        return ret;
+    }
+    if (retiring_pair_results != 0u || retiring_discovery_report) {
+        status_debug_printf(
+            "DBG_SURVEY_GENERATION_SUPERSEDE_WAIT generation=%llu pair_results=%u discovery=%u\n",
+            (unsigned long long)generation,
+            (unsigned int)retiring_pair_results,
+            retiring_discovery_report ? 1u : 0u);
+        return -EBUSY;
+    }
     return 0;
 }
 
@@ -865,19 +885,19 @@ app_anchor_survey_runtime_admit_discovery(
         !survey_generation_restored || k_is_in_isr()) {
         return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
     }
-    /*
-     * Pair-result records belong to the preceding operation until the
-     * gateway ACKs their exact identities. Advancing the survey generation
-     * while any such owner remains would let a new discovery consume the
-     * protocol reserve or overwrite the retained RAM owner for a partially
-     * delivered pair in this boot.
-     */
-    if (app_anchor_survey_result_delivery_occupied_count() > 0u) {
-        (void)app_anchor_survey_result_delivery_service();
-        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
-    }
     ret = k_mutex_lock(&survey_generation_admission_mutex, K_FOREVER);
     if (ret < 0) {
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    ret = survey_generation_admit_locked(
+        config->operation_generation, &advanced);
+    if (ret < 0) {
+        k_mutex_unlock(&survey_generation_admission_mutex);
+        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
+    }
+    if (app_anchor_survey_result_delivery_occupied_count() > 0u) {
+        (void)app_anchor_survey_result_delivery_service();
+        k_mutex_unlock(&survey_generation_admission_mutex);
         return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
     }
     custody_status =
@@ -888,12 +908,6 @@ app_anchor_survey_runtime_admit_discovery(
         return APP_ANCHOR_SURVEY_DISCOVERY_DUPLICATE;
     }
     if (custody_status < 0) {
-        k_mutex_unlock(&survey_generation_admission_mutex);
-        return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
-    }
-    ret = survey_generation_admit_locked(
-        config->operation_generation, &advanced);
-    if (ret < 0) {
         k_mutex_unlock(&survey_generation_admission_mutex);
         return APP_ANCHOR_SURVEY_DISCOVERY_BUSY;
     }
@@ -1106,10 +1120,11 @@ void app_anchor_survey_runtime_handle_pair_prepare(
             } else if ((ret = survey_generation_admit_locked(
                             pair.operation_generation,
                             &generation_advanced)) < 0) {
-                status = ret == -ESTALE ?
-                             COMMAND_INVALID_STATE :
-                             COMMAND_INTERNAL_ERROR;
-                reason = ret == -ESTALE ? 6u : (uint8_t)(-ret);
+                status = ret == -ESTALE ? COMMAND_INVALID_STATE :
+                         ret == -EBUSY ? COMMAND_BUSY :
+                         COMMAND_INTERNAL_ERROR;
+                reason = ret == -ESTALE ? 6u :
+                         ret == -EBUSY ? 3u : (uint8_t)(-ret);
             } else {
                 key = k_spin_lock(&survey_lock);
                 decision = survey_pair_lease_prepare_round_bound(

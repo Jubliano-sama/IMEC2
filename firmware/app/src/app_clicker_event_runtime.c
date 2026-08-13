@@ -1,7 +1,15 @@
 #include "app_clicker_event_runtime.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
+
+static bool self_test_arm_window_expired(uint32_t now_ms,
+                                         uint32_t armed_at_ms)
+{
+    return (int32_t)(now_ms - armed_at_ms) >
+           (int32_t)FW_BUTTON_SELF_TEST_ARM_MS;
+}
 
 static enum button_action button_action_for_transition(
     const struct fw_transition *transition)
@@ -184,7 +192,8 @@ int app_clicker_event_runtime_button_signal(
 
     if (signal == BUTTON_SIGNAL_PRESS) {
         if (runtime->button.state == FW_BUTTON_SELF_TEST_ARMED &&
-            now_ms - runtime->button_armed_at_ms > FW_BUTTON_SELF_TEST_ARM_MS) {
+            self_test_arm_window_expired(now_ms,
+                                         runtime->button_armed_at_ms)) {
             ret = dispatch_button_signal(runtime,
                                          FW_EVENT_TIMER_EXPIRED,
                                          now_ms,
@@ -208,7 +217,8 @@ int app_clicker_event_runtime_button_signal(
 
     if (signal == BUTTON_SIGNAL_TICK) {
         if (runtime->button.state != FW_BUTTON_SELF_TEST_ARMED ||
-            now_ms - runtime->button_armed_at_ms <= FW_BUTTON_SELF_TEST_ARM_MS) {
+            !self_test_arm_window_expired(now_ms,
+                                          runtime->button_armed_at_ms)) {
             return 0;
         }
         return dispatch_button_signal(runtime,

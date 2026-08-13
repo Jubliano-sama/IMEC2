@@ -576,6 +576,38 @@ static uint32_t gateway_survey_collection_receive_deadline_ms(void)
            gateway_survey_collection_deadline_ms;
 }
 
+#if DEVICE_ROLE == ROLE_GATEWAY
+static int gateway_survey_preflight_note_early_ack_confirm(
+    const struct app_gateway_survey_round_ack_confirm *confirm)
+{
+    struct gateway_survey_result_preflight *preflight =
+        &gateway_survey_result_preflight;
+    const struct app_gateway_survey_round_ack_confirm *expected =
+        &preflight->early_ack_confirm;
+
+    if (!preflight->valid || confirm == NULL ||
+        confirm->msg_type != expected->msg_type ||
+        confirm->session_id != expected->session_id ||
+        confirm->seq != expected->seq ||
+        confirm->source_id != expected->source_id ||
+        confirm->destination_id != expected->destination_id) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    if (memcmp(confirm->semantic_digest,
+               expected->semantic_digest,
+               sizeof(expected->semantic_digest)) != 0) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if (!preflight->early_ack_confirmed ||
+        confirm->first_received_at_ms < expected->first_received_at_ms) {
+        preflight->early_ack_confirm.first_received_at_ms =
+            confirm->first_received_at_ms;
+    }
+    preflight->early_ack_confirmed = true;
+    return PROTO_OK;
+}
+#endif
+
 static int gateway_note_survey_ack_confirm(
     const struct proto_packet *confirm_packet,
     const struct mesh_gateway_ack_confirm_identity *identity,
@@ -641,6 +673,15 @@ static int gateway_note_survey_ack_confirm(
             (void)gateway_survey_work_schedule(
                 SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u);
             return 0;
+        }
+        if (ret == PROTO_ERR_NOT_FOUND) {
+            ret = gateway_survey_preflight_note_early_ack_confirm(
+                &confirm);
+            if (ret == PROTO_OK) {
+                (void)gateway_survey_work_schedule(
+                    SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u);
+                return 0;
+            }
         }
         if (ret == PROTO_ERR_MALFORMED) {
             gateway_survey_finish_status(
@@ -4147,12 +4188,7 @@ gateway_survey_preflight_result(const struct proto_packet *packet,
                                                       &status,
                                                       &reason);
     if (ret != PROTO_OK) {
-        status_debug_printf("DBG_SURVEY_RESULT_MALFORMED src=0x%016llx session=%u seq=%u command=0x%04x ret=%d\n",
-                            (unsigned long long)packet->src_id,
-                            packet->session_id,
-                            packet->seq,
-                            command_id,
-                            ret);
+        status_debug_printf("DBG_SRES %d\n", ret);
         return GATEWAY_SURVEY_RESULT_PREFLIGHT_UNRECOGNIZED;
     }
     transaction_candidate = gateway_survey_transaction;
@@ -4239,11 +4275,9 @@ void gateway_survey_commit_preflight_result(void)
         &transaction_result,
         &action);
     if (ret < 0 || transaction_result != preparation.result) {
-        LOG_ERR("gateway survey result preparation changed before commit: ret=%d expected=%u actual=%u",
-                ret,
-                (unsigned int)preparation.result,
-                ret < 0 ? (unsigned int)UINT32_MAX :
-                          (unsigned int)transaction_result);
+        gateway_survey_close_fault(
+            GATEWAY_SURVEY_CLOSE_FAULT_ROUND_OWNER,
+            ret < 0 ? ret : -ESTALE);
         gateway_survey_abandon_current(
             COMMAND_INTERNAL_ERROR,
             ret < 0 ? (uint8_t)(-ret) : 1u,
@@ -4259,11 +4293,23 @@ void gateway_survey_commit_preflight_result(void)
             gateway_survey_result_preflight =
                 (struct gateway_survey_result_preflight) {
                 .key = preparation.key,
+                .early_ack_confirm = {
+                    .source_id = preparation.key.responder_id,
+                    .destination_id = preparation.key.requester_id,
+                    .session_id = preparation.key.session_id,
+                    .seq = preparation.key.transaction_id,
+                    .msg_type = MSG_COMMAND_RESULT,
+                },
                 .result = preparation.result,
                 .status = preparation.status,
                 .reason = preparation.reason,
                 .valid = true,
             };
+            memcpy(gateway_survey_result_preflight
+                       .early_ack_confirm.semantic_digest,
+                   preparation.result_digest,
+                   sizeof(gateway_survey_result_preflight
+                              .early_ack_confirm.semantic_digest));
         }
         return;
     }
@@ -4443,10 +4489,6 @@ static void gateway_survey_note_command_result(const struct proto_packet *comman
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
         return;
     }
-    if (matched_preflight) {
-        memset(&gateway_survey_result_preflight, 0,
-               sizeof(gateway_survey_result_preflight));
-    }
 #endif
 
     app_stack_workload_diag_gateway_control_release(
@@ -4458,14 +4500,32 @@ static void gateway_survey_note_command_result(const struct proto_packet *comman
                                                   command_id,
                                                   status,
                                                   reason)) {
-        LOG_ERR("gateway survey accepted result lost exact round control: command=0x%04x target=0x%016llx",
-                command_id,
-                (unsigned long long)command->dst_id);
-        app_watchdog_stop_feeding();
+        gateway_survey_close_fault(
+            GATEWAY_SURVEY_CLOSE_FAULT_ROUND_OWNER, -ESTALE);
         (void)gateway_survey_finish_status(
             COMMAND_INTERNAL_ERROR,
             GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        memset(&gateway_survey_result_preflight, 0,
+               sizeof(gateway_survey_result_preflight));
+        return;
     }
+    if (gateway_survey_result_preflight.early_ack_confirmed) {
+        ret = app_gateway_survey_round_note_control_ack_confirm(
+            &gateway_survey_round,
+            &gateway_survey_result_preflight.early_ack_confirm);
+        if (ret != PROTO_OK) {
+            gateway_survey_close_fault(
+                GATEWAY_SURVEY_CLOSE_FAULT_ROUND_OWNER, ret);
+            (void)gateway_survey_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+        } else {
+            (void)gateway_survey_work_schedule(
+                SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u);
+        }
+    }
+    memset(&gateway_survey_result_preflight, 0,
+           sizeof(gateway_survey_result_preflight));
 #endif
 }
 

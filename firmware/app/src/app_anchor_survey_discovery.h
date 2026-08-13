@@ -44,6 +44,15 @@ int app_anchor_survey_discovery_stage_empty_report(
 int app_anchor_survey_discovery_retry_report(void);
 int app_anchor_survey_discovery_report_custody_status(
     uint64_t operation_generation);
+/*
+ * Retire only discovery-report custody from generations older than a
+ * strictly newer durable survey operation.  Any live communication handle is
+ * abandoned before the RAM owner is cleared; no gateway ACK is synthesized.
+ * Returns -EINPROGRESS while the exact older owner is still draining.
+ */
+int app_anchor_survey_discovery_supersede_before(
+    uint64_t operation_generation,
+    bool *retirement_pending);
 bool app_anchor_survey_discovery_report_staged(uint32_t operation_session_id);
 int app_anchor_survey_delivery_gateway_confirmed(
     const struct proto_packet *packet,

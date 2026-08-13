@@ -2913,6 +2913,21 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                         parsed.packet.msg_type);
                     continue;
                 }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+                if (!app_mesh_gateway_control_relay_hops_allowed(
+                        control_origin_ttl,
+                        parsed.packet.ttl,
+                        CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)) {
+                    status_debug_printf(
+                        "DBG_C5_CONTROL_HOPS_REJECT msg=0x%02x got=%u required=%u\n",
+                        parsed.packet.msg_type,
+                        parsed.packet.ttl <= control_origin_ttl ?
+                            (uint8_t)(control_origin_ttl - parsed.packet.ttl) :
+                            UINT8_MAX,
+                        CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS);
+                    continue;
+                }
+#endif
 
                 if (!targeted_control_relay) {
 #if DEVICE_ROLE == ROLE_ANCHOR

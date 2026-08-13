@@ -24,6 +24,7 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     GATEWAY_COMMAND_BUDGET_MAX_MS,
     GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_IDENTITY_UUID,
+    MESH_NETWORK_MAX_HOPS,
     MSG_ANCHOR_HEARTBEAT,
     GatewayReceiveBuffer,
     MSG_COMMAND_RESULT,
@@ -95,6 +96,24 @@ SURVEY_TERMINAL_DRAIN_MAX_S = 90.0
 
 def _is_ble_address(value: str) -> bool:
     return re.fullmatch(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}", value) is not None
+
+
+def _parse_expected_anchor_hop(value: str) -> tuple[int, int]:
+    try:
+        node_text, hop_text = value.split("=", 1)
+        node_id = int(node_text, 0)
+        hop_count = int(hop_text, 0)
+    except (ValueError, TypeError) as exc:
+        raise argparse.ArgumentTypeError(
+            "expected NODE_ID=HOPS"
+        ) from exc
+    if not 1 <= node_id <= 0xFFFFFFFFFFFFFFFF:
+        raise argparse.ArgumentTypeError("node ID must be a nonzero uint64")
+    if not 1 <= hop_count <= MESH_NETWORK_MAX_HOPS:
+        raise argparse.ArgumentTypeError(
+            f"hop count must be in 1..{MESH_NETWORK_MAX_HOPS}"
+        )
+    return node_id, hop_count
 
 
 async def _resolve_gateway_target(name_or_address: str, timeout_s: float) -> object:
@@ -331,6 +350,7 @@ class AssignmentQualification:
     require_hop_evidence: bool = False
     expected_direct_anchors: int | None = None
     expected_multihop_anchors: int | None = None
+    expected_anchor_hops: dict[int, int] = field(default_factory=dict)
     anchors: set[int] = field(default_factory=set)
     assigned_slots: dict[int, int] = field(default_factory=dict)
     hop_paths: dict[int, tuple[int, int]] = field(default_factory=dict)
@@ -485,6 +505,17 @@ class AssignmentQualification:
                 self._error(
                     f"anchor 0x{anchor_id:016x} has multihop predecessor "
                     f"0x{previous_hop_id:016x} outside the qualified roster"
+                )
+        for anchor_id, expected_hop_count in self.expected_anchor_hops.items():
+            actual = self.hop_paths.get(anchor_id)
+            if actual is None:
+                self._error(
+                    f"expected anchor 0x{anchor_id:016x} hop evidence is missing"
+                )
+            elif actual[0] != expected_hop_count:
+                self._error(
+                    f"anchor 0x{anchor_id:016x} expected hop count "
+                    f"{expected_hop_count}, got {actual[0]}"
                 )
         direct_count = sum(1 for hop, _previous in self.hop_paths.values() if hop == 1)
         multihop_count = sum(1 for hop, _previous in self.hop_paths.values() if hop > 1)
@@ -1102,9 +1133,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 require_hop_evidence=(
                     args.expected_direct_anchors is not None
                     or args.expected_multihop_anchors is not None
+                    or bool(args.expected_anchor_hops)
                 ),
                 expected_direct_anchors=args.expected_direct_anchors,
                 expected_multihop_anchors=args.expected_multihop_anchors,
+                expected_anchor_hops=args.expected_anchor_hops,
             )
             await send_command(
                 "assign-slots",
@@ -1154,8 +1187,14 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             identity & 0xFFFF,
                             identity,
                             args.expected_anchors,
+                            require_hop_evidence=(
+                                args.expected_direct_anchors is not None
+                                or args.expected_multihop_anchors is not None
+                                or bool(args.expected_anchor_hops)
+                            ),
                             expected_direct_anchors=args.expected_direct_anchors,
                             expected_multihop_anchors=args.expected_multihop_anchors,
+                            expected_anchor_hops=args.expected_anchor_hops,
                         )
                 else:
                     if args.require_survey_success and args.survey_id:
@@ -1288,6 +1327,17 @@ def main() -> None:
     parser.add_argument("--expected-pairs", type=int, default=3)
     parser.add_argument("--expected-direct-anchors", type=int)
     parser.add_argument("--expected-multihop-anchors", type=int)
+    parser.add_argument(
+        "--expected-anchor-hop",
+        action="append",
+        type=_parse_expected_anchor_hop,
+        default=[],
+        metavar="NODE_ID=HOPS",
+        help=(
+            "require an exact gateway hop count for one anchor; repeat once "
+            "per expected anchor"
+        ),
+    )
     parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
     parser.add_argument("--assignment-timeout", type=float, default=240.0)
     parser.add_argument(
@@ -1300,6 +1350,13 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    args.expected_anchor_hops = {}
+    for node_id, hop_count in args.expected_anchor_hop:
+        if node_id in args.expected_anchor_hops:
+            parser.error(
+                f"--expected-anchor-hop repeats node 0x{node_id:016x}"
+            )
+        args.expected_anchor_hops[node_id] = hop_count
     if args.notification_hold_s < 0.0:
         parser.error("--notification-hold-s must be non-negative")
     if args.survey_terminal_drain_quiet_s < 0.0:
@@ -1378,6 +1435,34 @@ def main() -> None:
         != args.expected_anchors
     ):
         parser.error("direct plus multihop anchors must equal --expected-anchors")
+    if args.expected_anchor_hops and (
+        args.command not in ("assign-slots", "qualify-reachability")
+        or len(args.expected_anchor_hops) != args.expected_anchors
+    ):
+        parser.error(
+            "--expected-anchor-hop requires assignment qualification and one "
+            "entry per expected anchor"
+        )
+    if args.expected_anchor_hops:
+        direct_hops = sum(
+            hop_count == 1
+            for hop_count in args.expected_anchor_hops.values()
+        )
+        if (
+            args.expected_direct_anchors is not None
+            and args.expected_direct_anchors != direct_hops
+        ):
+            parser.error(
+                "--expected-direct-anchors contradicts --expected-anchor-hop"
+            )
+        if (
+            args.expected_multihop_anchors is not None
+            and args.expected_multihop_anchors !=
+                len(args.expected_anchor_hops) - direct_hops
+        ):
+            parser.error(
+                "--expected-multihop-anchors contradicts --expected-anchor-hop"
+            )
     asyncio.run(run(args))
 
 

@@ -20,6 +20,8 @@ LOG_MODULE_REGISTER(app_watchdog, LOG_LEVEL_INF);
 
 #define APP_WATCHDOG_CHECK_MS 1000u
 
+BUILD_ASSERT(APP_WATCHDOG_HARDWARE_TIMEOUT_MS <= 0x07cfffffu,
+             "watchdog timeout must fit the nRF hardware counter");
 BUILD_ASSERT(APP_WATCHDOG_PROGRESS_LEASE_MS + APP_WATCHDOG_CHECK_MS <
              APP_WATCHDOG_HARDWARE_TIMEOUT_MS,
              "watchdog lease must expire before the hardware timeout");

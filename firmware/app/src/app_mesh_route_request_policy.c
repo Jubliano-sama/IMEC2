@@ -21,7 +21,9 @@ void app_mesh_route_request_policy_decide(
     }
 
     decision->route_request_flags = state->relay_required ?
-                                    MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED : 0u;
+        (uint8_t)(MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED |
+                  MESH_ROUTE_REQ_REQUIRED_HOPS_ENCODE(
+                      state->required_gateway_relay_hops)) : 0u;
     decision->install_direct_route_from_probe =
         !state->relay_required && !state->direct_bulk_suppressed;
     decision->direct_probe_satisfies_request =
@@ -94,4 +96,19 @@ uint32_t app_mesh_route_request_defer_delay_ms(uint32_t now_ms,
     }
 
     return due_ms - now_ms;
+}
+
+bool app_mesh_gateway_control_relay_hops_allowed(
+    uint8_t origin_ttl,
+    uint8_t packet_ttl,
+    uint8_t required_gateway_relay_hops)
+{
+    if (required_gateway_relay_hops == 0u) {
+        return true;
+    }
+    if (origin_ttl == 0u || packet_ttl == 0u || packet_ttl > origin_ttl) {
+        return false;
+    }
+    return (uint8_t)(origin_ttl - packet_ttl) ==
+           required_gateway_relay_hops;
 }

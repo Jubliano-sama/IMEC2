@@ -92,7 +92,9 @@ static int parse_route_discovery_tlvs(const uint8_t *payload,
     } else if (ret != PROTO_OK) {
         return ret;
     }
-    if ((fields->request_flags & ~MESH_ROUTE_REQ_FLAG_RELAY_REQUIRED) != 0u) {
+    if ((fields->request_flags & ~MESH_ROUTE_REQ_ALLOWED_FLAGS) != 0u ||
+        MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(fields->request_flags) >
+            MESH_NETWORK_MAX_HOPS) {
         return PROTO_ERR_MALFORMED;
     }
     ret = find_u16_tlv(payload,
@@ -159,6 +161,21 @@ static int parse_route_discovery_tlvs(const uint8_t *payload,
         return ret;
     }
     return PROTO_OK;
+}
+
+static bool route_request_reply_hops_allowed(
+    const struct route_discovery_fields *request,
+    uint8_t reply_hop_count)
+{
+    uint8_t required_hop_count;
+
+    if (request == NULL) {
+        return false;
+    }
+    required_hop_count =
+        MESH_ROUTE_REQ_REQUIRED_HOPS_DECODE(request->request_flags);
+    return required_hop_count == 0u ||
+           required_hop_count == reply_hop_count;
 }
 
 static bool route_discovery_required_tlvs_present(const uint8_t *payload,
@@ -647,6 +664,14 @@ static int validate_route_reply_packet(
                                  previous_hop_id) != PROTO_OK ||
         mesh_route_path_contains(&fields->path, relay->local_id)) {
         return PROTO_ERR_MALFORMED;
+    }
+    if (packet->dst_id == relay->local_id &&
+        relay->route_discovery.active &&
+        relay->route_discovery.target_id == fields->target_id &&
+        relay->route_discovery.current_request_id == packet->session_id &&
+        relay->route_discovery.required_hop_count != 0u &&
+        relay->route_discovery.required_hop_count != fields->hop_count) {
+        return PROTO_ERR_STALE;
     }
     ret = route_epoch_select_newer(fields->route_epoch,
                                    relay->upstream.current_epoch,
@@ -1632,6 +1657,13 @@ static int handle_route_request(struct mesh_relay *relay,
     }
     reply_available = fields.target_id == relay->local_id ||
         gateway_reply_available;
+    if (reply_available &&
+        !route_request_reply_hops_allowed(
+            &fields,
+            gateway_reply_available ?
+                (uint8_t)(reply_route.hop_count + 1u) : 0u)) {
+        reply_available = false;
+    }
     install_reply_timing = reply_available &&
         fields.proposed_channel9_timing_valid;
     if (install_reply_timing) {
@@ -1679,8 +1711,7 @@ static int handle_route_request(struct mesh_relay *relay,
                                            &first_seen,
                                            &best_updated);
 
-    if (fields.target_id == relay->local_id ||
-        gateway_reply_available) {
+    if (reply_available) {
         uint32_t reply_epoch = fields.route_epoch;
         const struct route_candidate *reply_route_ptr =
             gateway_reply_available ? &reply_route : NULL;

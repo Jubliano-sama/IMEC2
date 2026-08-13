@@ -794,6 +794,7 @@ static void test_control_result_requires_exact_ack_confirm_before_successor(void
     struct node_comm_terminal_event cancelled_delivery;
     struct proto_packet result_packet = {0};
     struct app_gateway_survey_round_ack_confirm confirm = {0};
+    struct app_gateway_survey_round_ack_confirm mismatched_confirm;
     uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
     const uint8_t request_payload[] = { 0x23u, 0x01u };
@@ -858,6 +859,26 @@ static void test_control_result_requires_exact_ack_confirm_before_successor(void
                &action) == PROTO_OK);
     assert(transaction_result ==
            SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
+
+    confirm = (struct app_gateway_survey_round_ack_confirm) {
+        .source_id = result_packet.src_id,
+        .destination_id = result_packet.dst_id,
+        .first_received_at_ms = 20u,
+        .msg_type = MSG_COMMAND_RESULT,
+        .session_id = result_key.session_id,
+        .seq = result_key.transaction_id,
+    };
+    memcpy(confirm.semantic_digest,
+           result_digest,
+           sizeof(confirm.semantic_digest));
+
+    /* This is the HIL ordering: the exact ACK_CONFIRM reaches the gateway
+     * after semantic result acceptance but before request-delivery terminal
+     * processing installs the round confirmation.  The round cannot consume
+     * it yet, so its caller must retain this immutable proof for promotion. */
+    assert(!transaction.active.request_delivery_terminal);
+    assert(app_gateway_survey_round_note_control_ack_confirm(
+               &round, &confirm) == PROTO_ERR_NOT_FOUND);
 
     /* Match the production cancel/take retirement of the accepted request. */
     cancelled_delivery = (struct node_comm_terminal_event) {
@@ -930,26 +951,24 @@ static void test_control_result_requires_exact_ack_confirm_before_successor(void
                control.target_id,
                result_key.session_id) == PROTO_ERR_BUSY);
 
-    confirm = (struct app_gateway_survey_round_ack_confirm) {
-        .source_id = result_packet.src_id,
-        .destination_id = result_packet.dst_id,
-        .first_received_at_ms = 999u,
-        .msg_type = MSG_COMMAND_RESULT,
-        .session_id = result_key.session_id,
-        .seq = result_key.transaction_id,
-    };
-    memset(confirm.semantic_digest, 0xa5u, sizeof(confirm.semantic_digest));
+    mismatched_confirm = confirm;
+    mismatched_confirm.source_id++;
     assert(app_gateway_survey_round_note_control_ack_confirm(
-               &round, &confirm) == PROTO_ERR_MALFORMED);
+               &round, &mismatched_confirm) == PROTO_ERR_NOT_FOUND);
     assert(app_gateway_survey_round_control_confirmation_pending(&round));
 
-    memcpy(confirm.semantic_digest,
-           result_digest,
-           sizeof(confirm.semantic_digest));
+    mismatched_confirm = confirm;
+    mismatched_confirm.semantic_digest[0] ^= 0xffu;
+    assert(app_gateway_survey_round_note_control_ack_confirm(
+               &round, &mismatched_confirm) == PROTO_ERR_MALFORMED);
+    assert(app_gateway_survey_round_control_confirmation_pending(&round));
+
+    /* Promoting the retained exact proof preserves its physical receipt
+     * time; processing latency must not move it beyond the control deadline. */
     assert(app_gateway_survey_round_note_control_ack_confirm(
                &round, &confirm) == PROTO_OK);
     assert(!app_gateway_survey_round_control_confirmation_pending(&round));
-    assert(round.control_confirmation.confirmed_at_ms == 999u);
+    assert(round.control_confirmation.confirmed_at_ms == 20u);
     assert(app_gateway_survey_round_control_confirmation_received_in_interval(
         &round, 10u, 1000u));
 
@@ -957,7 +976,7 @@ static void test_control_result_requires_exact_ack_confirm_before_successor(void
     confirm.first_received_at_ms = 1001u;
     assert(app_gateway_survey_round_note_control_ack_confirm(
                &round, &confirm) == PROTO_OK);
-    assert(round.control_confirmation.confirmed_at_ms == 999u);
+    assert(round.control_confirmation.confirmed_at_ms == 20u);
     assert(app_gateway_survey_round_control_confirmation_ready(
                &round, &control, &status) == PROTO_OK);
     assert(status == COMMAND_OK);

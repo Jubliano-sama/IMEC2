@@ -75,6 +75,8 @@ set(IMEC_GATEWAY_ID "" CACHE STRING "Override GATEWAY_ID")
 set(IMEC_NETWORK_ID "" CACHE STRING "Override NETWORK_ID")
 set(IMEC_ML_ANCHOR_SLOT "" CACHE STRING "Override deterministic ML anchor discovery slot")
 set(IMEC_MESH_ROUTE_TEST_DEVICE_NAME "" CACHE STRING "BLE device name for mesh-route test builds")
+set(IMEC_FORCED_GATEWAY_RELAY_HOPS "1" CACHE STRING
+    "Exact gateway relay depth for mesh_anchor_forcedhop (1-8)")
 
 set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway")
 set_property(CACHE FIRMWARE_ROLE PROPERTY STRINGS clicker tag anchor gateway)
@@ -253,9 +255,14 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
         endif()
     endif()
     if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
+        if(NOT IMEC_FORCED_GATEWAY_RELAY_HOPS MATCHES "^[1-8]$")
+            message(FATAL_ERROR
+                "IMEC_FORCED_GATEWAY_RELAY_HOPS must be an integer from 1 through 8")
+        endif()
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ=y\n"
-            "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL=y\n")
+            "CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL=y\n"
+            "CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS=${IMEC_FORCED_GATEWAY_RELAY_HOPS}\n")
     endif()
     list(APPEND EXTRA_CONF_FILE "${IMEC_MESH_ROUTE_TEST_NAME_CONF}")
 endif()

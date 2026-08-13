@@ -32,6 +32,8 @@ static bool survey_delivery_comm_identity_valid;
 static struct mesh_outbound survey_report_stage_retry_outbound;
 static uint32_t survey_report_stage_retry_generation;
 static bool survey_report_stage_retry_valid;
+static uint64_t survey_delivery_generation_floor;
+static bool survey_delivery_retirement_in_progress;
 
 #define SURVEY_DELIVERY_EVENT_POLL_MS 100u
 #define SURVEY_DISCOVERY_REPORT_SOURCE_DEADLINE_MS UINT64_MAX
@@ -268,6 +270,8 @@ int app_anchor_survey_discovery_init(
                sizeof(survey_report_stage_retry_outbound));
         survey_report_stage_retry_generation = 0u;
         survey_report_stage_retry_valid = false;
+        survey_delivery_generation_floor = 0u;
+        survey_delivery_retirement_in_progress = false;
         SURVEY_DELIVERY_UNLOCK();
         {
             const struct app_node_comm_durable_attempt_ops attempt_ops = {
@@ -511,7 +515,10 @@ static int prepare_discovery_report(
     outbound.earliest_tx_valid = true;
 
     SURVEY_DELIVERY_LOCK();
-    if (survey_report_stage_retry_valid) {
+    if (operation_generation < survey_delivery_generation_floor) {
+        ret = -ECANCELED;
+    } else if (survey_delivery_retirement_in_progress ||
+               survey_report_stage_retry_valid) {
         ret = -EBUSY;
     } else {
         ret = app_mesh_local_delivery_stage(delivery,
@@ -813,6 +820,118 @@ static int survey_delivery_service_failed_abandon(void)
     return 0;
 }
 
+static int survey_delivery_service_retirement(void)
+{
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    struct app_mesh_local_delivery_identity identity = {0};
+    struct mesh_outbound outbound = {0};
+    uint64_t owned_generation = 0u;
+    uint64_t retirement_floor = 0u;
+    uint32_t handle = 0u;
+    int handle_state;
+    int ret;
+
+    SURVEY_DELIVERY_LOCK();
+    if (!survey_delivery_retirement_in_progress) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ENOENT;
+    }
+    if (delivery == NULL || !app_mesh_local_delivery_occupied(delivery)) {
+        survey_delivery_retirement_in_progress = false;
+        SURVEY_DELIVERY_UNLOCK();
+        return 0;
+    }
+    outbound = delivery->snapshot.outbound;
+    retirement_floor = survey_delivery_generation_floor;
+    ret = survey_operation_generation_extract_tlv(
+        outbound.payload, outbound.payload_len, &owned_generation);
+    if (ret != PROTO_OK || owned_generation == 0u ||
+        owned_generation >= retirement_floor) {
+        SURVEY_DELIVERY_UNLOCK();
+        if (ret != PROTO_OK || owned_generation == 0u) {
+            app_watchdog_stop_feeding();
+            return -EBADMSG;
+        }
+        return -ESTALE;
+    }
+    app_mesh_local_delivery_identity_from_outbound(&outbound, &identity);
+    if (survey_delivery_comm_owned) {
+        if (!survey_delivery_comm_identity_valid ||
+            !survey_delivery_identity_equal(&survey_delivery_comm_identity,
+                                            &identity)) {
+            SURVEY_DELIVERY_UNLOCK();
+            app_watchdog_stop_feeding();
+            return -EBADMSG;
+        }
+        handle = survey_delivery_handle;
+        if (handle == 0u) {
+            SURVEY_DELIVERY_UNLOCK();
+            (void)schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
+            return -EINPROGRESS;
+        }
+    } else if (survey_delivery_handle != 0u) {
+        SURVEY_DELIVERY_UNLOCK();
+        app_watchdog_stop_feeding();
+        return -EBADMSG;
+    }
+    SURVEY_DELIVERY_UNLOCK();
+
+    if (handle != 0u) {
+        ret = app_node_comm_abandon_delivery(handle);
+        if (ret < 0 && ret != -ENOENT && ret != -EALREADY) {
+            (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
+            return ret;
+        }
+        handle_state = app_node_comm_delivery_handle_state(handle);
+        if (handle_state < 0) {
+            (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
+            return handle_state;
+        }
+        if (handle_state > 0) {
+            (void)schedule_work_ms(SURVEY_DELIVERY_EVENT_POLL_MS);
+            return -EINPROGRESS;
+        }
+    }
+
+    SURVEY_DELIVERY_LOCK();
+    if (!survey_delivery_retirement_in_progress ||
+        !app_mesh_local_delivery_identity_matches_outbound(
+            &identity, &delivery->snapshot.outbound) ||
+        (handle != 0u &&
+         (!survey_delivery_comm_owned ||
+          survey_delivery_handle != handle ||
+          !survey_delivery_comm_identity_valid ||
+          !survey_delivery_identity_equal(&survey_delivery_comm_identity,
+                                          &identity)))) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
+    if (handle != 0u) {
+        survey_delivery_comm_owned = false;
+        survey_delivery_handle = 0u;
+        memset(&survey_delivery_comm_identity, 0,
+               sizeof(survey_delivery_comm_identity));
+        survey_delivery_comm_identity_valid = false;
+    }
+    ret = app_mesh_local_delivery_cancel(delivery);
+    if (ret == 0) {
+        survey_delivery_retry_round = 0u;
+        survey_delivery_retirement_in_progress = false;
+    }
+    SURVEY_DELIVERY_UNLOCK();
+    if (ret < 0) {
+        (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
+        return ret;
+    }
+    status_debug_printf(
+        "DBG_SURVEY_REPORT_SUPERSEDE_RETIRED old_generation=%llu new_generation=%llu boot=%u seq=%u\n",
+        (unsigned long long)owned_generation,
+        (unsigned long long)retirement_floor,
+        outbound.packet.session_id,
+        outbound.packet.seq);
+    return 0;
+}
+
 int app_anchor_survey_discovery_retry_report(void)
 {
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
@@ -831,6 +950,10 @@ int app_anchor_survey_discovery_retry_report(void)
     }
     ret = survey_delivery_service_failed_abandon();
     if (ret < 0) {
+        return ret;
+    }
+    ret = survey_delivery_service_retirement();
+    if (ret != -ENOENT) {
         return ret;
     }
     ret = survey_delivery_poll_comm_result();
@@ -999,6 +1122,7 @@ int app_anchor_survey_discovery_retry_report(void)
                            &survey_delivery_comm_identity,
                            &outbound);
     still_current = submission_owned &&
+                    !survey_delivery_retirement_in_progress &&
                     survey_delivery_matches_locked(delivery, &outbound);
     if (ret == 0 && still_current) {
         survey_delivery_handle = delivery_handle;
@@ -1111,6 +1235,109 @@ int app_anchor_survey_discovery_report_custody_status(
         return -EBADMSG;
     }
     return operation_generation == owned_generation ? -EALREADY : -EBUSY;
+}
+
+int app_anchor_survey_discovery_supersede_before(
+    uint64_t operation_generation,
+    bool *retirement_pending)
+{
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    uint64_t active_generation = 0u;
+    uint64_t retry_generation = 0u;
+    bool pending = false;
+    int ret;
+
+    if (operation_generation == 0u || (uint32_t)operation_generation == 0u ||
+        retirement_pending == NULL) {
+        return -EINVAL;
+    }
+    *retirement_pending = false;
+    if (DEVICE_ROLE != ROLE_ANCHOR || delivery == NULL) {
+        return 0;
+    }
+
+    SURVEY_DELIVERY_LOCK();
+    if (operation_generation < survey_delivery_generation_floor) {
+        SURVEY_DELIVERY_UNLOCK();
+        return -ESTALE;
+    }
+    if (survey_delivery_retirement_in_progress &&
+        !app_mesh_local_delivery_occupied(delivery)) {
+        survey_delivery_retirement_in_progress = false;
+    }
+    if (survey_delivery_comm_owned &&
+        !app_mesh_local_delivery_occupied(delivery)) {
+        SURVEY_DELIVERY_UNLOCK();
+        app_watchdog_stop_feeding();
+        return -EBADMSG;
+    }
+    if (survey_report_stage_retry_valid) {
+        ret = survey_operation_generation_extract_tlv(
+            survey_report_stage_retry_outbound.payload,
+            survey_report_stage_retry_outbound.payload_len,
+            &retry_generation);
+        if (ret != PROTO_OK || retry_generation == 0u) {
+            SURVEY_DELIVERY_UNLOCK();
+            app_watchdog_stop_feeding();
+            return -EBADMSG;
+        }
+        if (retry_generation > operation_generation) {
+            SURVEY_DELIVERY_UNLOCK();
+            return -ESTALE;
+        }
+    }
+    if (app_mesh_local_delivery_occupied(delivery)) {
+        ret = survey_operation_generation_extract_tlv(
+            delivery->snapshot.outbound.payload,
+            delivery->snapshot.outbound.payload_len,
+            &active_generation);
+        if (ret != PROTO_OK || active_generation == 0u) {
+            SURVEY_DELIVERY_UNLOCK();
+            app_watchdog_stop_feeding();
+            return -EBADMSG;
+        }
+        if (active_generation > operation_generation) {
+            SURVEY_DELIVERY_UNLOCK();
+            return -ESTALE;
+        }
+    }
+
+    survey_delivery_generation_floor = operation_generation;
+    if (survey_report_stage_retry_valid &&
+        retry_generation < operation_generation) {
+        status_debug_printf(
+            "DBG_SURVEY_REPORT_SUPERSEDE_STAGE old_generation=%llu new_generation=%llu seq=%u\n",
+            (unsigned long long)retry_generation,
+            (unsigned long long)operation_generation,
+            survey_report_stage_retry_outbound.packet.seq);
+        memset(&survey_report_stage_retry_outbound, 0,
+               sizeof(survey_report_stage_retry_outbound));
+        survey_report_stage_retry_generation = 0u;
+        survey_report_stage_retry_valid = false;
+    }
+    if (app_mesh_local_delivery_occupied(delivery) &&
+        active_generation < operation_generation) {
+        survey_delivery_retirement_in_progress = true;
+        pending = true;
+        status_debug_printf(
+            "DBG_SURVEY_REPORT_SUPERSEDE_OWNED old_generation=%llu new_generation=%llu boot=%u seq=%u handle=%u\n",
+            (unsigned long long)active_generation,
+            (unsigned long long)operation_generation,
+            delivery->snapshot.outbound.packet.session_id,
+            delivery->snapshot.outbound.packet.seq,
+            survey_delivery_handle);
+    }
+    if (survey_delivery_failed_abandon_handle != 0u) {
+        pending = true;
+    }
+    SURVEY_DELIVERY_UNLOCK();
+
+    *retirement_pending = pending;
+    if (pending) {
+        (void)schedule_work_ms(0u);
+        return -EINPROGRESS;
+    }
+    return 0;
 }
 
 void app_anchor_survey_discovery_handle_start(

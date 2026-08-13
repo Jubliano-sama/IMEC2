@@ -9,6 +9,10 @@ APP = FIRMWARE / "app/src"
 GATEWAY_SURVEY = (APP / "app_anchor_gateway_survey.inc").read_text()
 GATEWAY_CONTROL = (APP / "app_anchor_gateway_control.inc").read_text()
 ANCHOR_RUNTIME = (APP / "app_anchor_survey_runtime.c").read_text()
+ANCHOR_DISCOVERY = (APP / "app_anchor_survey_discovery.c").read_text()
+ANCHOR_RESULT_DELIVERY = (
+    APP / "app_anchor_survey_result_delivery.c"
+).read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -145,6 +149,12 @@ class SurveyDurableGenerationSourceInvariants(unittest.TestCase):
             clear_old,
         )
         active = admit.index("survey_generation_active = generation", abandon_old)
+        retire_pairs = admit.index(
+            "app_anchor_survey_result_delivery_supersede_before(", active
+        )
+        retire_discovery = admit.index(
+            "app_anchor_survey_discovery_supersede_before(", retire_pairs
+        )
         self.assertLess(advance_guard, durable)
         self.assertLess(durable, failure)
         self.assertLess(failure_return, high_water)
@@ -152,6 +162,8 @@ class SurveyDurableGenerationSourceInvariants(unittest.TestCase):
         self.assertLess(supersede, clear_old)
         self.assertLess(clear_old, abandon_old)
         self.assertLess(abandon_old, active)
+        self.assertLess(active, retire_pairs)
+        self.assertLess(retire_pairs, retire_discovery)
         self.assertIn("APP_DURABLE_STATE_SURVEY_GENERATION", admit)
         self.assertIn("GATEWAY_ID", admit)
         self.assertEqual(
@@ -168,10 +180,20 @@ class SurveyDurableGenerationSourceInvariants(unittest.TestCase):
             admit,
         )
         self.assertIsNotNone(rollback)
-        self.assertRegex(
+        self.assertNotRegex(
             admit,
             r"if \(generation == survey_generation_active\) \{\s*"
             r"return 0;\s*\}",
+        )
+        # Exact replay must re-run the idempotent retirement checks so a
+        # successor redrive can observe that old handle teardown completed.
+        self.assertLess(
+            admit.index("generation < survey_generation_high_watermark"),
+            admit.index("app_anchor_survey_result_delivery_supersede_before("),
+        )
+        self.assertLess(
+            admit.index("app_anchor_survey_result_delivery_supersede_before("),
+            admit.index("app_anchor_survey_discovery_supersede_before("),
         )
         self.assertNotIn(
             "generation == survey_generation_high_watermark &&", admit
@@ -179,6 +201,115 @@ class SurveyDurableGenerationSourceInvariants(unittest.TestCase):
         self.assertLess(
             admit.index("generation > survey_generation_high_watermark"),
             admit.rindex("survey_generation_active = generation"),
+        )
+
+    def test_new_generation_is_explicit_exact_handle_repair_boundary(self) -> None:
+        pair_supersede = function_body(
+            ANCHOR_RESULT_DELIVERY,
+            "app_anchor_survey_result_delivery_supersede_before",
+        )
+        pair_stage = function_body(
+            ANCHOR_RESULT_DELIVERY,
+            "app_anchor_survey_result_delivery_stage_reserved",
+        )
+        pair_service = function_body(
+            ANCHOR_RESULT_DELIVERY, "result_delivery_service_slot"
+        )
+        discovery_supersede = function_body(
+            ANCHOR_DISCOVERY,
+            "app_anchor_survey_discovery_supersede_before",
+        )
+        discovery_service = function_body(
+            ANCHOR_DISCOVERY, "survey_delivery_service_retirement"
+        )
+        discovery_retry = function_body(
+            ANCHOR_DISCOVERY, "app_anchor_survey_discovery_retry_report"
+        )
+        discovery_prepare = function_body(
+            ANCHOR_DISCOVERY, "prepare_discovery_report"
+        )
+
+        self.assertIn(
+            "operation_generation < result_delivery_generation_floor",
+            pair_supersede,
+        )
+        self.assertLess(
+            pair_supersede.index(
+                "slot->reservation_owner_generation > operation_generation"
+            ),
+            pair_supersede.index(
+                "result_delivery_generation_floor = operation_generation"
+            ),
+        )
+        self.assertIn("slot->retirement_in_progress = true", pair_supersede)
+        self.assertIn("return -EINPROGRESS", pair_supersede)
+        self.assertIn(
+            "sample.pair.operation_generation <\n"
+            "        result_delivery_generation_floor",
+            pair_stage,
+        )
+        self.assertLess(
+            pair_service.index("app_node_comm_abandon_delivery(handle)"),
+            pair_service.index("app_node_comm_delivery_handle_state(handle)"),
+        )
+        self.assertLess(
+            pair_service.index("app_node_comm_delivery_handle_state(handle)"),
+            pair_service.index("app_mesh_local_delivery_cancel(&slot->delivery)"),
+        )
+
+        self.assertLess(
+            discovery_supersede.index(
+                "active_generation > operation_generation"
+            ),
+            discovery_supersede.index(
+                "survey_delivery_generation_floor = operation_generation"
+            ),
+        )
+        self.assertIn(
+            "survey_delivery_retirement_in_progress = true",
+            discovery_supersede,
+        )
+        self.assertLess(
+            discovery_service.index("app_node_comm_abandon_delivery(handle)"),
+            discovery_service.index("app_node_comm_delivery_handle_state(handle)"),
+        )
+        self.assertLess(
+            discovery_service.index("app_node_comm_delivery_handle_state(handle)"),
+            discovery_service.index("app_mesh_local_delivery_cancel(delivery)"),
+        )
+        self.assertLess(
+            discovery_retry.index("survey_delivery_service_retirement()"),
+            discovery_retry.index("survey_delivery_poll_comm_result()"),
+        )
+        self.assertLess(
+            discovery_retry.index("survey_delivery_service_retirement()"),
+            discovery_retry.index("app_node_comm_submit_delivery("),
+        )
+        self.assertIn(
+            "operation_generation < survey_delivery_generation_floor",
+            discovery_prepare,
+        )
+
+    def test_discovery_admission_advances_then_drains_old_custody(self) -> None:
+        admission = function_body(
+            ANCHOR_RUNTIME, "app_anchor_survey_runtime_admit_discovery"
+        )
+        generation = admission.index("survey_generation_admit_locked(")
+        pair_custody = admission.index(
+            "app_anchor_survey_result_delivery_occupied_count()", generation
+        )
+        discovery_custody = admission.index(
+            "app_anchor_survey_discovery_report_custody_status(", pair_custody
+        )
+        self.assertLess(generation, pair_custody)
+        self.assertLess(pair_custody, discovery_custody)
+        self.assertNotIn(
+            "app_anchor_survey_result_delivery_occupied_count()",
+            admission[:generation],
+        )
+        self.assertNotIn(
+            "app_anchor_survey_discovery_report_custody_status(",
+            admission[:generation],
         )
 
     def test_generation_io_is_out_of_retry_and_deadline_callbacks(self) -> None:

@@ -348,9 +348,11 @@ struct gateway_survey_cleanup_delivery {
 };
 struct gateway_survey_result_preflight {
     struct node_transaction_key key;
+    struct app_gateway_survey_round_ack_confirm early_ack_confirm;
     enum survey_gateway_transaction_result result;
     enum command_status status;
     uint8_t reason;
+    bool early_ack_confirmed;
     bool valid;
 };
 struct gateway_survey_result_preparation {

@@ -5,6 +5,13 @@
  * anchor image links from app_mesh_report.c.
  */
 #include "app_mesh_report.c"
+#undef LOG_MODULE_DECLARE
+#define LOG_MODULE_DECLARE(...)
+#include "app_anchor_survey_result_delivery.c"
+#undef LOG_MODULE_DECLARE
+#define LOG_MODULE_DECLARE(...)
+#include "app_anchor_survey_discovery.c"
+#undef LOG_MODULE_DECLARE
 
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
@@ -56,6 +63,26 @@ static int route_preempt_successor_result;
 static int route_owned_preempt_result;
 static int preempt_request_caller_result;
 static uint32_t preempt_request_caller_deadline_ms;
+static uint32_t survey_result_schedule_calls;
+
+static int survey_result_schedule_for_test(uint32_t delay_ms)
+{
+    ARG_UNUSED(delay_ms);
+    survey_result_schedule_calls++;
+    return 0;
+}
+
+static int survey_result_active_owner_for_test(
+    const struct mesh_outbound *outbound)
+{
+    ARG_UNUSED(outbound);
+    return 0;
+}
+
+static void survey_result_wake_owner_for_test(const char *reason)
+{
+    ARG_UNUSED(reason);
+}
 
 /* Production dependencies outside this deliberately narrow composed link. */
 void app_watchdog_stop_feeding(void)
@@ -88,6 +115,16 @@ void app_mesh_direct_probe_breadcrumb_note(
  * test reaches an RF effect because every handoff is observed before schedule. */
 void app_watchdog_note_radio_progress(void)
 {
+}
+
+void dwm3000_driver_request_receive_abort(uint32_t owner_mask)
+{
+    ARG_UNUSED(owner_mask);
+}
+
+bool dwm3000_driver_receive_abort_pending(void)
+{
+    return false;
 }
 
 void gateway_command_result_validation_release_reserved(uint32_t token)
@@ -423,6 +460,239 @@ static struct mesh_outbound queued_report(uint64_t source_id, uint16_t seq)
     outbound.queued_at_ms = k_uptime_get_32();
     outbound.queued_at_valid = true;
     return outbound;
+}
+
+static struct mesh_outbound survey_pair_result_for_test(
+    uint64_t operation_generation,
+    uint16_t round_id,
+    uint16_t sample_index)
+{
+    struct survey_sample sample = {
+        .pair = {
+            .operation_generation = operation_generation,
+            .survey_id = UINT32_C(0x31000001),
+            .initiator_id = UINT64_C(0x1111222233334444),
+            .responder_id = DEVICE_ID,
+            .sample_count = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+        },
+        .round_id = round_id,
+        .sample_index = sample_index,
+        .distance_mm = 1875,
+        .quality = 90u,
+        .range_status = RANGE_OK,
+    };
+    struct mesh_outbound outbound = {0};
+    size_t payload_len = 0u;
+    uint16_t sequence = 0u;
+
+    zassert_equal(survey_append_sample_tlvs(outbound.payload,
+                                            sizeof(outbound.payload),
+                                            &payload_len,
+                                            &sample),
+                  PROTO_OK);
+    zassert_equal(tlv_append_u64(outbound.payload,
+                                 sizeof(outbound.payload),
+                                 &payload_len,
+                                 TLV_TIMESTAMP_MS,
+                                 UINT64_C(123456789)),
+                  PROTO_OK);
+    zassert_equal(survey_pair_result_transport_sequence(round_id,
+                                                        sample_index,
+                                                        &sequence),
+                  PROTO_OK);
+    zassert_equal(survey_init_result_packet_from_reporter(
+                      &outbound.packet,
+                      &sample,
+                      DEVICE_ID,
+                      GATEWAY_ID,
+                      sequence,
+                      (uint8_t)payload_len),
+                  PROTO_OK);
+    outbound.payload_len = (uint8_t)payload_len;
+    outbound.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    outbound.next_hop_id = GATEWAY_ID;
+    return outbound;
+}
+
+static struct mesh_outbound survey_discovery_report_for_test(
+    uint64_t operation_generation,
+    uint16_t sequence)
+{
+    struct mesh_outbound outbound = {0};
+    const uint32_t survey_id = UINT32_C(0x32000001);
+    const uint32_t boot_incarnation = UINT32_C(0x41000001);
+    size_t payload_len = 0u;
+
+    zassert_equal(survey_append_reach_report_tlvs(outbound.payload,
+                                                  sizeof(outbound.payload),
+                                                  &payload_len,
+                                                  survey_id,
+                                                  DEVICE_ID,
+                                                  NULL,
+                                                  0u),
+                  PROTO_OK);
+    zassert_equal(survey_operation_generation_append_tlv(
+                      outbound.payload,
+                      sizeof(outbound.payload),
+                      &payload_len,
+                      operation_generation),
+                  PROTO_OK);
+    zassert_equal(tlv_append_u32(outbound.payload,
+                                 sizeof(outbound.payload),
+                                 &payload_len,
+                                 TLV_NODE_BOOT_COUNTER,
+                                 boot_incarnation),
+                  PROTO_OK);
+    zassert_equal(tlv_append_u16(outbound.payload,
+                                 sizeof(outbound.payload),
+                                 &payload_len,
+                                 TLV_COMMAND_STATUS,
+                                 COMMAND_OK),
+                  PROTO_OK);
+    zassert_equal(survey_init_discovery_report_packet(
+                      &outbound.packet,
+                      DEVICE_ID,
+                      GATEWAY_ID,
+                      survey_id,
+                      operation_generation,
+                      boot_incarnation,
+                      sequence,
+                      (uint8_t)payload_len),
+                  PROTO_OK);
+    outbound.payload_len = (uint8_t)payload_len;
+    outbound.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    outbound.next_hop_id = GATEWAY_ID;
+    return outbound;
+}
+
+ZTEST(production_seam_report_custody,
+      test_new_survey_generation_retires_only_older_pair_result_owner)
+{
+    const uint64_t old_generation = UINT64_C(0x0000000200000001);
+    const uint64_t new_generation = UINT64_C(0x0000000200000002);
+    struct app_node_comm_reservation_lease stale_reservation = {
+        .token = 91u,
+        .owner_generation = old_generation,
+        .owner_kind = APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT,
+    };
+    const struct app_anchor_survey_result_delivery_ops ops = {
+        .schedule_work_ms = survey_result_schedule_for_test,
+        .active_owner_matches_outbound = survey_result_active_owner_for_test,
+        .wake_active_outbox = survey_result_wake_owner_for_test,
+    };
+    const struct mesh_outbound old_result =
+        survey_pair_result_for_test(old_generation, 1u, 0u);
+    const struct mesh_outbound current_result =
+        survey_pair_result_for_test(new_generation, 1u, 1u);
+    size_t retiring_count = 0u;
+
+    zassert_ok(app_anchor_survey_result_delivery_init(&ops));
+    survey_result_schedule_calls = 0u;
+    zassert_ok(app_mesh_local_delivery_stage(
+        &result_delivery_slots[0].delivery,
+        &old_result,
+        survey_operation_session_id(old_generation)));
+    result_delivery_slots[0].reservation_owner_generation = old_generation;
+    zassert_ok(app_mesh_local_delivery_stage(
+        &result_delivery_slots[1].delivery,
+        &current_result,
+        survey_operation_session_id(new_generation)));
+    result_delivery_slots[1].reservation_owner_generation = new_generation;
+
+    zassert_equal(app_anchor_survey_result_delivery_supersede_before(
+                      new_generation, &retiring_count),
+                  -EINPROGRESS);
+    zassert_equal(retiring_count, 1u);
+    zassert_true(result_delivery_slots[0].retirement_in_progress);
+    zassert_false(result_delivery_slots[1].retirement_in_progress);
+    zassert_true(survey_result_schedule_calls > 0u);
+    zassert_ok(result_delivery_service_slot(&result_delivery_slots[0]));
+    zassert_false(app_mesh_local_delivery_occupied(
+        &result_delivery_slots[0].delivery));
+    zassert_true(app_mesh_local_delivery_occupied(
+        &result_delivery_slots[1].delivery));
+
+    retiring_count = 99u;
+    zassert_ok(app_anchor_survey_result_delivery_supersede_before(
+        new_generation, &retiring_count));
+    zassert_equal(retiring_count, 0u);
+    zassert_equal(app_anchor_survey_result_delivery_supersede_before(
+                      old_generation, &retiring_count),
+                  -ESTALE);
+    zassert_equal(app_anchor_survey_result_delivery_stage_reserved(
+                      &stale_reservation,
+                      &old_result,
+                      (const uint8_t[SEMANTIC_DIGEST_SHA256_LEN]) {0}),
+                  -ECANCELED);
+    zassert_ok(app_mesh_local_delivery_cancel(
+        &result_delivery_slots[1].delivery));
+    result_delivery_slots[1].reservation_owner_generation = 0u;
+}
+
+ZTEST(production_seam_report_custody,
+      test_new_survey_generation_retires_old_discovery_without_touching_current)
+{
+    const uint64_t old_generation = UINT64_C(0x0000000300000001);
+    const uint64_t current_generation = UINT64_C(0x0000000300000002);
+    const uint64_t next_generation = UINT64_C(0x0000000300000003);
+    const struct app_mesh_local_delivery_ops delivery_ops = {
+        .save = survey_delivery_save,
+        .clear = survey_delivery_clear,
+    };
+    const struct mesh_outbound old_report =
+        survey_discovery_report_for_test(old_generation, 1u);
+    const struct mesh_outbound current_report =
+        survey_discovery_report_for_test(current_generation, 2u);
+    struct app_mesh_local_delivery *delivery = survey_delivery_instance();
+    bool retirement_pending = false;
+
+    app_mesh_local_delivery_init(delivery, &delivery_ops);
+    discovery_ops.schedule_work_ms = survey_result_schedule_for_test;
+    survey_delivery_retry_round = 0u;
+    survey_delivery_handle = 0u;
+    survey_delivery_failed_abandon_handle = 0u;
+    survey_delivery_comm_owned = false;
+    survey_delivery_comm_identity_valid = false;
+    survey_delivery_generation_floor = 0u;
+    survey_delivery_retirement_in_progress = false;
+    survey_report_stage_retry_valid = false;
+    survey_result_schedule_calls = 0u;
+
+    zassert_ok(app_mesh_local_delivery_stage(
+        delivery,
+        &old_report,
+        survey_operation_session_id(old_generation)));
+    zassert_equal(app_anchor_survey_discovery_supersede_before(
+                      current_generation, &retirement_pending),
+                  -EINPROGRESS);
+    zassert_true(retirement_pending);
+    zassert_true(survey_delivery_retirement_in_progress);
+    zassert_true(survey_result_schedule_calls > 0u);
+    zassert_ok(survey_delivery_service_retirement());
+    zassert_false(app_mesh_local_delivery_occupied(delivery));
+
+    zassert_ok(app_mesh_local_delivery_stage(
+        delivery,
+        &current_report,
+        survey_operation_session_id(current_generation)));
+    retirement_pending = true;
+    zassert_ok(app_anchor_survey_discovery_supersede_before(
+        current_generation, &retirement_pending));
+    zassert_false(retirement_pending);
+    zassert_true(app_mesh_local_delivery_occupied(delivery));
+    zassert_ok(app_mesh_local_delivery_cancel(delivery));
+
+    survey_report_stage_retry_outbound = current_report;
+    survey_report_stage_retry_generation =
+        survey_operation_session_id(current_generation);
+    survey_report_stage_retry_valid = true;
+    zassert_ok(app_anchor_survey_discovery_supersede_before(
+        next_generation, &retirement_pending));
+    zassert_false(retirement_pending);
+    zassert_false(survey_report_stage_retry_valid);
+    zassert_equal(app_anchor_survey_discovery_supersede_before(
+                      old_generation, &retirement_pending),
+                  -ESTALE);
 }
 
 static void start_pending_gateway_report(uint64_t source_id, uint16_t seq)

@@ -94,6 +94,24 @@ assert "gateway_survey_result_preflight =" not in preflight[reconcile:], (
 assert "GATEWAY_SURVEY_RESULT_PREFLIGHT_ACCEPTED" in preflight[preparation:]
 assert "GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED" in preflight[preparation:]
 
+# A result may be ACKed end-to-end before cancellation/take publishes the
+# request-delivery terminal that lets the round capture its confirmation
+# identity.  The accepted-result latch therefore owns the complete semantic
+# result digest and one earliest exact ACK_CONFIRM until that handoff occurs.
+preflight_struct_match = re.search(
+    r"struct gateway_survey_result_preflight\s*\{(?P<body>.*?)\n\};",
+    ANCHOR,
+    re.DOTALL,
+)
+assert preflight_struct_match is not None
+preflight_struct = preflight_struct_match.group("body")
+assert "struct app_gateway_survey_round_ack_confirm early_ack_confirm" in preflight_struct, (
+    "the accepted-result latch must retain the complete exact ACK_CONFIRM proof"
+)
+assert "bool early_ack_confirmed" in preflight_struct, (
+    "an early ACK_CONFIRM needs an explicit validity bit"
+)
+
 commit = function_body(
     ANCHOR, "gateway_survey_commit_preflight_result"
 )
@@ -119,6 +137,12 @@ assert "!gateway_survey_result_preflight.valid" in latch_guard, (
 )
 
 accepted_return = commit.index("return;", latch_assignment)
+latch_publish = commit[latch_assignment:accepted_return]
+assert "preparation.result_digest" in latch_publish
+assert ".early_ack_confirm.semantic_digest" in latch_publish
+assert "memcpy(" in latch_publish, (
+    "committing an accepted result must freeze its complete semantic digest"
+)
 duplicate_branch = commit.index(
     "SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE", accepted_return
 )
@@ -168,6 +192,91 @@ eagain_return = accepted_result.index("return;", eagain)
 assert "memset(&gateway_survey_result_preflight" not in accepted_result[
     close_call:eagain_return
 ], "the accepted latch must survive an active backend cancel/take race"
+
+# Once the exact request terminal exists, install the round confirmation,
+# promote the retained proof, and only then retire the preflight latch.  This
+# ordering prevents the normal delivery poll from redriving a START whose
+# ACK_CONFIRM already reached the gateway.
+round_capture = accepted_result.index(
+    "gateway_survey_round_note_control_result(", eagain_return
+)
+promote_early = accepted_result.index(
+    "app_gateway_survey_round_note_control_ack_confirm(", round_capture
+)
+assert "&gateway_survey_result_preflight.early_ack_confirm" in accepted_result[
+    promote_early:
+]
+clear_preflight = accepted_result.index(
+    "memset(&gateway_survey_result_preflight", promote_early
+)
+assert close_call < eagain_return < round_capture < promote_early < clear_preflight
+
+ack_confirm_ingress = function_body(ANCHOR, "gateway_note_survey_ack_confirm")
+round_attempt = ack_confirm_ingress.index(
+    "app_gateway_survey_round_note_control_ack_confirm("
+)
+early_fallback = ack_confirm_ingress.index(
+    "gateway_survey_preflight_note_early_ack_confirm(", round_attempt
+)
+assert round_attempt < early_fallback, (
+    "ACK_CONFIRM ingress must try an installed round identity before the "
+    "preflight race fallback"
+)
+
+early_retain_body = function_body(
+    ANCHOR, "gateway_survey_preflight_note_early_ack_confirm"
+)
+early_retain = early_retain_body.index("preflight->valid")
+for exact_proof_field in (
+    "expected->destination_id",
+    "expected->source_id",
+    "expected->session_id",
+    "expected->seq",
+    "expected->semantic_digest",
+    "confirm->semantic_digest",
+    "confirm->first_received_at_ms",
+):
+    assert exact_proof_field in early_retain_body[early_retain:], (
+        "early ACK_CONFIRM retention must bind exact identity, digest, and "
+        f"physical receive time: missing {exact_proof_field}"
+    )
+assert "memcmp(" in early_retain_body[early_retain:], (
+    "a same-identity ACK_CONFIRM with another semantic digest must not promote"
+)
+earliest_guard = early_retain_body.index(
+    "confirm->first_received_at_ms < expected->first_received_at_ms",
+    early_retain,
+)
+earliest_publish = early_retain_body.index(
+    "preflight->early_ack_confirm.first_received_at_ms =",
+    earliest_guard,
+)
+early_publish = early_retain_body.index(
+    "preflight->early_ack_confirmed = true", earliest_publish
+)
+for mismatch_gate in (
+    "expected->destination_id",
+    "expected->source_id",
+    "expected->session_id",
+    "expected->seq",
+    "memcmp(",
+):
+    assert early_retain_body.index(mismatch_gate, early_retain) < early_publish, (
+        "mismatched ACK_CONFIRM proof must be rejected before retention: "
+        f"{mismatch_gate}"
+    )
+
+for retained_proof_field in (
+    ".source_id = preparation.key.responder_id",
+    ".destination_id = preparation.key.requester_id",
+    ".session_id = preparation.key.session_id",
+    ".seq = preparation.key.transaction_id",
+    ".msg_type = MSG_COMMAND_RESULT",
+):
+    assert retained_proof_field in latch_publish, (
+        "commit must freeze the exact proof identity: missing "
+        f"{retained_proof_field}"
+    )
 
 finish = function_body(ANCHOR, "gateway_survey_finish_status")
 assert "gateway_survey_finalize_pair_observation()" not in finish, (

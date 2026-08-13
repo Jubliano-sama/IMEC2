@@ -20,6 +20,28 @@ static void drain_effects(struct app_clicker_event_runtime *runtime)
     }
 }
 
+static void arm_self_test_at(struct app_clicker_event_runtime *runtime,
+                             uint32_t release_ms)
+{
+    enum button_action action;
+
+    assert(app_clicker_event_runtime_button_signal(
+        runtime,
+        BUTTON_SIGNAL_PRESS,
+        release_ms - FW_BUTTON_LONG_PRESS_MS,
+        &action) == 0);
+    assert(action == BUTTON_ACTION_NONE);
+    drain_effects(runtime);
+    assert(app_clicker_event_runtime_button_signal(runtime,
+                                                   BUTTON_SIGNAL_RELEASE,
+                                                   release_ms,
+                                                   &action) == 0);
+    assert(action == BUTTON_ACTION_SELF_TEST_ARMED);
+    drain_effects(runtime);
+    assert(app_clicker_event_runtime_button_state(runtime) ==
+           FW_BUTTON_SELF_TEST_ARMED);
+}
+
 static void test_button_normal_click_is_explicit(void)
 {
     struct app_clicker_event_runtime runtime;
@@ -103,9 +125,70 @@ static void test_button_long_press_and_expiry(void)
            FW_BUTTON_SELF_TEST_ARMED);
     assert(app_clicker_event_runtime_button_signal(&runtime,
                                                    BUTTON_SIGNAL_TICK,
+                                                   4700u,
+                                                   &action) == 0);
+    assert(action == BUTTON_ACTION_NONE);
+    assert(app_clicker_event_runtime_button_state(&runtime) ==
+           FW_BUTTON_SELF_TEST_ARMED);
+    assert(app_clicker_event_runtime_button_signal(&runtime,
+                                                   BUTTON_SIGNAL_TICK,
                                                    4701u,
                                                    &action) == 0);
     assert(action == BUTTON_ACTION_SELF_TEST_CANCELLED);
+    assert(app_clicker_event_runtime_button_state(&runtime) == FW_BUTTON_IDLE);
+}
+
+static void test_injected_short_press_before_arm_timestamp_starts_self_test(void)
+{
+    struct app_clicker_event_runtime runtime;
+    enum button_action action;
+    const uint32_t release_ms = 5000u;
+
+    app_clicker_event_runtime_init(&runtime);
+    arm_self_test_at(&runtime, release_ms);
+
+    /* app_clicker_inject_button_gesture() samples one release timestamp and
+     * synthesizes the corresponding press in the recent past.  An immediate
+     * RTT LONG then CLICK therefore presents a valid press timestamp slightly
+     * before the LONG release that armed self-test. */
+    assert(app_clicker_event_runtime_button_signal(
+        &runtime,
+        BUTTON_SIGNAL_PRESS,
+        release_ms - FW_BUTTON_DEBOUNCE_MS,
+        &action) == 0);
+    assert(action == BUTTON_ACTION_NONE);
+    drain_effects(&runtime);
+    assert(app_clicker_event_runtime_button_signal(&runtime,
+                                                   BUTTON_SIGNAL_RELEASE,
+                                                   release_ms,
+                                                   &action) == 0);
+    assert(action == BUTTON_ACTION_SELF_TEST_START);
+    assert(app_clicker_event_runtime_button_state(&runtime) == FW_BUTTON_IDLE);
+}
+
+static void test_self_test_confirmation_window_survives_uptime_wrap(void)
+{
+    struct app_clicker_event_runtime runtime;
+    enum button_action action;
+    const uint32_t arm_release_ms = UINT32_MAX - 100u;
+    const uint32_t confirm_release_ms = 100u;
+
+    app_clicker_event_runtime_init(&runtime);
+    arm_self_test_at(&runtime, arm_release_ms);
+
+    assert(app_clicker_event_runtime_button_signal(
+        &runtime,
+        BUTTON_SIGNAL_PRESS,
+        confirm_release_ms - FW_BUTTON_DEBOUNCE_MS,
+        &action) == 0);
+    assert(action == BUTTON_ACTION_NONE);
+    drain_effects(&runtime);
+    assert(app_clicker_event_runtime_button_signal(
+        &runtime,
+        BUTTON_SIGNAL_RELEASE,
+        confirm_release_ms,
+        &action) == 0);
+    assert(action == BUTTON_ACTION_SELF_TEST_START);
     assert(app_clicker_event_runtime_button_state(&runtime) == FW_BUTTON_IDLE);
 }
 
@@ -305,6 +388,8 @@ int main(void)
     test_button_normal_click_is_explicit();
     test_button_short_release_cancels_debounce();
     test_button_long_press_and_expiry();
+    test_injected_short_press_before_arm_timestamp_starts_self_test();
+    test_self_test_confirmation_window_survives_uptime_wrap();
     test_button_long_press_and_short_confirm();
     test_click_events_are_generation_bound();
     test_retryable_radio_failure_keeps_generation();
