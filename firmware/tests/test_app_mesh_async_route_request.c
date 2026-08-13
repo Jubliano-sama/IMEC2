@@ -189,6 +189,105 @@ static void test_core_pending_transfer_becomes_stale_on_terminal_or_replacement(
         transfer.packet_seq, transfer.msg_type));
 }
 
+static void test_node_comm_transfer_requires_exact_live_delivery_owner(void)
+{
+    const uint64_t gateway = UINT64_C(0x9999888877776666);
+    const struct app_mesh_async_route_transfer_identity transfer = {
+        .target_id = gateway,
+        .owner_generation = UINT32_C(0x55667788),
+        .packet_seq = 41u,
+        .msg_type = 0x35u,
+        .owner_kind = APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+    };
+    struct app_mesh_async_route_request request;
+    struct app_mesh_async_route_attempt attempt;
+
+    app_mesh_async_route_request_init(&request);
+    assert(app_mesh_async_route_request_submit(
+        &request, gateway, "node-comm-reliable-uplink", 10u,
+        &transfer, NULL));
+    assert(app_mesh_async_route_request_snapshot(&request, &attempt));
+    assert(app_mesh_async_route_request_transfer_matches(
+        &attempt, APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+        true, gateway, transfer.owner_generation,
+        transfer.packet_seq, transfer.msg_type));
+
+    /* A terminal/no-owner delivery is stale even while its frozen route
+     * request is still pending. */
+    assert(!app_mesh_async_route_request_transfer_matches(
+        &attempt, APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+        false, gateway, transfer.owner_generation,
+        transfer.packet_seq, transfer.msg_type));
+
+    /* Reuse of the same gateway by a successor delivery must not inherit
+     * the predecessor's asynchronous route request. */
+    assert(!app_mesh_async_route_request_transfer_matches(
+        &attempt, APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+        true, gateway, transfer.owner_generation + 1u,
+        transfer.packet_seq, transfer.msg_type));
+    assert(!app_mesh_async_route_request_transfer_matches(
+        &attempt, APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+        true, gateway, transfer.owner_generation,
+        transfer.packet_seq + 1u, transfer.msg_type));
+    assert(!app_mesh_async_route_request_transfer_matches(
+        &attempt, APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+        true, gateway, transfer.owner_generation,
+        transfer.packet_seq, transfer.msg_type + 1u));
+}
+
+static void test_node_comm_terminal_cancels_deferred_request_before_retry(void)
+{
+    const uint64_t gateway = UINT64_C(0x9999888877776666);
+    const struct app_mesh_async_route_transfer_identity old_transfer = {
+        .target_id = gateway,
+        .owner_generation = UINT32_C(0x10203040),
+        .packet_seq = 51u,
+        .msg_type = 0x36u,
+        .owner_kind = APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+    };
+    struct app_mesh_async_route_transfer_identity successor_transfer =
+        old_transfer;
+    struct app_mesh_async_route_request request;
+    struct app_mesh_async_route_attempt deferred;
+    struct app_mesh_async_route_attempt successor;
+    uint32_t delay_ms = 0u;
+
+    app_mesh_async_route_request_init(&request);
+    assert(app_mesh_async_route_request_submit(
+        &request, gateway, "node-comm-reliable-uplink", 100u,
+        &old_transfer, NULL));
+    assert(app_mesh_async_route_request_snapshot(&request, &deferred));
+    assert(app_mesh_async_route_request_defer(
+        &request, &deferred, 100u, 4000u));
+    assert(app_mesh_async_route_request_retry_delay_ms(
+        &request, 101u, &delay_ms));
+    assert(delay_ms == 3999u);
+
+    /* Terminal cancellation completes this exact deferred coroutine.  There
+     * is then no retry for the worker to turn into another RF probe. */
+    assert(app_mesh_async_route_request_transfer_matches(
+        &deferred, APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+        true, gateway, old_transfer.owner_generation,
+        old_transfer.packet_seq, old_transfer.msg_type));
+    assert(app_mesh_async_route_request_complete(&request, &deferred));
+    assert(!app_mesh_async_route_request_snapshot(&request, &successor));
+    assert(!app_mesh_async_route_request_retry_delay_ms(
+        &request, 4100u, &delay_ms));
+    assert(!app_mesh_async_route_request_defer(
+        &request, &deferred, 4100u, 1u));
+
+    successor_transfer.owner_generation++;
+    assert(app_mesh_async_route_request_submit(
+        &request, gateway, "successor", 4101u,
+        &successor_transfer, NULL));
+    assert(app_mesh_async_route_request_snapshot(&request, &successor));
+    assert(!app_mesh_async_route_request_complete(&request, &deferred));
+    assert(successor.generation != deferred.generation);
+    assert(successor.transfer.owner_generation ==
+           successor_transfer.owner_generation);
+    assert(request.pending);
+}
+
 static void test_transfer_owned_request_coalesces_exactly_and_cannot_be_displaced(void)
 {
     const uint64_t gateway = UINT64_C(0x9999888877776666);
@@ -337,6 +436,8 @@ int main(void)
     test_reason_is_frozen_and_oversize_is_rejected_atomically();
     test_terminal_transfer_requires_exact_waiting_target();
     test_core_pending_transfer_becomes_stale_on_terminal_or_replacement();
+    test_node_comm_transfer_requires_exact_live_delivery_owner();
+    test_node_comm_terminal_cancels_deferred_request_before_retry();
     test_transfer_owned_request_coalesces_exactly_and_cannot_be_displaced();
     test_c5_authorization_is_retained_and_cannot_be_displaced();
     return 0;

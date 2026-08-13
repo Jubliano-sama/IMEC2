@@ -1,7 +1,35 @@
 #line 9366 __BASE_FILE__
+static int mesh_request_route_owned_with_rx_handoff(
+    uint64_t target_id,
+    const char *reason,
+    enum app_mesh_route_wait_tx_owner owner,
+    const struct proto_packet *owner_packet,
+    uint32_t generation,
+    const struct app_mesh_c5_tx_authorization_token *authorization)
+{
+    bool control_handoff_started = false;
+    int ret;
+
+    ret = mesh_gateway_rx_control_begin(&control_handoff_started);
+    if (ret < 0) {
+        goto out;
+    }
+
+    ret = mesh_request_route_owned(target_id,
+                                   reason,
+                                   owner,
+                                   owner_packet,
+                                   generation,
+                                   authorization);
+
+out:
+    mesh_gateway_rx_control_end(control_handoff_started);
+    return ret;
+}
+
 int mesh_request_route(uint64_t target_id, const char *reason)
 {
-    return mesh_request_route_owned(
+    return mesh_request_route_owned_with_rx_handoff(
         target_id, reason,
         APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
         NULL, 0u, NULL);
@@ -12,7 +40,7 @@ static int mesh_request_route_authorized(
     const char *reason,
     const struct app_mesh_c5_tx_authorization_token *authorization)
 {
-    return mesh_request_route_owned(
+    return mesh_request_route_owned_with_rx_handoff(
         target_id, reason,
         APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
         NULL, 0u, authorization);
@@ -2508,7 +2536,8 @@ static bool mesh_store_route_waiting_tx_owned(
 
 static void mesh_defer_route_for_outbound(const struct mesh_outbound *out,
                                            const char *reason,
-                                           bool store_route_wait)
+                                           bool store_route_wait,
+                                           const struct app_mesh_async_route_transfer_identity *route_transfer)
 {
     if (out == NULL || !mesh_id_is_unicast(out->packet.dst_id) ||
         out->packet.dst_id == DEVICE_ID) {
@@ -2518,7 +2547,8 @@ static void mesh_defer_route_for_outbound(const struct mesh_outbound *out,
         (void)mesh_store_route_waiting_tx_owned(
             out, APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC);
     } else {
-        (void)mesh_schedule_route_request(out->packet.dst_id, reason);
+        (void)mesh_schedule_route_request_authorized(
+            out->packet.dst_id, reason, route_transfer, NULL);
     }
 }
 
@@ -2534,6 +2564,7 @@ static bool mesh_try_repair_selected_parent_event(
     int select_ret,
     uint64_t selected_next_hop,
     bool store_route_wait,
+    const struct app_mesh_async_route_transfer_identity *route_transfer,
     uint32_t *wait_retry_delay_ms)
 {
     uint32_t retry_delay_ms = RELAY_BUSY_RETRY_MIN_MS;
@@ -2581,7 +2612,8 @@ static bool mesh_try_repair_selected_parent_event(
         } else {
             mesh_defer_route_for_outbound(out,
                                            "initial-tx-event-repair-failed",
-                                           false);
+                                           false,
+                                           route_transfer);
         }
     }
     status_debug_printf(
@@ -3042,6 +3074,7 @@ static void mesh_try_route_waiting_tx(void)
             NULL,
             app_mesh_route_wait_tx_may_store(
                 APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC),
+            NULL,
             &route_wait_send_attempted,
             NULL,
             &route_wait_policy_deferred,
@@ -3191,6 +3224,7 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                             const char *reason,
                                             uint32_t *wait_retry_delay_ms,
                                             bool store_route_wait,
+                                            const struct app_mesh_async_route_transfer_identity *route_transfer,
                                             bool *send_attempted,
                                             bool *rf_sent,
                                             bool *policy_deferred,
@@ -3252,7 +3286,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
         }
         if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
             mesh_defer_route_for_outbound(&aged_out, reason,
-                                           store_route_wait);
+                                           store_route_wait,
+                                           route_transfer);
             return -EHOSTUNREACH;
         }
         LOG_WRN("mesh result offer rejected for %s: ret=%d", reason, ret);
@@ -3305,7 +3340,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
             }
             if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
                 mesh_defer_route_for_outbound(&aged_out, reason,
-                                               store_route_wait);
+                                               store_route_wait,
+                                               route_transfer);
                 return -EHOSTUNREACH;
             }
             return mesh_errno_from_proto(ret);
@@ -3438,11 +3474,13 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                     debug_select_ret,
                     debug_next_hop,
                     store_route_wait,
+                    route_transfer,
                     wait_retry_delay_ms)) {
                 return -EHOSTUNREACH;
             }
             mesh_defer_route_for_outbound(&aged_out, reason,
-                                           store_route_wait);
+                                           store_route_wait,
+                                           route_transfer);
             return -EHOSTUNREACH;
         }
         LOG_WRN("mesh channel-9 TX rejected for %s: ret=%d", reason, ret);
@@ -3459,7 +3497,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
         LOG_WRN("mesh could not start tracked TX for %s: %d", reason, ret);
         if (ret == PROTO_ERR_NOT_FOUND) {
             mesh_defer_route_for_outbound(&aged_out, reason,
-                                           store_route_wait);
+                                           store_route_wait,
+                                           route_transfer);
         }
         return mesh_errno_from_proto(ret);
     }
@@ -3558,7 +3597,8 @@ send_prepared:
         mesh_relay_cancel_tx(&mesh_runtime);
         if (ret == -EHOSTUNREACH || ret == -ETIMEDOUT || ret == -ENOTCONN) {
             /* No RF send completed, so no gateway-ACK cycle failed here. */
-            mesh_defer_route_for_outbound(&tx, reason, store_route_wait);
+            mesh_defer_route_for_outbound(&tx, reason, store_route_wait,
+                                           route_transfer);
         }
         return ret;
     }
@@ -3623,6 +3663,7 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
         NULL,
         NULL,
         NULL,
+        NULL,
         0u,
         NULL);
 }
@@ -3635,6 +3676,7 @@ int mesh_start_owned_tracked_tx(const struct mesh_outbound *out,
         out, reason, NULL,
         app_mesh_route_wait_tx_may_store(
             APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL),
+        NULL,
         NULL,
         rf_sent,
         NULL,
@@ -3665,8 +3707,9 @@ int mesh_owned_tracked_tx_preflight(const struct mesh_outbound *out,
         return 0;
     }
     if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
-        (void)mesh_request_route_owned(out->packet.dst_id, reason, owner,
-                                       &out->packet, generation, NULL);
+        (void)mesh_request_route_owned_with_rx_handoff(
+            out->packet.dst_id, reason, owner,
+            &out->packet, generation, NULL);
         return -EHOSTUNREACH;
     }
     return mesh_errno_from_proto(ret);

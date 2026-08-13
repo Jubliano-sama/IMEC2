@@ -15,6 +15,9 @@ BOARD_SOURCE = (ROOT / "app/src/app_board.c").read_text(encoding="utf-8")
 WORKLOAD_SOURCE = (ROOT / "app/src/app_stack_workload_diag.c").read_text(
     encoding="utf-8"
 )
+GATEWAY_SURVEY_SOURCE = (
+    ROOT / "app/src/app_anchor_gateway_survey.inc"
+).read_text(encoding="utf-8")
 CONFIG = (ROOT / "app/conf/mesh-stack-diagnostics.conf").read_text(
     encoding="utf-8"
 )
@@ -162,6 +165,21 @@ run_end = function_body("app_stack_diag_run_end")
 assert run_end.index("DBG_STACK_RUN_END") < run_end.index("emit_ret == 0")
 assert run_end.index("emit_ret == 0") < run_end.index("memset(run, 0")
 assert "app_stack_diag_run_end(run->run_id, outcome, &state) == 0" in WORKLOAD_SOURCE
+
+gateway_control_submit = function_body(
+    "gateway_survey_send_outbound", GATEWAY_SURVEY_SOURCE
+)
+gateway_control_admit = gateway_control_submit.index(
+    "app_stack_workload_diag_gateway_control_admit(&outbound->packet, 1u, 1u)"
+)
+gateway_control_sample = gateway_control_submit.index(
+    "app_stack_workload_diag_gateway_control_sample(&outbound->packet, 1u, 1u)"
+)
+gateway_control_return = gateway_control_submit.index("return 0;", gateway_control_sample)
+assert gateway_control_admit < gateway_control_sample < gateway_control_return
+assert gateway_control_submit.count(
+    "app_stack_workload_diag_gateway_control_sample(&outbound->packet, 1u, 1u)"
+) == 1
 
 for name, marker in (
     ("app_stack_diag_start", "DBG_STACK_BOOT"),

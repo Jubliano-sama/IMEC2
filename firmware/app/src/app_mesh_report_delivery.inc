@@ -1866,6 +1866,7 @@ static void report_tx_work_handler(struct k_work *work)
                                                APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC),
                                            NULL,
                                            NULL,
+                                           NULL,
                                            &report_policy_deferred,
                                            0u,
                                            NULL);
@@ -4913,6 +4914,7 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                     schedule_ret = mesh_schedule_route_request_authorized(
                         pending->packet.dst_id,
                         "transit-gateway-ack-route-repair",
+                        NULL,
                         &authorization);
                     if (schedule_ret < 0) {
                         LOG_ERR("transit gateway ACK child-route repair could not retain owner: peer=0x%016llx ret=%d",

@@ -2795,6 +2795,10 @@ static int gateway_survey_send_outbound(struct mesh_outbound *outbound,
     memset(&gateway_survey_result_preparation, 0,
            sizeof(gateway_survey_result_preparation));
     app_stack_workload_diag_gateway_control_admit(&outbound->packet, 1u, 1u);
+    /* A healthy direct delivery can complete before the first poll.  Sample
+     * the real system-workqueue submission boundary so that success still
+     * produces usable on-target stack evidence. */
+    app_stack_workload_diag_gateway_control_sample(&outbound->packet, 1u, 1u);
     GATEWAY_SURVEY_VERBOSE_LOG("gateway survey transaction submitted: cmd=0x%04x dst=0x%016llx seq=%u handle=%u deadline=%llu reason=%s",
             (unsigned int)command_id,
             (unsigned long long)outbound->packet.dst_id,

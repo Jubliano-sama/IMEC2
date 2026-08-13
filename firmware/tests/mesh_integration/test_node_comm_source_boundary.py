@@ -277,10 +277,19 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         state_definition = "static struct app_mesh_command_orchestrator"
         self.assertNotIn(state_definition, report)
         self.assertEqual(1, control.count(state_definition))
-        self.assertIn(
-            "return app_node_comm_gateway_control_send(orchestrator, reason, sent_now);",
-            report,
+        send_start = report.index("int mesh_send_gateway_command_flood(")
+        handoff_begin = report.index(
+            "mesh_gateway_rx_control_begin(&control_handoff_started)", send_start
         )
+        control_send = report.index(
+            "app_node_comm_gateway_control_send(orchestrator,", handoff_begin
+        )
+        handoff_end = report.index(
+            "mesh_gateway_rx_control_end(control_handoff_started)", control_send
+        )
+        self.assertLess(send_start, handoff_begin)
+        self.assertLess(handoff_begin, control_send)
+        self.assertLess(control_send, handoff_end)
         self.assertIn(
             "return app_node_comm_gateway_control_priority_submit(work);", report
         )

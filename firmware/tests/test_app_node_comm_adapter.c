@@ -68,6 +68,7 @@ static int try_uplink_results[64];
 static bool try_uplink_sent[64];
 static bool try_uplink_confirmed[64];
 static uint32_t try_uplink_retry_delays_ms[64];
+static uint32_t try_uplink_delivery_generations[64];
 static struct mesh_outbound try_uplink_envelopes[64];
 static uint32_t cancel_uplink_calls;
 static int cancel_uplink_result;
@@ -79,6 +80,7 @@ static struct proto_packet last_cancelled_uplink;
 static uint8_t
     last_cancel_uplink_semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
 static uint32_t last_cancel_uplink_delivery_handle;
+static uint32_t last_cancel_uplink_delivery_generation;
 static uint32_t last_cancel_uplink_request_token;
 static uint32_t queue_calls;
 static uint32_t stop_scan_calls;
@@ -681,6 +683,8 @@ int mesh_try_send_reliable_uplink_view(
                        sizeof(try_uplink_results[0]));
     assert(view != NULL);
     assert(view->packet != NULL);
+    assert(view->delivery_generation != 0u);
+    try_uplink_delivery_generations[index] = view->delivery_generation;
     out = &try_uplink_envelopes[index];
     memset(out, 0, sizeof(*out));
     out->packet = *view->packet;
@@ -726,11 +730,13 @@ int mesh_request_reliable_uplink_cancel(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t delivery_handle,
+    uint32_t delivery_generation,
     uint32_t request_token)
 {
     assert(packet != NULL);
     assert(semantic_digest != NULL);
     assert(delivery_handle != 0u);
+    assert(delivery_generation != 0u);
     assert(request_token != 0u);
     cancel_uplink_calls++;
     last_cancelled_uplink = *packet;
@@ -738,6 +744,7 @@ int mesh_request_reliable_uplink_cancel(
            semantic_digest,
            sizeof(last_cancel_uplink_semantic_digest));
     last_cancel_uplink_delivery_handle = delivery_handle;
+    last_cancel_uplink_delivery_generation = delivery_generation;
     last_cancel_uplink_request_token = request_token;
     if (cancel_uplink_request_result < 0) {
         return cancel_uplink_request_result;
@@ -844,6 +851,8 @@ static void reset_fixture(void)
     memset(try_uplink_confirmed, 0, sizeof(try_uplink_confirmed));
     memset(try_uplink_retry_delays_ms, 0,
            sizeof(try_uplink_retry_delays_ms));
+    memset(try_uplink_delivery_generations, 0,
+           sizeof(try_uplink_delivery_generations));
     memset(try_uplink_envelopes, 0, sizeof(try_uplink_envelopes));
     cancel_uplink_calls = 0u;
     cancel_uplink_result = 0;
@@ -855,6 +864,7 @@ static void reset_fixture(void)
     memset(last_cancel_uplink_semantic_digest, 0,
            sizeof(last_cancel_uplink_semantic_digest));
     last_cancel_uplink_delivery_handle = 0u;
+    last_cancel_uplink_delivery_generation = 0u;
     last_cancel_uplink_request_token = 0u;
     queue_calls = 0u;
     stop_scan_calls = 0u;
@@ -3880,6 +3890,7 @@ static void test_cancelling_reliable_uplink_releases_backend_owner(void)
     struct mesh_outbound second = reliable_uplink_envelope(66u);
     struct node_comm_terminal_event event;
     uint32_t first_handle;
+    uint32_t first_generation;
     uint32_t second_handle;
 
     reset_fixture();
@@ -3889,11 +3900,17 @@ static void test_cancelling_reliable_uplink_releases_backend_owner(void)
     assert(app_node_comm_submit_delivery(
         &second, NODE_COMM_PROFILE_RELIABLE_UPLINK,
         1000u, 606u, &second_handle) == 0);
+    assert(app_node_comm_delivery_generation(
+        first_handle, &first_generation) == 0);
+    assert(first_generation != 0u);
     assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_delivery_generations[0] == first_generation);
 
     assert(app_node_comm_cancel_delivery(first_handle) == 0);
     assert(cancel_uplink_calls == 1u);
     assert(last_cancelled_uplink.seq == first.packet.seq);
+    assert(last_cancel_uplink_delivery_handle == first_handle);
+    assert(last_cancel_uplink_delivery_generation == first_generation);
     assert(app_node_comm_take_delivery_event_for(first_handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_CANCELLED);
     assert(app_node_comm_service_deliveries() == 0);

@@ -282,6 +282,11 @@ int app_node_comm_delivery_attempts_started(uint32_t handle,
 /* The active delivery generation binds an asynchronous backend attempt. */
 int app_node_comm_delivery_generation(uint32_t handle,
                                       uint32_t *generation_out);
+/* True only while the exact delivery generation still owns this packet. */
+bool app_node_comm_delivery_owner_matches(uint32_t delivery_generation,
+                                          uint64_t target_id,
+                                          uint16_t packet_seq,
+                                          uint8_t msg_type);
 /*
  * Read the already-recorded attempt count without advancing delivery policy.
  * This is suitable for non-mutating semantic-admission preflight while the

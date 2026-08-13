@@ -131,6 +131,8 @@ struct app_mesh_outbound_view {
     uint64_t next_hop_id;
     uint32_t queued_at_ms;
     uint32_t earliest_tx_ms;
+    /* Exact facade owner for a deferred node-communication route request. */
+    uint32_t delivery_generation;
     uint8_t flood_retry_count;
     bool queued_at_valid;
     bool earliest_tx_valid;
@@ -236,6 +238,7 @@ int mesh_request_reliable_uplink_cancel(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t delivery_handle,
+    uint32_t delivery_generation,
     uint32_t request_token);
 int mesh_take_reliable_uplink_cancel_result(uint32_t delivery_handle,
                                             uint32_t request_token,

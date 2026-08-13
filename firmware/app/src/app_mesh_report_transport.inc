@@ -576,25 +576,10 @@ static int mesh_schedule_uwb_rx(uint32_t delay_ms)
     if (ret < 0 && !(ret == -EBUSY && defer_ret >= 0)) {
         mesh_uwb_rx_active = false;
     }
-    if (mesh_gateway_route_test_role()) {
-        uint32_t now_ms = k_uptime_get_32();
-
-        if (ret < 0 ||
-            gateway_rx_diag_next_ms == 0u ||
-            uptime_deadline_reached(now_ms, gateway_rx_diag_next_ms)) {
-            gateway_rx_diag_next_ms = now_ms + 1000u;
-            status_debug_printf("DBG_GATEWAY_RX_SCHEDULE delay=%u ret=%d defer=%d qrx=%u qtx=%u relay=%u wait=%u ack=%u adv_due=%u active=%u\n",
-                                delay_ms,
-                                ret,
-                                defer_ret,
-                                k_msgq_num_used_get(&mesh_rx_msgq),
-                                report_tx_queue_used(),
-                                mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
-                                mesh_route_waiting_tx_valid ? 1u : 0u,
-                                mesh_ch9_tx_pending_is_active() ? 1u : 0u,
-                                app_node_comm_gateway_route_refresh_due_ms(),
-                                mesh_uwb_rx_active ? 1u : 0u);
-        }
+    if (mesh_gateway_route_test_role() && ret < 0 &&
+        !(ret == -EBUSY && defer_ret >= 0)) {
+        status_debug_printf("DBG_GATEWAY_RX_SCHEDULE_FAIL ret=%d defer=%d\n",
+                            ret, defer_ret);
     }
     return ret == -EBUSY && defer_ret >= 0 ? 0 : ret;
 }
@@ -2572,6 +2557,7 @@ int mesh_try_send_reliable_uplink_view(
      * transient worker collision remains a pre-RF resource deferral.
      */
     struct mesh_outbound *out = &mesh_route_waiting_tx_scratch;
+    struct app_mesh_async_route_transfer_identity route_transfer;
     bool policy_deferred = false;
     bool rf_started = false;
     int ret;
@@ -2587,6 +2573,7 @@ int mesh_try_send_reliable_uplink_view(
         (view->payload_len != 0u && view->payload == NULL) ||
         view->payload_len > APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ||
         view->packet->payload_len != view->payload_len ||
+        view->delivery_generation == 0u ||
         !mesh_id_is_unicast(view->packet->dst_id)) {
         return -EINVAL;
     }
@@ -2608,6 +2595,13 @@ int mesh_try_send_reliable_uplink_view(
     out->flood_retry_count = view->flood_retry_count;
     out->queued_at_valid = view->queued_at_valid;
     out->earliest_tx_valid = view->earliest_tx_valid;
+    route_transfer = (struct app_mesh_async_route_transfer_identity) {
+        .target_id = out->packet.dst_id,
+        .owner_generation = view->delivery_generation,
+        .packet_seq = out->packet.seq,
+        .msg_type = out->packet.msg_type,
+        .owner_kind = APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+    };
 
     ret = mesh_start_tracked_tx_with_retry(
         out,
@@ -2615,6 +2609,7 @@ int mesh_try_send_reliable_uplink_view(
         scheduled_retry_delay_ms,
         app_mesh_route_wait_tx_may_store(
             APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL),
+        &route_transfer,
         NULL,
         &rf_started,
         &policy_deferred,
@@ -2637,12 +2632,29 @@ int mesh_try_send_reliable_uplink_view(
 static int mesh_cancel_reliable_uplink_route_owned(
     const struct mesh_node_comm_cancel_request *request)
 {
+    struct app_mesh_async_route_attempt route_attempt;
     bool cancelled = false;
 
     if (request == NULL || request->delivery_handle == 0u ||
-        request->request_token == 0u) {
+        request->delivery_generation == 0u || request->request_token == 0u) {
         return -EINVAL;
     }
+    k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
+    if (app_mesh_async_route_request_snapshot(
+            &mesh_route_discovery_request, &route_attempt) &&
+        app_mesh_async_route_request_transfer_matches(
+            &route_attempt,
+            APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM,
+            true,
+            request->packet.dst_id,
+            request->delivery_generation,
+            request->packet.seq,
+            request->packet.msg_type) &&
+        app_mesh_async_route_request_complete(
+            &mesh_route_discovery_request, &route_attempt)) {
+        cancelled = true;
+    }
+    k_mutex_unlock(&mesh_route_discovery_lock);
     if (mesh_relay_tx_active(&mesh_runtime) &&
         mesh_node_comm_packet_matches_cancel(
             &mesh_runtime.pending.packet,
@@ -2727,6 +2739,7 @@ int mesh_request_reliable_uplink_cancel(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t delivery_handle,
+    uint32_t delivery_generation,
     uint32_t request_token)
 {
     struct mesh_node_comm_cancel_request request;
@@ -2735,7 +2748,8 @@ int mesh_request_reliable_uplink_cancel(
     int ret;
 
     if (packet == NULL || semantic_digest == NULL ||
-        delivery_handle == 0u || request_token == 0u) {
+        delivery_handle == 0u || delivery_generation == 0u ||
+        request_token == 0u) {
         return -EINVAL;
     }
 
@@ -2760,6 +2774,7 @@ int mesh_request_reliable_uplink_cancel(
         (struct mesh_node_comm_cancel_request) {
             .packet = *packet,
             .delivery_handle = delivery_handle,
+            .delivery_generation = delivery_generation,
             .request_token = request_token,
             .pending = true,
         };
@@ -2875,5 +2890,14 @@ int mesh_send_gateway_command_flood(
     const char *reason,
     bool *sent_now)
 {
-    return app_node_comm_gateway_control_send(orchestrator, reason, sent_now);
+    bool control_handoff_started = false;
+    int ret = mesh_gateway_rx_control_begin(&control_handoff_started);
+
+    if (ret == 0) {
+        ret = app_node_comm_gateway_control_send(orchestrator,
+                                                 reason,
+                                                 sent_now);
+    }
+    mesh_gateway_rx_control_end(control_handoff_started);
+    return ret;
 }

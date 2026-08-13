@@ -3292,6 +3292,46 @@ static int mesh_rx_handoff_wait_for_control(void)
     return 0;
 }
 
+/*
+ * A gateway control worker can be scheduled from the exact receive-abort
+ * boundary while continuous Channel-9 RX is already being rearmed.  Hold the
+ * shared RX handoff across the complete route-owned operation so the scan
+ * cannot reclaim the coordinator between admission and the first control TX.
+ */
+static int mesh_gateway_rx_control_begin(bool *started)
+{
+    bool abort_scan = false;
+    int ret;
+
+    if (started == NULL) {
+        return -EINVAL;
+    }
+    *started = false;
+    if (!mesh_gateway_route_test_role()) {
+        return 0;
+    }
+    if (!mesh_rx_handoff_begin_control(&abort_scan)) {
+        return -EBUSY;
+    }
+    *started = true;
+    mesh_stop_role_scan();
+    if (abort_scan) {
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    }
+    ret = mesh_rx_handoff_wait_for_control();
+    return ret;
+}
+
+static void mesh_gateway_rx_control_end(bool started)
+{
+    if (!started) {
+        return;
+    }
+    mesh_rx_handoff_end_control();
+    mesh_restart_role_scan();
+}
+
 int mesh_route_owner_work_reschedule_timeout(struct k_work_delayable *work,
                                              k_timeout_t delay)
 {
@@ -3407,9 +3447,11 @@ static int mesh_submit_owned_work(struct k_work *work, const char *owner)
 static int mesh_schedule_route_request_authorized(
     uint64_t target_id,
     const char *reason,
+    const struct app_mesh_async_route_transfer_identity *caller_transfer,
     const struct app_mesh_c5_tx_authorization_token *authorization)
 {
     struct app_mesh_async_route_transfer_identity transfer = {0};
+    const struct app_mesh_async_route_transfer_identity *transfer_ptr = NULL;
     uint32_t schedule_delay_ms = 0u;
     uint32_t prior_generation;
     bool prior_pending;
@@ -3419,7 +3461,10 @@ static int mesh_schedule_route_request_authorized(
         return -EINVAL;
     }
 
-    if (mesh_route_waiting_tx_valid &&
+    if (caller_transfer != NULL) {
+        transfer = *caller_transfer;
+        transfer_ptr = &transfer;
+    } else if (mesh_route_waiting_tx_valid &&
         mesh_route_waiting_tx.packet.dst_id == target_id) {
         transfer.target_id = target_id;
         transfer.owner_generation =
@@ -3427,6 +3472,7 @@ static int mesh_schedule_route_request_authorized(
         transfer.packet_seq = mesh_route_waiting_tx.packet.seq;
         transfer.msg_type = mesh_route_waiting_tx.packet.msg_type;
         transfer.owner_kind = APP_MESH_ASYNC_ROUTE_TRANSFER_ROUTE_WAIT;
+        transfer_ptr = &transfer;
     } else if (mesh_relay_tx_active(&mesh_runtime) &&
                mesh_runtime.pending.packet.dst_id == target_id) {
         /* Bind timeout-driven discovery to the exact retained core owner.
@@ -3438,6 +3484,7 @@ static int mesh_schedule_route_request_authorized(
         transfer.packet_seq = mesh_runtime.pending.packet.seq;
         transfer.msg_type = mesh_runtime.pending.packet.msg_type;
         transfer.owner_kind = APP_MESH_ASYNC_ROUTE_TRANSFER_CORE_PENDING;
+        transfer_ptr = &transfer;
     }
 
     k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
@@ -3448,7 +3495,7 @@ static int mesh_schedule_route_request_authorized(
             target_id,
             reason,
             k_uptime_get_32(),
-            &transfer,
+            transfer_ptr,
             authorization)) {
         bool owner_retained = mesh_route_discovery_request.pending;
 
@@ -3482,7 +3529,8 @@ static int mesh_schedule_route_request_authorized(
 
 int mesh_schedule_route_request(uint64_t target_id, const char *reason)
 {
-    return mesh_schedule_route_request_authorized(target_id, reason, NULL);
+    return mesh_schedule_route_request_authorized(target_id, reason,
+                                                  NULL, NULL);
 }
 
 static bool mesh_complete_async_route_request_for_ready_target(
@@ -3546,6 +3594,14 @@ static bool mesh_async_route_transfer_owner_matches(
             core_active ? mesh_runtime.pending.packet.session_id : 0u,
             core_active ? mesh_runtime.pending.packet.seq : 0u,
             core_active ? mesh_runtime.pending.packet.msg_type : 0u);
+    }
+    if (attempt->transfer.owner_kind ==
+        APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM) {
+        return app_node_comm_delivery_owner_matches(
+            attempt->transfer.owner_generation,
+            attempt->transfer.target_id,
+            attempt->transfer.packet_seq,
+            attempt->transfer.msg_type);
     }
     return false;
 }

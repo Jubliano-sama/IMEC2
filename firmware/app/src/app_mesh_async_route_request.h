@@ -13,6 +13,7 @@ enum app_mesh_async_route_transfer_owner {
     APP_MESH_ASYNC_ROUTE_TRANSFER_NONE = 0,
     APP_MESH_ASYNC_ROUTE_TRANSFER_ROUTE_WAIT = 1,
     APP_MESH_ASYNC_ROUTE_TRANSFER_CORE_PENDING = 2,
+    APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM = 3,
 };
 
 struct app_mesh_async_route_transfer_identity {

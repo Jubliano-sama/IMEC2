@@ -1393,24 +1393,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         return;
     }
 
-    if (mesh_gateway_route_test_role()) {
-        uint32_t now_ms = k_uptime_get_32();
-
-        if (gateway_rx_diag_next_ms == 0u ||
-            uptime_deadline_reached(now_ms, gateway_rx_diag_next_ms)) {
-            gateway_rx_diag_next_ms = now_ms + 1000u;
-            status_debug_printf("DBG_GATEWAY_UWB_RX_WORK now=%u active=%u qrx=%u qtx=%u relay=%u wait=%u ack=%u adv_due=%u conn=%u\n",
-                                now_ms,
-                                mesh_uwb_rx_active ? 1u : 0u,
-                                k_msgq_num_used_get(&mesh_rx_msgq),
-                                report_tx_queue_used(),
-                                mesh_relay_tx_active(&mesh_runtime) ? 1u : 0u,
-                                mesh_route_waiting_tx_valid ? 1u : 0u,
-                                mesh_ch9_tx_pending_is_active() ? 1u : 0u,
-                                app_node_comm_gateway_route_refresh_due_ms(),
-                                mesh_channel9_connection_count());
-        }
-    }
     if (!mesh_role_uses_uwb_rx()) {
         mesh_uwb_rx_active = false;
         return;
@@ -1562,11 +1544,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             quality = 0u;
             rx_failure = DWM3000_RX_FAILURE_NONE;
             uwb_window_start_ms = k_uptime_get();
-            status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_ARM now=%u rem=%u win=%u frames=%u\n",
-                                k_uptime_get_32(),
-                                remaining_ms,
-                                window_ms,
-                                channel9_frames_seen);
             ret = dwm3000_driver_configure_mesh_payload_mode();
             mesh_event_note_channel_switch(&mesh_event_stats, ret == 0, false);
             if (ret == 0) {
@@ -1598,7 +1575,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             }
             if (ret == 0) {
                 channel9_frames_seen++;
-                status_debug_note("DBG_GATEWAY_CH9_RX_CONT_FRAME\n");
                 status_debug_gateway_uwb_rx_channel_pulse(UWB_CHANNEL_MESH_PAYLOAD);
                 parking_ret = mesh_radio_idle_with_bounded_recovery(
                     "gateway-ch9-frame");
@@ -1744,12 +1720,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             }
         }
 
-        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_DONE ret=%d len=%u fail=%u frames=%u recover=%u\n",
-                            ret,
-                            (unsigned int)frame_len,
-                            (unsigned int)rx_failure,
-                            channel9_frames_seen,
-                            gateway_ch9_recoverable_rx_errors);
+        if (ret != -ETIMEDOUT) {
+            status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_DONE ret=%d len=%u fail=%u recover=%u\n",
+                                ret,
+                                (unsigned int)frame_len,
+                                (unsigned int)rx_failure,
+                                gateway_ch9_recoverable_rx_errors);
+        }
         if (app_node_comm_gateway_route_refresh_due(k_uptime_get_32())) {
             status_debug_printf("DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=%u due=%u\n",
                                 k_uptime_get_32(),

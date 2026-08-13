@@ -1088,6 +1088,7 @@ static void app_node_comm_reconcile_terminal_backends_locked(void)
                         &record->packet,
                         semantic_digest,
                         record->handle,
+                        terminal.delivery_generation,
                         record->backend_release_request_token);
                     if (ret < 0) {
                         if (ret == -EBUSY) {
@@ -3003,6 +3004,7 @@ int app_node_comm_service_deliveries(void)
         .next_hop_id = attempt_record.next_hop_id,
         .queued_at_ms = attempt_record.queued_at_ms,
         .earliest_tx_ms = attempt_record.earliest_tx_ms,
+        .delivery_generation = lease.delivery_generation,
         .flood_retry_count = attempt_record.flood_retry_count,
         .queued_at_valid = attempt_record.queued_at_valid,
         .earliest_tx_valid = attempt_record.earliest_tx_valid,
@@ -3985,6 +3987,38 @@ int app_node_comm_delivery_generation(uint32_t handle,
         &node_comm_policy, handle, generation_out);
     app_node_comm_sync_unlock();
     return ret;
+}
+
+bool app_node_comm_delivery_owner_matches(uint32_t delivery_generation,
+                                          uint64_t target_id,
+                                          uint16_t packet_seq,
+                                          uint8_t msg_type)
+{
+    bool matches = false;
+
+    if (delivery_generation == 0u || target_id == 0u || packet_seq == 0u ||
+        app_node_comm_sync_lock() < 0) {
+        return false;
+    }
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+        uint32_t live_generation = 0u;
+
+        if (!record->occupied || record->packet.dst_id != target_id ||
+            record->packet.seq != packet_seq ||
+            record->packet.msg_type != msg_type ||
+            node_comm_delivery_generation(&node_comm_policy,
+                                          record->handle,
+                                          &live_generation) < 0 ||
+            live_generation != delivery_generation) {
+            continue;
+        }
+        matches = true;
+        break;
+    }
+    app_node_comm_sync_unlock();
+    return matches;
 }
 
 int app_node_comm_peek_delivery_attempts_started(uint32_t handle,

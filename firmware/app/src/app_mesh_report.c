@@ -493,6 +493,7 @@ struct mesh_node_comm_cancel_request {
     struct proto_packet packet;
     uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint32_t delivery_handle;
+    uint32_t delivery_generation;
     uint32_t request_token;
     int result;
     bool pending;
@@ -575,7 +576,6 @@ static const char *mesh_rx_handler_lock_owner;
 static uint32_t mesh_rx_handler_lock_since_ms;
 static uint32_t mesh_rx_window_log_next_ms;
 static uint32_t mesh_anchor_rx_yield_log_next_ms;
-static uint32_t gateway_rx_diag_next_ms;
 static bool mesh_route_reply_handoff_pending;
 static uint32_t mesh_route_reply_handoff_deadline_ms;
 struct app_mesh_command_orchestrator *mesh_gateway_command_orchestrator_context(void)
@@ -951,6 +951,7 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                             const char *reason,
                                             uint32_t *wait_retry_delay_ms,
                                             bool store_route_wait,
+                                            const struct app_mesh_async_route_transfer_identity *route_transfer,
                                             bool *send_attempted,
                                             bool *rf_sent,
                                             bool *policy_deferred,

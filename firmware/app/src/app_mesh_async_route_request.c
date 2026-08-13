@@ -28,7 +28,8 @@ static bool transfer_identity_valid(
 {
     return transfer != NULL &&
            (transfer->owner_kind == APP_MESH_ASYNC_ROUTE_TRANSFER_ROUTE_WAIT ||
-            transfer->owner_kind == APP_MESH_ASYNC_ROUTE_TRANSFER_CORE_PENDING) &&
+            transfer->owner_kind == APP_MESH_ASYNC_ROUTE_TRANSFER_CORE_PENDING ||
+            transfer->owner_kind == APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM) &&
            transfer->target_id == target_id &&
            transfer->owner_generation != 0u &&
            transfer->packet_seq != 0u;
@@ -86,6 +87,9 @@ bool app_mesh_async_route_request_submit(
         c5_authorization->peer_id != target_id) {
         return false;
     }
+    if (transfer != NULL && !transfer_identity_valid(transfer, target_id)) {
+        return false;
+    }
 
     if (request->pending && request->c5_authorization.valid) {
         if (target_id == request->target_id &&
@@ -113,7 +117,7 @@ bool app_mesh_async_route_request_submit(
     request->generation = generation;
     request->retry_at_ms = now_ms;
     memset(&request->transfer, 0, sizeof(request->transfer));
-    if (transfer_identity_valid(transfer, target_id)) {
+    if (transfer != NULL) {
         request->transfer = *transfer;
     }
     memset(&request->c5_authorization, 0,

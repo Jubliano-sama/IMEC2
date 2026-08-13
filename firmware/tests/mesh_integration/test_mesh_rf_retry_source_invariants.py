@@ -934,9 +934,15 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         discovery_worker = function_body(
             REPORT, "mesh_route_discovery_work_handler"
         )
+        request_with_handoff = function_body(
+            REPORT, "mesh_request_route_owned_with_rx_handoff"
+        )
         route_wait = function_body(REPORT, "mesh_try_route_waiting_tx")
         async_submit = function_body(
             REPORT, "mesh_schedule_route_request_authorized"
+        )
+        owned_preflight = function_body(
+            REPORT, "mesh_owned_tracked_tx_preflight"
         )
         init = function_body(REPORT, "app_mesh_report_init")
 
@@ -944,6 +950,13 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertEqual(discovery_worker.count("mesh_request_route("), 1)
         self.assertEqual(route_wait.count("mesh_request_route("), 1)
         self.assertNotIn("mesh_request_route(", async_submit)
+        self.assertEqual(REPORT.count("mesh_request_route_owned("), 2)
+        self.assertEqual(
+            request_with_handoff.count("mesh_request_route_owned("), 1
+        )
+        self.assertIn(
+            "mesh_request_route_owned_with_rx_handoff(", owned_preflight
+        )
         self.assertEqual(
             REPORT.count("mesh_try_route_waiting_tx("),
             3,
@@ -962,6 +975,44 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "k_work_init_delayable(&mesh_route_waiting_work,\n"
             "                          mesh_route_waiting_work_handler)",
             init,
+        )
+
+    def test_gateway_route_request_owns_complete_continuous_rx_handoff(self):
+        handoff = function_body(REPORT, "mesh_gateway_rx_control_begin")
+        handoff_end = function_body(REPORT, "mesh_gateway_rx_control_end")
+        route_request = function_body(
+            REPORT, "mesh_request_route_owned_with_rx_handoff"
+        )
+        command_flood = function_body(
+            REPORT, "mesh_send_gateway_command_flood"
+        )
+        role = handoff.index("mesh_gateway_route_test_role()")
+        begin = handoff.index("mesh_rx_handoff_begin_control", role)
+        stop = handoff.index("mesh_stop_role_scan()", begin)
+        abort = handoff.index(
+            "dwm3000_driver_request_receive_abort(", stop
+        )
+        wait = handoff.index("mesh_rx_handoff_wait_for_control()", abort)
+        end = handoff_end.index("mesh_rx_handoff_end_control()")
+        restart = handoff_end.index("mesh_restart_role_scan()", end)
+
+        self.assertLess(role, begin)
+        self.assertLess(begin, stop)
+        self.assertLess(stop, abort)
+        self.assertLess(abort, wait)
+        self.assertLess(end, restart)
+        self.assertIn("DWM3000_RECEIVE_ABORT_MESH_CONTROL", handoff)
+        for body in (route_request, command_flood):
+            acquire = body.index("mesh_gateway_rx_control_begin(")
+            release = body.index("mesh_gateway_rx_control_end(", acquire)
+            self.assertLess(acquire, release)
+        self.assertLess(
+            route_request.index("mesh_request_route_owned("),
+            route_request.index("mesh_gateway_rx_control_end("),
+        )
+        self.assertLess(
+            command_flood.index("app_node_comm_gateway_control_send("),
+            command_flood.index("mesh_gateway_rx_control_end("),
         )
 
     def test_first_gateway_ack_send_failures_enter_identity_backoff(self):

@@ -487,11 +487,13 @@ int mesh_request_reliable_uplink_cancel(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
     uint32_t delivery_handle,
+    uint32_t delivery_generation,
     uint32_t request_token)
 {
     ARG_UNUSED(packet);
     ARG_UNUSED(semantic_digest);
     ARG_UNUSED(delivery_handle);
+    ARG_UNUSED(delivery_generation);
     ARG_UNUSED(request_token);
     return -EAGAIN;
 }

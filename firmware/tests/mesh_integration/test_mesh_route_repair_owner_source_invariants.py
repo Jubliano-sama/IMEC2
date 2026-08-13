@@ -9,6 +9,13 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = read_composed_source(ROOT / "app" / "src" / "app_mesh_report.c")
+NODE_COMM = read_composed_source(ROOT / "app" / "src" / "app_node_comm.c")
+ASYNC_ROUTE_HEADER = (
+    ROOT / "app" / "src" / "app_mesh_async_route_request.h"
+).read_text(encoding="utf-8")
+REPORT_HEADER = (ROOT / "app" / "src" / "app_mesh_report.h").read_text(
+    encoding="utf-8"
+)
 ANCHOR = read_composed_source(ROOT / "app" / "src" / "app_anchor.c")
 GATEWAY_BLE = read_composed_source(
     ROOT / "app" / "src" / "app_gateway_ble.c"
@@ -122,6 +129,115 @@ class MeshRouteRepairOwnerSourceInvariantTests(unittest.TestCase):
         self.assertLess(rf, post_rf)
         self.assertLess(post_rf, complete)
         self.assertLess(complete, defer)
+
+    def test_node_comm_route_repair_is_generation_owned_until_terminal_cancel(self):
+        service = function_body(NODE_COMM, "app_node_comm_service_deliveries")
+        reconcile = function_body(
+            NODE_COMM, "app_node_comm_reconcile_terminal_backends_locked"
+        )
+        owner_match = function_body(
+            REPORT, "mesh_async_route_transfer_owner_matches"
+        )
+        send = function_body(REPORT, "mesh_try_send_reliable_uplink_view")
+        cancel_route = function_body(
+            REPORT, "mesh_cancel_reliable_uplink_route_owned"
+        )
+        cancel_request = function_body(
+            REPORT, "mesh_request_reliable_uplink_cancel"
+        )
+        cancel_worker = function_body(
+            REPORT, "mesh_node_comm_cancel_work_handler"
+        )
+        route_worker = function_body(
+            REPORT, "mesh_route_discovery_work_handler"
+        )
+
+        self.assertIn(
+            "APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM", ASYNC_ROUTE_HEADER
+        )
+
+        # The facade lease generation crosses the backend seam instead of
+        # being reconstructed later from a destination shared by successors.
+        generation = service.index(
+            ".delivery_generation = lease.delivery_generation"
+        )
+        backend = service.index("mesh_try_send_reliable_uplink_view(")
+        self.assertLess(generation, backend)
+
+        self.assertIn("view->delivery_generation == 0u", send)
+        self.assertIn(
+            ".owner_generation = view->delivery_generation", send
+        )
+        self.assertIn(".packet_seq = out->packet.seq", send)
+        self.assertIn(".msg_type = out->packet.msg_type", send)
+        self.assertIn(
+            ".owner_kind = APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM", send
+        )
+        self.assertIn("&route_transfer", send)
+
+        self.assertIn(
+            "APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM", owner_match
+        )
+        self.assertIn("app_node_comm_delivery_owner_matches(", owner_match)
+        self.assertIn("attempt->transfer.owner_generation", owner_match)
+        self.assertIn("attempt->transfer.target_id", owner_match)
+        self.assertIn("attempt->transfer.packet_seq", owner_match)
+        self.assertIn("attempt->transfer.msg_type", owner_match)
+
+        # Every async worker probe checks the exact live owner first and
+        # checks again after RF before it can retain a deferred retry.
+        pre_rf = route_worker.index(
+            "if (!mesh_async_route_transfer_owner_matches(&attempt))"
+        )
+        rf = route_worker.index("mesh_request_route(", pre_rf)
+        post_rf = route_worker.index(
+            "!mesh_async_route_transfer_owner_matches(&attempt)", rf
+        )
+        defer = route_worker.index(
+            "app_mesh_async_route_request_defer(", post_rf
+        )
+        self.assertLess(pre_rf, rf)
+        self.assertLess(rf, post_rf)
+        self.assertLess(post_rf, defer)
+
+        # Terminalization freezes the same generation into cancellation;
+        # matching the target alone cannot cancel a same-target successor.
+        self.assertIn("terminal.delivery_generation", reconcile)
+        self.assertRegex(
+            REPORT_HEADER,
+            r"mesh_request_reliable_uplink_cancel\s*\([^;]*"
+            r"uint32_t delivery_generation\s*,",
+        )
+        self.assertIn(
+            ".delivery_generation = delivery_generation", cancel_request
+        )
+        self.assertIn(
+            "APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM", cancel_route
+        )
+        self.assertIn("request->delivery_generation", cancel_route)
+        match = cancel_route.index(
+            "app_mesh_async_route_request_transfer_matches("
+        )
+        complete = cancel_route.index(
+            "app_mesh_async_route_request_complete(", match
+        )
+        reschedule = cancel_route.index("mesh_schedule_tx_timeout()", complete)
+        self.assertLess(match, complete)
+        self.assertLess(complete, reschedule)
+
+        # The deferred route request is invalidated before terminal release is
+        # published, so its worker cannot survive to issue another RF probe.
+        cancel = cancel_worker.index(
+            "mesh_cancel_reliable_uplink_route_owned(&request)"
+        )
+        publish = cancel_worker.index(
+            "mesh_node_comm_cancel_complete(&request, ret)", cancel
+        )
+        release = cancel_worker.index(
+            "app_node_comm_backend_release_ready(", publish
+        )
+        self.assertLess(cancel, publish)
+        self.assertLess(publish, release)
 
     def test_forwarded_gateway_ack_route_wait_cannot_be_replaced(self):
         self.assertTrue(
