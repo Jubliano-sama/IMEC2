@@ -761,6 +761,20 @@ uint32_t mesh_sim_connection_next_event_ms(const struct mesh_sim_world *world,
     return start_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)start_ms;
 }
 
+static void connection_expiry_restore_idle_radio(
+    struct mesh_sim_role_instance *node,
+    uint64_t now_us)
+{
+    /* Supervision can expire while unrelated Channel-5 or direct-gateway
+     * work is already on air. Retire only the connection owner in that case;
+     * its TX/RX completion still owns the physical radio transition. */
+    if (node->radio_state == MESH_SIM_RADIO_TX ||
+        node->radio_state == MESH_SIM_RADIO_RX) {
+        return;
+    }
+    node->radio_state = mesh_sim_radio_post_operation_state(node, now_us);
+}
+
 int mesh_sim_expire_connection_ownership(struct mesh_sim_world *world,
                                          uint16_t connection_index,
                                          uint8_t *expired_endpoints)
@@ -786,12 +800,10 @@ int mesh_sim_expire_connection_ownership(struct mesh_sim_world *world,
         connection->timing_b.timing_fresh = false;
         connection->timing_b.fallback_required = true;
         mesh_sim_clear_connection_timing(world, connection);
-        world->roles[connection->node_a].radio_state =
-            mesh_sim_radio_post_operation_state(
-                &world->roles[connection->node_a], world->now_us);
-        world->roles[connection->node_b].radio_state =
-            mesh_sim_radio_post_operation_state(
-                &world->roles[connection->node_b], world->now_us);
+        connection_expiry_restore_idle_radio(
+            &world->roles[connection->node_a], world->now_us);
+        connection_expiry_restore_idle_radio(
+            &world->roles[connection->node_b], world->now_us);
         expired = 2u;
     }
     for (size_t endpoint = 0u; endpoint < 2u; endpoint++) {
@@ -813,9 +825,8 @@ int mesh_sim_expire_connection_ownership(struct mesh_sim_world *world,
         timing->fallback_required = true;
         mesh_relay_clear_channel9_timing(&world->roles[node_index].relay,
                                          world->roles[peer_index].id);
-        world->roles[node_index].radio_state =
-            mesh_sim_radio_post_operation_state(&world->roles[node_index],
-                                                world->now_us);
+        connection_expiry_restore_idle_radio(&world->roles[node_index],
+                                             world->now_us);
         expired++;
     }
     if (expired_endpoints != NULL) {

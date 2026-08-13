@@ -1766,6 +1766,20 @@ add_test(NAME mesh_stress_busy_line_reset
             --packets 2 --reset-step 2 --max-steps 800 --quiet)
 set_tests_properties(mesh_stress_busy_line_reset PROPERTIES
     LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;reset;state")
+add_test(NAME mesh_stress_busy_line_midflight_reset_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x10df
+            --fault-seed 0xf4174e32 --packets 2 --loss 50
+            --ack-loss 300 --duplicate 300 --delay 500
+            --max-delay-us 4000 --reset-step 120 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_busy_line_midflight_reset_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;reset;recovery;faults;replay;liveness")
+add_test(NAME mesh_stress_connection_expiry_during_route_tx_regression
+    COMMAND mesh_stress --scenario busy-line --seed 0x4091
+            --fault-seed 0xf4171e7c --packets 2 --loss 50
+            --ack-loss 300 --duplicate 300 --delay 500
+            --max-delay-us 4000 --reset-step 160 --max-steps 800 --quiet)
+set_tests_properties(mesh_stress_connection_expiry_during_route_tx_regression PROPERTIES
+    LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;reset;recovery;faults;replay;liveness;radio")
 add_test(NAME mesh_stress_one_hop_fault_replay
     COMMAND mesh_stress --scenario one-hop --seed 0x51a7e551
             --fault-seed 0x12345678 --packets 2 --loss 0
@@ -1908,6 +1922,8 @@ set_property(TEST
     mesh_watchdog_lease_scenarios
     mesh_app_arbitration_scenarios
     mesh_stress_busy_line_reset
+    mesh_stress_busy_line_midflight_reset_regression
+    mesh_stress_connection_expiry_during_route_tx_regression
     mesh_stress_one_hop_fault_replay
     mesh_stress_busy_line_ack_loss_regression
     mesh_stress_busy_line_ack_downlink_regression

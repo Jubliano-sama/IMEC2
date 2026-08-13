@@ -461,6 +461,91 @@ static int queue_packets(struct runner *runner)
     return MESH_SIM_OK;
 }
 
+static int expire_elapsed_connection_ownership(struct runner *runner)
+{
+    for (size_t i = 0u; i < runner->connection_count; i++) {
+        int ret = mesh_sim_expire_connection_ownership(
+            runner->world, runner->connections[i], NULL);
+
+        if (ret != MESH_SIM_OK) {
+            return ret;
+        }
+    }
+    return MESH_SIM_OK;
+}
+
+static uint64_t next_pending_event_time_us(const struct runner *runner)
+{
+    uint64_t earliest_us = UINT64_MAX;
+
+    for (size_t i = 0u; i < runner->world->event_count; i++) {
+        const struct mesh_sim_event *event = &runner->world->events[i];
+
+        if (event->pending && event->time_us >= runner->world->now_us &&
+            event->time_us < earliest_us) {
+            earliest_us = event->time_us;
+        }
+    }
+    return earliest_us;
+}
+
+static uint64_t next_orphan_supervision_time_us(const struct runner *runner)
+{
+    uint64_t earliest_us = UINT64_MAX;
+    uint64_t now_ms_wide = runner->world->now_us / UINT64_C(1000);
+    uint32_t now_ms = now_ms_wide > UINT32_MAX ?
+                      UINT32_MAX : (uint32_t)now_ms_wide;
+
+    for (size_t i = 0u; i < runner->connection_count; i++) {
+        const struct mesh_sim_connection *connection =
+            &runner->world->connections[runner->connections[i]];
+        const struct mesh_event_timing *active_timing;
+        uint64_t deadline_us;
+
+        if (!connection->valid ||
+            connection->owner_a.active == connection->owner_b.active) {
+            continue;
+        }
+        active_timing = connection->owner_a.active ?
+                        &connection->timing_a : &connection->timing_b;
+        if (!mesh_event_timing_usable(active_timing, now_ms)) {
+            deadline_us = runner->world->now_us;
+        } else {
+            uint32_t deadline_ms =
+                active_timing->last_successful_ch9_event_ms +
+                active_timing->supervision_timeout_ms;
+            uint32_t remaining_ms = deadline_ms - now_ms;
+
+            if (runner->world->now_us >
+                    UINT64_MAX - (uint64_t)remaining_ms * UINT64_C(1000)) {
+                return UINT64_MAX;
+            }
+            deadline_us = runner->world->now_us +
+                          (uint64_t)remaining_ms * UINT64_C(1000);
+        }
+        if (deadline_us < earliest_us) {
+            earliest_us = deadline_us;
+        }
+    }
+    return earliest_us;
+}
+
+static int run_next_pending_or_supervision(struct runner *runner)
+{
+    uint64_t next_event_us = next_pending_event_time_us(runner);
+    uint64_t supervision_us = next_orphan_supervision_time_us(runner);
+    uint64_t target_us = next_event_us < supervision_us ?
+                         next_event_us : supervision_us;
+    int ret;
+
+    if (target_us == UINT64_MAX) {
+        return MESH_SIM_ERR_EVENT_ORDER;
+    }
+    ret = mesh_sim_run_until(runner->world, target_us);
+    return ret == MESH_SIM_OK ? expire_elapsed_connection_ownership(runner) :
+                                ret;
+}
+
 static int run_next_connection(struct runner *runner,
                                bool *empty_channel9_event)
 {
@@ -472,6 +557,10 @@ static int run_next_connection(struct runner *runner,
         return MESH_SIM_ERR_ARG;
     }
     *empty_channel9_event = false;
+    first_error = expire_elapsed_connection_ownership(runner);
+    if (first_error != MESH_SIM_OK) {
+        return first_error;
+    }
     for (size_t i = 0u; i < runner->connection_count; i++) {
         struct mesh_sim_connection_action action;
         int ret = mesh_sim_connection_next_action(
@@ -489,8 +578,8 @@ static int run_next_connection(struct runner *runner,
         }
     }
     if (selected == SIZE_MAX) {
-        return first_error == MESH_SIM_OK ? run_next_pending_event(runner) :
-                                            first_error;
+        return first_error == MESH_SIM_OK ?
+               run_next_pending_or_supervision(runner) : first_error;
     }
     {
         struct mesh_sim_connection_action action;
@@ -690,16 +779,8 @@ static int run_direct_gateway_turn(struct runner *runner)
 
 static int run_next_pending_event(struct runner *runner)
 {
-    uint64_t earliest_us = UINT64_MAX;
+    uint64_t earliest_us = next_pending_event_time_us(runner);
 
-    for (size_t i = 0u; i < runner->world->event_count; i++) {
-        const struct mesh_sim_event *event = &runner->world->events[i];
-
-        if (event->pending && event->time_us >= runner->world->now_us &&
-            event->time_us < earliest_us) {
-            earliest_us = event->time_us;
-        }
-    }
     return earliest_us == UINT64_MAX ? MESH_SIM_ERR_EVENT_ORDER :
                                        mesh_sim_run_until(runner->world,
                                                           earliest_us);
@@ -727,6 +808,15 @@ static bool network_idle(const struct runner *runner)
         if (node->tx_queue_count != 0u || node->route_waiting_valid ||
             (node->relay_initialized &&
              node->relay.pending.state != MESH_RELAY_TX_IDLE)) {
+            return false;
+        }
+    }
+    for (size_t i = 0u; i < runner->connection_count; i++) {
+        const struct mesh_sim_connection *connection =
+            &runner->world->connections[runner->connections[i]];
+
+        if (connection->valid &&
+            connection->owner_a.active != connection->owner_b.active) {
             return false;
         }
     }
@@ -1188,6 +1278,9 @@ static int run_delivery(struct runner *runner)
         }
         if (ret == MESH_SIM_OK) {
             ret = feed_idle_watchdogs(runner);
+        }
+        if (ret == MESH_SIM_OK) {
+            ret = expire_elapsed_connection_ownership(runner);
         }
         update_delivery_timestamps(runner);
         if (ret == MESH_SIM_OK &&
