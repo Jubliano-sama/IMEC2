@@ -206,16 +206,18 @@ static void test_manual_pair_commitment_binds_generation_and_pair(void)
     assert(memcmp(baseline, other, sizeof(baseline)) != 0);
 }
 
-static void test_start_release_reserves_both_control_horizons(void)
+static void test_start_release_is_separate_from_failure_horizons(void)
 {
-    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS ==
-           2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS +
-               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +
+    assert(SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS == 1000u);
+    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS == 15000u);
+    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS >=
+           8u * SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS +
                SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS +
-               SURVEY_PAIR_START_SKEW_MARGIN_MS);
-    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS == 244000u);
+               2u * SURVEY_PAIR_START_SKEW_MARGIN_MS);
+    assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
+           SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS);
     assert(SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS == 174000u);
-    assert(SURVEY_PAIR_PREPARED_LEASE_MS == 3774000u);
+    assert(SURVEY_PAIR_PREPARED_LEASE_MS == 534000u);
     assert(SURVEY_PAIR_PREPARED_LEASE_MS ==
            SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS +
                SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS);
@@ -228,6 +230,6 @@ int main(void)
     test_round_id_optional_parser_and_encoding();
     test_round_commitment_binds_complete_plan();
     test_manual_pair_commitment_binds_generation_and_pair();
-    test_start_release_reserves_both_control_horizons();
+    test_start_release_is_separate_from_failure_horizons();
     return 0;
 }

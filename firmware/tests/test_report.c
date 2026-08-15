@@ -615,7 +615,7 @@ static void test_self_test_report_is_diagnostic_not_click(void)
     assert(memcmp(decoded_payload, payload, payload_len) == 0);
 }
 
-static void test_anchor_heartbeat_report_requires_gateway_ack(void)
+static void test_anchor_heartbeat_report_is_best_effort(void)
 {
     const struct anchor_heartbeat_fields fields = {
         .device_role = ROLE_ANCHOR,
@@ -657,7 +657,7 @@ static void test_anchor_heartbeat_report_requires_gateway_ack(void)
                                                7u,
                                                (uint8_t)payload_len) == PROTO_OK);
     assert(packet.msg_type == MSG_ANCHOR_HEARTBEAT);
-    assert((packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u);
+    assert(packet.flags == 0u);
     assert((packet.flags & FLAG_COUNT_AS_CLICK) == 0u);
     assert((packet.flags & FLAG_DIAGNOSTIC) == 0u);
 }
@@ -1187,7 +1187,7 @@ int main(void)
     test_rejects_unbounded_diagnostic_bytes();
     test_full_diagnostic_first_fragment_stays_inside_packet_payload();
     test_self_test_report_is_diagnostic_not_click();
-    test_anchor_heartbeat_report_requires_gateway_ack();
+    test_anchor_heartbeat_report_is_best_effort();
     test_rejects_bad_range_fields();
     test_rejects_missing_sample_data();
     test_max_single_packet_range_samples_fit_one_uwb_mesh_frame();

@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="931" viewBox="0 0 4300 931" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">IMEC2 FOUR-BOARD PROTOCOL QUALIFICATION: CURRENT STATE</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="824.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="154.0" y="96.0" class="row-label">HEADLESS GUI / BLE</text>
+<rect x="264.0" y="74.0" width="460.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="494.4" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="494.4" dy="0.0">BLE connect</tspan><tspan x="494.4" dy="12.0">Here-I-Am</tspan></text>
+<rect x="724.8" y="74.0" width="522.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="986.0" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="986.0" dy="0.0">Strict reachability</tspan><tspan x="986.0" dy="12.0">3 anchors / retries 0</tspan></text>
+<rect x="1247.1" y="74.0" width="430.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1462.2" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1462.2" dy="0.0">Durable assignment</tspan><tspan x="1462.2" dy="12.0">exact receipts</tspan></text>
+<rect x="1677.3" y="74.0" width="921.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2138.1" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2138.1" dy="0.0">Survey discovery</tspan><tspan x="2138.1" dy="12.0">A + B reports receipted</tspan></text>
+<rect x="2599.0" y="74.0" width="891.0" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3044.4" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="3044.4" dy="0.0">Waits for C report</tspan><tspan x="3044.4" dy="12.0">outer timeout</tspan></text>
+<rect x="3489.9" y="74.0" width="768.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3874.0" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">Full survey + click matrix</tspan><tspan x="3874.0" dy="12.0">pending</tspan></text>
+<line x1="44.0" y1="124.0" x2="4258.0" y2="124.0" class="major-line"/>
+<text x="154.0" y="160.0" class="row-label">GATEWAY</text>
+<rect x="264.0" y="138.0" width="460.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="494.4" y="155.0" class="small center event-text" text-anchor="middle"><tspan x="494.4" dy="0.0">BLE ingress</tspan><tspan x="494.4" dy="12.0">command correlation</tspan></text>
+<rect x="724.8" y="138.0" width="522.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="986.0" y="155.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="986.0" dy="0.0">Route projection</tspan><tspan x="986.0" dy="12.0">A=1 / B=2 / C=3</tspan></text>
+<rect x="1247.1" y="138.0" width="430.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1462.2" y="155.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1462.2" dy="0.0">Publish roster</tspan><tspan x="1462.2" dy="12.0">all TABLE ACKs</tspan></text>
+<rect x="1677.3" y="138.0" width="491.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1923.0" y="161.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1923.0" dy="0.0">Four bounded survey waves</tspan></text>
+<rect x="2168.8" y="138.0" width="430.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2383.9" y="161.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2383.9" dy="0.0">A + B reports accepted</tspan></text>
+<rect x="2599.0" y="138.0" width="891.0" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3044.4" y="161.0" class="small center event-text" text-anchor="middle"><tspan x="3044.4" dy="0.0">C report absent</tspan></text>
+<rect x="3489.9" y="138.0" width="768.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="3874.0" y="161.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">Protocol wire format unchanged</tspan></text>
+<line x1="44.0" y1="188.0" x2="4258.0" y2="188.0" class="major-line"/>
+<text x="154.0" y="230.0" class="row-label">DIRECT ANCHOR A - HOP 1</text>
+<polygon points="1247.1,209.0 1252.1,214.0 1247.1,219.0 1242.1,214.0" class="diamond"/>
+<rect x="264.0" y="218.0" width="983.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="755.6" y="235.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="755.6" dy="0.0">Direct gateway route</tspan><tspan x="755.6" dy="12.0">stable hop 1</tspan></text>
+<rect x="1247.1" y="218.0" width="1351.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1923.0" y="235.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1923.0" dy="0.0">Assignment + discovery report</tspan><tspan x="1923.0" dy="12.0">exact host receipt</tspan></text>
+<rect x="2599.0" y="218.0" width="1659.0" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="3428.5" y="241.0" class="small center event-text" text-anchor="middle"><tspan x="3428.5" dy="0.0">Existing behavior remains green</tspan></text>
+<line x1="1247.1" y1="202.0" x2="1247.1" y2="214.0" class="hairline"/>
+<text x="1226.1" y="201.0" class="tiny">hop 1</text>
+<line x1="44.0" y1="264.0" x2="4258.0" y2="264.0" class="major-line"/>
+<text x="154.0" y="306.0" class="row-label">FORCED ANCHOR B - HOP 2</text>
+<polygon points="1247.1,285.0 1252.1,290.0 1247.1,295.0 1242.1,290.0" class="diamond"/>
+<rect x="264.0" y="294.0" width="983.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="755.6" y="311.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="755.6" dy="0.0">Route through A</tspan><tspan x="755.6" dy="12.0">stable hop 2</tspan></text>
+<rect x="1247.1" y="294.0" width="1351.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1923.0" y="311.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1923.0" dy="0.0">Assignment + discovery report</tspan><tspan x="1923.0" dy="12.0">exact host receipt</tspan></text>
+<rect x="2599.0" y="294.0" width="891.0" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3044.4" y="311.0" class="small center event-text" text-anchor="middle"><tspan x="3044.4" dy="0.0">Upstream timing lost</tspan><tspan x="3044.4" dy="12.0">old result waiter retained</tspan></text>
+<rect x="3489.9" y="294.0" width="768.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3874.0" y="317.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">Arbitration fix under test</tspan></text>
+<line x1="1247.1" y1="278.0" x2="1247.1" y2="290.0" class="hairline"/>
+<text x="1226.1" y="277.0" class="tiny">hop 2</text>
+<line x1="44.0" y1="340.0" x2="4258.0" y2="340.0" class="major-line"/>
+<text x="154.0" y="382.0" class="row-label">FORCED-2 ANCHOR C - HOP 3</text>
+<polygon points="1247.1,361.0 1252.1,366.0 1247.1,371.0 1242.1,366.0" class="diamond"/>
+<polygon points="2168.8,361.0 2173.8,366.0 2168.8,371.0 2163.8,366.0" class="diamond"/>
+<polygon points="3244.1,361.0 3249.1,366.0 3244.1,371.0 3239.1,366.0" class="diamond"/>
+<rect x="264.0" y="370.0" width="983.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="755.6" y="387.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="755.6" dy="0.0">Route through B + A</tspan><tspan x="755.6" dy="12.0">stable hop 3</tspan></text>
+<rect x="1247.1" y="370.0" width="430.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1462.2" y="393.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1462.2" dy="0.0">Assignment + TABLE ACK</tspan></text>
+<rect x="1677.3" y="370.0" width="491.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1923.0" y="387.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1923.0" dy="0.0">Rejects hop 0 / 1</tspan><tspan x="1923.0" dy="12.0">accepts exact hop 2</tspan></text>
+<rect x="2168.8" y="370.0" width="430.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2383.9" y="387.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2383.9" dy="0.0">Survey runs</tspan><tspan x="2383.9" dy="12.0">report staged</tspan></text>
+<rect x="2599.0" y="370.0" width="891.0" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3044.4" y="387.0" class="small center event-text" text-anchor="middle"><tspan x="3044.4" dy="0.0">EVENT_ACCEPT then CH9 sends</tspan><tspan x="3044.4" dy="12.0">B never receives report</tspan></text>
+<rect x="3489.9" y="370.0" width="768.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3874.0" y="393.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">Live requalification pending</tspan></text>
+<line x1="1247.1" y1="354.0" x2="1247.1" y2="366.0" class="hairline"/>
+<text x="1226.1" y="353.0" class="tiny">hop 3</text>
+<line x1="2168.8" y1="354.0" x2="2168.8" y2="366.0" class="hairline"/>
+<text x="2134.5" y="353.0" class="tiny">hop 2 accepted</text>
+<line x1="3244.1" y1="354.0" x2="3244.1" y2="366.0" class="hairline"/>
+<text x="3212.4" y="353.0" class="tiny">report missed</text>
+<line x1="44.0" y1="416.0" x2="4258.0" y2="416.0" class="major-line"/>
+<text x="154.0" y="452.0" class="row-label">B UPSTREAM / C DOWNSTREAM OWNERS</text>
+<rect x="264.0" y="430.0" width="2335.0" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1431.5" y="453.0" class="small center event-text" text-anchor="middle"><tspan x="1431.5" dy="0.0">No conflicting retained owner observed in proven phases</tspan></text>
+<rect x="2599.0" y="430.0" width="430.1" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="2814.0" y="447.0" class="small center event-text" text-anchor="middle"><tspan x="2814.0" dy="0.0">B accepts C cadence</tspan><tspan x="2814.0" dy="12.0">while upstream waiter is live</tspan></text>
+<rect x="3029.1" y="430.0" width="460.8" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3259.5" y="447.0" class="small center event-text" text-anchor="middle"><tspan x="3259.5" dy="0.0">B route probe overlaps</tspan><tspan x="3259.5" dy="12.0">C first slot; retries continue</tspan></text>
+<rect x="3489.9" y="430.0" width="768.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3874.0" y="447.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">Required: preserve custody</tspan><tspan x="3874.0" dy="12.0">and serialize the two owners</tspan></text>
+<line x1="44.0" y1="480.0" x2="4258.0" y2="480.0" class="major-line"/>
+<text x="154.0" y="516.0" class="row-label">CLICK / SELF-TEST MATRIX</text>
+<rect x="264.0" y="494.0" width="3225.9" height="36.0" fill="#fbfbfb" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1877.0" y="517.0" class="small center event-text" text-anchor="middle"><tspan x="1877.0" dy="0.0">Held until all three discovery reports settle</tspan></text>
+<rect x="3489.9" y="494.0" width="768.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3874.0" y="511.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">PENDING</tspan><tspan x="3874.0" dy="12.0">direct / forced1 / forced2 / mixed / self-test</tspan></text>
+<line x1="44.0" y1="544.0" x2="4258.0" y2="544.0" class="major-line"/>
+<text x="154.0" y="580.0" class="row-label">BUILD / FLASH EVIDENCE</text>
+<rect x="264.0" y="558.0" width="1413.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="970.6" y="575.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="970.6" dy="0.0">LIVE PASS</tspan><tspan x="970.6" dy="12.0">GUI + topology + durable assignment</tspan></text>
+<rect x="1677.3" y="558.0" width="921.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2138.1" y="575.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2138.1" dy="0.0">LIVE PASS</tspan><tspan x="2138.1" dy="12.0">depth-3 downlink + A/B reports</tspan></text>
+<rect x="2599.0" y="558.0" width="891.0" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3044.4" y="575.0" class="small center event-text" text-anchor="middle"><tspan x="3044.4" dy="0.0">CORRELATED 4-RTT TRACE</tspan><tspan x="3044.4" dy="12.0">C uplink owner collision</tspan></text>
+<rect x="3489.9" y="558.0" width="768.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3874.0" y="575.0" class="small center event-text" text-anchor="middle"><tspan x="3874.0" dy="0.0">IN PROGRESS</tspan><tspan x="3874.0" dy="12.0">regression + focused fix + HIL</tspan></text>
+<line x1="44.0" y1="608.0" x2="4258.0" y2="608.0" class="major-line"/>
+<text x="154.0" y="644.0" class="row-label">QUALIFICATION VERDICT</text>
+<rect x="264.0" y="622.0" width="2335.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1431.5" y="645.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1431.5" dy="0.0">PROVEN</tspan></text>
+<rect x="2599.0" y="622.0" width="891.0" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3044.4" y="639.0" class="small center event-text" text-anchor="middle"><tspan x="3044.4" dy="0.0">FAIL REPRODUCED</tspan><tspan x="3044.4" dy="12.0">no C report at gateway</tspan></text>
+<rect x="3489.9" y="622.0" width="399.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3689.6" y="639.0" class="small center event-text" text-anchor="middle"><tspan x="3689.6" dy="0.0">NEXT</tspan><tspan x="3689.6" dy="12.0">fix + full gates</tspan></text>
+<rect x="3889.3" y="622.0" width="368.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="4073.7" y="639.0" class="small center event-text" text-anchor="middle"><tspan x="4073.7" dy="0.0">THEN</tspan><tspan x="4073.7" dy="12.0">reflash + survey + clicks</tspan></text>
+<line x1="44.0" y1="672.0" x2="4258.0" y2="672.0" class="major-line"/>
+<text x="154.0" y="722.0" class="row-label">KEY POINT</text>
+<rect x="2001.0" y="684.0" width="520.0" height="68.0" class="box shaded"/>
+<text x="2261.0" y="699.0" class="small center" text-anchor="middle"><tspan x="2261.0" dy="0.0">Green: headless BLE, Here-I-Am, exact routes 1 / 2 / 3, durable assignment, TABLE ACKs, the full</tspan><tspan x="2261.0" dy="12.0">depth-3 survey downlink, and A/B discovery reports. Red: C stages and repeatedly transmits its</tspan><tspan x="2261.0" dy="12.0">report, but B retains an older upstream route-wait owner and launches route repair through the</tspan><tspan x="2261.0" dy="12.0">accepted child slot. That uplink arbitration fix and its regression are in progress; full survey</tspan><tspan x="2261.0" dy="12.0">and the click matrix remain pending.</tspan></text>
+<line x1="44.0" y1="764.0" x2="4258.0" y2="764.0" class="major-line"/>
+<line x1="44.0" y1="790.0" x2="44.0" y2="828.0" class="major-line"/>
+<line x1="44.0" y1="790.0" x2="4258.0" y2="790.0" class="axis-line"/>
+<line x1="264.0" y1="789.0" x2="264.0" y2="801.0" class="tick"/>
+<line x1="724.8" y1="789.0" x2="724.8" y2="801.0" class="tick"/>
+<line x1="1247.1" y1="789.0" x2="1247.1" y2="801.0" class="tick"/>
+<line x1="1677.3" y1="789.0" x2="1677.3" y2="801.0" class="tick"/>
+<line x1="2168.8" y1="789.0" x2="2168.8" y2="801.0" class="tick"/>
+<line x1="2599.0" y1="789.0" x2="2599.0" y2="801.0" class="tick"/>
+<line x1="3029.1" y1="789.0" x2="3029.1" y2="801.0" class="tick"/>
+<line x1="3489.9" y1="789.0" x2="3489.9" y2="801.0" class="tick"/>
+<line x1="3889.3" y1="789.0" x2="3889.3" y2="801.0" class="tick"/>
+<line x1="4258.0" y1="789.0" x2="4258.0" y2="801.0" class="tick"/>
+<text x="231.8" y="813.0" class="axis-time">connect</text>
+<text x="692.6" y="813.0" class="axis-time">reachability</text>
+<text x="1214.9" y="813.0" class="axis-time">assignment</text>
+<text x="1645.0" y="813.0" class="axis-time">survey downlink</text>
+<text x="2136.6" y="813.0" class="axis-time">C admitted</text>
+<text x="2566.7" y="813.0" class="axis-time">reports staged</text>
+<text x="2996.8" y="813.0" class="axis-time">owner collision</text>
+<text x="3457.7" y="813.0" class="axis-time">live failure</text>
+<text x="3857.1" y="813.0" class="axis-time">software gate</text>
+<text x="4225.8" y="813.0" class="axis-time">hardware gate</text>
+<text x="264.0" y="842.5" class="tiny center" text-anchor="middle"><tspan x="264.0" dy="0.0">headless GUI owns BLE link</tspan></text>
+<text x="724.8" y="837.0" class="tiny center" text-anchor="middle"><tspan x="724.8" dy="0.0">three anchors discovered at hops 1</tspan><tspan x="724.8" dy="11.0">/ 2 / 3</tspan></text>
+<text x="1247.1" y="842.5" class="tiny center" text-anchor="middle"><tspan x="1247.1" dy="0.0">exact durable roster and TABLE ACKs</tspan></text>
+<text x="1677.3" y="842.5" class="tiny center" text-anchor="middle"><tspan x="1677.3" dy="0.0">four bounded waves begin</tspan></text>
+<text x="2168.8" y="837.0" class="tiny center" text-anchor="middle"><tspan x="2168.8" dy="0.0">exact hop-2 copy reaches</tspan><tspan x="2168.8" dy="11.0">forced-two-hop anchor</tspan></text>
+<text x="2599.0" y="837.0" class="tiny center" text-anchor="middle"><tspan x="2599.0" dy="0.0">A and B delivered; C owns a local</tspan><tspan x="2599.0" dy="11.0">report</tspan></text>
+<text x="3029.1" y="837.0" class="tiny center" text-anchor="middle"><tspan x="3029.1" dy="0.0">B accepts C cadence while retaining</tspan><tspan x="3029.1" dy="11.0">upstream repair</tspan></text>
+<text x="3489.9" y="837.0" class="tiny center" text-anchor="middle"><tspan x="3489.9" dy="0.0">C retries but gateway receives no C</tspan><tspan x="3489.9" dy="11.0">report</tspan></text>
+<text x="3889.3" y="842.5" class="tiny center" text-anchor="middle"><tspan x="3889.3" dy="0.0">regression and fix</tspan></text>
+<text x="4171.2" y="837.0" class="tiny center" text-anchor="middle"><tspan x="4171.2" dy="0.0">full survey then click and self-test</tspan><tspan x="4171.2" dy="11.0">matrix</tspan></text>
+<text x="2150.0" y="897.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Figure: Current qualification path for one gateway, a direct anchor, a forced-hop anchor, and a forced-two-hop anchor. Horizontal position is protocol order, not elapsed time.</tspan></text>
+</svg>

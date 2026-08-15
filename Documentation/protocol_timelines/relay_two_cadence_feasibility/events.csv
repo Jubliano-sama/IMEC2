@@ -1,0 +1,13 @@
+row,start,end,text,style,lane_index
+current_a,0,240,"60 guard + 120 event + 60 guard",emphasis,0
+current_b,260,500,"60 guard + 120 event + 60 guard",emphasis,0
+current_gap,240,260,"only 20 ms free",shaded,0
+current_gap,500,520,"only 20 ms free",shaded,1
+model,240,320,"60 ms retune reserve + 20 ms receive",default,0
+model,560,640,"60 ms retune reserve + 20 ms receive",default,1
+fixed_a,0,240,"60 guard + 120 event + 60 guard",emphasis,0
+fixed_gap_a,240,320,"60 ms retune + 20 ms Channel-5 RX",emphasis,0
+fixed_b,320,560,"60 guard + 120 event + 60 guard",emphasis,0
+fixed_gap_b,560,640,"60 ms retune + 20 ms Channel-5 RX",emphasis,0
+verdict,0,520,"520 ms provides only 40 ms total free time",shaded,0
+verdict,520,640,"the extra 120 ms creates two legal scan gaps",emphasis,0

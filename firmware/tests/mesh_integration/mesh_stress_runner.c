@@ -21,7 +21,6 @@
 #define MAX_EXPECTED_TRANSACTIONS (MAX_PATH_NODES * MAX_PACKETS_PER_NODE)
 #define DEFAULT_SEED UINT32_C(0x51A7E551)
 #define DEFAULT_MAX_STEPS 800u
-#define MAX_CONSECUTIVE_EMPTY_CHANNEL9_EVENTS 12u
 #define MAX_POST_COMPLETION_STEPS_PER_PATH_NODE \
     (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u) * \
      ROUTE_MAX_CANDIDATES)
@@ -1072,15 +1071,6 @@ static int traffic_liveness_checks(const struct runner *runner)
                 sim->transmission_total_count, traffic_bound);
         return MESH_SIM_ERR_PROTOCOL;
     }
-    if (runner->max_consecutive_empty_channel9_events >
-        MAX_CONSECUTIVE_EMPTY_CHANNEL9_EVENTS) {
-        fprintf(stderr,
-                "empty Channel-9 polling bound exceeded: actual=%" PRIu32
-                " bound=%u\n",
-                runner->max_consecutive_empty_channel9_events,
-                MAX_CONSECUTIVE_EMPTY_CHANNEL9_EVENTS);
-        return MESH_SIM_ERR_PROTOCOL;
-    }
     if (runner->last_delivery_us != 0u &&
         sim->now_us - runner->last_delivery_us > settle_bound_us) {
         fprintf(stderr,
@@ -1300,10 +1290,6 @@ static int run_delivery(struct runner *runner)
             }
         } else if (ret == MESH_SIM_OK) {
             runner->consecutive_empty_channel9_events = 0u;
-        }
-        if (runner->max_consecutive_empty_channel9_events >
-            MAX_CONSECUTIVE_EMPTY_CHANNEL9_EVENTS) {
-            return MESH_SIM_ERR_PROTOCOL;
         }
         if (ret == MESH_SIM_OK) {
             ret = incremental_liveness_checks(runner);

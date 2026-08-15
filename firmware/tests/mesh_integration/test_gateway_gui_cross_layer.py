@@ -383,7 +383,7 @@ def main() -> None:
     )
     expected_survey_payload = (
         "100200011504070000001a04fa0000000f0205004c0106"
-        "78020500ab0480ee3600" + survey_policy_suffix
+        "78020500ab04407e0500" + survey_policy_suffix
     )
     policy_survey_parsed = firmware_parse(oracle, policy_survey.frame)
     assert "command_id=256" in policy_survey_parsed

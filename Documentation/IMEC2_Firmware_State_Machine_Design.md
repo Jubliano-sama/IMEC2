@@ -238,8 +238,8 @@ stateDiagram-v2
     Negotiating --> Empty: timeout or rejection
 
     Active --> Active: event completes
-    Active --> Stale: 8 missed receive turns
-    Active --> Stale: 30 s supervision timeout
+    Active --> Stale: 8 attempted-transfer failures
+    Active --> Stale: 5 min peer supervision timeout
     Active --> Empty: accepted click removes timing
     Active --> Closing: route closes
 

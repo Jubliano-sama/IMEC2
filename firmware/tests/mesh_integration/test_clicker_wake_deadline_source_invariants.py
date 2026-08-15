@@ -444,7 +444,21 @@ assert "atomic_or(&receive_abort_owners, requested)" in request_abort
 assert "atomic_and(&receive_abort_owners, ~cleared)" in clear_abort
 assert "dwm3000_driver_receive_abort_pending()" in transport_quiesced
 assert "DWM3000_RECEIVE_ABORT_NODE_COMM" in NODE_COMM
-assert "dwm3000_driver_clear_receive_abort" not in NODE_COMM
+assert not re.search(
+    r"dwm3000_driver_clear_receive_abort\s*\(\s*"
+    r"DWM3000_RECEIVE_ABORT_NODE_COMM\s*\)",
+    NODE_COMM,
+)
+for preempt_owner in (
+    "app_node_comm_transport_preempt_ready",
+    "app_node_comm_transport_preempt_end",
+):
+    preempt_body = source_function_body(NODE_COMM, preempt_owner)
+    assert re.search(
+        r"dwm3000_driver_clear_receive_abort\s*\(\s*"
+        r"DWM3000_RECEIVE_ABORT_MESH_CONTROL\s*\)",
+        preempt_body,
+    )
 assert "DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY" in MESH_ARBITRATION
 assert "dwm3000_driver_request_receive_abort(" in MESH_ARBITRATION
 assert "dwm3000_driver_clear_receive_abort(" in MESH_ARBITRATION

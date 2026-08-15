@@ -397,6 +397,12 @@ enum tlv_type {
     TLV_MESH_EVENT_TX_ON_EVEN = 0xBA,
     /* Exact identity of the gateway stream record accepted by the GUI. */
     TLV_GATEWAY_HOST_RECEIPT_IDENTITY = 0xBB,
+    /*
+     * Stable EVENT_ACCEPT counterproposal: add this many milliseconds to the
+     * immutable PROPOSE phase.  A relative shift survives byte-identical
+     * ACCEPT replay without requiring synchronized node uptime clocks.
+     */
+    TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC,
 };
 
 enum detection_source {
@@ -507,16 +513,24 @@ enum range_status {
 };
 
 struct proto_packet {
-    uint8_t msg_type;
-    uint8_t flags;
+    /*
+     * This is an in-memory model, not the wire header. Keep wide fields first
+     * so every supported ABI stores it in 32 bytes; proto_packet_encode() and
+     * proto_packet_decode() remain the sole authority for wire ordering.
+     */
     uint64_t src_id;
     uint64_t dst_id;
     uint32_t session_id;
-    uint16_t seq;
-    uint8_t ttl;
-    uint16_t payload_len;
     uint32_t message_age_ms;
+    uint16_t payload_len;
+    uint16_t seq;
+    uint8_t msg_type;
+    uint8_t flags;
+    uint8_t ttl;
 };
+
+_Static_assert(sizeof(struct proto_packet) == 32u,
+               "in-memory packet model must not carry alignment holes");
 
 struct command_result_id {
     uint64_t gateway_id;

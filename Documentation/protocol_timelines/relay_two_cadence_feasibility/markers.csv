@@ -1,0 +1,9 @@
+time,label,caption,kind,row
+0,0 ms,cycle begins,axis,
+240,240 ms,first physical owner ends,axis,
+260,260 ms,current second owner starts too early,axis,
+320,320 ms,correct second owner starts after retune and receive,axis,
+500,500 ms,current second owner ends,axis,
+520,520 ms,current cycle repeats without a usable scan,axis,
+560,560 ms,correct second owner ends,axis,
+640,640 ms,correct cycle repeats,axis,

@@ -1,0 +1,21 @@
+row,start,end,text,style,lane_index
+anchor_c,-305,-285,"C sends exact survey\ndiscovery report",emphasis,0
+anchor_c,-285,140,"Retains report until\nterminal gateway proof",default,0
+anchor_b_rx,-300,-275,"Complete child-slot RX\nMSG 0x41 from C",emphasis,0
+anchor_b_rx,-275,-60,"Builds immutable forward\nwaits for parent cadence",default,0
+anchor_b_owner,-288,-60,"WAIT_RETRY_BACKOFF\nbytes + ingress C retained",default,0
+anchor_b_owner,-60,15,"Same owner\nradio preparation",default,0
+anchor_b_owner,15,140,"WAIT_GATEWAY_ACK\nafter one real send",emphasis,0
+old_tx,-60,-58,"Wake + configure",default,0
+old_tx,-58,-56,"BUG: RF send",shaded,0
+old_tx,-56,140,"No ACK\nretry continues",shaded,0
+fixed_tx,-60,15,"Wake + configure\nthen hold exact bytes",default,0
+fixed_tx,15,17,"RF send at slot +15",emphasis,0
+fixed_tx,17,140,"Await exact ACK",default,0
+anchor_a,-60,-41,"Configure Channel 9",default,0
+anchor_a,-41,120,"Receiver armed\ncomplete event window",emphasis,0
+anchor_a,-58,-56,"Old packet arrives\nbefore RX arm",shaded,1
+anchor_a,15,17,"Fixed packet decoded\ninside RX window",emphasis,1
+outcome,-320,-60,"C to B path works",emphasis,0
+outcome,-60,0,"OLD: preparation boundary\nwas mistaken for send time",shaded,0
+outcome,0,140,"FIX: one shared slot-bound\nprepare helper",emphasis,0

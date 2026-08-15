@@ -149,7 +149,8 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
 
         peek = service.index("app_node_comm_peek_delivery_event_for(")
         horizon = service.index(
-            "gateway_survey_natural_request_timeout_ms(", peek
+            "redrive_horizon_ms = SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS",
+            peek,
         )
         fit = service.index(
             "redrive_due_ms < transaction->spec.absolute_deadline_ms", horizon
@@ -173,6 +174,7 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertLess(same_handle, same_deadline)
         self.assertLess(same_deadline, transaction)
         self.assertLess(transaction, take)
+        self.assertNotIn("gateway_survey_natural_request_timeout_ms(", service)
 
         result_winner = function_body(
             SURVEY, "gateway_survey_complete_accepted_delivery"
@@ -198,13 +200,21 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         store_deadline = route.index(
             "control_transaction_deadline_ms", store_packet
         )
-        store_handle = route.index("control_delivery_handle = delivery_handle", store_deadline)
+        store_redrive = route.index(
+            "control_redrive_horizon_ms =\n"
+            "        SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS",
+            store_deadline,
+        )
+        store_handle = route.index(
+            "control_delivery_handle = delivery_handle", store_redrive
+        )
         publish = route.index("control_delivery_active = true", store_handle)
         schedule = route.index("gateway_survey_work_schedule(", publish)
         self.assertNotIn("app_node_comm_auto_reap_delivery", route)
         self.assertLess(submit, store_packet)
         self.assertLess(store_packet, store_deadline)
-        self.assertLess(store_deadline, store_handle)
+        self.assertLess(store_deadline, store_redrive)
+        self.assertLess(store_redrive, store_handle)
         self.assertLess(store_handle, publish)
         self.assertLess(publish, schedule)
         self.assertIn(
@@ -216,6 +226,10 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertIn("app_node_comm_redrive_delivered_control(", service)
         self.assertIn("control_delivery_handle", service)
         self.assertIn("control_transaction_deadline_ms", service)
+        self.assertIn(
+            "gateway_manual_survey_pair_state.control_redrive_horizon_ms",
+            service,
+        )
 
         abandon = release.index("app_node_comm_abandon_delivery(handle)")
         error_guard = release.index("if (ret < 0", abandon)
@@ -243,7 +257,9 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         delivered = cleanup.index(
             "event.reason == NODE_COMM_TERMINAL_DELIVERED", peek
         )
-        horizon = cleanup.index("survey_pair_control_timeout_ms(cleanup->hop_count)", delivered)
+        horizon = cleanup.index(
+            "SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS", delivered
+        )
         fit = cleanup.index("redrive_due_ms < cleanup->absolute_deadline_ms", horizon)
         redrive = cleanup.index("app_node_comm_redrive_delivered_control(", fit)
         same_handle = cleanup.index("cleanup->handle", redrive)
@@ -259,6 +275,63 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertLess(same_handle, same_deadline)
         self.assertLess(same_deadline, result)
         self.assertLess(result, abandon)
+        self.assertNotIn(
+            "survey_pair_control_timeout_ms(cleanup->hop_count)",
+            cleanup[delivered:redrive],
+        )
+
+    def test_pair_redrive_interval_is_shared_without_changing_deadlines(self) -> None:
+        self.assertIn(
+            "#define NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS 10000u",
+            NODE_COMM_HEADER,
+        )
+        self.assertRegex(
+            SURVEY_HEADER,
+            r"#define\s+SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS\s+1000u\b",
+        )
+        self.assertIn(
+            "#define NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS 10000u",
+            NODE_COMM_HEADER,
+        )
+        for name, value in (
+            ("SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS", "30000u"),
+            ("SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS", "15000u"),
+            ("SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS", "90000u"),
+        ):
+            self.assertRegex(
+                SURVEY_HEADER,
+                rf"#define\s+{name}\s+{value}\b",
+            )
+
+    def test_assignment_publication_rejects_survey_before_any_state_claim(
+        self,
+    ) -> None:
+        admission = function_body(SURVEY, "gateway_route_survey_reachability")
+
+        publication = admission.index(
+            "if (gateway_assignment_publication_pending())"
+        )
+        rejection = admission.index(
+            "return gateway_reject_survey_request(", publication
+        )
+        active_check = admission.index("if (gateway_survey_active", rejection)
+        policy = admission.index(
+            "app_operation_policy_prepare_payload(", active_check
+        )
+        owner = admission.index("gateway_operation_owner_claim(", policy)
+        begin = admission.index("survey_gateway_begin_operation(", owner)
+        claim = admission.index("gateway_survey_active = true", begin)
+        publication_branch = admission[publication:active_check]
+
+        self.assertIn("COMMAND_BUSY", publication_branch)
+        self.assertIn("GATEWAY_COMMAND_EVENT_REASON_BUSY", publication_branch)
+        self.assertIn("-EBUSY", publication_branch)
+        self.assertLess(publication, rejection)
+        self.assertLess(rejection, active_check)
+        self.assertLess(active_check, policy)
+        self.assertLess(policy, owner)
+        self.assertLess(owner, begin)
+        self.assertLess(begin, claim)
 
     def test_discovery_start_gets_four_fixed_origin_redrives_before_execution(self) -> None:
         admission = function_body(SURVEY, "gateway_route_survey_reachability")
@@ -273,8 +346,7 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         )
         self.assertRegex(
             SURVEY_HEADER,
-            r"SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS\s+\\\s*"
-            r"NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS",
+            r"SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS\s+2000u\b",
         )
         self.assertRegex(
             DISCOVERY_ASSIGNMENT_HEADER,
@@ -298,15 +370,18 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
             (ROOT / "app/src/app_anchor.c").read_text(),
         )
 
-        hop_budget_ms = 10_000
+        hop_budget_ms = 2_000
         origin_redrive_count = 4
-        start_delay_ms = 90_000
-        phy_prep_ms = 103
+        start_delay_ms = 20_000
+        transport_preempt_ms = 1_000
+        phy_setup_and_margin_ms = 63 + 40
+        phy_prep_ms = transport_preempt_ms + phy_setup_and_margin_ms
+        self.assertEqual(phy_prep_ms, 1_103)
         due_offsets_ms = [
             (count + 1) * hop_budget_ms
             for count in range(origin_redrive_count)
         ]
-        self.assertEqual(due_offsets_ms, [10_000, 20_000, 30_000, 40_000])
+        self.assertEqual(due_offsets_ms, [2_000, 4_000, 6_000, 8_000])
         self.assertLess(
             due_offsets_ms[-1]
             + 4 * hop_budget_ms

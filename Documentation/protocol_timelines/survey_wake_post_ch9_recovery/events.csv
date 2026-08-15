@@ -1,0 +1,16 @@
+row,start,end,text,style,lane_index
+direct,0,400,"400 ms wake train\nTX bursts alternate with 3 ms click-politeness listens",emphasis,0
+direct,400,460,"60 ms control turnaround",default,0
+direct,460,580,"Four survey-control frames\n40 ms repeat spacing",emphasis,0
+relay_child,-219,21,"240 ms physical RX owner\nchild cadence",default,0
+relay_parent,41,281,"240 ms physical RX owner\nparent cadence",emphasis,0
+old_scan,293,296,"3 ms scan\nempty",shaded,0
+old_scan,296,673,"ordinary 380 ms reschedule",quiet,0
+old_scan,673,676,"next 3 ms scan\nafter payload",shaded,0
+new_scan,281,293,"release latch retained",solid,0
+new_scan,293,313,"one 20 ms post-CH9 recovery scan\ncaptures remaining wake claims",emphasis,0
+new_scan,313,580,"existing control handoff\ncontinuous extended listener",default,0
+deep,0,580,"Hears A directly\nrejects hop 1 as required for forced depth 2",default,0
+result,0,296,"OBSERVED: required relay B never wakes",shaded,0
+result,296,580,"FIXED MODEL: B wakes, accepts hop 1, and can reflood hop 2",emphasis,0
+result,580,720,"No new owner, packet format, or retry lane",default,0

@@ -205,6 +205,17 @@ bool radio_guard_uwb_busy(void)
     return busy;
 }
 
+enum radio_guard_uwb_client radio_guard_uwb_owner_client(void)
+{
+    k_spinlock_key_t key = k_spin_lock(&uwb_rf_lock);
+    enum radio_guard_uwb_client client =
+        uwb_rf_phase == RADIO_GUARD_UWB_IDLE ?
+            RADIO_GUARD_UWB_CLIENT_NONE : uwb_rf_owner.client;
+
+    k_spin_unlock(&uwb_rf_lock, key);
+    return client;
+}
+
 bool radio_guard_uwb_rearm_allowed(void)
 {
     k_spinlock_key_t key = k_spin_lock(&uwb_rf_lock);

@@ -277,6 +277,52 @@ static void test_anchor_survey_restore_hardware_watermark(void)
     CHECK_U32(result.required_free_bytes, 2458u);
 }
 
+static void test_anchor_route_hardware_watermark_rebalances_existing_ram(void)
+{
+    struct stack_budget_role_config anchor;
+    struct stack_budget_role_config forcedhop;
+    struct stack_budget_result result;
+
+    CHECK_INT(stack_budget_role_baseline(STACK_BUDGET_ROLE_ANCHOR, &anchor),
+              PROTO_OK);
+    CHECK_INT(stack_budget_role_baseline(
+                  STACK_BUDGET_ROLE_ANCHOR_FORCEDHOP, &forcedhop),
+              PROTO_OK);
+    CHECK_U32(anchor.system_workqueue_bytes, 5376u);
+    CHECK_U32(anchor.mesh_route_bytes, 9472u);
+    CHECK_U32(forcedhop.system_workqueue_bytes,
+              anchor.system_workqueue_bytes);
+    CHECK_U32(forcedhop.mesh_route_bytes, anchor.mesh_route_bytes);
+
+    CHECK_INT(stack_budget_evaluate(anchor.mesh_route_bytes,
+                                    7360u,
+                                    0u,
+                                    STACK_BUDGET_OWNER_MESH_ROUTE,
+                                    &result),
+              PROTO_OK);
+    CHECK_TRUE(result.passes);
+    CHECK_U32(result.remaining_bytes, 2112u);
+    CHECK_U32(result.required_free_bytes, 1895u);
+
+    CHECK_INT(stack_budget_evaluate(8576u,
+                                    7360u,
+                                    0u,
+                                    STACK_BUDGET_OWNER_MESH_ROUTE,
+                                    &result),
+              PROTO_OK);
+    CHECK_TRUE(!result.passes);
+
+    CHECK_INT(stack_budget_evaluate(anchor.system_workqueue_bytes,
+                                    4088u,
+                                    0u,
+                                    STACK_BUDGET_OWNER_SYSTEM_WORKQUEUE,
+                                    &result),
+              PROTO_OK);
+    CHECK_TRUE(result.passes);
+    CHECK_U32(result.remaining_bytes, 1288u);
+    CHECK_U32(result.required_free_bytes, 1076u);
+}
+
 static void test_worst_combined_scenario(void)
 {
     const struct stack_budget_combined_scenario scenario = {
@@ -331,6 +377,7 @@ int main(void)
     test_large_local_guard();
     test_assignment_publish_large_local_budget();
     test_anchor_survey_restore_hardware_watermark();
+    test_anchor_route_hardware_watermark_rebalances_existing_ram();
     test_worst_combined_scenario();
 
     if (failures != 0u) {

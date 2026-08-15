@@ -1,0 +1,10 @@
+time,label,caption,kind,row
+-288,B receives C,child Channel-9 report is valid,axis,
+-60,prepare boundary,B retry worker wakes,axis,
+-58,old RF send,A is still configuring,axis,
+-41,A RX armed,old packet was 17 ms early,axis,
+0,parent event,negotiated counter 112025208,axis,
+15,real send offset,fixed packet is inside RX,axis,
+120,event end,full receive reservation closes,axis,
+-58,too early,,row,old_tx
+15,correct,,row,fixed_tx

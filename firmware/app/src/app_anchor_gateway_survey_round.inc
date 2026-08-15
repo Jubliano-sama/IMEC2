@@ -432,8 +432,14 @@ static bool gateway_survey_round_finalize_observation(void)
         if (!deadline && !all_missing_samples_unusable) {
             continue;
         }
-        final_failure = lane->reruns_started >=
-                        gateway_survey_max_pair_reruns;
+        /* Five explicit responder failures are a complete answer, not lost
+         * transport evidence. Repeating the same RF batch only repeats a
+         * measured ranging failure and can consume most of the operation
+         * budget. Reserve reruns for attempts with genuinely missing sample
+         * evidence. */
+        final_failure = all_missing_samples_unusable ||
+                        lane->reruns_started >=
+                            gateway_survey_max_pair_reruns;
         outcome = final_failure ? SURVEY_PAIR_ROUND_CLEANUP_FAIL :
                                   SURVEY_PAIR_ROUND_CLEANUP_RETRY;
         ret = app_gateway_survey_round_finalize_lane(

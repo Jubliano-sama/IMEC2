@@ -17,7 +17,6 @@ enum app_anchor_survey_discovery_admission {
 struct app_anchor_survey_discovery_ops {
     bool (*abort_requested)(void);
     void (*abort_pair)(void);
-    void (*preempt_radio)(uint32_t survey_id);
     enum app_anchor_survey_discovery_admission (*admit_start)(
         const struct survey_discovery_config *config);
     int (*queue_start)(const struct survey_discovery_config *config,

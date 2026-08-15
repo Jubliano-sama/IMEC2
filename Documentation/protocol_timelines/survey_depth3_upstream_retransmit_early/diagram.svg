@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3600" height="924" viewBox="0 0 3600 924" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">DEPTH-3 SURVEY UPLINK: PREPARATION IS NOT TRANSMISSION</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="787.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="3558.0" y2="60.0" class="major-line"/>
+<text x="166.5" y="96.0" class="row-label">FORCED2 C - REPORT</text>
+<rect x="395.6" y="74.0" width="142.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="466.7" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="466.7" dy="0.0">C sends exact survey</tspan><tspan x="466.7" dy="12.0">discovery report</tspan></text>
+<rect x="537.7" y="74.0" width="3020.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2047.9" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="2047.9" dy="0.0">Retains report until</tspan><tspan x="2047.9" dy="12.0">terminal gateway proof</tspan></text>
+<line x1="44.0" y1="124.0" x2="3558.0" y2="124.0" class="major-line"/>
+<text x="166.5" y="160.0" class="row-label">FORCED1 B - CHILD RX</text>
+<rect x="431.1" y="138.0" width="177.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="520.0" y="155.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="520.0" dy="0.0">Complete child-slot RX</tspan><tspan x="520.0" dy="12.0">MSG 0x41 from C</tspan></text>
+<rect x="608.8" y="138.0" width="1527.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1372.7" y="155.0" class="small center event-text" text-anchor="middle"><tspan x="1372.7" dy="0.0">Builds immutable forward</tspan><tspan x="1372.7" dy="12.0">waits for parent cadence</tspan></text>
+<line x1="44.0" y1="188.0" x2="3558.0" y2="188.0" class="major-line"/>
+<text x="166.5" y="224.0" class="row-label">FORCED1 B - RETAINED OWNER</text>
+<rect x="516.4" y="202.0" width="1620.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1326.6" y="219.0" class="small center event-text" text-anchor="middle"><tspan x="1326.6" dy="0.0">WAIT_RETRY_BACKOFF</tspan><tspan x="1326.6" dy="12.0">bytes + ingress C retained</tspan></text>
+<rect x="2136.7" y="202.0" width="533.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2403.2" y="219.0" class="small center event-text" text-anchor="middle"><tspan x="2403.2" dy="0.0">Same owner</tspan><tspan x="2403.2" dy="12.0">radio preparation</tspan></text>
+<rect x="2669.7" y="202.0" width="888.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3113.8" y="219.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3113.8" dy="0.0">WAIT_GATEWAY_ACK</tspan><tspan x="3113.8" dy="12.0">after one real send</tspan></text>
+<line x1="44.0" y1="252.0" x2="3558.0" y2="252.0" class="major-line"/>
+<text x="166.5" y="314.0" class="row-label">OLD B RETRANSMIT</text>
+<polygon points="2150.9,313.0 2155.9,318.0 2150.9,323.0 2145.9,318.0" class="diamond"/>
+<rect x="2136.7" y="322.0" width="14.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="2150.9" y="322.0" width="14.2" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<rect x="2165.1" y="322.0" width="1392.9" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="2861.6" y="339.0" class="small center event-text" text-anchor="middle"><tspan x="2861.6" dy="0.0">No ACK</tspan><tspan x="2861.6" dy="12.0">retry continues</tspan></text>
+<line x1="2143.8" y1="278.0" x2="2143.8" y2="322.0" class="hairline"/>
+<rect x="2097.5" y="254.0" width="92.7" height="16.0" class="callout"/>
+<text x="2101.5" y="266.5" class="tiny" text-anchor="start"><tspan x="2101.5" dy="0.0">Wake + configure</tspan></text>
+<line x1="2150.9" y1="286.0" x2="2150.9" y2="318.0" class="hairline"/>
+<text x="2129.2" y="285.0" class="tiny">too early</text>
+<line x1="2158.0" y1="318.0" x2="2158.0" y2="322.0" class="hairline"/>
+<rect x="2122.7" y="294.0" width="70.5" height="16.0" class="callout"/>
+<text x="2126.7" y="306.5" class="tiny" text-anchor="start"><tspan x="2126.7" dy="0.0">BUG: RF send</tspan></text>
+<line x1="44.0" y1="368.0" x2="3558.0" y2="368.0" class="major-line"/>
+<text x="166.5" y="420.0" class="row-label">FIXED B RETRANSMIT</text>
+<polygon points="2669.7,409.0 2674.7,414.0 2669.7,419.0 2664.7,414.0" class="diamond"/>
+<rect x="2136.7" y="418.0" width="533.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2403.2" y="435.0" class="small center event-text" text-anchor="middle"><tspan x="2403.2" dy="0.0">Wake + configure</tspan><tspan x="2403.2" dy="12.0">then hold exact bytes</tspan></text>
+<rect x="2669.7" y="418.0" width="14.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="2683.9" y="418.0" width="874.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3120.9" y="441.0" class="small center event-text" text-anchor="middle"><tspan x="3120.9" dy="0.0">Await exact ACK</tspan></text>
+<line x1="2669.7" y1="382.0" x2="2669.7" y2="414.0" class="hairline"/>
+<text x="2648.7" y="381.0" class="tiny">correct</text>
+<line x1="2676.8" y1="414.0" x2="2676.8" y2="418.0" class="hairline"/>
+<rect x="2625.9" y="390.0" width="101.9" height="16.0" class="callout"/>
+<text x="2629.9" y="402.5" class="tiny" text-anchor="start"><tspan x="2629.9" dy="0.0">RF send at slot +15</tspan></text>
+<line x1="44.0" y1="464.0" x2="3558.0" y2="464.0" class="major-line"/>
+<text x="166.5" y="528.0" class="row-label">DIRECT A - PARENT RX</text>
+<rect x="2136.7" y="494.0" width="135.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2204.2" y="517.0" class="small center event-text" text-anchor="middle"><tspan x="2204.2" dy="0.0">Configure Channel 9</tspan></text>
+<rect x="2271.7" y="494.0" width="1144.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2843.8" y="511.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2843.8" dy="0.0">Receiver armed</tspan><tspan x="2843.8" dy="12.0">complete event window</tspan></text>
+<rect x="2150.9" y="538.0" width="14.2" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<rect x="2669.7" y="538.0" width="14.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="2158.0" y1="499.0" x2="2158.0" y2="538.0" class="hairline"/>
+<rect x="2075.3" y="466.0" width="165.4" height="25.0" class="callout"/>
+<text x="2079.3" y="477.5" class="tiny" text-anchor="start"><tspan x="2079.3" dy="0.0">Old packet arrives</tspan><tspan x="2079.3" dy="11.0">before RX arm</tspan></text>
+<line x1="2676.8" y1="499.0" x2="2676.8" y2="538.0" class="hairline"/>
+<rect x="2583.5" y="466.0" width="186.6" height="25.0" class="callout"/>
+<text x="2587.5" y="477.5" class="tiny" text-anchor="start"><tspan x="2587.5" dy="0.0">Fixed packet decoded</tspan><tspan x="2587.5" dy="11.0">inside RX window</tspan></text>
+<line x1="44.0" y1="584.0" x2="3558.0" y2="584.0" class="major-line"/>
+<text x="166.5" y="620.0" class="row-label">OUTCOME</text>
+<rect x="289.0" y="598.0" width="1847.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1212.8" y="621.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1212.8" dy="0.0">C to B path works</tspan></text>
+<rect x="2136.7" y="598.0" width="426.4" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="2349.9" y="615.0" class="small center event-text" text-anchor="middle"><tspan x="2349.9" dy="0.0">OLD: preparation boundary</tspan><tspan x="2349.9" dy="12.0">was mistaken for send time</tspan></text>
+<rect x="2563.1" y="598.0" width="994.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3060.5" y="615.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3060.5" dy="0.0">FIX: one shared slot-bound</tspan><tspan x="3060.5" dy="12.0">prepare helper</tspan></text>
+<line x1="44.0" y1="648.0" x2="3558.0" y2="648.0" class="major-line"/>
+<text x="166.5" y="691.5" class="row-label">KEY POINT</text>
+<rect x="1663.5" y="660.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="1923.5" y="674.5" class="small center" text-anchor="middle"><tspan x="1923.5" dy="0.0">B receives C&#x27;s valid discovery report and retains it. The retry wakes at -60 ms so the radio can</tspan><tspan x="1923.5" dy="12.0">be configured, but the old path transmits at -58 ms while A is still configuring and 17 ms before</tspan><tspan x="1923.5" dy="12.0">A arms RX. The fixed path keeps the same custody and waits until the negotiated +15 ms send</tspan><tspan x="1923.5" dy="12.0">offset, inside A&#x27;s complete receive window.</tspan></text>
+<line x1="44.0" y1="727.0" x2="3558.0" y2="727.0" class="major-line"/>
+<line x1="44.0" y1="753.0" x2="44.0" y2="791.0" class="major-line"/>
+<line x1="44.0" y1="753.0" x2="3558.0" y2="753.0" class="axis-line"/>
+<line x1="516.4" y1="752.0" x2="516.4" y2="764.0" class="tick"/>
+<line x1="2136.7" y1="752.0" x2="2136.7" y2="764.0" class="tick"/>
+<line x1="2150.9" y1="752.0" x2="2150.9" y2="764.0" class="tick"/>
+<line x1="2271.7" y1="752.0" x2="2271.7" y2="764.0" class="tick"/>
+<line x1="2563.1" y1="752.0" x2="2563.1" y2="764.0" class="tick"/>
+<line x1="2669.7" y1="752.0" x2="2669.7" y2="764.0" class="tick"/>
+<line x1="3415.9" y1="752.0" x2="3415.9" y2="764.0" class="tick"/>
+<text x="516.4" y="776.0" class="axis-time">B receives C</text>
+<text x="2136.7" y="776.0" class="axis-time">prepare boundary</text>
+<text x="2207.7" y="776.0" class="axis-time">old RF send</text>
+<text x="2271.7" y="776.0" class="axis-time">A RX armed</text>
+<text x="2563.1" y="776.0" class="axis-time">parent event</text>
+<text x="2669.7" y="776.0" class="axis-time">real send offset</text>
+<text x="3415.9" y="776.0" class="axis-time">event end</text>
+<text x="516.4" y="805.5" class="tiny center" text-anchor="middle"><tspan x="516.4" dy="0.0">child Channel-9 report is valid</tspan></text>
+<text x="2136.7" y="805.5" class="tiny center" text-anchor="middle"><tspan x="2136.7" dy="0.0">B retry worker wakes</tspan></text>
+<text x="2150.9" y="835.5" class="tiny center" text-anchor="middle"><tspan x="2150.9" dy="0.0">A is still configuring</tspan></text>
+<text x="2271.7" y="805.5" class="tiny center" text-anchor="middle"><tspan x="2271.7" dy="0.0">old packet was 17 ms early</tspan></text>
+<text x="2563.1" y="805.5" class="tiny center" text-anchor="middle"><tspan x="2563.1" dy="0.0">negotiated counter 112025208</tspan></text>
+<text x="2669.7" y="835.5" class="tiny center" text-anchor="middle"><tspan x="2669.7" dy="0.0">fixed packet is inside RX</tspan></text>
+<text x="3415.9" y="805.5" class="tiny center" text-anchor="middle"><tspan x="3415.9" dy="0.0">full receive reservation closes</tspan></text>
+<text x="1800.0" y="890.0" class="caption center" text-anchor="middle"><tspan x="1800.0" dy="0.0">Figure: Exact ordering reconstructed from the four-probe RTT capture. Times are normalized to B&#x27;s negotiated upstream event start; the B-to-A clock offset is measured from matching event counter 112025208.</tspan></text>
+</svg>

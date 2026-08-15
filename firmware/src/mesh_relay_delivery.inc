@@ -542,6 +542,128 @@ int mesh_relay_cancel_tx_if_matches(struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+int mesh_relay_bind_transit_previous_hop(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint64_t previous_hop_id)
+{
+    if (relay == NULL || out == NULL ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        out->packet.src_id == relay->local_id) {
+        return PROTO_ERR_ARG;
+    }
+    if (!pending_matches_outbound(relay, &relay->pending, out)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    /*
+     * The retained original and its gateway ACK form one custody chain.
+     * Bind the physical child before RF starts; route discovery and later
+     * downlink improvements cannot redirect the ACK away from that owner.
+     */
+    relay->pending.transit_previous_hop_id = previous_hop_id;
+    return PROTO_OK;
+}
+
+static int commit_retained_transit_reverse_route(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint64_t previous_hop_id,
+    uint32_t now_ms)
+{
+    struct mesh_downlink_entry entry;
+    int keep_index;
+    int ret;
+
+    if (relay == NULL || out == NULL ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        relay->local_id == relay->gateway_id ||
+        out->packet.dst_id != relay->gateway_id ||
+        out->packet.src_id == relay->gateway_id ||
+        (out->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
+        relay->upstream.current_epoch == 0u ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        previous_hop_id == relay->gateway_id) {
+        return PROTO_ERR_ARG;
+    }
+
+    entry = (struct mesh_downlink_entry) {
+        .target_id = out->packet.src_id,
+        .next_hop_id = previous_hop_id,
+        .gateway_id = relay->gateway_id,
+        .route_epoch = relay->upstream.current_epoch,
+        .last_seen_ms = now_ms,
+        .hop_count = out->packet.src_id == previous_hop_id ?
+                     1u : MESH_NETWORK_MAX_HOPS,
+        .quality = 0u,
+        .valid = true,
+    };
+    ret = upsert_required_gateway_downlink(relay, &entry);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    keep_index = downlink_exact_index(relay, &entry);
+    if (keep_index < 0) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+
+    /* There is one authoritative same-boot ingress edge per descendant.
+     * The source has already completed route discovery and transferred exact
+     * packet custody, so its older physical hints must not redirect a later
+     * targeted control around the selected parent. */
+    for (size_t i = 0u; i < mesh_relay_downlink_capacity(relay); i++) {
+        struct mesh_downlink_entry *candidate =
+            downlink_at_mutable(relay, i);
+
+        if ((int)i != keep_index && candidate->valid &&
+            candidate->target_id == entry.target_id &&
+            candidate->gateway_id == entry.gateway_id) {
+            memset(candidate, 0, sizeof(*candidate));
+        }
+    }
+    return PROTO_OK;
+}
+
+static bool transit_reverse_route_outbound_valid(
+    const struct mesh_relay *relay,
+    const struct mesh_outbound *out)
+{
+    return relay != NULL && out != NULL &&
+           relay->role == MESH_RELAY_ROLE_ANCHOR &&
+           relay->local_id != relay->gateway_id &&
+           out->packet.dst_id == relay->gateway_id &&
+           out->packet.src_id != relay->gateway_id &&
+           (out->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+           relay->upstream.current_epoch != 0u;
+}
+
+int mesh_relay_commit_transit_reverse_route(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint32_t now_ms)
+{
+    if (!transit_reverse_route_outbound_valid(relay, out)) {
+        return PROTO_ERR_ARG;
+    }
+    if (!pending_matches_outbound(relay, &relay->pending, out)) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    return commit_retained_transit_reverse_route(
+        relay, out, relay->pending.transit_previous_hop_id, now_ms);
+}
+
+int mesh_relay_commit_queued_transit_reverse_route(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint64_t previous_hop_id,
+    uint32_t now_ms)
+{
+    return commit_retained_transit_reverse_route(
+        relay, out, previous_hop_id, now_ms);
+}
+
 int mesh_relay_defer_pending_retry(struct mesh_relay *relay,
                                    uint32_t retry_at_ms)
 {
@@ -700,6 +822,43 @@ int mesh_relay_start_result_offer(struct mesh_relay *relay,
     return outbound_from_pending(relay, &relay->pending, now_ms, out);
 }
 
+int mesh_relay_retain_channel9_tx_wait(struct mesh_relay *relay,
+                                       const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint32_t now_ms,
+                                       uint32_t retry_at_ms,
+                                       struct mesh_outbound *out)
+{
+    int ret;
+
+    if (relay == NULL || packet == NULL || out == NULL ||
+        !mesh_relay_packet_requires_channel9_payload_event(packet)) {
+        return PROTO_ERR_ARG;
+    }
+    ret = mesh_relay_start_tx(relay,
+                              packet,
+                              payload,
+                              payload_len,
+                              now_ms,
+                              out);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (!mesh_relay_tx_active(relay)) {
+        mesh_relay_cancel_tx(relay);
+        return PROTO_ERR_MALFORMED;
+    }
+
+    out->radio_channel = MESH_EVENT_CHANNEL;
+    relay->pending.radio_channel = MESH_EVENT_CHANNEL;
+    ret = mesh_relay_note_retransmit_deferred(relay, out, retry_at_ms);
+    if (ret != PROTO_OK) {
+        (void)mesh_relay_cancel_tx_if_matches(relay, out);
+    }
+    return ret;
+}
+
 int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
                                  const struct proto_packet *packet,
                                  const uint8_t *payload,
@@ -778,9 +937,9 @@ void mesh_relay_note_channel9_success(struct mesh_relay *relay,
     }
 }
 
-void mesh_relay_note_channel9_tx(struct mesh_relay *relay,
-                                 uint64_t next_hop_id,
-                                 uint32_t event_start_ms)
+void mesh_relay_note_channel9_unobserved_turn(struct mesh_relay *relay,
+                                              uint64_t next_hop_id,
+                                              uint32_t event_start_ms)
 {
     int index;
 
@@ -792,7 +951,8 @@ void mesh_relay_note_channel9_tx(struct mesh_relay *relay,
     if (index >= 0) {
         (void)mesh_event_skip_elapsed(
             &relay->event_timings[index].timing, event_start_ms, NULL);
-        mesh_event_note_local_tx(&relay->event_timings[index].timing, event_start_ms);
+        mesh_event_note_unobserved_turn(
+            &relay->event_timings[index].timing, event_start_ms);
     }
 }
 
@@ -1313,6 +1473,63 @@ static bool gateway_ack_confirm_can_forward_independently(
 }
 #endif
 
+static int handle_retained_pending_retry(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t previous_hop_id,
+    uint32_t now_ms,
+    struct mesh_relay_result *result)
+{
+    bool same_identity;
+    bool same_payload;
+    int ret;
+
+    same_identity = relay->pending.packet.msg_type == packet->msg_type &&
+                    relay->pending.packet.src_id == packet->src_id &&
+                    relay->pending.packet.dst_id == packet->dst_id &&
+                    relay->pending.packet.session_id == packet->session_id &&
+                    relay->pending.packet.seq == packet->seq;
+    if (!same_identity) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    same_payload = relay->pending.packet.payload_len ==
+                       relay->pending.payload_len &&
+                   relay->pending.payload_len == payload_len &&
+                   packet->payload_len == payload_len &&
+                   (payload_len == 0u ||
+                    memcmp(relay->pending.payload, payload, payload_len) == 0);
+    if (!same_payload) {
+        result->actions |= MESH_RELAY_ACTION_DROP;
+        result->status = PROTO_ERR_MALFORMED;
+        return PROTO_ERR_MALFORMED;
+    }
+
+    /* Live custody outlasts the short duplicate cache. Re-forward the
+     * immutable retained bytes and re-ACK the exact child retry. */
+    ret = outbound_from_pending(relay,
+                                &relay->pending,
+                                now_ms,
+                                &result->forward);
+    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
+        result->status = ret;
+        result->actions |= MESH_RELAY_ACTION_DROP;
+        return ret;
+    }
+    if (ret == PROTO_OK) {
+        result->actions |= MESH_RELAY_ACTION_FORWARD;
+    }
+    add_hop_ack_action(relay,
+                       packet,
+                       payload,
+                       payload_len,
+                       previous_hop_id,
+                       result);
+    result->status = PROTO_ERR_STALE;
+    return PROTO_OK;
+}
+
 int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                      const struct proto_packet *packet,
                                      const uint8_t *payload,
@@ -1724,53 +1941,31 @@ clicker_leaf_rx_allowed:
 #endif
             !gateway_targeted_control_can_forward_independently(
                 relay, packet, previous_hop_id)) {
-            bool same_pending_identity =
-                relay->pending.packet.msg_type == packet->msg_type &&
-                relay->pending.packet.src_id == packet->src_id &&
-                relay->pending.packet.dst_id == packet->dst_id &&
-                relay->pending.packet.session_id == packet->session_id &&
-                relay->pending.packet.seq == packet->seq;
-
             /* A retry of the exact packet this relay already owns is a
              * progress probe, not a competing transaction.  Identity alone
              * is insufficient: a same-header packet with different bytes
              * must never replace or extend custody. */
-            if (same_pending_identity) {
-                bool same_pending_payload =
-                    relay->pending.packet.payload_len ==
-                        relay->pending.payload_len &&
-                    relay->pending.payload_len == payload_len &&
-                    packet->payload_len == payload_len &&
-                    (payload_len == 0u ||
-                     memcmp(relay->pending.payload, payload, payload_len) == 0);
-
-                if (!same_pending_payload) {
-                    result->actions |= MESH_RELAY_ACTION_DROP;
-                    result->status = PROTO_ERR_MALFORMED;
-                    return PROTO_OK;
-                }
-
-                /* Re-forward immutable custody bytes.  In particular, do
-                 * not build from the received retry, whose payload may have
-                 * been altered after duplicate identity matched. */
-                ret = outbound_from_pending(relay,
-                                            &relay->pending,
-                                            now_ms,
-                                            &result->forward);
-                if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
-                    result->status = ret;
-                    result->actions |= MESH_RELAY_ACTION_DROP;
-                    return PROTO_OK;
-                }
-                if (ret == PROTO_OK) {
-                    result->actions |= MESH_RELAY_ACTION_FORWARD;
-                }
+            ret = handle_retained_pending_retry(relay,
+                                                packet,
+                                                payload,
+                                                payload_len,
+                                                previous_hop_id,
+                                                now_ms,
+                                                result);
+            if (ret != PROTO_ERR_NOT_FOUND) {
+                return PROTO_OK;
+            }
+            if (mesh_relay_packet_can_queue_gateway_report(relay, packet)) {
+                /* The first copy transferred into the bounded app queue.
+                 * Repair only the child's hop ACK; the queue remains the one
+                 * immutable owner of the report. */
                 add_hop_ack_action(relay,
                                    packet,
                                    payload,
                                    payload_len,
                                    previous_hop_id,
                                    result);
+                result->actions |= MESH_RELAY_ACTION_DROP;
                 result->status = PROTO_ERR_STALE;
                 return PROTO_OK;
             }
@@ -1784,7 +1979,14 @@ clicker_leaf_rx_allowed:
             return PROTO_OK;
         }
 
-        ret = build_forward(relay, packet, payload, payload_len, &result->forward);
+        ret = build_forward(relay,
+                            packet,
+                            payload,
+                            payload_len,
+                            previous_hop_id,
+                            false,
+                            now_ms,
+                            &result->forward);
         if (ret == PROTO_OK) {
             result->actions |= MESH_RELAY_ACTION_FORWARD;
             add_hop_ack_action(relay,
@@ -1802,6 +2004,16 @@ clicker_leaf_rx_allowed:
         return PROTO_OK;
     }
 
+    if (packet_needs_forward(relay, packet) &&
+        packet->msg_type == MSG_ANCHOR_HEARTBEAT &&
+        packet->flags == 0u && mesh_relay_tx_active(relay)) {
+        /* Heartbeat is disposable telemetry. It cannot displace retained
+         * custody or create a RELAY_BUSY response on Channel 5. */
+        result->status = PROTO_ERR_BUSY;
+        result->actions |= MESH_RELAY_ACTION_DROP;
+        return PROTO_OK;
+    }
+
     if (packet->msg_type != MSG_ROUTE_REQ &&
         packet->msg_type != MSG_ROUTE_REPLY &&
         packet_needs_forward(relay, packet) &&
@@ -1814,7 +2026,18 @@ clicker_leaf_rx_allowed:
 #endif
         !gateway_targeted_control_can_forward_independently(
             relay, packet, previous_hop_id) &&
+        !mesh_relay_packet_can_queue_gateway_report(relay, packet) &&
         mesh_relay_tx_active(relay)) {
+        ret = handle_retained_pending_retry(relay,
+                                            packet,
+                                            payload,
+                                            payload_len,
+                                            previous_hop_id,
+                                            now_ms,
+                                            result);
+        if (ret != PROTO_ERR_NOT_FOUND) {
+            return PROTO_OK;
+        }
         if (duplicate_busy_response_due(relay, packet, payload,
                                         payload_len, now_ms)) {
             add_busy_action(relay, packet, payload, payload_len,
@@ -2096,7 +2319,14 @@ clicker_leaf_rx_allowed:
 #endif
     }
 
-    ret = build_forward(relay, packet, payload, payload_len, &result->forward);
+    ret = build_forward(relay,
+                        packet,
+                        payload,
+                        payload_len,
+                        previous_hop_id,
+                        false,
+                        now_ms,
+                        &result->forward);
     if (ret == PROTO_OK) {
         duplicate_store(relay, packet, payload, payload_len, now_ms);
         if (relay->result_offer_reservation.valid &&

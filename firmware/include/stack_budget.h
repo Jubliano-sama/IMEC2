@@ -23,13 +23,13 @@ extern "C" {
 #define STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X)                              \
     X(CLICKER, "mesh_clicker", 4096u, 6144u, 6784u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
-    X(ANCHOR, "mesh_anchor", 5120u, 6144u, 8576u, 8192u, 320u, 2048u, 0u,        \
+    X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
       0u, 10240u, true, true, true, true, false)                              \
     X(GATEWAY, "mesh_gateway", 4096u, 4480u, 8192u, 8192u, 320u, 2048u, 1536u,  \
       1536u, 6000u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
-    X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 6144u, 8576u, 8192u, \
+    X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 5376u, 9472u, 8192u, \
       320u, 2048u, 0u, 0u, 10240u, true, true, true, true, false)             \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 9216u, 8192u, 320u, 0u, 0u, \
       0u, 18432u, true, true, true, true, false)                              \

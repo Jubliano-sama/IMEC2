@@ -1,0 +1,9 @@
+time,label,caption,kind,row
+0,0 ms,direct copy starts bounded relay search,axis,
+340,340 ms,allowed relay wake arrives,axis,
+360,360 ms,exclusive control contact begins,axis,
+450,450 ms,first Channel-9 owner would begin,axis,
+1740,1740 ms,deeper relay wake train begins,axis,
+2180,2180 ms,deeper relay payload,axis,
+2360,2360 ms,control owner releases,axis,
+2530,2530 ms,next usable Channel-9 owner,axis,

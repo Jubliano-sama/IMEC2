@@ -130,6 +130,7 @@ static bool channel9_timing_shape_valid(const struct mesh_event_timing *timing)
 static bool channel9_timings_conflict(const struct mesh_event_timing *a,
                                       const struct mesh_event_timing *b)
 {
+    int32_t signed_delta_ms;
     uint32_t cycle_ms;
     uint32_t a_reserved_ms;
     uint32_t b_reserved_ms;
@@ -153,7 +154,20 @@ static bool channel9_timings_conflict(const struct mesh_event_timing *a,
 
     a_start_ms = a->next_event_time_ms - a->guard_ms;
     b_start_ms = b->next_event_time_ms - b->guard_ms;
-    delta_ms = (b_start_ms - a_start_ms) % cycle_ms;
+    /*
+     * The event deadlines use uint32 serial time, so b may legitimately be
+     * a few milliseconds before a.  Taking the wrapped uint32 subtraction
+     * modulo an arbitrary cadence first adds (UINT32_MAX + 1) % cycle_ms and
+     * can turn a real overlap into an apparently safe phase.  Interpret the
+     * bounded deadline difference as signed serial time before reducing it to
+     * the repeating cadence.
+     */
+    signed_delta_ms = (int32_t)(b_start_ms - a_start_ms);
+    signed_delta_ms %= (int32_t)cycle_ms;
+    if (signed_delta_ms < 0) {
+        signed_delta_ms += (int32_t)cycle_ms;
+    }
+    delta_ms = (uint32_t)signed_delta_ms;
     return delta_ms < a_reserved_ms ||
            (delta_ms != 0u && cycle_ms - delta_ms < b_reserved_ms);
 }

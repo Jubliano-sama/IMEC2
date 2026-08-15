@@ -154,13 +154,23 @@ static int mesh_event_control_payload_validate(
         {TLV_MESH_SUPERVISION_TIMEOUT_MS, sizeof(uint32_t)},
         {TLV_MESH_EVENT_BOOT_NONCE, sizeof(uint64_t)},
         {TLV_MESH_EVENT_TX_ON_EVEN, sizeof(uint8_t)},
+#if !defined(IMEC_MESH_RELAY_GATEWAY_ONLY) || !IMEC_MESH_RELAY_GATEWAY_ONLY
+        {TLV_MESH_EVENT_PHASE_SHIFT_MS, sizeof(uint16_t)},
+#endif
     };
     const uint32_t timing_mask = (UINT32_C(1) << 9u) - 1u;
     const uint32_t nonce_mask = UINT32_C(1) << 9u;
     const uint32_t parity_mask = UINT32_C(1) << 10u;
     struct mesh_event_timing timing = {0};
     const uint8_t *counter_raw = NULL;
+#if !defined(IMEC_MESH_RELAY_GATEWAY_ONLY) || !IMEC_MESH_RELAY_GATEWAY_ONLY
+    const uint32_t phase_shift_mask = UINT32_C(1) << 11u;
+    const uint8_t *phase_shift_raw = NULL;
+#endif
     uint8_t counter_len = 0u;
+#if !defined(IMEC_MESH_RELAY_GATEWAY_ONLY) || !IMEC_MESH_RELAY_GATEWAY_ONLY
+    uint8_t phase_shift_len = 0u;
+#endif
     uint32_t seen = 0u;
     int ret;
 
@@ -185,6 +195,12 @@ static int mesh_event_control_payload_validate(
          (seen & parity_mask) != 0u)) {
         return PROTO_ERR_MALFORMED;
     }
+#if !defined(IMEC_MESH_RELAY_GATEWAY_ONLY) || !IMEC_MESH_RELAY_GATEWAY_ONLY
+    if (packet->msg_type != MSG_MESH_EVENT_ACCEPT &&
+        (seen & phase_shift_mask) != 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+#endif
     ret = mesh_event_timing_from_tlvs_at(&timing,
                                          payload,
                                          payload_len,
@@ -223,6 +239,19 @@ static int mesh_event_control_payload_validate(
         proto_get_u32_le(counter_raw) != packet->session_id) {
         return PROTO_ERR_MALFORMED;
     }
+#if !defined(IMEC_MESH_RELAY_GATEWAY_ONLY) || !IMEC_MESH_RELAY_GATEWAY_ONLY
+    if ((seen & phase_shift_mask) != 0u) {
+        ret = tlv_find_unique(payload,
+                              payload_len,
+                              TLV_MESH_EVENT_PHASE_SHIFT_MS,
+                              &phase_shift_raw,
+                              &phase_shift_len);
+        if (ret != PROTO_OK || phase_shift_len != sizeof(uint16_t) ||
+            proto_get_u16_le(phase_shift_raw) >= timing.event_interval_ms) {
+            return PROTO_ERR_MALFORMED;
+        }
+    }
+#endif
     return PROTO_OK;
 }
 
@@ -844,8 +873,10 @@ int mesh_packet_rx_semantics_validate(const struct proto_packet *packet,
             packet->ttl == 0u || packet->ttl > MESH_DEFAULT_TTL ||
             ((previous_hop_id == packet->src_id) !=
              (packet->ttl == MESH_DEFAULT_TTL)) ||
-            !mesh_gateway_ack_confirmed_flags_valid(packet->msg_type,
-                                                    packet->flags)) {
+            (packet->msg_type == MSG_ANCHOR_HEARTBEAT ?
+                 packet->flags != 0u :
+                 !mesh_gateway_ack_confirmed_flags_valid(packet->msg_type,
+                                                         packet->flags))) {
             return PROTO_ERR_MALFORMED;
         }
         return mesh_gateway_uplink_payload_validate(packet,
@@ -1681,7 +1712,6 @@ bool mesh_gateway_ack_confirmed_type(uint8_t msg_type)
     switch (msg_type) {
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
-    case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
@@ -1706,7 +1736,6 @@ bool mesh_gateway_ack_confirmed_flags_valid(uint8_t msg_type,
                flags == diagnostic;
     case MSG_SELF_TEST_REPORT:
         return flags == diagnostic;
-    case MSG_ANCHOR_HEARTBEAT:
     case MSG_RESULT_BUNDLE:
         return flags == ack;
     case MSG_MESH_DATA:
@@ -2131,8 +2160,8 @@ void mesh_event_note_success(struct mesh_event_timing *timing,
     timing->fallback_required = false;
 }
 
-void mesh_event_note_local_tx(struct mesh_event_timing *timing,
-                              uint32_t event_start_ms)
+void mesh_event_note_unobserved_turn(struct mesh_event_timing *timing,
+                                     uint32_t event_start_ms)
 {
     if (timing == NULL) {
         return;
@@ -2187,6 +2216,8 @@ uint8_t mesh_event_skip_elapsed(struct mesh_event_timing *timing,
 {
     uint8_t skipped = 0u;
 
+    (void)diagnostics;
+
     if (timing == NULL ||
         timing->event_interval_ms == 0u ||
         timing->event_window_ms == 0u) {
@@ -2199,12 +2230,15 @@ uint8_t mesh_event_skip_elapsed(struct mesh_event_timing *timing,
         if (!time_reached(now_ms, event_end_ms)) {
             break;
         }
-        if (mesh_event_timing_local_rx_slot(timing)) {
-            mesh_event_note_missed(timing, diagnostics);
-        } else {
-            timing->next_event_time_ms += timing->event_interval_ms;
-            timing->event_counter++;
-        }
+        /*
+         * An empty receive window is the peer's intentionally skippable
+         * empty transmit turn, not evidence that a promised frame was lost.
+         * Advance shared parity without refreshing peer supervision or
+         * consuming the bounded failed-transfer budget. A failed attempted
+         * transfer is accounted through the explicit failure path.
+         */
+        mesh_event_note_unobserved_turn(timing,
+                                        timing->next_event_time_ms);
         skipped++;
     }
 

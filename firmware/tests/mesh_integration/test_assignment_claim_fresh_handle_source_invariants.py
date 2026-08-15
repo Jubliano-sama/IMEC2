@@ -142,6 +142,88 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
             "inactive supersession must release the claim mutex exactly once",
         )
 
+    def test_claim_retries_keep_the_route_depth_captured_at_admission(self):
+        scheduler = function_body(ANCHOR, "anchor_schedule_discovery_response")
+        worker = function_body(ANCHOR, "anchor_discovery_claim_work_handler")
+        sender = function_body(ANCHOR, "anchor_send_discovery_response")
+
+        self.assertEqual(
+            1,
+            scheduler.count("hop_count = anchor_discovery_gateway_hop_count()"),
+            "the admitted response must capture one route-depth observation",
+        )
+        self.assertEqual(
+            1,
+            scheduler.count(
+                "anchor_discovery_claim_pending.hop_count = hop_count"
+            ),
+            "the captured depth must have one retained response owner",
+        )
+        self.assertNotIn(
+            "anchor_discovery_gateway_hop_count()",
+            worker,
+            "a retry must not erase its retained depth after route custody ends",
+        )
+        self.assertNotIn(
+            "anchor_discovery_claim_pending.hop_count =",
+            worker,
+            "terminal and admission retries must keep the admitted response immutable",
+        )
+        self.assertIn("TLV_HOP_COUNT", sender)
+        self.assertIn("pending->hop_count", sender)
+
+    def test_restored_ack_waits_for_a_real_route_before_capturing_depth(self):
+        resume = function_body(
+            ANCHOR, "anchor_resume_pending_discovery_assignment_ack"
+        )
+        scheduler = function_body(
+            ANCHOR, "anchor_schedule_discovery_response"
+        )
+        liveness = function_body(
+            ANCHOR, "anchor_discovery_ack_liveness_work_handler"
+        )
+        route_wait_start = scheduler.index(
+            "if (wait_for_route_before_admission"
+        )
+        route_wait = scheduler[
+            route_wait_start :
+            scheduler.index("if (matching_custody")
+        ]
+
+        self.assertIn("!anchor_discovery_claim_pending.active", route_wait)
+        self.assertIn("phase == DISCOVERY_ASSIGNMENT_PHASE_ACK", route_wait)
+        self.assertIn("hop_count == 0u", route_wait)
+        self.assertIn(
+            "anchor_discovery_ack_route_wait_pending = true", route_wait
+        )
+        self.assertIn(
+            "K_MSEC(ANCHOR_DISCOVERY_ACK_ROUTE_WAIT_RETRY_MS)", route_wait
+        )
+        self.assertIn('"assignment-ack-route-wait"', route_wait)
+        self.assertLess(
+            scheduler.index("hop_count = anchor_discovery_gateway_hop_count()"),
+            route_wait_start + route_wait.index("anchor_checked_work_reschedule("),
+        )
+        self.assertIn("return schedule_ret < 0 ? schedule_ret : 0", route_wait)
+        self.assertIn("snapshot.ack_retry_round,\n        true", resume)
+
+        liveness_route_wait = liveness[
+            liveness.index(
+                "route_wait_pending = anchor_discovery_ack_route_wait_pending"
+            ) : liveness.index(
+                "if (!anchor_discovery_claim_pending.active"
+            )
+        ]
+        self.assertIn(
+            "anchor_discovery_ack_route_wait_pending = false",
+            liveness_route_wait,
+        )
+        self.assertIn(
+            "anchor_resume_pending_discovery_assignment_ack(false)",
+            liveness_route_wait,
+        )
+        self.assertIn("app_watchdog_stop_feeding()", liveness_route_wait)
+
     def test_claim_budget_matches_firmware_gui_and_stays_deployable(self):
         required = re.search(
             r"#define\s+DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS"

@@ -88,11 +88,12 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX 64u
 #define MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS 6000u
 #define MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS
+#define MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS 1000u
+#define MESH_EVENT_NEGOTIATION_DEADLINE_MS \
+    (MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS + \
+     MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS)
 #define MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS \
-    MAX(MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS, \
-        MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS)
-#define MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS \
-    MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS
+    MESH_EVENT_NEGOTIATION_DEADLINE_MS
 #define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
 #define MESH_ROUTE_TEST_ROUTE_ADV_REPLY_GUARD_MS 20u
 #define MESH_ROUTE_TEST_EMBEDDED_ROUTE_SUPPRESS_MS 1000u
@@ -142,7 +143,8 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_TX_CONFIG_GUARD_MS 25u
 #define MESH_CH9_TX_SLOT_TRAILER_MS 5u
 #define MESH_ROUTE_TEST_CH9_TX_OFFSET_MS MESH_RADIO_EVENT_TX_OFFSET_MS
-#define MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS 30u
+#define MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS \
+    MESH_RADIO_EVENT_RETUNE_GUARD_MS
 #define MESH_EVENT_CONTROL_CH5_AIRTIME_MS \
     MESH_RADIO_EVENT_CONTROL_REFERENCE_MS
 #define MESH_GATEWAY_DIRECT_PROBE_ACK_GUARD_MS \
@@ -220,6 +222,14 @@ BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
      ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS + \
      MESH_ROUTE_REPLY_CLICK_PROBE_STANDARD_RETUNE_GUARD_MS + \
      MESH_ROUTE_REPLY_CLICK_PROBE_CONTROL_RETUNE_GUARD_MS)
+BUILD_ASSERT(MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS +
+                 ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS <=
+             ANCHOR_UWB_SCAN_RX_MS +
+                 MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS,
+             "boosted channel-5 slice must end before the channel-9 prepare horizon");
+BUILD_ASSERT(MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS <=
+                 ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS,
+             "boosted channel-5 scan must release before its next retry");
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC0 0x4du
 #define MESH_ROUTE_WAKE_ROUTE_MAGIC1 0x52u
 #define MESH_ROUTE_WAKE_ROUTE_VERSION 1u
@@ -254,6 +264,10 @@ BUILD_ASSERT(MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS +
                  MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS <=
              INT32_MAX,
              "event replay and queue retention must be wrap-safe");
+BUILD_ASSERT(MESH_EVENT_NEGOTIATION_DEADLINE_MS >=
+                 MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS +
+                 MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS,
+             "event proposer must listen through queueing and ACCEPT retry");
 BUILD_ASSERT(MESH_ROUTE_TEST_ROUTE_REPLY_RX_DELAY_MS <= UINT16_MAX,
              "mesh route-test route-reply ETA must fit in the uint16_t TLV");
 BUILD_ASSERT(MESH_ROUTE_TEST_CH9_TX_OFFSET_MS + MESH_CH9_TX_SLOT_TRAILER_MS <
@@ -264,11 +278,24 @@ BUILD_ASSERT(MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS >= MESH_EVENT_DEFAULT_GUARD_MS,
 BUILD_ASSERT(MESH_EVENT_DEFAULT_WINDOW_MS + MESH_EVENT_RX_LATE_GUARD_MS <
              MESH_EVENT_DEFAULT_SECOND_SLOT_OFFSET_MS,
              "mesh route-test late RX guard must not overlap the second channel-9 slot");
+BUILD_ASSERT(MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS +
+                 MESH_EVENT_DEFAULT_WINDOW_MS +
+                 MESH_EVENT_RX_LATE_GUARD_MS <=
+             MESH_EVENT_DEFAULT_SECOND_SLOT_OFFSET_MS,
+             "mesh route-test physical RX ownership must fit one half-slot");
+BUILD_ASSERT(MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS +
+                 MESH_EVENT_DEFAULT_WINDOW_MS +
+                 MESH_EVENT_RX_LATE_GUARD_MS +
+                 MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS +
+                 MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS <=
+             MESH_EVENT_DEFAULT_SECOND_SLOT_OFFSET_MS,
+             "two-link relays must retain a complete retune-and-channel-5 scan gap");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS < ROUTE_GATEWAY_ACK_TIMEOUT_MS,
              "direct gateway batch window must fit inside the ACK timeout");
-/* Eight missed receive turns intentionally expire stale synchronized timing
- * before the longest jittered ACK retry gap. Retransmit then takes the
- * existing channel-5 event-repair path instead of trusting an old phase. */
+/* Eight failed scheduled transfers intentionally expire synchronized timing
+ * before the longest jittered ACK retry gap. Intentionally empty peer turns
+ * advance parity without consuming this failure budget; supervision remains
+ * the bounded authority for a completely silent peer. */
 BUILD_ASSERT((MESH_EVENT_DEFAULT_MAX_MISSED *
               MESH_EVENT_DEFAULT_INTERVAL_MS) <
              (ROUTE_GATEWAY_ACK_TIMEOUT_MS + MESH_RELAY_RETRY_BACKOFF_MAX_MS),
@@ -380,12 +407,12 @@ struct mesh_event_control_record {
     uint32_t encoded_delay_ms;
     uint8_t payload_len;
     bool valid;
+    bool transmit_phase_frozen;
 };
 
 struct mesh_event_accept_retry_context {
     struct mesh_event_control_record response;
     struct app_mesh_event_retry_state retry;
-    struct mesh_event_timing reservation_timing;
     uint64_t remote_boot_nonce;
     uint32_t predecessor_owner_generation;
     struct app_mesh_c5_tx_authorization_token c5_repair_authorization;
@@ -408,7 +435,7 @@ struct mesh_event_accept_completed {
     uint16_t retry_round;
 };
 
-BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 216u,
+BUILD_ASSERT(sizeof(struct mesh_event_accept_completed) == 208u,
              "event ACCEPT completion layout changed; re-audit gateway RAM");
 
 /*
@@ -934,9 +961,8 @@ struct mesh_c5_flood_tx_context {
     struct app_mesh_tx_observation *observation;
     uint64_t absolute_deadline_ms;
     bool response_priority;
-    /* Only mesh_try_send_c5_flood_resume binds this to a frozen recovery
-     * EACK.  The defer callback rechecks the full owner state on every turn. */
-    const struct mesh_outbound *collection_recovery_candidate;
+    uint8_t c5_tx_intent;
+    const struct mesh_outbound *candidate;
 };
 
 void mesh_fill_channel5_requirements(struct mesh_channel5_requirements *requirements);
@@ -955,12 +981,17 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                             bool *send_attempted,
                                             bool *rf_sent,
                                             bool *policy_deferred,
+                                            bool retain_initial_channel9_wait,
                                             uint64_t absolute_deadline_ms,
                                             struct app_mesh_tx_observation *observation);
 static int mesh_schedule_tx_timeout(void);
 static void mesh_route_discovery_work_handler(struct k_work *work);
 static void mesh_event_negotiation_retry_work_handler(struct k_work *work);
 static int mesh_event_negotiation_schedule_next(void);
+#if DEVICE_ROLE == ROLE_ANCHOR
+static int mesh_event_propose_prepare_immediate_send(
+    const struct mesh_outbound *outbound);
+#endif
 static int mesh_radio_idle_with_bounded_recovery(const char *reason);
 static int mesh_radio_standby_with_bounded_recovery(const char *reason);
 int mesh_schedule_route_request(uint64_t target_id, const char *reason);
@@ -1020,12 +1051,13 @@ static bool mesh_handoff_anchor_click_claim(
     const struct uwb_wake_claim_frame *claim,
     uint8_t quality,
     uint32_t observed_packet_ms);
-static int mesh_probe_standard_click_claim(
+static int mesh_probe_standard_wake_claim(
     uint8_t *frame,
     size_t frame_cap,
     struct uwb_wake_claim_frame *click_claim,
     uint8_t *click_quality,
-    uint32_t *click_observed_ms);
+    uint32_t *click_observed_ms,
+    bool allow_relayed_gateway_control);
 static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   uint8_t purpose,
                                   const char *reason,
@@ -1035,6 +1067,17 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   const struct app_mesh_command_orchestrator *command_orchestrator,
                                   struct app_mesh_flood_result *result,
                                   bool *rf_started_out);
+static int mesh_send_c5_flood_now_intent(
+    const struct mesh_outbound *out,
+    uint8_t purpose,
+    const char *reason,
+    bool send_wake_train,
+    bool response_priority,
+    bool single_opportunity,
+    const struct app_mesh_command_orchestrator *command_orchestrator,
+    struct app_mesh_flood_result *result,
+    bool *rf_started_out,
+    enum fw_c5_tx_intent c5_tx_intent);
 static int mesh_send_c5_flood_now_until(
     const struct mesh_outbound *out,
     uint8_t purpose,
@@ -1046,7 +1089,8 @@ static int mesh_send_c5_flood_now_until(
     struct app_mesh_flood_result *result,
     bool *rf_started_out,
     uint64_t absolute_deadline_ms,
-    struct app_mesh_tx_observation *observation);
+    struct app_mesh_tx_observation *observation,
+    enum fw_c5_tx_intent c5_tx_intent);
 static void mesh_c5_flood_work_handler(struct k_work *work);
 struct mesh_route_capture_identity {
     uint32_t session_id;

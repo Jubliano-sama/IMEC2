@@ -4127,6 +4127,9 @@ static int outbound_from_pending(const struct mesh_relay *relay,
     out->payload_len = pending->payload_len;
     out->radio_channel = pending->radio_channel;
     out->next_hop_id = pending->next_hop_id;
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+    out->ingress_previous_hop_id = pending->transit_previous_hop_id;
+#endif
     out->queued_at_ms = now_ms;
     out->earliest_tx_ms = now_ms;
     out->queued_at_valid = true;

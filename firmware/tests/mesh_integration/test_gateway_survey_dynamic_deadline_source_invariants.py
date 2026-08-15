@@ -63,6 +63,33 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             route,
         )
 
+    def test_admitted_discovery_slack_extends_collection_before_command_cap(self) -> None:
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+        validation = route.index(
+            "required_budget_ms < collection_delay_ms"
+        )
+        slack = route.index(
+            "collection_delay_ms +=\n"
+            "        admitted_discovery.operation_budget_ms - required_budget_ms"
+        )
+        command_cap = route.index(
+            "collection_delay_ms = gateway_command_budget_window_ms(",
+            slack,
+        )
+        frozen_deadline = route.index(
+            "gateway_survey_collection_deadline_ms =",
+            command_cap,
+        )
+
+        self.assertLess(validation, slack)
+        self.assertLess(slack, command_cap)
+        self.assertLess(command_cap, frozen_deadline)
+        self.assertIn(
+            "true, command_budget_ms, 1u, collection_delay_ms",
+            route[command_cap:frozen_deadline],
+        )
+        self.assertNotIn("if (budget_explicit)", route[validation:frozen_deadline])
+
     def test_pair_control_separates_request_and_semantic_deadlines(self) -> None:
         request_timeout = function_body(
             SURVEY, "gateway_survey_request_timeout_ms"

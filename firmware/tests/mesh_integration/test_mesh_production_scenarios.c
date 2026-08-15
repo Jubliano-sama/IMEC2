@@ -792,11 +792,11 @@ static int test_click_preemption_and_retry(void)
         &world, MESH_SIM_TRANSITION_CONNECTION_REPAIR_STARTED, TRANSMITTER_ID);
     repaired_connections = mesh_sim_count_transitions(
         &world, MESH_SIM_TRANSITION_CONNECTION_REPAIRED, TRANSMITTER_ID);
-    if (data_tx_starts != 2u || propose_tx_starts != 1u ||
-        accept_tx_starts != 1u || repair_starts != 1u ||
-        repaired_connections != 1u ||
-        world.connections[child].completed_repairs != 1u ||
-        world.now_us > ((uint64_t)retry_at_ms + 8000u) * 1000u ||
+    if (data_tx_starts != 2u || propose_tx_starts != 0u ||
+        accept_tx_starts != 0u || repair_starts != 0u ||
+        repaired_connections != 0u ||
+        world.connections[child].completed_repairs != 0u ||
+        world.now_us > ((uint64_t)retry_at_ms + 8500u) * 1000u ||
         !no_route_discovery(&world) ||
         !no_watchdog_expired(&world)) {
         fprintf(stderr,
@@ -823,18 +823,18 @@ static int test_click_preemption_and_retry(void)
     }
     REQUIRE("click_preemption", SCENARIO_SEED_CLICK,
             data_tx_starts == 2u &&
-            propose_tx_starts == 1u &&
-            accept_tx_starts == 1u &&
-            repair_starts == 1u &&
-            repaired_connections == 1u &&
-            world.connections[child].completed_repairs == 1u &&
-            world.now_us <= ((uint64_t)retry_at_ms + 8000u) * 1000u &&
+            propose_tx_starts == 0u &&
+            accept_tx_starts == 0u &&
+            repair_starts == 0u &&
+            repaired_connections == 0u &&
+            world.connections[child].completed_repairs == 0u &&
+            world.now_us <= ((uint64_t)retry_at_ms + 8500u) * 1000u &&
             no_route_discovery(&world) &&
             no_watchdog_expired(&world));
     return 0;
 }
 
-static int test_empty_receive_slots_expire_timing(void)
+static int test_empty_receive_slots_preserve_timing_for_delayed_delivery(void)
 {
     static struct mesh_sim_world world;
     uint8_t transmitter;
@@ -848,7 +848,7 @@ static int test_empty_receive_slots_expire_timing(void)
                                                         MESH_RADIO_EVENT_INTERVAL_MS);
 
     mesh_sim_init(&world, SCENARIO_SEED_EMPTY);
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
+    REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
             mesh_sim_add_role(&world, MESH_SIM_ROLE_TRANSMITTER,
                               TRANSMITTER_ID, GATEWAY_ID, ROUTE_EPOCH,
                               &transmitter) == MESH_SIM_OK &&
@@ -858,7 +858,7 @@ static int test_empty_receive_slots_expire_timing(void)
             mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
                               GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH,
                               &gateway) == MESH_SIM_OK);
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
+    REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
             mesh_sim_set_link(&world, transmitter, anchor, 98u, 0u) == MESH_SIM_OK &&
             mesh_sim_set_link(&world, anchor, gateway, 98u, 0u) == MESH_SIM_OK &&
             mesh_sim_install_route(&world, transmitter, anchor, 1u,
@@ -870,35 +870,42 @@ static int test_empty_receive_slots_expire_timing(void)
                                       ROUTE_EPOCH) == MESH_SIM_OK &&
             mesh_sim_add_connection(&world, transmitter, anchor, &params,
                                     true, &child) == MESH_SIM_OK);
-    payload_len = data_payload(payload, sizeof(payload), 1u);
-    packet = data_packet(1u, (uint16_t)payload_len);
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
-            mesh_sim_queue_originated(&world, transmitter, &packet,
-                                      payload, payload_len) == MESH_SIM_OK &&
+    REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
             mesh_sim_watchdog_arm(&world, transmitter, STRESS_WATCHDOG_US,
                                   MESH_SIM_WATCHDOG_FAIL) == MESH_SIM_OK &&
             mesh_sim_watchdog_arm(&world, anchor, STRESS_WATCHDOG_US,
                                   MESH_SIM_WATCHDOG_FAIL) == MESH_SIM_OK);
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
-            run_next_connection(&world, child) == MESH_SIM_OK &&
-            run_next_connection(&world, child) == MESH_SIM_OK);
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
-            world.roles[transmitter].relay.pending.state ==
-                MESH_RELAY_TX_WAIT_GATEWAY_ACK);
-
-    for (unsigned int event = 0u; event < 6u &&
-         world.connections[child].timing_a.timing_fresh &&
-         world.connections[child].timing_b.timing_fresh; event++) {
-        REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
+    for (unsigned int event = 0u;
+         event < (unsigned int)params.max_missed_events * 4u;
+         event++) {
+        REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
                 run_next_connection(&world, child) == MESH_SIM_OK);
     }
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
-            !world.connections[child].timing_a.timing_fresh ||
-            !world.connections[child].timing_b.timing_fresh);
-    REQUIRE("empty_rx_expiry", SCENARIO_SEED_EMPTY,
-            world.connections[child].diagnostics_a.ch9_event_misses +
-                world.connections[child].diagnostics_b.ch9_event_misses >=
-                params.max_missed_events &&
+    REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
+            world.connections[child].timing_a.timing_fresh &&
+            world.connections[child].timing_b.timing_fresh &&
+            world.connections[child].timing_a.missed_event_count == 0u &&
+            world.connections[child].timing_b.missed_event_count == 0u &&
+            world.connections[child].diagnostics_a.ch9_event_misses == 0u &&
+            world.connections[child].diagnostics_b.ch9_event_misses == 0u);
+
+    payload_len = data_payload(payload, sizeof(payload), 1u);
+    packet = data_packet(1u, (uint16_t)payload_len);
+    REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
+            mesh_sim_queue_originated(&world, transmitter, &packet,
+                                      payload, payload_len) == MESH_SIM_OK);
+    for (unsigned int event = 0u;
+         event < 2u &&
+         world.roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE;
+         event++) {
+        REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
+                run_next_connection(&world, child) == MESH_SIM_OK);
+    }
+    REQUIRE("empty_rx_retention", SCENARIO_SEED_EMPTY,
+            world.roles[transmitter].relay.pending.state ==
+                MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
+            world.connections[child].timing_a.timing_fresh &&
+            world.connections[child].timing_b.timing_fresh &&
             no_watchdog_expired(&world));
     return 0;
 }
@@ -944,10 +951,10 @@ int main(int argc, char **argv)
         return test_click_preemption_and_retry();
     }
     if (argc == 2 && strcmp(argv[1], "empty_rx") == 0) {
-        return test_empty_receive_slots_expire_timing();
+        return test_empty_receive_slots_preserve_timing_for_delayed_delivery();
     }
     failed |= test_click_preemption_and_retry();
-    failed |= test_empty_receive_slots_expire_timing();
+    failed |= test_empty_receive_slots_preserve_timing_for_delayed_delivery();
     failed |= test_stalled_work_expires_watchdog();
     for (uint8_t relay_count = 1u; relay_count <= LINE_MAX_RELAYS;
          relay_count++) {

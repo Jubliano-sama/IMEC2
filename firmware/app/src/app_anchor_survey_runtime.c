@@ -68,6 +68,7 @@ struct survey_rf_retry_state {
 
 static struct survey_rf_retry_state discovery_rf_retry;
 static struct survey_rf_retry_state pair_rf_retry;
+static bool survey_transport_preempt_active;
 
 static void pair_start_kick_clear_locked(void);
 static void pair_lease_work_handler(struct k_work *work);
@@ -83,6 +84,55 @@ static int survey_radio_release(struct radio_guard_uwb_lease *lease,
         return ret;
     }
     return radio_guard_uwb_release_finish(lease, parking_ret);
+}
+
+/*
+ * Discovery begins at one shared physical instant.  A route repair that was
+ * already inside its Channel-5 reply listener can otherwise outlive the PHY
+ * preparation window on one anchor while its peers start on time.  Pause the
+ * mesh transport without dropping any queued owner, abort only that active
+ * mesh receive, and reopen radio admission after the old owner reaches its
+ * exact safe boundary.  Click radio ownership remains independent and can
+ * still win the subsequent radio_guard claim.
+ */
+static int survey_transport_preempt_begin(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    int ret;
+
+    if (!survey_transport_preempt_active) {
+        ret = app_node_comm_transport_preempt_begin();
+        if (ret < 0) {
+            return ret;
+        }
+        survey_transport_preempt_active = true;
+        status_debug_printf("DBG_SURVEY_TRANSPORT_PREEMPT_BEGIN\n");
+    }
+    ret = app_node_comm_transport_preempt_ready();
+    if (ret == 0) {
+        status_debug_printf("DBG_SURVEY_TRANSPORT_PREEMPT_READY\n");
+    }
+    return ret;
+#else
+    return -ENOTSUP;
+#endif
+}
+
+static void survey_transport_preempt_end(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    bool node_comm_running;
+
+    if (!survey_transport_preempt_active) {
+        return;
+    }
+    node_comm_running = app_node_comm_policy_running();
+    app_node_comm_transport_preempt_end();
+    survey_transport_preempt_active = false;
+    status_debug_printf(
+        "DBG_SURVEY_TRANSPORT_PREEMPT_END resumed=%u\n",
+        node_comm_running ? 1u : 0u);
+#endif
 }
 
 static bool pair_queueable(const struct survey_pair *pair)
@@ -476,6 +526,7 @@ static bool schedule_pair_rf_retry(
         (void)app_anchor_survey_runtime_abandon_pair_start_delivery(
             delivery_handle, "pair-rf-retry-expired");
     }
+    survey_transport_preempt_end();
     survey_rf_retry_reset(&pair_rf_retry);
     LOG_ERR("survey pair RF retry terminated: survey=%u seq=%u ret=%d reason=%s",
             control_id->session_id,
@@ -1476,13 +1527,30 @@ static bool pair_start_delivery_ready(void)
                 &pair_lease, k_uptime_get_32(), as_responder);
         k_spin_unlock(&survey_lock, key);
         if (release_remaining_ms != 0u) {
+            uint32_t schedule_delay_ms = release_remaining_ms;
+
+            if (release_remaining_ms >
+                SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS) {
+                schedule_delay_ms -=
+                    SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS;
+            } else {
+                int preempt_ret = survey_transport_preempt_begin();
+
+                if (preempt_ret < 0) {
+                    schedule_delay_ms = MIN(
+                        release_remaining_ms,
+                        SURVEY_NON_RF_SERVICE_POLL_MS);
+                }
+            }
             status_debug_printf(
-                "DBG_SURVEY_PAIR_RELEASE_WAIT remaining=%u\n",
-                release_remaining_ms);
+                "DBG_SURVEY_PAIR_RELEASE_WAIT remaining=%u delay=%u preempt=%u\n",
+                release_remaining_ms,
+                schedule_delay_ms,
+                survey_transport_preempt_active ? 1u : 0u);
             (void)deadline_schedule(
                 SURVEY_ANCHOR_DEADLINE_PHASE_SAFETY,
                 operation_generation,
-                release_remaining_ms,
+                schedule_delay_ms,
                 "pair-start-release");
             return false;
         }
@@ -1528,9 +1596,24 @@ static bool pair_start_delivery_ready(void)
         return false;
     }
     if (release_remaining_ms != 0u) {
+        uint32_t schedule_delay_ms = release_remaining_ms;
+
+        if (release_remaining_ms >
+            SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS) {
+            schedule_delay_ms -=
+                SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS;
+        } else {
+            int preempt_ret = survey_transport_preempt_begin();
+
+            if (preempt_ret < 0) {
+                schedule_delay_ms = MIN(
+                    release_remaining_ms,
+                    SURVEY_NON_RF_SERVICE_POLL_MS);
+            }
+        }
         (void)deadline_schedule(SURVEY_ANCHOR_DEADLINE_PHASE_SAFETY,
                                 operation_generation,
-                                release_remaining_ms,
+                                schedule_delay_ms,
                                 "pair-start-release");
     }
     status_debug_printf(
@@ -1566,6 +1649,7 @@ static void finish_discovery_without_radio(
         successor_pending = discovery_pending;
         k_spin_unlock(&survey_lock, key);
         survey_rf_retry_reset(&discovery_rf_retry);
+        survey_transport_preempt_end();
         if (!successor_pending) {
             app_node_comm_restart_role_scan();
             (void)runtime_ops.start_uwb_scan();
@@ -1588,7 +1672,6 @@ static void finish_discovery_without_radio(
         run_ret,
         report_ret,
         reason == NULL ? "radio-deadline" : reason);
-    runtime_ops.report_schedule(0u);
     survey_rf_retry_reset(&discovery_rf_retry);
     key = k_spin_lock(&survey_lock);
     survey_running = false;
@@ -1599,6 +1682,17 @@ static void finish_discovery_without_radio(
     }
     successor_pending = discovery_pending;
     k_spin_unlock(&survey_lock, key);
+    survey_transport_preempt_end();
+    /*
+     * The empty report lives in retained local-delivery custody, not yet in
+     * the physical report queue. Scheduling it while transport is paused is
+     * intentionally rejected, and resume cannot infer this owner from queue
+     * depth. Service that retained owner only after the preemption facade has
+     * reopened transport, then wake the physical report worker just as the
+     * normal discovery completion path does.
+     */
+    (void)app_anchor_survey_discovery_retry_report();
+    runtime_ops.report_schedule(0u);
     if (!successor_pending) {
         app_node_comm_restart_role_scan();
         (void)runtime_ops.start_uwb_scan();
@@ -1831,9 +1925,13 @@ static void survey_work_handler(struct k_work *work)
             return;
         }
         app_node_comm_stop_role_scan();
-        ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
-                                    "survey discovery",
-                                    &radio_lease);
+        ret = survey_transport_preempt_begin();
+        if (ret == 0) {
+            ret = radio_guard_uwb_claim(
+                RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
+                "survey discovery",
+                &radio_lease);
+        }
         if (ret < 0) {
             bool retry_current = false;
             int retry_ret;
@@ -1869,6 +1967,7 @@ static void survey_work_handler(struct k_work *work)
                     }
                     successor_pending = discovery_pending;
                     k_spin_unlock(&survey_lock, key);
+                    survey_transport_preempt_end();
                     if (!successor_pending) {
                         app_node_comm_restart_role_scan();
                         (void)runtime_ops.start_uwb_scan();
@@ -1949,6 +2048,7 @@ static void survey_work_handler(struct k_work *work)
         }
         successor_pending = discovery_pending;
         k_spin_unlock(&survey_lock, key);
+        survey_transport_preempt_end();
         if (!successor_pending) {
             app_node_comm_restart_role_scan();
             (void)runtime_ops.start_uwb_scan();
@@ -2073,9 +2173,12 @@ static void survey_work_handler(struct k_work *work)
     }
 
     app_node_comm_stop_role_scan();
-    ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
-                                "survey pair DS-TWR",
-                                &radio_lease);
+    ret = survey_transport_preempt_begin();
+    if (ret == 0) {
+        ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
+                                    "survey pair DS-TWR",
+                                    &radio_lease);
+    }
     if (ret < 0) {
         if (radio_guard_uwb_poisoned()) {
             LOG_ERR("survey pair rearm suppressed after radio parking failure: %d",
@@ -2087,7 +2190,7 @@ static void survey_work_handler(struct k_work *work)
             return;
         }
         status_debug_printf(
-            "DBG_SURVEY_PAIR_RF_BLOCK stage=radio-guard ret=%d\n",
+            "DBG_SURVEY_PAIR_RF_BLOCK stage=transport-or-radio ret=%d\n",
             ret);
         bool reschedule;
         bool successor_pending;
@@ -2107,12 +2210,14 @@ static void survey_work_handler(struct k_work *work)
                 delivery_reservation_leases,
                 ARRAY_SIZE(delivery_reservation_leases),
                 "radio-guard");
-        if (reschedule && cancel_ret == 0) {
-            (void)schedule_pair_rf_retry(&pair_control_id,
-                                         pair.operation_generation,
-                                         pair_deadline_ms,
-                                         "radio-guard-busy");
+        if (reschedule && cancel_ret == 0 &&
+            schedule_pair_rf_retry(&pair_control_id,
+                                   pair.operation_generation,
+                                   pair_deadline_ms,
+                                   "radio-guard-busy")) {
+            return;
         }
+        survey_transport_preempt_end();
         return;
     }
     survey_rf_retry_reset(&pair_rf_retry);
@@ -2163,6 +2268,7 @@ static void survey_work_handler(struct k_work *work)
         if (!successor_pending) {
             app_node_comm_restart_role_scan();
         }
+        survey_transport_preempt_end();
         (void)app_anchor_survey_result_delivery_cancel_reservations(
             delivery_reservation_leases,
             ARRAY_SIZE(delivery_reservation_leases),
@@ -2187,6 +2293,7 @@ static void survey_work_handler(struct k_work *work)
         if (!successor_pending) {
             app_node_comm_restart_role_scan();
         }
+        survey_transport_preempt_end();
         (void)app_anchor_survey_result_delivery_cancel_reservations(
             delivery_reservation_leases,
             ARRAY_SIZE(delivery_reservation_leases),
@@ -2215,6 +2322,7 @@ static void survey_work_handler(struct k_work *work)
         if (!successor_pending) {
             app_node_comm_restart_role_scan();
         }
+        survey_transport_preempt_end();
         (void)app_anchor_survey_result_delivery_cancel_reservations(
             delivery_reservation_leases,
             ARRAY_SIZE(delivery_reservation_leases),
@@ -2273,6 +2381,7 @@ static void survey_work_handler(struct k_work *work)
     if (functional_radio_outcome && low_power_ret >= 0) {
         app_watchdog_note_radio_progress();
     }
+    survey_transport_preempt_end();
     runtime_ops.report_schedule(0u);
     key = k_spin_lock(&survey_lock);
     survey_running = false;
@@ -2944,6 +3053,7 @@ int app_anchor_survey_runtime_start(void)
     discovery_report_stage_pending = false;
     survey_rf_retry_reset(&discovery_rf_retry);
     survey_rf_retry_reset(&pair_rf_retry);
+    survey_transport_preempt_active = false;
     k_work_init_delayable(&pair_lease_work, pair_lease_work_handler);
     k_work_init_delayable(&pair_start_kick_work,
                           pair_start_kick_work_handler);

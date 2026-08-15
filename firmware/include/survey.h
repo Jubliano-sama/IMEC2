@@ -25,7 +25,12 @@ extern "C" {
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 5u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
 #define SURVEY_DEFAULT_TTL 4u
-#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 3600000u
+/*
+ * A normal three-anchor survey must terminate as one bounded user action,
+ * even when a report or pair control never settles. Larger experimental
+ * fleets may still request a longer command budget explicitly.
+ */
+#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 360000u
 /*
  * A known reverse path gets a route-depth-aware natural control deadline.
  * The base covers one complete gateway-ACK custody/retry horizon; each
@@ -35,6 +40,13 @@ extern "C" {
 #define SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS 30000u
 #define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
 #define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
+/*
+ * Redrive a terminal-but-unanswered pair control independently from its
+ * route-depth failure deadline.  A one-second cadence leaves several full
+ * 640 ms two-link radio turns between copies while keeping the four ordered
+ * controls of a healthy pair inside the six-minute three-anchor operation.
+ */
+#define SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS 1000u
 #define SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS 12000u
 #define SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS 3000u
 #define SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS                     \
@@ -103,6 +115,11 @@ extern "C" {
     SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS == 0u
 #error "Survey pair control route-depth budgets must be positive"
 #endif
+#if SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS == 0u ||                    \
+    SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS >=                         \
+        SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS
+#error "Survey pair redrive must be positive and precede the shortest request deadline"
+#endif
 #if SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS >                                \
     (UINT32_MAX - ((SURVEY_DEFAULT_TTL - 1u) *                           \
                    SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS))
@@ -164,8 +181,7 @@ _Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
 #define SURVEY_DISCOVERY_MIN_SLOT_MS 30u
 #define SURVEY_DISCOVERY_MAX_SLOT_MS 1000u
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 90000u
-#define SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS \
-    NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS
+#define SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS 2000u
 #define SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT 4u
 #define SURVEY_DISCOVERY_MAX_ROUND_COUNT 4u
 #define SURVEY_DISCOVERY_REPORT_MAX_BURST_RECORDS \

@@ -1,0 +1,27 @@
+row,start,end,text,style,lane_index
+gateway,0,400,"Standard wake train\ndirect gateway copy",default,0
+gateway,400,510,"Extended control payload\nhop count 0",default,0
+gateway,510,3700,"Bounded redrives remain available",quiet,0
+anchor_a,0,510,"Receives direct copy",default,0
+anchor_a,1607,2007,"Standard wake train\nrelay A",emphasis,0
+anchor_a,2057,2157,"Extended control payload\nhop count 1",emphasis,0
+anchor_a,2157,3700,"Discovery report path works",quiet,0
+anchor_b,1607,2157,"Receives A copy",default,0
+anchor_b,2786,3186,"Standard wake train\nrelay B",emphasis,0
+anchor_b,3236,3336,"Extended control payload\nhop count 2",emphasis,0
+anchor_b,3336,3700,"Discovery report path works",quiet,0
+c_observed,0,510,"Direct copy rejected\nforced relay policy",default,0
+c_observed,1607,2007,"Captures A standard wake",emphasis,0
+c_observed,2057,2157,"Decodes hop 1\ncorrectly rejects",emphasis,0
+c_observed,2157,3547,"BUG: stays on extended PHY\nB standard wake is invisible",shaded,0
+c_observed,3547,3700,"No discovery report",shaded,0
+c_candidate,0,2157,"Same direct + hop-1 behavior",quiet,0
+c_candidate,2157,2786,"Reopen bounded standard probe\nclick checked first",emphasis,0
+c_candidate,2786,3186,"Capture B standard wake",emphasis,0
+c_candidate,3186,3336,"Retune extended\naccept exact hop 2",emphasis,0
+c_candidate,3336,3700,"LIVE: schedule discovery\nand stage report",emphasis,0
+host,0,3336,"Survey waits for all three discovery reports",default,0
+host,3336,3700,"Downlink proven\nuplink tracked separately",default,0
+evidence,0,2157,"LIVE RTT\ndirect and one-hop copies decoded exactly",emphasis,0
+evidence,2157,3336,"LIVE RTT ROOT CAUSE\nwrong PHY during B wake",shaded,0
+evidence,3336,3700,"LIVE HIL PASS\nexact hop 2 accepted\nreport staged",emphasis,0

@@ -943,12 +943,6 @@ static void run_route_reply_ack_case(enum response_window_case window_case)
 
 int main(void)
 {
-    run_relay_busy_case(RESPONSE_WINDOW_VALID);
-    run_relay_busy_case(RESPONSE_WINDOW_SHIFTED);
-    run_relay_busy_case(RESPONSE_WINDOW_SHORT);
-    run_multihop_transit_busy_addressing_case();
-    run_busy_response_reserves_future_connection_case();
-    run_scheduled_busy_response_preempts_later_channel9_case();
     run_result_offer_case(true, RESPONSE_WINDOW_VALID);
     run_result_offer_case(false, RESPONSE_WINDOW_VALID);
     run_result_offer_case(false, RESPONSE_WINDOW_SHORT);

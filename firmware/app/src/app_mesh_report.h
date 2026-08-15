@@ -80,6 +80,8 @@ struct anchor_range_window_report {
 
 struct app_mesh_report_callbacks {
     bool (*anchor_survey_radio_active)(void);
+    bool (*anchor_survey_operation_generation_active)(
+        uint64_t operation_generation);
     void (*anchor_note_uwb_awake_since)(int64_t start_ms,
                                         uint32_t already_counted_us);
     bool (*anchor_handle_click_wake_claim)(
@@ -192,6 +194,7 @@ uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity);
 void mesh_stop_role_scan(void);
 void mesh_restart_role_scan(void);
 int mesh_transport_pause_preserving_queued(void);
+bool mesh_transport_pause_active(void);
 bool mesh_transport_quiesced(void);
 void mesh_transport_resume(void);
 int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);

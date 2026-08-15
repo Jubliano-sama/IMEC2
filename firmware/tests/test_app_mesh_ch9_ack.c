@@ -764,6 +764,7 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
         },
         .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
         .next_hop_id = GATEWAY_ID_TEST,
+        .transit_previous_hop_id = SECOND_RELAY_ID,
     };
     struct mesh_outbound route_request = {
         .packet = {
@@ -778,9 +779,9 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
         .packet = {
             .msg_type = MSG_MESH_EVENT_PROPOSE,
             .src_id = RELAY_ID,
-            .dst_id = TRANSMITTER_ID,
+            .dst_id = SECOND_RELAY_ID,
         },
-        .next_hop_id = TRANSMITTER_ID,
+        .next_hop_id = SECOND_RELAY_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
     };
     struct app_mesh_ch9_ack_batch batch = {
@@ -793,10 +794,10 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
             },
             .payload = {UINT8_C(0x5a), UINT8_C(0xa5)},
             .payload_len = 2u,
-            .next_hop_id = TRANSMITTER_ID,
+            .next_hop_id = SECOND_RELAY_ID,
             .radio_channel = UWB_CHANNEL_MESH_PAYLOAD,
         },
-        .peer_id = TRANSMITTER_ID,
+        .peer_id = SECOND_RELAY_ID,
         .count = 1u,
         .valid = true,
         .preserve_payload = true,
@@ -858,19 +859,25 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
         &pending, true, NULL, TRANSMITTER_ID));
     pending.packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
 
-    /* After the gateway ACK is retained, event timing repair requires a
-     * second authorization bound to both the transit owner and ACK digest. */
+    /* After the gateway ACK is retained, event timing repair targets the
+     * immediate relay while the logical ACK remains addressed to the deeper
+     * packet origin. It is also bound to the transit owner and ACK digest. */
     pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD;
     pending.gateway_ack_forward_pending = true;
     assert(app_mesh_ch9_c5_repair_authorization_capture(
         &event_authorization,
         APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR,
-        &pending, true, &batch, TRANSMITTER_ID));
+        &pending, true, &batch, SECOND_RELAY_ID));
     assert(event_authorization.retained_ack_valid);
     assert(app_mesh_ch9_c5_repair_allowed(
         &event_authorization, &pending, true, &batch, &event_propose));
     assert(!app_mesh_ch9_c5_repair_allowed(
         &event_authorization, &pending, true, &batch, &route_request));
+    assert(!app_mesh_ch9_c5_repair_authorization_capture(
+        &none,
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR,
+        &pending, true, &batch, TRANSMITTER_ID));
+    assert(!none.valid);
 
     batch.preserve_payload = false;
     assert(!app_mesh_ch9_c5_repair_owner_matches(
@@ -890,7 +897,7 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
     assert(app_mesh_ch9_c5_repair_authorization_capture(
         &late_authorization,
         APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR,
-        NULL, false, &batch, TRANSMITTER_ID));
+        NULL, false, &batch, SECOND_RELAY_ID));
     assert(app_mesh_ch9_c5_repair_owner_matches(
         &late_authorization, NULL, false, &batch));
     assert(app_mesh_ch9_c5_repair_allowed(
@@ -900,11 +907,11 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
     assert(!app_mesh_ch9_c5_repair_authorization_capture(
         &none,
         APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR,
-        NULL, false, &batch, SECOND_RELAY_ID));
+        NULL, false, &batch, TRANSMITTER_ID));
     assert(!app_mesh_ch9_c5_repair_authorization_capture(
         &none,
         APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR,
-        NULL, false, &batch, TRANSMITTER_ID));
+        NULL, false, &batch, SECOND_RELAY_ID));
 
     batch.template_ack.payload[0] ^= UINT8_C(0xff);
     assert(!app_mesh_ch9_c5_repair_owner_matches(
@@ -918,7 +925,7 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
     assert(!app_mesh_ch9_c5_repair_authorization_capture(
         &none,
         APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR,
-        NULL, false, &batch, TRANSMITTER_ID));
+        NULL, false, &batch, SECOND_RELAY_ID));
 }
 
 static void test_durable_gateway_result_stays_in_core_tracker(void)

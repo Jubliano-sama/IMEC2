@@ -232,6 +232,35 @@ static uint8_t outbound_priority(const struct mesh_sim_role_instance *node,
     return 100u;
 }
 
+static int bind_transit_previous_hop_before_rf(
+    struct mesh_sim_world *world,
+    struct mesh_sim_role_instance *sender,
+    const struct mesh_outbound *pending_outbound,
+    uint64_t ingress_previous_hop_id)
+{
+    int ret;
+
+    if (pending_outbound->packet.dst_id != sender->gateway_id ||
+        pending_outbound->packet.src_id == sender->id ||
+        (pending_outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return MESH_SIM_OK;
+    }
+
+    ret = mesh_relay_bind_transit_previous_hop(&sender->relay,
+                                                pending_outbound,
+                                                ingress_previous_hop_id);
+    if (ret != PROTO_OK) {
+        int cancel_ret = mesh_relay_cancel_tx_if_matches(&sender->relay,
+                                                         pending_outbound);
+
+        if (cancel_ret != PROTO_OK) {
+            return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
+        }
+        return mesh_sim_fail(world, ret);
+    }
+    return MESH_SIM_OK;
+}
+
 static bool generated_ack_requested_seq(const struct mesh_outbound *outbound,
                                         uint16_t *requested_seq)
 {
@@ -471,6 +500,14 @@ int mesh_sim_direct_gateway_start_queued_tx(struct mesh_sim_world *world,
             return MESH_SIM_ERR_PROTOCOL;
         }
         outbound = queued.outbound;
+    }
+    ret = bind_transit_previous_hop_before_rf(
+        world,
+        sender,
+        &outbound,
+        queued.outbound.ingress_previous_hop_id);
+    if (ret != MESH_SIM_OK) {
+        return ret;
     }
     outbound.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
     sender->relay.pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
@@ -2060,6 +2097,15 @@ int mesh_sim_relay_start_connection_tx(
             tx_plan.end_ms != plan->end_ms) {
             return mesh_sim_fail(world, MESH_SIM_ERR_SENDER_PLAN);
         }
+    }
+
+    ret = bind_transit_previous_hop_before_rf(
+        world,
+        sender,
+        &outbound,
+        queued.outbound.ingress_previous_hop_id);
+    if (ret != MESH_SIM_OK) {
+        return ret;
     }
 
     ret = mesh_sim_radio_schedule_channel9_runtime_tx(world,

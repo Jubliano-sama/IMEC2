@@ -1,0 +1,8 @@
+id,label,order
+budget,OPERATION DEADLINE,1
+discovery,MEASURED DISCOVERY,2
+old_pair1,OLD: PAIR 1,3
+old_remaining,OLD: PAIRS 2 + 3,4
+fixed_pair1,FIXED: PAIR 1,5
+fixed_pair2,FIXED: PAIR 2,6
+fixed_pair3,FIXED: PAIR 3,7

@@ -1,0 +1,10 @@
+id,label,order
+host,HEADLESS GUI / BLE,1
+gateway,GATEWAY,2
+anchor_a,DIRECT ANCHOR A - HOP 1,3
+anchor_b,FORCED ANCHOR B - HOP 2,4
+anchor_c,FORCED-2 ANCHOR C - HOP 3,5
+relay_state,B UPSTREAM / C DOWNSTREAM OWNERS,6
+clicks,CLICK / SELF-TEST MATRIX,7
+evidence,BUILD / FLASH EVIDENCE,8
+verdict,QUALIFICATION VERDICT,9

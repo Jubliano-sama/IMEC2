@@ -20,7 +20,10 @@ from .command_telemetry import (
     CommandTelemetryDecodeError, GatewayCommandRequestTracker,
     decode_gateway_command_event,
 )
-from .command_orchestration import GatewayCommandOrchestrator
+from .command_orchestration import (
+    GatewayAssignmentReplayBarrier,
+    GatewayCommandOrchestrator,
+)
 from .protocol import (
     COMMAND_STATUS_NAMES, MSG_CLICK_REPORT, MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT, Packet, TLV_ANCHOR_ID, TLV_CLICKER_ID,
@@ -48,6 +51,7 @@ class GatewayDiagnosticsMixin:
         self.command_orchestrator = GatewayCommandOrchestrator(
             self.command_request_tracker
         )
+        self.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
         self.topology_model = TopologyBaselineModel(
             Path.home() / ".config" / "imec2-gateway-gui" / "anchor-baseline.json"
         )
@@ -101,7 +105,14 @@ class GatewayDiagnosticsMixin:
             self.command_timeline_model.observe(event)
             self._apply_gateway_command_transition(
                 self.command_orchestrator.observe_event(
-                    event, received_at=received_at
+                    event,
+                    received_at=received_at,
+                    target_dispatch_allowed=not (
+                        self.command_orchestrator.plan is not None
+                        and self.assignment_replay_barrier.blocks(
+                            self.command_orchestrator.plan.target.command_id
+                        )
+                    ),
                 )
             )
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)

@@ -125,6 +125,13 @@ BUILD_ASSERT(MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS >=
              UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS +
              MESH_ROUTE_TEST_REPLY_WINDOW_GUARD_MS,
              "control follow-up RX must cover wake train and TX transition");
+BUILD_ASSERT(MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS <=
+             UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
+             "deep gateway-control follow-up must fit the wake claim bound");
+BUILD_ASSERT(MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS >
+             FLOOD_WAVE_MS + WAKE_ADV_MS +
+                 MESH_CONTROL_FOLLOWUP_TURNAROUND_MS,
+             "deep gateway-control follow-up must cover the next relay wave");
 BUILD_ASSERT(UWB_CLICKER_CLAIMED_DURATION_MS <=
              UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS,
              "wake claim timing bounds must cover the configured advertised click epoch");

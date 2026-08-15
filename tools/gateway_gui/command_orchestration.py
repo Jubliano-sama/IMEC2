@@ -31,7 +31,73 @@ ROUTE_REFRESH_DEFAULT_BUDGET_MS = 120_000
 # written back.  The headless qualification client uses this same boundary.
 GATEWAY_COMMAND_COMPLETION_GUARD_S = 5.0
 
-CommandPhase = Literal["preflight", "target"]
+CommandPhase = Literal["preflight", "target_wait", "target"]
+
+
+@dataclass(frozen=True)
+class GatewayAssignmentReplayReceipt:
+    """Exact reliable assignment event whose terminal receipt releases the barrier."""
+
+    correlation_key: tuple[int, int, int, int]
+    gateway_sequence: int
+    event_sequence: int
+    terminal: bool
+
+
+class GatewayAssignmentReplayBarrier:
+    """Keep a successor command behind unfinished assignment publication.
+
+    Publication can resume after either a cold boot or a same-boot BLE client
+    loss. Only the cold-boot form carries the REPLAY flag, so the assignment
+    command kind is the stable boundary shared by both forms. Every ordinary
+    command waits because the retained mapping/ACK owner is shared; explicitly
+    immediate maintenance and abort commands remain exempt.
+    """
+
+    ASSIGNMENT_COMMAND_KIND = 1
+
+    def __init__(self) -> None:
+        self._active: set[tuple[int, int, int, int]] = set()
+        self._terminal_by_key: dict[
+            tuple[int, int, int, int], GatewayAssignmentReplayReceipt
+        ] = {}
+
+    @property
+    def active(self) -> bool:
+        return bool(self._active)
+
+    def blocks(self, command_id: int) -> bool:
+        return self.active and gateway_command_requires_preflight(command_id)
+
+    def observe(
+        self, event: GatewayCommandEvent
+    ) -> GatewayAssignmentReplayReceipt | None:
+        if event.command_kind != self.ASSIGNMENT_COMMAND_KIND:
+            return None
+        key = event.correlation_key
+        self._active.add(key)
+        token = GatewayAssignmentReplayReceipt(
+            correlation_key=key,
+            gateway_sequence=event.gateway_sequence,
+            event_sequence=event.event_sequence,
+            terminal=event.terminal,
+        )
+        if token.terminal:
+            self._terminal_by_key[key] = token
+        return token
+
+    def receipt_written(self, token: GatewayAssignmentReplayReceipt) -> bool:
+        if not token.terminal:
+            return False
+        if self._terminal_by_key.get(token.correlation_key) != token:
+            return False
+        self._terminal_by_key.pop(token.correlation_key, None)
+        self._active.discard(token.correlation_key)
+        return True
+
+    def reset(self) -> None:
+        self._active.clear()
+        self._terminal_by_key.clear()
 
 
 def gateway_command_requires_preflight(command_id: int) -> bool:
@@ -142,6 +208,7 @@ class GatewayCommandOrchestrator:
         *,
         now: float | None = None,
         received_at: float | None = None,
+        target_dispatch_allowed: bool = True,
     ) -> GatewayCommandTransition:
         boundary_time = received_at if received_at is not None else now
         if boundary_time is not None:
@@ -161,7 +228,11 @@ class GatewayCommandOrchestrator:
             return GatewayCommandTransition()
         if not self.tracker.observe_event(event):
             return GatewayCommandTransition()
-        return self._advance(self.tracker.last_outcome, now=now)
+        return self._advance(
+            self.tracker.last_outcome,
+            now=now,
+            target_dispatch_allowed=target_dispatch_allowed,
+        )
 
     def observe_command_result(
         self,
@@ -195,6 +266,20 @@ class GatewayCommandOrchestrator:
             return GatewayCommandTransition()
         return self._advance(self.tracker.last_outcome, now=now)
 
+    def release_waiting_target(
+        self, *, now: float | None = None
+    ) -> GatewayCommandTransition:
+        if self.phase != "target_wait" or self.plan is None:
+            return GatewayCommandTransition()
+        target = self.plan.target
+        self.phase = "target"
+        self.current = target
+        return GatewayCommandTransition(
+            matched=True,
+            dispatch=target,
+            phase="target_wait",
+        )
+
     def expire(self, *, now: float | None = None) -> GatewayCommandTransition:
         if not self.tracker.expire(now=now):
             return GatewayCommandTransition()
@@ -217,7 +302,11 @@ class GatewayCommandOrchestrator:
         )
 
     def _advance(
-        self, outcome: str, *, now: float | None
+        self,
+        outcome: str,
+        *,
+        now: float | None,
+        target_dispatch_allowed: bool = True,
     ) -> GatewayCommandTransition:
         plan = self.plan
         phase = self.phase
@@ -238,6 +327,13 @@ class GatewayCommandOrchestrator:
                 self._clear()
                 return GatewayCommandTransition(
                     matched=True, completed=True, outcome="failed", phase=phase
+                )
+            if not target_dispatch_allowed:
+                self.phase = "target_wait"
+                self.current = target
+                return GatewayCommandTransition(
+                    matched=True,
+                    phase="preflight",
                 )
             self.phase = "target"
             self.current = target

@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="882" viewBox="0 0 4300 882" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">THREE-ANCHOR SURVEY: SIX-MINUTE FAILURE CEILING</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="715.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="194.0" y="96.0" class="row-label">GATEWAY CONTROL WAVES</text>
+<rect x="344.0" y="74.0" width="434.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="561.4" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="561.4" dy="0.0">Initial survey flood + four 10 s redrives</tspan></text>
+<rect x="778.9" y="74.0" width="434.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="996.3" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="996.3" dy="0.0">Latest legal depth-4 propagation envelope</tspan></text>
+<line x1="44.0" y1="124.0" x2="4258.0" y2="124.0" class="major-line"/>
+<text x="194.0" y="182.0" class="row-label">ALL ANCHORS - PHYSICAL DISCOVERY</text>
+<rect x="1213.8" y="174.0" width="96.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1262.1" y="191.0" class="small center event-text" text-anchor="middle"><tspan x="1262.1" dy="0.0">Worst-path</tspan><tspan x="1262.1" dy="12.0">preparation</tspan><tspan x="1262.1" dy="12.0">margin</tspan></text>
+<rect x="1310.5" y="174.0" width="12.0" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1322.5" y="174.0" width="10.4" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="1316.5" y1="150.0" x2="1316.5" y2="174.0" class="hairline"/>
+<rect x="1221.5" y="126.0" width="190.0" height="16.0" class="callout"/>
+<text x="1225.5" y="138.5" class="tiny" text-anchor="start"><tspan x="1225.5" dy="0.0">Transport preemption + PHY preparation</tspan></text>
+<line x1="1327.7" y1="179.0" x2="1327.7" y2="174.0" class="hairline"/>
+<rect x="1232.7" y="146.0" width="190.0" height="25.0" class="callout"/>
+<text x="1236.7" y="157.5" class="tiny" text-anchor="start"><tspan x="1236.7" dy="0.0">4 rounds x 6 slots x 40 ms</tspan><tspan x="1236.7" dy="11.0">all anchors run in parallel</tspan></text>
+<line x1="44.0" y1="232.0" x2="4258.0" y2="232.0" class="major-line"/>
+<text x="194.0" y="268.0" class="row-label">THREE REPORT UPLINKS</text>
+<rect x="1332.9" y="246.0" width="148.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1407.0" y="269.0" class="small center event-text" text-anchor="middle"><tspan x="1407.0" dy="0.0">Six retained emission slots</tspan></text>
+<rect x="1481.0" y="246.0" width="456.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1709.3" y="269.0" class="small center event-text" text-anchor="middle"><tspan x="1709.3" dy="0.0">Maximum hop-aware custody</tspan></text>
+<rect x="1937.7" y="246.0" width="689.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2282.4" y="269.0" class="small center event-text" text-anchor="middle"><tspan x="2282.4" dy="0.0">Direct/mesh ACK-repair tail + guards</tspan></text>
+<line x1="44.0" y1="296.0" x2="4258.0" y2="296.0" class="major-line"/>
+<text x="194.0" y="338.0" class="row-label">DISCOVERY COLLECTION CONTRACT</text>
+<polygon points="2953.3,317.0 2958.3,322.0 2953.3,327.0 2948.3,322.0" class="diamond"/>
+<rect x="344.0" y="326.0" width="2283.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1485.5" y="349.0" class="small center event-text" text-anchor="middle"><tspan x="1485.5" dy="0.0">Existing worst-case discovery/report accounting</tspan></text>
+<rect x="2627.1" y="326.0" width="326.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2790.2" y="349.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2790.2" dy="0.0">30.007 s policy margin</tspan></text>
+<line x1="2953.3" y1="310.0" x2="2953.3" y2="322.0" class="hairline"/>
+<text x="2913.9" y="309.0" class="tiny">collection ceiling</text>
+<line x1="44.0" y1="372.0" x2="4258.0" y2="372.0" class="major-line"/>
+<text x="194.0" y="408.0" class="row-label">THREE PAIR EDGES + RERUNS</text>
+<rect x="2953.3" y="386.0" width="1174.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3540.4" y="403.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3540.4" dy="0.0">Up to 9 x 12 s pair-control floors</tspan><tspan x="3540.4" dy="12.0">3 edges x initial + 2 reruns</tspan></text>
+<rect x="4127.5" y="386.0" width="130.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4192.8" y="403.0" class="small center event-text" text-anchor="middle"><tspan x="4192.8" dy="0.0">Terminal/host</tspan><tspan x="4192.8" dy="12.0">settlement margin</tspan></text>
+<line x1="44.0" y1="436.0" x2="4258.0" y2="436.0" class="major-line"/>
+<text x="194.0" y="510.0" class="row-label">USER-VISIBLE CEILINGS</text>
+<polygon points="4258.0,477.0 4263.0,482.0 4258.0,487.0 4253.0,482.0" class="diamond"/>
+<rect x="344.0" y="486.0" width="2609.3" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1648.7" y="509.0" class="small center event-text" text-anchor="middle"><tspan x="1648.7" dy="0.0">Missing report ends here</tspan></text>
+<rect x="2953.3" y="486.0" width="1304.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3605.7" y="509.0" class="small center event-text" text-anchor="middle"><tspan x="3605.7" dy="0.0">Pair work may continue only inside this bound</tspan></text>
+<rect x="4247.1" y="530.0" width="10.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="4252.6" y1="462.0" x2="4252.6" y2="530.0" class="hairline"/>
+<rect x="4069.2" y="438.0" width="188.8" height="16.0" class="callout"/>
+<text x="4073.2" y="450.5" class="tiny" text-anchor="start"><tspan x="4073.2" dy="0.0">Complete or fail; never wait 15 minutes</tspan></text>
+<line x1="4258.0" y1="470.0" x2="4258.0" y2="482.0" class="hairline"/>
+<text x="4176.2" y="469.0" class="tiny">operation ceiling</text>
+<line x1="44.0" y1="576.0" x2="4258.0" y2="576.0" class="major-line"/>
+<text x="194.0" y="619.5" class="row-label">KEY POINT</text>
+<rect x="2041.0" y="588.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="2301.0" y="602.5" class="small center" text-anchor="middle"><tspan x="2301.0" dy="0.0">The 15-minute collection window was unnecessary. The existing physical and custody bounds fit</tspan><tspan x="2301.0" dy="12.0">by about 210 s, so 240 s leaves 30 s margin. Three anchors create three pair edges; with two</tspan><tspan x="2301.0" dy="12.0">reruns, nine 12 s control floors fit in the remaining 120 s, with 12 s left for terminal</tspan><tspan x="2301.0" dy="12.0">settlement. Healthy expected-count runs leave collection early.</tspan></text>
+<line x1="44.0" y1="655.0" x2="4258.0" y2="655.0" class="major-line"/>
+<line x1="44.0" y1="681.0" x2="44.0" y2="719.0" class="major-line"/>
+<line x1="44.0" y1="681.0" x2="4258.0" y2="681.0" class="axis-line"/>
+<line x1="344.0" y1="680.0" x2="344.0" y2="692.0" class="tick"/>
+<line x1="778.9" y1="680.0" x2="778.9" y2="692.0" class="tick"/>
+<line x1="1213.8" y1="680.0" x2="1213.8" y2="692.0" class="tick"/>
+<line x1="1322.5" y1="680.0" x2="1322.5" y2="692.0" class="tick"/>
+<line x1="1332.9" y1="680.0" x2="1332.9" y2="692.0" class="tick"/>
+<line x1="2627.1" y1="680.0" x2="2627.1" y2="692.0" class="tick"/>
+<line x1="2953.3" y1="680.0" x2="2953.3" y2="692.0" class="tick"/>
+<line x1="4127.5" y1="680.0" x2="4127.5" y2="692.0" class="tick"/>
+<line x1="4258.0" y1="680.0" x2="4258.0" y2="692.0" class="tick"/>
+<text x="330.6" y="704.0" class="axis-time">command admitted</text>
+<text x="765.4" y="704.0" class="axis-time">last redrive</text>
+<text x="1200.3" y="704.0" class="axis-time">latest depth-4 copy</text>
+<text x="1309.1" y="704.0" class="axis-time">physical start</text>
+<text x="1381.4" y="704.0" class="axis-time">discovery done</text>
+<text x="2613.7" y="704.0" class="axis-time">accounted report bound</text>
+<text x="2939.9" y="704.0" class="axis-time">4 min</text>
+<text x="4114.1" y="704.0" class="axis-time">9 control floors</text>
+<text x="4244.6" y="704.0" class="axis-time">6 min</text>
+<text x="344.0" y="733.5" class="tiny center" text-anchor="middle"><tspan x="344.0" dy="0.0">survey operation begins</tspan></text>
+<text x="778.9" y="728.0" class="tiny center" text-anchor="middle"><tspan x="778.9" dy="0.0">gateway has emitted all bounded control</tspan><tspan x="778.9" dy="11.0">waves</tspan></text>
+<text x="1213.8" y="733.5" class="tiny center" text-anchor="middle"><tspan x="1213.8" dy="0.0">legal propagation envelope ends</tspan></text>
+<text x="1322.5" y="763.5" class="tiny center" text-anchor="middle"><tspan x="1322.5" dy="0.0">all anchors share the scheduled instant</tspan></text>
+<text x="1332.9" y="793.5" class="tiny center" text-anchor="middle"><tspan x="1332.9" dy="0.0">24 physical slots complete</tspan></text>
+<text x="2627.1" y="733.5" class="tiny center" text-anchor="middle"><tspan x="2627.1" dy="0.0">all existing report terms end</tspan></text>
+<text x="2953.3" y="733.5" class="tiny center" text-anchor="middle"><tspan x="2953.3" dy="0.0">missing-report collection closes</tspan></text>
+<text x="4127.5" y="733.5" class="tiny center" text-anchor="middle"><tspan x="4127.5" dy="0.0">three K3 edges with two reruns</tspan></text>
+<text x="4205.6" y="763.5" class="tiny center" text-anchor="middle"><tspan x="4205.6" dy="0.0">hard survey terminal</tspan></text>
+<text x="2150.0" y="848.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Parallel contract view in real milliseconds. Discovery waves and per-anchor work overlap. The collection ceiling terminates a missing-report case; the operation ceiling terminates any later pair-control stall.</tspan></text>
+</svg>

@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="826" viewBox="0 0 4300 826" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">SURVEY UPLINK: ONE RADIO DECISION BREAKS THE TWO-OWNER DEADLOCK</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="719.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="194.0" y="104.0" class="row-label">C REPORT CUSTODY</text>
+<rect x="344.0" y="70.0" width="75.3" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="381.6" y="87.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="381.6" dy="0.0">C transmits</tspan><tspan x="381.6" dy="12.0">retained</tspan><tspan x="381.6" dy="12.0">survey</tspan><tspan x="381.6" dy="12.0">report</tspan></text>
+<rect x="419.3" y="70.0" width="2534.1" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1686.3" y="105.0" class="small center event-text" text-anchor="middle"><tspan x="1686.3" dy="0.0">Exact source custody remains valid</tspan></text>
+<rect x="2953.3" y="70.0" width="100.4" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3003.5" y="93.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3003.5" dy="0.0">B forwards</tspan><tspan x="3003.5" dy="12.0">after local ACK</tspan><tspan x="3003.5" dy="12.0">settles</tspan></text>
+<rect x="3053.7" y="70.0" width="1204.3" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3655.8" y="105.0" class="small center event-text" text-anchor="middle"><tspan x="3655.8" dy="0.0">Normal gateway-ACK settlement continues</tspan></text>
+<line x1="44.0" y1="140.0" x2="4258.0" y2="140.0" class="major-line"/>
+<text x="194.0" y="182.0" class="row-label">B CHILD ROUTE-WAIT OWNER</text>
+<polygon points="3003.5,161.0 3008.5,166.0 3003.5,171.0 2998.5,166.0" class="diamond"/>
+<rect x="419.3" y="170.0" width="1229.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1034.0" y="187.0" class="small center event-text" text-anchor="middle"><tspan x="1034.0" dy="0.0">B stores C bytes</tspan><tspan x="1034.0" dy="12.0">route-wait TX deferred</tspan></text>
+<rect x="1648.7" y="170.0" width="702.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1999.9" y="193.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1999.9" dy="0.0">Must stay retained during ACK RX</tspan></text>
+<rect x="2351.2" y="170.0" width="602.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2652.3" y="193.0" class="small center event-text" text-anchor="middle"><tspan x="2652.3" dy="0.0">Becomes eligible after local retirement</tspan></text>
+<rect x="2953.3" y="170.0" width="100.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3003.5" y="187.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3003.5" dy="0.0">TX C report</tspan><tspan x="3003.5" dy="12.0">upstream</tspan></text>
+<line x1="3003.5" y1="154.0" x2="3003.5" y2="166.0" class="hairline"/>
+<text x="2982.5" y="153.0" class="tiny">child TX</text>
+<line x1="44.0" y1="216.0" x2="4258.0" y2="216.0" class="major-line"/>
+<text x="194.0" y="260.0" class="row-label">B LOCAL REPORT / ACK OWNER</text>
+<rect x="344.0" y="226.0" width="1304.7" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="996.3" y="255.0" class="small center event-text" text-anchor="middle"><tspan x="996.3" dy="0.0">B&#x27;s own report is already upstream</tspan><tspan x="996.3" dy="12.0">waiting for exact gateway ACK</tspan></text>
+<rect x="1648.7" y="226.0" width="602.2" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1949.7" y="261.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1949.7" dy="0.0">Known Channel-9 ACK receive reservation</tspan></text>
+<rect x="2250.8" y="226.0" width="100.4" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2301.0" y="243.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2301.0" dy="0.0">Decode exact</tspan><tspan x="2301.0" dy="12.0">ACK</tspan><tspan x="2301.0" dy="12.0">retire local</tspan><tspan x="2301.0" dy="12.0">owner</tspan></text>
+<line x1="44.0" y1="296.0" x2="4258.0" y2="296.0" class="major-line"/>
+<text x="194.0" y="334.0" class="row-label">A + GATEWAY RETURN PATH</text>
+<rect x="344.0" y="306.0" width="652.3" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="670.2" y="335.0" class="small center event-text" text-anchor="middle"><tspan x="670.2" dy="0.0">B report reaches A and gateway</tspan></text>
+<rect x="996.3" y="306.0" width="652.3" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1322.5" y="335.0" class="small center event-text" text-anchor="middle"><tspan x="1322.5" dy="0.0">Gateway emits exact ACK; A retains return</tspan></text>
+<rect x="1648.7" y="306.0" width="100.4" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1698.8" y="323.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1698.8" dy="0.0">A transmits ACK</tspan><tspan x="1698.8" dy="12.0">in B&#x27;s reserved</tspan><tspan x="1698.8" dy="12.0">slot</tspan></text>
+<line x1="44.0" y1="364.0" x2="4258.0" y2="364.0" class="major-line"/>
+<text x="194.0" y="406.0" class="row-label">OLD DUPLICATE RX VETO</text>
+<polygon points="1698.8,385.0 1703.8,390.0 1698.8,395.0 1693.8,390.0" class="diamond"/>
+<rect x="1648.7" y="394.0" width="602.2" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1949.7" y="417.0" class="small center event-text" text-anchor="middle"><tspan x="1949.7" dy="0.0">WRONG: route-wait blanket suppresses B RX</tspan></text>
+<rect x="2250.8" y="394.0" width="2007.2" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3254.4" y="411.0" class="small center event-text" text-anchor="middle"><tspan x="3254.4" dy="0.0">Both owners retry indefinitely</tspan><tspan x="3254.4" dy="12.0">operation reaches outer timeout</tspan></text>
+<line x1="1698.8" y1="378.0" x2="1698.8" y2="390.0" class="hairline"/>
+<text x="1677.8" y="377.0" class="tiny">old veto</text>
+<line x1="44.0" y1="440.0" x2="4258.0" y2="440.0" class="major-line"/>
+<text x="194.0" y="482.0" class="row-label">FIXED COORDINATOR DECISION</text>
+<polygon points="1698.8,461.0 1703.8,466.0 1698.8,471.0 1693.8,466.0" class="diamond"/>
+<rect x="1648.7" y="470.0" width="602.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1949.7" y="487.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1949.7" dy="0.0">RIGHT: ACK wait keeps RX open</tspan><tspan x="1949.7" dy="12.0">route-wait stays untouched</tspan></text>
+<rect x="2250.8" y="470.0" width="702.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2602.1" y="487.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2602.1" dy="0.0">Local owner retires</tspan><tspan x="2602.1" dy="12.0">coordinator releases route-wait</tspan></text>
+<line x1="1698.8" y1="454.0" x2="1698.8" y2="466.0" class="hairline"/>
+<text x="1677.8" y="453.0" class="tiny">ACK RX</text>
+<line x1="44.0" y1="516.0" x2="4258.0" y2="516.0" class="major-line"/>
+<text x="194.0" y="552.0" class="row-label">OUTCOME</text>
+<rect x="344.0" y="530.0" width="1304.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="996.3" y="553.0" class="small center event-text" text-anchor="middle"><tspan x="996.3" dy="0.0">Two valid retained owners</tspan></text>
+<rect x="1648.7" y="530.0" width="702.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1999.9" y="553.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1999.9" dy="0.0">One physical priority decision</tspan></text>
+<rect x="2351.2" y="530.0" width="1906.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3304.6" y="547.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3304.6" dy="0.0">Progress in the next cadence</tspan><tspan x="3304.6" dy="12.0">no new state machine or retry lane</tspan></text>
+<line x1="44.0" y1="580.0" x2="4258.0" y2="580.0" class="major-line"/>
+<text x="194.0" y="623.5" class="row-label">KEY POINT</text>
+<rect x="2041.0" y="592.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="2301.0" y="606.5" class="small center" text-anchor="middle"><tspan x="2301.0" dy="0.0">The route-wait packet must remain retained while B opens the known ACK receive slot. The old</tspan><tspan x="2301.0" dy="12.0">duplicate RX veto suppressed that slot and left both reports live forever. The fixed path obeys</tspan><tspan x="2301.0" dy="12.0">the centralized coordinator: ACK RX first, exact local retirement second, then the unchanged</tspan><tspan x="2301.0" dy="12.0">child route-wait owner resumes.</tspan></text>
+<line x1="44.0" y1="659.0" x2="4258.0" y2="659.0" class="major-line"/>
+<line x1="44.0" y1="685.0" x2="44.0" y2="723.0" class="major-line"/>
+<line x1="44.0" y1="685.0" x2="4258.0" y2="685.0" class="axis-line"/>
+<line x1="344.0" y1="684.0" x2="344.0" y2="696.0" class="tick"/>
+<line x1="996.3" y1="684.0" x2="996.3" y2="696.0" class="tick"/>
+<line x1="1648.7" y1="684.0" x2="1648.7" y2="696.0" class="tick"/>
+<line x1="2250.8" y1="684.0" x2="2250.8" y2="696.0" class="tick"/>
+<line x1="2953.3" y1="684.0" x2="2953.3" y2="696.0" class="tick"/>
+<line x1="4258.0" y1="684.0" x2="4258.0" y2="696.0" class="tick"/>
+<text x="305.0" y="708.0" class="axis-time">C report at B</text>
+<text x="957.4" y="708.0" class="axis-time">ACK generated</text>
+<text x="1609.7" y="708.0" class="axis-time">B ACK slot</text>
+<text x="2211.9" y="708.0" class="axis-time">ACK decoded</text>
+<text x="2914.4" y="708.0" class="axis-time">next cadence</text>
+<text x="4219.0" y="708.0" class="axis-time">bounded progress</text>
+<text x="344.0" y="737.5" class="tiny center" text-anchor="middle"><tspan x="344.0" dy="0.0">child custody becomes route-wait</tspan></text>
+<text x="996.3" y="737.5" class="tiny center" text-anchor="middle"><tspan x="996.3" dy="0.0">gateway return begins</tspan></text>
+<text x="1648.7" y="732.0" class="tiny center" text-anchor="middle"><tspan x="1648.7" dy="0.0">radio must receive rather than</tspan><tspan x="1648.7" dy="11.0">route-wait TX</tspan></text>
+<text x="2250.8" y="737.5" class="tiny center" text-anchor="middle"><tspan x="2250.8" dy="0.0">local report settles</tspan></text>
+<text x="2953.3" y="737.5" class="tiny center" text-anchor="middle"><tspan x="2953.3" dy="0.0">child route-wait resumes</tspan></text>
+<text x="4200.5" y="737.5" class="tiny center" text-anchor="middle"><tspan x="4200.5" dy="0.0">both owners can settle</tspan></text>
+<text x="2150.0" y="792.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">One 640 ms Channel-9 cadence around forced relay B. C&#x27;s report is already retained at B while B&#x27;s own report awaits its exact gateway ACK. Horizontal position is protocol time; boxes sharing time are physically competing radio work.</tspan></text>
+</svg>

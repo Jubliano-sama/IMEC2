@@ -965,18 +965,18 @@ static void test_channel9_skip_elapsed_advances_to_next_live_slot(void)
     assert(mesh_event_skip_elapsed(&timing, 1319u, &diagnostics) == 3u);
     assert(timing.next_event_time_ms == 1300u);
     assert(timing.event_counter == 3u);
-    assert(timing.missed_event_count == 1u);
-    assert(diagnostics.ch9_event_misses == 1u);
+    assert(timing.missed_event_count == 0u);
+    assert(diagnostics.ch9_event_misses == 0u);
     assert(timing.timing_fresh);
     assert(!timing.fallback_required);
 
     assert(mesh_event_skip_elapsed(&timing, 1419u, &diagnostics) == 1u);
     assert(timing.next_event_time_ms == 1400u);
     assert(timing.event_counter == 4u);
-    assert(timing.missed_event_count == 2u);
-    assert(diagnostics.ch9_event_misses == 2u);
-    assert(!timing.timing_fresh);
-    assert(timing.fallback_required);
+    assert(timing.missed_event_count == 0u);
+    assert(diagnostics.ch9_event_misses == 0u);
+    assert(timing.timing_fresh);
+    assert(!timing.fallback_required);
 }
 
 static void test_channel9_traffic_refreshes_supervision_timeout(void)
@@ -998,7 +998,7 @@ static void test_channel9_traffic_refreshes_supervision_timeout(void)
     assert(!mesh_event_timing_usable(&timing, 2300u));
 }
 
-static void test_channel9_local_tx_does_not_refresh_supervision_timeout(void)
+static void test_channel9_unobserved_turn_does_not_refresh_supervision_timeout(void)
 {
     struct mesh_event_timing timing = {0};
     struct mesh_event_params params = event_params();
@@ -1007,7 +1007,7 @@ static void test_channel9_local_tx_does_not_refresh_supervision_timeout(void)
     assert(mesh_event_timing_negotiate(&timing, &params, true) == PROTO_OK);
     assert(mesh_event_timing_local_tx_slot(&timing));
 
-    mesh_event_note_local_tx(&timing, 1400u);
+    mesh_event_note_unobserved_turn(&timing, 1400u);
     assert(mesh_event_timing_local_rx_slot(&timing));
     assert(timing.next_event_time_ms == 1500u);
     assert(mesh_event_timing_usable(&timing, 1499u));
@@ -1896,7 +1896,7 @@ int main(void)
     test_channel9_missed_events_refresh_contact_at_configured_limit();
     test_channel9_skip_elapsed_advances_to_next_live_slot();
     test_channel9_traffic_refreshes_supervision_timeout();
-    test_channel9_local_tx_does_not_refresh_supervision_timeout();
+    test_channel9_unobserved_turn_does_not_refresh_supervision_timeout();
     test_channel9_batch_metadata_requires_exact_pair();
     test_channel9_batch_metadata_rejects_ambiguous_values();
     test_ack_payload_requires_one_consistent_encoding();

@@ -1,0 +1,12 @@
+time,label,caption,kind,row
+-350,t = -350 ms,C begins reliable pair-result delivery,axis,
+-110,result at gateway,upstream depth-3 delivery succeeds,axis,
+45,control wake,repeated survey-control contact reaches C,axis,
+90,C5 listener,C enters extended follow-up,axis,
+110,exact ACK slot,B transmits downstream ACK to C,axis,
+527,C5 listener ends,ACK slot has passed,axis,
+731,ACK timeout,C retries the same retained result,axis,
+850,current candidate,guard is present; HIL rerun pending,axis,
+110,ACK TX,,row,anchor_b
+110,missed while on C5,,row,anchor_c_ch9
+110,overlap,,row,anchor_c_ch5

@@ -403,6 +403,13 @@ static void retire_connection_for_repair(
     struct mesh_sim_world *world,
     struct mesh_sim_connection *connection)
 {
+    uint16_t connection_index = (uint16_t)(connection - world->connections);
+
+    /* A repair replaces this cadence.  A not-yet-started Channel-9 event may
+     * already be queued at the same boundary; cancel that stale event before
+     * changing timing so it cannot execute against the replacement plan. */
+    mesh_sim_scheduler_cancel_pending_connection_event(world,
+                                                       connection_index);
     mesh_sim_clear_connection_timing(world, connection);
     mesh_event_owner_abandon(&connection->owner_a);
     mesh_event_owner_abandon(&connection->owner_b);
@@ -490,6 +497,11 @@ static int schedule_connection_repair_exchange(
     if (requester != connection->node_a && requester != connection->node_b) {
         return MESH_SIM_ERR_ARG;
     }
+    /* Repair may be selected by the scheduler after a future Channel-9 turn
+     * was already queued.  The new control exchange supersedes that turn even
+     * when the caller did not explicitly retire the connection first. */
+    mesh_sim_scheduler_cancel_pending_connection_event(world,
+                                                       connection_index);
     connection->repair_start_us = start_us;
     connection->repair_end_us = end_us;
     connection->repair_requester = requester;
@@ -610,12 +622,8 @@ static uint8_t skip_unstartable_events(
 
     while (skipped < UINT8_MAX &&
            (uint64_t)timing->next_event_time_ms * 1000u < now_us) {
-        if (mesh_event_timing_local_rx_slot(timing)) {
-            mesh_event_note_missed(timing, diagnostics);
-        } else {
-            timing->next_event_time_ms += timing->event_interval_ms;
-            timing->event_counter++;
-        }
+        mesh_event_note_unobserved_turn(timing,
+                                        timing->next_event_time_ms);
         skipped++;
     }
     return skipped;
@@ -701,10 +709,13 @@ int mesh_sim_connection_next_action(const struct mesh_sim_world *world,
         return ret;
     }
 
+    /* A cadence that expires before its next physical turn cannot schedule
+     * that turn and then discover the expiry at dispatch.  Decide usability
+     * at the candidate event boundary so repair owns the radio coherently. */
     usable_a = mesh_event_timing_usable(&timing_a,
-                                        mesh_sim_time_ms(endpoints_ready_us));
+                                        timing_a.next_event_time_ms);
     usable_b = mesh_event_timing_usable(&timing_b,
-                                        mesh_sim_time_ms(endpoints_ready_us));
+                                        timing_b.next_event_time_ms);
     if (usable_a && usable_b) {
         action->start_us =
             (uint64_t)timing_a.next_event_time_ms * 1000u;
@@ -1870,11 +1881,13 @@ int mesh_sim_connection_process_end(struct mesh_sim_world *world,
         receiver_timing = &connection->timing_a;
         receiver_diagnostics = &connection->diagnostics_a;
     }
-    mesh_event_note_local_tx(sender_timing, event_start_ms);
+    mesh_event_note_unobserved_turn(sender_timing, event_start_ms);
     if (event->decoded) {
         mesh_event_note_success(receiver_timing, event_start_ms);
-    } else {
+    } else if (event->had_packet) {
         mesh_event_note_missed(receiver_timing, receiver_diagnostics);
+    } else {
+        mesh_event_note_unobserved_turn(receiver_timing, event_start_ms);
     }
     connection->completed_events++;
     ret = sync_connection_timing(world, connection);

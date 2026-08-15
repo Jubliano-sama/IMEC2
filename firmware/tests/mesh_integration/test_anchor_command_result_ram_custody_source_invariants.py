@@ -362,6 +362,38 @@ class AnchorCommandResultRamCustodySourceTests(unittest.TestCase):
             with self.subTest(false_durable_owner=false_durable_owner):
                 self.assertNotIn(false_durable_owner, ANCHOR)
 
+    def test_heartbeat_is_operator_requested_and_never_boot_traffic(self):
+        startup = function_body(ANCHOR, "anchor_heartbeat_request_startup")
+        self.assertNotIn("anchor_heartbeat_enabled", startup)
+        self.assertNotIn("anchor_heartbeat_schedule", startup)
+        self.assertNotIn("anchor_send_heartbeat", startup)
+
+        worker = function_body(ANCHOR, "anchor_heartbeat_work_handler")
+        admitted = worker.index("ret = anchor_send_heartbeat()")
+        busy = worker[:admitted]
+        self.assertIn(
+            "anchor_heartbeat_schedule(anchor_heartbeat_interval_ms)", busy
+        )
+        self.assertNotIn("REPORT_TX_RETRY_DELAY_MS", busy)
+        periodic_gate = worker.index("if (anchor_heartbeat_enabled)", admitted)
+        periodic_schedule = worker.index(
+            "anchor_heartbeat_schedule(anchor_heartbeat_interval_ms)",
+            periodic_gate,
+        )
+
+        self.assertLess(admitted, periodic_gate)
+        self.assertLess(periodic_gate, periodic_schedule)
+
+        send = function_body(ANCHOR, "anchor_send_heartbeat")
+        self.assertIn("app_node_comm_submit_best_effort_uplink(", send)
+        self.assertNotIn("app_node_comm_submit_reliable_uplink(", send)
+
+        stop = function_body(ANCHOR, "anchor_stop_heartbeat")
+        disable = stop.index("anchor_heartbeat_enabled = false")
+        cancel = stop.index("k_work_cancel_delayable(&anchor_heartbeat_work)")
+        self.assertLess(disable, cancel)
+        self.assertNotIn("anchor_startup_heartbeat_pending", ANCHOR)
+
 
 if __name__ == "__main__":
     unittest.main()

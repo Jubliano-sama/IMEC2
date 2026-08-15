@@ -1,0 +1,8 @@
+id,label,order
+gateway,GATEWAY - ORIGIN,1
+anchor_a,DIRECT A - RELAY HOP 1,2
+anchor_b,FORCED1 B - RELAY HOP 2,3
+c_observed,FORCED2 C - PREVIOUS IMAGE,4
+c_candidate,FORCED2 C - CURRENT IMAGE,5
+host,HEADLESS GUI / SURVEY,6
+evidence,EVIDENCE / VERDICT,7

@@ -37,7 +37,15 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .max_attempts = 16u,
         .successful_attempts_required = 1u,
         .retry_backoff_shift_cap = 3u,
-        .priority = 210u,
+        /*
+         * This profile is reserved for already-captured survey results. A
+         * pending assignment TABLE ACK must remain reliable, but it must not
+         * consume every newly repaired route while the gateway's bounded
+         * survey collection window is open. Keep durable measurements above
+         * protocol responses while leaving owed control responses and
+         * bounded gateway control above both classes.
+         */
+        .priority = 230u,
     },
     [NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE] = {
         .retry_delay_ms = NODE_COMM_PROTOCOL_RESPONSE_RETRY_BASE_MS,
@@ -1207,6 +1215,38 @@ static bool same_priority_pre_rf_predecessor(
     return false;
 }
 
+/*
+ * An already-captured survey result is the highest-priority measurement
+ * owner.  If its next RF attempt is temporarily deferred, allowing a lower
+ * class to consume the newly repaired route can defer the measurement again
+ * until the gateway's bounded collection window closes.  Keep lower classes
+ * behind that exact pre-RF owner; bounded/control responses have equal or
+ * higher priority and remain eligible.
+ */
+static bool durable_survey_pre_rf_barrier(
+    const struct node_comm *comm,
+    const struct node_comm_request_slot *candidate)
+{
+    if (comm == NULL || candidate == NULL) {
+        return false;
+    }
+    for (size_t i = 0u; i < NODE_COMM_MAX_REQUESTS; i++) {
+        const struct node_comm_request_slot *slot = &comm->slots[i];
+
+        if (slot == candidate || !slot_is_live(slot) ||
+            slot->request.profile !=
+                NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+            slot->priority <= candidate->priority) {
+            continue;
+        }
+        if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX ||
+            slot->owner.delivery.state == FW_DELIVERY_RETRY) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int node_comm_acquire(struct node_comm *comm,
                       uint64_t now_ms,
                       struct node_comm_lease *lease_out)
@@ -1234,6 +1274,9 @@ int node_comm_acquire(struct node_comm *comm,
             continue;
         }
         if (same_priority_pre_rf_predecessor(comm, slot)) {
+            continue;
+        }
+        if (durable_survey_pre_rf_barrier(comm, slot)) {
             continue;
         }
         if (selected == NULL ||
@@ -1934,7 +1977,8 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
             slot_due_ms = slot->request.absolute_deadline_ms;
         } else if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX ||
                    slot->owner.delivery.state == FW_DELIVERY_RETRY) {
-            if (same_priority_pre_rf_predecessor(comm, slot)) {
+            if (same_priority_pre_rf_predecessor(comm, slot) ||
+                durable_survey_pre_rf_barrier(comm, slot)) {
                 slot_due_ms = slot->request.absolute_deadline_ms;
                 if (slot_due_ms == 0u) {
                     continue;

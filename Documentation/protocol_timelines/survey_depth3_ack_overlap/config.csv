@@ -1,0 +1,11 @@
+key,value
+title,"IMEC2 DEPTH-3 SURVEY STALL: CONTROL FOLLOW-UP OVERLAPS THE EXACT ACK SLOT"
+caption,"Figure: Correlated four-board RTT trace, normalized around the forced-two-hop anchor's reliable pair result. The result reaches the gateway through B and A. The exact gateway ACK returns to B, but C remains in an extended channel-5 survey-control listener across B's known channel-9 ACK slot, then times out and retries."
+key_point,"The route and ACK identity are correct. The receiver is on the wrong channel at the only useful instant. The narrow guard now defers only a survey-control follow-up while that anchor owns a live channel-9 ACK wait; clicks and ordinary route discovery retain priority. The guard is built and flashed, but its live survey rerun is still pending."
+start,-350
+end,850
+width,4200
+unit,ms
+axis_caption_width,190
+row_label_width,230
+max_inline_lines,4

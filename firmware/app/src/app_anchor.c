@@ -66,6 +66,7 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 
 #define ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS 1000u
 #define ANCHOR_COMMAND_DELIVERY_POLL_MS 5u
+#define ANCHOR_DISCOVERY_ACK_ROUTE_WAIT_RETRY_MS 500u
 #define ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_BASE_MS 60000u
 #define ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_MAX_MS 3600000u
 #define GATEWAY_HOST_COMMAND_QUEUE_DEPTH 2u
@@ -149,6 +150,9 @@ BUILD_ASSERT(DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS >=
                   ROUTE_GATEWAY_ACK_TIMEOUT_MS),
              "assignment response custody must cover every bounded protocol-response retry");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES > 0u &&
+             ANCHOR_DISCOVERY_ACK_ROUTE_WAIT_RETRY_MS > 0u &&
+             ANCHOR_DISCOVERY_ACK_ROUTE_WAIT_RETRY_MS <
+                 ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_BASE_MS &&
              ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_BASE_MS >
                  DISCOVERY_ASSIGNMENT_RETRY_MAX_MS &&
              ANCHOR_DISCOVERY_ACK_LOW_DUTY_RETRY_MAX_MS >=
@@ -162,8 +166,8 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 7200u,
              "mesh-route anchor scan must retain its measured safety margin");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_PRIORITY < ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
              "mesh route work must preempt low-duty anchor scan handoff");
-BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 8576u,
-             "mesh communication worker must retain its verified route stack budget");
+BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 9472u,
+             "mesh communication worker must retain its measured route stack budget");
 BUILD_ASSERT(ANCHOR_UWB_SCAN_BUSY_RETRY_MS > 0u,
              "blocked mesh route-test anchor scans must not spin at zero delay");
 #endif

@@ -1,0 +1,17 @@
+row,start,end,text,style
+budget,0 s,360 s,Existing bounded user action\n6 minute hard cap,shaded
+discovery,0 s,90 s,Four bounded discovery waves\nand shared execution lead,default
+discovery,90 s,111.42 s,All 3 reports reach gateway\nand receive exact ACK proof,emphasis
+old_pair1,108 s,183 s,PREPARE C\nroute-depth retry delay,default
+old_pair1,183 s,239 s,PREPARE B\nroute-depth retry delay,default
+old_pair1,239 s,299 s,START B\nroute-depth retry delay,dashed
+old_pair1,299 s,359 s,START C\nfirst pair only now armed,dashed
+old_remaining,359 s,420 s,No time remains for observation\nor pairs 2 and 3,ghost
+fixed_pair1,111.42 s,121.42 s,PREP C\n5 s redrives,solid
+fixed_pair1,121.42 s,131.42 s,PREP B\n5 s redrives,solid
+fixed_pair1,131.42 s,141.42 s,START B,solid
+fixed_pair1,141.42 s,156.42 s,START C\nthen await shared release,solid
+fixed_pair1,156.42 s,178.42 s,45 s release + range,emphasis
+fixed_pair2,178.42 s,245.42 s,Same bounded controls\n45 s shared release + range,emphasis
+fixed_pair3,245.42 s,312.42 s,Same bounded controls\n45 s shared release + range,emphasis
+fixed_pair3,312.42 s,330 s,Terminal and host settlement,default

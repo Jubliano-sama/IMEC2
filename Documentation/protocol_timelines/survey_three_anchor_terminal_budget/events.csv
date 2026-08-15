@@ -1,0 +1,16 @@
+row,start,end,text,style,lane_index
+control,0,40000,"Initial survey flood + four 10 s redrives",emphasis,0
+control,40000,80000,"Latest legal depth-4 propagation envelope",default,0
+physical,80000,88897,"Worst-path preparation margin",default,0
+physical,88897,90000,"Transport preemption + PHY preparation",emphasis,0
+physical,90000,90960,"4 rounds x 6 slots x 40 ms\nall anchors run in parallel",emphasis,0
+reports,90960,104580,"Six retained emission slots",default,0
+reports,104580,146580,"Maximum hop-aware custody",default,0
+reports,146580,209993,"Direct/mesh ACK-repair tail + guards",default,0
+collection,0,209993,"Existing worst-case discovery/report accounting",default,0
+collection,209993,240000,"30.007 s policy margin",emphasis,0
+pairs,240000,348000,"Up to 9 x 12 s pair-control floors\n3 edges x initial + 2 reruns",emphasis,0
+pairs,348000,360000,"Terminal/host settlement margin",default,0
+terminal,0,240000,"Missing report ends here",shaded,0
+terminal,240000,360000,"Pair work may continue only inside this bound",default,0
+terminal,359000,360000,"Complete or fail; never wait 15 minutes",emphasis,1

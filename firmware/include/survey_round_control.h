@@ -14,18 +14,16 @@ extern "C" {
 
 #define SURVEY_LEGACY_ROUND_ID 0u
 /*
- * The release is anchored before START responder is sent. Reserve the
- * maximum request horizon to the responder, its complete result horizon and
- * exact gateway-ACK confirmation settle, then the maximum request horizon to
- * the initiator. The initiator result is not on the execution-critical path.
- * This bound is shared on the wire so a legal deep route cannot age past a
- * direct-route-only release instant.
+ * The release is anchored before START responder is sent and shared on the
+ * wire with START initiator.  This is an execution barrier, not a failure
+ * deadline: controls are redriven every second, while the independent
+ * route-depth transaction deadlines still decide whether a missed endpoint
+ * fails and cleans up. The preceding Here-I-Am and assignment have already
+ * proved the routes, so the shared start barrier does not reserve another
+ * route-repair horizon. Fifteen seconds covers eight one-second semantic
+ * redrives, response settlement, and both endpoint skew margins.
  */
-#define SURVEY_ROUND_START_EXECUTE_DELAY_MS                               \
-    ((2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS) +                 \
-     SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS +                             \
-     SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS +                             \
-     SURVEY_PAIR_START_SKEW_MARGIN_MS)
+#define SURVEY_ROUND_START_EXECUTE_DELAY_MS 15000u
 
 struct survey_round_plan_entry {
     struct survey_pair pair;

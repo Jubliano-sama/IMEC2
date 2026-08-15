@@ -1,0 +1,11 @@
+key,value
+title,"THREE-ANCHOR SURVEY: SIX-MINUTE FAILURE CEILING"
+caption,"Parallel contract view in real milliseconds. Discovery waves and per-anchor work overlap. The collection ceiling terminates a missing-report case; the operation ceiling terminates any later pair-control stall."
+key_point,"The 15-minute collection window was unnecessary. The existing physical and custody bounds fit by about 210 s, so 240 s leaves 30 s margin. Three anchors create three pair edges; with two reruns, nine 12 s control floors fit in the remaining 120 s, with 12 s left for terminal settlement. Healthy expected-count runs leave collection early."
+start,0
+end,360000
+width,4300
+unit,ms
+axis_caption_width,190
+row_label_width,300
+max_inline_lines,4

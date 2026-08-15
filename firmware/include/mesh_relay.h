@@ -301,6 +301,13 @@ struct mesh_outbound {
     uint8_t radio_channel;
     uint64_t next_hop_id;
     /*
+     * Physical child that handed this transit packet to the local relay.
+     * This is local custody metadata, never wire data.  Queue and route-wait
+     * owners retain it so the eventual gateway ACK retraces the exact custody
+     * edge instead of consulting a newer or shorter mutable downlink.
+     */
+    uint64_t ingress_previous_hop_id;
+    /*
      * Optional custody provenance for a response handed to another owner.
      * Ordinary packets leave these fields zero.  A transit gateway ACK keeps
      * the handoff owner generation beside the queued bytes so a later commit
@@ -506,7 +513,12 @@ struct mesh_pending_tx {
             uint32_t gateway_ack_confirm_route_epoch;
         };
     };
-    uint64_t gateway_ack_forward_next_hop_id;
+    union {
+        /* Exact child edge retained from original transit admission. */
+        uint64_t transit_previous_hop_id;
+        /* Same edge after the matching gateway ACK owns its return handoff. */
+        uint64_t gateway_ack_forward_next_hop_id;
+    };
     uint32_t gateway_ack_forward_owner_generation;
     uint8_t busy_retry_round;
     bool hop_ack_observed_since_send;
@@ -901,6 +913,9 @@ int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
 bool mesh_relay_tx_active(const struct mesh_relay *relay);
 bool mesh_relay_packet_requires_channel9_payload_event(
     const struct proto_packet *packet);
+bool mesh_relay_packet_can_queue_gateway_report(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet);
 bool mesh_relay_tx_active_local_collection_result(const struct mesh_relay *relay);
 bool mesh_relay_result_bundle_pending(const struct mesh_relay *relay);
 uint32_t mesh_relay_result_bundle_due_ms(const struct mesh_relay *relay);
@@ -923,6 +938,23 @@ int mesh_relay_restore_child_custody_snapshot(
 void mesh_relay_cancel_tx(struct mesh_relay *relay);
 int mesh_relay_cancel_tx_if_matches(struct mesh_relay *relay,
                                     const struct mesh_outbound *out);
+int mesh_relay_bind_transit_previous_hop(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint64_t previous_hop_id);
+/* After the exact transit owner is retained and bound, its physical ingress
+ * edge is authoritative for later gateway controls addressed to that source. */
+int mesh_relay_commit_transit_reverse_route(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint32_t now_ms);
+/* Same reverse-route commit for an exact immutable outbound already retained
+ * by an external queue rather than by relay->pending. */
+int mesh_relay_commit_queued_transit_reverse_route(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *out,
+    uint64_t previous_hop_id,
+    uint32_t now_ms);
 bool mesh_relay_defer_tx(struct mesh_relay *relay,
                          uint32_t now_ms,
                          uint32_t random_value);
@@ -951,6 +983,13 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
                         size_t payload_len,
                         uint32_t now_ms,
                         struct mesh_outbound *out);
+int mesh_relay_retain_channel9_tx_wait(struct mesh_relay *relay,
+                                       const struct proto_packet *packet,
+                                       const uint8_t *payload,
+                                       size_t payload_len,
+                                       uint32_t now_ms,
+                                       uint32_t retry_at_ms,
+                                       struct mesh_outbound *out);
 int mesh_relay_start_result_offer(struct mesh_relay *relay,
                                   const struct proto_packet *packet,
                                   const uint8_t *payload,
@@ -968,9 +1007,9 @@ int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
 void mesh_relay_note_channel9_success(struct mesh_relay *relay,
                                       uint64_t next_hop_id,
                                       uint32_t event_start_ms);
-void mesh_relay_note_channel9_tx(struct mesh_relay *relay,
-                                 uint64_t next_hop_id,
-                                 uint32_t event_start_ms);
+void mesh_relay_note_channel9_unobserved_turn(struct mesh_relay *relay,
+                                              uint64_t next_hop_id,
+                                              uint32_t event_start_ms);
 void mesh_relay_note_channel9_rx(struct mesh_relay *relay,
                                  uint64_t next_hop_id,
                                  uint32_t planned_event_start_ms,

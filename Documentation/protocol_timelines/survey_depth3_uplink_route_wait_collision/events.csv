@@ -1,0 +1,31 @@
+row,start,end,text,style,lane_index
+host,0,24,"Starts full survey\nexpects 3 reports",default,0
+host,24,48,"Receives A + B\nexact host receipts",emphasis,0
+host,48,88,"Waits for C",shaded,0
+host,88,100,"Outer timeout\nno pair plan",shaded,0
+gateway,0,18,"Four bounded\nsurvey-control waves",emphasis,0
+gateway,18,48,"Accepts A + B reports",emphasis,0
+gateway,48,100,"No C report arrives",shaded,0
+anchor_a,0,48,"Direct path delivers\ndiscovery report",emphasis,0
+anchor_a,48,100,"Settled",quiet,0
+anchor_b_up,0,18,"Upstream timing lost\nold result becomes route waiter",shaded,0
+anchor_b_up,18,62,"Waiter retained\nroute repair + zero-delay churn",shaded,0
+anchor_b_up,62,74,"Direct gateway probe\nuses first child slot",shaded,0
+anchor_b_up,74,100,"Same waiter still live\nthrough end of capture",shaded,0
+anchor_b_down,0,42,"Forwards exact survey control\nto C",emphasis,0
+anchor_b_down,42,62,"Accepts C EVENT_PROPOSE\ninstalls downstream cadence",default,0
+anchor_b_down,62,82,"No matching report RX",shaded,0
+anchor_b_down,82,100,"Route owner continues winning",shaded,0
+anchor_c,0,24,"Rejects hop 0 / 1\naccepts exact hop 2",emphasis,0
+anchor_c,24,42,"Runs discovery\nstages valid report",emphasis,0
+anchor_c,42,62,"EVENT_PROPOSE retries\nabout 37 seconds",default,0
+anchor_c,62,74,"Receives EVENT_ACCEPT\ncommits first TX slot",emphasis,0
+anchor_c,74,100,"Keeps report custody\nretries remain bounded",default,0
+ch9,0,62,"No usable child cadence yet",quiet,0
+ch9,62,74,"Accepted cadence",default,0
+ch9,74,80,"C sends report\nB is probing upstream",shaded,0
+ch9,80,100,"C retries at later slots\nB records no report RX",shaded,0
+evidence,0,42,"LIVE PASS\ndepth-3 downlink + report staging",emphasis,0
+evidence,42,74,"CORRELATED ROOT CAUSE\ntwo live owners share first slot",shaded,0
+evidence,74,88,"LIVE FAIL\nC payload never reaches B",shaded,0
+evidence,88,100,"NEXT\nadmission/arbitration regression + HIL",dashed,0

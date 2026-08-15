@@ -253,18 +253,18 @@ survey_worker = function_body(ANCHOR_RUNTIME, "survey_work_handler")
 assert "survey_pair_lease_mark_running_for_role_at(&pair_lease" in survey_worker
 
 # Discovery START is a timed broadcast, so every relay must forward it before
-# claiming its own discovery RF window.  A retryable forward is retained in
-# the eight-retry C5 lane; its worst-case lead is materially larger than the
-# nominal flood wave. Four fixed-origin redrives occur at 10, 20, 30, and
-# 40 seconds. The 90-second execution delay leaves the last wave a complete
-# four-hop path guard plus the measured PHY preparation budget before RF:
+# claiming its own discovery RF window. A retryable forward remains retained
+# in the eight-retry C5 lane, but the preceding Here-I-Am and exact assignment
+# have already proven the route. Four fixed-origin redrives occur at 2, 4, 6,
+# and 8 seconds before the 20-second execution boundary. A node that exhausts
+# the full retry lane is reported absent instead of extending every survey:
 #
 #   one relay = 1400 ms flood wave + 40 ms initial failed turnaround
 #             + (300 + 600 + 1200 + 5 * 2400) ms retry backoff
 #             + 7 * (400 ms wake train + 40 ms failed turnaround)
 #             + 400 ms final wake + 40 ms turnaround + 3 * 40 ms repeats
 #             = 19,180 ms
-#   three relays + 103 ms PHY preparation = 57,643 ms.
+#   three relays + 1,103 ms transport/PHY preparation = 58,643 ms.
 assert "#define MESH_C5_DEFERRED_MAX_RETRIES 8u" in MESH_REPORT
 bounded_control = NODE_COMM[
     NODE_COMM.index("[NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD]") :
@@ -274,37 +274,40 @@ assert ".retry_delay_ms = 200u" in bounded_control
 assert ".retry_backoff_shift_cap = 3u" in bounded_control
 retry_maxima_ms = (300, 600, 1200, 2400, 2400, 2400, 2400, 2400)
 per_relay_ms = 1400 + 40 + sum(retry_maxima_ms) + 7 * (400 + 40) + 400 + 40 + 3 * 40
-full_ttl_lead_ms = 3 * per_relay_ms + 103
+transport_preempt_budget_ms = 1000
+phy_setup_and_margin_ms = 63 + 40
+phy_prep_budget_ms = transport_preempt_budget_ms + phy_setup_and_margin_ms
+full_ttl_lead_ms = 3 * per_relay_ms + phy_prep_budget_ms
 assert per_relay_ms == 19_180
-assert full_ttl_lead_ms == 57_643
+assert phy_prep_budget_ms == 1_103
+assert full_ttl_lead_ms == 58_643
 origin_redrive_count = 4
-control_hop_budget_ms = 10_000
-phy_prep_budget_ms = 103
-default_start_delay_ms = 90_000
+control_hop_budget_ms = 2_000
+default_start_delay_ms = 20_000
 origin_redrive_offsets_ms = [
     wave * control_hop_budget_ms
     for wave in range(1, origin_redrive_count + 1)
 ]
-assert origin_redrive_offsets_ms == [10_000, 20_000, 30_000, 40_000]
+assert origin_redrive_offsets_ms == [2_000, 4_000, 6_000, 8_000]
 assert (
     origin_redrive_offsets_ms[-1]
     + 4 * control_hop_budget_ms
     + phy_prep_budget_ms
     < default_start_delay_ms
 )
-assert full_ttl_lead_ms < default_start_delay_ms
+assert full_ttl_lead_ms > default_start_delay_ms
 assert "#define SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT 4u" in SURVEY_HEADER
-assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 90000u" in OPERATION_POLICY
-assert "OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 90000u" in OPERATION_POLICY
-assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 90000u" in OPERATION_POLICY
+assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 20000u" in OPERATION_POLICY
+assert "OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 20000u" in OPERATION_POLICY
+assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 20000u" in OPERATION_POLICY
 assert re.search(
     r"#define\s+SURVEY_DISCOVERY_START_DELAY_MS\s+\\?\s*"
     r"OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS",
     APP_CONFIG,
 )
-assert "DISCOVERY_START_DELAY_MIN_MS = 90_000" in GUI_OPERATION_POLICY
-assert "DISCOVERY_START_DELAY_MAX_MS = 90_000" in GUI_OPERATION_POLICY
-assert "DISCOVERY_DEFAULT_START_DELAY_MS = 90_000" in GUI_OPERATION_POLICY
+assert "DISCOVERY_START_DELAY_MIN_MS = 20_000" in GUI_OPERATION_POLICY
+assert "DISCOVERY_START_DELAY_MAX_MS = 20_000" in GUI_OPERATION_POLICY
+assert "DISCOVERY_DEFAULT_START_DELAY_MS = 20_000" in GUI_OPERATION_POLICY
 
 # No production runtime retains a separate GO phase, codec, delivery handle, or
 # broadcast submit path. Only the explicit retired wire ID may remain elsewhere.

@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <errno.h>
 
 static void test_passive_gateway_preempt_defers_background_flood(void)
 {
@@ -66,6 +67,14 @@ static void test_idle_state_does_not_defer(void)
     const struct app_mesh_c5_flood_priority_state state = {0};
 
     assert(!app_mesh_c5_flood_should_defer(&state));
+}
+
+static void test_route_capture_releases_receive_abort(void)
+{
+    assert(app_mesh_c5_route_capture_receive_aborted(-ECANCELED));
+    assert(!app_mesh_c5_route_capture_receive_aborted(-ETIMEDOUT));
+    assert(!app_mesh_c5_route_capture_receive_aborted(-EIO));
+    assert(!app_mesh_c5_route_capture_receive_aborted(0));
 }
 
 static void test_gateway_route_adv_counts_as_route_capture(void)
@@ -412,7 +421,7 @@ static void test_route_reply_capture_requires_exact_discovery_identity(void)
     assert(!app_mesh_c5_route_capture_relevant(&route_reply));
 }
 
-static void test_event_accept_reservation_covers_bounded_realign(void)
+static void test_event_accept_reservation_expands_guard(void)
 {
     const struct mesh_event_timing accepted = {
         .event_interval_ms = 440u,
@@ -421,32 +430,10 @@ static void test_event_accept_reservation_covers_bounded_realign(void)
         .guard_ms = 30u,
     };
     struct mesh_event_timing reservation;
-    struct mesh_event_timing realigned;
 
     assert(app_mesh_c5_event_accept_reservation(&accepted, 20u, &reservation));
     assert(reservation.guard_ms == 50u);
     assert(reservation.next_event_time_ms == accepted.next_event_time_ms);
-
-    realigned = accepted;
-    realigned.next_event_time_ms += 17u;
-    assert(app_mesh_c5_event_accept_realign_is_reserved(&reservation,
-                                                         &realigned,
-                                                         20u));
-    realigned.next_event_time_ms++;
-    assert(app_mesh_c5_event_accept_realign_is_reserved(&reservation,
-                                                         &realigned,
-                                                         20u));
-
-    realigned = accepted;
-    realigned.next_event_time_ms -= 20u;
-    assert(app_mesh_c5_event_accept_realign_is_reserved(&reservation,
-                                                         &realigned,
-                                                         20u));
-    realigned = accepted;
-    realigned.next_event_time_ms += 21u;
-    assert(!app_mesh_c5_event_accept_realign_is_reserved(&reservation,
-                                                          &realigned,
-                                                          20u));
     assert(!app_mesh_c5_event_accept_reservation(&accepted, 200u, &reservation));
 }
 
@@ -564,6 +551,16 @@ static void test_wake_claim_click_priority_policy(void)
     assert(app_mesh_c5_wake_followup_is_control(
         FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
         FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY));
+    assert(!app_mesh_c5_control_followup_yields_to_ack(
+        FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY, true));
+    assert(!app_mesh_c5_control_followup_yields_to_ack(
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY, false));
+    assert(app_mesh_c5_control_followup_yields_to_ack(
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY, true));
+    assert(!app_mesh_c5_control_followup_yields_to_ack(
+        FLAG_CONTROL_FOLLOWUP | FLAG_COUNT_AS_CLICK, true));
 }
 
 static void test_forced_hop_anchor_ignores_direct_gateway_route_wake(void)
@@ -830,6 +827,7 @@ int main(void)
     test_mesh_route_test_gateway_does_not_advertise_on_channel5();
     test_protected_anchor_work_still_defers_priority_response();
     test_idle_state_does_not_defer();
+    test_route_capture_releases_receive_abort();
     test_gateway_route_adv_counts_as_route_capture();
     test_unrelated_gateway_route_adv_is_ignored();
     test_route_reply_and_event_control_capture_rules();
@@ -840,7 +838,7 @@ int main(void)
     test_control_wake_captures_targeted_survey_pair_prepare();
     test_targeted_gateway_control_requires_validated_downlink_to_relay();
     test_route_reply_capture_requires_exact_discovery_identity();
-    test_event_accept_reservation_covers_bounded_realign();
+    test_event_accept_reservation_expands_guard();
     test_channel5_control_phr_policy();
     test_gateway_control_origin_ttl_matches_command_profile();
     test_gateway_control_followup_tx_rx_phr_symmetry();

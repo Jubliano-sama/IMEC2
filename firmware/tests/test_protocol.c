@@ -123,7 +123,7 @@ static void test_extended_packet_round_trip(void)
 
     const struct proto_packet packet = {
         .msg_type = MSG_MESH_DATA,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .flags = 0u,
         .src_id = 0x1122334455667788ull,
         .dst_id = 0x9999888877776666ull,
         .session_id = 0xABCDEF01u,
@@ -1057,7 +1057,7 @@ static void test_report_validators_reject_schema_smuggling_and_mismatch(void)
 
     packet = (struct proto_packet) {
         .msg_type = MSG_ANCHOR_HEARTBEAT,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .flags = 0u,
         .src_id = source_id,
         .dst_id = gateway_id,
         .session_id = 7u,
@@ -1119,6 +1119,13 @@ static void test_report_validators_reject_schema_smuggling_and_mismatch(void)
     packet.payload_len = (uint16_t)payload_len;
     assert(proto_anchor_heartbeat_validate(&packet, payload, payload_len) ==
            PROTO_OK);
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
+    assert(proto_anchor_heartbeat_validate(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+    packet.flags = FLAG_DIAGNOSTIC;
+    assert(proto_anchor_heartbeat_validate(&packet, payload, payload_len) ==
+           PROTO_ERR_MALFORMED);
+    packet.flags = 0u;
 
     assert(tlv_append_u64(payload, sizeof(payload), &payload_len,
                           TLV_GATEWAY_ID, gateway_id) == PROTO_OK);

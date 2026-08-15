@@ -821,9 +821,24 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertIn("app_node_comm_service_policy_locked", account)
         self.assertIn("app_node_comm_reap_auto_terminal_events_locked", account)
 
+        retransmit_action = report.rindex(
+            "if (result->actions & MESH_RELAY_ACTION_RETRANSMIT)",
+            0,
+            report.index("app_node_comm_backend_retry_preflight"),
+        )
+        retransmit_snapshot = report.index(
+            "struct mesh_outbound retransmit_snapshot = result->retransmit;",
+            retransmit_action,
+        )
+        retransmit_pointer = report.index(
+            "struct mesh_outbound *retransmit = &retransmit_snapshot;",
+            retransmit_snapshot,
+        )
         retransmit = report.index("app_node_comm_backend_retry_preflight")
         send = report.index("mesh_send_outbound_with_release", retransmit)
         complete = report.index("app_node_comm_complete_backend_attempt", send)
+        self.assertLess(retransmit_snapshot, retransmit_pointer)
+        self.assertLess(retransmit_pointer, retransmit)
         self.assertLess(retransmit, send)
         self.assertLess(send, complete)
         self.assertIn("backend_rf_started", report[send:complete + 160])

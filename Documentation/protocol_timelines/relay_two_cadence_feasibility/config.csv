@@ -1,0 +1,11 @@
+key,value
+title,"ONE RELAY, TWO CHANNEL-9 RHYTHMS: 520 MS LEAVES NO USABLE CHANNEL-5 GAP"
+caption,"Each Channel-9 turn owns 60 ms of early retune, 120 ms of event window, and 60 ms of trailing receive time. A usable Channel-5 opportunity needs another 60 ms transition reserve before its 20 ms receive slice."
+key_point,"A 520 ms cycle leaves only 20 ms between adjacent 240 ms Channel-9 owners, but the scanner needs 80 ms: 60 ms to retune and 20 ms to listen. A 640 ms cycle contains two owners plus two complete 80 ms Channel-5 opportunities without adding another radio-owner exception."
+start,0
+end,640
+width,4300
+unit,ms
+axis_caption_width,190
+row_label_width,300
+max_inline_lines,4

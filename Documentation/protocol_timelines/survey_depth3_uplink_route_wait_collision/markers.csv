@@ -1,0 +1,13 @@
+time,label,caption,kind,row
+0,survey command,gateway begins bounded discovery,axis,
+18,B waiter stored,upstream timing is absent,axis,
+24,C admitted,exact hop-2 control accepted,axis,
+42,C report staged,local custody is valid,axis,
+62,EVENT_ACCEPT,B admits downstream cadence,axis,
+70,route probe,B's older upstream owner takes radio,axis,
+76,first C TX,no corresponding B receive,axis,
+84,retries,C retains and retransmits the same report,axis,
+100,timeout,gateway still has only A and B,axis,
+18,live to capture end,,row,anchor_b_up
+62,accepted,,row,anchor_b_down
+76,missed,,row,ch9

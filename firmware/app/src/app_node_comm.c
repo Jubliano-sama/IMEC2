@@ -90,6 +90,7 @@ static bool node_comm_backend_ready;
 static bool node_comm_delivery_backend_active;
 static uint32_t node_comm_delivery_backend_active_handle;
 static uint32_t node_comm_reliable_uplink_inflight_handle;
+static bool node_comm_transport_preempt_active;
 static struct app_node_comm_control_response_health
     node_comm_control_response_health;
 #define APP_NODE_COMM_DURABLE_ATTEMPT_OWNER_CAPACITY 2u
@@ -1411,6 +1412,22 @@ static int app_node_comm_normalize_schedule_result(int ret)
     return ret < 0 ? ret : 0;
 }
 
+/*
+ * A survey transport preemption deliberately closes the mesh workqueue while
+ * retaining every accepted owner. Reservations created or committed inside
+ * that bounded pause are therefore accepted without an immediate work
+ * submission; the transport-preemption end path rearms the shared delivery
+ * scheduler as soon as transport reopens. Every other scheduling failure
+ * still rolls admission back before the caller receives a capability.
+ */
+static int app_node_comm_schedule_reservation_locked(uint64_t now_ms)
+{
+    int ret = app_node_comm_normalize_schedule_result(
+        app_node_comm_schedule_delivery_locked(now_ms));
+
+    return ret == -ESHUTDOWN && node_comm_transport_preempt_active ? 0 : ret;
+}
+
 static void app_node_comm_retain_delivery_schedule_locked(
     uint64_t now_ms,
     const char *source)
@@ -1804,6 +1821,7 @@ int app_node_comm_init(const app_node_comm_callbacks *callbacks)
     node_comm_delivery_backend_active = false;
     node_comm_delivery_backend_active_handle = 0u;
     node_comm_reliable_uplink_inflight_handle = 0u;
+    node_comm_transport_preempt_active = false;
     node_comm_next_reservation_token = 0u;
     node_comm_next_backend_release_request_token = 0u;
     node_comm_terminal_owner_watchdog_reported = false;
@@ -2275,6 +2293,22 @@ int app_node_comm_submit_reliable_uplink(
         client_token, handle_out == NULL, false, handle_out);
 }
 
+int app_node_comm_submit_best_effort_uplink(
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token)
+{
+    if (envelope == NULL || absolute_deadline_ms == 0u ||
+        envelope->payload_len > APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN ||
+        envelope->packet.payload_len != envelope->payload_len ||
+        !mesh_id_is_unicast(envelope->packet.dst_id)) {
+        return -EINVAL;
+    }
+    return app_node_comm_submit_delivery_internal(
+        envelope, NODE_COMM_PROFILE_BEST_EFFORT, absolute_deadline_ms,
+        client_token, true, false, NULL);
+}
+
 int app_node_comm_submit_protocol_response(
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
@@ -2499,9 +2533,7 @@ static int app_node_comm_reserve_deliveries(
                 ret = -EEXIST;
             } else {
                 /* Same semantic owner retries receive the same capabilities. */
-                app_node_comm_retain_delivery_schedule_locked(
-                    now_ms, "reservation-coalesced");
-                ret = 0;
+                ret = app_node_comm_schedule_reservation_locked(now_ms);
             }
         } else {
             expires_at_ms = app_node_comm_reservation_expires_at(now_ms);
@@ -2532,8 +2564,7 @@ static int app_node_comm_reserve_deliveries(
                     record, &reservation_leases[i]);
             }
             if (ret == 0) {
-                ret = app_node_comm_normalize_schedule_result(
-                    app_node_comm_schedule_delivery_locked(now_ms));
+                ret = app_node_comm_schedule_reservation_locked(now_ms);
             }
             if (ret < 0) {
                 for (size_t i = 0u; i < reservation_count; i++) {
@@ -2681,8 +2712,11 @@ static int app_node_comm_commit_delivery_reservation(
                     &node_comm_policy, handle, &cancelled);
             }
             if (ret == 0) {
-                ret = app_node_comm_normalize_schedule_result(
-                    app_node_comm_schedule_delivery_locked(now_ms));
+                ret = reservation_profile ==
+                              NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ?
+                          app_node_comm_schedule_reservation_locked(now_ms) :
+                          app_node_comm_normalize_schedule_result(
+                              app_node_comm_schedule_delivery_locked(now_ms));
                 if (ret < 0) {
                     (void)node_comm_cancel(
                         &node_comm_policy, handle, now_ms);
@@ -3089,10 +3123,13 @@ int app_node_comm_service_deliveries(void)
                attempt_record.profile ==
                    NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
                attempt_record.profile ==
-                   NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) {
+                   NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE ||
+               attempt_record.profile == NODE_COMM_PROFILE_BEST_EFFORT) {
         ret = mesh_try_send_reliable_uplink_view(
             &attempt_view,
-            "node-comm-reliable-uplink",
+            attempt_record.profile == NODE_COMM_PROFILE_BEST_EFFORT ?
+                "node-comm-best-effort-uplink" :
+                "node-comm-reliable-uplink",
             &observation,
             &scheduled_retry_delay_ms);
     } else {
@@ -3213,6 +3250,14 @@ int app_node_comm_service_deliveries(void)
                                                               .result_at_ms);
             }
         }
+    } else if (attempt_record.profile == NODE_COMM_PROFILE_BEST_EFFORT) {
+        /* Best-effort traffic gets one immediate backend opportunity. A
+         * pre-RF deferral must not retain capacity or create route/radio work
+         * behind click, survey, or reliable protocol traffic. */
+        state_ret = node_comm_lease_complete(&node_comm_policy,
+                                              &lease,
+                                              NODE_COMM_DELIVERY_FAILED,
+                                              observation.result_at_ms);
     } else if (ret == 0 || app_node_comm_backend_error_retryable(ret)) {
         if (scheduled_retry_delay_ms > 0u) {
             uint64_t not_before_ms =
@@ -4140,6 +4185,101 @@ void app_node_comm_delivery_health_get(app_node_comm_delivery_health *health)
 bool app_node_comm_policy_running(void)
 {
     return app_node_comm_require_running() == 0;
+}
+
+int app_node_comm_transport_preempt_begin(void)
+{
+    int ret = app_node_comm_sync_lock();
+
+    if (ret < 0) {
+        return ret;
+    }
+    if (node_comm_state(&node_comm_policy) != NODE_COMM_RUNNING ||
+        !node_comm_backend_ready) {
+        ret = -ESHUTDOWN;
+    } else if (node_comm_transport_preempt_active) {
+        ret = 0;
+    } else if (mesh_transport_pause_active()) {
+        /* Never resume a fail-stop or an independently owned lifecycle pause. */
+        ret = -ESHUTDOWN;
+    } else {
+        ret = mesh_transport_pause_preserving_queued();
+        if (ret == 0) {
+            node_comm_transport_preempt_active = true;
+        }
+    }
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+int app_node_comm_transport_preempt_ready(void)
+{
+    enum radio_guard_uwb_client radio_owner;
+    int ret = app_node_comm_sync_lock();
+
+    if (ret < 0) {
+        return ret;
+    }
+    if (!node_comm_transport_preempt_active) {
+        ret = -EACCES;
+        goto out;
+    }
+    if (node_comm_state(&node_comm_policy) != NODE_COMM_RUNNING ||
+        !node_comm_backend_ready) {
+        ret = -ESHUTDOWN;
+        goto out;
+    }
+    if (!mesh_transport_quiesced()) {
+        radio_owner = radio_guard_uwb_owner_client();
+        if (!anchor_uwb_window_active() &&
+            !anchor_click_window_active() &&
+            (radio_owner == RADIO_GUARD_UWB_CLIENT_MESH_RX ||
+             radio_owner == RADIO_GUARD_UWB_CLIENT_MESH_TX)) {
+            dwm3000_driver_request_receive_abort(
+                DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+        }
+        ret = -EBUSY;
+        goto out;
+    }
+
+    dwm3000_driver_clear_receive_abort(
+        DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    if (dwm3000_driver_receive_abort_pending()) {
+        ret = -EBUSY;
+        goto out;
+    }
+    radio_guard_uwb_admission_resume();
+    ret = 0;
+
+out:
+    app_node_comm_sync_unlock();
+    return ret;
+}
+
+void app_node_comm_transport_preempt_end(void)
+{
+    if (app_node_comm_sync_lock() < 0) {
+        app_watchdog_stop_feeding();
+        return;
+    }
+    if (!node_comm_transport_preempt_active) {
+        app_node_comm_sync_unlock();
+        return;
+    }
+
+    dwm3000_driver_clear_receive_abort(
+        DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    if (node_comm_state(&node_comm_policy) == NODE_COMM_RUNNING &&
+        node_comm_backend_ready) {
+        /* Holding the lifecycle lock makes resume atomic with pause_request. */
+        mesh_transport_resume();
+        app_node_comm_retain_delivery_schedule_locked(
+            app_node_comm_now_ms(), "transport-preempt-end");
+    } else {
+        radio_guard_uwb_admission_pause();
+    }
+    node_comm_transport_preempt_active = false;
+    app_node_comm_sync_unlock();
 }
 
 int app_node_comm_pause_request(uint32_t owner,

@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -96,6 +99,20 @@ def _unguarded_queue_symbol_lines(source: str) -> list[int]:
     return failures
 
 
+def _legacy_stack_diag_hash(preset: str) -> str:
+    identity = "|".join(
+        (
+            preset,
+            "abc1234",
+            "2026-08-14T12:34:56",
+            "nrf52833dk_nrf52833",
+            "GNU",
+            "12.2.0",
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 class ForcedHopRamPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -180,6 +197,79 @@ class ForcedHopRamPolicyTests(unittest.TestCase):
             "mesh_relay_note_gateway_control_reverse_route("
         )
         self.assertLess(hop_gate, reverse_route)
+
+    def test_stack_diag_identity_hashes_only_forced_anchor_depth(self) -> None:
+        cmake = APP_CMAKE.read_text(encoding="utf-8")
+        timestamp = 'string(TIMESTAMP IMEC_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%S")'
+        start = cmake.index(timestamp) + len(timestamp)
+        end = cmake.index("target_compile_definitions(app PRIVATE", start)
+        identity_block = cmake[start:end]
+        presets = (
+            "mesh_anchor_forcedhop",
+            "mesh_anchor",
+            "mesh_gateway",
+            "mesh_clicker",
+        )
+        calls = "\n".join(
+            f'imec_test_hash("{preset}" "{hops}")'
+            for preset in presets
+            for hops in (1, 2)
+        )
+        script_text = f'''function(imec_test_hash IMEC_BUILD_PRESET IMEC_FORCED_GATEWAY_RELAY_HOPS)
+set(IMEC_GIT_VERSION "abc1234")
+set(IMEC_BUILD_TIMESTAMP "2026-08-14T12:34:56")
+set(BOARD "nrf52833dk_nrf52833")
+set(CMAKE_C_COMPILER_ID "GNU")
+set(CMAKE_C_COMPILER_VERSION "12.2.0")
+{identity_block}
+message(STATUS "IMEC_TEST_HASH=${{IMEC_BUILD_PRESET}}:${{IMEC_FORCED_GATEWAY_RELAY_HOPS}}:${{IMEC_STACK_DIAG_ID_HASH}}")
+endfunction()
+{calls}
+'''
+        with tempfile.TemporaryDirectory(prefix="imec-stack-diag-") as temporary:
+            script = Path(temporary) / "identity.cmake"
+            script.write_text(script_text, encoding="utf-8")
+            completed = subprocess.run(
+                ["cmake", "-P", str(script)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        hashes = {
+            (preset, int(hops)): digest
+            for preset, hops, digest in re.findall(
+                r"IMEC_TEST_HASH=([^:]+):([12]):([0-9a-f]{64})",
+                completed.stdout + completed.stderr,
+            )
+        }
+        self.assertEqual(len(presets) * 2, len(hashes))
+
+        forced_one = hashes[("mesh_anchor_forcedhop", 1)]
+        forced_two = hashes[("mesh_anchor_forcedhop", 2)]
+        self.assertNotEqual(
+            forced_one,
+            forced_two,
+            "forced-hop depths produced the same diagnostic build identity",
+        )
+        self.assertNotEqual(
+            _legacy_stack_diag_hash("mesh_anchor_forcedhop"),
+            forced_one,
+            "forced-hop depth did not extend the legacy identity input",
+        )
+
+        for preset in presets[1:]:
+            with self.subTest(preset=preset):
+                expected = _legacy_stack_diag_hash(preset)
+                self.assertEqual(
+                    expected,
+                    hashes[(preset, 1)],
+                    "non-forced preset identity changed from the legacy input",
+                )
+                self.assertEqual(
+                    expected,
+                    hashes[(preset, 2)],
+                    "irrelevant forced-hop depth changed a non-forced identity",
+                )
 
 
 if __name__ == "__main__":

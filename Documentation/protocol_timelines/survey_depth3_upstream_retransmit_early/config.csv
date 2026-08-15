@@ -1,0 +1,11 @@
+key,value
+title,"DEPTH-3 SURVEY UPLINK: PREPARATION IS NOT TRANSMISSION"
+caption,"Figure: Exact ordering reconstructed from the four-probe RTT capture. Times are normalized to B's negotiated upstream event start; the B-to-A clock offset is measured from matching event counter 112025208."
+key_point,"B receives C's valid discovery report and retains it. The retry wakes at -60 ms so the radio can be configured, but the old path transmits at -58 ms while A is still configuring and 17 ms before A arms RX. The fixed path keeps the same custody and waits until the negotiated +15 ms send offset, inside A's complete receive window."
+start,-320
+end,140
+width,3600
+unit,ms
+axis_caption_width,175
+row_label_width,245
+max_inline_lines,4

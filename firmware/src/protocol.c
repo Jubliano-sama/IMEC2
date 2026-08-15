@@ -1200,7 +1200,7 @@ int proto_anchor_heartbeat_validate(const struct proto_packet *packet,
         return PROTO_ERR_ARG;
     }
     if (packet->msg_type != MSG_ANCHOR_HEARTBEAT ||
-        packet->flags != FLAG_GATEWAY_ACK_REQUIRED ||
+        packet->flags != 0u ||
         packet->src_id == 0u || packet->dst_id == 0u ||
         packet->src_id == packet->dst_id || packet->session_id == 0u ||
         packet->seq == 0u || packet->ttl == 0u ||

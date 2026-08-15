@@ -1,0 +1,8 @@
+time,label,caption,kind,row
+0 s,0 s,Survey admitted,axis,
+90 s,90 s,Discovery execution,axis,
+111.42 s,111 s,Measured all-report proof,axis,
+312.42 s,312 s,Projected three-pair ranging complete,axis,
+330 s,330 s,Terminal settlement target,axis,
+360 s,6 min,Hard operation deadline,axis,
+359 s,old first pair starts,No remaining pair budget,row,old_pair1

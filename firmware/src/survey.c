@@ -15,6 +15,9 @@ _Static_assert(SURVEY_GATEWAY_PAIR_MAX_RERUNS < UINT8_MAX,
 _Static_assert(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS >=
                    MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS,
                "survey control base must cover gateway-ACK custody retries");
+_Static_assert(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS >=
+                   ROUTE_GATEWAY_ACK_PROGRESS_TIMEOUT_MS,
+               "survey control base must cover a proved multi-hop ACK return");
 _Static_assert(PROTO_TLV_U32_ENCODED_LEN +
                    (2u * PROTO_TLV_U64_ENCODED_LEN) +
                    PROTO_TLV_U16_ENCODED_LEN +

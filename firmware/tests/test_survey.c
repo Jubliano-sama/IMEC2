@@ -816,7 +816,7 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 90000u,
+        .start_delay_ms = 20000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 4u,
@@ -878,7 +878,7 @@ static void test_discovery_start_rejects_conflicting_singletons(void)
     };
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 90000u,
+        .start_delay_ms = 20000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 4u,
@@ -910,7 +910,7 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 90000u,
+        .start_delay_ms = 20000u,
         .slot_ms = 40u,
         .slot_count = 50u,
         .round_count = 2u,
@@ -918,7 +918,7 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
     const struct operation_policy policy = {
         .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
         .value.discovery = {
-            .start_delay_ms = 90000u,
+            .start_delay_ms = 20000u,
             .slot_ms = 40u,
             .slot_count = 50u,
             .round_count = 2u,
@@ -3112,6 +3112,14 @@ static void test_gateway_context_retains_only_accepted_reverse_hints(void)
 
 static void test_gateway_control_timeout_tracks_accepted_route_depth(void)
 {
+    assert(NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS == 10000u);
+    assert(SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS == 1000u);
+    assert(SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS <
+           NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS);
+    assert(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS == 30000u);
+    assert(SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS == 15000u);
+    assert(SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS == 90000u);
+
     assert(survey_gateway_hop_count_from_report_ttl(SURVEY_DEFAULT_TTL) == 1u);
     assert(survey_gateway_hop_count_from_report_ttl(
                SURVEY_DEFAULT_TTL - 1u) == 2u);
@@ -3134,6 +3142,11 @@ static void test_gateway_control_timeout_tracks_accepted_route_depth(void)
            SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
     assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL + 1u) ==
            SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+    assert(survey_pair_control_timeout_ms(1u) == 30000u);
+    assert(survey_pair_control_timeout_ms(2u) == 45000u);
+    assert(survey_pair_control_timeout_ms(3u) == 60000u);
+    assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL) == 75000u);
+    assert(4u * SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS == 4000u);
 
     assert(survey_pair_control_round_trip_timeout_ms(1u) ==
            SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +

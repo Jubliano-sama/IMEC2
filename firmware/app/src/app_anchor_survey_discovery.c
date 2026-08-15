@@ -240,7 +240,7 @@ int app_anchor_survey_discovery_init(
     const struct app_anchor_survey_discovery_ops *ops)
 {
     if (ops == NULL || ops->abort_requested == NULL ||
-        ops->abort_pair == NULL || ops->preempt_radio == NULL ||
+        ops->abort_pair == NULL ||
         ops->admit_start == NULL || ops->queue_start == NULL ||
         ops->schedule_work_ms == NULL ||
         ops->boot_incarnation == NULL ||
@@ -1397,7 +1397,6 @@ void app_anchor_survey_discovery_handle_start(
     }
 
     discovery_ops.abort_pair();
-    discovery_ops.preempt_radio(config.survey_id);
     now_ms = k_uptime_get_32();
     if (uptime_deadline_reached(now_ms, start_at_ms) ||
         uptime_ms_until_deadline(now_ms, start_at_ms) <=

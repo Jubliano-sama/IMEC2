@@ -336,7 +336,8 @@ static int mesh_prepare_event_control_record(
     uint8_t msg_type,
     const struct mesh_event_timing *accepted_timing,
     uint32_t session_id,
-    uint16_t sequence)
+    uint16_t sequence,
+    uint16_t phase_shift_ms)
 {
     struct mesh_event_timing timing = {0};
     size_t payload_len = 0u;
@@ -391,6 +392,15 @@ static int mesh_prepare_event_control_record(
         if (ret != PROTO_OK || payload_len > UINT8_MAX) {
             return -EMSGSIZE;
         }
+    } else if (phase_shift_ms != 0u) {
+        ret = tlv_append_u16(record->payload,
+                             sizeof(record->payload),
+                             &payload_len,
+                             TLV_MESH_EVENT_PHASE_SHIFT_MS,
+                             phase_shift_ms);
+        if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+            return -EMSGSIZE;
+        }
     }
     ret = mesh_init_event_control(&record->packet,
                                   msg_type,
@@ -412,6 +422,95 @@ static int mesh_prepare_event_control_record(
     record->valid = true;
     return 0;
 }
+
+#if DEVICE_ROLE == ROLE_ANCHOR
+/*
+ * A route wake can consume most of one Channel-9 interval.  EVENT_PROPOSE
+ * carries relative time, so selecting its phase before that wake would move
+ * the decoded cadence by the wake latency and can collide with another live
+ * link.  Finalize the immutable proposal after the wake/turnaround, directly
+ * before its first physical send.  Once one send completes, retries retain
+ * those exact bytes and the first successfully transmitted phase.
+ */
+static __attribute__((noinline)) int mesh_event_propose_prepare_immediate_send(
+    const struct mesh_outbound *outbound)
+{
+    struct mesh_event_timing timing = {0};
+    struct mesh_event_control_record *record = &mesh_event_propose_record;
+    size_t payload_len = 0u;
+    uint32_t now_ms;
+    uint32_t timing_reference_ms;
+    int ret;
+
+    if (outbound != &mesh_event_control_retry_scratch ||
+        !record->valid || record->packet.msg_type != MSG_MESH_EVENT_PROPOSE ||
+        !mesh_event_propose_retry.active ||
+        mesh_event_propose_retry.peer_id != record->peer_id) {
+        return -ESTALE;
+    }
+    if (record->transmit_phase_frozen ||
+        mesh_event_propose_retry.rf_attempts != 0u) {
+        return 0;
+    }
+
+    now_ms = k_uptime_get_32();
+    timing_reference_ms =
+        mesh_event_control_tx_reference_ms(MSG_MESH_EVENT_PROPOSE, now_ms);
+    ret = mesh_prepare_event_timing(&timing, timing_reference_ms);
+    if (ret != PROTO_OK ||
+        !mesh_event_timing_bind_proposal_session(
+            &timing, record->packet.session_id)) {
+        return -EINVAL;
+    }
+    ret = mesh_relay_check_channel9_timing_guarded_direction(
+        &mesh_runtime,
+        record->peer_id,
+        &timing,
+        MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM,
+        MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
+        NULL);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+
+    memset(record->payload, 0, sizeof(record->payload));
+    ret = mesh_append_event_timing_tlvs_at(
+        record->payload,
+        sizeof(record->payload),
+        &payload_len,
+        &timing,
+        now_ms);
+    if (ret == PROTO_OK) {
+        ret = tlv_append_u64(record->payload,
+                             sizeof(record->payload),
+                             &payload_len,
+                             TLV_MESH_EVENT_BOOT_NONCE,
+                             mesh_event_boot_nonce());
+    }
+    if (ret != PROTO_OK || payload_len > UINT8_MAX) {
+        return -EMSGSIZE;
+    }
+
+    mesh_event_propose_record.timing = timing;
+    mesh_event_propose_record.encoded_delay_ms =
+        uptime_ms_until_deadline(now_ms, timing.next_event_time_ms);
+    mesh_event_propose_record.payload_len = (uint8_t)payload_len;
+    mesh_event_propose_record.packet.payload_len = (uint8_t)payload_len;
+    mesh_event_propose_retry.request = mesh_event_request_identity(
+        &mesh_event_propose_record.packet,
+        mesh_event_propose_record.payload,
+        mesh_event_propose_record.payload_len);
+
+    mesh_event_control_retry_scratch.packet =
+        mesh_event_propose_record.packet;
+    memcpy(mesh_event_control_retry_scratch.payload,
+           mesh_event_propose_record.payload,
+           mesh_event_propose_record.payload_len);
+    mesh_event_control_retry_scratch.payload_len =
+        mesh_event_propose_record.payload_len;
+    return 0;
+}
+#endif
 
 static int mesh_send_event_control_record(
     const struct mesh_event_control_record *record,
@@ -815,16 +914,10 @@ static int mesh_event_accept_promote_forwarded_ack_repair(
     uint64_t peer_id,
     const struct app_mesh_c5_tx_authorization_token *authorization)
 {
-    const struct app_mesh_ch9_ack_batch *batch;
     uint32_t now_ms;
     int schedule_ret;
 
-    if (authorization == NULL || !authorization->valid ||
-        authorization->kind !=
-            APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR ||
-        authorization->peer_id != peer_id) {
-        return -EINVAL;
-    }
+    /* The sole caller has just matched this token to the live ACK owner. */
     if (!mesh_event_accept_retry.retry.active ||
         mesh_event_accept_retry.replay_existing_response ||
         !mesh_event_accept_retry.response.valid ||
@@ -834,22 +927,6 @@ static int mesh_event_accept_promote_forwarded_ack_repair(
             MSG_MESH_EVENT_ACCEPT) {
         return -ENOENT;
     }
-
-    batch = app_mesh_ch9_ack_table_get_peer(&mesh_ch9_ack_table, peer_id);
-    if (!app_mesh_ch9_c5_repair_owner_matches(
-            authorization,
-            &mesh_runtime.pending,
-            mesh_relay_tx_active(&mesh_runtime),
-            batch)) {
-        return -ESTALE;
-    }
-    if (mesh_event_accept_retry.c5_repair_authorization.valid &&
-        !app_mesh_c5_tx_authorization_token_equal(
-            &mesh_event_accept_retry.c5_repair_authorization,
-            authorization)) {
-        return -EBUSY;
-    }
-
     now_ms = k_uptime_get_32();
     if (app_mesh_event_retry_expired(&mesh_event_accept_retry.retry,
                                      now_ms)) {
@@ -991,6 +1068,10 @@ static int mesh_propose_event_after_channel5_contact_authorized(
     if (mesh_event_accept_retry.retry.active &&
         !mesh_event_accept_retry.replay_existing_response &&
         mesh_event_accept_retry.retry.peer_id == peer_id) {
+        if (authorization != NULL && authorization->valid) {
+            return mesh_event_accept_promote_forwarded_ack_repair(
+                peer_id, authorization);
+        }
         return -EAGAIN;
     }
 
@@ -1033,6 +1114,7 @@ static int mesh_propose_event_after_channel5_contact_authorized(
                                                 peer_id,
                                                 MSG_MESH_EVENT_PROPOSE,
                                                 NULL,
+                                                0u,
                                                 0u,
                                                 0u);
         if (ret < 0) {
@@ -1098,19 +1180,27 @@ static int mesh_propose_event_after_channel5_contact_authorized(
         status_debug_note("DBG_EVENT_PROPOSE_SENT\n");
     }
     /*
-     * The immutable wire record carries a relative delay.  Retain the phase
-     * that this successful RF transmission actually proposed so ACCEPT can
-     * confirm it without moving the connection by the response-queue latency.
+     * The first successful RF transmission owns the immutable proposal
+     * phase. Retries send the same bytes so the peer can replay its ACCEPT;
+     * moving only our local phase on a later retry would split event parity.
      */
-    mesh_event_propose_record.timing = transmitted_timing;
+    if (!mesh_event_propose_record.transmit_phase_frozen) {
+        mesh_event_propose_record.timing = transmitted_timing;
+        mesh_event_propose_record.transmit_phase_frozen = true;
+    }
 
     if (require_accept) {
+        /* The retry owner was created before wake/contact preparation. Once
+         * the immutable PROPOSE reaches RF, keep its correlation alive for
+         * the complete queue-plus-ACCEPT listener that starts now. */
+        mesh_event_propose_retry.deadline_ms =
+            k_uptime_get_32() + MESH_EVENT_NEGOTIATION_DEADLINE_MS;
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_EVENT_ACCEPT_LISTEN\n");
         }
         ret = mesh_listen_for_route_reply(peer_id,
                                           "event-accept",
-                                          MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS,
+                                          MESH_EVENT_NEGOTIATION_DEADLINE_MS,
                                           NULL,
                                           NULL);
         if (ret == 0 && mesh_event_propose_retry.active) {
@@ -1347,14 +1437,46 @@ static void mesh_event_accept_completed_note_retry_round(
     }
 }
 
+/*
+ * PROPOSE owns the cadence phase.  ACCEPT may complete after the first
+ * preparation boundary has passed, but it must not move that phase by the
+ * response-queue latency.  Defer the first physical occurrence by whole
+ * cadence periods instead. Each skipped physical occurrence advances the
+ * event counter too, so peers that cross the preparation boundary on
+ * opposite sides still converge on the same counter and TX/RX direction.
+ */
+static void mesh_event_timing_defer_first_start_if_needed(
+    struct mesh_event_timing *timing,
+    uint32_t ready_at_ms)
+{
+    uint32_t prepare_ms;
+    uint32_t elapsed_ms;
+    uint32_t periods;
+    uint32_t defer_ms;
+
+    if (timing == NULL || timing->event_interval_ms == 0u) {
+        return;
+    }
+    prepare_ms = mesh_channel9_prepare_start_ms(timing);
+    if (!uptime_deadline_reached(ready_at_ms, prepare_ms)) {
+        return;
+    }
+
+    elapsed_ms = ready_at_ms - prepare_ms;
+    periods = (elapsed_ms / timing->event_interval_ms) + 1u;
+    defer_ms = periods * timing->event_interval_ms;
+    timing->next_event_time_ms += defer_ms;
+    timing->last_successful_ch9_event_ms += defer_ms;
+    timing->event_counter += periods;
+}
+
 static int mesh_event_accept_finish_send(
     const struct mesh_event_timing *transmitted_timing,
     const char *reason)
 {
     struct app_mesh_event_retry_state *retry =
         &mesh_event_accept_retry.retry;
-    const struct mesh_event_timing *negotiated_timing =
-        &mesh_event_accept_retry.response.timing;
+    struct mesh_event_timing committed_timing;
     struct mesh_event_owner *predecessor_owner = NULL;
     uint64_t peer_id = retry->peer_id;
     uint16_t retry_round;
@@ -1367,6 +1489,7 @@ static int mesh_event_accept_finish_send(
         mesh_event_accept_clear();
         return -ESTALE;
     }
+    committed_timing = mesh_event_accept_retry.response.timing;
     /*
      * RF has completed, so the bounded accepted exchange has served its only
      * purpose.  Release only this peer and control class; a newer or unrelated
@@ -1378,22 +1501,19 @@ static int mesh_event_accept_finish_send(
         "event-accept-sent");
     if (!mesh_event_accept_retry.replay_existing_response &&
         app_mesh_event_retry_claim_timing_install(retry)) {
-        if (!app_mesh_c5_event_accept_realign_is_reserved(
-                &mesh_event_accept_retry.reservation_timing,
-                negotiated_timing,
-                MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS)) {
-            status_debug_printf("DBG_EVENT_ACCEPT_REALIGN_OUT_OF_BOUNDS prev=0x%llx reserved=%u actual=%u slop=%u\n",
-                                (unsigned long long)peer_id,
-                                mesh_event_accept_retry.reservation_timing.next_event_time_ms,
-                                negotiated_timing->next_event_time_ms,
-                                MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS);
-            retry->timing_installed = false;
-            mesh_event_accept_clear();
-            return -ERANGE;
-        }
+        /*
+         * The successful PROPOSE already fixed the cadence phase.  The
+         * relative ACCEPT payload is deliberately immutable across retries,
+         * so decoding it at a later RF send would move that phase by the
+         * response latency.  Preserve the proposal timing and, when its first
+         * preparation boundary is now too close, defer it by whole periods.
+         */
+        mesh_event_timing_defer_first_start_if_needed(
+            &committed_timing,
+            k_uptime_get_32() + MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS);
         ret = mesh_install_channel9_timing_direction(
             peer_id,
-            negotiated_timing,
+            &committed_timing,
             MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
             reason == NULL ? "event-accept-tx-aligned" : reason);
         if (ret != PROTO_OK) {
@@ -1435,12 +1555,12 @@ static int mesh_event_accept_finish_send(
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_EVENT_ACCEPT_REALIGNED prev=0x%llx next=%u\n",
                                 (unsigned long long)peer_id,
-                                negotiated_timing->next_event_time_ms);
+                                committed_timing.next_event_time_ms);
         }
         {
             uint32_t now_ms = k_uptime_get_32();
             uint32_t prepare_ms =
-                mesh_channel9_prepare_start_ms(negotiated_timing);
+                mesh_channel9_prepare_start_ms(&committed_timing);
             uint32_t delay_ms =
                 uptime_deadline_reached(now_ms, prepare_ms) ?
                 0u :
@@ -1667,6 +1787,212 @@ static enum app_mesh_event_request_match mesh_event_accept_rx_match(
     return APP_MESH_EVENT_REQUEST_NEW;
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
+static bool mesh_event_accept_local_owner_has_stable_upstream_timing(
+    uint32_t now_ms)
+{
+    const struct route_candidate *selected =
+        route_selected(&mesh_runtime.upstream);
+
+    if (selected == NULL || selected->gateway_id != GATEWAY_ID ||
+        !selected->channel9_timing_valid ||
+        mesh_runtime.pending.next_hop_id != selected->next_hop_id) {
+        return false;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry =
+            &mesh_runtime.event_timings[i];
+
+        if (entry->valid && entry->next_hop_id == selected->next_hop_id &&
+            entry->direction == MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM &&
+            mesh_event_timing_usable(&entry->timing, now_ms)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/*
+ * A local gateway-bound owner without a usable upstream cadence may still
+ * launch route repair through the child's first receive turn, so the proposal
+ * remains retryable.  Once that owner is bound to a usable upstream cadence,
+ * the directional timing guard has already proved the proposed downstream
+ * half-phase disjoint; both owners may then coexist without changing either
+ * packet's custody.  Transit repair follows its separately authorized path.
+ */
+static bool mesh_event_accept_downstream_admission_allowed(
+    uint64_t peer_id,
+    const struct mesh_event_timing *reservation_timing)
+{
+    uint32_t node_comm_generation = 0u;
+    uint16_t node_comm_packet_seq = 0u;
+    uint8_t node_comm_msg_type = 0u;
+    bool generic_async_route = false;
+    bool node_comm_async_route = false;
+    bool stable_upstream_timing = false;
+    const char *blocked_by = NULL;
+
+    if (!mesh_id_is_unicast(peer_id) || peer_id == DEVICE_ID ||
+        reservation_timing == NULL) {
+        return false;
+    }
+
+    stable_upstream_timing =
+        mesh_event_accept_local_owner_has_stable_upstream_timing(
+            k_uptime_get_32());
+
+    if (mesh_route_waiting_tx_valid &&
+        mesh_route_waiting_tx.packet.src_id == DEVICE_ID &&
+        mesh_route_waiting_tx.packet.dst_id == GATEWAY_ID) {
+        blocked_by = "route-wait";
+    } else if (mesh_relay_tx_active(&mesh_runtime) &&
+               mesh_runtime.pending.packet.src_id == DEVICE_ID &&
+               mesh_runtime.pending.packet.dst_id == GATEWAY_ID &&
+               !stable_upstream_timing) {
+        blocked_by = "core-pending";
+    }
+
+    if (blocked_by == NULL) {
+        k_mutex_lock(&mesh_route_discovery_lock, K_FOREVER);
+        if (mesh_route_discovery_request.pending &&
+            mesh_route_discovery_request.target_id == GATEWAY_ID) {
+            generic_async_route =
+                mesh_route_discovery_request.transfer.owner_kind ==
+                APP_MESH_ASYNC_ROUTE_TRANSFER_NONE;
+            node_comm_async_route =
+                mesh_route_discovery_request.transfer.owner_kind ==
+                APP_MESH_ASYNC_ROUTE_TRANSFER_NODE_COMM;
+            node_comm_generation =
+                mesh_route_discovery_request.transfer.owner_generation;
+            node_comm_packet_seq =
+                mesh_route_discovery_request.transfer.packet_seq;
+            node_comm_msg_type =
+                mesh_route_discovery_request.transfer.msg_type;
+        }
+        k_mutex_unlock(&mesh_route_discovery_lock);
+    }
+    if (blocked_by == NULL &&
+        (generic_async_route ||
+         (node_comm_async_route &&
+          app_node_comm_delivery_owner_matches(
+              node_comm_generation,
+              GATEWAY_ID,
+              node_comm_packet_seq,
+              node_comm_msg_type)))) {
+        blocked_by = "async-route";
+    }
+
+    if (blocked_by != NULL) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf(
+                "DBG_EVENT_PROPOSE_REJECT_UPSTREAM_OWNER prev=0x%llx owner=%s first=%u\n",
+                (unsigned long long)peer_id,
+                blocked_by,
+                mesh_channel9_prepare_start_ms(reservation_timing));
+        }
+        return false;
+    }
+    return true;
+}
+
+/*
+ * The child owns the immutable PROPOSE identity, but only a connected parent
+ * knows the phase of its upstream radio reservation.  Express the parent's
+ * counterproposal as a bounded shift from the child's frozen phase.  That
+ * shift is stable across byte-identical ACCEPT replay and needs no shared
+ * uptime clock.
+ */
+static bool mesh_event_accept_align_to_upstream_half_phase(
+    const struct mesh_event_timing *proposed,
+    const struct mesh_relay_channel9_guard_status *conflict,
+    struct mesh_event_timing *accepted,
+    uint16_t *phase_shift_ms)
+{
+    const struct mesh_relay_event_timing_entry *upstream = NULL;
+    int32_t signed_shift_ms;
+    uint32_t interval_ms;
+    uint32_t target_ms;
+
+    if (proposed == NULL || conflict == NULL || accepted == NULL ||
+        phase_shift_ms == NULL ||
+        conflict->reason != MESH_RELAY_CHANNEL9_GUARD_INTERVAL_CONFLICT ||
+        conflict->conflict_direction !=
+            MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM ||
+        proposed->event_interval_ms == 0u ||
+        (proposed->event_interval_ms & 1u) != 0u) {
+        return false;
+    }
+
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry =
+            &mesh_runtime.event_timings[i];
+
+        if (entry->valid &&
+            entry->next_hop_id == conflict->conflict_peer_id &&
+            entry->direction == MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM) {
+            upstream = entry;
+            break;
+        }
+    }
+    if (upstream == NULL ||
+        upstream->timing.event_interval_ms != proposed->event_interval_ms ||
+        upstream->timing.event_window_ms != proposed->event_window_ms ||
+        upstream->timing.guard_ms != proposed->guard_ms) {
+        return false;
+    }
+
+    interval_ms = proposed->event_interval_ms;
+    target_ms = upstream->timing.next_event_time_ms + (interval_ms / 2u);
+    signed_shift_ms = (int32_t)(target_ms - proposed->next_event_time_ms);
+    signed_shift_ms %= (int32_t)interval_ms;
+    if (signed_shift_ms < 0) {
+        signed_shift_ms += (int32_t)interval_ms;
+    }
+    if (signed_shift_ms == 0 || signed_shift_ms > UINT16_MAX) {
+        return false;
+    }
+
+    *accepted = *proposed;
+    *phase_shift_ms = (uint16_t)signed_shift_ms;
+    return app_mesh_event_timing_apply_phase_shift(accepted,
+                                                    *phase_shift_ms);
+}
+#endif
+
+#if DEVICE_ROLE != ROLE_GATEWAY
+static bool mesh_event_accept_phase_shift_from_payload(
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t event_interval_ms,
+    uint16_t *phase_shift_ms)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    int ret;
+
+    if (payload == NULL || phase_shift_ms == NULL ||
+        event_interval_ms == 0u) {
+        return false;
+    }
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_MESH_EVENT_PHASE_SHIFT_MS,
+                          &value,
+                          &value_len);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        *phase_shift_ms = 0u;
+        return true;
+    }
+    if (ret != PROTO_OK || value_len != sizeof(uint16_t)) {
+        return false;
+    }
+    *phase_shift_ms = proto_get_u16_le(value);
+    return *phase_shift_ms < event_interval_ms;
+}
+#endif
+
 static bool mesh_handle_event_control(const struct proto_packet *packet,
                                       const uint8_t *payload,
                                       size_t payload_len,
@@ -1782,6 +2108,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         struct app_mesh_rf_retry_key retry_key;
         enum mesh_event_proposal_arbitration arbitration;
         uint64_t proposal_boot_nonce = 0u;
+        uint16_t accept_phase_shift_ms = 0u;
         bool had_active_timing;
         bool installed_reciprocal_window;
         bool reciprocal_local_proposal_proven;
@@ -1910,13 +2237,67 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
             status_debug_note("DBG_EVENT_PROPOSE_REJECT_RESERVATION\n");
             return false;
         }
+#if DEVICE_ROLE == ROLE_ANCHOR
+        {
+            struct mesh_relay_channel9_guard_status guard = {0};
+
+            ret = mesh_relay_check_channel9_timing_guarded_direction(
+                &mesh_runtime,
+                previous_hop_id,
+                &reservation_timing,
+                MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
+                MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
+                &guard);
+            if (ret != PROTO_OK &&
+                mesh_event_accept_align_to_upstream_half_phase(
+                    &timing,
+                    &guard,
+                    &timing,
+                    &accept_phase_shift_ms) &&
+                app_mesh_c5_event_accept_reservation(
+                    &timing,
+                    MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS,
+                    &reservation_timing)) {
+                memset(&guard, 0, sizeof(guard));
+                ret = mesh_relay_check_channel9_timing_guarded_direction(
+                    &mesh_runtime,
+                    previous_hop_id,
+                    &reservation_timing,
+                    MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
+                    MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS,
+                    &guard);
+                if (ret == PROTO_OK &&
+                    IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_printf(
+                        "DBG_EVENT_PROPOSE_COUNTERPHASE prev=0x%llx shift=%u next=%u\n",
+                        (unsigned long long)previous_hop_id,
+                        accept_phase_shift_ms,
+                        timing.next_event_time_ms);
+                }
+            }
+            if (ret != PROTO_OK) {
+                status_debug_printf(
+                    "DBG_EVENT_PROPOSE_REJECT_CHANNEL9_GUARD prev=0x%llx ret=%d reason=%u conflict=0x%llx\n",
+                    (unsigned long long)previous_hop_id,
+                    ret,
+                    (unsigned int)guard.reason,
+                    (unsigned long long)guard.conflict_peer_id);
+                return false;
+            }
+            if (!mesh_event_accept_downstream_admission_allowed(
+                    previous_hop_id, &reservation_timing)) {
+                return false;
+            }
+        }
+#endif
         ret = mesh_prepare_event_control_record(
             &mesh_event_accept_retry.response,
             previous_hop_id,
             MSG_MESH_EVENT_ACCEPT,
             &timing,
             packet->session_id,
-            packet->seq);
+            packet->seq,
+            accept_phase_shift_ms);
         if (ret < 0) {
             return false;
         }
@@ -1938,7 +2319,6 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                    sizeof(mesh_event_accept_retry));
             return false;
         }
-        mesh_event_accept_retry.reservation_timing = reservation_timing;
         mesh_event_accept_retry.remote_boot_nonce = proposal_boot_nonce;
         mesh_event_accept_retry.predecessor_owner_present = owner != NULL;
         mesh_event_accept_retry.predecessor_owner_generation =
@@ -1977,6 +2357,17 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         struct app_mesh_event_request_identity request;
         enum app_mesh_event_accept_correlation correlation;
         enum app_mesh_event_request_match accept_match;
+        uint16_t phase_shift_ms = 0u;
+
+#if DEVICE_ROLE != ROLE_GATEWAY
+        if (!mesh_event_accept_phase_shift_from_payload(
+                payload,
+                payload_len,
+                timing.event_interval_ms,
+                &phase_shift_ms)) {
+            return false;
+        }
+#endif
         accept_match = mesh_event_accept_rx_match(packet,
                                                   payload,
                                                   payload_len,
@@ -2026,12 +2417,31 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         }
         /*
          * ACCEPT confirms the immutable parameters from our successful
-         * PROPOSE, but its sender may have reanchored the first event after a
-         * delayed channel-5 response.  Correlation above already proved the
-         * parameters compatible; retain the decoded ACCEPT phase so both
-         * peers enter the same physical event.
-         */
+         * PROPOSE. Its optional phase shift is the parent's stable
+         * counterproposal relative to that frozen cadence, so replay cannot
+         * move it with response latency. Defer only by whole periods when its
+         * preparation boundary passed.
+        */
+        timing = mesh_event_propose_record.timing;
+#if DEVICE_ROLE != ROLE_GATEWAY
+        if (!app_mesh_event_timing_apply_phase_shift(&timing,
+                                                      phase_shift_ms)) {
+            mesh_event_accept_rx_clear();
+            return false;
+        }
+#endif
         mesh_event_timing_set_local_first_slot_tx(&timing, true);
+        mesh_event_timing_defer_first_start_if_needed(
+            &timing,
+            now_ms + MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+            phase_shift_ms != 0u) {
+            status_debug_printf(
+                "DBG_EVENT_ACCEPT_COUNTERPHASE prev=0x%llx shift=%u next=%u\n",
+                (unsigned long long)previous_hop_id,
+                phase_shift_ms,
+                timing.next_event_time_ms);
+        }
     }
 
     if (packet->msg_type == MSG_MESH_EVENT_ACCEPT) {
@@ -2279,7 +2689,6 @@ static bool mesh_tx_can_wait_for_route(const struct mesh_outbound *out)
     case MSG_GATEWAY_ACK_CONFIRM:
     case MSG_MESH_DATA:
     case MSG_SELF_TEST_REPORT:
-    case MSG_ANCHOR_HEARTBEAT:
     case MSG_SURVEY_PAIR_PREPARE:
     case MSG_SURVEY_PAIR_RESULT:
     case MSG_SURVEY_DISCOVERY_REPORT:
@@ -2545,7 +2954,7 @@ static void mesh_defer_route_for_outbound(const struct mesh_outbound *out,
                                            const struct app_mesh_async_route_transfer_identity *route_transfer)
 {
     if (out == NULL || !mesh_id_is_unicast(out->packet.dst_id) ||
-        out->packet.dst_id == DEVICE_ID) {
+        out->packet.dst_id == DEVICE_ID || !mesh_tx_can_wait_for_route(out)) {
         return;
     }
     if (store_route_wait) {
@@ -2577,7 +2986,8 @@ static bool mesh_try_repair_selected_parent_event(
     bool hard_failure;
     int repair_ret;
 
-    if (out == NULL || select_ret != PROTO_OK ||
+    if (out == NULL || !mesh_tx_can_wait_for_route(out) ||
+        select_ret != PROTO_OK ||
         !mesh_id_is_unicast(selected_next_hop) ||
         selected_next_hop == DEVICE_ID || selected_next_hop == GATEWAY_ID) {
         return false;
@@ -3083,6 +3493,7 @@ static void mesh_try_route_waiting_tx(void)
             &route_wait_send_attempted,
             NULL,
             &route_wait_policy_deferred,
+            false,
             0u,
             NULL);
     }
@@ -3233,6 +3644,7 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                             bool *send_attempted,
                                             bool *rf_sent,
                                             bool *policy_deferred,
+                                            bool retain_initial_channel9_wait,
                                             uint64_t absolute_deadline_ms,
                                             struct app_mesh_tx_observation *observation)
 {
@@ -3246,6 +3658,7 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
     bool channel9_success_pending = false;
     bool channel9_report_latency_pending = false;
     bool direct_gateway_tx_pending = false;
+    bool initial_channel9_wait_retained = false;
     bool send_prepared_c5_control = false;
     uint8_t send_prepared_c5_purpose = 0u;
     enum mesh_c5_control_send_mode send_prepared_c5_mode =
@@ -3255,6 +3668,9 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
     if (out == NULL) {
         return -EINVAL;
     }
+#if DEVICE_ROLE != ROLE_ANCHOR
+    ARG_UNUSED(retain_initial_channel9_wait);
+#endif
     if (rf_sent != NULL) {
         *rf_sent = false;
     }
@@ -3303,6 +3719,15 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
         uint64_t debug_next_hop = 0u;
         int debug_select_ret;
 
+        /*
+         * mesh_relay_start_tx() time-normalizes the route table before it
+         * selects a next hop.  Do the same before classifying the direct
+         * gateway fast path, otherwise a held-down selection can say
+         * "direct" here while start_tx() returns a different relay outbound.
+         * Feeding that outbound to the direct sender is an endless -EINVAL
+         * retry and also prevents this anchor from receiving child traffic.
+         */
+        (void)mesh_relay_expire_routes(&mesh_runtime, now_ms);
         debug_select_ret = mesh_relay_select_next_hop(&mesh_runtime,
                                                       aged_out.packet.dst_id,
                                                       &debug_next_hop);
@@ -3330,7 +3755,8 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                     mesh_runtime.pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
                 }
                 channel9_success_pending = true;
-                direct_gateway_tx_pending = true;
+                direct_gateway_tx_pending =
+                    (aged_out.packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u;
                 channel9_report_latency_pending = aged_out.packet.msg_type == MSG_CLICK_REPORT;
                 channel9_event_start_ms = now_ms;
                 channel9_next_hop_id = tx.next_hop_id;
@@ -3445,6 +3871,41 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                     MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS,
                     wait_retry_delay_ms);
             }
+#if DEVICE_ROLE == ROLE_ANCHOR
+            if (retain_initial_channel9_wait &&
+                wait_retry_delay_ms != NULL &&
+                *wait_retry_delay_ms > 0u) {
+                int defer_ret = mesh_relay_retain_channel9_tx_wait(
+                    &mesh_runtime,
+                    &aged_out.packet,
+                    aged_out.payload,
+                    aged_out.payload_len,
+                    now_ms,
+                    now_ms + *wait_retry_delay_ms,
+                    &tx);
+
+                if (defer_ret == PROTO_OK &&
+                    aged_out.packet.src_id != DEVICE_ID) {
+                    defer_ret = mesh_relay_bind_transit_previous_hop(
+                        &mesh_runtime,
+                        &tx,
+                        aged_out.ingress_previous_hop_id);
+                    if (defer_ret != PROTO_OK) {
+                        (void)mesh_relay_cancel_tx_if_matches(&mesh_runtime,
+                                                              &tx);
+                    }
+                }
+                if (defer_ret == PROTO_OK) {
+                    status_debug_printf(
+                        "DBG_FORWARD_DEFER_UPSTREAM_SLOT delay=%u msg=0x%02x seq=%u\n",
+                        *wait_retry_delay_ms,
+                        aged_out.packet.msg_type,
+                        aged_out.packet.seq);
+                    (void)mesh_schedule_tx_timeout();
+                    initial_channel9_wait_retained = true;
+                }
+            }
+#endif
             mesh_debug_channel9_unavailable("tx",
                                             reason,
                                             &aged_out.packet,
@@ -3459,7 +3920,10 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
                                    &plan,
                                    reason);
             }
-            return -EBUSY;
+            /* Exact retained custody is a successful handoff even though the
+             * physical parent slot is still pending. This lets the child
+             * receive its hop ACK while the retained owner sends later. */
+            return initial_channel9_wait_retained ? 0 : -EBUSY;
         }
         if (ret == PROTO_ERR_NOT_FOUND || ret == PROTO_ERR_STALE) {
             mesh_debug_channel9_unavailable("tx",
@@ -3509,6 +3973,31 @@ static int mesh_start_tracked_tx_with_retry(const struct mesh_outbound *out,
     }
 
 send_prepared:
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (aged_out.packet.dst_id == GATEWAY_ID &&
+        aged_out.packet.src_id != DEVICE_ID &&
+        (aged_out.packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u) {
+        int bind_ret = mesh_relay_bind_transit_previous_hop(
+            &mesh_runtime,
+            &tx,
+            aged_out.ingress_previous_hop_id);
+
+        if (bind_ret != PROTO_OK) {
+            int cancel_ret =
+                mesh_relay_cancel_tx_if_matches(&mesh_runtime, &tx);
+
+            LOG_ERR("transit TX lost exact child custody before RF: src=0x%016llx prev=0x%016llx bind=%d cancel=%d",
+                    (unsigned long long)aged_out.packet.src_id,
+                    (unsigned long long)aged_out.ingress_previous_hop_id,
+                    bind_ret,
+                    cancel_ret);
+            if (cancel_ret != PROTO_OK) {
+                app_watchdog_stop_feeding();
+            }
+            return mesh_errno_from_proto(bind_ret);
+        }
+    }
+#endif
     if (channel9_success_pending) {
         mesh_ch9_event_set(CH9_EVENT_TX_PAYLOAD,
                            channel9_next_hop_id,
@@ -3661,6 +4150,21 @@ send_prepared:
 
 int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
 {
+#if DEVICE_ROLE == ROLE_ANCHOR
+    uint32_t wait_retry_delay_ms = 0u;
+
+    return mesh_start_tracked_tx_with_retry(
+        out, reason, &wait_retry_delay_ms,
+        app_mesh_route_wait_tx_may_store(
+            APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC),
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        true,
+        0u,
+        NULL);
+#else
     return mesh_start_tracked_tx_with_retry(
         out, reason, NULL,
         app_mesh_route_wait_tx_may_store(
@@ -3669,8 +4173,10 @@ int mesh_start_tracked_tx(const struct mesh_outbound *out, const char *reason)
         NULL,
         NULL,
         NULL,
+        false,
         0u,
         NULL);
+#endif
 }
 
 int mesh_start_owned_tracked_tx(const struct mesh_outbound *out,
@@ -3685,6 +4191,7 @@ int mesh_start_owned_tracked_tx(const struct mesh_outbound *out,
         NULL,
         rf_sent,
         NULL,
+        false,
         0u,
         NULL);
 }

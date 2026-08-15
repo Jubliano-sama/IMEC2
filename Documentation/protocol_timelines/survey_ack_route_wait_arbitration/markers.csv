@@ -1,0 +1,10 @@
+time,label,caption,kind,row
+0,C report at B,child custody becomes route-wait,axis,
+260,ACK generated,gateway return begins,axis,
+520,B ACK slot,radio must receive rather than route-wait TX,axis,
+760,ACK decoded,local report settles,axis,
+1040,next cadence,child route-wait resumes,axis,
+1560,bounded progress,both owners can settle,axis,
+540,old veto,,row,old
+540,ACK RX,,row,fixed
+1060,child TX,,row,route_wait

@@ -1036,11 +1036,15 @@ unlock:
     }
 
     gateway_observability_mark_sent_state(event.event_seq);
-    /* An exact receipt may arrive synchronously inside the publisher's emit
-     * callback.  At that point emit_attempt_active is still set, so querying
-     * work_pending would miss the successor event and strand the batch.
-     * Semantic publisher advancement itself is the reliable scheduling edge. */
+    /* The receipt is the semantic edge that makes the successor publishable.
+     * Pump it directly while the BLE stream is live; routing that edge only
+     * through mesh-route work can strand a host publication behind unrelated
+     * radio custody.  Keep one prompt route-owned fallback for terminal
+     * durability or queue pressure, but do not compound its backoff across a
+     * burst whose exact receipts are making forward progress. */
     if (publisher_ret > 0) {
+        app_gateway_assignment_publisher_pump();
+        gateway_persistence_retry_round = 0u;
         gateway_schedule_persistence_retry(
             "assignment-publication-host-receipt");
     }

@@ -212,9 +212,9 @@ static void gateway_eack_note_channel9_tx(uint64_t next_hop_id,
     ARG_UNUSED(ctx);
 
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        mesh_relay_note_channel9_tx(&mesh_runtime,
-                                    next_hop_id,
-                                    event_start_ms);
+        mesh_relay_note_channel9_unobserved_turn(&mesh_runtime,
+                                                 next_hop_id,
+                                                 event_start_ms);
     } else {
         mesh_relay_note_channel9_success(&mesh_runtime,
                                          next_hop_id,

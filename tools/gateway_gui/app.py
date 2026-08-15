@@ -14,9 +14,15 @@ from .cir_reassembly import CirAssemblyKey, CirReassembler, CirSample
 from .command_orchestration import (
     GATEWAY_COMMAND_COMPLETION_GUARD_S,
     ROUTE_REFRESH_DEFAULT_BUDGET_MS,
+    GatewayAssignmentReplayBarrier,
+    GatewayAssignmentReplayReceipt,
     GatewayCommandDispatch,
     GatewayCommandPlan,
     GatewayCommandTransition,
+)
+from .command_telemetry import (
+    CommandTelemetryDecodeError,
+    decode_gateway_command_event,
 )
 from .delivery_dedup import (
     CommandEventIdentity,
@@ -48,6 +54,7 @@ from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
     COMMAND_NAMES,
+    COMMAND_STATUS_NAMES,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     GATEWAY_COMMAND_BUDGET_MAX_MS,
@@ -58,6 +65,7 @@ from .protocol import (
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
+    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     STREAM_CLASS_NAMES,
     TLV_ANCHOR_DIAG_BYTES,
@@ -946,6 +954,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         if transition.dispatch is not None:
             self._dispatch_gateway_command(transition.dispatch)
+        elif (
+            transition.matched
+            and self.command_orchestrator.phase == "target_wait"
+        ):
+            self.status_text.set(
+                "Waiting for restored assignment telemetry to be receipted..."
+            )
         elif transition.completed and transition.phase == "preflight":
             self.status_text.set(
                 "Here I Am preflight failed; requested command was not sent"
@@ -994,10 +1009,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 operation_policy.assignment.expected_anchor_count or None
             )
             # The host command limit owns the complete gateway orchestration,
-            # while the discovery policy bounds only the flooded discovery
-            # phase that every anchor must decode.  Keeping these independent
-            # lets the robust one-hour gateway operation coexist with the
-            # bounded 15-minute anchor policy wire contract.
+            # while the discovery policy bounds only discovery and retained
+            # report collection. Keeping these independent gives a normal
+            # survey a six-minute terminal ceiling and a four-minute missing-
+            # report ceiling; larger fleets can request more time explicitly.
             command_budget_ms = self._command_budget_ms()
             survey_id = self._survey_id_for_send()
             command = build_anchor_discovery_command(
@@ -1020,7 +1035,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 sequence=seq,
                 frame=command.frame,
                 label=command.label,
-                timeout_s=self._command_timeout_s(command_budget_ms),
+                timeout_s=self._command_timeout_s(
+                    command_budget_ms,
+                    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+                ),
                 status_text="Writing anchor-pair survey command over BLE...",
                 on_dispatch=lambda: self._prepare_anchor_geometry_survey(
                     survey_id, session_id, seq
@@ -1206,6 +1224,34 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 )
             self.status_text.set(message)
             self._append_log("tx", message)
+            if label == "gateway host receipt":
+                raw = event.get("raw")
+                replay_receipts = getattr(
+                    self, "_assignment_replay_receipts", {}
+                )
+                token = (
+                    replay_receipts.pop(bytes(raw), None)
+                    if isinstance(raw, (bytes, bytearray))
+                    else None
+                )
+                barrier = getattr(self, "assignment_replay_barrier", None)
+                if (
+                    isinstance(token, GatewayAssignmentReplayReceipt)
+                    and isinstance(barrier, GatewayAssignmentReplayBarrier)
+                    and barrier.receipt_written(token)
+                    and not barrier.active
+                ):
+                    self._apply_gateway_command_transition(
+                        self.command_orchestrator.release_waiting_target(
+                            now=(
+                                float(event["received_at"])
+                                if isinstance(
+                                    event.get("received_at"), (int, float)
+                                )
+                                else None
+                            )
+                        )
+                    )
 
     def _set_connection_state(self, state: str) -> None:
         self.connected = state == "connected"
@@ -1217,6 +1263,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._apply_gateway_command_transition(
                 self.command_orchestrator.disconnect()
             )
+            barrier = getattr(self, "assignment_replay_barrier", None)
+            if isinstance(barrier, GatewayAssignmentReplayBarrier):
+                barrier.reset()
+            getattr(self, "_assignment_replay_receipts", {}).clear()
         if not self.connected and state != "connecting":
             self._clear_gateway_identity("Connect to read the gateway firmware DEVICE_ID.")
         elif state == "connecting":
@@ -1276,7 +1326,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
             reason = "Connect gateway to run a command."
         elif self.gateway_id is None:
             reason = "Waiting for a valid gateway identity."
-        elif tracker is not None and tracker.pending is not None:
+        elif (
+            getattr(getattr(self, "command_orchestrator", None), "active", False)
+            or (tracker is not None and tracker.pending is not None)
+        ):
             reason = "Command already running; waiting for its terminal result."
         else:
             reason = "Ready for a gateway command."
@@ -1311,6 +1364,40 @@ class GatewayGui(GatewayDiagnosticsMixin):
             and is_host_delivery_packet(packet)
         )
 
+    def _observe_assignment_replay(
+        self, packet: Packet
+    ) -> GatewayAssignmentReplayReceipt | None:
+        if (
+            packet.msg_type != MSG_GATEWAY_COMMAND_EVENT
+            or not self._is_receiptable_gateway_packet(packet)
+        ):
+            return None
+        try:
+            event = decode_gateway_command_event(
+                packet.payload,
+                valid_statuses=set(COMMAND_STATUS_NAMES),
+            )
+        except CommandTelemetryDecodeError:
+            return None
+        barrier = getattr(self, "assignment_replay_barrier", None)
+        if not isinstance(barrier, GatewayAssignmentReplayBarrier):
+            barrier = GatewayAssignmentReplayBarrier()
+            self.assignment_replay_barrier = barrier
+        return barrier.observe(event)
+
+    def _track_assignment_replay_receipt(
+        self,
+        frame: bytes | None,
+        token: GatewayAssignmentReplayReceipt | None,
+    ) -> None:
+        if frame is None or token is None:
+            return
+        receipts = getattr(self, "_assignment_replay_receipts", None)
+        if receipts is None:
+            receipts = {}
+            self._assignment_replay_receipts = receipts
+        receipts[bytes(frame)] = token
+
     def _log_gateway_receipt(self, tag: str, message: str) -> None:
         """Keep receipt failures non-fatal for headless/model receive paths."""
         try:
@@ -1326,15 +1413,15 @@ class GatewayGui(GatewayDiagnosticsMixin):
         delivery: Any,
         *,
         gateway_scope: int | None = None,
-    ) -> None:
+    ) -> bytes | None:
         """Receipt a cached stream record while leaving custody upstream on error."""
         if delivery.disposition not in (
             PacketDisposition.NEW,
             PacketDisposition.DUPLICATE,
         ):
-            return
+            return None
         if not delivery.cached or not self._is_receiptable_gateway_packet(packet):
-            return
+            return None
 
         if gateway_scope is None:
             configured_gateway_id = getattr(self, "gateway_id", None)
@@ -1352,7 +1439,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"{format_device_id(packet.dst_id)} does not match gateway "
                 f"scope {format_device_id(gateway_id)}",
             )
-            return
+            return None
         if gateway_id == 0:
             # Before the GATT identity event arrives, the stream destination is
             # the only safe gateway scope available to the GUI.
@@ -1361,13 +1448,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 "Not sending host receipt: gateway identity is unavailable "
                 "and the stream record has no destination",
             )
-            return
+            return None
 
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
         except (AttributeError, ValueError) as exc:
             self._log_gateway_receipt("error", f"Not sending host receipt: {exc}")
-            return
+            return None
 
         try:
             receipt = build_gateway_host_receipt(
@@ -1376,6 +1463,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 gateway_id=gateway_id,
             )
             self.transport.send_frame(receipt.frame, "gateway host receipt")
+            return bytes(receipt.frame)
         except Exception as exc:
             # A failed write must not alter the cache or semantic models; the
             # gateway will retain source custody and replay the stream record.
@@ -1384,6 +1472,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"Gateway host receipt was not sent; upstream custody remains: "
                 f"{type(exc).__name__}: {exc}",
             )
+            return None
 
     def _add_packet(
         self, packet: Packet, *, received_at: float | None = None
@@ -1421,8 +1510,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             # Exact replays still need a fresh transport attempt after a
             # reconnect, but only after the already-committed RAM record is
             # recognized. Conflicts never receive a receipt.
-            self._maybe_send_gateway_host_receipt(
+            replay_receipt = self._observe_assignment_replay(packet)
+            receipt_frame = self._maybe_send_gateway_host_receipt(
                 packet, delivery, gateway_scope=receipt_gateway_scope
+            )
+            self._track_assignment_replay_receipt(
+                receipt_frame, replay_receipt
             )
             identity = delivery.identity
             if isinstance(identity, CommandEventIdentity):
@@ -1467,6 +1560,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     "semantic mutation",
                 )
         canonical_delivery = delivery.disposition is PacketDisposition.NEW
+        replay_receipt = (
+            self._observe_assignment_replay(packet)
+            if canonical_delivery
+            else None
+        )
         if canonical_delivery:
             self._observe_diagnostic_packet(packet, received_at=received_at)
         self.packet_counter += 1
@@ -1527,8 +1625,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
             if committed:
                 # The semantic/model path completed, so this RAM entry now
                 # represents data the GUI can replay without reapplying.
-                self._maybe_send_gateway_host_receipt(
+                receipt_frame = self._maybe_send_gateway_host_receipt(
                     packet, delivery, gateway_scope=receipt_gateway_scope
+                )
+                self._track_assignment_replay_receipt(
+                    receipt_frame, replay_receipt
                 )
             else:
                 self._log_gateway_receipt(

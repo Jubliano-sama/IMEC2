@@ -1,0 +1,9 @@
+id,label,order
+host,HEADLESS GUI / BLE,1
+gateway,GATEWAY MESH,2
+anchor_a,DIRECT A - CH9,3
+anchor_b,FORCED1 B - CH9,4
+anchor_c_ch9,FORCED2 C - CH9,5
+anchor_c_ch5,FORCED2 C - CH5,6
+owner,C RELIABLE OWNER,7
+outcome,OUTCOME / REPAIR,8

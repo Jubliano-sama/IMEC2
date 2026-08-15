@@ -1,0 +1,14 @@
+time,label,caption,kind,row
+0,0 ms,A starts survey wake train,axis,
+21,+21 ms,first B Channel-9 owner releases,axis,
+41,+41 ms,second B Channel-9 owner begins,axis,
+281,+281 ms,B radio is released,axis,
+293,+293 ms,B's deferred Channel-5 scan begins,axis,
+296,+296 ms,old 3 ms scan already ended,axis,
+313,+313 ms,new one-shot scan ends after capture,axis,
+400,+400 ms,wake train ends,axis,
+460,+460 ms,survey payload repeats begin,axis,
+580,+580 ms,fourth survey payload completes,axis,
+673,+673 ms,next ordinary scan is too late,axis,
+294,empty,,row,old_scan
+303,capture,,row,new_scan

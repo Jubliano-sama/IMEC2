@@ -1977,8 +1977,7 @@ static bool pending_ack_yields_to_newer_claim(
 {
     if (state == NULL || !state->pending_ack_active ||
         !discovery_assignment_epoch_strictly_newer(
-            incoming_epoch, state->pending_epoch) ||
-        state->has_committed_provisioned_slot) {
+            incoming_epoch, state->pending_epoch)) {
         return false;
     }
     state->pending_epoch = 0u;
@@ -1986,7 +1985,7 @@ static bool pending_ack_yields_to_newer_claim(
     return true;
 }
 
-static bool test_unprovisioned_obsolete_ack_yields_to_newer_claim(void)
+static bool test_obsolete_ack_yields_to_newer_claim(void)
 {
     struct pending_ack_supersession_model first_assignment = {
         .pending_epoch = ASSIGNMENT_EPOCH,
@@ -2019,16 +2018,17 @@ static bool test_unprovisioned_obsolete_ack_yields_to_newer_claim(void)
               !first_assignment.has_committed_provisioned_slot,
           "newer enumeration did not reacquire first-assignment custody");
 
-    CHECK(!pending_ack_yields_to_newer_claim(
+    CHECK(pending_ack_yields_to_newer_claim(
               &replacement, ASSIGNMENT_EPOCH + 1u),
-          "newer CLAIM discarded an ACK protecting a committed slot");
-    CHECK(replacement.pending_ack_active &&
-              replacement.pending_epoch == ASSIGNMENT_EPOCH,
-          "replacement enumeration lost its older proven candidate");
+          "provisioned anchor let an obsolete ACK suppress a newer CLAIM");
+    CHECK(!replacement.pending_ack_active &&
+              replacement.pending_epoch == 0u &&
+              replacement.has_committed_provisioned_slot,
+          "provisioned ACK supersession damaged the committed slot");
     return true;
 }
 
-static bool test_newer_claim_abort_preserves_old_low_duty_ack(void)
+static bool test_newer_claim_abort_retires_old_low_duty_ack(void)
 {
     struct assignment_transaction_snapshot_model snapshot = {
         .committed_epoch = ASSIGNMENT_EPOCH,
@@ -2040,25 +2040,22 @@ static bool test_newer_claim_abort_preserves_old_low_duty_ack(void)
     bool newer_table_persisted = false;
 
     /*
-     * CLAIM alone is not an assignment-changing transaction. The old ACK
-     * owner remains live while the gateway attempts a newer enumeration.
+     * A newer CLAIM is authoritative evidence that the gateway has moved on
+     * from the older response window. It retires only the unacknowledged
+     * candidate; the previously committed slot remains available if the new
+     * operation later aborts before TABLE.
      */
     CHECK(discovery_assignment_epoch_strictly_newer(
               newer_claim_epoch, snapshot.pending_epoch),
           "newer CLAIM fixture is not ordered");
-    CHECK(old_ack_low_duty_active && !newer_table_persisted &&
-              snapshot.pending_epoch == ASSIGNMENT_EPOCH + 1u,
-          "newer CLAIM superseded old pending ACK before TABLE");
-
-    /* The newer operation aborts pre-TABLE; a later low-duty probe converges. */
-    CHECK(assignment_transaction_promote(
-              &snapshot, ASSIGNMENT_EPOCH + 1u),
-          "old low-duty ACK did not recover after newer CLAIM abort");
+    snapshot.pending_epoch = 0u;
+    snapshot.pending_valid = false;
     old_ack_low_duty_active = false;
     CHECK(!old_ack_low_duty_active &&
-              snapshot.committed_epoch == ASSIGNMENT_EPOCH + 1u &&
-              !snapshot.pending_valid,
-          "newer CLAIM abort stranded the older proven assignment");
+              !newer_table_persisted &&
+              snapshot.committed_epoch == ASSIGNMENT_EPOCH &&
+              !snapshot.pending_valid && snapshot.pending_epoch == 0u,
+          "newer CLAIM abort lost the committed slot or retained stale ACK custody");
     return true;
 }
 
@@ -2425,10 +2422,10 @@ int main(void)
     if (!test_queued_delivery_promotes_before_new_claim_abort()) {
         return EXIT_FAILURE;
     }
-    if (!test_unprovisioned_obsolete_ack_yields_to_newer_claim()) {
+    if (!test_obsolete_ack_yields_to_newer_claim()) {
         return EXIT_FAILURE;
     }
-    if (!test_newer_claim_abort_preserves_old_low_duty_ack()) {
+    if (!test_newer_claim_abort_retires_old_low_duty_ack()) {
         return EXIT_FAILURE;
     }
     if (!test_expected_count_uses_unique_current_claim_responders()) {

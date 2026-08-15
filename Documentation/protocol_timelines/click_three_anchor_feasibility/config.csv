@@ -1,0 +1,11 @@
+key,value
+title,"NORMAL CLICK: THREE ANCHORS FIT INSIDE THE 400 MS RANGING BURST"
+caption,"Production schedule at the 50 ms minimum exchange stride. Eight sequential DS-TWR reservations fit exactly in the 400 ms burst; the round-robin order gives all three selected anchors at least two opportunities without overlapping the clicker's single DWM3000."
+key_point,"This part is physically feasible. The clicker uses one exchange at a time: A, B, C, A, B, C, A, B. Existing Channel-9 custody is preempted and retained during the burst, then delivery resumes after the ranging owner releases."
+start,0
+end,500
+width,4300
+unit,ms
+axis_caption_width,190
+row_label_width,270
+max_inline_lines,4

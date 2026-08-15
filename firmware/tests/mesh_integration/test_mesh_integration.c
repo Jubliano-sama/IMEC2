@@ -757,17 +757,17 @@ static void test_click_preempts_transit_and_origin_retries(void)
                                          MESH_SIM_TRANSITION_TX_START,
                                          TRANSMITTER_ID,
                                          MSG_MESH_DATA) == 2u);
-    assert(world.connections[child_connection].completed_repairs >= 1u);
+    assert(world.connections[child_connection].completed_repairs == 0u);
     assert(mesh_sim_count_transitions(
                &world,
                MESH_SIM_TRANSITION_CONNECTION_REPAIR_STARTED,
                TRANSMITTER_ID) ==
-           world.connections[child_connection].completed_repairs);
+           0u);
     assert(mesh_sim_count_transitions(
                &world,
                MESH_SIM_TRANSITION_CONNECTION_REPAIRED,
                TRANSMITTER_ID) ==
-           world.connections[child_connection].completed_repairs);
+           0u);
     assert(world.connections[child_connection].timing_b.missed_event_count <
            world.connections[child_connection].timing_b.max_missed_events);
     assert(world.connections[child_connection].timing_b.timing_fresh);

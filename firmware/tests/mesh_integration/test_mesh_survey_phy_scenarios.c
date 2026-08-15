@@ -4,6 +4,8 @@
 #include "firmware_state_machines.h"
 #include "gateway_command.h"
 #include "mesh.h"
+#include "mesh_radio_timing.h"
+#include "mesh_relay.h"
 #include "protocol.h"
 #include "survey.h"
 #include "survey_pair_lease.h"
@@ -20,6 +22,7 @@
 #define GATEWAY_ID UINT64_C(0xa001000000000001)
 #define ANCHOR_ID UINT64_C(0xa002000000000001)
 #define ANCHOR_2_ID UINT64_C(0xa002000000000002)
+#define ANCHOR_3_ID UINT64_C(0xa002000000000003)
 #define SURVEY_ID UINT32_C(0x50665006)
 #define SURVEY_OPERATION_GENERATION UINT64_C(0x0000000150665006)
 #define SURVEY_ROUND_ID UINT16_C(1)
@@ -30,10 +33,59 @@
 #define MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS 40u
 #define MODELED_CONTROL_PHY_RETUNE_US UINT64_C(30000)
 #define MODELED_WAKE_REPEAT_GAP_US UINT64_C(1000)
+#define MODELED_FORCED_CONTROL_RELAY_DELAY_MS 340u
+#define MODELED_FORCED_CONTROL_CLAIM_MS 400u
+#define MODELED_DEEP_RELAY_LISTEN_MS 2000u
+#define MODELED_LOW_DUTY_RESCHEDULE_MS 380u
+#define MODELED_LOW_DUTY_RX_US UINT64_C(3000)
+#define MODELED_FOLLOWUP_SCAN_MS 20u
+#define MODELED_CONNECTED_GAP_RETUNE_MS 60u
+#define MODELED_LEGACY_EVENT_INTERVAL_MS 520u
+#define MODELED_POST_CH9_RELEASE_DELAY_MS 12u
+#define MODELED_WAKE_AFTER_RECOVERY_SCAN_START_MS 5u
+#define MODELED_CH9_OWNER_MS                                              \
+    (MESH_RADIO_EVENT_GUARD_MS + MESH_RADIO_EVENT_WINDOW_MS +           \
+     MESH_RADIO_EVENT_GUARD_MS)
+#define MODELED_INTER_CH9_C5_GAP_MS                                      \
+    (MODELED_CONNECTED_GAP_RETUNE_MS + MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS)
+#define MODELED_PREEMPTED_CH9_WINDOWS \
+    ((MODELED_DEEP_RELAY_LISTEN_MS + MESH_RADIO_EVENT_INTERVAL_MS - 1u) / \
+     MESH_RADIO_EVENT_INTERVAL_MS)
 
 _Static_assert(MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS * 1000u >
                    MODELED_CONTROL_PHY_RETUNE_US,
                "control follow-up turnaround must cover the PHY retune");
+_Static_assert(MODELED_FORCED_CONTROL_RELAY_DELAY_MS <
+                   MODELED_LOW_DUTY_RESCHEDULE_MS,
+               "relay copy must arrive inside the measured low-duty hole");
+_Static_assert(MODELED_FORCED_CONTROL_CLAIM_MS >
+                   MODELED_LOW_DUTY_RESCHEDULE_MS,
+               "control claim must cover the complete low-duty hole");
+_Static_assert(MODELED_DEEP_RELAY_LISTEN_MS >
+                   FLOOD_WAVE_MS + MESH_RADIO_WAKE_TRAIN_MS +
+                       MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS,
+               "deep relay listener must cover the next wake wave and payload");
+_Static_assert(MODELED_LOW_DUTY_RESCHEDULE_MS ==
+                   MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS,
+               "forced follow-up scenario must use the production scan interval");
+_Static_assert(MODELED_LOW_DUTY_RX_US == MESH_RADIO_ANCHOR_SCAN_RX_US,
+               "forced follow-up scenario must use the production scan window");
+_Static_assert(MODELED_FOLLOWUP_SCAN_MS ==
+                   MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS,
+               "forced follow-up scenario must use the boosted scan slice");
+_Static_assert(MODELED_WAKE_AFTER_RECOVERY_SCAN_START_MS * 1000u >
+                   MODELED_LOW_DUTY_RX_US,
+               "observed 3 ms scan must finish before the modeled wake copy");
+_Static_assert(MODELED_WAKE_AFTER_RECOVERY_SCAN_START_MS <
+                   MODELED_FOLLOWUP_SCAN_MS,
+               "post-Channel-9 recovery slice must still contain the wake copy");
+_Static_assert(MESH_RADIO_EVENT_INTERVAL_MS ==
+                   2u * (MODELED_CH9_OWNER_MS +
+                         MODELED_INTER_CH9_C5_GAP_MS),
+               "two channel-9 owners must retain retune plus 20 ms Channel-5 gaps");
+_Static_assert(MODELED_PREEMPTED_CH9_WINDOWS <=
+                   MESH_RADIO_EVENT_MAX_MISSES,
+               "one bounded gateway-control contact must not expire channel-9 timing");
 
 static unsigned int failures;
 
@@ -874,25 +926,27 @@ static int build_pair_start_control(struct mesh_outbound *control,
     return PROTO_OK;
 }
 
-static bool encode_control_followup_wake(uint16_t sequence,
-                                         uint8_t *frame,
-                                         size_t frame_cap,
-                                         size_t *frame_len)
+static bool encode_control_followup_wake_from(uint64_t sender_id,
+                                              uint16_t sequence,
+                                              uint16_t claimed_duration_ms,
+                                              uint8_t *frame,
+                                              size_t frame_cap,
+                                              size_t *frame_len)
 {
     const uint8_t flags =
         FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
         FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
     const struct uwb_wake_claim_frame claim = {
         .network_id = UINT32_C(0x494d4543),
-        .clicker_id = GATEWAY_ID,
+        .clicker_id = sender_id,
         .click_event_id = sequence,
         .attempt_index = 1u,
-        .priority_id = GATEWAY_ID,
+        .priority_id = sender_id,
         .wake_channel = UWB_CHANNEL_WAKE_CONTACT,
         .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
         .wake_train_ends_in_ms = 5u,
         .discovery_starts_in_ms = 5u,
-        .claimed_duration_ms = 20u,
+        .claimed_duration_ms = claimed_duration_ms,
         .min_anchor_count = 1u,
         .max_anchor_count = 1u,
         .nonce = UINT64_C(0x0102030405060708),
@@ -907,6 +961,1012 @@ static bool encode_control_followup_wake(uint16_t sequence,
           "modeled control wake does not select an extended-PHR follower");
     return uwb_encode_wake_claim(&claim, frame, frame_cap, frame_len) ==
            PROTO_OK;
+}
+
+static bool encode_control_followup_wake(uint16_t sequence,
+                                         uint8_t *frame,
+                                         size_t frame_cap,
+                                         size_t *frame_len)
+{
+    return encode_control_followup_wake_from(GATEWAY_ID,
+                                             sequence,
+                                             20u,
+                                             frame,
+                                             frame_cap,
+                                             frame_len);
+}
+
+static void test_forced_control_followup_covers_relay_gap(void)
+{
+    static struct mesh_sim_world world;
+    struct mesh_outbound control;
+    uint8_t direct_wake[UWB_WAKE_CLAIM_LEN] = {0};
+    uint8_t relay_wake[UWB_WAKE_CLAIM_LEN] = {0};
+    uint8_t control_frame[PACKET_EXT_MAX_LEN] = {0};
+    size_t direct_wake_len = 0u;
+    size_t relay_wake_len = 0u;
+    size_t control_frame_len = 0u;
+    uint8_t gateway = UINT8_MAX;
+    uint8_t relay = UINT8_MAX;
+    uint8_t forced = UINT8_MAX;
+    uint16_t direct_tx = UINT16_MAX;
+    uint16_t control_tx = UINT16_MAX;
+    uint16_t relay_tx = UINT16_MAX;
+    uint16_t relay_control_tx = UINT16_MAX;
+    uint64_t direct_end_us;
+    uint64_t control_start_us;
+    uint64_t relay_start_us;
+    uint64_t relay_end_us;
+    uint64_t relay_accepted_at_us = 0u;
+    uint64_t exclusive_listener_end_us;
+    uint64_t followup_end_us;
+    uint64_t ordinary_scan_start_us;
+    size_t direct_wakes_decoded = 0u;
+    size_t direct_payloads_decoded = 0u;
+    size_t relay_wakes_decoded = 0u;
+    size_t relay_payloads_decoded = 0u;
+    size_t boosted_retries_during_exclusive = 0u;
+    const uint8_t control_flags =
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+
+    mesh_sim_init(&world, UINT32_C(0xf0c53400));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK,
+          "forced-followup gateway setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_2_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &relay) == MESH_SIM_OK,
+          "forced-followup relay setup failed");
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &forced) == MESH_SIM_OK,
+          "forced-followup target setup failed");
+    CHECK(mesh_sim_set_link(&world, gateway, forced, 100u, 0u) == MESH_SIM_OK &&
+              mesh_sim_set_link(&world, relay, forced, 100u, 0u) == MESH_SIM_OK,
+          "forced-followup links failed");
+    CHECK(encode_control_followup_wake_from(
+              GATEWAY_ID, 201u, MODELED_FORCED_CONTROL_CLAIM_MS,
+              direct_wake, sizeof(direct_wake), &direct_wake_len) &&
+              encode_control_followup_wake_from(
+                  ANCHOR_2_ID, 201u, MODELED_FORCED_CONTROL_CLAIM_MS,
+                  relay_wake, sizeof(relay_wake), &relay_wake_len),
+          "forced-followup wake encoding failed");
+    CHECK(build_pair_start_control(&control, ANCHOR_ID, 201u) == PROTO_OK &&
+              proto_packet_encode(&control.packet,
+                                  control.payload,
+                                  control_frame,
+                                  sizeof(control_frame),
+                                  &control_frame_len) == PROTO_OK,
+          "forced-followup direct payload encoding failed");
+
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   gateway,
+                                   TX_START_US,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   direct_wake,
+                                   direct_wake_len,
+                                   false,
+                                   &direct_tx) == MESH_SIM_OK,
+          "forced-followup direct wake scheduling failed");
+    direct_end_us = world.transmissions[direct_tx].end_us;
+    control_start_us = direct_end_us +
+                       MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS * 1000u;
+    relay_start_us = direct_end_us +
+                     MODELED_FORCED_CONTROL_RELAY_DELAY_MS * 1000u;
+    followup_end_us = direct_end_us +
+                      MODELED_FORCED_CONTROL_CLAIM_MS * 1000u;
+    ordinary_scan_start_us = direct_end_us +
+                             MODELED_LOW_DUTY_RESCHEDULE_MS * 1000u;
+
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   gateway,
+                                   control_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   control_frame,
+                                   control_frame_len,
+                                   false,
+                                   &control_tx) == MESH_SIM_OK,
+          "forced-followup direct payload scheduling failed");
+    world.transmissions[control_tx].protocol_msg_type =
+        control.packet.msg_type;
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   relay,
+                                   relay_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   relay_wake,
+                                   relay_wake_len,
+                                   false,
+                                   &relay_tx) == MESH_SIM_OK,
+          "forced-followup relay wake scheduling failed");
+    relay_end_us = world.transmissions[relay_tx].end_us;
+    CHECK(relay_end_us < ordinary_scan_start_us &&
+              ordinary_scan_start_us + MODELED_LOW_DUTY_RX_US <
+                  followup_end_us,
+          "relay copy no longer occupies the measured 380 ms low-duty hole");
+
+    CHECK(mesh_sim_schedule_rx(&world,
+                               forced,
+                               TX_START_US,
+                               direct_end_us,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_WAKE,
+                               NULL) == MESH_SIM_OK,
+          "forced-followup initial Channel-5 RX scheduling failed");
+    for (uint64_t slice_start_us =
+             direct_end_us + MODELED_FOLLOWUP_SCAN_MS * 1000u;
+         slice_start_us < followup_end_us;
+         slice_start_us += 2u * MODELED_FOLLOWUP_SCAN_MS * 1000u) {
+        const uint64_t candidate_end_us =
+            slice_start_us + MODELED_FOLLOWUP_SCAN_MS * 1000u;
+        const uint64_t slice_end_us =
+            candidate_end_us < followup_end_us ? candidate_end_us :
+                                                  followup_end_us;
+
+        CHECK(mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   slice_start_us,
+                                   slice_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   NULL) == MESH_SIM_OK,
+              "forced-followup boosted Channel-5 slice scheduling failed");
+        if (slice_start_us <= relay_start_us &&
+            relay_end_us <= slice_end_us) {
+            relay_accepted_at_us = slice_end_us;
+            break;
+        }
+    }
+    CHECK(relay_accepted_at_us != 0u,
+          "boosted scan did not contain the complete allowed relay wake");
+    if (relay_accepted_at_us == 0u) {
+        return;
+    }
+    exclusive_listener_end_us = relay_accepted_at_us +
+                                MODELED_DEEP_RELAY_LISTEN_MS * 1000u;
+    CHECK(mesh_sim_schedule_rx(&world,
+                               forced,
+                               relay_accepted_at_us,
+                               exclusive_listener_end_us,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                               NULL) == MESH_SIM_OK,
+          "allowed relay wake did not acquire the exclusive control listener");
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   relay,
+                                   relay_accepted_at_us +
+                                       MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS *
+                                           1000u,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   control_frame,
+                                   control_frame_len,
+                                   false,
+                                   &relay_control_tx) == MESH_SIM_OK,
+          "forced-followup relayed payload scheduling failed");
+    world.transmissions[relay_control_tx].protocol_msg_type =
+        control.packet.msg_type;
+    for (size_t i = 0u; i < world.rx_window_count; i++) {
+        const struct mesh_sim_rx_window *window = &world.rx_windows[i];
+
+        if (window->valid && window->node_index == forced &&
+            window->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
+            window->start_us >= relay_accepted_at_us &&
+            window->start_us < exclusive_listener_end_us) {
+            boosted_retries_during_exclusive++;
+        }
+    }
+    CHECK(relay_accepted_at_us + MODELED_FOLLOWUP_SCAN_MS * 1000u <
+              exclusive_listener_end_us,
+          "modeled boosted retry no longer falls inside exclusive ownership");
+    CHECK(boosted_retries_during_exclusive == 0u,
+          "accepted relay wake left boosted scan retries inside exclusive ownership");
+    CHECK(mesh_sim_run_until(&world, exclusive_listener_end_us + 1u) ==
+              MESH_SIM_OK,
+          "forced-followup PHY simulation failed");
+
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        const struct mesh_sim_reception *rx = &world.receptions[i];
+
+        if (rx->receiver_id != ANCHOR_ID) {
+            continue;
+        }
+        if (rx->source_id == GATEWAY_ID &&
+            rx->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
+            rx->outcome == MESH_SIM_RX_DECODED) {
+            direct_wakes_decoded++;
+        } else if (rx->source_id == GATEWAY_ID &&
+                   rx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+                   rx->outcome == MESH_SIM_RX_DECODED) {
+            direct_payloads_decoded++;
+        } else if (rx->source_id == ANCHOR_2_ID &&
+                   rx->phy == MESH_SIM_PHY_CHANNEL5_WAKE &&
+                   rx->outcome == MESH_SIM_RX_DECODED) {
+            relay_wakes_decoded++;
+        } else if (rx->source_id == ANCHOR_2_ID &&
+                   rx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+                   rx->outcome == MESH_SIM_RX_DECODED) {
+            relay_payloads_decoded++;
+        }
+    }
+
+    CHECK(direct_wakes_decoded == 1u,
+          "forced target did not physically decode the direct gateway wake");
+    CHECK(direct_payloads_decoded == 0u,
+          "boosted standard scanner decoded the direct extended payload");
+    CHECK(relay_wakes_decoded == 1u,
+          "bounded boosted scanner missed the 340 ms relay wake");
+    CHECK(relay_payloads_decoded == 1u,
+          "exclusive listener missed the allowed relayed control payload");
+    CHECK(!app_mesh_c5_route_wake_claim_allowed(
+              GATEWAY_ID, GATEWAY_ID, control_flags, false, true) &&
+              app_mesh_c5_connected_gap_rx_action(false, false, false) ==
+                  APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE,
+          "forced target did not ignore the direct gateway wake and continue");
+    CHECK(!app_mesh_c5_gateway_control_copy_allowed(
+              GATEWAY_ID, GATEWAY_ID, GATEWAY_ID, true) &&
+              app_mesh_c5_gateway_control_copy_allowed(
+                  GATEWAY_ID, ANCHOR_2_ID, GATEWAY_ID, true),
+          "forced target direct/relayed payload admission drifted");
+    CHECK(app_mesh_c5_route_wake_claim_allowed(
+              ANCHOR_2_ID, GATEWAY_ID, control_flags, false, true) &&
+              app_mesh_c5_connected_gap_rx_action(false, true, false) ==
+                  APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL,
+          "forced target did not admit the allowed relay wake");
+    CHECK(app_mesh_c5_connected_gap_rx_action(true, true, false) ==
+              APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_CLICK,
+          "a click claim did not retain priority over an allowed relay wake");
+}
+
+struct post_ch9_recovery_model {
+    bool channel9_owner_active;
+    bool recovery_pending;
+    uint8_t completed_owner_windows;
+    uint8_t worker_conflicts_observed;
+    uint8_t attempted_scans;
+};
+
+static void model_post_ch9_owner_begin(struct post_ch9_recovery_model *model)
+{
+    CHECK(model != NULL && !model->channel9_owner_active,
+          "post-Channel-9 model acquired overlapping owner windows");
+    if (model != NULL) {
+        model->channel9_owner_active = true;
+    }
+}
+
+static void model_post_ch9_owner_release(struct post_ch9_recovery_model *model)
+{
+    CHECK(model != NULL && model->channel9_owner_active,
+          "post-Channel-9 model released an inactive owner");
+    if (model != NULL) {
+        model->channel9_owner_active = false;
+        model->recovery_pending = true;
+        model->completed_owner_windows++;
+    }
+}
+
+static uint32_t model_post_ch9_scan_window_ms(
+    struct post_ch9_recovery_model *model)
+{
+    if (model == NULL) {
+        return 0u;
+    }
+    if (model->channel9_owner_active) {
+        model->worker_conflicts_observed++;
+        return 0u;
+    }
+    return model->recovery_pending ? MODELED_FOLLOWUP_SCAN_MS :
+                                     (uint32_t)(MODELED_LOW_DUTY_RX_US / 1000u);
+}
+
+static void model_post_ch9_scan_complete(
+    struct post_ch9_recovery_model *model,
+    bool rx_attempted)
+{
+    if (model != NULL && rx_attempted) {
+        model->attempted_scans++;
+        model->recovery_pending = false;
+    }
+}
+
+static void test_post_channel9_recovery_scan_captures_live_wake_train(void)
+{
+    static struct mesh_sim_world world;
+    struct post_ch9_recovery_model recovery = {0};
+    uint8_t wake_frame[UWB_WAKE_CLAIM_LEN] = {0};
+    size_t wake_frame_len = 0u;
+    uint8_t sender = UINT8_MAX;
+    uint8_t old_receiver = UINT8_MAX;
+    uint8_t recovery_receiver = UINT8_MAX;
+    uint16_t wake_tx = UINT16_MAX;
+    const uint64_t first_ch9_owner_start_us = UINT64_C(740000);
+    const uint64_t first_ch9_owner_end_us =
+        first_ch9_owner_start_us +
+        MODELED_CH9_OWNER_MS * UINT64_C(1000);
+    const uint64_t second_ch9_owner_start_us =
+        first_ch9_owner_end_us +
+        MODELED_INTER_CH9_C5_GAP_MS * UINT64_C(1000);
+    const uint64_t second_ch9_owner_end_us =
+        second_ch9_owner_start_us +
+        MODELED_CH9_OWNER_MS * UINT64_C(1000);
+    const uint64_t scan_start_us =
+        second_ch9_owner_end_us +
+        MODELED_POST_CH9_RELEASE_DELAY_MS * UINT64_C(1000);
+    const uint64_t wake_start_us =
+        scan_start_us +
+        MODELED_WAKE_AFTER_RECOVERY_SCAN_START_MS * UINT64_C(1000);
+    uint32_t deferred_scan_ms;
+    uint32_t recovery_scan_ms;
+    size_t physical_ch9_owner_windows = 0u;
+    size_t old_decoded = 0u;
+    size_t recovery_decoded = 0u;
+
+    mesh_sim_init(&world, UINT32_C(0xf0c53402));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_2_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &sender) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
+                                GATEWAY_ID, ROUTE_EPOCH, &old_receiver) ==
+                  MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_3_ID,
+                                GATEWAY_ID, ROUTE_EPOCH, &recovery_receiver) ==
+                  MESH_SIM_OK,
+          "post-Channel-9 recovery roles failed");
+    CHECK(mesh_sim_set_link(&world, sender, old_receiver, 100u, 0u) ==
+                  MESH_SIM_OK &&
+              mesh_sim_set_link(&world, sender, recovery_receiver, 100u, 0u) ==
+                  MESH_SIM_OK,
+          "post-Channel-9 recovery links failed");
+    CHECK(first_ch9_owner_end_us +
+                  MODELED_INTER_CH9_C5_GAP_MS * UINT64_C(1000) ==
+              second_ch9_owner_start_us,
+          "post-Channel-9 owner windows lost the exact 60 ms retune plus 20 ms receive gap");
+    CHECK(mesh_sim_schedule_rx(&world,
+                               recovery_receiver,
+                               first_ch9_owner_start_us,
+                               first_ch9_owner_end_us,
+                               UWB_CHANNEL_MESH_PAYLOAD,
+                               MESH_SIM_PHY_CHANNEL9_MESH,
+                               NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   recovery_receiver,
+                                   second_ch9_owner_start_us,
+                                   second_ch9_owner_end_us,
+                                   UWB_CHANNEL_MESH_PAYLOAD,
+                                   MESH_SIM_PHY_CHANNEL9_MESH,
+                                   NULL) == MESH_SIM_OK,
+          "post-Channel-9 physical owner scheduling failed");
+
+    CHECK(mesh_sim_run_until(&world, first_ch9_owner_start_us) == MESH_SIM_OK,
+          "first Channel-9 owner did not start");
+    model_post_ch9_owner_begin(&recovery);
+    CHECK(mesh_sim_run_until(&world, first_ch9_owner_end_us) == MESH_SIM_OK,
+          "first Channel-9 owner did not finish");
+    model_post_ch9_owner_release(&recovery);
+    CHECK(recovery.recovery_pending,
+          "first Channel-9 release did not retain recovery debt");
+
+    CHECK(mesh_sim_run_until(&world, second_ch9_owner_start_us) == MESH_SIM_OK,
+          "second Channel-9 owner did not start");
+    model_post_ch9_owner_begin(&recovery);
+    CHECK(recovery.recovery_pending,
+          "back-to-back Channel-9 owner cleared pending recovery");
+    CHECK(mesh_sim_run_until(&world, second_ch9_owner_end_us) == MESH_SIM_OK,
+          "second Channel-9 owner did not finish");
+    model_post_ch9_owner_release(&recovery);
+    CHECK(recovery.completed_owner_windows == 2u &&
+              recovery.recovery_pending,
+          "two completed Channel-9 owners did not retain one recovery scan");
+
+    deferred_scan_ms = model_post_ch9_scan_window_ms(&recovery);
+    model_post_ch9_scan_complete(&recovery, false);
+    CHECK(deferred_scan_ms == MODELED_FOLLOWUP_SCAN_MS &&
+              recovery.recovery_pending &&
+              recovery.attempted_scans == 0u,
+          "a non-attempted post-Channel-9 worker consumed recovery debt");
+    CHECK(scan_start_us > second_ch9_owner_end_us,
+          "recovery worker still overlaps a live Channel-9 owner");
+    recovery_scan_ms = model_post_ch9_scan_window_ms(&recovery);
+    CHECK(recovery_scan_ms == MODELED_FOLLOWUP_SCAN_MS &&
+              recovery.worker_conflicts_observed == 0u,
+          "first released scan depended on observing a live Channel-9 conflict");
+
+    CHECK(encode_control_followup_wake_from(
+              ANCHOR_2_ID, 401u, MODELED_FORCED_CONTROL_CLAIM_MS,
+              wake_frame, sizeof(wake_frame), &wake_frame_len),
+          "post-Channel-9 recovery wake encoding failed");
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   sender,
+                                   wake_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   wake_frame,
+                                   wake_frame_len,
+                                   false,
+                                   &wake_tx) == MESH_SIM_OK,
+          "post-Channel-9 recovery wake scheduling failed");
+    CHECK(mesh_sim_schedule_rx(&world,
+                               old_receiver,
+                               scan_start_us,
+                               scan_start_us + MODELED_LOW_DUTY_RX_US,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_WAKE,
+                               NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(
+                  &world,
+                  recovery_receiver,
+                  scan_start_us,
+                  scan_start_us + recovery_scan_ms * UINT64_C(1000),
+                  UWB_CHANNEL_WAKE_CONTACT,
+                  MESH_SIM_PHY_CHANNEL5_WAKE,
+                  NULL) == MESH_SIM_OK,
+          "post-Channel-9 recovery scan scheduling failed");
+    CHECK(world.transmissions[wake_tx].end_us <
+              scan_start_us + MODELED_FOLLOWUP_SCAN_MS * UINT64_C(1000),
+          "20 ms recovery scan no longer contains the complete wake frame");
+    CHECK(mesh_sim_run_until(
+              &world,
+              scan_start_us + MODELED_FOLLOWUP_SCAN_MS * UINT64_C(1000) + 1u) ==
+              MESH_SIM_OK,
+          "post-Channel-9 recovery simulation failed");
+    model_post_ch9_scan_complete(&recovery, true);
+
+    for (size_t i = 0u; i < world.rx_window_count; i++) {
+        const struct mesh_sim_rx_window *window = &world.rx_windows[i];
+
+        if (window->valid && window->node_index == recovery_receiver &&
+            window->phy == MESH_SIM_PHY_CHANNEL9_MESH) {
+            physical_ch9_owner_windows++;
+        }
+    }
+
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        const struct mesh_sim_reception *rx = &world.receptions[i];
+
+        if (rx->source_id != ANCHOR_2_ID ||
+            rx->outcome != MESH_SIM_RX_DECODED) {
+            continue;
+        }
+        if (rx->receiver_id == ANCHOR_ID) {
+            old_decoded++;
+        } else if (rx->receiver_id == ANCHOR_3_ID) {
+            recovery_decoded++;
+        }
+    }
+
+    CHECK(old_decoded == 0u,
+          "observed 3 ms post-Channel-9 scan unexpectedly decoded the later wake");
+    CHECK(recovery_decoded == 1u,
+          "20 ms post-Channel-9 recovery scan missed the live wake train");
+    CHECK(physical_ch9_owner_windows == 2u,
+          "scenario did not execute two real Channel-9 owner windows");
+    CHECK(recovery.attempted_scans == 1u && !recovery.recovery_pending,
+          "real attempted recovery scan did not consume the pending bit once");
+}
+
+static uint32_t model_two_connection_gap_scan_ms(uint32_t event_interval_ms)
+{
+    uint32_t half_phase_ms;
+    uint32_t physical_gap_ms;
+
+    if ((event_interval_ms & 1u) != 0u) {
+        return 0u;
+    }
+    half_phase_ms = event_interval_ms / 2u;
+    if (half_phase_ms <= MODELED_CH9_OWNER_MS) {
+        return 0u;
+    }
+    physical_gap_ms = half_phase_ms - MODELED_CH9_OWNER_MS;
+    return app_mesh_c5_connected_gap_window_ms(
+        &(const struct app_mesh_c5_connected_gap_timing) {
+            .next_channel9_delay_ms = physical_gap_ms,
+            .scan_cap_ms = MODELED_FOLLOWUP_SCAN_MS,
+            .min_scan_ms = MODELED_FOLLOWUP_SCAN_MS,
+            .retune_margin_ms = MODELED_CONNECTED_GAP_RETUNE_MS,
+        });
+}
+
+static void test_retained_ch9_retry_owner_keeps_survey_control_gap(void)
+{
+    static const struct survey_discovery_config config = {
+        .survey_id = SURVEY_ID,
+        .operation_generation = SURVEY_OPERATION_GENERATION,
+        .start_delay_ms = 90000u,
+        .slot_ms = 40u,
+        .slot_count = 6u,
+        .round_count = 4u,
+    };
+    static struct mesh_sim_world world;
+    struct route_candidate parent_route = {
+        .next_hop_id = ANCHOR_2_ID,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = ROUTE_EPOCH,
+        .last_seen_ms = 1u,
+        .last_success_ms = 1u,
+        .hop_count = 1u,
+        .link_quality = 94u,
+        .valid = true,
+    };
+    struct mesh_outbound retry_owner = {0};
+    struct mesh_pending_tx pending_before;
+    struct proto_packet survey_start = {0};
+    struct fw_radio_activity_capture capture = {
+        .relay_tx_active = true,
+        .ch9_ack_wait_active = true,
+        .c5_tx_intent = FW_C5_TX_INTENT_BACKGROUND,
+    };
+    struct fw_radio_activity_runtime activity_runtime;
+    struct fw_radio_activity_decision decision;
+    uint8_t command_result_payload[32] = {0};
+    uint8_t survey_payload[96] = {0};
+    uint8_t survey_frame[PACKET_EXT_MAX_LEN] = {0};
+    uint8_t wake_frame[UWB_WAKE_CLAIM_LEN] = {0};
+    size_t command_result_payload_len = 0u;
+    size_t survey_payload_len = 0u;
+    size_t survey_frame_len = 0u;
+    size_t wake_frame_len = 0u;
+    uint8_t relay = UINT8_MAX;
+    uint8_t forced = UINT8_MAX;
+    uint16_t object_index = UINT16_MAX;
+    const uint64_t first_owner_start_us = UINT64_C(10000);
+    const uint64_t first_owner_end_us =
+        first_owner_start_us + MODELED_CH9_OWNER_MS * UINT64_C(1000);
+    const uint64_t first_scan_start_us =
+        first_owner_end_us +
+        MODELED_CONNECTED_GAP_RETUNE_MS * UINT64_C(1000);
+    const uint64_t first_scan_end_us =
+        first_scan_start_us + MODELED_FOLLOWUP_SCAN_MS * UINT64_C(1000);
+    const uint64_t second_owner_start_us =
+        first_owner_start_us +
+        (MESH_RADIO_EVENT_INTERVAL_MS / 2u) * UINT64_C(1000);
+    const uint64_t second_owner_end_us =
+        second_owner_start_us + MODELED_CH9_OWNER_MS * UINT64_C(1000);
+    const uint64_t second_scan_start_us =
+        second_owner_end_us +
+        MODELED_CONNECTED_GAP_RETUNE_MS * UINT64_C(1000);
+    const uint64_t second_scan_end_us =
+        second_scan_start_us + MODELED_FOLLOWUP_SCAN_MS * UINT64_C(1000);
+    const uint64_t wake_start_us = first_scan_end_us + 1u;
+    const uint64_t wake_end_us =
+        wake_start_us + MESH_RADIO_WAKE_TRAIN_MS * UINT64_C(1000);
+    uint64_t wake_tx_us;
+    uint64_t payload_tx_us;
+    uint64_t payload_listener_end_us;
+    uint32_t production_scan_ms;
+    uint32_t wake_airtime_us;
+    size_t wake_decoded = 0u;
+    size_t survey_payloads_decoded = 0u;
+    bool state_changed = false;
+
+    CHECK(model_two_connection_gap_scan_ms(
+              MODELED_LEGACY_EVENT_INTERVAL_MS) == 0u,
+          "legacy 520 ms cadence unexpectedly contains retune plus C5 RX");
+    production_scan_ms = model_two_connection_gap_scan_ms(
+        MESH_RADIO_EVENT_INTERVAL_MS);
+    CHECK(production_scan_ms == MODELED_FOLLOWUP_SCAN_MS,
+          "production cadence does not expose the exact 20 ms C5 scan");
+
+    /* A full wake beginning just after one scan still contains the next
+     * complete scan for every possible phase of the two-link cadence. */
+    for (uint32_t phase_us = 0u;
+         phase_us < (MESH_RADIO_EVENT_INTERVAL_MS / 2u) * 1000u;
+         phase_us++) {
+        const uint64_t next_scan_us = phase_us == 0u ? 0u :
+            (MESH_RADIO_EVENT_INTERVAL_MS / 2u) * UINT64_C(1000);
+
+        CHECK(next_scan_us +
+                  MODELED_FOLLOWUP_SCAN_MS * UINT64_C(1000) <=
+              (uint64_t)phase_us +
+                  MESH_RADIO_WAKE_TRAIN_MS * UINT64_C(1000),
+              "400 ms wake lost its guaranteed complete connected-gap scan");
+        if (failures != 0u) {
+            break;
+        }
+    }
+
+    mesh_sim_init(&world, UINT32_C(0xf0c56400));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_2_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &relay) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
+                                GATEWAY_ID, ROUTE_EPOCH, &forced) ==
+                  MESH_SIM_OK,
+          "retained-owner control-gap roles failed");
+    CHECK(mesh_sim_set_link(&world, relay, forced, 100u, 0u) == MESH_SIM_OK,
+          "retained-owner control-gap link failed");
+    CHECK(route_upsert_candidate(&world.roles[forced].relay.upstream,
+                                 &parent_route) == PROTO_OK,
+          "retained owner parent route setup failed");
+    CHECK(mesh_append_command_result(command_result_payload,
+                                     sizeof(command_result_payload),
+                                     &command_result_payload_len,
+                                     CMD_SURVEY_PREPARE_PAIR,
+                                     COMMAND_OK,
+                                     0u) == PROTO_OK &&
+              mesh_init_command_result(&retry_owner.packet,
+                                       ANCHOR_ID,
+                                       GATEWAY_ID,
+                                       SURVEY_ID,
+                                       UINT16_C(0x6401),
+                                       (uint8_t)command_result_payload_len,
+                                       true) == PROTO_OK,
+          "retained command-result owner setup failed");
+    memcpy(retry_owner.payload,
+           command_result_payload,
+           command_result_payload_len);
+    retry_owner.payload_len = (uint16_t)command_result_payload_len;
+    CHECK(mesh_relay_start_tx(&world.roles[forced].relay,
+                              &retry_owner.packet,
+                              retry_owner.payload,
+                              retry_owner.payload_len,
+                              1u,
+                              &retry_owner) == PROTO_OK,
+          "retained command-result owner did not acquire custody");
+    world.roles[forced].relay.pending.radio_channel =
+        UWB_CHANNEL_MESH_PAYLOAD;
+    world.roles[forced].relay.pending.state =
+        MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+    world.roles[forced].relay.pending.retry_after_ms = UINT32_C(0x12345678);
+    pending_before = world.roles[forced].relay.pending;
+
+    fw_radio_activity_runtime_init(&activity_runtime);
+    CHECK(fw_radio_activity_decide(&capture,
+                                   &activity_runtime,
+                                   &decision,
+                                   &state_changed) == 0 &&
+              decision.state == FW_RADIO_ACTIVITY_MESH_RX &&
+              !decision.c5_tx_allowed && decision.uwb_rx_allowed,
+          "generic C5 received a blanket live-ACK bypass");
+    capture.c5_tx_intent = FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL;
+    CHECK(fw_radio_activity_decide(&capture,
+                                   &activity_runtime,
+                                   &decision,
+                                   &state_changed) == 0 &&
+              decision.c5_tx_allowed,
+          "validated gateway survey control lost its narrow ACK exception");
+
+    CHECK(survey_append_discovery_start_tlvs(
+              survey_payload,
+              sizeof(survey_payload),
+              &survey_payload_len,
+              &config) == PROTO_OK &&
+              survey_init_discovery_start_packet(
+                  &survey_start,
+                  GATEWAY_ID,
+                  &config,
+                  UINT16_C(0x6402),
+                  (uint8_t)survey_payload_len) == PROTO_OK &&
+              proto_packet_encode(&survey_start,
+                                  survey_payload,
+                                  survey_frame,
+                                  sizeof(survey_frame),
+                                  &survey_frame_len) == PROTO_OK &&
+              encode_control_followup_wake_from(
+                  ANCHOR_2_ID,
+                  survey_start.seq,
+                  MESH_RADIO_WAKE_TRAIN_MS,
+                  wake_frame,
+                  sizeof(wake_frame),
+                  &wake_frame_len),
+          "exact relayed survey-start wave setup failed");
+    CHECK(survey_start.msg_type == MSG_SURVEY_DISCOVERY_START &&
+              survey_start_tx_phy(survey_frame_len) ==
+                  MESH_SIM_PHY_CHANNEL5_MESH_CONTROL &&
+              app_mesh_c5_route_wake_claim_allowed(
+                  ANCHOR_2_ID,
+                  GATEWAY_ID,
+                  FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+                      FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY,
+                  false,
+                  true) &&
+              app_mesh_c5_connected_gap_rx_action(false, true, false) ==
+                  APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL,
+          "modeled control is not an exact allowed relayed 0x54");
+
+    CHECK(mesh_sim_schedule_rx(&world,
+                               forced,
+                               first_owner_start_us,
+                               first_owner_end_us,
+                               UWB_CHANNEL_MESH_PAYLOAD,
+                               MESH_SIM_PHY_CHANNEL9_MESH,
+                               NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   second_owner_start_us,
+                                   second_owner_end_us,
+                                   UWB_CHANNEL_MESH_PAYLOAD,
+                                   MESH_SIM_PHY_CHANNEL9_MESH,
+                                   NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   first_scan_start_us,
+                                   first_scan_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   second_scan_start_us,
+                                   second_scan_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   NULL) == MESH_SIM_OK,
+          "retained-owner CH9/C5 reservation scheduling failed");
+
+    wake_airtime_us = mesh_sim_frame_duration_us(
+        MESH_SIM_PHY_CHANNEL5_WAKE, wake_frame_len);
+    CHECK((2u * wake_airtime_us) +
+              (uint32_t)MODELED_WAKE_REPEAT_GAP_US <=
+              MODELED_FOLLOWUP_SCAN_MS * 1000u,
+          "20 ms connected-gap scan cannot contain a worst-aligned wake copy");
+    wake_tx_us = wake_start_us;
+    while (wake_tx_us + wake_airtime_us <= wake_end_us) {
+        CHECK(mesh_sim_schedule_raw_tx(&world,
+                                       relay,
+                                       wake_tx_us,
+                                       UWB_CHANNEL_WAKE_CONTACT,
+                                       MESH_SIM_PHY_CHANNEL5_WAKE,
+                                       wake_frame,
+                                       wake_frame_len,
+                                       false,
+                                       &object_index) == MESH_SIM_OK,
+              "bounded control wake copy scheduling failed");
+        world.transmissions[object_index].protocol_msg_type =
+            MSG_UWB_WAKE_CLAIM;
+        wake_tx_us = world.transmissions[object_index].end_us +
+                     MODELED_WAKE_REPEAT_GAP_US;
+    }
+
+    payload_tx_us = wake_end_us +
+                    MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS * UINT64_C(1000);
+    for (uint8_t copy = 0u; copy < 4u; copy++) {
+        CHECK(mesh_sim_schedule_raw_tx(&world,
+                                       relay,
+                                       payload_tx_us,
+                                       UWB_CHANNEL_WAKE_CONTACT,
+                                       MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                       survey_frame,
+                                       survey_frame_len,
+                                       false,
+                                       &object_index) == MESH_SIM_OK,
+              "survey-start payload copy scheduling failed");
+        world.transmissions[object_index].protocol_msg_type =
+            MSG_SURVEY_DISCOVERY_START;
+        payload_tx_us = world.transmissions[object_index].end_us +
+                        MODELED_WAKE_REPEAT_GAP_US;
+    }
+    payload_listener_end_us = payload_tx_us;
+    CHECK(mesh_sim_schedule_rx(&world,
+                               forced,
+                               second_scan_end_us,
+                               payload_listener_end_us,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                               NULL) == MESH_SIM_OK,
+          "survey control follow-up listener scheduling failed");
+    CHECK(mesh_sim_run_until(&world, payload_listener_end_us + 1u) ==
+              MESH_SIM_OK,
+          "retained-owner survey-control PHY simulation failed");
+
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        const struct mesh_sim_reception *rx = &world.receptions[i];
+
+        if (rx->receiver_id != ANCHOR_ID ||
+            rx->source_id != ANCHOR_2_ID ||
+            rx->outcome != MESH_SIM_RX_DECODED) {
+            continue;
+        }
+        if (rx->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
+            wake_decoded++;
+        } else if (rx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) {
+            survey_payloads_decoded++;
+        }
+    }
+    CHECK(wake_decoded > 0u,
+          "400 ms wake missed every legal two-link connected-gap scan");
+    CHECK(survey_payloads_decoded == 4u,
+          "allowed control follow-up did not receive all four exact 0x54 copies");
+    CHECK(memcmp(&world.roles[forced].relay.pending,
+                 &pending_before,
+                 sizeof(pending_before)) == 0,
+          "C5 survey observation mutated or lost retained CH9 retry custody");
+    CHECK(app_mesh_c5_connected_gap_rx_action(false, false, false) ==
+              APP_MESH_C5_CONNECTED_GAP_RX_CONTINUE,
+          "generic C5 activity escaped the bounded observation loop");
+}
+
+static void test_forced_control_followup_reopens_for_deeper_relay(void)
+{
+    static struct mesh_sim_world world;
+    struct mesh_outbound hop1_control;
+    struct mesh_outbound hop2_control;
+    uint8_t hop1_wake[UWB_WAKE_CLAIM_LEN] = {0};
+    uint8_t hop2_wake[UWB_WAKE_CLAIM_LEN] = {0};
+    uint8_t hop1_frame[PACKET_EXT_MAX_LEN] = {0};
+    uint8_t hop2_frame[PACKET_EXT_MAX_LEN] = {0};
+    size_t hop1_wake_len = 0u;
+    size_t hop2_wake_len = 0u;
+    size_t hop1_frame_len = 0u;
+    size_t hop2_frame_len = 0u;
+    uint8_t relay1 = UINT8_MAX;
+    uint8_t relay2 = UINT8_MAX;
+    uint8_t forced = UINT8_MAX;
+    uint16_t hop1_wake_tx = UINT16_MAX;
+    uint16_t hop1_payload_tx = UINT16_MAX;
+    uint16_t hop2_wake_tx = UINT16_MAX;
+    uint16_t hop2_payload_tx = UINT16_MAX;
+    uint64_t hop1_wake_start_us = TX_START_US;
+    uint64_t hop1_wake_end_us;
+    uint64_t hop1_payload_start_us;
+    uint64_t hop1_payload_end_us;
+    uint64_t hop2_wake_start_us;
+    uint64_t hop2_wake_end_us;
+    uint64_t hop2_payload_start_us;
+    uint64_t hop2_payload_end_us;
+    uint64_t listen_end_us;
+    size_t hop1_wakes_decoded = 0u;
+    size_t hop1_payloads_decoded = 0u;
+    size_t hop2_wakes_decoded = 0u;
+    size_t hop2_payloads_decoded = 0u;
+
+    mesh_sim_init(&world, UINT32_C(0xf0c53401));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_2_ID,
+                            GATEWAY_ID, ROUTE_EPOCH, &relay1) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_3_ID,
+                                GATEWAY_ID, ROUTE_EPOCH, &relay2) == MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR, ANCHOR_ID,
+                                GATEWAY_ID, ROUTE_EPOCH, &forced) == MESH_SIM_OK,
+          "deep forced-followup role setup failed");
+    CHECK(mesh_sim_set_link(&world, relay1, forced, 100u, 0u) == MESH_SIM_OK &&
+              mesh_sim_set_link(&world, relay2, forced, 100u, 0u) == MESH_SIM_OK,
+          "deep forced-followup links failed");
+    CHECK(encode_control_followup_wake_from(
+              ANCHOR_2_ID, 301u, MODELED_DEEP_RELAY_LISTEN_MS,
+              hop1_wake, sizeof(hop1_wake), &hop1_wake_len) &&
+              encode_control_followup_wake_from(
+                  ANCHOR_3_ID, 302u, MODELED_DEEP_RELAY_LISTEN_MS,
+                  hop2_wake, sizeof(hop2_wake), &hop2_wake_len),
+          "deep forced-followup wake encoding failed");
+    CHECK(build_pair_start_control(&hop1_control, ANCHOR_ID, 301u) == PROTO_OK,
+          "deep forced-followup control setup failed");
+    hop1_control.packet.ttl = (uint8_t)(MESH_DEFAULT_TTL - 1u);
+    hop2_control = hop1_control;
+    hop2_control.packet.ttl = (uint8_t)(MESH_DEFAULT_TTL - 2u);
+    CHECK(proto_packet_encode(&hop1_control.packet,
+                              hop1_control.payload,
+                              hop1_frame,
+                              sizeof(hop1_frame),
+                              &hop1_frame_len) == PROTO_OK &&
+              proto_packet_encode(&hop2_control.packet,
+                                  hop2_control.payload,
+                                  hop2_frame,
+                                  sizeof(hop2_frame),
+                                  &hop2_frame_len) == PROTO_OK,
+          "deep forced-followup payload encoding failed");
+    CHECK((uint8_t)(MESH_DEFAULT_TTL - hop1_control.packet.ttl) == 1u &&
+              (uint8_t)(MESH_DEFAULT_TTL - hop2_control.packet.ttl) == 2u,
+          "deep forced-followup hop policy drifted");
+
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   relay1,
+                                   hop1_wake_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   hop1_wake,
+                                   hop1_wake_len,
+                                   false,
+                                   &hop1_wake_tx) == MESH_SIM_OK,
+          "deep forced-followup first wake scheduling failed");
+    hop1_wake_end_us = world.transmissions[hop1_wake_tx].end_us;
+    hop1_payload_start_us = hop1_wake_start_us +
+                            (MESH_RADIO_WAKE_TRAIN_MS +
+                             MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS) * 1000u;
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   relay1,
+                                   hop1_payload_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   hop1_frame,
+                                   hop1_frame_len,
+                                   false,
+                                   &hop1_payload_tx) == MESH_SIM_OK,
+          "deep forced-followup first payload scheduling failed");
+    hop1_payload_end_us = world.transmissions[hop1_payload_tx].end_us;
+
+    hop2_wake_start_us = hop1_wake_start_us + FLOOD_WAVE_MS * 1000u;
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   relay2,
+                                   hop2_wake_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   hop2_wake,
+                                   hop2_wake_len,
+                                   false,
+                                   &hop2_wake_tx) == MESH_SIM_OK,
+          "deep forced-followup second wake scheduling failed");
+    hop2_wake_end_us = world.transmissions[hop2_wake_tx].end_us;
+    hop2_payload_start_us = hop2_wake_start_us +
+                            (MESH_RADIO_WAKE_TRAIN_MS +
+                             MODELED_CONTROL_FOLLOWUP_TURNAROUND_MS) * 1000u;
+    CHECK(mesh_sim_schedule_raw_tx(&world,
+                                   relay2,
+                                   hop2_payload_start_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   hop2_frame,
+                                   hop2_frame_len,
+                                   false,
+                                   &hop2_payload_tx) == MESH_SIM_OK,
+          "deep forced-followup second payload scheduling failed");
+    hop2_payload_end_us = world.transmissions[hop2_payload_tx].end_us;
+    listen_end_us = hop1_wake_start_us +
+                    (MESH_RADIO_WAKE_TRAIN_MS +
+                     MODELED_DEEP_RELAY_LISTEN_MS) * 1000u;
+
+    CHECK(mesh_sim_schedule_rx(&world,
+                               forced,
+                               hop1_wake_start_us,
+                               hop1_wake_end_us,
+                               UWB_CHANNEL_WAKE_CONTACT,
+                               MESH_SIM_PHY_CHANNEL5_WAKE,
+                               NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   hop1_payload_start_us,
+                                   hop1_payload_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   hop1_payload_end_us,
+                                   hop2_wake_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_WAKE,
+                                   NULL) == MESH_SIM_OK &&
+              mesh_sim_schedule_rx(&world,
+                                   forced,
+                                   hop2_payload_start_us,
+                                   hop2_payload_end_us,
+                                   UWB_CHANNEL_WAKE_CONTACT,
+                                   MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                                   NULL) == MESH_SIM_OK,
+          "deep forced-followup PHY handoff scheduling failed");
+    CHECK(hop2_payload_end_us < listen_end_us,
+          "deep forced-followup second payload escaped the bounded listener");
+    CHECK(!mesh_sim_phy_decode_compatible(
+              MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+              MESH_SIM_PHY_CHANNEL5_WAKE),
+          "extended listener could decode the second standard wake");
+    CHECK(mesh_sim_run_until(&world, listen_end_us + 1u) == MESH_SIM_OK,
+          "deep forced-followup PHY simulation failed");
+
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        const struct mesh_sim_reception *rx = &world.receptions[i];
+
+        if (rx->receiver_id != ANCHOR_ID ||
+            rx->outcome != MESH_SIM_RX_DECODED) {
+            continue;
+        }
+        if (rx->source_id == ANCHOR_2_ID &&
+            rx->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
+            hop1_wakes_decoded++;
+        } else if (rx->source_id == ANCHOR_2_ID &&
+                   rx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) {
+            hop1_payloads_decoded++;
+        } else if (rx->source_id == ANCHOR_3_ID &&
+                   rx->phy == MESH_SIM_PHY_CHANNEL5_WAKE) {
+            hop2_wakes_decoded++;
+        } else if (rx->source_id == ANCHOR_3_ID &&
+                   rx->phy == MESH_SIM_PHY_CHANNEL5_MESH_CONTROL) {
+            hop2_payloads_decoded++;
+        }
+    }
+
+    CHECK(hop1_wakes_decoded == 1u && hop1_payloads_decoded == 1u,
+          "forced target did not decode and reject the first relay copy");
+    CHECK(hop2_wakes_decoded == 1u && hop2_payloads_decoded == 1u,
+          "forced target did not reopen standard PHY for the deeper relay copy");
 }
 
 static bool model_two_anchor_control_opportunity(
@@ -1932,6 +2992,10 @@ int main(void)
     run_survey_start_phy_case(true, 0u, false, true);
     test_pair_start_skew_is_local_and_route_depth_independent();
     test_pair_prepare_phr_and_complete_airtime_sweep();
+    test_forced_control_followup_covers_relay_gap();
+    test_post_channel9_recovery_scan_captures_live_wake_train();
+    test_retained_ch9_retry_owner_keeps_survey_control_gap();
+    test_forced_control_followup_reopens_for_deeper_relay();
     test_two_anchor_control_followup_turnaround();
     test_two_anchor_survey_lifecycle();
 

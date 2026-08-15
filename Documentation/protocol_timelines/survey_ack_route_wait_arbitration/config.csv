@@ -1,0 +1,11 @@
+key,value
+title,"SURVEY UPLINK: ONE RADIO DECISION BREAKS THE TWO-OWNER DEADLOCK"
+caption,"One 640 ms Channel-9 cadence around forced relay B. C's report is already retained at B while B's own report awaits its exact gateway ACK. Horizontal position is protocol time; boxes sharing time are physically competing radio work."
+key_point,"The route-wait packet must remain retained while B opens the known ACK receive slot. The old duplicate RX veto suppressed that slot and left both reports live forever. The fixed path obeys the centralized coordinator: ACK RX first, exact local retirement second, then the unchanged child route-wait owner resumes."
+start,0
+end,1560
+width,4300
+unit,ms
+axis_caption_width,190
+row_label_width,300
+max_inline_lines,4

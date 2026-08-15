@@ -118,6 +118,7 @@ class DurableStateSourceInvariants(unittest.TestCase):
             "CONFIG_ADC=n",
             "CONFIG_BT_CTLR_ECDH=n",
             "CONFIG_BT_CTLR_LE_ENC=n",
+            "CONFIG_BT_ASSERT_VERBOSE=n",
             "CONFIG_BT_GATT_CACHING=n",
             "CONFIG_BT_GATT_READ_MULTIPLE=n",
             "CONFIG_BT_GATT_READ_MULT_VAR_LEN=n",

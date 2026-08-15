@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="971" viewBox="0 0 4300 971" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">ONE RELAY, TWO CHANNEL-9 RHYTHMS: 520 MS LEAVES NO USABLE CHANNEL-5 GAP</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="834.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="194.0" y="96.0" class="row-label">CURRENT 520: FIRST CHANNEL-9 OWNER</text>
+<rect x="344.0" y="74.0" width="1467.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1077.9" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1077.9" dy="0.0">60 guard + 120 event + 60 guard</tspan></text>
+<line x1="44.0" y1="124.0" x2="4258.0" y2="124.0" class="major-line"/>
+<text x="194.0" y="160.0" class="row-label">CURRENT 520: SECOND CHANNEL-9 OWNER</text>
+<rect x="1934.1" y="138.0" width="1467.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2667.9" y="161.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2667.9" dy="0.0">60 guard + 120 event + 60 guard</tspan></text>
+<line x1="44.0" y1="188.0" x2="4258.0" y2="188.0" class="major-line"/>
+<text x="194.0" y="242.0" class="row-label">CURRENT 520: PHYSICAL FREE TIME</text>
+<rect x="1811.8" y="198.0" width="122.3" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1872.9" y="221.0" class="small center event-text" text-anchor="middle"><tspan x="1872.9" dy="0.0">only 20 ms free</tspan></text>
+<rect x="3401.8" y="242.0" width="122.3" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3463.0" y="265.0" class="small center event-text" text-anchor="middle"><tspan x="3463.0" dy="0.0">only 20 ms free</tspan></text>
+<line x1="44.0" y1="288.0" x2="4258.0" y2="288.0" class="major-line"/>
+<text x="194.0" y="342.0" class="row-label">SCANNER REQUIREMENT</text>
+<rect x="1811.8" y="298.0" width="489.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2056.4" y="321.0" class="small center event-text" text-anchor="middle"><tspan x="2056.4" dy="0.0">60 ms retune reserve + 20 ms receive</tspan></text>
+<rect x="3768.8" y="342.0" width="489.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4013.4" y="365.0" class="small center event-text" text-anchor="middle"><tspan x="4013.4" dy="0.0">60 ms retune reserve + 20 ms receive</tspan></text>
+<line x1="44.0" y1="388.0" x2="4258.0" y2="388.0" class="major-line"/>
+<text x="194.0" y="424.0" class="row-label">SIMPLE 640: FIRST CHANNEL-9 OWNER</text>
+<rect x="344.0" y="402.0" width="1467.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1077.9" y="425.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1077.9" dy="0.0">60 guard + 120 event + 60 guard</tspan></text>
+<line x1="44.0" y1="452.0" x2="4258.0" y2="452.0" class="major-line"/>
+<text x="194.0" y="488.0" class="row-label">SIMPLE 640: RETUNE + CHANNEL-5 RX</text>
+<rect x="1811.8" y="466.0" width="489.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2056.4" y="489.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2056.4" dy="0.0">60 ms retune + 20 ms Channel-5 RX</tspan></text>
+<line x1="44.0" y1="516.0" x2="4258.0" y2="516.0" class="major-line"/>
+<text x="194.0" y="552.0" class="row-label">SIMPLE 640: SECOND CHANNEL-9 OWNER</text>
+<rect x="2301.0" y="530.0" width="1467.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3034.9" y="553.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3034.9" dy="0.0">60 guard + 120 event + 60 guard</tspan></text>
+<line x1="44.0" y1="580.0" x2="4258.0" y2="580.0" class="major-line"/>
+<text x="194.0" y="616.0" class="row-label">SIMPLE 640: RETUNE + CHANNEL-5 RX</text>
+<rect x="3768.8" y="594.0" width="489.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="4013.4" y="617.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="4013.4" dy="0.0">60 ms retune + 20 ms Channel-5 RX</tspan></text>
+<line x1="44.0" y1="644.0" x2="4258.0" y2="644.0" class="major-line"/>
+<text x="194.0" y="680.0" class="row-label">PHYSICAL FEASIBILITY</text>
+<rect x="344.0" y="658.0" width="3180.1" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1934.1" y="681.0" class="small center event-text" text-anchor="middle"><tspan x="1934.1" dy="0.0">520 ms provides only 40 ms total free time</tspan></text>
+<rect x="3524.1" y="658.0" width="733.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3891.1" y="681.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3891.1" dy="0.0">the extra 120 ms creates two legal scan gaps</tspan></text>
+<line x1="44.0" y1="708.0" x2="4258.0" y2="708.0" class="major-line"/>
+<text x="194.0" y="745.0" class="row-label">KEY POINT</text>
+<rect x="2041.0" y="720.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="2301.0" y="734.0" class="small center" text-anchor="middle"><tspan x="2301.0" dy="0.0">A 520 ms cycle leaves only 20 ms between adjacent 240 ms Channel-9 owners, but the scanner</tspan><tspan x="2301.0" dy="12.0">needs 80 ms: 60 ms to retune and 20 ms to listen. A 640 ms cycle contains two owners plus two</tspan><tspan x="2301.0" dy="12.0">complete 80 ms Channel-5 opportunities without adding another radio-owner exception.</tspan></text>
+<line x1="44.0" y1="774.0" x2="4258.0" y2="774.0" class="major-line"/>
+<line x1="44.0" y1="800.0" x2="44.0" y2="838.0" class="major-line"/>
+<line x1="44.0" y1="800.0" x2="4258.0" y2="800.0" class="axis-line"/>
+<line x1="344.0" y1="799.0" x2="344.0" y2="811.0" class="tick"/>
+<line x1="1811.8" y1="799.0" x2="1811.8" y2="811.0" class="tick"/>
+<line x1="1934.1" y1="799.0" x2="1934.1" y2="811.0" class="tick"/>
+<line x1="2301.0" y1="799.0" x2="2301.0" y2="811.0" class="tick"/>
+<line x1="3401.8" y1="799.0" x2="3401.8" y2="811.0" class="tick"/>
+<line x1="3524.1" y1="799.0" x2="3524.1" y2="811.0" class="tick"/>
+<line x1="3768.8" y1="799.0" x2="3768.8" y2="811.0" class="tick"/>
+<line x1="4258.0" y1="799.0" x2="4258.0" y2="811.0" class="tick"/>
+<text x="327.4" y="823.0" class="axis-time">0 ms</text>
+<text x="1795.2" y="823.0" class="axis-time">240 ms</text>
+<text x="1917.5" y="823.0" class="axis-time">260 ms</text>
+<text x="2284.4" y="823.0" class="axis-time">320 ms</text>
+<text x="3385.3" y="823.0" class="axis-time">500 ms</text>
+<text x="3507.6" y="823.0" class="axis-time">520 ms</text>
+<text x="3752.2" y="823.0" class="axis-time">560 ms</text>
+<text x="4241.4" y="823.0" class="axis-time">640 ms</text>
+<text x="344.0" y="852.5" class="tiny center" text-anchor="middle"><tspan x="344.0" dy="0.0">cycle begins</tspan></text>
+<text x="1811.8" y="852.5" class="tiny center" text-anchor="middle"><tspan x="1811.8" dy="0.0">first physical owner ends</tspan></text>
+<text x="1934.1" y="882.5" class="tiny center" text-anchor="middle"><tspan x="1934.1" dy="0.0">current second owner starts too early</tspan></text>
+<text x="2301.0" y="847.0" class="tiny center" text-anchor="middle"><tspan x="2301.0" dy="0.0">correct second owner starts after</tspan><tspan x="2301.0" dy="11.0">retune and receive</tspan></text>
+<text x="3401.8" y="852.5" class="tiny center" text-anchor="middle"><tspan x="3401.8" dy="0.0">current second owner ends</tspan></text>
+<text x="3524.1" y="877.0" class="tiny center" text-anchor="middle"><tspan x="3524.1" dy="0.0">current cycle repeats without a usable</tspan><tspan x="3524.1" dy="11.0">scan</tspan></text>
+<text x="3768.8" y="852.5" class="tiny center" text-anchor="middle"><tspan x="3768.8" dy="0.0">correct second owner ends</tspan></text>
+<text x="4202.1" y="852.5" class="tiny center" text-anchor="middle"><tspan x="4202.1" dy="0.0">correct cycle repeats</tspan></text>
+<text x="2150.0" y="937.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Each Channel-9 turn owns 60 ms of early retune, 120 ms of event window, and 60 ms of trailing receive time. A usable Channel-5 opportunity needs another 60 ms transition reserve before its 20 ms receive slice.</tspan></text>
+</svg>

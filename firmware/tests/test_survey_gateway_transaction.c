@@ -1061,28 +1061,21 @@ static void test_completed_validation_uses_full_processing_hold_across_wrap(void
            GATEWAY_COMMAND_RESULT_VALIDATION_EXPIRED);
 }
 
-static void test_pair_plan_minimum_budget_scales_to_one_hour(void)
+static void test_pair_plan_default_and_explicit_maximum_budgets(void)
 {
     assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS == 12000u);
     assert(SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS == 174000u);
-    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 3600000u);
+    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 360000u);
 
-    /* Every legal 50-anchor plan fits its four serialized control floors. */
+    /* The default covers thirty serialized floors: ample for K3 plus reruns. */
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        SURVEY_GATEWAY_MAX_PAIRS,
-        SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));
-    assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        SURVEY_GATEWAY_MAX_PAIRS,
-        GATEWAY_COMMAND_BUDGET_MAX_MS));
-
-    /* Three hundred pair floors consume the complete one-hour boundary. */
-    assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        300u,
+        30u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        300u,
+        30u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS - 1u));
 
+    /* The explicit one-hour command maximum retains the larger-fleet option. */
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
         300u,
         GATEWAY_COMMAND_BUDGET_MAX_MS));
@@ -1266,7 +1259,7 @@ int main(void)
     test_remote_lease_expiry_is_terminal_cleanup_authority();
     test_d_minus_one_result_decides_before_failed_delivery_terminal();
     test_completed_validation_uses_full_processing_hold_across_wrap();
-    test_pair_plan_minimum_budget_scales_to_one_hour();
+    test_pair_plan_default_and_explicit_maximum_budgets();
     test_due_registry_retains_earliest_observation_due();
     test_due_registry_same_owner_only_moves_earlier();
     test_observation_origin_keeps_a_wrapped_zero_start();

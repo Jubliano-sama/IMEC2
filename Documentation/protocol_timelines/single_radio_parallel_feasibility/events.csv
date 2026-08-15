@@ -1,0 +1,34 @@
+row,start,end,text,style,lane_index
+old_ch5,360,2360,"2,000 ms control listener",shaded,0
+old_ch9,450,690,"turn 1",emphasis,0
+old_ch9,970,1210,"turn 2",emphasis,0
+old_ch9,1490,1730,"turn 3",emphasis,0
+old_ch9,2010,2250,"turn 4",emphasis,0
+old_ch9,2530,2770,"turn 5 after release",default,0
+old_result,450,690,"two owners",shaded,0
+old_result,970,1210,"two owners",shaded,0
+old_result,1490,1730,"two owners",shaded,0
+old_result,2010,2250,"two owners",shaded,0
+boost,20,40,"",default,0
+boost,60,80,"",default,0
+boost,100,120,"",default,0
+boost,140,160,"",default,0
+boost,180,200,"",default,0
+boost,220,240,"",default,0
+boost,260,280,"",default,0
+boost,300,320,"",default,0
+boost,340,360,"relay wake found",emphasis,0
+control,360,2360,"accepted gateway control owns the DWM3000",emphasis,0
+copies,340,740,"allowed relay wake train",default,0
+copies,780,800,"payload 1",emphasis,0
+copies,1740,2140,"deeper relay wake train",default,0
+copies,2180,2200,"payload 2",emphasis,0
+deferred,450,690,"retained 1",shaded,0
+deferred,970,1210,"retained 2",shaded,0
+deferred,1490,1730,"retained 3",shaded,0
+deferred,2010,2250,"retained 4",shaded,0
+resume,2530,2770,"next cadence turn is armed and usable",emphasis,0
+verdict,0,360,"released slices: both lanes remain schedulable",default,0
+verdict,360,2360,"control priority: no simultaneous promise",emphasis,0
+verdict,2360,2530,"release and rearm",default,0
+verdict,2530,2850,"retained Channel-9 custody resumes",emphasis,0

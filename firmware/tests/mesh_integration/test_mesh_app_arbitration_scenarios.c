@@ -1055,7 +1055,7 @@ static void test_click_preemption_custody_failures_are_explicit(void)
     assert(fixture.schedule_calls == 0u);
 
     memset(&fixture, 0, sizeof(fixture));
-    start_gateway_bound_tx(&relay, MSG_ANCHOR_HEARTBEAT, ANCHOR_ID, 73u, NULL, 0u);
+    start_gateway_bound_tx(&relay, MSG_MESH_DATA, TRANSIT_ID, 73u, NULL, 0u);
     fixture.relay = &relay;
     fixture.schedule_ret = -EIO;
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_ID, 2020u, &plan) == PROTO_OK);

@@ -25,7 +25,7 @@ class OperationPolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             discovery.hex(),
-            "010200905f010028000604fa000000a0bb0d00",
+            "010200204e000028000604fa00000080a90300",
         )
         self.assertEqual(pair.hex(), "0103000219")
         self.assertEqual(
@@ -37,7 +37,7 @@ class OperationPolicyTests(unittest.TestCase):
         profile = OperationPolicyProfile(
             assignment=AssignmentOperationPolicy(5, 1_600_000, 750),
             discovery=DiscoveryOperationPolicy(
-                90_000, 80, 12, 3, 1_500, 500_000
+                20_000, 80, 12, 3, 1_500, 500_000
             ),
             pair=PairOperationPolicy(1, 8),
         )
@@ -65,10 +65,10 @@ class OperationPolicyTests(unittest.TestCase):
             lambda: AssignmentOperationPolicy(0, 999, 1_000),
             lambda: AssignmentOperationPolicy(0, 1_591_203, 1_000),
             lambda: AssignmentOperationPolicy(3, 526_203, 1_000),
-            lambda: DiscoveryOperationPolicy(89_999, 40, 6, 4, 250, 600_000),
-            lambda: DiscoveryOperationPolicy(90_000, 29, 6, 4, 250, 600_000),
-            lambda: DiscoveryOperationPolicy(90_000, 40, 6, 5, 250, 600_000),
-            lambda: DiscoveryOperationPolicy(90_000, 40, 6, 4, 250, 209_992),
+            lambda: DiscoveryOperationPolicy(19_999, 40, 6, 4, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(20_000, 29, 6, 4, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(20_000, 40, 6, 5, 250, 600_000),
+            lambda: DiscoveryOperationPolicy(20_000, 40, 6, 4, 250, 139_992),
             lambda: PairOperationPolicy(3, 1),
             lambda: PairOperationPolicy(2, 26),
         )
@@ -84,8 +84,8 @@ class OperationPolicyTests(unittest.TestCase):
         self.assertEqual(1_591_204, assignment_required_budget_ms(1_000, 50))
         self.assertLessEqual(assignment_required_budget_ms(10_000), 1_800_000)
         self.assertEqual(
-            209_993,
-            discovery_required_budget_ms(90_000, 40, 6, 4, 250),
+            139_993,
+            discovery_required_budget_ms(20_000, 40, 6, 4, 250),
         )
         self.assertEqual(42_000, DISCOVERY_REPORT_CUSTODY_MAX_MS)
 

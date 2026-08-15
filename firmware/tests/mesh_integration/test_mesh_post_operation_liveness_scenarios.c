@@ -162,6 +162,13 @@ static int start_transit(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         return ret;
     }
+    ret = mesh_relay_bind_transit_previous_hop(
+        relay,
+        &upstream,
+        received.forward.ingress_previous_hop_id);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
     mesh_relay_note_tx_sent(relay, &upstream, now_ms + 1u);
     return relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK &&
                    relay->pending.packet.src_id == CHILD_ID &&
@@ -233,22 +240,25 @@ static void test_duplicate_ack_burst_is_bounded(void)
           DUPLICATE_ACK_BURST, forward_count);
 }
 
-static void test_duplicate_busy_response_burst_is_coalesced(void)
+static void test_queueable_report_burst_never_creates_busy_control(void)
 {
     struct mesh_relay relay;
     struct transit_operation active;
     struct transit_operation competing;
+    struct transit_operation recovered;
     struct mesh_pending_tx active_pending;
     uint32_t busy_count = 0u;
     const uint32_t burst_count = 4u;
 
-    phase = "duplicate-busy-response-burst";
+    phase = "queueable-report-burst";
     CHECK(setup_relay(&relay, 1500u) == PROTO_OK, "relay setup failed");
     CHECK(build_operation(&active, UINT32_C(0xd1500001), 15u) == PROTO_OK &&
               start_transit(&relay, &active, 1510u) == PROTO_OK,
           "active custody setup failed");
     CHECK(build_operation(&competing, UINT32_C(0xd1500002), 16u) == PROTO_OK,
           "competing operation build failed");
+    CHECK(build_operation(&recovered, UINT32_C(0xd1500003), 17u) == PROTO_OK,
+          "recovery operation build failed");
     active_pending = relay.pending;
 
     for (uint32_t burst = 0u; burst < burst_count; burst++) {
@@ -275,9 +285,9 @@ static void test_duplicate_busy_response_burst_is_coalesced(void)
                   burst, i);
         }
     }
-    CHECK(busy_count == burst_count,
-          "%u duplicate bursts produced %u busy controls; exactly one "
-          "response is permitted per retry interval",
+    CHECK(busy_count == 0u,
+          "%u duplicate bursts produced %u obsolete busy controls for a "
+          "queueable reliable report",
           burst_count, busy_count);
 
     mesh_relay_cancel_tx(&relay);
@@ -288,20 +298,20 @@ static void test_duplicate_busy_response_burst_is_coalesced(void)
             DUPLICATE_ACK_BURST;
 
         CHECK(mesh_relay_handle_rx(&relay,
-                                   &competing.packet,
-                                   competing.payload,
-                                   competing.payload_len,
+                                   &recovered.packet,
+                                   recovered.payload,
+                                   recovered.payload_len,
                                    CHILD_ID,
                                    95u,
                                    after_last_burst_ms,
                                    &result) == PROTO_OK,
-              "capacity recovery rejected the previously busy packet");
+              "capacity recovery rejected a fresh queueable packet");
         CHECK(result.status == PROTO_OK &&
                   has_action(&result, MESH_RELAY_ACTION_FORWARD) &&
                   has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK) &&
                   !has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY) &&
                   !has_action(&result, MESH_RELAY_ACTION_SEND_RESULT_BUSY),
-              "BUSY suppression state poisoned later packet admission");
+              "prior queue admission poisoned later packet admission");
     }
 }
 
@@ -484,7 +494,7 @@ static void test_reset_drains_ack_forward_ownership(void)
 int main(void)
 {
     test_duplicate_ack_burst_is_bounded();
-    test_duplicate_busy_response_burst_is_coalesced();
+    test_queueable_report_burst_never_creates_busy_control();
     test_stale_ack_and_commit_cannot_cross_operations();
     test_delayed_ack_retry_and_post_settle_polling_are_bounded();
     test_reset_drains_ack_forward_ownership();

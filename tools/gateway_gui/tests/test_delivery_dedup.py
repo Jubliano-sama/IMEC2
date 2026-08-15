@@ -378,6 +378,14 @@ class GatewayPacketDeduplicatorTests(unittest.TestCase):
             self.assertEqual(cache.observe(packet).disposition, PacketDisposition.DUPLICATE)
         self.assertEqual(cache.size, len(packets))
 
+    def test_best_effort_heartbeat_remains_visible_without_cache_custody(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0xAAA, max_entries=16)
+        heartbeat = host_packet(MSG_ANCHOR_HEARTBEAT, flags=0, seq=11)
+
+        self.assertEqual(cache.observe(heartbeat).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(heartbeat).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.size, 0)
+
     def test_command_event_replay_uses_semantic_identity_not_stream_sequence(self) -> None:
         cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=4)
         original = command_event_packet(event_sequence=0x10203040)

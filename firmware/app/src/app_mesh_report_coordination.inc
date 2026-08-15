@@ -6,6 +6,16 @@ static bool mesh_report_anchor_survey_radio_active(void)
            mesh_report_callbacks->anchor_survey_radio_active();
 }
 
+static bool mesh_report_anchor_survey_operation_generation_active(
+    uint64_t operation_generation)
+{
+    return mesh_report_callbacks != NULL &&
+           mesh_report_callbacks->anchor_survey_operation_generation_active !=
+               NULL &&
+           mesh_report_callbacks->anchor_survey_operation_generation_active(
+               operation_generation);
+}
+
 static uint8_t mesh_channel9_connection_count(void)
 {
     uint8_t count = 0u;
@@ -284,8 +294,9 @@ static uint32_t mesh_c5_exchange_duration_ms(uint8_t purpose)
     case C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD:
     case C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD:
         return FLOOD_WAVE_MS + FLOOD_RELAY_BURST_MS + FLOOD_POST_ROOT_GUARD_MS;
-    case C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT:
     case C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION:
+        return MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS;
+    case C5_CONTACT_PURPOSE_RESULT_OFFER_GRANT:
     case C5_CONTACT_PURPOSE_ROUTE_SOLICIT:
     case C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH:
     default:
@@ -528,6 +539,72 @@ static bool mesh_c5_causal_response_candidate_valid(
     }
 }
 
+static bool mesh_c5_gateway_survey_control_candidate_valid(
+    const struct mesh_outbound *candidate)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    uint64_t operation_generation = 0u;
+
+    if (candidate == NULL ||
+        candidate->radio_channel != UWB_CHANNEL_WAKE_CONTACT ||
+        candidate->packet.src_id != GATEWAY_ID ||
+        candidate->packet.flags != FLAG_DIAGNOSTIC ||
+        candidate->packet.payload_len != candidate->payload_len ||
+        candidate->packet.ttl == 0u ||
+        candidate->packet.ttl > SURVEY_DEFAULT_TTL ||
+        survey_operation_generation_extract_tlv(
+            candidate->payload,
+            candidate->payload_len,
+            &operation_generation) != PROTO_OK ||
+        operation_generation == 0u ||
+        candidate->packet.session_id !=
+            survey_operation_session_id(operation_generation)) {
+        return false;
+    }
+
+    if (candidate->packet.msg_type == MSG_SURVEY_DISCOVERY_START) {
+        struct survey_discovery_config config = {0};
+
+        return candidate->packet.dst_id == MESH_BROADCAST_ID &&
+               candidate->next_hop_id == MESH_BROADCAST_ID &&
+               survey_extract_discovery_start_tlvs(
+                   candidate->payload,
+                   candidate->payload_len,
+                   &config) == PROTO_OK &&
+               config.operation_generation == operation_generation;
+    }
+    if (candidate->packet.msg_type == MSG_SURVEY_PAIR_PREPARE) {
+        struct survey_pair pair = {0};
+
+        return mesh_id_is_unicast(candidate->packet.dst_id) &&
+               mesh_id_is_unicast(candidate->next_hop_id) &&
+               survey_extract_pair_tlvs(candidate->payload,
+                                        candidate->payload_len,
+                                        &pair) == PROTO_OK &&
+               pair.operation_generation == operation_generation &&
+               (candidate->packet.dst_id == pair.initiator_id ||
+                candidate->packet.dst_id == pair.responder_id);
+    }
+    return false;
+#else
+    ARG_UNUSED(candidate);
+    return false;
+#endif
+}
+
+static enum fw_c5_tx_intent mesh_c5_forwarded_control_intent(
+    const struct mesh_outbound *candidate)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    return mesh_c5_gateway_survey_control_candidate_valid(candidate) ?
+        FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL :
+        FW_C5_TX_INTENT_BACKGROUND;
+#else
+    ARG_UNUSED(candidate);
+    return FW_C5_TX_INTENT_BACKGROUND;
+#endif
+}
+
 static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
     const char *owner,
     const struct mesh_outbound *candidate,
@@ -541,6 +618,10 @@ static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
 
     if (intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE &&
         !mesh_c5_causal_response_candidate_valid(candidate)) {
+        return false;
+    }
+    if (intent == FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL &&
+        !mesh_c5_gateway_survey_control_candidate_valid(candidate)) {
         return false;
     }
     mesh_coordinator_decide_for_c5_intent(
@@ -621,11 +702,9 @@ static bool mesh_outbound_reports_local_delivery_loss(const struct mesh_outbound
     switch (out->packet.msg_type) {
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
-    case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_REACH_REPORT:
     case MSG_SURVEY_PAIR_RESULT:
     case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
@@ -1221,7 +1300,8 @@ static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
 static void mesh_note_channel9_local_tx(uint64_t next_hop_id, uint32_t event_start_ms)
 {
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-        mesh_relay_note_channel9_tx(&mesh_runtime, next_hop_id, event_start_ms);
+        mesh_relay_note_channel9_unobserved_turn(
+            &mesh_runtime, next_hop_id, event_start_ms);
     } else {
         mesh_relay_note_channel9_success(&mesh_runtime, next_hop_id, event_start_ms);
     }
@@ -1318,7 +1398,6 @@ static bool mesh_gateway_delivery_requires_semantic_acceptance(
     switch (packet->msg_type) {
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
-    case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
@@ -1592,6 +1671,19 @@ static void mesh_rx_pending_refresh_age(struct mesh_rx_pending *pending, uint32_
     }
     pending->received_at_ms = now_ms;
     pending->received_at_valid = true;
+}
+
+static uint32_t mesh_rx_pending_physical_received_at_ms(
+    const struct mesh_rx_pending *pending)
+{
+    if (pending == NULL) {
+        return 0u;
+    }
+
+    /* received_at_ms advances whenever queue residence is folded into the
+     * packet age. Event-control relative timing is anchored to the physical
+     * RF reception instead, which first_received_at_ms retains unchanged. */
+    return (uint32_t)pending->first_received_at_ms;
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR

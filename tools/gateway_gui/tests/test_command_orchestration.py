@@ -7,6 +7,7 @@ import unittest
 
 from tools.gateway_gui.command_orchestration import (
     CMD_SURVEY_ABORT,
+    GatewayAssignmentReplayBarrier,
     GatewayCommandDispatch,
     GatewayCommandOrchestrator,
     GatewayCommandPlan,
@@ -20,6 +21,8 @@ from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
     CMD_SURVEY_REACHABILITY,
+    GATEWAY_COMMAND_EVENT_FLAG_REPLAY,
+    GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
 )
 
 
@@ -74,6 +77,119 @@ def terminal(
         hop_count=0,
         discovery_slot=0,
     )
+
+
+def assignment_publication(
+    stage: int,
+    event_sequence: int,
+    *,
+    replay: bool = True,
+) -> GatewayCommandEvent:
+    terminal_event = stage == 12
+    mapping = stage == 6
+    return GatewayCommandEvent(
+        command_kind=1,
+        stage=stage,
+        flags=(GATEWAY_COMMAND_EVENT_FLAG_REPLAY if replay else 0)
+        | (GATEWAY_COMMAND_EVENT_FLAG_TERMINAL if terminal_event else 0),
+        attempt=0,
+        command_status=0,
+        reason=0,
+        command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
+        route_epoch=7,
+        correlation_id=0x33333,
+        gateway_sequence=event_sequence,
+        host_session_id=0x33333,
+        host_sequence=0x3333,
+        event_sequence=event_sequence,
+        anchor_id=0x4444 if mapping else 0,
+        pair_initiator_id=0,
+        pair_responder_id=0,
+        previous_hop_id=0,
+        progress_count=1 if mapping else 3,
+        total_count=3,
+        success_count=1 if mapping else 3,
+        failure_count=0,
+        duplicate_count=0,
+        lost_event_count=0,
+        hop_count=1 if mapping else 0,
+        discovery_slot=0 if mapping else 0xFF,
+    )
+
+
+class GatewayAssignmentReplayBarrierTests(unittest.TestCase):
+    def test_every_replay_receipt_precedes_terminal_release(self) -> None:
+        barrier = GatewayAssignmentReplayBarrier()
+
+        for event in (
+            assignment_publication(6, 200),
+            assignment_publication(7, 201),
+            assignment_publication(8, 202),
+        ):
+            token = barrier.observe(event)
+            self.assertIsNotNone(token)
+            self.assertTrue(barrier.active)
+            self.assertTrue(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+            self.assertTrue(barrier.blocks(CMD_SURVEY_REACHABILITY))
+            self.assertFalse(barrier.blocks(CMD_SURVEY_ABORT))
+            self.assertFalse(barrier.blocks(CMD_FORCE_REDISCOVERY))
+            barrier.receipt_written(token)
+            self.assertTrue(barrier.active)
+
+        terminal_token = barrier.observe(assignment_publication(12, 203))
+        self.assertIsNotNone(terminal_token)
+        self.assertTrue(barrier.active)
+        barrier.receipt_written(terminal_token)
+        self.assertFalse(barrier.active)
+        self.assertFalse(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+        self.assertFalse(barrier.blocks(CMD_SURVEY_REACHABILITY))
+
+    def test_live_non_replay_publication_blocks_until_terminal_receipt(self) -> None:
+        barrier = GatewayAssignmentReplayBarrier()
+        mapping_token = barrier.observe(
+            assignment_publication(6, 300, replay=False)
+        )
+
+        self.assertIsNotNone(mapping_token)
+        self.assertTrue(barrier.active)
+        self.assertTrue(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+        self.assertTrue(barrier.blocks(CMD_SURVEY_REACHABILITY))
+        self.assertFalse(barrier.blocks(CMD_SURVEY_ABORT))
+        self.assertFalse(barrier.blocks(CMD_FORCE_REDISCOVERY))
+        assert mapping_token is not None
+        self.assertFalse(barrier.receipt_written(mapping_token))
+        self.assertTrue(barrier.active)
+
+        terminal_token = barrier.observe(
+            assignment_publication(12, 303, replay=False)
+        )
+        self.assertIsNotNone(terminal_token)
+        self.assertTrue(barrier.active)
+        assert terminal_token is not None
+        self.assertTrue(barrier.receipt_written(terminal_token))
+        self.assertFalse(barrier.active)
+        self.assertFalse(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+
+    def test_no_publication_keeps_assignment_fast_path_open(self) -> None:
+        barrier = GatewayAssignmentReplayBarrier()
+        tracker = GatewayCommandRequestTracker()
+        orchestrator = GatewayCommandOrchestrator(tracker)
+        preflight = dispatch(CMD_FORCE_REDISCOVERY, 3, 0x44444, 4)
+        assignment = dispatch(CMD_ASSIGN_DISCOVERY_SLOTS, 1, 0x55555, 5)
+        plan = GatewayCommandPlan.user_triggered(
+            assignment,
+            preflight=preflight,
+        )
+
+        self.assertEqual(orchestrator.begin(plan), preflight)
+        self.assertFalse(barrier.active)
+        self.assertFalse(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+        transition = orchestrator.observe_event(
+            terminal(preflight),
+            target_dispatch_allowed=not barrier.blocks(assignment.command_id),
+        )
+        self.assertEqual(transition.dispatch, assignment)
+        self.assertEqual(orchestrator.phase, "target")
 
 
 class GatewayCommandPlanTests(unittest.TestCase):
@@ -164,6 +280,38 @@ class GatewayCommandOrchestratorTests(unittest.TestCase):
         self.assertEqual(completed.outcome, "complete")
         self.assertEqual(completed.phase, "target")
         self.assertFalse(self.orchestrator.active)
+
+    def test_matching_preflight_terminal_waits_for_replay_barrier_release(
+        self,
+    ) -> None:
+        assignment = dispatch(CMD_ASSIGN_DISCOVERY_SLOTS, 1, 102, 2)
+        plan = GatewayCommandPlan.user_triggered(
+            assignment, preflight=self.preflight
+        )
+        self.assertEqual(self.orchestrator.begin(plan, now=0.0), self.preflight)
+
+        waiting = self.orchestrator.observe_event(
+            terminal(self.preflight),
+            now=1.0,
+            target_dispatch_allowed=False,
+        )
+
+        self.assertTrue(waiting.matched)
+        self.assertIsNone(waiting.dispatch)
+        self.assertFalse(waiting.completed)
+        self.assertTrue(self.orchestrator.active)
+        self.assertEqual(self.orchestrator.phase, "target_wait")
+        self.assertEqual(self.orchestrator.current, assignment)
+        self.assertIsNotNone(self.tracker.pending)
+        pending = self.tracker.pending
+
+        released = self.orchestrator.release_waiting_target()
+        self.assertTrue(released.matched)
+        self.assertEqual(released.dispatch, assignment)
+        self.assertFalse(released.completed)
+        self.assertEqual(self.orchestrator.current, assignment)
+        self.assertIs(self.tracker.pending, pending)
+        self.assertFalse(self.orchestrator.release_waiting_target().matched)
 
     def test_intermediate_stale_and_duplicate_events_never_dispatch_target_twice(self) -> None:
         self.orchestrator.begin(self.plan, now=0.0)

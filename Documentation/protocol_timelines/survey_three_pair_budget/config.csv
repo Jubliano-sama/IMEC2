@@ -1,0 +1,7 @@
+key,value
+title,THREE-ANCHOR SURVEY: FAILURE DEADLINES VS EXECUTION BARRIERS
+caption,Four-board HIL proved discovery and all three routes, then exposed a 244 s pair-release barrier that made three rounds impossible. Pair controls now retry every 5 s and use a separate 45 s shared release while their 30-90 s failure deadlines remain unchanged.
+key_point,A healthy three-pair survey now fits before 6 minutes because retry cadence, shared execution time, and failure deadlines are three separate things.
+start,0 s
+end,420 s
+width,2200

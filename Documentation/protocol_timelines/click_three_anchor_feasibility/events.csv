@@ -1,0 +1,23 @@
+row,start,end,text,style,lane_index
+clicker,0,50,"A1",emphasis,0
+clicker,50,100,"B1",emphasis,0
+clicker,100,150,"C1",emphasis,0
+clicker,150,200,"A2",emphasis,0
+clicker,200,250,"B2",emphasis,0
+clicker,250,300,"C2",emphasis,0
+clicker,300,350,"A3",emphasis,0
+clicker,350,400,"B3",emphasis,0
+anchor_a,0,50,"exchange 1",default,0
+anchor_a,150,200,"exchange 2",default,0
+anchor_a,300,350,"exchange 3",default,0
+anchor_b,50,100,"exchange 1",default,0
+anchor_b,200,250,"exchange 2",default,0
+anchor_b,350,400,"exchange 3",default,0
+anchor_c,100,150,"exchange 1",default,0
+anchor_c,250,300,"exchange 2",default,0
+ch9,0,400,"click priority: cadence work retained, no competing radio owner",shaded,0
+ch9,400,500,"rearm and bounded retry",default,0
+delivery,0,400,"no report is exposed before the range owner releases",quiet,0
+delivery,400,500,"three-anchor result enters reliable mesh custody",emphasis,0
+verdict,0,400,"8 x 50 ms = 400 ms exactly; no overlap",emphasis,0
+verdict,400,500,"normal delivery resumes",emphasis,0

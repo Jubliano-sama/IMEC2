@@ -1,0 +1,27 @@
+row,start,end,text,style,lane_index
+host,-350,-90,"Survey pair phase active\nwaiting for exact command result",default,0
+host,-90,20,"C result delivered by gateway\nstream receipt committed",emphasis,0
+host,20,850,"No next pair progress\nC has not settled",shaded,0
+gateway,-110,-70,"RX reliable C result\nidentity and digest valid",emphasis,0
+gateway,-70,-20,"Emit exact gateway ACK\nroute C via A",emphasis,0
+gateway,-20,850,"Repeated C result arrives\nACK is regenerated exactly",shaded,0
+anchor_a,-210,-110,"Forward C result\nA -> gateway",emphasis,0
+anchor_a,-20,55,"Forward gateway ACK\nA -> B",emphasis,0
+anchor_b,-300,-210,"Forward C result\nB -> A",emphasis,0
+anchor_b,55,105,"Receive exact ACK\nreserve downstream slot",emphasis,0
+anchor_b,105,115,"TX exact ACK\nB -> C",emphasis,0
+anchor_b,115,850,"Downstream commit complete\nwaits for later traffic",default,0
+anchor_c_ch9,-350,-300,"TX reliable pair result\nC -> B",emphasis,0
+anchor_c_ch9,-300,731,"ACK wait owner retained",dashed,0
+anchor_c_ch9,95,130,"Expected ACK RX window",ghost,1
+anchor_c_ch9,731,790,"Timeout\nretry same result",shaded,0
+anchor_c_ch5,-350,45,"Idle between route/control work",default,0
+anchor_c_ch5,45,90,"Repeated survey-control wake",emphasis,0
+anchor_c_ch5,90,527,"Extended C5 follow-up listener\nholds over the CH9 ACK slot",shaded,0
+anchor_c_ch5,527,731,"Return from listener\nACK already gone",dashed,0
+owner,-350,731,"Exact C result custody\nsrc / seq / len / digest retained",default,0
+owner,105,115,"No retirement\nACK not decoded",shaded,1
+owner,731,850,"Retry remains valid\nno data loss, no progress",dashed,0
+outcome,-350,105,"Upstream delivery succeeds\nreturn route succeeds through B",emphasis,0
+outcome,105,731,"FAIL: receiver is on CH5\nwhen B transmits exact CH9 ACK",shaded,0
+outcome,731,850,"GUARD BUILT + FLASHED\nlive survey rerun pending",dashed,0

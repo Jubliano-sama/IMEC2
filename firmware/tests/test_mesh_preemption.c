@@ -95,13 +95,13 @@ static void test_click_preemption_defers_collection_result(void)
     assert(memcmp(relay.pending.payload, payload, payload_len) == 0);
 }
 
-static void test_click_preemption_defers_generic_gateway_host_tx(void)
+static void test_click_preemption_ignores_disposable_heartbeat(void)
 {
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(7u);
     struct proto_packet packet = {
         .msg_type = MSG_ANCHOR_HEARTBEAT,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .flags = 0u,
         .src_id = ANCHOR_A,
         .dst_id = GATEWAY,
         .session_id = 11u,
@@ -117,16 +117,11 @@ static void test_click_preemption_defers_generic_gateway_host_tx(void)
     assert(mesh_relay_start_tx(&relay, &packet, NULL, 0u, 5000u, &tx) == PROTO_OK);
 
     assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) == PROTO_OK);
-    assert(plan.defer_active_tx);
-    assert(plan.schedule_timeout);
+    assert(!plan.defer_active_tx);
+    assert(!plan.schedule_timeout);
     assert(!plan.transfer_local_click);
-    assert(mesh_relay_tx_active(&relay));
-    assert(relay.pending.packet.msg_type == MSG_ANCHOR_HEARTBEAT);
-    assert(relay.pending.packet.src_id == ANCHOR_A);
-    assert(relay.pending.payload_len == 0u);
-    assert(mesh_relay_defer_tx(&relay, 5100u, UINT32_C(0x22222222)));
-    assert(mesh_relay_tx_active(&relay));
-    assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
+    assert(!mesh_relay_tx_active(&relay));
+    assert(!mesh_relay_defer_tx(&relay, 5100u, UINT32_C(0x22222222)));
 }
 
 static void test_click_preemption_requeues_local_click_report(void)
@@ -390,7 +385,7 @@ static void test_relay_deferral_preserves_existing_backoff(void)
 int main(void)
 {
     test_click_preemption_defers_collection_result();
-    test_click_preemption_defers_generic_gateway_host_tx();
+    test_click_preemption_ignores_disposable_heartbeat();
     test_click_preemption_requeues_local_click_report();
     test_click_preemption_retains_transit_click_report();
     test_click_preemption_preserves_forbidden_local_custody();

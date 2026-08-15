@@ -1723,18 +1723,13 @@ static int handle_local_busy(struct mesh_relay *relay,
                                                  random_value);
     pending_refresh_age(&relay->pending, now_ms);
     outbox_record_sync_age_from_pending(relay, now_ms);
-    route_update_capacity_hint(&relay->upstream,
-                               previous_hop_id,
-                               relay->gateway_id,
-                               fields.capacity_state,
-                               0u,
-                               0u,
-                               fields.capacity_validity_interval_ms != 0u,
-                               now_ms,
-                               capacity_valid_until_ms(
-                                   now_ms,
-                                   fields.capacity_validity_interval_ms),
-                               now_ms);
+    /* BUSY is scoped to the exact packet and the parent's current custody
+     * slot.  It is not evidence that the proven route or negotiated radio
+     * timing failed.  Persisting the advertised transient capacity here made
+     * a RED response unselect the current parent, so every ordinary retry
+     * restarted route discovery and Channel-9 negotiation.  Keep the route
+     * byte-for-byte intact and retry this packet after the bounded backoff;
+     * actual RF/ACK failure remains the sole route-repair authority. */
     relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
     relay->pending.retry_after_ms = result_offer_clip_retry_at_ms(
         relay,
@@ -1747,6 +1742,9 @@ static int build_forward(const struct mesh_relay *relay,
                          const struct proto_packet *packet,
                          const uint8_t *payload,
                          size_t payload_len,
+                         uint64_t ingress_previous_hop_id,
+                         bool exact_return_edge_required,
+                         uint32_t now_ms,
                          struct mesh_outbound *out);
 
 static uint32_t next_gateway_ack_forward_owner_generation(
@@ -2011,6 +2009,9 @@ static int handle_local_ack(struct mesh_relay *relay,
                                 packet,
                                 payload,
                                 payload_len,
+                                relay->pending.transit_previous_hop_id,
+                                true,
+                                now_ms,
                                 &result->forward);
             if (ret != PROTO_OK) {
                 result->status = ret;
@@ -2087,7 +2088,8 @@ static int handle_local_ack(struct mesh_relay *relay,
             return PROTO_OK;
         }
         relay->pending.hop_ack_observed_since_send = true;
-        pending_set_deadlines(&relay->pending, now_ms);
+        relay->pending.gateway_ack_deadline_ms =
+            now_ms + ROUTE_GATEWAY_ACK_PROGRESS_TIMEOUT_MS;
         relay->pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK;
         route_refresh_selected_at(&relay->upstream, now_ms);
         result->actions |= MESH_RELAY_ACTION_TX_HOP_PROGRESS;
@@ -2269,6 +2271,9 @@ static int build_forward(const struct mesh_relay *relay,
                          const struct proto_packet *packet,
                          const uint8_t *payload,
                          size_t payload_len,
+                         uint64_t ingress_previous_hop_id,
+                         bool exact_return_edge_required,
+                         uint32_t now_ms,
                          struct mesh_outbound *out)
 {
     uint64_t next_hop_id = 0u;
@@ -2277,10 +2282,32 @@ static int build_forward(const struct mesh_relay *relay,
     if (packet->ttl <= 1u) {
         return PROTO_ERR_STALE;
     }
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+    if (exact_return_edge_required) {
+        if (packet->msg_type != MSG_GATEWAY_ACK ||
+            packet->src_id != relay->gateway_id ||
+            packet->dst_id == relay->local_id) {
+            return PROTO_ERR_MALFORMED;
+        }
+        if (!id_is_unicast(ingress_previous_hop_id) ||
+            ingress_previous_hop_id == relay->local_id) {
+            return PROTO_ERR_NOT_FOUND;
+        }
+        next_hop_id = ingress_previous_hop_id;
+    } else {
+        ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+#else
+    (void)ingress_previous_hop_id;
+    (void)exact_return_edge_required;
     ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
     if (ret != PROTO_OK) {
         return ret;
     }
+#endif
 
     out->packet = *packet;
     out->packet.ttl = (uint8_t)(packet->ttl - 1u);
@@ -2289,6 +2316,20 @@ static int build_forward(const struct mesh_relay *relay,
     }
     out->payload_len = (uint16_t)payload_len;
     out->next_hop_id = next_hop_id;
+    /*
+     * The received packet already includes age through this relay's ingress
+     * boundary. Start a new residence interval here so the physical sender
+     * also accounts for route/control handoff and radio wait time. Without
+     * this timestamp, every forwarded hop silently loses its local delay and
+     * separately delivered controls derive different "shared" deadlines.
+     */
+    out->queued_at_ms = now_ms;
+    out->queued_at_valid = true;
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+    out->ingress_previous_hop_id = ingress_previous_hop_id;
+#else
+    (void)ingress_previous_hop_id;
+#endif
     return PROTO_OK;
 }
 
@@ -2342,7 +2383,29 @@ bool mesh_relay_packet_requires_channel9_payload_event(
     case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_REACH_REPORT:
+    case MSG_SURVEY_PAIR_RESULT:
+    case MSG_SURVEY_DISCOVERY_REPORT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool mesh_relay_packet_can_queue_gateway_report(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet)
+{
+    if (relay == NULL || packet == NULL ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        packet->dst_id != relay->gateway_id ||
+        (packet->flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+
+    switch (packet->msg_type) {
+    case MSG_CLICK_REPORT:
+    case MSG_SELF_TEST_REPORT:
+    case MSG_MESH_DATA:
     case MSG_SURVEY_PAIR_RESULT:
     case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
@@ -2517,6 +2580,7 @@ static bool gateway_bound_packet_flags_valid(
     case MSG_SELF_TEST_REPORT:
         return packet->flags == diagnostic;
     case MSG_ANCHOR_HEARTBEAT:
+        return packet->flags == 0u;
     case MSG_RESULT_BUNDLE:
         return packet->flags == ack;
     case MSG_COMMAND_RESULT:
@@ -2989,7 +3053,6 @@ static bool gateway_delivery_requires_commit(
     switch (packet->msg_type) {
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
-    case MSG_ANCHOR_HEARTBEAT:
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:

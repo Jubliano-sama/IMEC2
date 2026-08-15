@@ -1350,12 +1350,18 @@ static int gateway_discovery_assignment_ack_proof_admission(
                     packet->session_id,
                     table_commitment,
                     packet->src_id) ?
-                1 : 0;
+                1 :
+                gateway_registered_membership_proves_assignment_ack(
+                    epoch,
+                    packet->session_id,
+                    table_commitment,
+                    packet->src_id);
     if (proof_ret == 1) {
         /*
          * The first TABLE response is intentionally left in sender custody
-         * until this proof exists. Reconcile only now, while gateway RX owns
-         * mesh_runtime: the newly durable roster is authoritative, retained
+         * until an exact durable proof, or a newer durable roster that makes
+         * this response obsolete, exists. Reconcile only now, while gateway
+         * RX owns mesh_runtime: the durable roster is authoritative, retained
          * members keep their ACK identities, and a removed member cannot hold
          * the transition partition needed by this response retry.
          */
@@ -2789,8 +2795,14 @@ static void gateway_survey_service_active_delivery(void)
     now_ms = (uint64_t)k_uptime_get();
     close_intent = survey_gateway_transaction_close_requested(
         &gateway_survey_transaction);
-    redrive_horizon_ms = gateway_survey_natural_request_timeout_ms(
-        gateway_survey_transaction.active_target_id);
+    /*
+     * Route depth sizes the immutable request/result deadline; it must not
+     * also delay every replay of the same control. Four ordered controls per
+     * pair would otherwise consume the whole six-minute operation before the
+     * ranging round can run. Keep the exact owner and deadline, but use the
+     * shared bounded-control cadence for semantic redrive.
+     */
+    redrive_horizon_ms = SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS;
     redrive_due_ms = UINT64_MAX - now_ms < redrive_horizon_ms ?
         UINT64_MAX : now_ms + redrive_horizon_ms;
     if (close_intent == SURVEY_GATEWAY_TRANSACTION_CLOSE_NONE &&
@@ -3828,7 +3840,7 @@ static int gateway_route_survey_pair_control(const struct proto_packet *host_pac
     gateway_manual_survey_pair_state.control_transaction_deadline_ms =
         transaction_deadline_ms;
     gateway_manual_survey_pair_state.control_redrive_horizon_ms =
-        gateway_survey_natural_request_timeout_ms(outbound.packet.dst_id);
+        SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS;
     gateway_manual_survey_pair_state.control_delivery_handle = delivery_handle;
     gateway_manual_survey_pair_state.control_command_id = command_id;
     gateway_manual_survey_pair_state.control_target_mask = target_mask;

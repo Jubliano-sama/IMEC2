@@ -112,7 +112,8 @@ static void mesh_rx_work_handler(struct k_work *work)
     k_mutex_unlock(&mesh_rx_handler_lock);
 }
 
-bool mesh_process_queued_rx_now(const char *reason)
+static bool mesh_process_queued_rx_now_internal(const char *reason,
+                                                bool gateway_rx_boundary)
 {
     uint32_t pending_count = k_msgq_num_used_get(&mesh_rx_msgq);
     uint32_t handled_count;
@@ -121,6 +122,10 @@ bool mesh_process_queued_rx_now(const char *reason)
     int submit_ret;
 
     if (pending_count == 0u) {
+        return false;
+    }
+    if (gateway_rx_boundary &&
+        (DEVICE_ROLE != ROLE_GATEWAY || radio_guard_uwb_busy())) {
         return false;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && radio_guard_uwb_busy()) {
@@ -134,7 +139,9 @@ bool mesh_process_queued_rx_now(const char *reason)
     }
     mesh_coordinator_decide_now(reason == NULL ? "queued-rx" : reason,
                                 &coordinator_decision);
-    if (!coordinator_decision.mesh_work_allowed) {
+    if (!coordinator_decision.mesh_work_allowed &&
+        !(gateway_rx_boundary &&
+          coordinator_decision.state == FW_RADIO_ACTIVITY_GATEWAY_RX)) {
         submit_ret = mesh_submit_owned_work(&mesh_rx_work,
                                             "rx-coordinator-defer");
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -193,6 +200,17 @@ bool mesh_process_queued_rx_now(const char *reason)
                                      "rx-drain-remainder");
     }
     return handled_count > 0u;
+}
+
+bool mesh_process_queued_rx_now(const char *reason)
+{
+    return mesh_process_queued_rx_now_internal(reason, false);
+}
+
+static bool mesh_process_queued_rx_at_gateway_rx_boundary(void)
+{
+    return mesh_process_queued_rx_now_internal(
+        "gateway-ch9-continuous-rx", true);
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -1178,6 +1196,7 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
     struct uwb_wake_claim_frame claim;
     bool embedded_route_frame = false;
     bool captured_route_reply = false;
+    bool control_followup;
     uint32_t listen_ms;
     int listen_ret = 0;
 
@@ -1198,6 +1217,24 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
         return false;
     }
 
+    control_followup = app_mesh_c5_wake_followup_is_control(claim.flags);
+    if (!embedded_route_frame && control_followup) {
+        for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+            const struct mesh_relay_event_timing_entry *entry =
+                &mesh_runtime.event_timings[i];
+
+            if (entry->valid && entry->next_hop_id == claim.clicker_id &&
+                entry->direction ==
+                    MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM) {
+                status_debug_printf(
+                    "DBG_ANCHOR_DOWNSTREAM_CONTROL_WAKE_IGNORED src=0x%llx evt=%u\n",
+                    (unsigned long long)claim.clicker_id,
+                    claim.click_event_id);
+                return true;
+            }
+        }
+    }
+
     if (!mesh_handle_channel5_wake_claim(frame,
                                          frame_len,
                                          link_quality,
@@ -1213,6 +1250,16 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
     if (listen_ms > WAKE_ADV_MS + MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS) {
         listen_ms = WAKE_ADV_MS + MESH_ROUTE_TEST_POST_WAKE_ROUTE_RX_MS;
     }
+    if (control_followup) {
+        /*
+         * A deeper relay starts in a later flood wave.  The sender's
+         * remaining claim only covers its own payload; keep the receiver
+         * through the next bounded wave so a forced-depth child can hear the
+         * next relay wake and payload.  The listener still probes clicks
+         * before accepting another control wake.
+         */
+        listen_ms = MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS;
+    }
 
     status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_HANDOFF src=0x%llx evt=%u attempt=%u flags=0x%02x embedded=%u listen=%u\n",
                         (unsigned long long)claim.clicker_id,
@@ -1224,7 +1271,7 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
 
     if (!embedded_route_frame) {
         const char *followup_reason =
-            app_mesh_c5_wake_followup_is_control(claim.flags) ?
+            control_followup ?
             "gateway-command-wake-followup" :
             "anchor-route-wake-followup";
 
@@ -1432,15 +1479,6 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         mesh_schedule_uwb_rx(mesh_uwb_rx_idle_delay_ms());
         return;
     }
-    if (DEVICE_ROLE == ROLE_ANCHOR && mesh_route_waiting_tx_valid) {
-        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            LOG_INF("mesh UWB RX suppressed while route-waiting TX owns channel-9 event");
-        }
-        mesh_schedule_route_waiting_retry_after("rx-route-waiting", 0u);
-        mesh_schedule_uwb_rx(MESH_ROUTE_WAIT_RX_SUPPRESS_MS);
-        return;
-    }
-
     if (mesh_gateway_route_test_role()) {
         uint32_t now_ms = k_uptime_get_32();
         bool route_adv_pending;
@@ -1698,25 +1736,21 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             }
 
             {
-                bool accepted = mesh_process_received_frame(frame,
-                                                            frame_len,
-                                                            quality,
-                                                            true,
-                                                            0u,
-                                                            NULL,
-                                                            observed_packet_ms,
-                                                            protocol_validation_token,
-                                                            NULL);
+                (void)mesh_process_received_frame(frame,
+                                                  frame_len,
+                                                  quality,
+                                                  true,
+                                                  0u,
+                                                  NULL,
+                                                  observed_packet_ms,
+                                                  protocol_validation_token,
+                                                  NULL);
                 protocol_validation_token = 0u;
-                bool processed = mesh_process_queued_rx_now(
-                    "gateway-ch9-continuous-rx");
-
-                status_debug_printf("DBG_GATEWAY_CH9_FRAME_PROCESS len=%u quality=%u accepted=%u processed=%u frames=%u\n",
-                                    (unsigned int)frame_len,
-                                    quality,
-                                    accepted ? 1u : 0u,
-                                    processed ? 1u : 0u,
-                                    channel9_frames_seen);
+                /* The receiver has parked and released the physical radio.
+                 * Drain this exact frame before rearming so its bounded
+                 * validation lease cannot expire behind the receiver's own
+                 * coordinator state. */
+                (void)mesh_process_queued_rx_at_gateway_rx_boundary();
             }
         }
 
@@ -2217,6 +2251,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         app_watchdog_note_radio_progress();
     }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (channel9_event) {
+        /* The low-duty worker may not run until this owner is already gone. */
+        app_anchor_note_channel9_window_released();
+    }
+#endif
+
     if (route_control_handoff) {
         frame_processed_inline =
             mesh_anchor_handoff_route_wake_frame(frame,
@@ -2275,10 +2316,12 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
 	                                channel9_plan.end_ms,
 	                                (unsigned int)rx_failure);
 	        }
-	        mesh_relay_note_channel9_missed(&mesh_runtime,
-	                                        channel9_peer_id,
-	                                        &mesh_event_stats);
-	        app_mesh_test_note_ch9_missed();
+	        /* The peer is allowed to skip an empty transmit turn. Advance
+	         * parity, but reserve the miss budget for an attempted transfer
+	         * that actually failed. Silent-peer cleanup remains bounded by
+	         * the negotiated supervision timeout. */
+	        mesh_relay_note_channel9_unobserved_turn(
+	            &mesh_runtime, channel9_peer_id, channel9_plan.start_ms);
 		    } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && channel9_event) {
 		        status_debug_note(channel9_peer_observed ?
 		                          "DBG_CH9_RX_DONE_WITH_PEER\n" :

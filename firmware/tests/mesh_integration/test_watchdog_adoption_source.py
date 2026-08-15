@@ -784,10 +784,16 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         discovery_start = runtime.index("if (run_discovery) {")
         discovery_end = braced_statement_end(runtime, discovery_start)
         discovery = runtime[discovery_start:discovery_end]
-        acquire = discovery.index(
-            "ret = radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,"
+        preempt = discovery.index(
+            "ret = survey_transport_preempt_begin();"
         )
-        failure = discovery.index("if (ret < 0)", acquire)
+        acquire = discovery.index("ret = radio_guard_uwb_claim(", preempt)
+        acquire_end = discovery.index(");", acquire)
+        self.assertIn(
+            "RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY",
+            discovery[acquire:acquire_end],
+        )
+        failure = discovery.index("if (ret < 0)", acquire_end)
         failure_end = braced_statement_end(discovery, failure)
         operation = discovery.index(
             "ret = app_anchor_survey_discovery_run(", failure_end

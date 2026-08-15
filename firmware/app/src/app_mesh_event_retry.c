@@ -66,6 +66,20 @@ bool app_mesh_event_accept_timing_compatible(
                proposed->supervision_timeout_ms;
 }
 
+bool app_mesh_event_timing_apply_phase_shift(
+    struct mesh_event_timing *timing,
+    uint16_t phase_shift_ms)
+{
+    if (timing == NULL || timing->event_interval_ms == 0u ||
+        phase_shift_ms >= timing->event_interval_ms) {
+        return false;
+    }
+
+    timing->next_event_time_ms += phase_shift_ms;
+    timing->last_successful_ch9_event_ms += phase_shift_ms;
+    return true;
+}
+
 enum app_mesh_event_request_match app_mesh_event_retry_match(
     const struct app_mesh_event_retry_state *state,
     uint64_t peer_id,

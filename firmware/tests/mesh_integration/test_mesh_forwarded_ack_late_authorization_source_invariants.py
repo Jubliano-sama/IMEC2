@@ -9,6 +9,7 @@ from source_text import read_composed_source
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT = read_composed_source(ROOT / "app" / "src" / "app_mesh_report.c")
+CH9_ACK = (ROOT / "app" / "src" / "app_mesh_ch9_ack.c").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -28,6 +29,25 @@ def function_body(source: str, name: str) -> str:
 
 
 class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
+    def test_route_repair_binds_logical_origin_but_event_repair_binds_child_edge(self):
+        state = function_body(CH9_ACK, "c5_repair_pending_state_matches")
+
+        self.assertIn(
+            "APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR", state
+        )
+        self.assertIn("pending->packet.src_id == peer_id", state)
+        self.assertIn(
+            "APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR", state
+        )
+        self.assertIn(
+            "pending->gateway_ack_forward_next_hop_id == peer_id", state
+        )
+        self.assertIn(
+            "batch->template_ack.packet.dst_id == pending->packet.src_id",
+            state,
+        )
+        self.assertIn("batch->template_ack.next_hop_id == peer_id", state)
+
     def test_exact_forwarded_ack_repair_can_escape_only_its_idle_mesh_rx_owner(self):
         capture = function_body(
             REPORT, "mesh_coordinator_decide_for_c5_intent"
@@ -80,7 +100,7 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         self.assertLess(exact_token, repair_allowed)
         self.assertLess(repair_allowed, rejected)
 
-    def test_ack_queue_captures_then_promotes_before_fallback_propose(self):
+    def test_ack_queue_captures_then_enters_shared_authorized_repair(self):
         actions = function_body(REPORT, "mesh_handle_result_actions")
 
         queued = actions.index(
@@ -94,42 +114,101 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         capture = actions.index(
             "app_mesh_ch9_c5_repair_authorization_capture(", transit_owner
         )
-        promote = actions.index(
-            "mesh_event_accept_promote_forwarded_ack_repair(", capture
-        )
-        no_accept = actions.index("promote_ret == -ENOENT", promote)
-        fallback = actions.index(
-            "mesh_propose_event_after_channel5_contact_authorized(", no_accept
+        shared_repair = actions.index(
+            "mesh_propose_event_after_channel5_contact_authorized(", capture
         )
 
         self.assertLess(queued, queue_success)
         self.assertLess(queue_success, transit_owner)
         self.assertLess(transit_owner, capture)
-        self.assertLess(capture, promote)
-        self.assertLess(promote, no_accept)
-        self.assertLess(no_accept, fallback)
+        self.assertLess(capture, shared_repair)
         self.assertIn(
             "APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR",
-            actions[capture:promote],
+            actions[capture:shared_repair],
         )
-        self.assertIn("forward_ack->next_hop_id", actions[capture:fallback + 200])
+        self.assertIn(
+            "forward_ack->next_hop_id",
+            actions[capture:shared_repair + 240],
+        )
+        self.assertNotIn(
+            "mesh_event_accept_promote_forwarded_ack_repair(",
+            actions[capture:shared_repair],
+        )
+
+    def test_stale_ack_retry_uses_the_same_authorized_repair_seam(self):
+        select = function_body(REPORT, "mesh_select_channel9_ack_tx_event")
+        stale = select.index("if (ret == PROTO_ERR_STALE)")
+        capture = select.index(
+            "app_mesh_ch9_c5_repair_authorization_capture(", stale
+        )
+        shared_repair = select.index(
+            "mesh_propose_event_after_channel5_contact_authorized(", capture
+        )
+
+        self.assertLess(stale, capture)
+        self.assertLess(capture, shared_repair)
+        self.assertIn(
+            "APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR",
+            select[stale:capture],
+        )
+        self.assertNotIn(
+            "mesh_event_accept_promote_forwarded_ack_repair(",
+            select[capture:shared_repair],
+        )
 
     def test_preexisting_accept_is_upgraded_in_place_and_retried_now(self):
+        authorized = function_body(
+            REPORT, "mesh_propose_event_after_channel5_contact_authorized"
+        )
         promote = function_body(
             REPORT, "mesh_event_accept_promote_forwarded_ack_repair"
+        )
+
+        supplied = authorized.index(
+            "authorization != NULL && authorization->valid"
+        )
+        kind = authorized.index(
+            "mesh_authorization_is_ack_event_repair(authorization)", supplied
+        )
+        peer = authorized.index("authorization->peer_id != peer_id", kind)
+        owner_match = authorized.index(
+            "app_mesh_ch9_c5_repair_owner_matches(", peer
+        )
+        stale_reject = authorized.index("return -ESTALE", owner_match)
+        proposal_conflict = authorized.index(
+            "mesh_event_propose_retry.active", stale_reject
+        )
+        retain_fresh = authorized.index(
+            "mesh_forwarded_ack_event_repair_authorization = *authorization",
+            proposal_conflict,
+        )
+        active_accept_branch = authorized.index(
+            "mesh_event_accept_retry.retry.active", retain_fresh
+        )
+        promote_call = authorized.index(
+            "mesh_event_accept_promote_forwarded_ack_repair(",
+            active_accept_branch,
+        )
+
+        self.assertLess(supplied, kind)
+        self.assertLess(kind, peer)
+        self.assertLess(peer, owner_match)
+        self.assertLess(owner_match, stale_reject)
+        self.assertLess(stale_reject, proposal_conflict)
+        self.assertLess(proposal_conflict, retain_fresh)
+        self.assertLess(retain_fresh, active_accept_branch)
+        self.assertLess(active_accept_branch, promote_call)
+        self.assertIn("return -EBUSY", authorized[kind:owner_match])
+        self.assertNotIn(
+            "mesh_event_accept_retry.c5_repair_authorization =",
+            authorized[supplied:promote_call],
         )
 
         active_accept = promote.index("mesh_event_accept_retry.retry.active")
         peer_match = promote.index(
             "mesh_event_accept_retry.retry.peer_id", active_accept
         )
-        owner_match = promote.index(
-            "app_mesh_ch9_c5_repair_owner_matches(", peer_match
-        )
-        exact_existing = promote.index(
-            "app_mesh_c5_tx_authorization_token_equal(", owner_match
-        )
-        now = promote.index("now_ms = k_uptime_get_32()", exact_existing)
+        now = promote.index("now_ms = k_uptime_get_32()", peer_match)
         expired = promote.index("app_mesh_event_retry_expired(", now)
         expired_clear = promote.index(
             "memset(&mesh_event_accept_retry, 0", expired
@@ -143,17 +222,16 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         schedule = promote.index("mesh_event_negotiation_schedule_next()", arm)
 
         self.assertLess(active_accept, peer_match)
-        self.assertLess(peer_match, owner_match)
-        self.assertLess(owner_match, exact_existing)
-        self.assertLess(exact_existing, now)
+        self.assertLess(peer_match, now)
         self.assertLess(now, expired)
         self.assertLess(expired, expired_clear)
         self.assertLess(expired_clear, expired_fallback)
         self.assertLess(expired_fallback, attach)
-        self.assertLess(exact_existing, attach)
         self.assertLess(attach, arm)
         self.assertLess(arm, schedule)
         self.assertIn("retry_due_ms", promote[attach:schedule])
+        self.assertNotIn("app_mesh_ch9_c5_repair_owner_matches", promote)
+        self.assertNotIn("app_mesh_c5_tx_authorization_token_equal", promote)
 
 if __name__ == "__main__":
     unittest.main()

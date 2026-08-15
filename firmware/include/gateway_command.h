@@ -32,7 +32,7 @@ extern "C" {
 #define GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN \
     PROTO_GATEWAY_COLLECTION_EACK_MAX_PAYLOAD_LEN
 #define GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_VERSION 1u
-#define GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_SIZE 608u
+#define GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_SIZE 600u
 
 struct gateway_membership_roster;
 
@@ -216,11 +216,11 @@ _Static_assert(sizeof(struct gateway_collection_eack_custody_snapshot) ==
                GATEWAY_COLLECTION_EACK_CUSTODY_SNAPSHOT_SIZE,
                "frozen RAM collection EACK custody must remain compact");
 _Static_assert(offsetof(struct gateway_collection_eack_custody_snapshot, packet) == 0u &&
-               offsetof(struct gateway_collection_eack_custody_snapshot, payload) == 40u &&
-               offsetof(struct gateway_collection_eack_custody_snapshot, version) == 597u &&
-               offsetof(struct gateway_collection_eack_custody_snapshot, payload_len) == 598u &&
-               offsetof(struct gateway_collection_eack_custody_snapshot, payload_crc) == 600u &&
-               offsetof(struct gateway_collection_eack_custody_snapshot, valid) == 602u,
+               offsetof(struct gateway_collection_eack_custody_snapshot, payload) == 32u &&
+               offsetof(struct gateway_collection_eack_custody_snapshot, version) == 589u &&
+               offsetof(struct gateway_collection_eack_custody_snapshot, payload_len) == 590u &&
+               offsetof(struct gateway_collection_eack_custody_snapshot, payload_crc) == 592u &&
+               offsetof(struct gateway_collection_eack_custody_snapshot, valid) == 594u,
                "frozen RAM collection EACK custody offsets are stable");
 
 int gateway_command_extract_id(const uint8_t *payload,

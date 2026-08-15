@@ -878,6 +878,16 @@ add_test(NAME mesh_rf_retry_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_rf_retry_source_invariants.py)
 set_tests_properties(mesh_rf_retry_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;static_analysis")
+add_test(NAME forced_control_followup_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_forced_control_followup_source_invariants.py)
+set_tests_properties(forced_control_followup_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;survey;timing;wake;static_analysis")
+add_test(NAME survey_discovery_transport_preemption_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_survey_discovery_transport_preemption_source_invariants.py)
+set_tests_properties(survey_discovery_transport_preemption_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;custody;survey;timing;radio;static_analysis")
 add_test(NAME mesh_route_repair_owner_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_route_repair_owner_source_invariants.py)

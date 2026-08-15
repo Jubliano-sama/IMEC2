@@ -820,6 +820,78 @@ static void queue_received_fixture(const struct recovery_fixture *fixture)
     zassert_equal(previous_hop_id, fixture->packet.src_id);
 }
 
+static void build_live_survey_report(
+    struct recovery_fixture *fixture,
+    uint64_t source_id,
+    uint64_t peer_id,
+    uint32_t survey_id,
+    uint64_t operation_generation,
+    uint32_t boot_incarnation,
+    uint16_t sequence)
+{
+    const struct survey_reachability_entry entry = {
+        .peer_id = peer_id,
+        .rssi_dbm = -67,
+        .quality = 91u,
+    };
+
+    zassert_not_null(fixture);
+    memset(fixture, 0, sizeof(*fixture));
+    zassert_ok(survey_append_reach_report_tlvs(
+        fixture->payload, sizeof(fixture->payload), &fixture->payload_len,
+        survey_id, source_id, &entry, 1u));
+    zassert_ok(survey_operation_generation_append_tlv(
+        fixture->payload, sizeof(fixture->payload), &fixture->payload_len,
+        operation_generation));
+    zassert_ok(tlv_append_u32(
+        fixture->payload, sizeof(fixture->payload), &fixture->payload_len,
+        TLV_NODE_BOOT_COUNTER, boot_incarnation));
+    zassert_ok(tlv_append_u16(
+        fixture->payload, sizeof(fixture->payload), &fixture->payload_len,
+        TLV_COMMAND_STATUS, COMMAND_OK));
+    zassert_ok(survey_init_discovery_report_packet(
+        &fixture->packet, source_id, DEVICE_ID, survey_id,
+        operation_generation, boot_incarnation, sequence,
+        (uint8_t)fixture->payload_len));
+}
+
+static void queue_received_fixture_with_validation(
+    const struct recovery_fixture *fixture,
+    uint32_t received_at_ms,
+    uint32_t validation_token)
+{
+    uint8_t frame[UWB_MESH_MAX_FRAME_LEN] = {0};
+    size_t frame_len = 0u;
+    bool valid_mesh_frame = false;
+    uint64_t previous_hop_id = 0u;
+
+    zassert_not_null(fixture);
+    zassert_ok(uwb_mesh_frame_encode(
+        NETWORK_ID, fixture->packet.src_id, DEVICE_ID, &fixture->packet,
+        fixture->payload, frame, sizeof(frame), &frame_len));
+    zassert_true(mesh_queue_from_frame_at_internal(
+        frame, frame_len, 90u, UWB_CHANNEL_MESH_PAYLOAD, received_at_ms,
+        validation_token, NULL, 0u, false, &valid_mesh_frame,
+        &previous_hop_id));
+    zassert_true(valid_mesh_frame);
+    zassert_equal(previous_hop_id, fixture->packet.src_id);
+}
+
+static bool validation_token_is_completed(uint32_t token)
+{
+    for (size_t i = 0u;
+         i < ARRAY_SIZE(gateway_command_result_validation_state.entries);
+         i++) {
+        const uint32_t token_state =
+            gateway_command_result_validation_state.entries[i].token_state;
+
+        if ((token_state & UINT32_C(0x7fffffff)) == token) {
+            return (token_state & UINT32_C(0x80000000)) != 0u;
+        }
+    }
+    return false;
+}
+
 static void mark_exact_head_host_notified(void)
 {
     const uint8_t *record = NULL;
@@ -895,6 +967,51 @@ static void build_exact_host_receipt(struct proto_packet *receipt,
         .session_id = head.session_id,
         .seq = head.seq,
         .ttl = 1u,
+        .payload_len = (uint16_t)*payload_len,
+    };
+}
+
+static void build_assignment_ack_result(
+    uint64_t node_id,
+    uint32_t assignment_epoch,
+    uint32_t table_sequence,
+    const struct discovery_assignment_table_commitment *commitment,
+    struct proto_packet *packet,
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *payload_len)
+{
+    zassert_not_null(commitment);
+    zassert_not_null(packet);
+    zassert_not_null(payload);
+    zassert_not_null(payload_len);
+
+    *payload_len = 0u;
+    zassert_ok(tlv_append_u16(payload, payload_cap, payload_len,
+                              TLV_COMMAND_ID,
+                              CMD_ASSIGN_DISCOVERY_SLOTS));
+    zassert_ok(tlv_append_u16(payload, payload_cap, payload_len,
+                              TLV_COMMAND_STATUS, COMMAND_OK));
+    zassert_ok(tlv_append_u8(payload, payload_cap, payload_len,
+                             TLV_REASON, 0u));
+    zassert_ok(discovery_assignment_append_control_tlvs(
+        payload, payload_cap, payload_len,
+        DISCOVERY_ASSIGNMENT_PHASE_ACK, assignment_epoch));
+    zassert_ok(discovery_assignment_append_claim_hash(
+        payload, payload_cap, payload_len,
+        discovery_assignment_hash(node_id)));
+    zassert_ok(discovery_assignment_append_table_commitment(
+        payload, payload_cap, payload_len, commitment));
+    zassert_ok(tlv_append_u8(payload, payload_cap, payload_len,
+                             TLV_HOP_COUNT, 3u));
+
+    *packet = (struct proto_packet) {
+        .msg_type = MSG_COMMAND_RESULT,
+        .src_id = node_id,
+        .dst_id = DEVICE_ID,
+        .session_id = table_sequence,
+        .seq = 1u,
+        .ttl = MESH_DEFAULT_TTL,
         .payload_len = (uint16_t)*payload_len,
     };
 }
@@ -1142,6 +1259,180 @@ ZTEST(production_seam_gateway_host_recovery,
 }
 
 ZTEST(production_seam_gateway_host_recovery,
+      test_newer_durable_roster_settles_only_valid_older_member_ack)
+{
+    const uint64_t node_ids[] = {TEST_SOURCE_A};
+    const uint8_t slots[] = {0u};
+    const uint32_t durable_epoch = UINT32_C(65011722);
+    const uint32_t durable_table_sequence = UINT32_C(65011723);
+    const uint32_t old_epoch = UINT32_C(63963146);
+    const uint32_t old_table_sequence = UINT32_C(63963147);
+    const uint32_t half_range_epoch =
+        durable_epoch + UINT32_C(0x80000000);
+    const struct discovery_assignment_table_commitment durable_commitment = {
+        .bytes = {[0] = 0x3cu, [31] = 0xc3u},
+    };
+    const struct discovery_assignment_table_commitment old_commitment = {
+        .bytes = {[0] = 0x5au, [31] = 0xa5u},
+    };
+    struct discovery_assignment_table_commitment wrong_current_commitment =
+        durable_commitment;
+    struct gateway_membership_roster roster = {0};
+    struct gateway_membership_snapshot snapshot = {0};
+    struct gateway_discovery_assignment_state assignment_before;
+    struct proto_packet packet = {0};
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN] = {0};
+    size_t payload_len = 0u;
+
+    reset_gateway_owner();
+    gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_clear_durable_evidence();
+    zassert_ok(gateway_membership_set_roster_explicit_slots(
+        &roster,
+        discovery_assignment_membership_epoch(durable_epoch),
+        node_ids, slots, ARRAY_SIZE(node_ids)));
+    zassert_ok(gateway_membership_export_assignment_snapshot(
+        &roster, durable_epoch, durable_table_sequence, &durable_commitment,
+        NULL, &snapshot));
+    gateway_membership_roster_state = roster;
+    gateway_membership_snapshot_state = snapshot;
+    gateway_membership_durable_receipt_valid = true;
+
+    /* Keep unrelated live assignment state in place so every accepted old
+     * ACK proves transport-only settlement rather than semantic mutation. */
+    gateway_discovery_assignment_state =
+        (struct gateway_discovery_assignment_state) {
+            .active = true,
+            .stage = GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS,
+            .epoch = durable_epoch + 1u,
+            .claim_command_seq = durable_table_sequence + 1u,
+            .anchor_ids = {TEST_SOURCE_B},
+            .claim_count = 1u,
+        };
+    assignment_before = gateway_discovery_assignment_state;
+
+    /* The exact durable identity remains the first proof path. */
+    build_assignment_ack_result(TEST_SOURCE_A, durable_epoch,
+                                durable_table_sequence, &durable_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_registered_membership_proves_assignment_ack(
+                      durable_epoch, durable_table_sequence,
+                      &durable_commitment, TEST_SOURCE_A),
+                  1);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 99u, TEST_SOURCE_A),
+                  APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE);
+    zassert_mem_equal(&gateway_discovery_assignment_state,
+                      &assignment_before, sizeof(assignment_before),
+                      "exact durable ACK changed live assignment state");
+
+    /* This is the four-board HIL relationship: the old response's exact
+     * commitment is gone, but a strictly newer readback-proven roster still
+     * contains its source. The result is admitted only as a duplicate so the
+     * gateway ACK can settle sender and transit custody. */
+    zassert_false(discovery_assignment_table_commitment_equal(
+        &old_commitment, &durable_commitment));
+    build_assignment_ack_result(TEST_SOURCE_A, old_epoch,
+                                old_table_sequence, &old_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_registered_membership_proves_assignment_ack(
+                      old_epoch, old_table_sequence, &old_commitment,
+                      TEST_SOURCE_A),
+                  1);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 100u, TEST_SOURCE_A),
+                  APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE,
+                  "newer durable roster did not settle obsolete member ACK");
+    zassert_mem_equal(&gateway_discovery_assignment_state,
+                      &assignment_before, sizeof(assignment_before),
+                      "obsolete ACK mutated the newer live assignment");
+
+    /* A same-epoch ACK still needs the exact current durable identity. */
+    wrong_current_commitment.bytes[0] ^= 1u;
+    build_assignment_ack_result(TEST_SOURCE_A, durable_epoch,
+                                durable_table_sequence,
+                                &wrong_current_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_registered_membership_proves_assignment_ack(
+                      durable_epoch, durable_table_sequence,
+                      &wrong_current_commitment, TEST_SOURCE_A),
+                  0);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 101u, TEST_SOURCE_A),
+                  -EAGAIN,
+                  "same-epoch ACK borrowed a mismatched current commitment");
+
+    build_assignment_ack_result(TEST_SOURCE_A, durable_epoch,
+                                durable_table_sequence + 1u,
+                                &durable_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 102u, TEST_SOURCE_A),
+                  -EAGAIN,
+                  "same-epoch ACK borrowed a mismatched current TABLE sequence");
+
+    build_assignment_ack_result(TEST_SOURCE_A, durable_epoch + 1u,
+                                durable_table_sequence,
+                                &durable_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_registered_membership_proves_assignment_ack(
+                      durable_epoch + 1u, durable_table_sequence,
+                      &durable_commitment, TEST_SOURCE_A),
+                  0);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 103u, TEST_SOURCE_A),
+                  -EAGAIN,
+                  "incoming newer ACK borrowed an older durable roster");
+
+    build_assignment_ack_result(TEST_SOURCE_A, half_range_epoch,
+                                old_table_sequence, &old_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_registered_membership_proves_assignment_ack(
+                      half_range_epoch, old_table_sequence,
+                      &old_commitment, TEST_SOURCE_A),
+                  0);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 104u, TEST_SOURCE_A),
+                  -EAGAIN,
+                  "RFC1982 half-range ambiguity did not fail closed");
+
+    build_assignment_ack_result(TEST_SOURCE_B, old_epoch,
+                                old_table_sequence, &old_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len, 105u, TEST_SOURCE_B),
+                  -EAGAIN,
+                  "nonmember borrowed newer-roster supersession proof");
+
+    build_assignment_ack_result(TEST_SOURCE_A, old_epoch,
+                                old_table_sequence, &old_commitment,
+                                &packet, payload, sizeof(payload),
+                                &payload_len);
+    zassert_true(payload_len > 0u);
+    zassert_equal(gateway_discovery_assignment_note_claim(
+                      &packet, payload, payload_len - 1u,
+                      106u, TEST_SOURCE_A),
+                  -EBADMSG,
+                  "malformed obsolete ACK reached durable proof admission");
+
+    zassert_mem_equal(&gateway_discovery_assignment_state,
+                      &assignment_before, sizeof(assignment_before),
+                      "rejected ACK matrix changed live assignment state");
+
+    gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_clear_durable_evidence();
+    memset(&gateway_discovery_assignment_state, 0,
+           sizeof(gateway_discovery_assignment_state));
+}
+
+ZTEST(production_seam_gateway_host_recovery,
       test_generic_command_telemetry_never_claims_host_receipt_custody)
 {
     const struct gateway_command_event event = {
@@ -1233,6 +1524,7 @@ ZTEST(production_seam_gateway_host_recovery,
     reset_gateway_owner();
     test_enable_receipt_stream_fixture();
     test_start_reliable_assignment_publisher();
+    gateway_persistence_retry_round = 0u;
 
     zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 1u);
     zassert_ok(gateway_ble_stream_head_packet(&gateway_ble_stream_state,
@@ -1254,9 +1546,24 @@ ZTEST(production_seam_gateway_host_recovery,
                                                receipt_payload,
                                                receipt_payload_len));
     app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
-    zassert_equal(diagnostics.inflight_event_seq, 0u);
+    zassert_not_equal(diagnostics.inflight_event_seq, 0u,
+                      "receipt must transfer publisher custody directly to "
+                      "the successor event");
     zassert_equal(diagnostics.sent_mappings, 1u);
-    zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 0u);
+    zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 1u,
+                  "exact receipt must publish its successor without waiting "
+                  "for mesh-route work or a BLE reconnect");
+    zassert_ok(gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                              &head));
+    zassert_equal(head.msg_type, MSG_GATEWAY_COMMAND_EVENT);
+    zassert_not_equal(head.session_id, receipt.session_id,
+                      "successor needs a distinct durable event identity");
+    app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
+    zassert_not_equal(diagnostics.inflight_event_seq, 0u,
+                      "successor must retain publisher custody immediately");
+    zassert_equal(gateway_persistence_retry_round, 1u,
+                  "publisher progress must retain only one base-delay "
+                  "route-owned fallback");
     (void)k_work_cancel_delayable(&gateway_persistence_retry_work);
     test_disable_receipt_stream_fixture();
     k_sched_unlock();
@@ -1392,9 +1699,11 @@ ZTEST(production_seam_gateway_host_recovery,
                                                receipt_payload,
                                                receipt_payload_len));
     app_gateway_assignment_publisher_get_diagnostics(&diagnostics);
-    zassert_equal(diagnostics.inflight_event_seq, 0u);
+    zassert_not_equal(diagnostics.inflight_event_seq, 0u,
+                      "successor publisher event must remain owned behind "
+                      "the unrelated mesh head");
     zassert_equal(diagnostics.sent_mappings, 1u);
-    zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 1u);
+    zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 2u);
     zassert_ok(gateway_ble_stream_head_packet(&gateway_ble_stream_state,
                                               &head));
     zassert_equal(head.msg_type, MSG_COMMAND_RESULT);
@@ -1532,11 +1841,194 @@ ZTEST(production_seam_gateway_host_recovery,
 }
 
 ZTEST(production_seam_gateway_host_recovery,
+      test_gateway_ch9_safe_boundary_drains_validated_survey_report)
+{
+    const uint32_t survey_id = UINT32_C(0x3200b001);
+    const uint64_t operation_generation = UINT64_C(0x000000010000b001);
+    const uint32_t boot_incarnation = UINT32_C(0x4100b001);
+    struct recovery_fixture survey_report;
+    struct recovery_fixture successor;
+    struct radio_guard_uwb_lease radio_lease = {0};
+    struct fw_radio_activity_decision decision;
+    struct proto_packet receipt = {0};
+    struct proto_packet head = {0};
+    uint8_t receipt_payload[PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES] = {0};
+    size_t receipt_payload_len = 0u;
+    uint32_t validation_token = 0u;
+    uint32_t received_at_ms;
+
+    reset_gateway_owner();
+    memset(&gateway_discovery_assignment_state, 0,
+           sizeof(gateway_discovery_assignment_state));
+    app_gateway_survey_incarnation_tracker_init(
+        &gateway_survey_incarnation_tracker);
+    memset(&gateway_survey_incarnation_event, 0,
+           sizeof(gateway_survey_incarnation_event));
+    zassert_ok(survey_gateway_begin_operation(
+        &gateway_survey_context, survey_id, operation_generation, 1u));
+    received_at_ms = k_uptime_get_32();
+    gateway_survey_active = true;
+    gateway_survey_operation_started_at_ms = received_at_ms - 1u;
+    gateway_survey_operation_deadline_ms = received_at_ms + 60000u;
+    gateway_survey_collection_started_at_ms = received_at_ms - 1u;
+    gateway_survey_collection_deadline_ms = received_at_ms + 60000u;
+    gateway_survey_collection_finalize_cutoff_ms = 0u;
+    gateway_survey_collection_finalize_cutoff_valid = false;
+    gateway_survey_collection_window_armed = true;
+    gateway_survey_collection_pending = true;
+    gateway_survey_expected_node_count_present = false;
+    mesh_report_callbacks = app_anchor_mesh_report_callbacks();
+
+    build_live_survey_report(
+        &survey_report, TEST_SOURCE_A, TEST_SOURCE_B, survey_id,
+        operation_generation, boot_incarnation, 71u);
+    build_stale_bundle(&successor, TEST_SOURCE_B, 92u, 20u, 20u, 72u);
+
+    /* Model the successful frame boundary: validation completes while the
+     * continuous receiver owns the radio, then its exact lease is released
+     * before the decoded frame enters the deferred semantic queue. */
+    zassert_ok(mesh_rx_radio_claim("gateway-boundary-fixture", &radio_lease));
+    zassert_true(radio_guard_uwb_busy());
+    zassert_ok(gateway_protocol_validation_arm(1000u, &validation_token));
+    zassert_ok(gateway_protocol_validation_complete(
+        validation_token, received_at_ms));
+    zassert_true(validation_token_is_completed(validation_token));
+    zassert_ok(mesh_rx_radio_finish(&radio_lease, 0));
+    zassert_false(radio_guard_uwb_busy());
+
+    k_sched_lock();
+    queue_received_fixture_with_validation(
+        &survey_report, received_at_ms, validation_token);
+    queue_received_fixture(&successor);
+    zassert_equal(mesh_rx_pending_count(), 2u);
+
+    mesh_coordinator_decide_now("gateway-boundary-fixture", &decision);
+    zassert_equal(decision.state, FW_RADIO_ACTIVITY_GATEWAY_RX);
+    zassert_false(decision.mesh_work_allowed);
+    zassert_false(mesh_process_queued_rx_now("ordinary-gateway-rx"),
+                  "ordinary callers borrowed the safe-boundary exception");
+    zassert_equal(mesh_rx_pending_count(), 2u);
+    zassert_true(validation_token_is_completed(validation_token));
+
+    zassert_ok(mesh_rx_radio_claim("gateway-boundary-busy", &radio_lease));
+    zassert_false(mesh_process_queued_rx_at_gateway_rx_boundary(),
+                  "safe-boundary drain ran while physical radio was busy");
+    zassert_equal(mesh_rx_pending_count(), 2u);
+    zassert_true(validation_token_is_completed(validation_token));
+    zassert_ok(mesh_rx_radio_finish(&radio_lease, 0));
+
+    zassert_true(mesh_process_queued_rx_at_gateway_rx_boundary(),
+                 "released gateway boundary did not drain the exact frame");
+    zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 1u);
+    zassert_true(atomic_get(&mesh_gateway_host_delivery_pending_state) != 0);
+    zassert_equal(mesh_gateway_host_delivery_semantic_acceptance,
+                  APP_GATEWAY_SEMANTIC_ACCEPT_NEW);
+    zassert_equal(mesh_rx_work_pending.packet.msg_type,
+                  MSG_SURVEY_DISCOVERY_REPORT);
+    zassert_equal(mesh_rx_work_pending.packet.src_id, TEST_SOURCE_A);
+    zassert_equal(mesh_rx_work_pending.result_validation_token,
+                  validation_token);
+    zassert_true(validation_token_is_completed(validation_token));
+    zassert_equal(gateway_survey_context.report_count, 0u,
+                  "pure preflight mutated survey state before GUI receipt");
+
+    zassert_equal(mesh_rx_pending_count(), 1u,
+                  "successor did not remain queued behind host custody");
+    zassert_ok(gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                              &head));
+    zassert_equal(head.msg_type, MSG_SURVEY_DISCOVERY_REPORT);
+    zassert_equal(head.src_id, TEST_SOURCE_A);
+    mark_exact_head_host_notified();
+    build_exact_host_receipt(&receipt, receipt_payload,
+                             sizeof(receipt_payload), &receipt_payload_len);
+    zassert_false(mesh_process_queued_rx_at_gateway_rx_boundary(),
+                  "unaccepted GUI receipt did not remain a hard barrier");
+    zassert_equal(mesh_rx_pending_count(), 1u);
+    zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 1u);
+    zassert_true(validation_token_is_completed(validation_token));
+
+    /* The ordinary-call denial deliberately publishes deferred work.  The
+     * scheduler lock kept it from racing this exact boundary transaction;
+     * cancel that test-only pending submission before reinitializing the
+     * shared work item for the next case. */
+    (void)k_work_cancel(&mesh_rx_work);
+    reset_gateway_owner();
+    gateway_survey_active = false;
+    gateway_survey_operation_started_at_ms = 0u;
+    gateway_survey_operation_deadline_ms = 0u;
+    gateway_survey_collection_started_at_ms = 0u;
+    gateway_survey_collection_deadline_ms = 0u;
+    gateway_survey_collection_finalize_cutoff_ms = 0u;
+    gateway_survey_collection_finalize_cutoff_valid = false;
+    gateway_survey_collection_window_armed = false;
+    gateway_survey_collection_pending = false;
+    memset(&gateway_survey_context, 0, sizeof(gateway_survey_context));
+    k_sched_unlock();
+}
+
+ZTEST(production_seam_gateway_host_recovery,
+      test_assignment_publication_debt_rejects_survey_before_state_claim)
+{
+    const uint8_t host_payload[] = {0u};
+    const struct proto_packet host_command = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = TEST_HOST_ID,
+        .dst_id = DEVICE_ID,
+        .session_id = UINT32_C(0x55667788),
+        .seq = 87u,
+        .ttl = 1u,
+        .payload_len = sizeof(host_payload),
+    };
+
+    reset_gateway_owner();
+    memset(&gateway_operation_owner, 0, sizeof(gateway_operation_owner));
+    memset(&gateway_auto_survey_operation_lease, 0,
+           sizeof(gateway_auto_survey_operation_lease));
+    memset(&gateway_survey_context, 0, sizeof(gateway_survey_context));
+    gateway_survey_active = false;
+    gateway_survey_operation_started_at_ms = 0u;
+    gateway_survey_operation_deadline_ms = 0u;
+    gateway_survey_discovery_delivery_handle = 0u;
+    gateway_survey_collection_pending = false;
+    atomic_set(&gateway_assignment_publication_pending_state, 1);
+
+    zassert_equal(
+        gateway_route_survey_reachability(
+            &host_command, host_payload, sizeof(host_payload)),
+        -EBUSY,
+        "assignment publication debt did not apply retryable pressure");
+    zassert_true(gateway_assignment_publication_pending(),
+                 "survey rejection consumed assignment publication custody");
+    zassert_false(gateway_survey_active,
+                  "busy rejection partially activated survey state");
+    zassert_equal(gateway_survey_operation_started_at_ms, 0u);
+    zassert_equal(gateway_survey_operation_deadline_ms, 0u);
+    zassert_equal(gateway_survey_discovery_delivery_handle, 0u);
+    zassert_false(gateway_survey_collection_pending);
+    zassert_equal(gateway_survey_context.operation_generation, 0u);
+    zassert_equal(gateway_survey_context.survey_id, 0u);
+    zassert_equal(gateway_survey_context.report_count, 0u);
+    zassert_equal(gateway_survey_context.pair_count, 0u);
+    zassert_equal(gateway_operation_owner.active.owner,
+                  APP_GATEWAY_OPERATION_OWNER_NONE);
+    zassert_equal(gateway_operation_owner.active.generation, 0u);
+    zassert_equal(gateway_operation_owner.next_generation, 0u,
+                  "busy rejection consumed an operation generation");
+    zassert_equal(gateway_auto_survey_operation_lease.owner,
+                  APP_GATEWAY_OPERATION_OWNER_NONE);
+    zassert_equal(gateway_auto_survey_operation_lease.generation, 0u);
+
+    atomic_clear(&gateway_assignment_publication_pending_state);
+    reset_gateway_owner();
+}
+
+ZTEST(production_seam_gateway_host_recovery,
       test_gateway_rx_still_defers_unrelated_c5_flood)
 {
     struct mesh_c5_flood_tx_context unrelated = {
         .response_priority = true,
-        .collection_recovery_candidate = NULL,
+        .candidate = NULL,
     };
 
     reset_gateway_owner();

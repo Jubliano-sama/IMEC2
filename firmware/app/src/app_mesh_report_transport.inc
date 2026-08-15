@@ -814,11 +814,20 @@ int mesh_transport_pause_preserving_queued(void)
     return 0;
 }
 
+bool mesh_transport_pause_active(void)
+{
+    return mesh_transport_paused();
+}
+
 bool mesh_transport_quiesced(void)
 {
     return mesh_transport_paused() &&
            !radio_guard_uwb_busy() &&
-           !mesh_rx_response_active() &&
+           /* A paused EVENT_ACCEPT retry is retained RAM custody, not live
+            * RF.  Keep it parked for resume, but wait for an attempt that is
+            * physically inside the response send before lending the radio to
+            * survey discovery. */
+           atomic_get(&mesh_rx_response_active_state) == 0 &&
            atomic_get(&mesh_rx_handler_active_state) == 0;
 }
 
@@ -1661,6 +1670,15 @@ static int mesh_send_c5_control_attempt(
                                                      reason);
     }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (tx->packet.msg_type == MSG_MESH_EVENT_PROPOSE) {
+        ret = mesh_event_propose_prepare_immediate_send(tx);
+        if (ret < 0) {
+            goto out_unlock;
+        }
+    }
+#endif
+
     if (peer_id != 0u) {
         mesh_c5_contact_exchange(peer_id,
                                  purpose,
@@ -1846,15 +1864,26 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
      * RX owner that is executing this exact completion. */
     collection_recovery_receipt_owner = flood_ctx != NULL &&
         mesh_gateway_collection_recovery_receipt_c5_allowed(
-            flood_ctx->collection_recovery_candidate);
+            flood_ctx->candidate);
 
     if (mesh_rx_pending_count() > 0u && !collection_recovery_receipt_owner) {
         return true;
     }
-    mesh_coordinator_decide_now("c5-flood", &coordinator_decision);
-    if (!coordinator_decision.c5_tx_allowed &&
-        !collection_recovery_receipt_owner) {
-        return true;
+    if (flood_ctx != NULL &&
+        flood_ctx->c5_tx_intent != FW_C5_TX_INTENT_BACKGROUND) {
+        if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
+                "c5-flood",
+                flood_ctx->candidate,
+                NULL,
+                (enum fw_c5_tx_intent)flood_ctx->c5_tx_intent)) {
+            return true;
+        }
+    } else {
+        mesh_coordinator_decide_now("c5-flood", &coordinator_decision);
+        if (!coordinator_decision.c5_tx_allowed &&
+            !collection_recovery_receipt_owner) {
+            return true;
+        }
     }
 
     if (DEVICE_ROLE == ROLE_ANCHOR) {
@@ -1937,7 +1966,8 @@ static int mesh_c5_flood_send_cb(const struct mesh_outbound *out, void *ctx)
         flood_ctx == NULL ? NULL : flood_ctx->observation,
         0u,
         NULL,
-        FW_C5_TX_INTENT_BACKGROUND);
+        flood_ctx == NULL ? FW_C5_TX_INTENT_BACKGROUND :
+            (enum fw_c5_tx_intent)flood_ctx->c5_tx_intent);
     if (rf_started && flood_ctx != NULL &&
         flood_ctx->rf_started_out != NULL) {
         *flood_ctx->rf_started_out = true;
@@ -2093,7 +2123,8 @@ static int mesh_send_c5_flood_now_until(
     struct app_mesh_flood_result *result,
     bool *rf_started_out,
     uint64_t absolute_deadline_ms,
-    struct app_mesh_tx_observation *observation)
+    struct app_mesh_tx_observation *observation,
+    enum fw_c5_tx_intent c5_tx_intent)
 {
     struct mesh_outbound tx;
     struct app_mesh_flood_result aggregate_result = {0};
@@ -2102,6 +2133,7 @@ static int mesh_send_c5_flood_now_until(
         .observation = observation,
         .absolute_deadline_ms = absolute_deadline_ms,
         .response_priority = response_priority,
+        .c5_tx_intent = (uint8_t)c5_tx_intent,
     };
     struct app_mesh_flood_ops ops = {
         .now_ms = mesh_c5_flood_now_ms,
@@ -2131,6 +2163,7 @@ static int mesh_send_c5_flood_now_until(
 
     tx = *out;
     tx.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
+    flood_ctx.candidate = &tx;
     attempt_count = 1u + tx.flood_retry_count;
 
     if (mesh_c5_flood_defer_active_cb(&flood_ctx)) {
@@ -2164,7 +2197,7 @@ static int mesh_send_c5_flood_now_until(
         if (send_wake_train) {
             ret = mesh_send_route_wake_train(MESH_BROADCAST_ID, NULL, NULL,
                                              purpose, reason, &tx, NULL,
-                                             FW_C5_TX_INTENT_BACKGROUND,
+                                             c5_tx_intent,
                                              NULL,
                                              NULL);
             if (ret < 0) {
@@ -2236,6 +2269,24 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
                                   struct app_mesh_flood_result *result,
                                   bool *rf_started_out)
 {
+    return mesh_send_c5_flood_now_intent(
+        out, purpose, reason, send_wake_train, response_priority,
+        single_opportunity, command_orchestrator, result, rf_started_out,
+        FW_C5_TX_INTENT_BACKGROUND);
+}
+
+static int mesh_send_c5_flood_now_intent(
+    const struct mesh_outbound *out,
+    uint8_t purpose,
+    const char *reason,
+    bool send_wake_train,
+    bool response_priority,
+    bool single_opportunity,
+    const struct app_mesh_command_orchestrator *command_orchestrator,
+    struct app_mesh_flood_result *result,
+    bool *rf_started_out,
+    enum fw_c5_tx_intent c5_tx_intent)
+{
     return mesh_send_c5_flood_now_until(
         out,
         purpose,
@@ -2247,7 +2298,8 @@ static int mesh_send_c5_flood_now(const struct mesh_outbound *out,
         result,
         rf_started_out,
         0u,
-        NULL);
+        NULL,
+        c5_tx_intent);
 }
 
 int mesh_try_send_c5_flood(const struct mesh_outbound *out,
@@ -2303,7 +2355,7 @@ int mesh_try_send_c5_flood_resume(
 
     tx = *out;
     tx.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-    flood_ctx.collection_recovery_candidate = &tx;
+    flood_ctx.candidate = &tx;
     if (mesh_c5_flood_defer_active_cb(&flood_ctx)) {
         *result = progress->result;
         return -EAGAIN;
@@ -2413,7 +2465,8 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
         NULL,
         NULL,
         view->absolute_deadline_ms,
-        observation);
+        observation,
+        FW_C5_TX_INTENT_BACKGROUND);
 
 out_unlock:
     if (observation != NULL) {
@@ -2613,6 +2666,7 @@ int mesh_try_send_reliable_uplink_view(
         NULL,
         &rf_started,
         &policy_deferred,
+        false,
         view->absolute_deadline_ms,
         observation);
     k_mutex_unlock(&mesh_route_wait_scratch_lock);
@@ -2862,7 +2916,8 @@ int mesh_send_c5_flood(const struct mesh_outbound *out,
         *sent_now = attempted;
     }
     if (!attempted && mesh_send_failure_retryable(ret)) {
-        ret = mesh_c5_flood_store_deferred(out, purpose, reason, priority);
+        ret = mesh_c5_flood_store_deferred(
+            out, purpose, reason, priority);
     }
     return ret;
 }

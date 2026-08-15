@@ -1582,6 +1582,7 @@ static int handle_route_request(struct mesh_relay *relay,
     struct mesh_route_path direct_selected_path = {0};
     struct route_candidate reply_route = {0};
     struct mesh_event_timing downstream_timing = {0};
+    struct mesh_relay_channel9_guard_status timing_guard = {0};
     struct reactive_route_rollback route_rollback = {0};
     bool first_seen = false;
     bool best_updated = false;
@@ -1614,7 +1615,11 @@ static int handle_route_request(struct mesh_relay *relay,
         return PROTO_ERR_STALE;
     }
     if (relay->role == MESH_RELAY_ROLE_ANCHOR &&
-        relay_active_channel9_timing_count(relay) > 0u) {
+        relay_active_channel9_timing_count(relay) > 0u &&
+        !fields.proposed_channel9_timing_valid) {
+        /* A connected relay may add its one downstream cadence only when
+         * the request carries the exact candidate that the direction and
+         * overlap guard below can prove. */
         return PROTO_ERR_BUSY;
     }
 
@@ -1675,7 +1680,27 @@ static int handle_route_request(struct mesh_relay *relay,
             &downstream_timing,
             MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM,
             MESH_RELAY_EVENT_TIMINGS,
-            NULL);
+            &timing_guard);
+#if !IMEC_MESH_RELAY_GATEWAY_ONLY
+        if (ret == PROTO_ERR_BUSY &&
+            timing_guard.reason ==
+                MESH_RELAY_CHANNEL9_GUARD_INTERVAL_CONFLICT &&
+            timing_guard.conflict_direction ==
+                MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM) {
+            /*
+             * Routing and connection scheduling are separate. A parent with
+             * one free downstream direction can return the route even when
+             * the requester's guessed phase overlaps its upstream cadence;
+             * EVENT_ACCEPT will counterpropose the exact half phase later.
+             */
+            install_reply_timing = false;
+            fields.proposed_channel9_timing_valid = false;
+            fields.timing_reference_ms = 0u;
+            memset(&fields.proposed_channel9_timing,
+                   0,
+                   sizeof(fields.proposed_channel9_timing));
+        } else
+#endif
         if (ret != PROTO_OK) {
             return ret;
         }

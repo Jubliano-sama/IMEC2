@@ -1,0 +1,8 @@
+time,label,caption,kind,row
+0,0 ms,range burst begins,axis,
+50,50 ms,next anchor exchange,axis,
+100,100 ms,third unique anchor reached,axis,
+200,200 ms,half burst,axis,
+300,300 ms,all anchors have two opportunities,axis,
+400,400 ms,eighth exchange reservation ends,axis,
+500,500 ms,post-range delivery window,axis,

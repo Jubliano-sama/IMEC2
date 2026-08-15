@@ -14,6 +14,8 @@ const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void);
 int app_anchor_init(void);
 int app_anchor_start_anchor_role(void);
 int app_anchor_start_gateway_role(void);
+/* Retain one widened Channel-5 scan after an anchor releases Channel-9. */
+void app_anchor_note_channel9_window_released(void);
 /*
  * Reconstruct an exact durable enumeration publication after reset.  Returns
  * 1 while publication debt remains, 0 when there is none, or a negative errno

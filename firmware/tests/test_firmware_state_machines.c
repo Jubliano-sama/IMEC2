@@ -367,6 +367,72 @@ static void test_causal_c5_response_only_overrides_queued_rx_work(void)
     capture.gateway_continuous_ch9 = false;
 }
 
+static void test_validated_survey_forward_only_overrides_live_ch9_ack_owner(void)
+{
+    struct fw_radio_activity_capture capture = {
+        .ch9_ack_wait_active = true,
+        .c5_tx_intent = FW_C5_TX_INTENT_BACKGROUND,
+    };
+    struct fw_radio_activity_runtime runtime;
+    struct fw_radio_activity_decision decision;
+
+    fw_radio_activity_runtime_init(&runtime);
+
+    /* A retained report's live ACK deadline keeps every ordinary Channel-5
+     * producer blocked, including the broader causal-response exception. */
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.c5_tx_intent = FW_C5_TX_INTENT_CAUSAL_RESPONSE;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(!decision.c5_tx_allowed);
+
+    /* The app may mint this intent only from the relay core's validated
+     * gateway survey-forward action. It opens one control send without
+     * weakening the ACK owner or its receive eligibility. */
+    capture.c5_tx_intent = FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
+    assert(decision.c5_tx_allowed);
+    assert(decision.mesh_work_allowed);
+    assert(decision.uwb_rx_allowed);
+    assert(!decision.route_wait_allowed);
+    assert(!decision.report_tx_allowed);
+
+    capture.ch9_ack_wait_active = false;
+    capture.ch9_ack_send_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(decision.c5_tx_allowed);
+
+    /* The exception is intentionally narrower than a generic priority lane:
+     * queued RX, clicks, survey RF, and continuous gateway RX still win. */
+    capture.rx_queue_used = 1u;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.rx_queue_used = 0u;
+
+    capture.click_active = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.click_active = false;
+
+    capture.survey_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.survey_pending = false;
+
+    capture.gateway_continuous_ch9 = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, NULL) == 0);
+    assert(!decision.c5_tx_allowed);
+}
+
 static void test_radio_cancel_failure_enters_recovery(void)
 {
     struct fw_radio_sm radio;
@@ -1305,6 +1371,7 @@ int main(void)
     test_gateway_continuous_rx_blocks_competing_work();
     test_ch9_ack_custody_allows_rx_but_blocks_channel5_tx();
     test_causal_c5_response_only_overrides_queued_rx_work();
+    test_validated_survey_forward_only_overrides_live_ch9_ack_owner();
     test_radio_cancel_failure_enters_recovery();
     test_radio_recovery_completion_promotes_pending_after_report();
     test_radio_recovery_exhaustion_reports_both_owners();

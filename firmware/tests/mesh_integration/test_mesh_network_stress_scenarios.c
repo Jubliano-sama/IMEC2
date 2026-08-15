@@ -982,28 +982,34 @@ static int expire_connection_timing(struct mesh_sim_world *sim,
                                     uint16_t connection_index,
                                     const char *phase_prefix)
 {
-    const unsigned int max_events =
-        (unsigned int)sim->connections[connection_index].timing_a.max_missed_events *
-        2u + 4u;
+    const struct mesh_sim_connection *connection;
+    uint64_t deadline_a_us;
+    uint64_t deadline_b_us;
+    uint64_t deadline_us;
+    int ret;
 
-    for (unsigned int event = 0u; event < max_events; event++) {
-        const struct mesh_sim_connection *connection =
-            &sim->connections[connection_index];
-
-        if (!connection->timing_a.timing_fresh ||
-            !connection->timing_b.timing_fresh) {
-            return MESH_SIM_OK;
-        }
-        set_phase("%s-event-%u", phase_prefix, event + 1u);
-        {
-            int ret = run_connection(sim, connection_index, false);
-
-            if (ret != MESH_SIM_OK) {
-                return ret;
-            }
-        }
+    if (sim == NULL || connection_index >= sim->connection_count) {
+        return MESH_SIM_ERR_ARG;
     }
-    return MESH_SIM_ERR_EVENT_ORDER;
+    connection = &sim->connections[connection_index];
+    deadline_a_us =
+        ((uint64_t)connection->timing_a.last_successful_ch9_event_ms +
+         connection->timing_a.supervision_timeout_ms) * 1000u;
+    deadline_b_us =
+        ((uint64_t)connection->timing_b.last_successful_ch9_event_ms +
+         connection->timing_b.supervision_timeout_ms) * 1000u;
+    deadline_us = deadline_a_us < deadline_b_us ?
+                  deadline_a_us : deadline_b_us;
+    set_phase("%s-supervision", phase_prefix);
+    ret = mesh_sim_run_until(sim, deadline_us);
+    if (ret != MESH_SIM_OK) {
+        return ret;
+    }
+    return !mesh_event_timing_usable(
+                &connection->timing_a, (uint32_t)(sim->now_us / 1000u)) ||
+           !mesh_event_timing_usable(
+                &connection->timing_b, (uint32_t)(sim->now_us / 1000u)) ?
+               MESH_SIM_OK : MESH_SIM_ERR_EVENT_ORDER;
 }
 
 static int run_connection_until_repaired(struct mesh_sim_world *sim,
@@ -1793,8 +1799,12 @@ static int test_repeated_timing_expiry_and_repair(void)
             CHECK(expire_connection_timing(&world,
                                            connection,
                                            "timing-expiry") == MESH_SIM_OK);
-            CHECK(!world.connections[connection].timing_a.timing_fresh ||
-                  !world.connections[connection].timing_b.timing_fresh);
+            CHECK(!mesh_event_timing_usable(
+                      &world.connections[connection].timing_a,
+                      (uint32_t)(world.now_us / 1000u)) ||
+                  !mesh_event_timing_usable(
+                      &world.connections[connection].timing_b,
+                      (uint32_t)(world.now_us / 1000u)));
 
             set_phase("repair-cycle-%u-run", cycle);
             CHECK(run_connection_until_repaired(&world,

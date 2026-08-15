@@ -5,6 +5,7 @@
 #include "mesh_sim.h"
 
 #include "mesh_relay.h"
+#include "mesh_radio_timing.h"
 #include "protocol.h"
 #include "survey.h"
 #include "survey_round_control.h"
@@ -267,7 +268,7 @@ static struct mesh_event_params connection_params(uint32_t first_event_ms)
         .event_interval_ms = 250u,
         .event_window_ms = 120u,
         .guard_ms = 30u,
-        .supervision_timeout_ms = 5000u,
+        .supervision_timeout_ms = MESH_RADIO_EVENT_SUPERVISION_MS,
         .peer_clock_skew_estimate_ppm = 0,
         .max_missed_events = 3u,
     };
@@ -707,21 +708,21 @@ static int keep_connection_alive_until(struct mesh_sim_world *world,
                                        uint16_t connection,
                                        uint64_t target_us)
 {
-    for (size_t step = 0u; step < 64u; step++) {
+    while (world->now_us < target_us) {
         struct mesh_sim_connection_action action;
+        uint64_t before_us;
 
-        if (world->now_us >= target_us) {
-            return mesh_sim_run_until(world, world->now_us);
-        }
         CHECK(mesh_sim_connection_next_action(world, connection, &action) ==
               MESH_SIM_OK);
         if (action.kind == MESH_SIM_CONNECTION_ACTION_NONE ||
             action.start_us > target_us) {
             return mesh_sim_run_until(world, target_us);
         }
+        before_us = world->now_us;
         CHECK(run_connection_action(world, connection, false) == MESH_SIM_OK);
+        CHECK(world->now_us > before_us);
     }
-    return MESH_SIM_ERR_EVENT_ORDER;
+    return mesh_sim_run_until(world, world->now_us);
 }
 
 static int schedule_origin_retry(struct mesh_sim_world *world,
@@ -1441,6 +1442,233 @@ static int run_targeted_gateway_control_multirelay_scenario(void)
     return 0;
 }
 
+static int run_committed_reverse_route_repairs_targeted_forced2_scenario(void)
+{
+    static struct mesh_gateway_ack_store gateway_ack_store;
+    const uint64_t direct_anchor_id = ANCHOR_ID + UINT64_C(0x510);
+    const uint64_t forced1_id = ANCHOR_ID + UINT64_C(0x520);
+    const uint64_t forced2_id = TRANSMITTER_ID + UINT64_C(0x5300);
+    const uint8_t report_payload[] = {
+        TLV_MESH_TEST_PADDING, 1u, 0x52u,
+    };
+    const struct route_candidate gateway_route = {
+        .next_hop_id = GATEWAY_ID,
+        .gateway_id = GATEWAY_ID,
+        .route_epoch = ROUTE_EPOCH,
+        .last_seen_ms = 1000u,
+        .hop_count = 0u,
+        .link_quality = 96u,
+        .valid = true,
+    };
+    const struct proto_packet child_report = {
+        .msg_type = MSG_MESH_DATA,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
+        .src_id = forced2_id,
+        .dst_id = GATEWAY_ID,
+        .session_id = UINT32_C(0x52565253),
+        .seq = UINT16_C(0x5254),
+        .ttl = MESH_DEFAULT_TTL - 1u,
+        .payload_len = sizeof(report_payload),
+    };
+    struct mesh_relay direct_anchor;
+    struct mesh_relay forced1;
+    struct mesh_relay forced2;
+    struct mesh_relay gateway;
+    struct mesh_relay_result report_admission;
+    struct mesh_relay_result direct_control;
+    struct mesh_relay_result forced1_control;
+    struct mesh_relay_result forced2_control;
+    struct mesh_relay_result gateway_result;
+    struct mesh_outbound retained_report;
+    struct mesh_outbound control;
+    struct mesh_pending_tx pending_before_control;
+    struct survey_pair decoded_pair;
+    const struct mesh_downlink_entry *downlink;
+    const struct route_candidate *route;
+    uint8_t origin_ttl = 0u;
+
+    phase = "committed_reverse_route_targeted_forced2";
+    mesh_relay_init(&direct_anchor, MESH_RELAY_ROLE_ANCHOR,
+                    direct_anchor_id, GATEWAY_ID, ROUTE_EPOCH);
+    mesh_relay_init(&forced1, MESH_RELAY_ROLE_ANCHOR,
+                    forced1_id, GATEWAY_ID, ROUTE_EPOCH);
+    mesh_relay_init(&forced2, MESH_RELAY_ROLE_ANCHOR,
+                    forced2_id, GATEWAY_ID, ROUTE_EPOCH);
+    mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY_ID, GATEWAY_ID, ROUTE_EPOCH);
+    CHECK(mesh_relay_attach_gateway_ack_store(
+              &gateway, &gateway_ack_store) == PROTO_OK);
+    CHECK(route_upsert_candidate(&direct_anchor.upstream,
+                                 &gateway_route) == PROTO_OK);
+
+    /* A stale proximity hint claims forced2 is directly reachable from the
+     * direct anchor, while forced1 already knows the real final edge. */
+    CHECK(install_control_downlink(&direct_anchor, 0u,
+                                   forced2_id, forced2_id, 1u) == 0);
+    CHECK(install_control_downlink(&forced1, 0u,
+                                   forced2_id, forced2_id, 1u) == 0);
+    downlink = mesh_relay_find_downlink(&direct_anchor, forced2_id);
+    CHECK(downlink != NULL);
+    CHECK(downlink->next_hop_id == forced2_id);
+
+    /* Only the exact report owner retained and bound to its physical child
+     * may replace that stale reverse selection. */
+    CHECK(mesh_relay_handle_rx(&direct_anchor,
+                               &child_report,
+                               report_payload,
+                               sizeof(report_payload),
+                               forced1_id,
+                               94u,
+                               2000u,
+                               &report_admission) == PROTO_OK);
+    CHECK(report_admission.status == PROTO_OK);
+    CHECK(has_action(&report_admission, MESH_RELAY_ACTION_FORWARD));
+    CHECK(has_action(&report_admission, MESH_RELAY_ACTION_SEND_HOP_ACK));
+    CHECK(report_admission.forward.next_hop_id == GATEWAY_ID);
+    CHECK(report_admission.forward.ingress_previous_hop_id == forced1_id);
+    CHECK(mesh_relay_start_tx(&direct_anchor,
+                              &report_admission.forward.packet,
+                              report_admission.forward.payload,
+                              report_admission.forward.payload_len,
+                              2010u,
+                              &retained_report) == PROTO_OK);
+    CHECK(mesh_relay_bind_transit_previous_hop(
+              &direct_anchor, &retained_report, forced1_id) == PROTO_OK);
+    CHECK(mesh_relay_commit_transit_reverse_route(
+              &direct_anchor, &retained_report, 2020u) == PROTO_OK);
+    downlink = mesh_relay_find_downlink(&direct_anchor, forced2_id);
+    CHECK(downlink != NULL);
+    CHECK(downlink->next_hop_id == forced1_id);
+    CHECK(downlink->discovery_flood_epoch_id == 0u);
+    for (size_t i = 0u;
+         i < mesh_relay_downlink_capacity(&direct_anchor);
+         i++) {
+        const struct mesh_downlink_entry *candidate =
+            mesh_relay_downlink_at(&direct_anchor, i);
+
+        CHECK(candidate != NULL);
+        CHECK(!candidate->valid || candidate->target_id != forced2_id ||
+              candidate->next_hop_id != forced2_id);
+    }
+    pending_before_control = direct_anchor.pending;
+
+    CHECK(build_targeted_survey_control(&control,
+                                         MSG_SURVEY_PAIR_PREPARE,
+                                         forced2_id,
+                                         UINT16_C(0x5354)) == PROTO_OK);
+    CHECK(app_mesh_c5_gateway_control_origin_ttl(
+              control.packet.msg_type,
+              (uint16_t)CMD_SURVEY_PREPARE_PAIR,
+              &origin_ttl));
+    CHECK(control.packet.ttl == origin_ttl);
+    CHECK(control_capture_relevant(&control.packet,
+                                   GATEWAY_ID,
+                                   &direct_anchor));
+    CHECK(mesh_relay_handle_rx(&direct_anchor,
+                               &control.packet,
+                               control.payload,
+                               control.payload_len,
+                               GATEWAY_ID,
+                               96u,
+                               2030u,
+                               &direct_control) == PROTO_OK);
+    CHECK(direct_control.status == PROTO_OK);
+    CHECK(has_action(&direct_control, MESH_RELAY_ACTION_FORWARD));
+    CHECK(!has_action(&direct_control, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    CHECK(direct_control.forward.next_hop_id == forced1_id);
+    CHECK(memcmp(&direct_anchor.pending,
+                 &pending_before_control,
+                 sizeof(pending_before_control)) == 0);
+
+    CHECK(control_capture_relevant(&direct_control.forward.packet,
+                                   direct_anchor_id,
+                                   &forced1));
+    CHECK(mesh_relay_handle_rx(&forced1,
+                               &direct_control.forward.packet,
+                               direct_control.forward.payload,
+                               direct_control.forward.payload_len,
+                               direct_anchor_id,
+                               94u,
+                               2040u,
+                               &forced1_control) == PROTO_OK);
+    CHECK(forced1_control.status == PROTO_OK);
+    CHECK(has_action(&forced1_control, MESH_RELAY_ACTION_FORWARD));
+    CHECK(forced1_control.forward.next_hop_id == forced2_id);
+    CHECK(forced1_control.forward.packet.ttl == origin_ttl - 2u);
+
+    CHECK(control_capture_relevant(&forced1_control.forward.packet,
+                                   forced1_id,
+                                   &forced2));
+    CHECK(mesh_relay_note_gateway_control_reverse_route(
+              &forced2,
+              &forced1_control.forward.packet,
+              forced1_id,
+              92u,
+              origin_ttl,
+              2050u) == PROTO_OK);
+    CHECK(mesh_relay_handle_rx(&forced2,
+                               &forced1_control.forward.packet,
+                               forced1_control.forward.payload,
+                               forced1_control.forward.payload_len,
+                               forced1_id,
+                               92u,
+                               2050u,
+                               &forced2_control) == PROTO_OK);
+    CHECK(forced2_control.status == PROTO_OK);
+    CHECK(has_action(&forced2_control, MESH_RELAY_ACTION_DELIVER_LOCAL));
+    CHECK(!has_action(&forced2_control, MESH_RELAY_ACTION_FORWARD));
+    CHECK(survey_extract_pair_tlvs(
+              forced1_control.forward.payload,
+              forced1_control.forward.payload_len,
+              &decoded_pair) == PROTO_OK);
+    CHECK(decoded_pair.survey_id == TARGETED_SURVEY_ID);
+    CHECK(decoded_pair.initiator_id == forced2_id);
+    route = route_selected(&forced2.upstream);
+    CHECK(route != NULL);
+    CHECK(route->next_hop_id == forced1_id);
+    CHECK(route->hop_count == 2u);
+    CHECK(memcmp(&direct_anchor.pending,
+                 &pending_before_control,
+                 sizeof(pending_before_control)) == 0);
+
+    /* Complete the original report afterward. Its ACK must still retrace the
+     * exact forced1 ingress custody rather than consulting any downlink. */
+    mesh_relay_note_tx_sent(&direct_anchor, &retained_report, 2060u);
+    CHECK(mesh_relay_handle_rx(&gateway,
+                               &retained_report.packet,
+                               retained_report.payload,
+                               retained_report.payload_len,
+                               direct_anchor_id,
+                               96u,
+                               2070u,
+                               &gateway_result) == PROTO_OK);
+    CHECK(gateway_result.actions == MESH_RELAY_ACTION_DELIVER_LOCAL);
+    CHECK(mesh_relay_commit_gateway_delivery(
+              &gateway,
+              &retained_report.packet,
+              retained_report.payload,
+              retained_report.payload_len,
+              direct_anchor_id,
+              2080u,
+              &gateway_result) == PROTO_OK);
+    CHECK(gateway_result.actions == MESH_RELAY_ACTION_SEND_GATEWAY_ACK);
+    CHECK(mesh_relay_handle_rx(&direct_anchor,
+                               &gateway_result.gateway_ack.packet,
+                               gateway_result.gateway_ack.payload,
+                               gateway_result.gateway_ack.payload_len,
+                               GATEWAY_ID,
+                               96u,
+                               2090u,
+                               &report_admission) == PROTO_OK);
+    CHECK(has_action(&report_admission, MESH_RELAY_ACTION_FORWARD));
+    CHECK(has_action(
+              &report_admission,
+              MESH_RELAY_ACTION_TRANSIT_GATEWAY_ACK_FORWARD_PENDING));
+    CHECK(report_admission.forward.next_hop_id == forced1_id);
+    CHECK(report_admission.forward.ingress_previous_hop_id == forced1_id);
+    return 0;
+}
+
 static int run_targeted_gateway_control_bypasses_unrelated_custody_scenario(void)
 {
     const uint64_t relay_id = ANCHOR_ID + UINT64_C(0x300);
@@ -1565,10 +1793,11 @@ static int run_targeted_gateway_control_bypasses_unrelated_custody_scenario(void
                                    96u,
                                    5030u,
                                    &result) == PROTO_OK);
-        CHECK(result.status == PROTO_ERR_BUSY);
-        CHECK(has_action(&result, MESH_RELAY_ACTION_DROP));
-        CHECK(has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
-        CHECK(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        CHECK(result.status == PROTO_OK);
+        CHECK(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        CHECK(has_action(&result, MESH_RELAY_ACTION_SEND_HOP_ACK));
+        CHECK(!has_action(&result, MESH_RELAY_ACTION_DROP));
+        CHECK(!has_action(&result, MESH_RELAY_ACTION_SEND_RELAY_BUSY));
         CHECK(memcmp(&relay.pending, &pending_before,
                      sizeof(pending_before)) == 0);
         CHECK(memcmp(&relay.outbox_record, &outbox_before,
@@ -1820,6 +2049,9 @@ int main(void)
         return 1;
     }
     if (run_targeted_gateway_control_multirelay_scenario() != 0) {
+        return 1;
+    }
+    if (run_committed_reverse_route_repairs_targeted_forced2_scenario() != 0) {
         return 1;
     }
     if (run_targeted_gateway_control_bypasses_unrelated_custody_scenario() !=

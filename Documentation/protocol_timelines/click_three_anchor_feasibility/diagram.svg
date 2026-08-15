@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="741" viewBox="0 0 4300 741" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">NORMAL CLICK: THREE ANCHORS FIT INSIDE THE 400 MS RANGING BURST</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="634.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="179.0" y="96.0" class="row-label">CLICKER: ONE DWM3000</text>
+<rect x="314.0" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="511.2" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="511.2" dy="0.0">A1</tspan></text>
+<rect x="708.4" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="905.6" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="905.6" dy="0.0">B1</tspan></text>
+<rect x="1102.8" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1300.0" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1300.0" dy="0.0">C1</tspan></text>
+<rect x="1497.2" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1694.4" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1694.4" dy="0.0">A2</tspan></text>
+<rect x="1891.6" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2088.8" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2088.8" dy="0.0">B2</tspan></text>
+<rect x="2286.0" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2483.2" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2483.2" dy="0.0">C2</tspan></text>
+<rect x="2680.4" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2877.6" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2877.6" dy="0.0">A3</tspan></text>
+<rect x="3074.8" y="74.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3272.0" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3272.0" dy="0.0">B3</tspan></text>
+<line x1="44.0" y1="124.0" x2="4258.0" y2="124.0" class="major-line"/>
+<text x="179.0" y="160.0" class="row-label">ANCHOR A RX / RESPONSE</text>
+<rect x="314.0" y="138.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="511.2" y="161.0" class="small center event-text" text-anchor="middle"><tspan x="511.2" dy="0.0">exchange 1</tspan></text>
+<rect x="1497.2" y="138.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1694.4" y="161.0" class="small center event-text" text-anchor="middle"><tspan x="1694.4" dy="0.0">exchange 2</tspan></text>
+<rect x="2680.4" y="138.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2877.6" y="161.0" class="small center event-text" text-anchor="middle"><tspan x="2877.6" dy="0.0">exchange 3</tspan></text>
+<line x1="44.0" y1="188.0" x2="4258.0" y2="188.0" class="major-line"/>
+<text x="179.0" y="224.0" class="row-label">ANCHOR B RX / RESPONSE</text>
+<rect x="708.4" y="202.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="905.6" y="225.0" class="small center event-text" text-anchor="middle"><tspan x="905.6" dy="0.0">exchange 1</tspan></text>
+<rect x="1891.6" y="202.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2088.8" y="225.0" class="small center event-text" text-anchor="middle"><tspan x="2088.8" dy="0.0">exchange 2</tspan></text>
+<rect x="3074.8" y="202.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3272.0" y="225.0" class="small center event-text" text-anchor="middle"><tspan x="3272.0" dy="0.0">exchange 3</tspan></text>
+<line x1="44.0" y1="252.0" x2="4258.0" y2="252.0" class="major-line"/>
+<text x="179.0" y="288.0" class="row-label">ANCHOR C RX / RESPONSE</text>
+<rect x="1102.8" y="266.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1300.0" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="1300.0" dy="0.0">exchange 1</tspan></text>
+<rect x="2286.0" y="266.0" width="394.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2483.2" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="2483.2" dy="0.0">exchange 2</tspan></text>
+<line x1="44.0" y1="316.0" x2="4258.0" y2="316.0" class="major-line"/>
+<text x="179.0" y="352.0" class="row-label">EXISTING CHANNEL-9 CUSTODY</text>
+<rect x="314.0" y="330.0" width="3155.2" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1891.6" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="1891.6" dy="0.0">click priority: cadence work retained, no competing radio owner</tspan></text>
+<rect x="3469.2" y="330.0" width="788.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3863.6" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="3863.6" dy="0.0">rearm and bounded retry</tspan></text>
+<line x1="44.0" y1="380.0" x2="4258.0" y2="380.0" class="major-line"/>
+<text x="179.0" y="416.0" class="row-label">REPORT DELIVERY</text>
+<rect x="314.0" y="394.0" width="3155.2" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1891.6" y="417.0" class="small center event-text" text-anchor="middle"><tspan x="1891.6" dy="0.0">no report is exposed before the range owner releases</tspan></text>
+<rect x="3469.2" y="394.0" width="788.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3863.6" y="417.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3863.6" dy="0.0">three-anchor result enters reliable mesh custody</tspan></text>
+<line x1="44.0" y1="444.0" x2="4258.0" y2="444.0" class="major-line"/>
+<text x="179.0" y="480.0" class="row-label">PHYSICAL FEASIBILITY</text>
+<rect x="314.0" y="458.0" width="3155.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1891.6" y="481.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1891.6" dy="0.0">8 x 50 ms = 400 ms exactly; no overlap</tspan></text>
+<rect x="3469.2" y="458.0" width="788.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3863.6" y="481.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3863.6" dy="0.0">normal delivery resumes</tspan></text>
+<line x1="44.0" y1="508.0" x2="4258.0" y2="508.0" class="major-line"/>
+<text x="179.0" y="545.0" class="row-label">KEY POINT</text>
+<rect x="2026.0" y="520.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="2286.0" y="534.0" class="small center" text-anchor="middle"><tspan x="2286.0" dy="0.0">This part is physically feasible. The clicker uses one exchange at a time: A, B, C, A, B, C, A, B.</tspan><tspan x="2286.0" dy="12.0">Existing Channel-9 custody is preempted and retained during the burst, then delivery resumes</tspan><tspan x="2286.0" dy="12.0">after the ranging owner releases.</tspan></text>
+<line x1="44.0" y1="574.0" x2="4258.0" y2="574.0" class="major-line"/>
+<line x1="44.0" y1="600.0" x2="44.0" y2="638.0" class="major-line"/>
+<line x1="44.0" y1="600.0" x2="4258.0" y2="600.0" class="axis-line"/>
+<line x1="314.0" y1="599.0" x2="314.0" y2="611.0" class="tick"/>
+<line x1="708.4" y1="599.0" x2="708.4" y2="611.0" class="tick"/>
+<line x1="1102.8" y1="599.0" x2="1102.8" y2="611.0" class="tick"/>
+<line x1="1891.6" y1="599.0" x2="1891.6" y2="611.0" class="tick"/>
+<line x1="2680.4" y1="599.0" x2="2680.4" y2="611.0" class="tick"/>
+<line x1="3469.2" y1="599.0" x2="3469.2" y2="611.0" class="tick"/>
+<line x1="4258.0" y1="599.0" x2="4258.0" y2="611.0" class="tick"/>
+<text x="297.4" y="623.0" class="axis-time">0 ms</text>
+<text x="691.8" y="623.0" class="axis-time">50 ms</text>
+<text x="1086.2" y="623.0" class="axis-time">100 ms</text>
+<text x="1875.0" y="623.0" class="axis-time">200 ms</text>
+<text x="2663.8" y="623.0" class="axis-time">300 ms</text>
+<text x="3452.6" y="623.0" class="axis-time">400 ms</text>
+<text x="4241.4" y="623.0" class="axis-time">500 ms</text>
+<text x="314.0" y="652.5" class="tiny center" text-anchor="middle"><tspan x="314.0" dy="0.0">range burst begins</tspan></text>
+<text x="708.4" y="652.5" class="tiny center" text-anchor="middle"><tspan x="708.4" dy="0.0">next anchor exchange</tspan></text>
+<text x="1102.8" y="652.5" class="tiny center" text-anchor="middle"><tspan x="1102.8" dy="0.0">third unique anchor reached</tspan></text>
+<text x="1891.6" y="652.5" class="tiny center" text-anchor="middle"><tspan x="1891.6" dy="0.0">half burst</tspan></text>
+<text x="2680.4" y="652.5" class="tiny center" text-anchor="middle"><tspan x="2680.4" dy="0.0">all anchors have two opportunities</tspan></text>
+<text x="3469.2" y="652.5" class="tiny center" text-anchor="middle"><tspan x="3469.2" dy="0.0">eighth exchange reservation ends</tspan></text>
+<text x="4191.4" y="652.5" class="tiny center" text-anchor="middle"><tspan x="4191.4" dy="0.0">post-range delivery window</tspan></text>
+<text x="2150.0" y="707.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Production schedule at the 50 ms minimum exchange stride. Eight sequential DS-TWR reservations fit exactly in the 400 ms burst; the round-robin order gives all three selected anchors at least two opportunities without overlapping the clicker&#x27;s single DWM3000.</tspan></text>
+</svg>

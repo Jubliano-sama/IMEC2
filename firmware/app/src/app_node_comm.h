@@ -175,6 +175,10 @@ int app_node_comm_submit_reliable_uplink(
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
+int app_node_comm_submit_best_effort_uplink(
+    const app_node_comm_envelope *envelope,
+    uint64_t absolute_deadline_ms,
+    uint32_t client_token);
 int app_node_comm_submit_protocol_response(
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
@@ -351,6 +355,14 @@ void app_node_comm_control_response_health_get(
     struct app_node_comm_control_response_health *health);
 void app_node_comm_delivery_health_get(app_node_comm_delivery_health *health);
 bool app_node_comm_policy_running(void);
+/*
+ * Temporarily stop only mesh transport work while a higher-priority local
+ * radio operation reaches its physical start. The communication facade keeps
+ * queued custody intact and serializes the final resume with lifecycle pause.
+ */
+int app_node_comm_transport_preempt_begin(void);
+int app_node_comm_transport_preempt_ready(void);
+void app_node_comm_transport_preempt_end(void);
 int app_node_comm_pause_request(uint32_t owner,
                                 uint32_t max_hold_ms,
                                 struct node_comm_pause_lease *lease_out);

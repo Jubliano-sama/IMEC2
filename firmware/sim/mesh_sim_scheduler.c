@@ -250,6 +250,38 @@ void mesh_sim_scheduler_cancel_connection_repair(
     }
 }
 
+void mesh_sim_scheduler_cancel_pending_connection_event(
+    struct mesh_sim_world *world,
+    uint16_t connection_index)
+{
+    size_t i = 0u;
+
+    if (world == NULL || connection_index >= world->connection_count) {
+        return;
+    }
+    while (i < world->event_count) {
+        const struct mesh_sim_event *event = &world->events[i];
+        bool pending_connection_start =
+            event->type == SIM_EVENT_CONNECTION_START &&
+            event->object_index < world->connection_event_count &&
+            world->connection_events[event->object_index].connection_index ==
+                connection_index;
+
+        if (!pending_connection_start) {
+            i++;
+            continue;
+        }
+        invalidate_event_object(world, event);
+        if (i + 1u < world->event_count) {
+            memmove(&world->events[i],
+                    &world->events[i + 1u],
+                    (world->event_count - i - 1u) *
+                        sizeof(world->events[0]));
+        }
+        world->event_count--;
+    }
+}
+
 void mesh_sim_scheduler_cancel_relay_tick(struct mesh_sim_world *world,
                                           uint8_t node_index)
 {

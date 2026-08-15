@@ -44,6 +44,7 @@ int radio_guard_uwb_release_begin(const struct radio_guard_uwb_lease *lease);
 int radio_guard_uwb_release_finish(struct radio_guard_uwb_lease *lease,
                                    int parking_result);
 bool radio_guard_uwb_busy(void);
+enum radio_guard_uwb_client radio_guard_uwb_owner_client(void);
 bool radio_guard_uwb_rearm_allowed(void);
 bool radio_guard_uwb_poisoned(void);
 int radio_guard_uwb_poison_error(void);

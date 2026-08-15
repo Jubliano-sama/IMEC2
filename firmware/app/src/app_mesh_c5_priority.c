@@ -2,6 +2,7 @@
 #include "gateway_command.h"
 #include "survey.h"
 
+#include <errno.h>
 #include <stddef.h>
 
 _Static_assert(MESH_DEFAULT_TTL == SURVEY_DEFAULT_TTL,
@@ -200,6 +201,11 @@ bool app_mesh_c5_route_capture_requires_post_rx_response(uint8_t msg_type)
     return msg_type == MSG_MESH_EVENT_PROPOSE;
 }
 
+bool app_mesh_c5_route_capture_receive_aborted(int receive_ret)
+{
+    return receive_ret == -ECANCELED;
+}
+
 bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
                                             uint16_t command_id,
                                             uint8_t *origin_ttl)
@@ -251,30 +257,6 @@ bool app_mesh_c5_event_accept_reservation(
     *reservation = *accepted;
     reservation->guard_ms = (uint16_t)expanded_guard_ms;
     return true;
-}
-
-bool app_mesh_c5_event_accept_realign_is_reserved(
-    const struct mesh_event_timing *reserved,
-    const struct mesh_event_timing *realigned,
-    uint16_t realign_slop_ms)
-{
-    uint32_t forward_delta_ms;
-    uint32_t backward_delta_ms;
-
-    if (reserved == NULL || realigned == NULL ||
-        reserved->event_interval_ms == 0u ||
-        reserved->event_interval_ms != realigned->event_interval_ms) {
-        return false;
-    }
-
-    forward_delta_ms =
-        (realigned->next_event_time_ms - reserved->next_event_time_ms) %
-        reserved->event_interval_ms;
-    backward_delta_ms =
-        (reserved->next_event_time_ms - realigned->next_event_time_ms) %
-        reserved->event_interval_ms;
-    return forward_delta_ms <= realign_slop_ms ||
-           backward_delta_ms <= realign_slop_ms;
 }
 
 bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
@@ -370,6 +352,14 @@ bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags)
 bool app_mesh_c5_wake_followup_is_control(uint8_t claim_flags)
 {
     return (claim_flags & FLAG_CONTROL_FOLLOWUP) != 0u;
+}
+
+bool app_mesh_c5_control_followup_yields_to_ack(uint8_t claim_flags,
+                                                bool ch9_ack_wait_active)
+{
+    return ch9_ack_wait_active &&
+           app_mesh_c5_wake_followup_is_control(claim_flags) &&
+           !app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
 }
 
 uint32_t app_mesh_c5_route_reply_listen_window_ms(

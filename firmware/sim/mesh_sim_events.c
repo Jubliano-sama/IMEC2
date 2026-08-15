@@ -585,7 +585,7 @@ static int process_tx_end(struct mesh_sim_world *world, size_t tx_index)
             struct mesh_sim_connection_event *connection_event =
                 &world->connection_events[tx->connection_event_index];
 
-            mesh_relay_note_channel9_tx(
+            mesh_relay_note_channel9_unobserved_turn(
                 &node->relay,
                 world->roles[connection_event->receiver_index].id,
                 mesh_sim_time_ms(connection_event->start_us));

@@ -54,17 +54,21 @@ struct survey_probe_event {
     bool collided;
 };
 
-static void test_survey_multihop_start_lead_covers_retained_forward(void)
+static void test_survey_multihop_start_lead_covers_routed_redrives(void)
 {
     enum {
-        C5_DEFERRED_RETRY_COUNT = 8u,
-        C5_CONTROL_RETRY_BASE_MS = 200u,
-        C5_CONTROL_RETRY_SHIFT_CAP = 3u,
-        SURVEY_PHY_PREP_BUDGET_MS = 103u,
+        SURVEY_TRANSPORT_PREEMPT_BUDGET_MS = 1000u,
+        SURVEY_PHY_PREP_MEASURED_MAX_MS = 63u,
+        SURVEY_PHY_PREP_MARGIN_MS = 40u,
+        SURVEY_PHY_PREP_BUDGET_MS =
+            SURVEY_TRANSPORT_PREEMPT_BUDGET_MS +
+            SURVEY_PHY_PREP_MEASURED_MAX_MS +
+            SURVEY_PHY_PREP_MARGIN_MS,
     };
-    uint32_t retry_backoff_max_ms = 0u;
-    uint32_t per_relay_ms;
-    uint32_t full_ttl_lead_ms;
+    const uint32_t routed_redrive_lead_ms =
+        (SURVEY_DEFAULT_TTL + SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
+            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
+        SURVEY_PHY_PREP_BUDGET_MS;
     struct survey_discovery_config config = {
         .survey_id = UINT32_C(0x53544152),
         .operation_generation = UINT64_C(0x53544152544c4541),
@@ -75,36 +79,14 @@ static void test_survey_multihop_start_lead_covers_retained_forward(void)
     };
     struct survey_discovery_timing timing;
 
-    for (uint32_t round = 1u; round <= C5_DEFERRED_RETRY_COUNT; round++) {
-        uint32_t shift = round - 1u;
-        uint32_t base_ms;
-
-        if (shift > C5_CONTROL_RETRY_SHIFT_CAP) {
-            shift = C5_CONTROL_RETRY_SHIFT_CAP;
-        }
-        base_ms = C5_CONTROL_RETRY_BASE_MS << shift;
-        /* Production jitter is [-base/2, +base/2], inclusive. */
-        retry_backoff_max_ms += base_ms + (base_ms / 2u);
-    }
-    per_relay_ms = FLOOD_WAVE_MS + FLOOD_RELAY_REPEAT_MS +
-        retry_backoff_max_ms +
-        (C5_DEFERRED_RETRY_COUNT - 1u) *
-            (MESH_RADIO_WAKE_TRAIN_MS + FLOOD_RELAY_REPEAT_MS) +
-        MESH_RADIO_WAKE_TRAIN_MS + FLOOD_RELAY_REPEAT_MS +
-        (FLOOD_RELAY_REPEAT_COUNT - 1u) * FLOOD_RELAY_REPEAT_MS;
-    full_ttl_lead_ms = (SURVEY_DEFAULT_TTL - 1u) * per_relay_ms +
-                       SURVEY_PHY_PREP_BUDGET_MS;
-
-    CHECK(retry_backoff_max_ms == 14100u,
-          "retained C5 forward retry horizon changed unexpectedly");
-    CHECK(per_relay_ms == 19180u,
-          "per-relay timed-control horizon changed unexpectedly");
-    CHECK(full_ttl_lead_ms == 57643u,
-          "full-TTL timed-control horizon changed unexpectedly");
-    CHECK(config.start_delay_ms >= full_ttl_lead_ms,
-          "survey START lead cannot cover a retained full-TTL forward");
+    CHECK(SURVEY_PHY_PREP_BUDGET_MS == 1103u,
+          "survey preparation no longer includes transport quiescence");
+    CHECK(routed_redrive_lead_ms == 17103u,
+          "routed survey-control horizon changed unexpectedly");
+    CHECK(config.start_delay_ms >= routed_redrive_lead_ms,
+          "survey START lead cannot cover routed control redrives");
     CHECK(survey_discovery_timing_from_age(
-              &config, full_ttl_lead_ms, &timing) == PROTO_OK &&
+              &config, routed_redrive_lead_ms, &timing) == PROTO_OK &&
               timing.pending && !timing.active && !timing.expired &&
               timing.wait_ms >= SURVEY_PHY_PREP_BUDGET_MS,
           "last-hop survey reception lacks its PHY preparation window");
@@ -120,6 +102,61 @@ static void test_survey_multihop_start_lead_covers_retained_forward(void)
 static bool fully_contained(struct interval frame, struct interval rx)
 {
     return frame.start_us >= rx.start_us && frame.end_us <= rx.end_us;
+}
+
+static void test_channel9_hil_phase_skew_is_inside_receiver_window(void)
+{
+    enum {
+        HIL_PHASE_SKEW_MS = 32u,
+        HIL_PHY_PREP_MAX_MS = 20u,
+        HIL_FRAME_AIRTIME_MAX_MS = 5u,
+        OLD_RETUNE_GUARD_MS = 30u,
+        OLD_TX_OFFSET_MS = 15u,
+        REQUIRED_C5_OPPORTUNITY_MS = 20u,
+    };
+    const uint32_t physical_leading_guard_ms =
+        MESH_RADIO_EVENT_GUARD_MS > MESH_RADIO_EVENT_RETUNE_GUARD_MS ?
+            MESH_RADIO_EVENT_GUARD_MS :
+            MESH_RADIO_EVENT_RETUNE_GUARD_MS;
+    const uint32_t physical_trailing_guard_ms =
+        MESH_RADIO_EVENT_GUARD_MS > MESH_RADIO_EVENT_RX_LATE_GUARD_MS ?
+            MESH_RADIO_EVENT_GUARD_MS :
+            MESH_RADIO_EVENT_RX_LATE_GUARD_MS;
+    const uint32_t physical_rx_reservation_ms =
+        physical_leading_guard_ms + MESH_RADIO_EVENT_WINDOW_MS +
+        physical_trailing_guard_ms;
+    const uint32_t peer_phase_spacing_ms =
+        MESH_RADIO_EVENT_INTERVAL_MS / 2u;
+    const int32_t old_receiver_armed_ms =
+        -(int32_t)OLD_RETUNE_GUARD_MS + HIL_PHY_PREP_MAX_MS;
+    const int32_t old_frame_start_ms =
+        -(int32_t)HIL_PHASE_SKEW_MS + OLD_TX_OFFSET_MS;
+    const int32_t old_frame_end_ms =
+        old_frame_start_ms + HIL_FRAME_AIRTIME_MAX_MS;
+    const int32_t receiver_armed_ms =
+        -(int32_t)MESH_RADIO_EVENT_RETUNE_GUARD_MS + HIL_PHY_PREP_MAX_MS;
+    const int32_t frame_start_ms =
+        -(int32_t)HIL_PHASE_SKEW_MS + MESH_RADIO_EVENT_TX_OFFSET_MS;
+    const int32_t frame_end_ms =
+        frame_start_ms + HIL_FRAME_AIRTIME_MAX_MS;
+
+    CHECK(old_frame_end_ms <= old_receiver_armed_ms,
+          "old channel-9 geometry no longer reproduces the missed HIL ACK");
+    CHECK(frame_start_ms >= receiver_armed_ms,
+          "channel-9 receiver is not armed before the skewed peer transmits");
+    CHECK(frame_end_ms <=
+              (int32_t)(MESH_RADIO_EVENT_WINDOW_MS +
+                        MESH_RADIO_EVENT_RX_LATE_GUARD_MS),
+          "skewed channel-9 frame extends beyond the receiver deadline");
+    CHECK(MESH_RADIO_EVENT_GUARD_MS >= MESH_RADIO_EVENT_RETUNE_GUARD_MS &&
+              MESH_RADIO_EVENT_GUARD_MS >=
+                  MESH_RADIO_EVENT_RX_LATE_GUARD_MS,
+          "negotiated channel-9 guard does not cover physical RX ownership");
+    CHECK(physical_rx_reservation_ms <= peer_phase_spacing_ms,
+          "channel-9 physical RX ownership overlaps the second peer slot");
+    CHECK(physical_rx_reservation_ms + MESH_RADIO_EVENT_RETUNE_GUARD_MS +
+              REQUIRED_C5_OPPORTUNITY_MS <= peer_phase_spacing_ms,
+          "two channel-9 phases do not leave retune plus 20 ms for channel 5");
 }
 
 static uint64_t runtime_prepare_rx_us(enum dwm3000_timing_phy phy)
@@ -917,7 +954,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
     static const uint32_t report_grace_windows_ms[] = {
         1u, 250u, 1000u, 5000u,
     };
-    bool reproduced_old_three_phase_close = false;
+    bool healthy_collection_precedes_old_partition = false;
     bool covered_bench_50_anchor_case = false;
     bool covered_50_slot_case = false;
 
@@ -1017,33 +1054,37 @@ static void test_survey_gateway_collection_budget_sweep(void)
                             SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
-                        CHECK(first_report_ms == 90960u,
+                        CHECK(first_report_ms == 20960u,
                               "six-slot survey first-report timing drifted");
-                        CHECK(last_report_start_ms == 102310u,
+                        CHECK(last_report_start_ms == 32310u,
                               "six-slot survey final-report timing drifted");
-                        CHECK(no_anchor_evidence_ms == 105580u,
+                        CHECK(no_anchor_evidence_ms == 35580u,
                               "six-slot survey evidence horizon drifted");
-                        CHECK(current_wake_ms ==
-                                  SURVEY_GATEWAY_BENCH_BUDGET_MS &&
-                                  current_wake_ms < no_anchor_evidence_ms,
-                              "100-second bench budget was not preserved as a generic timeout boundary");
-                        if (old_three_phase_wake_ms < first_report_ms) {
-                            reproduced_old_three_phase_close = true;
+                        CHECK(current_wake_ms == no_anchor_evidence_ms &&
+                                  current_wake_ms <
+                                      SURVEY_GATEWAY_BENCH_BUDGET_MS,
+                              "survey did not close on complete evidence before its generic timeout");
+                        if (no_anchor_evidence_ms <=
+                            SURVEY_GATEWAY_BENCH_BUDGET_MS &&
+                            first_report_ms < old_three_phase_wake_ms) {
+                            healthy_collection_precedes_old_partition = true;
                         }
                     }
                     if (anchor_count == 50u && slot_count == 50u &&
                         config.slot_ms == 40u &&
                         report_grace_windows_ms[grace_index] == 1000u) {
                         covered_50_slot_case = true;
-                        CHECK(first_report_ms == 98000u &&
+                        CHECK(first_report_ms == 28000u &&
                                   first_report_ms <
                                       SURVEY_GATEWAY_BENCH_BUDGET_MS,
                               "runtime rounds did not shorten 50-slot discovery");
                         CHECK(gateway_command_budget_window_ms(
                                   true, SURVEY_GATEWAY_BENCH_BUDGET_MS, 1u,
                                   no_anchor_evidence_ms) ==
-                                  SURVEY_GATEWAY_BENCH_BUDGET_MS,
-                              "50-slot survey budget closed before its global timeout");
+                                  SURVEY_GATEWAY_BENCH_BUDGET_MS &&
+                                  no_anchor_evidence_ms >
+                                      SURVEY_GATEWAY_BENCH_BUDGET_MS,
+                              "50-slot survey did not preserve its explicit generic timeout");
                     }
                 }
             }
@@ -1054,8 +1095,68 @@ static void test_survey_gateway_collection_budget_sweep(void)
           "survey deadline sweep omitted the 50-anchor/six-slot bench case");
     CHECK(covered_50_slot_case,
           "survey deadline sweep omitted the maximum-slot case");
-    CHECK(reproduced_old_three_phase_close,
-          "three-phase mutation no longer reproduces premature no-anchor closure");
+    CHECK(healthy_collection_precedes_old_partition,
+          "healthy collection no longer completes before the old budget partition");
+}
+
+static void test_survey_policy_slack_extends_collection_horizon(void)
+{
+    enum {
+        GATEWAY_TERMINAL_SCHEDULING_GUARD_MS = 102u,
+        HIL_DISCOVERY_POLICY_MS = 600000u,
+        HIL_COMMAND_BUDGET_MS = 600000u,
+    };
+    const struct operation_policy_discovery policy = {
+        .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
+        .slot_count = 30u,
+        .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
+        .report_grace_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_REPORT_GRACE_MS,
+        .operation_budget_ms = HIL_DISCOVERY_POLICY_MS,
+    };
+    const struct operation_policy_discovery_budget_terms terms = {
+        .report_slot_ms = SURVEY_GATEWAY_REPORT_SLOT_MS,
+        .report_custody_ms = survey_discovery_report_custody_ms(3u),
+        .report_delivery_tail_ms = 63060u,
+        .terminal_scheduling_guard_ms =
+            GATEWAY_TERMINAL_SCHEDULING_GUARD_MS,
+    };
+    const uint32_t terminal_guard_ms =
+        GATEWAY_TERMINAL_SCHEDULING_GUARD_MS +
+        SURVEY_DISCOVERY_OPERATION_TERMINAL_GUARD_MS;
+    uint32_t required_budget_ms = 0u;
+    uint32_t natural_collection_ms;
+    uint32_t extended_collection_ms;
+
+    CHECK(operation_policy_discovery_required_budget_ms(
+              &policy, &terms, &required_budget_ms) == PROTO_OK,
+          "HIL discovery policy budget could not be composed");
+    CHECK(required_budget_ms > terminal_guard_ms &&
+              required_budget_ms < policy.operation_budget_ms,
+          "HIL discovery policy has no usable retained-report slack");
+    natural_collection_ms = required_budget_ms - terminal_guard_ms;
+    extended_collection_ms = natural_collection_ms +
+        policy.operation_budget_ms - required_budget_ms;
+
+    CHECK(extended_collection_ms ==
+              HIL_DISCOVERY_POLICY_MS - terminal_guard_ms,
+          "discovery policy slack was not preserved for collection");
+    CHECK(gateway_command_budget_window_ms(
+              true, HIL_COMMAND_BUDGET_MS, 1u,
+              extended_collection_ms) == extended_collection_ms,
+          "global command budget shortened the admitted discovery horizon");
+    CHECK(survey_gateway_collection_decide(
+              true, false, 2u, 3u, true) ==
+              SURVEY_GATEWAY_COLLECTION_WAIT,
+          "missing retained report closed collection before its safety deadline");
+    CHECK(survey_gateway_collection_decide(
+              true, false, 3u, 3u, true) ==
+              SURVEY_GATEWAY_COLLECTION_CLOSE,
+          "complete expected collection did not close early");
+    CHECK(survey_gateway_collection_decide(
+              true, true, 2u, 3u, true) ==
+              SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH,
+          "incomplete collection did not fail at the admitted safety deadline");
 }
 
 struct survey_control_budget_model_result {
@@ -1481,7 +1582,8 @@ int main(void)
                                          UWB_WAKE_CLAIM_LEN) > 0u,
           "wake claim airtime unavailable");
     test_maintained_normal_click_phy_and_capacity_contract();
-    test_survey_multihop_start_lead_covers_retained_forward();
+    test_channel9_hil_phase_skew_is_inside_receiver_window();
+    test_survey_multihop_start_lead_covers_routed_redrives();
     test_survey_phase_sweep_and_old_defect_sensitivity();
     test_claim_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
@@ -1490,6 +1592,7 @@ int main(void)
     test_survey_partial_rounds_still_produce_reports();
     test_survey_repeat_age_convergence_sweep();
     test_survey_gateway_collection_budget_sweep();
+    test_survey_policy_slack_extends_collection_horizon();
     test_survey_control_global_budget_multi_pair_sweep();
     test_survey_probe_pair_graph_stress_sweep();
     test_multi_anchor_claim_and_range_schedule_invariants();

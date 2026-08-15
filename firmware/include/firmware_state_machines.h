@@ -87,6 +87,9 @@ enum fw_radio_activity_state {
 enum fw_c5_tx_intent {
     FW_C5_TX_INTENT_BACKGROUND = 0,
     FW_C5_TX_INTENT_CAUSAL_RESPONSE,
+    /* A relay-core-validated gateway survey control may interrupt a retained
+     * Channel-9 ACK wait without taking ownership of the retained bytes. */
+    FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL,
 };
 
 struct fw_radio_activity_capture {

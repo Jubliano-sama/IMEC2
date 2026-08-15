@@ -1,0 +1,11 @@
+key,value
+title,"ONE DWM3000: IMPOSSIBLE PARALLEL PROMISE, THEN EXPLICIT PRIORITY"
+caption,"Real millisecond scale at one forced-hop anchor. A Channel-9 physical turn includes the 50 ms prepare guard, 120 ms event window, and 60 ms late guard. Gateway Channel-5 control has the documented higher priority."
+key_point,"The old schedule asked one radio to serve four Channel-9 turns during one 2,000 ms Channel-5 contact. The feasible schedule uses short released scans only until the relayed wake is found, then cancels that search and gives the accepted gateway-control contact exclusive ownership. Channel-9 custody is retained across four missed turns, below the production limit of eight, and is rearmed after release."
+start,0
+end,2850
+width,4300
+unit,ms
+axis_caption_width,190
+row_label_width,290
+max_inline_lines,3

@@ -2087,6 +2087,58 @@ static void anchor_click_handoff_work_handler(struct k_work *work)
 }
 
 #if !defined(APP_ANCHOR_CLICK_HANDOFF_SEAM_ONLY)
+static bool anchor_relay_control_followup_boost_active_state;
+static uint32_t anchor_relay_control_followup_boost_deadline_ms;
+static atomic_t anchor_ch5_post_ch9_recovery_scan_pending;
+
+void app_anchor_note_channel9_window_released(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        atomic_set(&anchor_ch5_post_ch9_recovery_scan_pending, 1);
+    }
+#endif
+}
+
+static void anchor_relay_control_followup_boost_begin(uint32_t duration_ms)
+{
+    uint32_t now_ms;
+    uint32_t candidate_deadline_ms;
+
+    if (duration_ms == 0u) {
+        return;
+    }
+    duration_ms = MIN(duration_ms, UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS);
+    now_ms = k_uptime_get_32();
+    candidate_deadline_ms = now_ms + duration_ms;
+    if (!anchor_relay_control_followup_boost_active_state ||
+        uptime_deadline_reached(now_ms,
+                                anchor_relay_control_followup_boost_deadline_ms) ||
+        (int32_t)(candidate_deadline_ms -
+                  anchor_relay_control_followup_boost_deadline_ms) > 0) {
+        anchor_relay_control_followup_boost_deadline_ms = candidate_deadline_ms;
+    }
+    anchor_relay_control_followup_boost_active_state = true;
+}
+
+static bool anchor_relay_control_followup_boost_active(void)
+{
+    if (!anchor_relay_control_followup_boost_active_state) {
+        return false;
+    }
+    if (uptime_deadline_reached(k_uptime_get_32(),
+                                anchor_relay_control_followup_boost_deadline_ms)) {
+        anchor_relay_control_followup_boost_active_state = false;
+        return false;
+    }
+    return true;
+}
+
+static void anchor_relay_control_followup_boost_cancel(void)
+{
+    anchor_relay_control_followup_boost_active_state = false;
+}
+
 static void anchor_uwb_scan_work_handler(struct k_work *work)
 {
     uint8_t *frame = anchor_uwb_scan_frame;
@@ -2111,7 +2163,10 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool ch9_ack_wait_active = false;
     bool ch9_rx_conflict = false;
     bool uwb_radio_busy = false;
+    bool control_followup_boost_active = false;
+    bool post_ch9_recovery_scan = false;
     uint32_t ch9_retry_ms = 0u;
+    uint32_t scan_rx_ms = ANCHOR_UWB_SCAN_RX_MS;
     uint32_t mesh_rx_queue_depth = 0u;
     bool mesh_rx_response_busy = false;
     uint32_t blocked_retry_ms = anchor_uwb_scan_blocked_retry_ms();
@@ -2142,6 +2197,13 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         anchor_uwb_scan_schedule_ms(ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS);
         return;
     }
+    control_followup_boost_active =
+        anchor_relay_control_followup_boost_active();
+    post_ch9_recovery_scan =
+        atomic_get(&anchor_ch5_post_ch9_recovery_scan_pending) != 0;
+    if (control_followup_boost_active || post_ch9_recovery_scan) {
+        scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS;
+    }
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
@@ -2151,10 +2213,14 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         mesh_rx_active = mesh_rx_response_busy;
         ch9_ack_wait_active = mesh_report_ch9_ack_wait_active();
     }
-    ch9_rx_conflict = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                      mesh_anchor_low_duty_scan_should_defer(&ch9_retry_ms);
     uwb_radio_busy = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                      radio_guard_uwb_busy();
+    ch9_rx_conflict = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+                      !uwb_radio_busy &&
+                      mesh_anchor_low_duty_scan_should_defer(&ch9_retry_ms);
+    if (ch9_rx_conflict) {
+        atomic_set(&anchor_ch5_post_ch9_recovery_scan_pending, 1);
+    }
     /*
      * Relay, route-wait, and gateway-ACK records are passive custody between
      * physical attempts. They must not suppress the Channel-5 contact scan:
@@ -2224,7 +2290,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                 scan_debug_now_ms + ANCHOR_CH5_SCAN_DEBUG_INTERVAL_MS;
             status_debug_printf("DBG_ANCHOR_CH5_SCAN_ARM now=%u win=%u complete=%u interval=%u wait=%u tx=%u\n",
                                 scan_debug_now_ms,
-                                ANCHOR_UWB_SCAN_RX_MS,
+                                scan_rx_ms,
                                 ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
                                 anchor_uwb_scan_interval_ms,
                                 mesh_route_waiting_tx_active() ? 1u : 0u,
@@ -2240,7 +2306,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         scan_rx_start_cycles = k_cycle_get_32();
         rx_attempted = true;
         ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
-            ANCHOR_UWB_SCAN_RX_MS,
+            scan_rx_ms,
             ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS,
             frame,
             UWB_MESH_MAX_FRAME_LEN,
@@ -2250,8 +2316,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
             &rx_failure);
         scan_rx_elapsed_us = (uint32_t)k_cyc_to_us_floor64(
             (uint32_t)(k_cycle_get_32() - scan_rx_start_cycles));
-        if (scan_rx_elapsed_us < ANCHOR_UWB_SCAN_RX_US) {
-            scan_rx_elapsed_us = ANCHOR_UWB_SCAN_RX_US;
+        if (scan_rx_elapsed_us < scan_rx_ms * 1000u) {
+            scan_rx_elapsed_us = scan_rx_ms * 1000u;
         }
     }
     preamble_detected = ret == 0 ||
@@ -2300,7 +2366,19 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                                         (unsigned long long)claim.clicker_id,
                                         claim.click_event_id,
                                         claim.flags);
+                    anchor_relay_control_followup_boost_begin(
+                        claim.claimed_duration_ms);
+                    if (app_mesh_c5_control_followup_yields_to_ack(
+                            claim.flags, ch9_ack_wait_active)) {
+                        status_debug_printf("DBG_ANCHOR_CONTROL_FOLLOWUP_DEFER_ACK src=0x%llx evt=%u direct=1\n",
+                                            (unsigned long long)claim.clicker_id,
+                                            claim.click_event_id);
+                        goto scan_complete;
+                    }
                     goto scan_complete;
+                }
+                if (app_mesh_c5_wake_followup_is_control(claim.flags)) {
+                    anchor_relay_control_followup_boost_cancel();
                 }
                 route_wake_handoff = true;
                 route_wake_frame_len = frame_len;
@@ -2320,9 +2398,16 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                                         false,
                                         &retained_sleep_us,
                                         &deferred_mesh_rx_queued)) {
+                anchor_relay_control_followup_boost_cancel();
                 handled_claim = true;
                 uwb_anchor_abort_epoch(&anchor_uwb_session);
             }
+        } else if (control_followup_boost_active) {
+            status_debug_printf("DBG_ANCHOR_RELAY_CONTROL_FOLLOWUP_SKIP len=%u q=%u ret=%d\n",
+                                (unsigned int)frame_len,
+                                quality,
+                                decode_ret);
+            goto scan_complete;
         } else {
             bool valid_mesh_frame = false;
             bool queued;
@@ -2357,6 +2442,10 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                 anchor_uwb_session.diagnostics.frame_timeouts);
             }
         }
+    } else if (ret != -ETIMEDOUT && control_followup_boost_active) {
+        status_debug_printf("DBG_ANCHOR_RELAY_CONTROL_FOLLOWUP_RX_FAIL ret=%d fail=%u\n",
+                            ret,
+                            (unsigned int)rx_failure);
     } else if (ret != -ETIMEDOUT) {
         enum uwb_wake_decode_failure failure =
             app_anchor_wake_failure_from_rx(rx_failure);
@@ -2415,6 +2504,15 @@ scan_complete:
          app_anchor_rx_failure_detected_preamble(rx_failure))) {
         app_watchdog_note_radio_progress();
     }
+    if (post_ch9_recovery_scan && rx_attempted) {
+        atomic_clear(&anchor_ch5_post_ch9_recovery_scan_pending);
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf("DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=%u ret=%d pre=%u\n",
+                                scan_rx_ms,
+                                ret,
+                                preamble_detected ? 1u : 0u);
+        }
+    }
     if (route_wake_handoff) {
         bool handed_off = mesh_anchor_handoff_route_wake_frame(
             frame,
@@ -2455,6 +2553,10 @@ scan_complete:
         next_scan_delay_ms = ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS;
     }
     anchor_scan_recovery_gap_requested = false;
+    if (anchor_relay_control_followup_boost_active() &&
+        next_scan_delay_ms > ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS) {
+        next_scan_delay_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
+    }
     LOG_DBG("anchor UWB diagnostics: last_ret=%d last_rx_failure=%s last_preamble=%u scans=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u claims=%u collisions=%u wins=%u losses=%u replies=%u schedules=%u ds_ok=%u ds_fail=%u timing_rejections=%u mesh_packets=%u sample_order=%u scan_startup_us=%u scan_pll_us=%u scan_rx_us=%u awake_us=%u false_cooldowns=%u",
                 ret,
                 app_anchor_rx_failure_name(rx_failure),
@@ -2558,6 +2660,8 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
 #if DEVICE_ROLE == ROLE_ANCHOR
     .anchor_survey_radio_active =
         app_anchor_survey_runtime_radio_active,
+    .anchor_survey_operation_generation_active =
+        app_anchor_survey_runtime_operation_generation_active,
     .anchor_note_uwb_awake_since = anchor_note_uwb_awake_since,
     .anchor_handle_click_wake_claim = anchor_handle_mesh_click_wake_claim,
     .anchor_handle_local_command = anchor_handle_local_command,

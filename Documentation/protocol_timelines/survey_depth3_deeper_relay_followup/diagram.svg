@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="836" viewBox="0 0 4300 836" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">RESOLVED DEPTH-3 DOWNLINK DEFECT: THE SECOND RELAY WAKE</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="699.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="159.0" y="98.0" class="row-label">GATEWAY - ORIGIN</text>
+<rect x="274.0" y="70.0" width="430.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="489.4" y="93.0" class="small center event-text" text-anchor="middle"><tspan x="489.4" dy="0.0">Standard wake train</tspan><tspan x="489.4" dy="12.0">direct gateway copy</tspan></text>
+<rect x="704.7" y="70.0" width="118.4" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="763.9" y="87.0" class="small center event-text" text-anchor="middle"><tspan x="763.9" dy="0.0">Extended control</tspan><tspan x="763.9" dy="12.0">payload</tspan><tspan x="763.9" dy="12.0">hop count 0</tspan></text>
+<rect x="823.1" y="70.0" width="3434.9" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="2540.6" y="99.0" class="small center event-text" text-anchor="middle"><tspan x="2540.6" dy="0.0">Bounded redrives remain available</tspan></text>
+<line x1="44.0" y1="128.0" x2="4258.0" y2="128.0" class="major-line"/>
+<text x="159.0" y="166.0" class="row-label">DIRECT A - RELAY HOP 1</text>
+<rect x="274.0" y="138.0" width="549.1" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="548.6" y="167.0" class="small center event-text" text-anchor="middle"><tspan x="548.6" dy="0.0">Receives direct copy</tspan></text>
+<rect x="2004.3" y="138.0" width="430.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2219.7" y="161.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2219.7" dy="0.0">Standard wake train</tspan><tspan x="2219.7" dy="12.0">relay A</tspan></text>
+<rect x="2488.9" y="138.0" width="107.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2542.7" y="155.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2542.7" dy="0.0">Extended control</tspan><tspan x="2542.7" dy="12.0">payload</tspan><tspan x="2542.7" dy="12.0">hop count 1</tspan></text>
+<rect x="2596.6" y="138.0" width="1661.4" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="3427.3" y="167.0" class="small center event-text" text-anchor="middle"><tspan x="3427.3" dy="0.0">Discovery report path works</tspan></text>
+<line x1="44.0" y1="196.0" x2="4258.0" y2="196.0" class="major-line"/>
+<text x="159.0" y="234.0" class="row-label">FORCED1 B - RELAY HOP 2</text>
+<rect x="2004.3" y="206.0" width="592.2" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2300.5" y="235.0" class="small center event-text" text-anchor="middle"><tspan x="2300.5" dy="0.0">Receives A copy</tspan></text>
+<rect x="3273.8" y="206.0" width="430.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3489.2" y="229.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3489.2" dy="0.0">Standard wake train</tspan><tspan x="3489.2" dy="12.0">relay B</tspan></text>
+<rect x="3758.4" y="206.0" width="107.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3812.2" y="223.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3812.2" dy="0.0">Extended control</tspan><tspan x="3812.2" dy="12.0">payload</tspan><tspan x="3812.2" dy="12.0">hop count 2</tspan></text>
+<rect x="3866.1" y="206.0" width="391.9" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="4062.0" y="235.0" class="small center event-text" text-anchor="middle"><tspan x="4062.0" dy="0.0">Discovery report path works</tspan></text>
+<line x1="44.0" y1="264.0" x2="4258.0" y2="264.0" class="major-line"/>
+<text x="159.0" y="312.0" class="row-label">FORCED2 C - PREVIOUS IMAGE</text>
+<polygon points="3489.2,285.0 3494.2,290.0 3489.2,295.0 3484.2,290.0" class="diamond"/>
+<rect x="274.0" y="294.0" width="549.1" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="548.6" y="317.0" class="small center event-text" text-anchor="middle"><tspan x="548.6" dy="0.0">Direct copy rejected</tspan><tspan x="548.6" dy="12.0">forced relay policy</tspan></text>
+<rect x="2004.3" y="294.0" width="430.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2219.7" y="323.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2219.7" dy="0.0">Captures A standard wake</tspan></text>
+<rect x="2488.9" y="294.0" width="107.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2542.7" y="311.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2542.7" dy="0.0">Decodes hop 1</tspan><tspan x="2542.7" dy="12.0">correctly</tspan><tspan x="2542.7" dy="12.0">rejects</tspan></text>
+<rect x="2596.6" y="294.0" width="1496.7" height="48.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3344.9" y="317.0" class="small center event-text" text-anchor="middle"><tspan x="3344.9" dy="0.0">BUG: stays on extended PHY</tspan><tspan x="3344.9" dy="12.0">B standard wake is invisible</tspan></text>
+<rect x="4093.3" y="294.0" width="164.7" height="48.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="4175.6" y="323.0" class="small center event-text" text-anchor="middle"><tspan x="4175.6" dy="0.0">No discovery report</tspan></text>
+<line x1="3489.2" y1="278.0" x2="3489.2" y2="290.0" class="hairline"/>
+<text x="3468.2" y="277.0" class="tiny">missed</text>
+<line x1="44.0" y1="352.0" x2="4258.0" y2="352.0" class="major-line"/>
+<text x="159.0" y="394.0" class="row-label">FORCED2 C - CURRENT IMAGE</text>
+<polygon points="3489.2,373.0 3494.2,378.0 3489.2,383.0 3484.2,378.0" class="diamond"/>
+<polygon points="3812.2,373.0 3817.2,378.0 3812.2,383.0 3807.2,378.0" class="diamond"/>
+<rect x="274.0" y="382.0" width="2322.6" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1435.3" y="405.0" class="small center event-text" text-anchor="middle"><tspan x="1435.3" dy="0.0">Same direct + hop-1 behavior</tspan></text>
+<rect x="2596.6" y="382.0" width="677.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2935.2" y="399.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2935.2" dy="0.0">Reopen bounded standard probe</tspan><tspan x="2935.2" dy="12.0">click checked first</tspan></text>
+<rect x="3273.8" y="382.0" width="430.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3489.2" y="405.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3489.2" dy="0.0">Capture B standard wake</tspan></text>
+<rect x="3704.5" y="382.0" width="161.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3785.3" y="399.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3785.3" dy="0.0">Retune extended</tspan><tspan x="3785.3" dy="12.0">accept exact hop 2</tspan></text>
+<rect x="3866.1" y="382.0" width="391.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="4062.0" y="399.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="4062.0" dy="0.0">LIVE: schedule discovery</tspan><tspan x="4062.0" dy="12.0">and stage report</tspan></text>
+<line x1="3489.2" y1="366.0" x2="3489.2" y2="378.0" class="hairline"/>
+<text x="3468.0" y="365.0" class="tiny">captured</text>
+<line x1="3812.2" y1="366.0" x2="3812.2" y2="378.0" class="hairline"/>
+<text x="3777.9" y="365.0" class="tiny">hop 2 accepted</text>
+<line x1="44.0" y1="428.0" x2="4258.0" y2="428.0" class="major-line"/>
+<text x="159.0" y="464.0" class="row-label">HEADLESS GUI / SURVEY</text>
+<rect x="274.0" y="442.0" width="3592.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2070.0" y="465.0" class="small center event-text" text-anchor="middle"><tspan x="2070.0" dy="0.0">Survey waits for all three discovery reports</tspan></text>
+<rect x="3866.1" y="442.0" width="391.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4062.0" y="459.0" class="small center event-text" text-anchor="middle"><tspan x="4062.0" dy="0.0">Downlink proven</tspan><tspan x="4062.0" dy="12.0">uplink tracked separately</tspan></text>
+<line x1="44.0" y1="492.0" x2="4258.0" y2="492.0" class="major-line"/>
+<text x="159.0" y="530.0" class="row-label">EVIDENCE / VERDICT</text>
+<rect x="274.0" y="502.0" width="2322.6" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1435.3" y="525.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1435.3" dy="0.0">LIVE RTT</tspan><tspan x="1435.3" dy="12.0">direct and one-hop copies decoded exactly</tspan></text>
+<rect x="2596.6" y="502.0" width="1269.5" height="48.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="3231.3" y="525.0" class="small center event-text" text-anchor="middle"><tspan x="3231.3" dy="0.0">LIVE RTT ROOT CAUSE</tspan><tspan x="3231.3" dy="12.0">wrong PHY during B wake</tspan></text>
+<rect x="3866.1" y="502.0" width="391.9" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="4062.0" y="519.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="4062.0" dy="0.0">LIVE HIL PASS</tspan><tspan x="4062.0" dy="12.0">exact hop 2 accepted</tspan><tspan x="4062.0" dy="12.0">report staged</tspan></text>
+<line x1="44.0" y1="560.0" x2="4258.0" y2="560.0" class="major-line"/>
+<text x="159.0" y="603.5" class="row-label">KEY POINT</text>
+<rect x="2006.0" y="572.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="2266.0" y="586.5" class="small center" text-anchor="middle"><tspan x="2266.0" dy="0.0">Live four-probe RTT now proves the fix: forced-two-hop C rejects the direct and one-hop</tspan><tspan x="2266.0" dy="12.0">copies, captures B&#x27;s later standard wake inside the 2-second listener, accepts the exact</tspan><tspan x="2266.0" dy="12.0">two-hop payload, runs discovery, and stages its report. The remaining failure is a separate</tspan><tspan x="2266.0" dy="12.0">reliable-uplink arbitration defect shown in survey_depth3_uplink_route_wait_collision.</tspan></text>
+<line x1="44.0" y1="639.0" x2="4258.0" y2="639.0" class="major-line"/>
+<line x1="44.0" y1="665.0" x2="44.0" y2="703.0" class="major-line"/>
+<line x1="44.0" y1="665.0" x2="4258.0" y2="665.0" class="axis-line"/>
+<line x1="274.0" y1="664.0" x2="274.0" y2="676.0" class="tick"/>
+<line x1="704.7" y1="664.0" x2="704.7" y2="676.0" class="tick"/>
+<line x1="2004.3" y1="664.0" x2="2004.3" y2="676.0" class="tick"/>
+<line x1="2488.9" y1="664.0" x2="2488.9" y2="676.0" class="tick"/>
+<line x1="2596.6" y1="664.0" x2="2596.6" y2="676.0" class="tick"/>
+<line x1="3273.8" y1="664.0" x2="3273.8" y2="676.0" class="tick"/>
+<line x1="3758.4" y1="664.0" x2="3758.4" y2="676.0" class="tick"/>
+<line x1="3866.1" y1="664.0" x2="3866.1" y2="676.0" class="tick"/>
+<line x1="4258.0" y1="664.0" x2="4258.0" y2="676.0" class="tick"/>
+<text x="239.0" y="688.0" class="axis-time">gateway wake</text>
+<text x="669.7" y="688.0" class="axis-time">direct payload</text>
+<text x="1969.4" y="688.0" class="axis-time">A wake</text>
+<text x="2453.9" y="688.0" class="axis-time">A payload</text>
+<text x="2561.6" y="688.0" class="axis-time">critical transition</text>
+<text x="3238.9" y="688.0" class="axis-time">B wake</text>
+<text x="3723.4" y="688.0" class="axis-time">B payload</text>
+<text x="3831.1" y="688.0" class="axis-time">C admitted</text>
+<text x="4223.0" y="688.0" class="axis-time">downlink proven</text>
+<text x="274.0" y="717.5" class="tiny center" text-anchor="middle"><tspan x="274.0" dy="0.0">direct control contact begins</tspan></text>
+<text x="704.7" y="717.5" class="tiny center" text-anchor="middle"><tspan x="704.7" dy="0.0">C rejects hop 0 as required</tspan></text>
+<text x="2004.3" y="717.5" class="tiny center" text-anchor="middle"><tspan x="2004.3" dy="0.0">first relayed standard wake</tspan></text>
+<text x="2488.9" y="717.5" class="tiny center" text-anchor="middle"><tspan x="2488.9" dy="0.0">C rejects hop 1 as required</tspan></text>
+<text x="2596.6" y="742.0" class="tiny center" text-anchor="middle"><tspan x="2596.6" dy="0.0">reopen standard PHY after depth</tspan><tspan x="2596.6" dy="11.0">shortfall</tspan></text>
+<text x="3273.8" y="717.5" class="tiny center" text-anchor="middle"><tspan x="3273.8" dy="0.0">second relayed standard wake</tspan></text>
+<text x="3758.4" y="717.5" class="tiny center" text-anchor="middle"><tspan x="3758.4" dy="0.0">required hop-2 control arrives</tspan></text>
+<text x="3866.1" y="747.5" class="tiny center" text-anchor="middle"><tspan x="3866.1" dy="0.0">discovery work can start</tspan></text>
+<text x="4184.9" y="717.5" class="tiny center" text-anchor="middle"><tspan x="4184.9" dy="0.0">C stages its discovery report</tspan></text>
+<text x="2150.0" y="802.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Figure: Normalized four-board control flood. The previous image rejected A&#x27;s valid one-hop payload, then remained on extended PHY while B transmitted the required standard wake. The current image reopens a bounded standard probe and keeps click priority.</tspan></text>
+</svg>

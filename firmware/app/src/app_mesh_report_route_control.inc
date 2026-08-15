@@ -5,14 +5,17 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
                                        bool *forward_admission_retained)
 {
     struct app_mesh_flood_result result = {0};
+    enum fw_c5_tx_intent c5_tx_intent =
+        mesh_c5_forwarded_control_intent(out);
     int store_ret;
     int ret;
 
     if (forward_admission_retained != NULL) {
         *forward_admission_retained = false;
     }
-    ret = mesh_send_c5_flood_now(out, purpose, reason, true, true, false, NULL,
-                                 &result, NULL);
+    ret = mesh_send_c5_flood_now_intent(
+        out, purpose, reason, true, true, false, NULL, &result, NULL,
+        c5_tx_intent);
     if (result.sent_count > 0u) {
         if (forward_admission_retained != NULL) {
             *forward_admission_retained = true;
@@ -24,7 +27,8 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     }
     if (mesh_send_failure_retryable(ret)) {
         store_ret =
-            mesh_c5_flood_store_deferred(out, purpose, reason, true);
+            mesh_c5_flood_store_deferred(
+                out, purpose, reason, true);
         if (store_ret == 0) {
             if (forward_admission_retained != NULL) {
                 *forward_admission_retained = true;
@@ -89,13 +93,21 @@ static void mesh_log_standard_click_probe_done(uint32_t started_ms,
                         ret);
 }
 
-static int mesh_probe_standard_click_claim(
+enum mesh_standard_wake_probe_result {
+    MESH_STANDARD_WAKE_PROBE_NONE = 0,
+    MESH_STANDARD_WAKE_PROBE_CLICK,
+    MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL,
+};
+
+static int mesh_probe_standard_wake_claim(
     uint8_t *frame,
     size_t frame_cap,
     struct uwb_wake_claim_frame *click_claim,
     uint8_t *click_quality,
-    uint32_t *click_observed_ms)
+    uint32_t *click_observed_ms,
+    bool allow_relayed_gateway_control)
 {
+    struct uwb_wake_claim_frame candidate = {0};
     enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
     size_t frame_len = 0u;
     uint8_t quality = 0u;
@@ -134,7 +146,28 @@ static int mesh_probe_standard_click_claim(
                             click_claim->attempt_index,
                             quality);
         mesh_log_standard_click_probe_done(started_ms, "capture", 0);
-        return 1;
+        return MESH_STANDARD_WAKE_PROBE_CLICK;
+    }
+    if (ret == 0 && allow_relayed_gateway_control &&
+        uwb_decode_wake_claim(frame, frame_len, &candidate) == PROTO_OK &&
+        app_mesh_c5_wake_followup_is_control(candidate.flags) &&
+        app_mesh_c5_route_wake_claim_allowed(
+            candidate.clicker_id,
+            GATEWAY_ID,
+            candidate.flags,
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_ROUTE_REQ),
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL))) {
+        ret = dwm3000_driver_configure_wake_mesh_control_mode();
+        if (ret < 0) {
+            mesh_log_standard_click_probe_done(started_ms, "fail", ret);
+            return ret;
+        }
+        status_debug_printf("DBG_C5_CONTROL_DEEPER_RELAY_WAKE src=0x%llx evt=%u q=%u\n",
+                            (unsigned long long)candidate.clicker_id,
+                            candidate.click_event_id,
+                            quality);
+        mesh_log_standard_click_probe_done(started_ms, "control", 0);
+        return MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL;
     }
 
     /* A timeout, malformed standard frame, or another PHY's activity all
@@ -152,7 +185,7 @@ static int mesh_probe_standard_click_claim(
         return ret;
     }
     mesh_log_standard_click_probe_done(started_ms, "restore", 0);
-    return 0;
+    return MESH_STANDARD_WAKE_PROBE_NONE;
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -2100,6 +2133,18 @@ wake_train_attempt:
         int64_t remaining_ms = close_ms - k_uptime_get();
         uint16_t remaining_u16 = delay_ms_to_u16(remaining_ms);
 
+        /*
+         * A lifecycle pause preserves the route owner, but an already-running
+         * wake train cannot be canceled by k_work_cancel().  Yield at this
+         * physical frame boundary so higher-priority survey preparation does
+         * not have to wait for the rest of the train.  Resume will rearm the
+         * retained route work after the survey releases the radio.
+         */
+        if (mesh_transport_paused()) {
+            ret = -ESHUTDOWN;
+            break;
+        }
+
         ret = uwb_clicker_build_wake_claim(session,
                                            clicker_priority_id(event_seq,
                                                                session->attempt_index),
@@ -2474,6 +2519,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     bool yielded_to_competing_route_request = false;
     bool hold_post_rx_response_contact = false;
     bool click_captured = false;
+    bool gateway_control_relay_shortfall = false;
+    bool gateway_control_followup_wake_seen = false;
     struct uwb_wake_claim_frame click_claim = {0};
     uint8_t click_quality = 0u;
     uint32_t click_observed_ms = 0u;
@@ -2543,6 +2590,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             uint16_t captured_reply_nonce = 0u;
             uint64_t captured_route_request_target_id = 0u;
             uint32_t now_ms = k_uptime_get_32();
+            uint32_t received_at_ms = 0u;
+            bool received_at_valid = false;
             uint32_t remaining_ms;
             size_t frame_len = 0u;
             uint8_t quality = 0u;
@@ -2576,19 +2625,24 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             if (ret == -ETIMEDOUT) {
                 continue;
             }
+            if (app_mesh_c5_route_capture_receive_aborted(ret)) {
+                status_debug_note("DBG_ROUTE_REPLY_LISTEN_ABORTED\n");
+                break;
+            }
             if (ret < 0) {
                 if (DEVICE_ROLE == ROLE_ANCHOR &&
                     app_wake_train_politeness_rx_activity(ret, rx_failure) &&
                     contact_purpose !=
                         C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
-                    int probe_ret = mesh_probe_standard_click_claim(
+                    int probe_ret = mesh_probe_standard_wake_claim(
                         frame,
                         UWB_MESH_MAX_FRAME_LEN,
                         &click_claim,
                         &click_quality,
-                        &click_observed_ms);
+                        &click_observed_ms,
+                        false);
 
-                    if (probe_ret > 0) {
+                    if (probe_ret == MESH_STANDARD_WAKE_PROBE_CLICK) {
                         click_captured = true;
                         last_ret = -EAGAIN;
                         status_debug_note("DBG_ROUTE_REPLY_CLICK_PREEMPT_PROBE\n");
@@ -2605,12 +2659,54 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                ret, rx_failure) &&
                            contact_purpose ==
                                C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
+                    if (gateway_control_relay_shortfall &&
+                        !gateway_control_followup_wake_seen) {
+                        int probe_ret = mesh_probe_standard_wake_claim(
+                            frame,
+                            UWB_MESH_MAX_FRAME_LEN,
+                            &click_claim,
+                            &click_quality,
+                            &click_observed_ms,
+                            true);
+
+                        if (probe_ret == MESH_STANDARD_WAKE_PROBE_CLICK) {
+                            click_captured = true;
+                            last_ret = -EAGAIN;
+                            status_debug_note(
+                                "DBG_ROUTE_REPLY_CLICK_PREEMPT_PROBE\n");
+                            break;
+                        }
+                        if (probe_ret ==
+                            MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL) {
+                            gateway_control_followup_wake_seen = true;
+                            /*
+                             * This wake begins the next relay's exchange.
+                             * It can arrive at the end of the listener opened
+                             * by the previous hop, so give its payload one
+                             * complete bounded follow-up window of its own.
+                             */
+                            deadline_ms = k_uptime_get_32() +
+                                MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS;
+                            status_debug_printf(
+                                "DBG_C5_CONTROL_DEEPER_RELAY_LISTEN deadline=%u\n",
+                                deadline_ms);
+                            continue;
+                        }
+                        if (probe_ret < 0) {
+                            last_ret = probe_ret;
+                            status_debug_printf(
+                                "DBG_C5_CONTROL_DEEPER_RELAY_PROBE_FAIL ret=%d\n",
+                                probe_ret);
+                            break;
+                        }
+                    }
                     /*
-                     * The decoded CONTROL_FOLLOWUP wake already transferred
-                     * this bounded exchange to the gateway-control listener.
-                     * Repeated standard-PHR claims belong to that same wake
-                     * train; stay on extended PHR so a zero-turnaround older
-                     * sender cannot make the following control frame partial.
+                     * A decoded CONTROL_FOLLOWUP wake transfers this bounded
+                     * exchange to the gateway-control listener. Repeated
+                     * standard-PHR claims belong to the same wake train; do
+                     * not retune back to standard after the first one because
+                     * the extended payload immediately following the train can
+                     * otherwise be consumed during that retune.
                      */
                     status_debug_note(
                         "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED\n");
@@ -2644,6 +2740,12 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         (unsigned int)rx_failure,
                         reason == NULL ? "route" : reason);
                 continue;
+            }
+
+            received_at_valid =
+                dwm3000_driver_last_rx_host_uptime(&received_at_ms) == 0;
+            if (!received_at_valid) {
+                received_at_ms = k_uptime_get_32();
             }
 
             status_debug_note("DBG_ROUTE_REPLY_RX_FRAME\n");
@@ -2733,6 +2835,12 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                        parsed.packet.msg_type == MSG_MESH_EVENT_ACCEPT ||
                        parsed.packet.msg_type == MSG_MESH_EVENT_UPDATE ||
                        parsed.packet.msg_type == MSG_MESH_EVENT_END) {
+                if (!received_at_valid) {
+                    status_debug_printf(
+                        "DBG_EVENT_CTRL_RX_TIMESTAMP_MISSING msg=0x%02x\n",
+                        parsed.packet.msg_type);
+                    continue;
+                }
                 status_debug_note("DBG_EVENT_CTRL_RX\n");
             }
 
@@ -2918,12 +3026,19 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                         control_origin_ttl,
                         parsed.packet.ttl,
                         CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)) {
+                    const uint8_t observed_relay_hops =
+                        parsed.packet.ttl <= control_origin_ttl ?
+                            (uint8_t)(control_origin_ttl - parsed.packet.ttl) :
+                            UINT8_MAX;
+
+                    if (observed_relay_hops <
+                        CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS) {
+                        gateway_control_relay_shortfall = true;
+                    }
                     status_debug_printf(
                         "DBG_C5_CONTROL_HOPS_REJECT msg=0x%02x got=%u required=%u\n",
                         parsed.packet.msg_type,
-                        parsed.packet.ttl <= control_origin_ttl ?
-                            (uint8_t)(control_origin_ttl - parsed.packet.ttl) :
-                            UINT8_MAX,
+                        observed_relay_hops,
                         CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS);
                     continue;
                 }
@@ -3007,8 +3122,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     parsed.packet.msg_type,
                     contact_purpose ==
                         C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION)) {
-                uint32_t received_at_ms = k_uptime_get_32();
-
                 if (!mesh_handle_event_control(&parsed.packet,
                                                parsed.payload,
                                                parsed.payload_len,
@@ -3032,7 +3145,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                                                    frame_len,
                                                    quality,
                                                    UWB_CHANNEL_WAKE_CONTACT,
-                                                   k_uptime_get_32(),
+                                                   received_at_ms,
                                                    0u,
                                                    NULL,
                                                    0u,

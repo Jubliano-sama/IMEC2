@@ -1,0 +1,41 @@
+row,start,end,text,style,lane_index
+host,0,15,"BLE connect\nHere-I-Am",emphasis,0
+host,15,32,"Strict reachability\n3 anchors / retries 0",emphasis,0
+host,32,46,"Durable assignment\nexact receipts",emphasis,0
+host,46,76,"Survey discovery\nA + B reports receipted",emphasis,0
+host,76,105,"Waits for C report\nouter timeout",shaded,0
+host,105,130,"Full survey + click matrix\npending",dashed,0
+gateway,0,15,"BLE ingress\ncommand correlation",default,0
+gateway,15,32,"Route projection\nA=1 / B=2 / C=3",emphasis,0
+gateway,32,46,"Publish roster\nall TABLE ACKs",emphasis,0
+gateway,46,62,"Four bounded survey waves",emphasis,0
+gateway,62,76,"A + B reports accepted",emphasis,0
+gateway,76,105,"C report absent",shaded,0
+gateway,105,130,"Protocol wire format unchanged",quiet,0
+anchor_a,0,32,"Direct gateway route\nstable hop 1",emphasis,0
+anchor_a,32,76,"Assignment + discovery report\nexact host receipt",emphasis,0
+anchor_a,76,130,"Existing behavior remains green",quiet,0
+anchor_b,0,32,"Route through A\nstable hop 2",emphasis,0
+anchor_b,32,76,"Assignment + discovery report\nexact host receipt",emphasis,0
+anchor_b,76,105,"Upstream timing lost\nold result waiter retained",shaded,0
+anchor_b,105,130,"Arbitration fix under test",dashed,0
+anchor_c,0,32,"Route through B + A\nstable hop 3",emphasis,0
+anchor_c,32,46,"Assignment + TABLE ACK",emphasis,0
+anchor_c,46,62,"Rejects hop 0 / 1\naccepts exact hop 2",emphasis,0
+anchor_c,62,76,"Survey runs\nreport staged",emphasis,0
+anchor_c,76,105,"EVENT_ACCEPT then CH9 sends\nB never receives report",shaded,0
+anchor_c,105,130,"Live requalification pending",dashed,0
+relay_state,0,76,"No conflicting retained owner observed in proven phases",quiet,0
+relay_state,76,90,"B accepts C cadence\nwhile upstream waiter is live",shaded,0
+relay_state,90,105,"B route probe overlaps\nC first slot; retries continue",shaded,0
+relay_state,105,130,"Required: preserve custody\nand serialize the two owners",dashed,0
+clicks,0,105,"Held until all three discovery reports settle",ghost,0
+clicks,105,130,"PENDING\ndirect / forced1 / forced2 / mixed / self-test",dashed,0
+evidence,0,46,"LIVE PASS\nGUI + topology + durable assignment",emphasis,0
+evidence,46,76,"LIVE PASS\ndepth-3 downlink + A/B reports",emphasis,0
+evidence,76,105,"CORRELATED 4-RTT TRACE\nC uplink owner collision",shaded,0
+evidence,105,130,"IN PROGRESS\nregression + focused fix + HIL",dashed,0
+verdict,0,76,"PROVEN",emphasis,0
+verdict,76,105,"FAIL REPRODUCED\nno C report at gateway",shaded,0
+verdict,105,118,"NEXT\nfix + full gates",dashed,0
+verdict,118,130,"THEN\nreflash + survey + clicks",dashed,0

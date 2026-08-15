@@ -1,0 +1,8 @@
+id,label,order
+anchor_c,FORCED2 C - REPORT,1
+anchor_b_rx,FORCED1 B - CHILD RX,2
+anchor_b_owner,FORCED1 B - RETAINED OWNER,3
+old_tx,OLD B RETRANSMIT,4
+fixed_tx,FIXED B RETRANSMIT,5
+anchor_a,DIRECT A - PARENT RX,6
+outcome,OUTCOME,7

@@ -1,0 +1,9 @@
+id,label,order
+host,HEADLESS GUI / BLE,1
+gateway,GATEWAY,2
+anchor_a,DIRECT A,3
+anchor_b_up,FORCED1 B - UPSTREAM OWNER,4
+anchor_b_down,FORCED1 B - CHILD SERVICE,5
+anchor_c,FORCED2 C - REPORT OWNER,6
+ch9,C TO B - CHANNEL 9,7
+evidence,EVIDENCE / VERDICT,8

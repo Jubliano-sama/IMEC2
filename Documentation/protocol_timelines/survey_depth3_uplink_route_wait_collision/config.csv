@@ -1,0 +1,11 @@
+key,value
+title,"DEPTH-3 SURVEY UPLINK: RETAINED ROUTE OWNER CROSSES THE CHILD SLOT"
+caption,"Figure: Protocol-order reconstruction from the correlated four-probe RTT trace. Horizontal position is normalized ordering across device clocks, not a shared millisecond clock."
+key_point,"C receives the exact hop-2 survey control, stages a valid report, negotiates a Channel-9 cadence with B, and transmits repeatedly. B had already retained an older gateway-bound result after losing upstream timing; it accepts C's cadence, then its route-repair owner uses the first child slot and remains live through the capture. The gateway therefore receives A and B, but never C."
+start,0
+end,100
+width,4300
+unit,phase
+axis_caption_width,185
+row_label_width,240
+max_inline_lines,4

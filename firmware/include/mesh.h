@@ -137,8 +137,8 @@ int mesh_event_plan_channel9(const struct mesh_event_timing *timing,
 bool mesh_event_plan_is_policy_deferral(enum mesh_event_plan_action action);
 void mesh_event_note_success(struct mesh_event_timing *timing,
                              uint32_t event_start_ms);
-void mesh_event_note_local_tx(struct mesh_event_timing *timing,
-                              uint32_t event_start_ms);
+void mesh_event_note_unobserved_turn(struct mesh_event_timing *timing,
+                                     uint32_t event_start_ms);
 void mesh_event_note_observed_packet(struct mesh_event_timing *timing,
                                      uint32_t planned_event_start_ms,
                                      uint32_t observed_packet_ms);

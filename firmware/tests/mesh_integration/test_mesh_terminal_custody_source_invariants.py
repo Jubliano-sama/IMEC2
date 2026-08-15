@@ -76,13 +76,17 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
         reschedule = tick.index("mesh_schedule_tx_timeout()", release_action)
         self.assertLess(release_action, reschedule)
 
-    def test_newer_claim_settles_first_assignment_ack_before_admission(self) -> None:
+    def test_newer_claim_settles_any_older_ack_before_admission(self) -> None:
         apply_assignment = function_body(
             ANCHOR, "anchor_apply_discovery_assignment_command"
         )
-        first_assignment = apply_assignment.index("snapshot.provisioned == 0u")
+        same_epoch = apply_assignment.index("epoch == snapshot.pending_epoch")
+        same_epoch_resume = apply_assignment.index(
+            "anchor_resume_pending_discovery_assignment_ack(false)", same_epoch
+        )
+        same_epoch_return = apply_assignment.index("return 0;", same_epoch_resume)
         newer = apply_assignment.index(
-            "discovery_assignment_epoch_strictly_newer(", first_assignment
+            "discovery_assignment_epoch_strictly_newer(", same_epoch_return
         )
         settle = apply_assignment.index(
             "anchor_settle_ack_before_newer_assignment(epoch)", newer
@@ -94,7 +98,10 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
             "anchor_schedule_discovery_claim(", note_claim
         )
 
-        self.assertLess(first_assignment, newer)
+        supersession_gate = apply_assignment[same_epoch_return:newer]
+        self.assertNotIn("snapshot.provisioned", supersession_gate)
+        self.assertLess(same_epoch, same_epoch_resume)
+        self.assertLess(same_epoch_resume, same_epoch_return)
         self.assertLess(newer, settle)
         self.assertLess(settle, note_claim)
         self.assertLess(note_claim, schedule_claim)

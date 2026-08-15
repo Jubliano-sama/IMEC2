@@ -589,8 +589,11 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             ANCHOR,
             "gateway_discovery_assignment_ack_proof_admission",
         )
-        durable = proof.index(
+        live = proof.index(
             "gateway_discovery_assignment_live_proof("
+        )
+        durable = proof.index(
+            "gateway_registered_membership_proves_assignment_ack(", live
         )
         accepted = proof.index("if (proof_ret == 1)", durable)
         roster = proof.index(
@@ -606,6 +609,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             reconcile,
         )
 
+        self.assertLess(live, durable)
         self.assertLess(durable, accepted)
         self.assertLess(accepted, roster)
         self.assertLess(roster, reconcile)
@@ -616,6 +620,42 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         )
         self.assertIn("if (ret != 0)", proof[roster:reconcile])
         self.assertIn("if (ret != PROTO_OK)", proof[reconcile:terminal])
+
+        projection = function_body(
+            GATEWAY,
+            "gateway_registered_membership_proves_assignment_ack",
+        )
+        for durable_guard in (
+            "gateway_membership_durable_receipt_valid",
+            "gateway_membership_snapshot_state.assignment_proof_valid",
+            "gateway_membership_snapshot_state.assignment_epoch",
+            "gateway_membership_snapshot_state.assignment_table_seq",
+            "gateway_membership_snapshot_state.assignment_table_commitment",
+            "gateway_membership_snapshot_state.node_ids[slot] == node_id",
+        ):
+            self.assertIn(durable_guard, projection)
+        member = projection.index(
+            "gateway_membership_snapshot_state.node_ids[slot] == node_id"
+        )
+        member_reject = projection.index("if (!current_member)", member)
+        exact = projection.index(
+            "gateway_membership_snapshot_state.assignment_epoch ==",
+            member_reject,
+        )
+        superseded = projection.index(
+            "discovery_assignment_epoch_strictly_newer(", exact
+        )
+        self.assertLess(member, member_reject)
+        self.assertLess(member_reject, exact)
+        self.assertLess(exact, superseded)
+        self.assertIn(
+            "gateway_membership_snapshot_state.assignment_epoch,\n"
+            "               assignment_epoch",
+            projection[superseded:],
+        )
+        self.assertNotIn("gateway_membership_snapshot_state =", projection)
+        self.assertNotIn("gateway_membership_roster_state =", projection)
+        self.assertNotIn("app_durable_state_", projection)
 
     def test_candidate_ack_capacity_is_reserved_after_validation_before_mutation(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")

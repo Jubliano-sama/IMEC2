@@ -12,6 +12,7 @@ from tools.gateway_gui.app import DEFAULT_COMMAND_BUDGET_TEXT, GatewayGui
 from tools.gateway_gui.cir_reassembly import CirReassembler
 from tools.gateway_gui.command_orchestration import (
     GATEWAY_COMMAND_COMPLETION_GUARD_S,
+    GatewayAssignmentReplayBarrier,
     GatewayCommandDispatch,
     GatewayCommandOrchestrator,
     GatewayCommandPlan,
@@ -27,11 +28,13 @@ from tools.gateway_gui.protocol import (
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     FLAG_GATEWAY_ACK_REQUIRED,
+    GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
     GATEWAY_COMMAND_BUDGET_MAX_MS,
     MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
+    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
     TLV_COMMAND_BUDGET_MS,
@@ -115,6 +118,116 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(
             gateway_app.SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
             SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+        )
+
+    def test_survey_dispatch_waits_for_live_assignment_terminal_receipt_write(
+        self,
+    ) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.__dict__["_append_log"] = Mock()
+        gui.__dict__["_update_command_state"] = Mock()
+        gui.command_request_tracker = GatewayCommandRequestTracker()
+        gui.command_orchestrator = GatewayCommandOrchestrator(
+            gui.command_request_tracker
+        )
+        gui.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
+
+        preflight = GatewayCommandDispatch(
+            command_kind=3,
+            command_id=CMD_FORCE_REDISCOVERY,
+            session_id=0x11111,
+            sequence=1,
+            frame=b"here-i-am",
+            label="here-i-am",
+            timeout_s=10.0,
+            status_text="preflight",
+        )
+        survey = GatewayCommandDispatch(
+            command_kind=2,
+            command_id=CMD_SURVEY_REACHABILITY,
+            session_id=0x22222,
+            sequence=2,
+            frame=b"survey",
+            label="survey",
+            timeout_s=10.0,
+            status_text="survey",
+        )
+        plan = GatewayCommandPlan.user_triggered(
+            survey, preflight=preflight
+        )
+        self.assertEqual(gui.command_orchestrator.begin(plan), preflight)
+        preflight_terminal = GatewayCommandEvent(
+            3, 12, GATEWAY_COMMAND_EVENT_FLAG_TERMINAL, 1, 0, 0,
+            CMD_FORCE_REDISCOVERY, 0, preflight.session_id, 1,
+            preflight.session_id, preflight.sequence, 1,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        )
+
+        live_mapping = GatewayCommandEvent(
+            1, 6, 0, 0, 0, 0,
+            CMD_ASSIGN_DISCOVERY_SLOTS, 7, 0x33333, 200,
+            0x33333, 3, 200,
+            0x4444, 0, 0, 0, 1, 3, 1, 0, 0, 1, 0, 0,
+        )
+        live_terminal = replace(
+            live_mapping,
+            stage=12,
+            flags=GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
+            gateway_sequence=203,
+            event_sequence=203,
+            anchor_id=0,
+            progress_count=3,
+            success_count=3,
+            hop_count=0,
+            discovery_slot=0xFF,
+        )
+        mapping_token = gui.assignment_replay_barrier.observe(live_mapping)
+        terminal_token = gui.assignment_replay_barrier.observe(live_terminal)
+        self.assertIsNotNone(mapping_token)
+        self.assertIsNotNone(terminal_token)
+        gui._assignment_replay_receipts = {
+            b"mapping-receipt": mapping_token,
+            b"terminal-receipt": terminal_token,
+        }
+
+        waiting = gui.command_orchestrator.observe_event(
+            preflight_terminal,
+            target_dispatch_allowed=not gui.assignment_replay_barrier.blocks(
+                survey.command_id
+            ),
+        )
+        gui._apply_gateway_command_transition(waiting)
+        self.assertEqual(gui.command_orchestrator.phase, "target_wait")
+        gui.transport.send_frame.assert_not_called()
+
+        gui._handle_event(
+            {
+                "kind": "tx_written",
+                "label": "gateway host receipt",
+                "raw": b"mapping-receipt",
+                "byte_count": 20,
+                "chunks": 1,
+            }
+        )
+        self.assertTrue(gui.assignment_replay_barrier.active)
+        self.assertEqual(gui.command_orchestrator.phase, "target_wait")
+        gui.transport.send_frame.assert_not_called()
+
+        gui._handle_event(
+            {
+                "kind": "tx_written",
+                "label": "gateway host receipt",
+                "raw": b"terminal-receipt",
+                "byte_count": 20,
+                "chunks": 1,
+            }
+        )
+        self.assertFalse(gui.assignment_replay_barrier.active)
+        self.assertEqual(gui.command_orchestrator.phase, "target")
+        gui.transport.send_frame.assert_called_once_with(
+            survey.frame, survey.label
         )
 
     @staticmethod
@@ -741,6 +854,12 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(submit_command.call_count, 2)
         plans = [call.args[0] for call in submit_command.call_args_list]
         self.assertTrue(all(plan.preflight is not None for plan in plans))
+        self.assertTrue(all(
+            plan.target.timeout_s
+            == SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS / 1000.0
+            + GATEWAY_COMMAND_COMPLETION_GUARD_S
+            for plan in plans
+        ))
         self.assertTrue(all(
             plan.preflight.session_id != plan.target.session_id for plan in plans
         ))

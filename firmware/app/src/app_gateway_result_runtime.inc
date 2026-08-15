@@ -2412,6 +2412,51 @@ int gateway_get_registered_membership_roster_with_slots(
     return ret == PROTO_OK ? 0 : mesh_errno_from_proto(ret);
 }
 
+int gateway_registered_membership_proves_assignment_ack(
+    uint32_t assignment_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    uint64_t node_id)
+{
+    bool current_member = false;
+
+    /* The local capability is set only after the durable owner has written
+     * and read back this snapshot.  Exact identity proves that the ACK was
+     * accepted by the durable assignment.  A strictly newer durable roster
+     * containing the same node also proves that an older ACK is obsolete:
+     * acknowledging it only releases sender/relay transport custody and must
+     * never mutate the newer assignment.  Same-epoch mismatches, future
+     * epochs, and RFC-1982 half-range ambiguity still fail closed. */
+    if (!gateway_membership_durable_receipt_valid ||
+        gateway_membership_snapshot_state.assignment_proof_valid == 0u ||
+        assignment_epoch == 0u || table_seq == 0u ||
+        table_commitment == NULL || node_id == 0u) {
+        return 0;
+    }
+    for (size_t slot = 0u;
+         slot < gateway_membership_snapshot_state.slot_span;
+         slot++) {
+        if (gateway_membership_snapshot_state.node_ids[slot] == node_id) {
+            current_member = true;
+            break;
+        }
+    }
+    if (!current_member) {
+        return 0;
+    }
+    if (gateway_membership_snapshot_state.assignment_epoch ==
+            assignment_epoch &&
+        gateway_membership_snapshot_state.assignment_table_seq == table_seq &&
+        discovery_assignment_table_commitment_equal(
+            &gateway_membership_snapshot_state.assignment_table_commitment,
+            table_commitment)) {
+        return 1;
+    }
+    return discovery_assignment_epoch_strictly_newer(
+               gateway_membership_snapshot_state.assignment_epoch,
+               assignment_epoch) ? 1 : 0;
+}
+
 bool gateway_assignment_publication_pending(void)
 {
     return DEVICE_ROLE == ROLE_GATEWAY &&
@@ -3728,6 +3773,19 @@ int gateway_get_registered_membership_roster_with_slots(
     if (membership_epoch != NULL) {
         *membership_epoch = 0u;
     }
+    return -ENOTSUP;
+}
+
+int gateway_registered_membership_proves_assignment_ack(
+    uint32_t assignment_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    uint64_t node_id)
+{
+    ARG_UNUSED(assignment_epoch);
+    ARG_UNUSED(table_seq);
+    ARG_UNUSED(table_commitment);
+    ARG_UNUSED(node_id);
     return -ENOTSUP;
 }
 

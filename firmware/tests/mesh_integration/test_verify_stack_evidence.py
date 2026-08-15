@@ -829,6 +829,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "CONFIG_ADC": False,
             "CONFIG_BT_CTLR_ECDH": False,
             "CONFIG_BT_CTLR_LE_ENC": False,
+            "CONFIG_BT_ASSERT_VERBOSE": False,
             "CONFIG_BT_GATT_CACHING": False,
             "CONFIG_BT_GATT_READ_MULTIPLE": False,
             "CONFIG_BT_GATT_READ_MULT_VAR_LEN": False,

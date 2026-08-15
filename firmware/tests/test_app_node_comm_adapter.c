@@ -1,5 +1,6 @@
 #include "app_node_comm.h"
 #include "app_mesh_report.h"
+#include "app_radio_guard.h"
 #include "dwm3000_driver.h"
 #include "survey.h"
 
@@ -51,6 +52,10 @@ struct app_delivery_trace_capture {
 
 static atomic_int_fast64_t fake_now_ms;
 static atomic_bool radio_busy;
+static atomic_int radio_owner_client;
+static atomic_bool anchor_uwb_active;
+static atomic_bool anchor_click_active;
+static atomic_bool radio_admission_paused;
 static atomic_bool rx_response_active;
 static uint32_t send_calls;
 static struct mesh_outbound last_control_flood;
@@ -86,11 +91,20 @@ static uint32_t queue_calls;
 static uint32_t stop_scan_calls;
 static uint32_t restart_scan_calls;
 static uint32_t receive_abort_calls;
+static uint32_t receive_abort_node_comm_calls;
+static uint32_t receive_abort_mesh_control_calls;
+static uint32_t receive_abort_clear_calls;
+static uint32_t last_receive_abort_request_mask;
+static uint32_t last_receive_abort_clear_mask;
+static uint32_t radio_admission_pause_calls;
+static uint32_t radio_admission_resume_calls;
 static uint32_t legacy_queue_depth;
-static atomic_bool receive_abort_pending;
+static atomic_uint_fast32_t receive_abort_pending;
 static atomic_bool transport_paused;
 static uint32_t transport_pause_calls;
 static uint32_t transport_resume_calls;
+
+static struct mesh_outbound reliable_uplink_envelope(uint16_t seq);
 static uint32_t route_refresh_pause_calls;
 static uint32_t route_refresh_resume_calls;
 static uint32_t watchdog_stop_calls;
@@ -422,6 +436,33 @@ bool radio_guard_uwb_busy(void)
     return atomic_load(&radio_busy);
 }
 
+enum radio_guard_uwb_client radio_guard_uwb_owner_client(void)
+{
+    return (enum radio_guard_uwb_client)atomic_load(&radio_owner_client);
+}
+
+bool anchor_uwb_window_active(void)
+{
+    return atomic_load(&anchor_uwb_active);
+}
+
+bool anchor_click_window_active(void)
+{
+    return atomic_load(&anchor_click_active);
+}
+
+void radio_guard_uwb_admission_pause(void)
+{
+    radio_admission_pause_calls++;
+    atomic_store(&radio_admission_paused, true);
+}
+
+void radio_guard_uwb_admission_resume(void)
+{
+    radio_admission_resume_calls++;
+    atomic_store(&radio_admission_paused, false);
+}
+
 bool mesh_rx_response_active(void)
 {
     return atomic_load(&rx_response_active);
@@ -429,22 +470,44 @@ bool mesh_rx_response_active(void)
 
 void dwm3000_driver_request_receive_abort(uint32_t owner_mask)
 {
-    assert(owner_mask == DWM3000_RECEIVE_ABORT_NODE_COMM);
+    assert(owner_mask == DWM3000_RECEIVE_ABORT_NODE_COMM ||
+           owner_mask == DWM3000_RECEIVE_ABORT_MESH_CONTROL);
     receive_abort_calls++;
-    atomic_store(&receive_abort_pending, true);
+    last_receive_abort_request_mask = owner_mask;
+    if (owner_mask == DWM3000_RECEIVE_ABORT_NODE_COMM) {
+        receive_abort_node_comm_calls++;
+    } else {
+        receive_abort_mesh_control_calls++;
+    }
+    (void)atomic_fetch_or(&receive_abort_pending, owner_mask);
+}
+
+void dwm3000_driver_clear_receive_abort(uint32_t owner_mask)
+{
+    assert(owner_mask == DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    receive_abort_clear_calls++;
+    last_receive_abort_clear_mask = owner_mask;
+    (void)atomic_fetch_and(&receive_abort_pending,
+                           ~(uint_fast32_t)owner_mask);
 }
 
 bool dwm3000_driver_receive_abort_pending(void)
 {
-    return atomic_load(&receive_abort_pending);
+    return atomic_load(&receive_abort_pending) != 0u;
 }
 
 int mesh_transport_pause_preserving_queued(void)
 {
     transport_pause_calls++;
     stop_scan_calls++;
+    radio_guard_uwb_admission_pause();
     atomic_store(&transport_paused, true);
     return 0;
+}
+
+bool mesh_transport_pause_active(void)
+{
+    return atomic_load(&transport_paused);
 }
 
 bool mesh_transport_quiesced(void)
@@ -468,6 +531,7 @@ void mesh_transport_resume(void)
     }
     assert(pthread_mutex_unlock(&interleave_lock) == 0);
     restart_scan_calls++;
+    radio_guard_uwb_admission_resume();
     atomic_store(&transport_paused, false);
 }
 
@@ -834,6 +898,10 @@ static void reset_fixture(void)
 
     atomic_store(&fake_now_ms, 0);
     atomic_store(&radio_busy, false);
+    atomic_store(&radio_owner_client, RADIO_GUARD_UWB_CLIENT_NONE);
+    atomic_store(&anchor_uwb_active, false);
+    atomic_store(&anchor_click_active, false);
+    atomic_store(&radio_admission_paused, false);
     atomic_store(&rx_response_active, false);
     send_calls = 0u;
     try_flood_calls = 0u;
@@ -870,7 +938,14 @@ static void reset_fixture(void)
     stop_scan_calls = 0u;
     restart_scan_calls = 0u;
     receive_abort_calls = 0u;
-    atomic_store(&receive_abort_pending, false);
+    receive_abort_node_comm_calls = 0u;
+    receive_abort_mesh_control_calls = 0u;
+    receive_abort_clear_calls = 0u;
+    last_receive_abort_request_mask = 0u;
+    last_receive_abort_clear_mask = 0u;
+    radio_admission_pause_calls = 0u;
+    radio_admission_resume_calls = 0u;
+    atomic_store(&receive_abort_pending, 0u);
     atomic_store(&transport_paused, false);
     transport_pause_calls = 0u;
     transport_resume_calls = 0u;
@@ -959,6 +1034,142 @@ static void test_production_init_installs_delivery_transition_trace(void)
     assert(strstr(production_delivery_trace_line, "f=") != NULL);
     assert(strstr(production_delivery_trace_line, "t=00000004") != NULL);
     assert(strstr(production_delivery_trace_line, "p=00000000") != NULL);
+}
+
+static void test_survey_transport_preempt_preserves_custody_and_exact_abort_owner(void)
+{
+    uint32_t original_queue_depth;
+
+    reset_fixture();
+    original_queue_depth = legacy_queue_depth;
+    assert(app_node_comm_transport_preempt_ready() == -EACCES);
+    assert(app_node_comm_transport_preempt_begin() == 0);
+    assert(transport_pause_calls == 1u);
+    assert(atomic_load(&transport_paused));
+    assert(atomic_load(&radio_admission_paused));
+    assert(legacy_queue_depth == original_queue_depth);
+
+    /* Re-entering the same survey-owned pause is idempotent. */
+    assert(app_node_comm_transport_preempt_begin() == 0);
+    assert(transport_pause_calls == 1u);
+
+    /* Click and anchor-ranging owners are never targets for the mesh-control
+     * abort edge, even while they keep transport short of quiescence. */
+    atomic_store(&radio_busy, true);
+    atomic_store(&radio_owner_client,
+                 RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK);
+    atomic_store(&anchor_click_active, true);
+    assert(app_node_comm_transport_preempt_ready() == -EBUSY);
+    assert(receive_abort_calls == 0u);
+
+    atomic_store(&anchor_click_active, false);
+    atomic_store(&radio_owner_client, RADIO_GUARD_UWB_CLIENT_MESH_RX);
+    atomic_store(&anchor_uwb_active, true);
+    assert(app_node_comm_transport_preempt_ready() == -EBUSY);
+    assert(receive_abort_calls == 0u);
+
+    atomic_store(&anchor_uwb_active, false);
+    assert(app_node_comm_transport_preempt_ready() == -EBUSY);
+    assert(receive_abort_calls == 1u);
+    assert(receive_abort_mesh_control_calls == 1u);
+    assert(receive_abort_node_comm_calls == 0u);
+    assert(last_receive_abort_request_mask ==
+           DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+
+    /* At the safe boundary, consume only the survey-owned edge. An unrelated
+     * lifecycle abort remains authoritative and keeps admission closed. */
+    atomic_store(&radio_busy, false);
+    atomic_store(&radio_owner_client, RADIO_GUARD_UWB_CLIENT_NONE);
+    (void)atomic_fetch_or(&receive_abort_pending,
+                          DWM3000_RECEIVE_ABORT_NODE_COMM);
+    assert(app_node_comm_transport_preempt_ready() == -EBUSY);
+    assert(receive_abort_clear_calls == 1u);
+    assert(last_receive_abort_clear_mask ==
+           DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    assert(atomic_load(&receive_abort_pending) ==
+           DWM3000_RECEIVE_ABORT_NODE_COMM);
+    assert(radio_admission_resume_calls == 0u);
+
+    atomic_store(&receive_abort_pending, 0u);
+    assert(app_node_comm_transport_preempt_ready() == 0);
+    assert(radio_admission_resume_calls == 1u);
+    assert(!atomic_load(&radio_admission_paused));
+    assert(atomic_load(&transport_paused));
+    assert(legacy_queue_depth == original_queue_depth);
+
+    app_node_comm_transport_preempt_end();
+    assert(transport_resume_calls == 1u);
+    assert(!atomic_load(&transport_paused));
+    assert(!atomic_load(&radio_admission_paused));
+    assert(legacy_queue_depth == original_queue_depth);
+}
+
+static void test_survey_transport_preempt_cannot_steal_lifecycle_pause(void)
+{
+    struct node_comm_pause_lease pause_lease;
+
+    reset_fixture();
+    atomic_store(&transport_paused, true);
+    atomic_store(&radio_admission_paused, true);
+    assert(app_node_comm_transport_preempt_begin() == -ESHUTDOWN);
+    assert(transport_pause_calls == 0u);
+    app_node_comm_transport_preempt_end();
+    assert(transport_resume_calls == 0u);
+    assert(atomic_load(&transport_paused));
+
+    reset_fixture();
+    assert(app_node_comm_transport_preempt_begin() == 0);
+    assert(app_node_comm_transport_preempt_ready() == 0);
+    assert(app_node_comm_pause_request(91u, 1000u, &pause_lease) == 0);
+    assert(!app_node_comm_policy_running());
+    app_node_comm_transport_preempt_end();
+    assert(transport_resume_calls == 0u);
+    assert(atomic_load(&transport_paused));
+    assert(atomic_load(&radio_admission_paused));
+}
+
+static void test_survey_transport_preempt_accepts_atomic_result_reservation(void)
+{
+    struct app_node_comm_reservation_lease reservations[
+        APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY] = {0};
+    uint32_t handles[APP_NODE_COMM_ORDINARY_DELIVERY_CAPACITY] = {0};
+    const size_t count = sizeof(reservations) / sizeof(reservations[0]);
+    uint32_t schedules_before_resume;
+
+    reset_fixture();
+    if (DEVICE_ROLE == ROLE_GATEWAY) {
+        /* The hardware failure was on the anchor's dedicated mesh queue. */
+        return;
+    }
+    assert(app_node_comm_transport_preempt_begin() == 0);
+    assert(app_node_comm_transport_preempt_ready() == 0);
+    mesh_route_reschedule_result = -ESHUTDOWN;
+
+    assert(app_node_comm_reserve_durable_reliable_uplinks(
+               0x5a5au, count, reservations, count) == 0);
+    assert(watchdog_stop_calls == 0u);
+    for (size_t i = 0u; i < count; i++) {
+        struct mesh_outbound sample =
+            reliable_uplink_envelope((uint16_t)(230u + i));
+
+        assert(reservations[i].token != 0u);
+        assert(reservations[i].owner_generation == 0x5a5au);
+        sample.packet.msg_type = MSG_SURVEY_PAIR_RESULT;
+        assert(app_node_comm_commit_durable_reliable_uplink_reservation(
+                   &reservations[i], &sample, 10000u,
+                   (uint32_t)(0x5300u + i), &handles[i]) == 0);
+        assert(handles[i] != 0u);
+        memset(&reservations[i], 0, sizeof(reservations[i]));
+    }
+    assert(app_node_comm_pending_delivery_count() == count);
+
+    schedules_before_resume = mesh_route_reschedule_calls;
+    mesh_route_reschedule_result = 0;
+    app_node_comm_transport_preempt_end();
+    assert(mesh_route_reschedule_calls == schedules_before_resume + 1u);
+    for (size_t i = 0u; i < count; i++) {
+        assert(app_node_comm_abandon_delivery(handles[i]) == 0);
+    }
 }
 
 static void test_pause_and_stop_gate_new_submissions_without_clearing_queue(void)
@@ -2377,6 +2588,36 @@ static void test_auto_reaped_control_flood_retries_without_leaking_handle(void)
     assert(try_flood_calls == 5u);
     assert(app_node_comm_pending_delivery_count() == 0u);
     assert(!app_node_comm_take_delivery_event_for(handle, &event));
+}
+
+static void test_best_effort_uplink_sends_once_without_reliable_custody(void)
+{
+    struct mesh_outbound heartbeat = reliable_uplink_envelope(13u);
+    uint64_t target_ids[1u] = {0u};
+
+    reset_fixture();
+    heartbeat.packet.msg_type = MSG_ANCHOR_HEARTBEAT;
+    heartbeat.packet.flags = 0u;
+    assert(app_node_comm_submit_best_effort_uplink(
+               &heartbeat, 1000u, 130u) == 0);
+    assert(app_node_comm_pending_delivery_count() == 1u);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 1u) == 0u);
+
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 1u);
+    assert(try_uplink_envelopes[0].packet.msg_type ==
+           MSG_ANCHOR_HEARTBEAT);
+    assert(try_uplink_envelopes[0].packet.flags == 0u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+    assert(app_node_comm_reliable_delivery_targets(target_ids, 1u) == 0u);
+
+    reset_fixture();
+    try_uplink_results[0] = -EHOSTUNREACH;
+    assert(app_node_comm_submit_best_effort_uplink(
+               &heartbeat, 1000u, 131u) == 0);
+    assert(app_node_comm_service_deliveries() == -EHOSTUNREACH);
+    assert(try_uplink_calls == 1u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
 }
 
 static void test_gateway_control_flood_preempts_queued_control_response(void)
@@ -5261,6 +5502,9 @@ test_durable_external_pre_rf_completion_failure_retains_exact_token(void)
 int main(void)
 {
     test_production_init_installs_delivery_transition_trace();
+    test_survey_transport_preempt_preserves_custody_and_exact_abort_owner();
+    test_survey_transport_preempt_cannot_steal_lifecycle_pause();
+    test_survey_transport_preempt_accepts_atomic_result_reservation();
     test_peek_attempt_count_does_not_service_delivery_policy();
     test_control_flood_freezes_age_before_wake_work();
     test_pause_and_stop_gate_new_submissions_without_clearing_queue();
@@ -5297,6 +5541,7 @@ int main(void)
     }
     test_delivery_pre_rf_busy_defers_without_consuming_attempts();
     test_auto_reaped_control_flood_retries_without_leaking_handle();
+    test_best_effort_uplink_sends_once_without_reliable_custody();
     test_gateway_control_flood_preempts_queued_control_response();
     test_control_response_queued_during_active_control_runs_next();
     test_replayed_gateway_ack_coalesces_by_acknowledged_identity();

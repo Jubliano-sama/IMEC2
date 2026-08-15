@@ -1,0 +1,16 @@
+time,label,caption,kind,row
+0,connect,headless GUI owns BLE link,axis,
+15,reachability,three anchors discovered at hops 1 / 2 / 3,axis,
+32,assignment,exact durable roster and TABLE ACKs,axis,
+46,survey downlink,four bounded waves begin,axis,
+62,C admitted,exact hop-2 copy reaches forced-two-hop anchor,axis,
+76,reports staged,A and B delivered; C owns a local report,axis,
+90,owner collision,B accepts C cadence while retaining upstream repair,axis,
+105,live failure,C retries but gateway receives no C report,axis,
+118,software gate,regression and fix,axis,
+130,hardware gate,full survey then click and self-test matrix,axis,
+32,hop 1,,row,anchor_a
+32,hop 2,,row,anchor_b
+32,hop 3,,row,anchor_c
+62,hop 2 accepted,,row,anchor_c
+97,report missed,,row,anchor_c

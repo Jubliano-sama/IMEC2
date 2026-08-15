@@ -1,0 +1,11 @@
+time,label,caption,kind,row
+0,0 s,initial origin flood,axis,
+10000,10 s,redrive 1,axis,
+20000,20 s,redrive 2,axis,
+30000,30 s,redrive 3,axis,
+40000,40 s,final redrive,axis,
+70000,70 s,latest three-hop arrival,axis,
+80000,80 s,latest legal four-hop arrival,axis,
+88897,88.897 s,latest safe prep start,axis,
+90000,90 s,shared discovery start,axis,
+90240,90.240 s,discovery slots complete,axis,

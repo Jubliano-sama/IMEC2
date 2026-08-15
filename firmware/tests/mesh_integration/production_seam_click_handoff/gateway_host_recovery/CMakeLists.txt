@@ -45,6 +45,7 @@ target_sources(app PRIVATE
     ../../../../app/src/app_durable_state.c
     ../../../../app/src/app_gateway_assignment_publisher.c
     ../../../../app/src/app_gateway_survey_round.c
+    ../../../../app/src/app_gateway_survey_observability.c
     ../../../../app/src/app_gateway_collection_eack.c
     ../../../../app/src/app_gateway_collection_recovery.c
     ../../../../app/src/app_gateway_command_observability.c

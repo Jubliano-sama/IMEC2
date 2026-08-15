@@ -46,6 +46,75 @@ static struct app_mesh_rf_retry_key retry_key(uint32_t session_id,
     };
 }
 
+static void assert_event_timing_equal(
+    const struct mesh_event_timing *actual,
+    const struct mesh_event_timing *expected)
+{
+    assert(actual != NULL);
+    assert(expected != NULL);
+    assert(actual->mesh_channel == expected->mesh_channel);
+    assert(actual->event_interval_ms == expected->event_interval_ms);
+    assert(actual->event_window_ms == expected->event_window_ms);
+    assert(actual->next_event_time_ms == expected->next_event_time_ms);
+    assert(actual->event_counter == expected->event_counter);
+    assert(actual->guard_ms == expected->guard_ms);
+    assert(actual->peer_clock_skew_estimate_ppm ==
+           expected->peer_clock_skew_estimate_ppm);
+    assert(actual->max_missed_events == expected->max_missed_events);
+    assert(actual->missed_event_count == expected->missed_event_count);
+    assert(actual->supervision_timeout_ms ==
+           expected->supervision_timeout_ms);
+    assert(actual->last_successful_ch9_event_ms ==
+           expected->last_successful_ch9_event_ms);
+    assert(actual->local_tx_on_even_events ==
+           expected->local_tx_on_even_events);
+    assert(actual->route_fresh == expected->route_fresh);
+    assert(actual->timing_fresh == expected->timing_fresh);
+    assert(actual->fallback_required == expected->fallback_required);
+}
+
+static void test_counterphase_shift_preserves_frozen_proposal_shape(void)
+{
+    enum {
+        EVENT_INTERVAL = 520u,
+        COUNTERPHASE_SHIFT = EVENT_INTERVAL / 2u,
+    };
+    const struct mesh_event_timing proposed = {
+        .mesh_channel = MESH_EVENT_CHANNEL,
+        .event_interval_ms = EVENT_INTERVAL,
+        .event_window_ms = 120u,
+        .next_event_time_ms = 10000u,
+        .event_counter = UINT32_C(0x13579bdf),
+        .guard_ms = 60u,
+        .peer_clock_skew_estimate_ppm = 17,
+        .max_missed_events = 8u,
+        .missed_event_count = 2u,
+        .supervision_timeout_ms = 300000u,
+        .last_successful_ch9_event_ms = 10000u,
+        .local_tx_on_even_events = true,
+        .route_fresh = true,
+        .timing_fresh = true,
+    };
+    struct mesh_event_timing shifted = proposed;
+    struct mesh_event_timing expected = proposed;
+    struct mesh_event_timing invalid;
+
+    expected.next_event_time_ms += COUNTERPHASE_SHIFT;
+    expected.last_successful_ch9_event_ms += COUNTERPHASE_SHIFT;
+    assert(app_mesh_event_timing_apply_phase_shift(
+        &shifted, COUNTERPHASE_SHIFT));
+    assert_event_timing_equal(&shifted, &expected);
+
+    invalid = proposed;
+    assert(!app_mesh_event_timing_apply_phase_shift(
+        &invalid, EVENT_INTERVAL));
+    assert_event_timing_equal(&invalid, &proposed);
+    invalid.event_interval_ms = 0u;
+    assert(!app_mesh_event_timing_apply_phase_shift(&invalid, 0u));
+    assert(!app_mesh_event_timing_apply_phase_shift(
+        NULL, COUNTERPHASE_SHIFT));
+}
+
 static void test_duplicate_conflict_and_busy_are_distinct(void)
 {
     const uint8_t payload[] = {1u, 2u, 3u, 4u};
@@ -272,7 +341,7 @@ static void test_delayed_legacy_accept_cannot_complete_newer_proposal(void)
            APP_MESH_EVENT_ACCEPT_LEGACY);
 }
 
-static void test_reanchored_accept_preserves_received_phase_and_local_tx_parity(void)
+static void test_accept_phase_is_compatibility_agnostic_and_parity_can_be_bound(void)
 {
     struct mesh_event_timing proposed = {
         .mesh_channel = MESH_EVENT_CHANNEL,
@@ -290,9 +359,10 @@ static void test_reanchored_accept_preserves_received_phase_and_local_tx_parity(
     uint32_t accepted_next_event_time_ms;
 
     /*
-     * An ACCEPT may move the first event after a delayed control response.
-     * That phase is intentionally excluded from proposal compatibility: the
-     * immutable schedule parameters still identify the same negotiation.
+     * The wire validator deliberately excludes absolute phase from ACCEPT
+     * compatibility because relative-time decoding moves with response
+     * latency.  The app still restores the retained successful PROPOSE phase;
+     * this pure helper only proves the immutable shape and parity contract.
      */
     accepted.next_event_time_ms += EVENT_INTERVAL_MS;
     accepted.local_tx_on_even_events = true;
@@ -815,11 +885,12 @@ static void test_accept_rx_cache_is_scoped_to_one_live_session(void)
 
 int main(void)
 {
+    test_counterphase_shift_preserves_frozen_proposal_shape();
     test_duplicate_conflict_and_busy_are_distinct();
     test_old_fnv_collision_is_a_digest_conflict();
     test_accept_correlates_with_exact_and_stable_release_identities();
     test_delayed_legacy_accept_cannot_complete_newer_proposal();
-    test_reanchored_accept_preserves_received_phase_and_local_tx_parity();
+    test_accept_phase_is_compatibility_agnostic_and_parity_can_be_bound();
     test_legacy_accept_survives_wire_validation_before_app_correlation();
     test_pre_rf_and_actual_failures_share_backoff_without_identity_loss();
     test_duplicate_proposal_reuses_response_and_installs_once();

@@ -210,11 +210,15 @@ assert (
     "the lease lock and abandon it only after unlocking"
 )
 
-discovery_guard_index = worker.index(
-    "radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,"
+discovery_run_index = worker.index("if (run_discovery)")
+discovery_run_block = braced_block_at(worker, discovery_run_index)
+discovery_guard_index = discovery_run_block.index("radio_guard_uwb_claim(")
+discovery_defer_index = discovery_run_block.index(
+    "if (ret < 0)", discovery_guard_index
 )
-discovery_defer_index = worker.index("if (ret < 0)", discovery_guard_index)
-discovery_defer_block = braced_block_at(worker, discovery_defer_index)
+discovery_defer_block = braced_block_at(
+    discovery_run_block, discovery_defer_index
+)
 assert "survey_rf_retry_delay_ms(" in discovery_defer_block
 assert "app_node_comm_restart_role_scan()" in discovery_defer_block
 assert "REPORT_TX_RETRY_DELAY_MS" not in discovery_defer_block

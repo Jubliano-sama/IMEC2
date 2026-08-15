@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4300" height="1158" viewBox="0 0 4300 1158" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">SURVEY CONTROL: PARALLEL WORST-CASE DEADLINE CHECK</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="991.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
+<text x="179.0" y="102.0" class="row-label">GATEWAY ORIGIN WAVES</text>
+<rect x="314.0" y="90.0" width="17.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="742.7" y="90.0" width="17.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1171.4" y="90.0" width="17.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1600.1" y="90.0" width="17.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="2028.8" y="90.0" width="17.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="322.6" y1="86.0" x2="322.6" y2="90.0" class="hairline"/>
+<rect x="314.0" y="62.0" width="79.7" height="16.0" class="callout"/>
+<text x="318.0" y="74.5" class="tiny" text-anchor="start"><tspan x="318.0" dy="0.0">initial control</tspan></text>
+<line x1="751.3" y1="86.0" x2="751.3" y2="90.0" class="hairline"/>
+<rect x="722.6" y="62.0" width="57.4" height="16.0" class="callout"/>
+<text x="726.6" y="74.5" class="tiny" text-anchor="start"><tspan x="726.6" dy="0.0">redrive 1</tspan></text>
+<line x1="1180.0" y1="86.0" x2="1180.0" y2="90.0" class="hairline"/>
+<rect x="1151.3" y="62.0" width="57.4" height="16.0" class="callout"/>
+<text x="1155.3" y="74.5" class="tiny" text-anchor="start"><tspan x="1155.3" dy="0.0">redrive 2</tspan></text>
+<line x1="1608.7" y1="86.0" x2="1608.7" y2="90.0" class="hairline"/>
+<rect x="1580.0" y="62.0" width="57.4" height="16.0" class="callout"/>
+<text x="1584.0" y="74.5" class="tiny" text-anchor="start"><tspan x="1584.0" dy="0.0">redrive 3</tspan></text>
+<line x1="2037.4" y1="86.0" x2="2037.4" y2="90.0" class="hairline"/>
+<rect x="2008.7" y="62.0" width="57.4" height="16.0" class="callout"/>
+<text x="2012.7" y="74.5" class="tiny" text-anchor="start"><tspan x="2012.7" dy="0.0">redrive 4</tspan></text>
+<line x1="44.0" y1="136.0" x2="4258.0" y2="136.0" class="major-line"/>
+<text x="179.0" y="256.0" class="row-label">THREE-HOP HIL ENVELOPE</text>
+<rect x="314.0" y="146.0" width="1286.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="957.0" y="169.0" class="small center event-text" text-anchor="middle"><tspan x="957.0" dy="0.0">initial copy: latest depth-3 arrival</tspan></text>
+<rect x="742.7" y="190.0" width="1286.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1385.7" y="213.0" class="small center event-text" text-anchor="middle"><tspan x="1385.7" dy="0.0">redrive 1 envelope</tspan></text>
+<rect x="1171.4" y="234.0" width="1286.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1814.4" y="257.0" class="small center event-text" text-anchor="middle"><tspan x="1814.4" dy="0.0">redrive 2 envelope</tspan></text>
+<rect x="1600.1" y="278.0" width="1286.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="2243.1" y="301.0" class="small center event-text" text-anchor="middle"><tspan x="2243.1" dy="0.0">redrive 3 envelope</tspan></text>
+<rect x="2028.8" y="322.0" width="1286.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2671.8" y="345.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2671.8" dy="0.0">last copy: latest depth-3 arrival</tspan></text>
+<line x1="44.0" y1="368.0" x2="4258.0" y2="368.0" class="major-line"/>
+<text x="179.0" y="488.0" class="row-label">LEGAL FOUR-HOP ENVELOPE</text>
+<rect x="314.0" y="378.0" width="1714.8" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1171.4" y="401.0" class="small center event-text" text-anchor="middle"><tspan x="1171.4" dy="0.0">initial copy: latest legal depth-4 arrival</tspan></text>
+<rect x="742.7" y="422.0" width="1714.8" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1600.1" y="445.0" class="small center event-text" text-anchor="middle"><tspan x="1600.1" dy="0.0">redrive 1 envelope</tspan></text>
+<rect x="1171.4" y="466.0" width="1714.8" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="2028.8" y="489.0" class="small center event-text" text-anchor="middle"><tspan x="2028.8" dy="0.0">redrive 2 envelope</tspan></text>
+<rect x="1600.1" y="510.0" width="1714.8" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="2457.5" y="533.0" class="small center event-text" text-anchor="middle"><tspan x="2457.5" dy="0.0">redrive 3 envelope</tspan></text>
+<rect x="2028.8" y="554.0" width="1714.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2886.2" y="577.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2886.2" dy="0.0">last copy: latest legal depth-4 arrival</tspan></text>
+<line x1="44.0" y1="600.0" x2="4258.0" y2="600.0" class="major-line"/>
+<text x="179.0" y="642.0" class="row-label">ANCHOR TRANSPORT + PHY PREP</text>
+<rect x="4125.0" y="630.0" width="47.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="4148.6" y1="635.0" x2="4148.6" y2="630.0" class="hairline"/>
+<rect x="4053.6" y="602.0" width="190.0" height="25.0" class="callout"/>
+<text x="4057.6" y="613.5" class="tiny" text-anchor="start"><tspan x="4057.6" dy="0.0">transport preemption 1000 ms</tspan><tspan x="4057.6" dy="11.0">PHY measured 63 ms + margin 40 ms</tspan></text>
+<line x1="44.0" y1="676.0" x2="4258.0" y2="676.0" class="major-line"/>
+<text x="179.0" y="718.0" class="row-label">PHYSICAL DISCOVERY</text>
+<rect x="4172.3" y="706.0" width="10.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="4177.4" y1="702.0" x2="4177.4" y2="706.0" class="hairline"/>
+<rect x="4113.3" y="678.0" width="128.1" height="16.0" class="callout"/>
+<text x="4117.3" y="690.5" class="tiny" text-anchor="start"><tspan x="4117.3" dy="0.0">6 discovery slots x 40 ms</tspan></text>
+<line x1="44.0" y1="752.0" x2="4258.0" y2="752.0" class="major-line"/>
+<text x="179.0" y="806.0" class="row-label">FEASIBILITY VERDICT</text>
+<rect x="3743.6" y="762.0" width="381.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3934.3" y="779.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3934.3" dy="0.0">legal worst-case margin</tspan><tspan x="3934.3" dy="12.0">8.897 s</tspan></text>
+<rect x="3314.9" y="806.0" width="810.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3719.9" y="823.0" class="small center event-text" text-anchor="middle"><tspan x="3719.9" dy="0.0">four-board HIL margin</tspan><tspan x="3719.9" dy="12.0">18.897 s</tspan></text>
+<line x1="44.0" y1="852.0" x2="4258.0" y2="852.0" class="major-line"/>
+<text x="179.0" y="895.5" class="row-label">KEY POINT</text>
+<rect x="2026.0" y="864.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="2286.0" y="878.5" class="small center" text-anchor="middle"><tspan x="2286.0" dy="0.0">The deepest legal four-hop copy can arrive by 80.000 s. Transport preemption plus PHY</tspan><tspan x="2286.0" dy="12.0">preparation consumes at most 1.103 s, so the fixed 90.000 s discovery start retains 8.897 s of</tspan><tspan x="2286.0" dy="12.0">true worst-case margin. The observed three-hop topology retains 18.897 s. This timing contract</tspan><tspan x="2286.0" dy="12.0">is feasible.</tspan></text>
+<line x1="44.0" y1="931.0" x2="4258.0" y2="931.0" class="major-line"/>
+<line x1="44.0" y1="957.0" x2="44.0" y2="995.0" class="major-line"/>
+<line x1="44.0" y1="957.0" x2="4258.0" y2="957.0" class="axis-line"/>
+<line x1="314.0" y1="956.0" x2="314.0" y2="968.0" class="tick"/>
+<line x1="742.7" y1="956.0" x2="742.7" y2="968.0" class="tick"/>
+<line x1="1171.4" y1="956.0" x2="1171.4" y2="968.0" class="tick"/>
+<line x1="1600.1" y1="956.0" x2="1600.1" y2="968.0" class="tick"/>
+<line x1="2028.8" y1="956.0" x2="2028.8" y2="968.0" class="tick"/>
+<line x1="3314.9" y1="956.0" x2="3314.9" y2="968.0" class="tick"/>
+<line x1="3743.6" y1="956.0" x2="3743.6" y2="968.0" class="tick"/>
+<line x1="4125.0" y1="956.0" x2="4125.0" y2="968.0" class="tick"/>
+<line x1="4172.3" y1="956.0" x2="4172.3" y2="968.0" class="tick"/>
+<line x1="4182.5" y1="956.0" x2="4182.5" y2="968.0" class="tick"/>
+<text x="314.0" y="980.0" class="axis-time">0 s</text>
+<text x="742.7" y="980.0" class="axis-time">10 s</text>
+<text x="1171.4" y="980.0" class="axis-time">20 s</text>
+<text x="1600.1" y="980.0" class="axis-time">30 s</text>
+<text x="2028.8" y="980.0" class="axis-time">40 s</text>
+<text x="3314.9" y="980.0" class="axis-time">70 s</text>
+<text x="3743.6" y="980.0" class="axis-time">80 s</text>
+<text x="4125.0" y="980.0" class="axis-time">88.897 s</text>
+<text x="4172.3" y="980.0" class="axis-time">90 s</text>
+<text x="4210.5" y="980.0" class="axis-time">90.240 s</text>
+<text x="314.0" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="314.0" dy="0.0">initial origin flood</tspan></text>
+<text x="742.7" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="742.7" dy="0.0">redrive 1</tspan></text>
+<text x="1171.4" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="1171.4" dy="0.0">redrive 2</tspan></text>
+<text x="1600.1" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="1600.1" dy="0.0">redrive 3</tspan></text>
+<text x="2028.8" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="2028.8" dy="0.0">final redrive</tspan></text>
+<text x="3314.9" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="3314.9" dy="0.0">latest three-hop arrival</tspan></text>
+<text x="3743.6" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="3743.6" dy="0.0">latest legal four-hop arrival</tspan></text>
+<text x="4125.0" y="1009.5" class="tiny center" text-anchor="middle"><tspan x="4125.0" dy="0.0">latest safe prep start</tspan></text>
+<text x="4172.3" y="1039.5" class="tiny center" text-anchor="middle"><tspan x="4172.3" dy="0.0">shared discovery start</tspan></text>
+<text x="4182.5" y="1069.5" class="tiny center" text-anchor="middle"><tspan x="4182.5" dy="0.0">discovery slots complete</tspan></text>
+<text x="2150.0" y="1124.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">All positions are real milliseconds from the first origin transmission. The five origin copies are the initial flood plus four 10 s redrives; each RF hop is conservatively budgeted at 10 s.</tspan></text>
+</svg>

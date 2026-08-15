@@ -866,7 +866,8 @@ static bool c5_repair_pending_state_matches(
     if (kind == APP_MESH_C5_TX_AUTH_FORWARDED_ACK_ROUTE_REPAIR) {
         return (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
                 pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
-               !pending->gateway_ack_forward_pending && batch == NULL;
+               !pending->gateway_ack_forward_pending && batch == NULL &&
+               pending->packet.src_id == peer_id;
     }
     if (kind != APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR) {
         return false;
@@ -874,11 +875,12 @@ static bool c5_repair_pending_state_matches(
     return (pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD ||
             pending->state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF) &&
            pending->gateway_ack_forward_pending && batch != NULL &&
+           pending->gateway_ack_forward_next_hop_id == peer_id &&
            batch->valid && batch->preserve_payload && batch->count > 0u &&
            batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE &&
            batch->peer_id == peer_id &&
            batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK &&
-           batch->template_ack.packet.dst_id == peer_id &&
+           batch->template_ack.packet.dst_id == pending->packet.src_id &&
            batch->template_ack.next_hop_id == peer_id;
 }
 
@@ -891,7 +893,7 @@ static bool c5_late_gateway_ack_batch_matches(
            batch->owner == APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD &&
            batch->peer_id == peer_id &&
            batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK &&
-           batch->template_ack.packet.dst_id == peer_id &&
+           batch->template_ack.packet.dst_id != 0u &&
            batch->template_ack.next_hop_id == peer_id;
 }
 
@@ -926,7 +928,6 @@ bool app_mesh_ch9_c5_repair_authorization_capture(
         return true;
     }
     if (!relay_tx_active || pending == NULL || repair_peer_id == 0u ||
-        pending->packet.src_id != repair_peer_id ||
         pending->packet.payload_len != pending->payload_len ||
         pending->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
         (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u ||
@@ -991,7 +992,6 @@ bool app_mesh_ch9_c5_repair_owner_matches(
                                      sizeof(ack_digest));
     }
     if (!relay_tx_active || pending == NULL ||
-        pending->packet.src_id != authorization->peer_id ||
         pending->packet.session_id != authorization->pending_session_id ||
         pending->packet.seq != authorization->pending_seq ||
         pending->packet.msg_type != authorization->pending_msg_type ||

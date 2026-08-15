@@ -1,0 +1,20 @@
+row,start,end,text,style,lane_index
+origin,0,400,"initial control",emphasis,0
+origin,10000,10400,"redrive 1",emphasis,0
+origin,20000,20400,"redrive 2",emphasis,0
+origin,30000,30400,"redrive 3",emphasis,0
+origin,40000,40400,"redrive 4",emphasis,0
+depth3,0,30000,"initial copy: latest depth-3 arrival",quiet,0
+depth3,10000,40000,"redrive 1 envelope",quiet,1
+depth3,20000,50000,"redrive 2 envelope",quiet,2
+depth3,30000,60000,"redrive 3 envelope",quiet,3
+depth3,40000,70000,"last copy: latest depth-3 arrival",emphasis,4
+depth4,0,40000,"initial copy: latest legal depth-4 arrival",quiet,0
+depth4,10000,50000,"redrive 1 envelope",quiet,1
+depth4,20000,60000,"redrive 2 envelope",quiet,2
+depth4,30000,70000,"redrive 3 envelope",quiet,3
+depth4,40000,80000,"last copy: latest legal depth-4 arrival",emphasis,4
+prep,88897,90000,"transport preemption 1000 ms\nPHY measured 63 ms + margin 40 ms",emphasis,0
+physical,90000,90240,"6 discovery slots x 40 ms",emphasis,0
+margin,80000,88897,"legal worst-case margin\n8.897 s",emphasis,0
+margin,70000,88897,"four-board HIL margin\n18.897 s",default,1

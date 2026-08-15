@@ -1,0 +1,11 @@
+key,value
+title,"SURVEY CONTROL: PARALLEL WORST-CASE DEADLINE CHECK"
+caption,"All positions are real milliseconds from the first origin transmission. The five origin copies are the initial flood plus four 10 s redrives; each RF hop is conservatively budgeted at 10 s."
+key_point,"The deepest legal four-hop copy can arrive by 80.000 s. Transport preemption plus PHY preparation consumes at most 1.103 s, so the fixed 90.000 s discovery start retains 8.897 s of true worst-case margin. The observed three-hop topology retains 18.897 s. This timing contract is feasible."
+start,0
+end,92000
+width,4300
+unit,ms
+axis_caption_width,190
+row_label_width,270
+max_inline_lines,4

@@ -104,6 +104,9 @@ void mesh_sim_scheduler_cancel_role_work(struct mesh_sim_world *world,
 void mesh_sim_scheduler_cancel_connection_repair(
     struct mesh_sim_world *world,
     uint16_t connection_index);
+void mesh_sim_scheduler_cancel_pending_connection_event(
+    struct mesh_sim_world *world,
+    uint16_t connection_index);
 void mesh_sim_scheduler_cancel_relay_tick(struct mesh_sim_world *world,
                                           uint8_t node_index);
 void mesh_sim_scheduler_cancel_route_discovery(

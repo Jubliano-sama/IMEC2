@@ -28,11 +28,14 @@ def function_body(source: str, name: str) -> str:
 
 event_tx = (APP / "app_mesh_report_event_tx.inc").read_text()
 coordination = (APP / "app_mesh_report_coordination.inc").read_text()
+delivery = (APP / "app_mesh_report_delivery.inc").read_text()
 transport = (APP / "app_mesh_report_transport.inc").read_text()
 route_control = (APP / "app_mesh_report_route_control.inc").read_text()
 anchor_radio = (APP / "app_anchor_radio.inc").read_text()
 report_source = (APP / "app_mesh_report.c").read_text()
 owner_source = (ROOT / "src" / "mesh_event_owner.c").read_text()
+mesh_source = (ROOT / "src" / "mesh.c").read_text()
+route_rx_source = (ROOT / "src" / "mesh_relay_route_rx.inc").read_text()
 
 assert (
     "expires_at_ms[MESH_ROUTE_TEST_CH9_MAX_CONNECTIONS]"
@@ -96,7 +99,10 @@ duplicate = handler.index("mesh_event_accept_duplicate(", classify)
 reservation = handler.index(
     "app_mesh_c5_event_accept_reservation(", duplicate
 )
-accept_begin = handler.index("app_mesh_event_retry_begin(", reservation)
+guard_check = handler.index(
+    "mesh_relay_check_channel9_timing_guarded_direction(", reservation
+)
+accept_begin = handler.index("app_mesh_event_retry_begin(", guard_check)
 predecessor = handler.index(
     "predecessor_owner_generation", accept_begin
 )
@@ -115,6 +121,7 @@ assert (
     < classify
     < duplicate
     < reservation
+    < guard_check
     < accept_begin
     < predecessor
     < repair_token_guard
@@ -122,6 +129,31 @@ assert (
     < clear_loser
     < accept_attempt
 )
+guard_call = handler[guard_check:accept_begin]
+assert "&reservation_timing" in guard_call
+assert "MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM" in guard_call
+counterphase = handler.index(
+    "mesh_event_accept_align_to_upstream_half_phase(", guard_check
+)
+counterphase_reservation = handler.index(
+    "app_mesh_c5_event_accept_reservation(", counterphase
+)
+counterphase_guard = handler.index(
+    "mesh_relay_check_channel9_timing_guarded_direction(",
+    counterphase_reservation,
+)
+response_prepare = handler.index(
+    "mesh_prepare_event_control_record(", counterphase_guard
+)
+assert (
+    guard_check
+    < counterphase
+    < counterphase_reservation
+    < counterphase_guard
+    < response_prepare
+    < accept_begin
+)
+assert "accept_phase_shift_ms" in handler[response_prepare:accept_begin]
 assert (
     "mesh_forwarded_ack_event_repair_authorization.peer_id ==\n"
     "                previous_hop_id"
@@ -130,6 +162,101 @@ assert (
 assert handler.count(
     "mesh_event_accept_retry.c5_repair_authorization ="
 ) == 1
+
+counterphase_body = function_body(
+    event_tx, "mesh_event_accept_align_to_upstream_half_phase"
+)
+assert "MESH_RELAY_CHANNEL9_GUARD_INTERVAL_CONFLICT" in counterphase_body
+assert "MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM" in counterphase_body
+assert "upstream->timing.event_interval_ms != proposed->event_interval_ms" in counterphase_body
+assert "upstream->timing.event_window_ms != proposed->event_window_ms" in counterphase_body
+assert "upstream->timing.guard_ms != proposed->guard_ms" in counterphase_body
+assert "interval_ms / 2u" in counterphase_body
+assert "signed_shift_ms == 0" in counterphase_body
+assert "app_mesh_event_timing_apply_phase_shift(accepted" in counterphase_body
+
+shift_parser = function_body(
+    event_tx, "mesh_event_accept_phase_shift_from_payload"
+)
+assert "tlv_find_unique(" in shift_parser
+assert "TLV_MESH_EVENT_PHASE_SHIFT_MS" in shift_parser
+assert "ret == PROTO_ERR_NOT_FOUND" in shift_parser
+assert "*phase_shift_ms = 0u" in shift_parser
+assert "value_len != sizeof(uint16_t)" in shift_parser
+assert "*phase_shift_ms < event_interval_ms" in shift_parser
+
+prepare_control = function_body(event_tx, "mesh_prepare_event_control_record")
+assert "else if (phase_shift_ms != 0u)" in prepare_control
+assert "TLV_MESH_EVENT_PHASE_SHIFT_MS" in prepare_control
+
+accept_branch = handler.index(
+    "} else if (packet->msg_type == MSG_MESH_EVENT_ACCEPT)"
+)
+shift_parse = handler.index(
+    "mesh_event_accept_phase_shift_from_payload(", accept_branch
+)
+accept_match = handler.index("mesh_event_accept_rx_match(", shift_parse)
+replay_guard = handler.index("if (replayed_event_accept)", accept_match)
+replay_return = handler.index("return true;", replay_guard)
+frozen_proposal = handler.index(
+    "timing = mesh_event_propose_record.timing", replay_return
+)
+apply_shift = handler.index(
+    "app_mesh_event_timing_apply_phase_shift(&timing", frozen_proposal
+)
+bind_parity = handler.index(
+    "mesh_event_timing_set_local_first_slot_tx(&timing, true)", apply_shift
+)
+install_shifted = handler.index(
+    "mesh_install_channel9_timing_direction(", bind_parity
+)
+assert (
+    shift_parse
+    < accept_match
+    < replay_guard
+    < replay_return
+    < frozen_proposal
+    < apply_shift
+    < bind_parity
+    < install_shifted
+)
+
+wire_validator = function_body(mesh_source, "mesh_event_control_payload_validate")
+assert "TLV_MESH_EVENT_PHASE_SHIFT_MS" in wire_validator
+assert "packet->msg_type != MSG_MESH_EVENT_ACCEPT" in wire_validator
+assert "tlv_find_unique(" in wire_validator
+assert "phase_shift_len != sizeof(uint16_t)" in wire_validator
+assert "proto_get_u16_le(phase_shift_raw) >= timing.event_interval_ms" in wire_validator
+
+route_request = function_body(route_rx_source, "handle_route_request")
+route_timing_guard = route_request.index(
+    "mesh_relay_check_channel9_timing_guarded_direction("
+)
+interval_only = route_request.index(
+    "MESH_RELAY_CHANNEL9_GUARD_INTERVAL_CONFLICT", route_timing_guard
+)
+upstream_only = route_request.index(
+    "MESH_RELAY_CHANNEL9_DIRECTION_UPSTREAM", interval_only
+)
+omit_install = route_request.index(
+    "install_reply_timing = false", upstream_only
+)
+omit_wire = route_request.index(
+    "fields.proposed_channel9_timing_valid = false", omit_install
+)
+other_reject = route_request.index("if (ret != PROTO_OK)", omit_wire)
+route_admission = route_request.index("upsert_reactive_route(", other_reject)
+reply_build = route_request.index("build_route_reply(", route_admission)
+assert (
+    route_timing_guard
+    < interval_only
+    < upstream_only
+    < omit_install
+    < omit_wire
+    < other_reject
+    < route_admission
+    < reply_build
+)
 
 ordinary_classifier = function_body(
     owner_source, "mesh_event_owner_classify_proposal"
@@ -173,11 +300,68 @@ assert "c5_repair_authorization" not in duplicate_accept
 
 finish = function_body(event_tx, "mesh_event_accept_finish_send")
 finish_guard = finish.index("mesh_event_accept_predecessor_matches()")
+preserved = finish.index(
+    "committed_timing = mesh_event_accept_retry.response.timing"
+)
+defer_first = finish.index(
+    "mesh_event_timing_defer_first_start_if_needed("
+)
 install = finish.index("mesh_install_channel9_timing_direction(")
+assert "&committed_timing" in finish[defer_first:install]
 replace = finish.index("replace_local_owner_after_accept", install)
 abandon = finish.index("mesh_event_owner_abandon(", replace)
 begin = finish.index("mesh_event_owner_begin_peer(", abandon)
-assert finish_guard < install < replace < abandon < begin
+assert finish_guard < preserved < defer_first < install < replace < abandon < begin
+assert "app_mesh_c5_event_accept_realign_is_reserved" not in finish
+assert "reservation_timing" not in finish
+assert "REALIGN_OUT_OF_BOUNDS" not in finish
+assert "MESH_RADIO_EVENT_ACCEPT_REALIGN_SLOP_MS" in finish
+install_call = finish[install:finish.index(");", install) + 2]
+assert "&committed_timing" in install_call
+assert "committed_timing = transmitted_timing" not in finish
+assert "transmitted_timing" not in install_call
+
+defer_first_body = function_body(
+    event_tx, "mesh_event_timing_defer_first_start_if_needed"
+)
+assert "timing->next_event_time_ms += defer_ms" in defer_first_body
+assert "timing->last_successful_ch9_event_ms += defer_ms" in defer_first_body
+assert "timing->event_counter += periods" in defer_first_body
+
+physical_rx = function_body(
+    coordination, "mesh_rx_pending_physical_received_at_ms"
+)
+assert "pending->first_received_at_ms" in physical_rx
+assert "pending->received_at_ms" not in physical_rx
+
+drain = function_body(delivery, "mesh_drain_rx_queue_locked")
+event_delivery = drain.index("admitted_event_control = mesh_handle_event_control(")
+event_delivery_end = drain.index(");", event_delivery)
+assert (
+    "mesh_rx_pending_physical_received_at_ms(pending)"
+    in drain[event_delivery:event_delivery_end]
+)
+
+route_listener = function_body(route_control, "mesh_listen_for_route_reply")
+timestamp_capture = route_listener.index(
+    "dwm3000_driver_last_rx_host_uptime(&received_at_ms)"
+)
+inline_event = route_listener.index("mesh_handle_event_control(", timestamp_capture)
+queued_event = route_listener.index(
+    "mesh_queue_from_frame_at_internal(", inline_event
+)
+assert timestamp_capture < inline_event < queued_event
+assert "received_at_ms" in route_listener[
+    inline_event : route_listener.index(");", inline_event)
+]
+assert "received_at_ms" in route_listener[
+    queued_event : route_listener.index(");", queued_event)
+]
+
+guarded_install = function_body(
+    coordination, "mesh_install_channel9_timing_direction"
+)
+assert "mesh_relay_set_channel9_timing_guarded_direction(" in guarded_install
 
 # A forwarded gateway ACK is the last custody evidence for a child packet.  A
 # stale or explicitly closed Channel-9 timing may retire ordinary hop ACKs, but

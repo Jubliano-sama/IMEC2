@@ -201,12 +201,15 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             # not request a secured or bonded BLE link. Keep controller crypto
             # available to the Bluetooth stack, but compile unused controller
             # key exchange/encryption and GATT cache/read-multiple surfaces out.
+            # Assertions remain enabled; only their verbose controller-side
+            # diagnostic strings are omitted from this flash-constrained role.
             # Service Changed remains explicit so the host can rediscover the
             # new attribute table on the same physical gateway identity.
             file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
                 "CONFIG_ADC=n\n"
                 "CONFIG_BT_CTLR_ECDH=n\n"
                 "CONFIG_BT_CTLR_LE_ENC=n\n"
+                "CONFIG_BT_ASSERT_VERBOSE=n\n"
                 "CONFIG_BT_GATT_CACHING=n\n"
                 "CONFIG_BT_GATT_READ_MULTIPLE=n\n"
                 "CONFIG_BT_GATT_READ_MULT_VAR_LEN=n\n"
@@ -238,6 +241,16 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             # ordinary deferred warning/error ring bounded so the five-result
             # survey journal leaves the required 10 KiB static RAM reserve.
             "CONFIG_LOG_BUFFER_SIZE=1920\n")
+        if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor" OR
+           IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
+            file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
+                # Four-board survey qualification measured 2076/6144 bytes on
+                # the system workqueue, while its current compiler chain is
+                # 4088 bytes. 5376 retains the 20% policy floor plus compiler
+                # margin, freeing RAM for the measured route worker without
+                # reducing total static headroom.
+                "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=5376\n")
+        endif()
     endif()
     if(IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
@@ -474,8 +487,14 @@ if(NOT IMEC_GIT_VERSION)
     set(IMEC_GIT_VERSION "unknown")
 endif()
 string(TIMESTAMP IMEC_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%S")
-string(SHA256 IMEC_STACK_DIAG_ID_HASH
+set(IMEC_STACK_DIAG_ID_INPUT
     "${IMEC_BUILD_PRESET}|${IMEC_GIT_VERSION}|${IMEC_BUILD_TIMESTAMP}|${BOARD}|${CMAKE_C_COMPILER_ID}|${CMAKE_C_COMPILER_VERSION}")
+if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
+    string(APPEND IMEC_STACK_DIAG_ID_INPUT
+        "|forced_gateway_relay_hops=${IMEC_FORCED_GATEWAY_RELAY_HOPS}")
+endif()
+string(SHA256 IMEC_STACK_DIAG_ID_HASH
+    "${IMEC_STACK_DIAG_ID_INPUT}")
 set(IMEC_STACK_DIAG_BUILD_ID
     "imec-stack-v1:${IMEC_BUILD_PRESET}:${IMEC_STACK_DIAG_ID_HASH}")
 

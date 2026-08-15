@@ -34,7 +34,6 @@ int app_anchor_init(void)
     const struct app_anchor_survey_discovery_ops discovery_ops = {
         .abort_requested = app_anchor_survey_runtime_abort_requested,
         .abort_pair = app_anchor_survey_runtime_abort_pair,
-        .preempt_radio = anchor_preempt_for_survey_discovery,
         .admit_start = app_anchor_survey_runtime_admit_discovery,
         .queue_start = app_anchor_survey_runtime_queue_discovery,
         .schedule_work_ms =

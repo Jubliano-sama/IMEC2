@@ -1,0 +1,22 @@
+row,start,end,text,style,lane_index
+child,0,30,"C transmits retained survey report",emphasis,0
+child,30,1040,"Exact source custody remains valid",default,0
+child,1040,1080,"B forwards after local ACK settles",emphasis,0
+child,1080,1560,"Normal gateway-ACK settlement continues",default,0
+route_wait,30,520,"B stores C bytes\nroute-wait TX deferred",default,0
+route_wait,520,800,"Must stay retained during ACK RX",emphasis,0
+route_wait,800,1040,"Becomes eligible after local retirement",default,0
+route_wait,1040,1080,"TX C report upstream",emphasis,0
+local,0,520,"B's own report is already upstream\nwaiting for exact gateway ACK",default,0
+local,520,760,"Known Channel-9 ACK receive reservation",emphasis,0
+local,760,800,"Decode exact ACK\nretire local owner",emphasis,0
+return,0,260,"B report reaches A and gateway",default,0
+return,260,520,"Gateway emits exact ACK; A retains return",default,0
+return,520,560,"A transmits ACK in B's reserved slot",emphasis,0
+old,520,760,"WRONG: route-wait blanket suppresses B RX",shaded,0
+old,760,1560,"Both owners retry indefinitely\noperation reaches outer timeout",shaded,0
+fixed,520,760,"RIGHT: ACK wait keeps RX open\nroute-wait stays untouched",emphasis,0
+fixed,760,1040,"Local owner retires\ncoordinator releases route-wait",emphasis,0
+outcome,0,520,"Two valid retained owners",default,0
+outcome,520,800,"One physical priority decision",emphasis,0
+outcome,800,1560,"Progress in the next cadence\nno new state machine or retry lane",emphasis,0

@@ -53,10 +53,15 @@ from tools.gateway_gui.delivery_dedup import (  # noqa: E402
     is_host_delivery_packet,
 )
 from tools.gateway_gui.operation_policy import (  # noqa: E402
+    ASSIGNMENT_DEFAULT_BUDGET_MS,
     DISCOVERY_DEFAULT_ROUND_COUNT,
+    DISCOVERY_DEFAULT_BUDGET_MS,
     DISCOVERY_DEFAULT_SLOT_MS,
     DISCOVERY_DEFAULT_START_DELAY_MS,
     ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+    AssignmentOperationPolicy,
+    DiscoveryOperationPolicy,
+    OperationPolicyProfile,
     assignment_required_budget_ms,
     discovery_required_budget_ms,
 )
@@ -66,6 +71,9 @@ from tools.gateway_gui.command_telemetry import (  # noqa: E402
 )
 from tools.gateway_gui.command_orchestration import (  # noqa: E402
     GATEWAY_COMMAND_COMPLETION_GUARD_S,
+    GatewayAssignmentReplayBarrier,
+    GatewayAssignmentReplayReceipt,
+    gateway_command_requires_preflight,
 )
 from tools.gateway_gui.anchor_geometry import solve_anchor_layout  # noqa: E402
 from tools.gateway_gui.diagnostic_models import SurveyGeometryModel  # noqa: E402
@@ -94,6 +102,51 @@ DISCOVERY_SLOT_UNAVAILABLE = 0xFF
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
 SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S = 5.0
 SURVEY_TERMINAL_DRAIN_MAX_S = 90.0
+
+
+def _assignment_operation_policy(
+    expected_anchor_count: int,
+    command_budget_ms: int | None,
+) -> OperationPolicyProfile:
+    """Mirror the desktop GUI's explicit assignment policy on the wire."""
+    return OperationPolicyProfile(
+        assignment=AssignmentOperationPolicy(
+            expected_anchor_count=expected_anchor_count,
+            operation_budget_ms=(
+                ASSIGNMENT_DEFAULT_BUDGET_MS
+                if command_budget_ms is None
+                else command_budget_ms
+            ),
+            response_spread_ms=ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+        )
+    )
+
+
+def _survey_operation_policy(
+    *,
+    expected_anchor_count: int,
+    command_budget_ms: int | None,
+    discovery_slot_count: int,
+    report_grace_ms: int,
+) -> OperationPolicyProfile:
+    """Bind headless survey arguments to the policy firmware validates."""
+    return OperationPolicyProfile(
+        assignment=AssignmentOperationPolicy(
+            expected_anchor_count=expected_anchor_count,
+        ),
+        discovery=DiscoveryOperationPolicy(
+            start_delay_ms=DISCOVERY_DEFAULT_START_DELAY_MS,
+            slot_ms=DISCOVERY_DEFAULT_SLOT_MS,
+            slot_count=discovery_slot_count,
+            round_count=DISCOVERY_DEFAULT_ROUND_COUNT,
+            report_grace_ms=report_grace_ms,
+            operation_budget_ms=(
+                DISCOVERY_DEFAULT_BUDGET_MS
+                if command_budget_ms is None
+                else command_budget_ms
+            ),
+        ),
+    )
 
 
 def _is_ble_address(value: str) -> bool:
@@ -805,6 +858,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     receipt_tasks: set[asyncio.Task[None]] = set()
     receipt_in_flight: set[object] = set()
     survey_custody_activity = asyncio.Event()
+    assignment_replay_barrier = GatewayAssignmentReplayBarrier()
+    assignment_replay_changed = asyncio.Event()
     command_budget_ms = getattr(args, "command_budget_ms", None)
     received = 0
     decode_errors: list[str] = []
@@ -833,6 +888,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         packet: Packet,
         *,
         accepted: bool,
+        assignment_replay: GatewayAssignmentReplayReceipt | None,
         client: BleakClient,
         characteristic: object,
         gateway_id: int,
@@ -876,6 +932,10 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     f"seq={receipt.identity.seq}",
                     flush=True,
                 )
+                if assignment_replay is not None:
+                    assignment_replay_barrier.receipt_written(
+                        assignment_replay
+                    )
             except Exception as exc:
                 disconnect_errors.append(
                     "gateway host receipt write failed: "
@@ -885,6 +945,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 transport_failed.set()
             finally:
                 receipt_in_flight.discard(receipt.identity)
+                assignment_replay_changed.set()
 
         task = asyncio.create_task(write_receipt())
         receipt_tasks.add(task)
@@ -903,6 +964,8 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             transport_failed.set()
         for packet in result.packets:
             accepted_for_receipt = False
+            assignment_replay = None
+            command_event = None
             survey_custody_record = False
             received += 1
             print(
@@ -938,6 +1001,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     and is_host_delivery_packet(packet)
                 )
                 print(f"GATEWAY_COMMAND_EVENT {event}", flush=True)
+                command_event = event
                 if qualification is not None and qualification.observe(event):
                     qualification_done.set()
             if isinstance(packet, Packet):
@@ -951,6 +1015,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         or delivery_dedup.commit(packet, delivery)
                     )
                 elif delivery.disposition is PacketDisposition.CONFLICT:
+                    accepted_for_receipt = False
                     print(
                         "BLE_HOST_CONFLICT "
                         f"type=0x{packet.msg_type:02x} "
@@ -959,9 +1024,14 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         "no receipt sent",
                         flush=True,
                     )
+            if accepted_for_receipt and command_event is not None:
+                assignment_replay = assignment_replay_barrier.observe(
+                    command_event
+                )
             if schedule_host_receipt(
                 packet,
                 accepted=accepted_for_receipt,
+                assignment_replay=assignment_replay,
                 client=client,
                 characteristic=characteristic,
                 gateway_id=gateway_id,
@@ -974,6 +1044,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         disconnect_errors.append("gateway disconnected during active command or monitoring")
         qualification_done.set()
         transport_failed.set()
+        assignment_replay_changed.set()
 
     def raise_transport_errors(label: str) -> None:
         if decode_errors:
@@ -1034,6 +1105,39 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 raise_transport_errors(f"{label} terminal drain")
         current.validate()
 
+    async def await_assignment_replay_clear(timeout_s: float) -> None:
+        if not assignment_replay_barrier.active:
+            return
+        print(
+            "BLE_ASSIGNMENT_REPLAY_DRAIN waiting for exact terminal receipt",
+            flush=True,
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while assignment_replay_barrier.active:
+            assignment_replay_changed.clear()
+            if not assignment_replay_barrier.active:
+                break
+            raise_transport_errors("assignment replay drain")
+            remaining_s = deadline - loop.time()
+            if remaining_s <= 0.0:
+                raise RuntimeError(
+                    "assignment replay terminal receipt timed out before "
+                    "successor command"
+                )
+            try:
+                await asyncio.wait_for(
+                    assignment_replay_changed.wait(),
+                    timeout=remaining_s,
+                )
+            except asyncio.TimeoutError as exc:
+                raise RuntimeError(
+                    "assignment replay terminal receipt timed out before "
+                    "successor command"
+                ) from exc
+        raise_transport_errors("assignment replay drain")
+        print("BLE_ASSIGNMENT_REPLAY_DRAIN_COMPLETE", flush=True)
+
     gateway_target = await _resolve_gateway_target(
         args.gateway,
         args.connect_timeout,
@@ -1054,12 +1158,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             1,
             min(int(characteristic.max_write_without_response_size or 20), 244),
         )
-        strict_mode = (
-            args.require_survey_success
-            or args.require_assignment_success
-            or args.command == "qualify-reachability"
-        )
-        defer_notifications = strict_mode or args.notification_hold_s > 0.0
+        defer_notifications = args.notification_hold_s > 0.0
         notifications_enabled = False
         if not defer_notifications:
             await client.start_notify(PACKET_TX_UUID, on_notify)
@@ -1103,24 +1202,29 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             )
         elif args.command == "qualify-reachability":
             route_identity = _next_identity()
+            operation_policy = _assignment_operation_policy(
+                args.expected_anchors,
+                command_budget_ms,
+            )
             route_args = {
                 "host_id": args.host_id,
                 "gateway_id": gateway_id,
                 "session_id": route_identity,
                 "seq": route_identity & 0xFFFF,
                 "command_budget_ms": command_budget_ms,
+                "operation_policy": operation_policy,
             }
             qualification = RouteRefreshQualification(
                 route_identity,
                 route_identity & 0xFFFF,
                 route_identity,
             )
+            await enable_notifications()
             await send_command(
                 "here-i-am",
                 route_identity,
                 build_here_i_am_command(**route_args),
             )
-            await enable_notifications()
             await await_qualification(
                 qualification,
                 _qualification_timeout_s(
@@ -1137,15 +1241,20 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "delivery_claim=local-broadcast-only",
                 flush=True,
             )
+            await await_assignment_replay_clear(args.assignment_timeout)
 
             assignment_identity = _next_identity(route_identity)
+            assignment_policy = operation_policy
             assignment_args = {
                 "host_id": args.host_id,
                 "gateway_id": gateway_id,
                 "session_id": assignment_identity,
                 "seq": assignment_identity & 0xFFFF,
-                "command_budget_ms": command_budget_ms,
+                "command_budget_ms": (
+                    assignment_policy.assignment.operation_budget_ms
+                ),
                 "expected_anchor_count": args.expected_anchors,
+                "operation_policy": assignment_policy,
             }
             qualification_done.clear()
             qualification = AssignmentQualification(
@@ -1200,9 +1309,17 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     command_args.pop("command_budget_ms")
                     command = build_survey_abort_command(**command_args)
                 elif args.command == "assign-slots":
+                    assignment_policy = _assignment_operation_policy(
+                        args.expected_anchors,
+                        command_budget_ms,
+                    )
+                    command_args["command_budget_ms"] = (
+                        assignment_policy.assignment.operation_budget_ms
+                    )
                     command = build_assign_discovery_slots_command(
                         **command_args,
                         expected_anchor_count=args.expected_anchors,
+                        operation_policy=assignment_policy,
                     )
                     if args.require_assignment_success:
                         qualification = AssignmentQualification(
@@ -1238,6 +1355,12 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             if args.require_survey_success
                             else None
                         ),
+                        operation_policy=_survey_operation_policy(
+                            expected_anchor_count=args.expected_anchors,
+                            command_budget_ms=command_budget_ms,
+                            discovery_slot_count=args.discovery_slots,
+                            report_grace_ms=args.survey_duration_ms,
+                        ),
                     )
                     if args.require_survey_success:
                         qualification = SurveyQualification(
@@ -1248,6 +1371,17 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             args.expected_anchors,
                             args.expected_pairs,
                         )
+                if (
+                    notifications_enabled
+                    and gateway_command_requires_preflight(command.command_id)
+                ):
+                    # Give an already-retained publication one event-loop turn
+                    # to enter the exact receipt barrier. A later publication
+                    # race is still closed by firmware admission backpressure.
+                    await asyncio.sleep(0)
+                    await await_assignment_replay_clear(
+                        args.assignment_timeout
+                    )
                 await send_command(args.command, identity, command)
                 if defer_notifications:
                     await enable_notifications()

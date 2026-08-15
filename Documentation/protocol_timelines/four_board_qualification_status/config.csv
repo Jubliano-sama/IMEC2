@@ -1,0 +1,11 @@
+key,value
+title,"IMEC2 FOUR-BOARD PROTOCOL QUALIFICATION: CURRENT STATE"
+caption,"Figure: Current qualification path for one gateway, a direct anchor, a forced-hop anchor, and a forced-two-hop anchor. Horizontal position is protocol order, not elapsed time."
+key_point,"Green: headless BLE, Here-I-Am, exact routes 1 / 2 / 3, durable assignment, TABLE ACKs, the full depth-3 survey downlink, and A/B discovery reports. Red: C stages and repeatedly transmits its report, but B retains an older upstream route-wait owner and launches route repair through the accepted child slot. That uplink arbitration fix and its regression are in progress; full survey and the click matrix remain pending."
+start,0
+end,130
+width,4300
+unit,phase
+axis_caption_width,175
+row_label_width,220
+max_inline_lines,4

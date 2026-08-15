@@ -1,0 +1,12 @@
+time,label,caption,kind,row
+0,command admitted,survey operation begins,axis,
+40000,last redrive,gateway has emitted all bounded control waves,axis,
+80000,latest depth-4 copy,legal propagation envelope ends,axis,
+90000,physical start,all anchors share the scheduled instant,axis,
+90960,discovery done,24 physical slots complete,axis,
+209993,accounted report bound,all existing report terms end,axis,
+240000,4 min,missing-report collection closes,axis,
+348000,9 control floors,three K3 edges with two reruns,axis,
+360000,6 min,hard survey terminal,axis,
+240000,collection ceiling,,row,collection
+360000,operation ceiling,,row,terminal

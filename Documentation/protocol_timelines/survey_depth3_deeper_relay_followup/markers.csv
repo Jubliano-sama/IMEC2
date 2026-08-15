@@ -1,0 +1,13 @@
+time,label,caption,kind,row
+0,gateway wake,direct control contact begins,axis,
+400,direct payload,C rejects hop 0 as required,axis,
+1607,A wake,first relayed standard wake,axis,
+2057,A payload,C rejects hop 1 as required,axis,
+2157,critical transition,reopen standard PHY after depth shortfall,axis,
+2786,B wake,second relayed standard wake,axis,
+3236,B payload,required hop-2 control arrives,axis,
+3336,C admitted,discovery work can start,axis,
+3700,downlink proven,C stages its discovery report,axis,
+2986,missed,,row,c_observed
+2986,captured,,row,c_candidate
+3286,hop 2 accepted,,row,c_candidate

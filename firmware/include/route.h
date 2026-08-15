@@ -16,7 +16,10 @@ extern "C" {
 #define ROUTE_NO_SELECTION 0xFFu
 #define ROUTE_RETRIES_PER_CANDIDATE 3u
 #define ROUTE_MAX_FAILURES (ROUTE_RETRIES_PER_CANDIDATE + 1u)
+/* No first-hop proof should fail quickly. Once an exact hop ACK transfers
+ * custody, allow the bounded multi-hop gateway ACK return path to finish. */
 #define ROUTE_GATEWAY_ACK_TIMEOUT_MS 2000u
+#define ROUTE_GATEWAY_ACK_PROGRESS_TIMEOUT_MS 30000u
 #define ROUTE_RETRY_BACKOFF_FIRST_MS 1500u
 #define ROUTE_RETRY_BACKOFF_SECOND_MS 3000u
 #define ROUTE_RETRY_BACKOFF_MAX_MS 6000u

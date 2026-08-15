@@ -42,6 +42,7 @@ static const uint64_t clicker_id = UINT64_C(0x1111222233334444);
 static const uint64_t anchor_id = UINT64_C(0x2222333344445555);
 static const uint64_t gateway_id = UINT64_C(0x9999888877776666);
 static const uint64_t repair_peer_id = UINT64_C(0x777788889999AAAA);
+static const uint64_t repair_origin_id = UINT64_C(0x6666777788889999);
 static const uint32_t click_event_seq = 0x10203040u;
 static const uint8_t click_attempt_index = 2u;
 
@@ -605,7 +606,7 @@ static void forwarded_ack_repair_token_build(void)
     repair_pending.packet = (struct proto_packet) {
         .msg_type = MSG_MESH_DATA,
         .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
-        .src_id = repair_peer_id,
+        .src_id = repair_origin_id,
         .dst_id = gateway_id,
         .session_id = 0xA100u,
         .seq = 0x42u,
@@ -617,9 +618,10 @@ static void forwarded_ack_repair_token_build(void)
     repair_pending.payload[2] = 0xC3u;
     repair_pending.payload_len = 3u;
     repair_pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
-    repair_pending.next_hop_id = repair_peer_id;
+    repair_pending.next_hop_id = gateway_id;
     repair_pending.state = MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD;
     repair_pending.gateway_ack_forward_pending = true;
+    repair_pending.gateway_ack_forward_next_hop_id = repair_peer_id;
 
     batch->valid = true;
     batch->preserve_payload = true;
@@ -630,7 +632,7 @@ static void forwarded_ack_repair_token_build(void)
         .msg_type = MSG_GATEWAY_ACK,
         .flags = FLAG_GATEWAY_ACK,
         .src_id = gateway_id,
-        .dst_id = repair_peer_id,
+        .dst_id = repair_origin_id,
         .session_id = 0xB200u,
         .seq = 0x51u,
         .ttl = MESH_DEFAULT_TTL,
@@ -649,7 +651,7 @@ static void forwarded_ack_repair_token_build(void)
         true,
         batch,
         repair_peer_id),
-        "could not mint the real forwarded-ACK repair capability");
+        "could not mint the multi-hop forwarded-ACK repair capability");
 
     repair_candidate.packet = (struct proto_packet) {
         .msg_type = MSG_MESH_EVENT_PROPOSE,

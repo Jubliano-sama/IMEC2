@@ -110,11 +110,6 @@ static void test_local_gateway_host_snapshot_class_matrix(void)
         },
         {
             MESH_RELAY_ROLE_ANCHOR,
-            MSG_ANCHOR_HEARTBEAT,
-            FLAG_GATEWAY_ACK_REQUIRED,
-        },
-        {
-            MESH_RELAY_ROLE_ANCHOR,
             MSG_MESH_DATA,
             FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
         },
@@ -134,6 +129,33 @@ static void test_local_gateway_host_snapshot_class_matrix(void)
         assert_local_class_survives_snapshot(&cases[i],
                                              (uint16_t)(i + 1u));
     }
+}
+
+static void test_disposable_heartbeat_has_no_outbox_snapshot(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = direct_gateway_route();
+    struct proto_packet packet = {
+        .msg_type = MSG_ANCHOR_HEARTBEAT,
+        .flags = 0u,
+        .src_id = LOCAL_ID,
+        .dst_id = GATEWAY_ID,
+        .session_id = UINT32_C(0x44556677),
+        .seq = 18u,
+        .ttl = MESH_DEFAULT_TTL,
+        .payload_len = 0u,
+    };
+    struct mesh_outbound tx;
+    struct mesh_relay_outbox_snapshot snapshot;
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR,
+                    LOCAL_ID, GATEWAY_ID, 13u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay, &packet, NULL, 0u,
+                               1000u, &tx) == PROTO_OK);
+    assert(!mesh_relay_tx_active(&relay));
+    assert(mesh_relay_export_outbox_snapshot(&relay, 1010u, &snapshot) ==
+           PROTO_ERR_NOT_FOUND);
 }
 
 static void test_unlisted_local_class_fails_closed(void)
@@ -175,6 +197,7 @@ static void test_unlisted_local_class_fails_closed(void)
 int main(void)
 {
     test_local_gateway_host_snapshot_class_matrix();
+    test_disposable_heartbeat_has_no_outbox_snapshot();
     test_unlisted_local_class_fails_closed();
     return 0;
 }

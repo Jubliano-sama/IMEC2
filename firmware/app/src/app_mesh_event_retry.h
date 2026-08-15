@@ -66,6 +66,11 @@ bool app_mesh_event_request_payload_equal(
 bool app_mesh_event_accept_timing_compatible(
     const struct mesh_event_timing *accepted,
     const struct mesh_event_timing *proposed);
+
+/* Apply one immutable counterproposal offset to a frozen PROPOSE cadence. */
+bool app_mesh_event_timing_apply_phase_shift(
+    struct mesh_event_timing *timing,
+    uint16_t phase_shift_ms);
 enum app_mesh_event_request_match app_mesh_event_retry_match(
     const struct app_mesh_event_retry_state *state,
     uint64_t peer_id,

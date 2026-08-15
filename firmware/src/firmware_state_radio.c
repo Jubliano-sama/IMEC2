@@ -86,6 +86,10 @@ int fw_radio_activity_decide(
                capture->ch9_ack_wait_active) {
         bool live_ack_owner = capture->ch9_ack_send_pending ||
                               capture->ch9_ack_wait_active;
+        bool survey_control_preemption =
+            capture->rx_queue_used == 0u &&
+            capture->c5_tx_intent ==
+                FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL;
 
         decision->state = FW_RADIO_ACTIVITY_MESH_RX;
         /* The handler may owe an immediate response to the exact packet it
@@ -93,11 +97,14 @@ int fw_radio_activity_decide(
          * Queue depth alone cannot suppress that causal response, but a live
          * ACK deadline/send owner still outranks every Channel-5 exchange. */
         decision->c5_tx_allowed =
-            !live_ack_owner && capture->rx_queue_used > 0u &&
-            capture->c5_tx_intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE;
+            survey_control_preemption ||
+            (!live_ack_owner && capture->rx_queue_used > 0u &&
+             capture->c5_tx_intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE);
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
-        decision->reason = decision->c5_tx_allowed ?
+        decision->reason = survey_control_preemption ?
+                           "gateway-survey-control" :
+                           decision->c5_tx_allowed ?
                            "mesh-rx-causal-response" :
                            capture->rx_queue_used > 0u ? "mesh-rx" :
                            (capture->ch9_ack_send_pending ?

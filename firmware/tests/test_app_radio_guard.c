@@ -69,6 +69,43 @@ static void test_compatibility_stop_cannot_clear_scoped_owner(void)
     assert(!radio_guard_uwb_busy());
 }
 
+static void test_survey_admission_reopen_preserves_click_owner(void)
+{
+    struct radio_guard_uwb_lease click = {0};
+    struct radio_guard_uwb_lease survey = {0};
+
+    assert(radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK,
+                                 "priority-click",
+                                 &click) == 0);
+    assert(radio_guard_uwb_owner_client() ==
+           RADIO_GUARD_UWB_CLIENT_ANCHOR_CLICK);
+    radio_guard_uwb_admission_pause();
+    assert(radio_guard_uwb_admission_paused());
+    assert(radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
+                                 "blocked-survey-prep",
+                                 &survey) == -ESHUTDOWN);
+
+    /* Physical survey preparation may reopen admission only after mesh
+     * quiescence. An already-owned click remains the radio owner and the
+     * survey must retry instead of stealing or aborting that lease. */
+    radio_guard_uwb_admission_resume();
+    assert(!radio_guard_uwb_admission_paused());
+    assert(radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
+                                 "click-still-priority",
+                                 &survey) == -EBUSY);
+    assert(radio_guard_uwb_release_begin(&click) == 0);
+    assert(radio_guard_uwb_release_finish(&click, 0) == 0);
+    assert(radio_guard_uwb_owner_client() == RADIO_GUARD_UWB_CLIENT_NONE);
+
+    assert(radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY,
+                                 "survey-after-click",
+                                 &survey) == 0);
+    assert(radio_guard_uwb_owner_client() ==
+           RADIO_GUARD_UWB_CLIENT_ANCHOR_SURVEY);
+    assert(radio_guard_uwb_release_begin(&survey) == 0);
+    assert(radio_guard_uwb_release_finish(&survey, 0) == 0);
+}
+
 static void test_failed_parking_poison_retains_owner_and_blocks_rearm(void)
 {
     struct radio_guard_uwb_lease owner = {0};
@@ -100,6 +137,7 @@ int main(void)
     test_uptime_ms = 1;
     test_exact_lease_release_rejects_stale_owner();
     test_compatibility_stop_cannot_clear_scoped_owner();
+    test_survey_admission_reopen_preserves_click_owner();
     test_failed_parking_poison_retains_owner_and_blocks_rearm();
     return 0;
 }

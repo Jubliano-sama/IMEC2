@@ -1192,6 +1192,22 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
             host_packet, COMMAND_DENIED, 1u,
             GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
     }
+    /*
+     * Assignment publication is retained protocol custody, even after its RF
+     * phase has completed. Starting a survey while those ACKs are still
+     * draining makes its first control wave contend with the old assignment
+     * owner. Return ordinary retryable pressure before claiming survey state;
+     * the serialized host-command owner will retry this exact command.
+     */
+    if (gateway_assignment_publication_pending()) {
+        status_debug_printf(
+            "DBG_SURVEY_ASSIGNMENT_PUBLICATION_BARRIER session=%u seq=%u\n",
+            host_packet->session_id,
+            host_packet->seq);
+        return gateway_reject_survey_request(
+            host_packet, COMMAND_BUSY, 5u,
+            GATEWAY_COMMAND_EVENT_REASON_BUSY, -EBUSY);
+    }
     if (gateway_survey_active
 #if DEVICE_ROLE == ROLE_GATEWAY
         || gateway_survey_cleanup_pending()
@@ -1358,22 +1374,23 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     ret = operation_policy_discovery_required_budget_ms(
         &admitted_discovery, &budget_terms, &required_budget_ms);
     if (ret != PROTO_OK || admitted_discovery.operation_budget_ms <
-                               required_budget_ms) {
+                               required_budget_ms ||
+        required_budget_ms < collection_delay_ms) {
         return gateway_reject_survey_request(
             host_packet, COMMAND_MALFORMED_PAYLOAD, EINVAL,
             GATEWAY_COMMAND_EVENT_REASON_INVALID_REQUEST, -EINVAL);
     }
-    if (budget_explicit) {
-        /*
-         * Collection is one indivisible phase.  If the host deadline is
-         * shorter than the natural collection horizon, wake at that deadline
-         * so the worker reports an operation timeout; never close collection
-         * at an arbitrary fair-share point and mislabel later valid reports as
-         * absent.
-         */
-        collection_delay_ms = gateway_command_budget_window_ms(
-            true, command_budget_ms, 1u, collection_delay_ms);
-    }
+    /*
+     * The discovery policy is the host's admitted phase horizon, not merely a
+     * validation floor.  Preserve every millisecond above the firmware-owned
+     * minimum for delayed retained reports, while the command budget remains
+     * the absolute operation cap.  An expected-count collection still closes
+     * as soon as every report is present.
+     */
+    collection_delay_ms +=
+        admitted_discovery.operation_budget_ms - required_budget_ms;
+    collection_delay_ms = gateway_command_budget_window_ms(
+        true, command_budget_ms, 1u, collection_delay_ms);
 
     if (!app_gateway_control_sequence_admission_available(
             APP_GATEWAY_CONTROL_SEQUENCE_SURVEY_ADMISSION_BUDGET)) {
@@ -3794,7 +3811,7 @@ static void gateway_survey_service_cleanup(void)
             app_node_comm_peek_delivery_event_for(cleanup->handle, &event) &&
             event.reason == NODE_COMM_TERMINAL_DELIVERED) {
             uint32_t redrive_horizon_ms =
-                survey_pair_control_timeout_ms(cleanup->hop_count);
+                SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS;
             uint64_t redrive_due_ms =
                 UINT64_MAX - now_ms < redrive_horizon_ms ?
                     UINT64_MAX : now_ms + redrive_horizon_ms;

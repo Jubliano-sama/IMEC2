@@ -701,8 +701,8 @@ class CommandBudgetContractTests(unittest.TestCase):
             discovery_default,
             host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS,
         )
-        self.assertEqual(3_600_000, survey_default)
-        self.assertEqual(900_000, discovery_default)
+        self.assertEqual(360_000, survey_default)
+        self.assertEqual(240_000, discovery_default)
         self.assertGreater(survey_default, discovery_default)
         self.assertEqual(
             route_refresh_default,
@@ -756,7 +756,7 @@ class CommandBudgetContractTests(unittest.TestCase):
             host_operation_policy.DISCOVERY_DEFAULT_ROUND_COUNT,
             1_000,
         )
-        self.assertEqual(210_743, required_ms)
+        self.assertEqual(140_743, required_ms)
 
         argv = [
             "provision_mesh_anchor.py",
@@ -802,6 +802,9 @@ class CommandBudgetContractTests(unittest.TestCase):
         )
 
     def test_cli_accepts_declared_three_anchor_assignment_budget(self) -> None:
+        def close_cli_coroutine(coroutine) -> None:
+            coroutine.close()
+
         argv = [
             "provision_mesh_anchor.py",
             "--gateway",
@@ -815,7 +818,11 @@ class CommandBudgetContractTests(unittest.TestCase):
         ]
         with (
             mock.patch.object(sys, "argv", argv),
-            mock.patch.object(provision.asyncio, "run") as async_run,
+            mock.patch.object(
+                provision.asyncio,
+                "run",
+                side_effect=close_cli_coroutine,
+            ) as async_run,
         ):
             provision.main()
         async_run.assert_called_once()
@@ -1268,6 +1275,7 @@ def args(**overrides: object) -> argparse.Namespace:
         "expected_anchor_hops": {},
         "route_refresh_timeout": 1.0,
         "assignment_timeout": 1.0,
+        "command_budget_ms": None,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -1488,6 +1496,15 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0x12345, command_args["survey_id"])
         self.assertEqual(0x12345, command_args["session_id"])
         self.assertEqual(3, command_args["expected_anchor_count"])
+        policy = command_args["operation_policy"]
+        self.assertIsInstance(policy, host_operation_policy.OperationPolicyProfile)
+        self.assertEqual(3, policy.assignment.expected_anchor_count)
+        self.assertEqual(6, policy.discovery.slot_count)
+        self.assertEqual(1000, policy.discovery.report_grace_ms)
+        self.assertEqual(
+            host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS,
+            policy.discovery.operation_budget_ms,
+        )
         self.assertEqual(3, len(qualification.pair_successes))
 
     async def test_default_mode_keeps_notify_before_command_write(self) -> None:
@@ -1511,6 +1528,133 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         )
         write = next(value for name, value in FakeBleakClient.operations if name == "write")
         self.assertTrue(write[1])
+
+    async def test_zero_hold_strict_survey_drains_assignment_before_target(
+        self,
+    ) -> None:
+        old_session = 0x33333
+        live_publication_events = [
+            dataclasses.replace(
+                command_event(
+                    6,
+                    event_sequence=200,
+                    command_kind=1,
+                    command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+                    host_session_id=old_session,
+                    host_sequence=old_session & 0xFFFF,
+                    correlation_id=old_session,
+                    anchor_id=0x4444,
+                    progress_count=1,
+                    total_count=3,
+                    success_count=1,
+                    discovery_slot=0,
+                ),
+                flags=0,
+                route_epoch=7,
+            ),
+            dataclasses.replace(
+                command_event(
+                    12,
+                    event_sequence=203,
+                    command_kind=1,
+                    command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+                    host_session_id=old_session,
+                    host_sequence=old_session & 0xFFFF,
+                    correlation_id=old_session,
+                    progress_count=3,
+                    total_count=3,
+                    success_count=3,
+                    discovery_slot=0xFF,
+                ),
+                flags=host_protocol.GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
+                route_epoch=7,
+            ),
+        ]
+        live_publication_packets = [
+            gateway_stream_command_event_packet(
+                event, flags=FLAG_GATEWAY_ACK_REQUIRED
+            )
+            for event in live_publication_events
+        ]
+        survey_events = [
+            dataclasses.replace(event, gateway_sequence=0x12345)
+            for event in successful_events()
+        ]
+        survey_packets = [
+            pair_packet(0x10, 0x20, 1000, 1, survey_id=0x12345),
+            pair_packet(0x10, 0x30, 1200, 2, survey_id=0x12345),
+            pair_packet(0x20, 0x30, 1500, 3, survey_id=0x12345),
+        ] + [
+            gateway_stream_command_event_packet(event, flags=0)
+            for event in survey_events
+        ]
+        FakeDecoder.packets = live_publication_packets + survey_packets
+        FakeBleakClient.notification_count = 1
+        FakeBleakClient.write_notification_counts = [
+            1,
+            0,
+            len(survey_packets),
+        ]
+
+        class LivePublicationBleakClient(FakeBleakClient):
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                await super().write_gatt_char(
+                    characteristic, data, response=response
+                )
+                await asyncio.sleep(0)
+
+        with (
+            mock.patch.object(
+                provision, "BleakClient", LivePublicationBleakClient
+            ),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await asyncio.wait_for(
+                provision.run(
+                    args(
+                        command="survey",
+                        duration=1.0,
+                        require_survey_success=True,
+                        notification_hold_s=0.0,
+                    )
+                ),
+                timeout=1.0,
+            )
+
+        operation_names = [
+            name for name, _value in FakeBleakClient.operations
+        ]
+        writes = [
+            value
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+        expected_receipts = [
+            self._expected_receipt(packet)
+            for packet in live_publication_packets
+        ]
+        self.assertLess(
+            operation_names.index("start_notify"),
+            operation_names.index("write"),
+        )
+        self.assertEqual(expected_receipts, [value[0] for value in writes[:2]])
+        self.assertEqual(
+            provision.CMD_SURVEY_REACHABILITY,
+            parse_cobs_packet(writes[2][0]).value(provision.TLV_COMMAND_ID),
+        )
+        self.assertTrue(
+            all(value[1] for value in writes),
+            "zero-hold strict survey wrote before notifications were active",
+        )
+        self.assertIsInstance(qualification, provision.SurveyQualification)
 
     async def test_unretained_gateway_stream_packets_are_not_receipted(self) -> None:
         unretained = dataclasses.replace(gateway_delivery_packet(7), flags=0)
@@ -1567,7 +1711,11 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         writes = await self._run_unqualified_survey_with_packets([discovery])
 
         self.assertEqual(2, len(writes), "command plus exact 0x55 receipt")
-        self.assertEqual(self._expected_receipt(discovery), writes[-1])
+        self.assertEqual(self._expected_receipt(discovery), writes[0])
+        self.assertEqual(
+            provision.CMD_SURVEY_REACHABILITY,
+            parse_cobs_packet(writes[1]).value(provision.TLV_COMMAND_ID),
+        )
 
     async def test_malformed_discovery_report_is_never_receipted(self) -> None:
         valid = gateway_stream_discovery_packet(32)
@@ -1657,7 +1805,18 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 self._expected_receipt(abort),
                 self._expected_receipt(unrelated),
             ],
-            writes[-5:],
+            [
+                write
+                for write in writes
+                if write
+                in {
+                    self._expected_receipt(reachability),
+                    self._expected_receipt(prepare),
+                    self._expected_receipt(start),
+                    self._expected_receipt(abort),
+                    self._expected_receipt(unrelated),
+                }
+            ],
         )
 
     async def test_local_route_and_assignment_results_are_receipted(self) -> None:
@@ -2089,6 +2248,17 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             writes,
         )
 
+    async def test_best_effort_anchor_heartbeat_needs_no_host_receipt(self) -> None:
+        heartbeat = gateway_stream_packet(
+            38,
+            msg_type=MSG_ANCHOR_HEARTBEAT,
+            flags=0,
+        )
+
+        writes = await self._run_monitor_with_packets([heartbeat])
+
+        self.assertEqual([], writes)
+
     async def test_concurrent_notifications_serialize_exact_receipt_writes(self) -> None:
         packets = [
             gateway_stream_pair_packet(
@@ -2119,6 +2289,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             notification_count = len(FakeDecoder.packets)
             active_writes = 0
             max_active_writes = 0
+            responses_emitted = False
 
             def __init__(self, *args: object, **kwargs: object) -> None:
                 super().__init__(*args, **kwargs)
@@ -2132,15 +2303,6 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 self.notify_enabled = True
                 self.notify_callback = callback
                 self.operations.append(("start_notify", None))
-
-                async def invoke_notification() -> None:
-                    callback(None, bytearray(b"notification"))
-                    await asyncio.sleep(0)
-
-                await asyncio.gather(*(
-                    invoke_notification()
-                    for _ in range(self.notification_count)
-                ))
 
             async def write_gatt_char(
                 self,
@@ -2159,6 +2321,22 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                     ("write", (bytes(data), self.notify_enabled, response))
                 )
                 await asyncio.sleep(0)
+                if (
+                    not type(self).responses_emitted
+                    and data.endswith(b"\x00")
+                ):
+                    type(self).responses_emitted = True
+                    assert self.notify_callback is not None
+
+                    async def invoke_notification() -> None:
+                        assert self.notify_callback is not None
+                        self.notify_callback(None, bytearray(b"notification"))
+                        await asyncio.sleep(0)
+
+                    await asyncio.gather(*(
+                        invoke_notification()
+                        for _ in range(self.notification_count)
+                    ))
                 type(self).active_writes -= 1
 
         expected_frames = [
@@ -2254,8 +2432,11 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         )
         events = route_events + assignment_events
         FakeDecoder.events = events
-        FakeBleakClient.notification_count = len(route_events)
-        FakeBleakClient.write_notification_counts = [len(assignment_events)]
+        FakeBleakClient.notification_count = 0
+        FakeBleakClient.write_notification_counts = [
+            len(route_events),
+            len(assignment_events),
+        ]
 
         def fake_decode(payload: bytes, **_kwargs: object) -> object:
             return events[payload[0]]
@@ -2269,6 +2450,263 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             ),
             mock.patch("builtins.print"),
         ):
+            qualification = await asyncio.wait_for(
+                provision.run(
+                    args(
+                        command="qualify-reachability",
+                        require_survey_success=False,
+                        notification_hold_s=0.0,
+                        expected_direct_anchors=1,
+                        expected_multihop_anchors=2,
+                    )
+                ),
+                timeout=1.0,
+            )
+
+        writes = [value for name, value in FakeBleakClient.operations if name == "write"]
+        self.assertEqual(2, len(writes))
+        operation_names = [name for name, _value in FakeBleakClient.operations]
+        self.assertLess(
+            operation_names.index("start_notify"), operation_names.index("write")
+        )
+        self.assertTrue(writes[0][1])
+        self.assertTrue(writes[1][1])
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+        assert isinstance(qualification, provision.AssignmentQualification)
+        self.assertEqual(3, len(qualification.anchors))
+
+    async def test_combined_reachability_drains_live_assignment_before_dispatch(
+        self,
+    ) -> None:
+        route_events = successful_route_events(
+            session_id=0x11111, retries=0, first_sequence=1
+        )
+        assignment_events = successful_assignment_events(
+            3,
+            session_id=0x22222,
+            direct_count=1,
+            first_sequence=100,
+        )
+        old_session = 0x33333
+        live_publication_events = [
+            dataclasses.replace(
+                command_event(
+                    6,
+                    event_sequence=200,
+                    command_kind=1,
+                    command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+                    host_session_id=old_session,
+                    host_sequence=old_session & 0xFFFF,
+                    correlation_id=old_session,
+                    anchor_id=0x4444,
+                    progress_count=1,
+                    total_count=3,
+                    success_count=1,
+                    discovery_slot=0,
+                ),
+                flags=0,
+                route_epoch=7,
+            ),
+            dataclasses.replace(
+                command_event(
+                    7,
+                    event_sequence=201,
+                    command_kind=1,
+                    command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+                    host_session_id=old_session,
+                    host_sequence=old_session & 0xFFFF,
+                    correlation_id=old_session,
+                    progress_count=3,
+                    total_count=3,
+                    discovery_slot=0xFF,
+                ),
+                flags=0,
+                route_epoch=7,
+            ),
+            dataclasses.replace(
+                command_event(
+                    8,
+                    event_sequence=202,
+                    command_kind=1,
+                    command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+                    host_session_id=old_session,
+                    host_sequence=old_session & 0xFFFF,
+                    correlation_id=old_session,
+                    progress_count=3,
+                    total_count=3,
+                    discovery_slot=0xFF,
+                ),
+                flags=0,
+                route_epoch=7,
+            ),
+            dataclasses.replace(
+                command_event(
+                    12,
+                    event_sequence=203,
+                    command_kind=1,
+                    command_id=provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+                    host_session_id=old_session,
+                    host_sequence=old_session & 0xFFFF,
+                    correlation_id=old_session,
+                    progress_count=3,
+                    total_count=3,
+                    success_count=3,
+                    discovery_slot=0xFF,
+                ),
+                flags=host_protocol.GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
+                route_epoch=7,
+            ),
+        ]
+        live_publication_packets = [
+            gateway_stream_command_event_packet(
+                event, flags=FLAG_GATEWAY_ACK_REQUIRED
+            )
+            for event in live_publication_events
+        ]
+        route_packets = [
+            gateway_stream_command_event_packet(event, flags=0)
+            for event in route_events
+        ]
+        assignment_packets = [
+            gateway_stream_command_event_packet(event, flags=0)
+            for event in assignment_events
+        ]
+        FakeDecoder.packets = (
+            [live_publication_packets[0]]
+            + route_packets
+            + live_publication_packets[1:]
+            + assignment_packets
+        )
+        # Subscription may expose only already-retained publisher custody.
+        # The Here-I-Am result itself cannot exist until its command write;
+        # release those route events from that write just like the real link.
+        FakeBleakClient.notification_count = 1
+        # Each receipt releases exactly the next retained publisher event.
+        # Only the successor assignment command releases its own events.
+        FakeBleakClient.write_notification_counts = [
+            len(route_packets),
+            1,
+            1,
+            1,
+            0,
+            len(assignment_packets),
+        ]
+
+        class LivePublicationBleakClient(FakeBleakClient):
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                await super().write_gatt_char(
+                    characteristic, data, response=response
+                )
+                # Real Bleak writes always yield to completion callbacks.  The
+                # fixture must do the same as each receipt releases the next
+                # retained publisher record.
+                await asyncio.sleep(0)
+
+        with (
+            mock.patch.object(provision, "BleakClient", LivePublicationBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(
+                provision, "_new_identity", side_effect=[0x11111, 0x22222]
+            ),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await asyncio.wait_for(
+                provision.run(
+                    args(
+                        command="qualify-reachability",
+                        require_survey_success=False,
+                        notification_hold_s=0.0,
+                        expected_direct_anchors=1,
+                        expected_multihop_anchors=2,
+                    )
+                ),
+                timeout=1.0,
+            )
+
+        writes = [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+        expected_receipts = [
+            self._expected_receipt(packet) for packet in live_publication_packets
+        ]
+        self.assertEqual(expected_receipts, writes[1:5])
+        self.assertEqual(6, len(writes), "expected two commands and four receipts")
+        self.assertEqual(
+            provision.CMD_FORCE_REDISCOVERY,
+            parse_cobs_packet(writes[0]).value(provision.TLV_COMMAND_ID),
+        )
+        self.assertEqual(
+            provision.CMD_ASSIGN_DISCOVERY_SLOTS,
+            parse_cobs_packet(writes[5]).value(provision.TLV_COMMAND_ID),
+        )
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+
+    async def test_combined_reachability_binds_short_budget_to_three_anchor_policy(
+        self,
+    ) -> None:
+        route_events = successful_route_events(
+            session_id=0x11111, retries=0, first_sequence=1
+        )
+        assignment_events = successful_assignment_events(
+            3,
+            session_id=0x22222,
+            direct_count=1,
+            first_sequence=100,
+        )
+        events = route_events + assignment_events
+        FakeDecoder.events = events
+        FakeBleakClient.notification_count = 0
+        FakeBleakClient.write_notification_counts = [
+            len(route_events),
+            len(assignment_events),
+        ]
+        command_args: dict[str, object] = {}
+        route_args: dict[str, object] = {}
+        real_build_assignment = provision.build_assign_discovery_slots_command
+        real_build_here_i_am = provision.build_here_i_am_command
+        budget_ms = host_operation_policy.assignment_required_budget_ms(
+            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            3,
+        )
+
+        def fake_decode(payload: bytes, **_kwargs: object) -> object:
+            return events[payload[0]]
+
+        def capture_assignment(**kwargs: object) -> object:
+            command_args.update(kwargs)
+            return real_build_assignment(**kwargs)
+
+        def capture_here_i_am(**kwargs: object) -> object:
+            route_args.update(kwargs)
+            return real_build_here_i_am(**kwargs)
+
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "decode_gateway_command_event", fake_decode),
+            mock.patch.object(
+                provision,
+                "build_assign_discovery_slots_command",
+                side_effect=capture_assignment,
+            ),
+            mock.patch.object(
+                provision,
+                "build_here_i_am_command",
+                side_effect=capture_here_i_am,
+            ),
+            mock.patch.object(
+                provision, "_new_identity", side_effect=[0x11111, 0x22222]
+            ),
+            mock.patch("builtins.print"),
+        ):
             qualification = await provision.run(
                 args(
                     command="qualify-reachability",
@@ -2276,16 +2714,23 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                     notification_hold_s=0.0,
                     expected_direct_anchors=1,
                     expected_multihop_anchors=2,
+                    command_budget_ms=budget_ms,
                 )
             )
 
-        writes = [value for name, value in FakeBleakClient.operations if name == "write"]
-        self.assertEqual(2, len(writes))
-        self.assertFalse(writes[0][1])
-        self.assertTrue(writes[1][1])
         self.assertIsInstance(qualification, provision.AssignmentQualification)
-        assert isinstance(qualification, provision.AssignmentQualification)
-        self.assertEqual(3, len(qualification.anchors))
+        self.assertEqual(budget_ms, command_args["command_budget_ms"])
+        self.assertEqual(3, command_args["expected_anchor_count"])
+        policy = command_args["operation_policy"]
+        self.assertIsInstance(policy, host_operation_policy.OperationPolicyProfile)
+        self.assertEqual(3, policy.assignment.expected_anchor_count)
+        self.assertEqual(budget_ms, policy.assignment.operation_budget_ms)
+        self.assertEqual(
+            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            policy.assignment.response_spread_ms,
+        )
+        self.assertEqual(budget_ms, route_args["command_budget_ms"])
+        self.assertEqual(policy, route_args["operation_policy"])
 
     async def test_combined_reachability_accepts_durable_mapping_without_optional_hops(
         self,
@@ -2306,8 +2751,11 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         ]
         events = route_events + assignment_events
         FakeDecoder.events = events
-        FakeBleakClient.notification_count = len(route_events)
-        FakeBleakClient.write_notification_counts = [len(assignment_events)]
+        FakeBleakClient.notification_count = 0
+        FakeBleakClient.write_notification_counts = [
+            len(route_events),
+            len(assignment_events),
+        ]
 
         def fake_decode(payload: bytes, **_kwargs: object) -> object:
             return events[payload[0]]
