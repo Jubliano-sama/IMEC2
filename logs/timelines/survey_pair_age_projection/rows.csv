@@ -1,0 +1,5 @@
+id,label,order
+initiator,INITIATOR,1
+old,RESPONDER / OLD AGE,2
+fixed,RESPONDER / CORRECTED AGE,3
+relay,RELAY AGE ACCOUNTING,4

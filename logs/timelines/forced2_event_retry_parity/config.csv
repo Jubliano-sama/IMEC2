@@ -1,0 +1,9 @@
+key,value
+title,"FORCED-2 CHANNEL-9 NEGOTIATION: RETRY PHASE SPLIT"
+caption,"PROPOSE bytes and identity stay unchanged across retries, so the parent correctly retains one ACCEPT. The child nevertheless overwrote its frozen local timing after every successful retry. Both endpoints then named the same physical cadence with counters three turns apart, making C transmit while B skipped to the opposite turn."
+key_point,"Freeze local proposal timing on the first successful RF send. Later byte-identical retries may recover the ACCEPT, but must not rewrite phase or counter state."
+start,0
+end,3000
+width,2600
+unit,ms
+axis_caption_width,250

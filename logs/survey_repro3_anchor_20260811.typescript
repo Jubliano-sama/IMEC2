@@ -1,0 +1,22 @@
+Script started on 2026-08-11 22:32:11+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -f 4000000 -M attach -u E46070D247394D36" TERM="linux" TTY="/dev/pts/2" COLUMNS="80" LINES="24"]
+[34m0000318[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000351[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000362[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000363[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000364[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000369[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000372[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000373[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000383[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000394[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000407[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000408[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000411[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000411[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000411[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000413[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000417[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000418[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0003620[0m [1m[91mC[0m [91mControl block not found [2m[__main__][0m
+[0m
+Script done on 2026-08-11 22:32:14+02:00 [COMMAND_EXIT_CODE="1"]

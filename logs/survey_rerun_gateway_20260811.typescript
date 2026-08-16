@@ -1,0 +1,282 @@
+Script started on 2026-08-11 23:56:04+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -f 4000000 -M pre-reset -a 0x20000410 -s 0x100 -u E46070D247233537" <not executed on terminal>]
+[34m0000307[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000323[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000574[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000679[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000685[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000685[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000686[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000688[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000690[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000691[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000692[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000693[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000695[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000696[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000699[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000699[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000699[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000701[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000705[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000706[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000716[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000716[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000717[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:8e87428db56ff08ddd152e44aa534b6d9da2e3373e46f7f5136cdada6c9404e3 epoch=12207882763636120073 uptime=2
+DBG_GATEWAY_BOOT stage=ble_begin uptime=25
+DBG_GATEWAY_BLE stage=entry enabled=1 uptime=25
+DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=30
+DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=32
+DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=32
+DBG_GATEWAY_BOOT stage=ch9_begin uptime=32
+DBG_GATEWAY_RX_SCHEDULE delay=0 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=32
+mesh node identity: ficr=0x88add51b1bcbe854 node=0x9999888877776666 preset=mesh_gateway
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25030 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25142 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25255 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25366 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25478 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25590 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25702 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25814 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=25926 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26038 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26151 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26263 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26375 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26486 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26598 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26710 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26822 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=26934 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27046 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27158 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27270 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27383 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27494 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27606 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27718 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27830 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=27942 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28055 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28167 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28278 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28390 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28502 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28615 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28727 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28838 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=28950 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29062 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29174 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29286 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29398 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29511 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29624 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29736 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29848 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=29960 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30072 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30184 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30297 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30408 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30520 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30632 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30744 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30856 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=30968 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31080 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31192 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31304 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31417 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31529 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31641 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31753 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31865 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=31977 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32089 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32201 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32313 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32426 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32537 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32649 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32761 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32873 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=32985 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33097 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33209 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33321 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33433 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33545 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33657 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33769 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33881 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=33993 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34105 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34218 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34329 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34441 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34553 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34666 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34777 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=34889 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35001 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35113 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35225 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35337 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35449 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35561 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35674 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35786 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=35897 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36009 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36121 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36233 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36345 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36458 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36570 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36681 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36793 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=36905 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37017 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37129 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37241 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=0 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37353 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37465 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37577 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37690 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=37801 rem=100 win=30000 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-116 len=0 fail=0 frames=0 rec

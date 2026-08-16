@@ -1,0 +1,8 @@
+key,value
+title,CHANNEL-9 NEGOTIATION: ONE COMPOSED DEADLINE
+caption,"A proposal may spend at most 1 s waiting for its receiver worker, then its retained ACCEPT has 6 s to find a legal Channel-5 gap. The proposer listens for the sum, and the accepted-exchange authority lasts for the complete ACCEPT retry interval."
+key_point,"One coherent rule replaces three unrelated clocks: listen = queued-proposal allowance + ACCEPT retry. The receiver drops older queued proposals, and a click may still pre-empt the entire negotiation."
+start,0
+end,7000
+width,1900
+unit,ms

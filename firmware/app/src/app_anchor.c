@@ -428,6 +428,7 @@ struct gateway_survey_start_release {
     struct survey_pair pair;
     uint32_t started_at_ms;
     bool valid;
+    bool initiator_submitted;
 };
 static struct gateway_survey_start_release gateway_survey_start_release;
 static struct app_gateway_operation_owner gateway_operation_owner;

@@ -1,0 +1,6 @@
+id,label,order
+command,GATEWAY SURVEY CONTROL,1
+old,ANCHOR B / OLD,2
+fixed,ANCHOR B / CORRECTED,3
+child,FORCED CHILD C,4
+survey,PHYSICAL SURVEY,5

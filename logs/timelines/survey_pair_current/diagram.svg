@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="7000" height="671" viewBox="0 0 7000 671" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">IMEC2 SURVEY PAIR: MESH QUIESCE, DS-TWR, AND RESULT CUSTODY</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="564.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="6958.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="108.0" class="row-label">MESH / CHANNEL 9</text>
+<rect x="202.0" y="90.0" width="193.0" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="298.5" y="113.0" class="small center event-text" text-anchor="middle"><tspan x="298.5" dy="0.0">Connected CH9 reservation</tspan><tspan x="298.5" dy="12.0">120 ms window + 60 ms guards</tspan></text>
+<rect x="395.0" y="90.0" width="16.1" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<rect x="411.1" y="90.0" width="48.3" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="435.2" y="107.0" class="small center event-text" text-anchor="middle"><tspan x="435.2" dy="0.0">60 ms</tspan><tspan x="435.2" dy="12.0">retune</tspan><tspan x="435.2" dy="12.0">budget</tspan></text>
+<rect x="459.4" y="90.0" width="193.0" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="555.9" y="119.0" class="small center event-text" text-anchor="middle"><tspan x="555.9" dy="0.0">Counterphase CH9 reservation</tspan></text>
+<rect x="652.4" y="90.0" width="514.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="909.8" y="113.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="909.8" dy="0.0">Transport pause drains the active owner</tspan><tspan x="909.8" dy="12.0">no route deletion or cadence renegotiation</tspan></text>
+<rect x="1167.1" y="90.0" width="4656.8" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3495.6" y="113.0" class="small center event-text" text-anchor="middle"><tspan x="3495.6" dy="0.0">Mesh radio work remains quiesced</tspan><tspan x="3495.6" dy="12.0">queued routes, retries, and reports stay in RAM custody</tspan></text>
+<rect x="5824.0" y="90.0" width="1134.0" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="6391.0" y="113.0" class="small center event-text" text-anchor="middle"><tspan x="6391.0" dy="0.0">Transport resumes</tspan><tspan x="6391.0" dy="12.0">existing cadence and queued work are rearmed</tspan></text>
+<line x1="403.1" y1="86.0" x2="403.1" y2="90.0" class="hairline"/>
+<rect x="367.8" y="62.0" width="70.5" height="16.0" class="callout"/>
+<text x="371.8" y="74.5" class="tiny" text-anchor="start"><tspan x="371.8" dy="0.0">20 ms C5 gap</tspan></text>
+<line x1="44.0" y1="148.0" x2="6958.0" y2="148.0" class="major-line"/>
+<text x="123.0" y="202.0" class="row-label">DIRECT ANCHOR A / RESPONDER</text>
+<rect x="362.9" y="158.0" width="804.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="765.0" y="175.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="765.0" dy="0.0">Begin custody-preserving preemption</tspan><tspan x="765.0" dy="12.0">abort only active mesh RX and wait for safe boundary</tspan></text>
+<rect x="1167.1" y="158.0" width="4656.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3495.6" y="175.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3495.6" dy="0.0">Responder DS-TWR worst case</tspan><tspan x="3495.6" dy="12.0">5 x 1150 ms windows + 4 x 10 ms gaps</tspan></text>
+<rect x="1971.4" y="202.0" width="635.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2289.1" y="219.0" class="small center event-text" text-anchor="middle"><tspan x="2289.1" dy="0.0">Normal successful overlap</tspan><tspan x="2289.1" dy="12.0">initiator exchanges arrive inside responder RX</tspan></text>
+<line x1="44.0" y1="248.0" x2="6958.0" y2="248.0" class="major-line"/>
+<text x="123.0" y="284.0" class="row-label">FORCED2 ANCHOR C / INITIATOR</text>
+<rect x="1167.1" y="262.0" width="804.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1569.3" y="279.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1569.3" dy="0.0">Begin custody-preserving preemption</tspan><tspan x="1569.3" dy="12.0">reach the shared execution boundary</tspan></text>
+<rect x="1971.4" y="262.0" width="635.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2289.1" y="279.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2289.1" dy="0.0">Five initiator attempts worst case</tspan><tspan x="2289.1" dy="12.0">5 x 150 ms + 4 x 10 ms gaps</tspan></text>
+<rect x="2606.8" y="262.0" width="4351.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4782.4" y="279.0" class="small center event-text" text-anchor="middle"><tspan x="4782.4" dy="0.0">Radio parked; transport resumes</tspan><tspan x="4782.4" dy="12.0">result delivery uses retained known route</tspan></text>
+<line x1="44.0" y1="312.0" x2="6958.0" y2="312.0" class="major-line"/>
+<text x="123.0" y="366.0" class="row-label">NODE-COMM RESULT CUSTODY</text>
+<rect x="1167.1" y="322.0" width="4656.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3495.6" y="339.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3495.6" dy="0.0">Five atomic result slots reserved</tspan><tspan x="3495.6" dy="12.0">scheduler wake deferred while mesh is paused</tspan></text>
+<rect x="5824.0" y="322.0" width="1134.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="6391.0" y="339.0" class="small center event-text" text-anchor="middle"><tspan x="6391.0" dy="0.0">Resume rearms expiry and delivery work</tspan><tspan x="6391.0" dy="12.0">committed samples drain over the retained route</tspan></text>
+<rect x="1167.1" y="366.0" width="5790.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="4062.6" y="383.0" class="small center event-text" text-anchor="middle"><tspan x="4062.6" dy="0.0">10 s reservation lease continues beyond diagram</tspan><tspan x="4062.6" dy="12.0">expiry at +9000 ms</tspan></text>
+<line x1="44.0" y1="412.0" x2="6958.0" y2="412.0" class="major-line"/>
+<text x="123.0" y="462.0" class="row-label">KEY POINT</text>
+<rect x="3320.0" y="424.0" width="520.0" height="68.0" class="box shaded"/>
+<text x="3580.0" y="439.0" class="small center" text-anchor="middle"><tspan x="3580.0" dy="0.0">The parallel timing is feasible: responder preemption starts at -2 s, responder RX starts at -1</tspan><tspan x="3580.0" dy="12.0">s, initiator preemption starts at -1 s, and both overlap for the initiator&#x27;s five bounded</tspan><tspan x="3580.0" dy="12.0">attempts. The five result reservations live for 10 s, covering the responder&#x27;s 5.79 s absolute</tspan><tspan x="3580.0" dy="12.0">worst case. The 640 ms connected cadence is absent during the pair because the existing</tspan><tspan x="3580.0" dy="12.0">transport is quiesced, not repaired or renegotiated.</tspan></text>
+<line x1="44.0" y1="504.0" x2="6958.0" y2="504.0" class="major-line"/>
+<line x1="44.0" y1="530.0" x2="44.0" y2="568.0" class="major-line"/>
+<line x1="44.0" y1="530.0" x2="6958.0" y2="530.0" class="axis-line"/>
+<line x1="362.9" y1="529.0" x2="362.9" y2="541.0" class="tick"/>
+<line x1="1167.1" y1="529.0" x2="1167.1" y2="541.0" class="tick"/>
+<line x1="1971.4" y1="529.0" x2="1971.4" y2="541.0" class="tick"/>
+<line x1="2606.8" y1="529.0" x2="2606.8" y2="541.0" class="tick"/>
+<line x1="5824.0" y1="529.0" x2="5824.0" y2="541.0" class="tick"/>
+<line x1="6958.0" y1="529.0" x2="6958.0" y2="541.0" class="tick"/>
+<text x="341.8" y="553.0" class="axis-time">-2000 ms</text>
+<text x="1146.1" y="553.0" class="axis-time">-1000 ms</text>
+<text x="1950.4" y="553.0" class="axis-time">t = 0</text>
+<text x="2585.8" y="553.0" class="axis-time">+790 ms</text>
+<text x="5802.9" y="553.0" class="axis-time">+4790 ms</text>
+<text x="6937.0" y="553.0" class="axis-time">+6200 ms</text>
+<text x="362.9" y="582.5" class="tiny center" text-anchor="middle"><tspan x="362.9" dy="0.0">responder starts transport preemption</tspan></text>
+<text x="1167.1" y="577.0" class="tiny center" text-anchor="middle"><tspan x="1167.1" dy="0.0">responder RF starts and five result slots</tspan><tspan x="1167.1" dy="11.0">are reserved</tspan></text>
+<text x="1971.4" y="582.5" class="tiny center" text-anchor="middle"><tspan x="1971.4" dy="0.0">initiator starts five DS-TWR attempts</tspan></text>
+<text x="2606.8" y="582.5" class="tiny center" text-anchor="middle"><tspan x="2606.8" dy="0.0">initiator worst-case attempt horizon ends</tspan></text>
+<text x="5824.0" y="577.0" class="tiny center" text-anchor="middle"><tspan x="5824.0" dy="0.0">responder absolute worst case ends and</tspan><tspan x="5824.0" dy="11.0">transport resumes</tspan></text>
+<text x="6854.0" y="577.0" class="tiny center" text-anchor="middle"><tspan x="6854.0" dy="0.0">diagram end; reservation remains valid until</tspan><tspan x="6854.0" dy="11.0">+9000 ms</tspan></text>
+<text x="3500.0" y="637.0" class="caption center" text-anchor="middle"><tspan x="3500.0" dy="0.0">Current firmware timing. t=0 is the initiator&#x27;s shared execution time; the responder starts 1 s early. Mesh transport is paused before either RF role and resumes with the same retained routes and queued owners.</tspan></text>
+</svg>

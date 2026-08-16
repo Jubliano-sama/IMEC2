@@ -1,0 +1,5 @@
+id,label,order
+current_gateway,CURRENT GATEWAY CONTROL,1
+current_rf,CURRENT ANCHOR RF,2
+proposed_gateway,SHORTENED GATEWAY CONTROL,3
+proposed_rf,SHORTENED ANCHOR RF,4

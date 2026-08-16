@@ -1,0 +1,43 @@
+FAIL scenario=busy-line seed=0x000021a9 fault_seed=0xf4177f44 status=-1004 last_error=-1004
+replay: /tmp/mesh-stress-campaign-n2__9r8k/mesh_stress --scenario busy-line --seed 0x000021a9 --fault-seed 0xf4177f44 --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 40
+failure_source /home/tommie/Projects/IMEC2/firmware/sim/mesh_sim_events.c:570
+failure_event type=0 object=83 time_us=29599240
+node[0] id=a100 queue=0 pending=2 pending_seq=258 next=0 radio=0 runtime_owner=0 work=0 transit=0 repair=0 workers=0/39/39 deliveries=0 route_waiting=0 epoch=1
+node[1] id=a101 queue=0 pending=0 pending_seq=258 next=a102 radio=0 runtime_owner=0 work=0 transit=0 repair=0 workers=0/27/27 deliveries=0 route_waiting=0 epoch=2
+node[2] id=a102 queue=1 pending=0 pending_seq=258 next=9000 radio=0 runtime_owner=0 work=0 transit=0 repair=0 workers=0/35/35 deliveries=0 route_waiting=0 epoch=1
+  queue[1] msg=49 src=a102 dst=a101 session=1895866625 seq=7 next=a101 priority=210 relay_start=0 order=52
+node[3] id=9000 queue=0 pending=0 pending_seq=0 next=0 radio=0 runtime_owner=0 work=0 transit=0 repair=0 workers=0/0/0 deliveries=4 route_waiting=0 epoch=1
+connection[0] ret=0 kind=2 start=18446744073709551615 end=18446744073709551615 skipped=0 scheduled=0 valid=1 fresh=0/0 fallback=1/1 repairs=9
+connection[1] ret=0 kind=0 start=29700000 end=29725000 skipped=0 scheduled=0 valid=1 fresh=1/1 fallback=0/0 repairs=4
+trace[1410] t=29005000 kind=event/24 node=9000 peer=0 msg=0 detail=121 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1411] t=29209000 kind=event/19 node=a100 peer=0 msg=0 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1412] t=29209000 kind=event/19 node=a101 peer=a100 msg=50 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1413] t=29224000 kind=gateway-acked/9 node=a101 peer=9000 msg=51 detail=0 tx={src=a100 dst=9000 session=1895866625 seq=258} fault_ordinal=0
+trace[1414] t=29209000 kind=connection-event/13 node=a101 peer=a100 msg=50 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1415] t=29209004 kind=event/0 node=a100 peer=0 msg=0 detail=136 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1416] t=29224000 kind=event/2 node=a101 peer=a100 msg=50 detail=78 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1417] t=29225827 kind=event/3 node=a101 peer=a100 msg=50 detail=78 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1418] t=29225828 kind=event/4 node=a100 peer=a101 msg=50 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1419] t=29234000 kind=event/1 node=a100 peer=0 msg=0 detail=136 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1420] t=29234000 kind=event/24 node=a100 peer=0 msg=0 detail=150 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1421] t=29234000 kind=event/24 node=a100 peer=0 msg=0 detail=151 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1422] t=29234000 kind=event/24 node=a102 peer=0 msg=0 detail=166 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1423] t=29234000 kind=event/24 node=9000 peer=0 msg=0 detail=122 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1424] t=29340000 kind=event/19 node=a102 peer=0 msg=0 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1425] t=29340000 kind=connection-event/13 node=a101 peer=a102 msg=0 detail=1 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1426] t=29340004 kind=event/0 node=a102 peer=0 msg=0 detail=137 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1427] t=29365000 kind=event/1 node=a102 peer=0 msg=0 detail=137 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1428] t=29365000 kind=event/24 node=a102 peer=0 msg=0 detail=167 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1429] t=29365000 kind=event/24 node=a100 peer=0 msg=0 detail=152 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1430] t=29365000 kind=event/24 node=a102 peer=0 msg=0 detail=168 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1431] t=29365000 kind=event/24 node=9000 peer=0 msg=0 detail=123 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1432] t=29569000 kind=event/19 node=a101 peer=0 msg=0 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1433] t=29569000 kind=connection-event/13 node=a100 peer=a101 msg=0 detail=0 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1434] t=29569004 kind=event/0 node=a101 peer=0 msg=0 detail=138 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1435] t=29575000 kind=route-required/12 node=a100 peer=9000 msg=48 detail=2 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1436] t=29575000 kind=packet-queued/7 node=a100 peer=0 msg=53 detail=180 tx={src=a100 dst=0 session=28140 seq=3} fault_ordinal=0
+trace[1437] t=29594000 kind=event/1 node=a101 peer=0 msg=0 detail=138 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1438] t=29594000 kind=event/2 node=a100 peer=0 msg=53 detail=106 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1439] t=29594000 kind=event/24 node=a100 peer=0 msg=0 detail=153 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1440] t=29594000 kind=event/24 node=a102 peer=0 msg=0 detail=169 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0
+trace[1441] t=29594000 kind=event/24 node=9000 peer=0 msg=0 detail=124 tx={src=0 dst=0 session=0 seq=0} fault_ordinal=0

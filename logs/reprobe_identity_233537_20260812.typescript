@@ -1,0 +1,238 @@
+Script started on 2026-08-12 15:00:20+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -f 4000000 -M pre-reset -u E46070D247233537" <not executed on terminal>]
+[34m0000460[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000473[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000724[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000829[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000835[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000836[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000836[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000839[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000841[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000842[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000843[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000844[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000845[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000846[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000849[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000849[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000849[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000851[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000855[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000856[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000889[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000889[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000890[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_anchor build=imec-stack-v1:mesh_anchor:e303c02c85512b2ece548b93de02699ac71709b69b1e1c8ffa6f1c421c8037f4 epoch=8143649583469700344 uptime=251
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=329 attempt=1
+DBG_CH9_TX_SEND_AT now=329 earliest=266 msg=3f len=61
+DBG_CH9_TX_DONE now=333 dur=3 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_DIRECT_GW_PROBE_KEEP_CH9_AWAKE seq=1 attempt=1 release_ret=0
+DBG_DIRECT_GW_ACK_DONE ret=0 m=1 f=1 p=1 q=0 v=1 fail=1 sl=48 prev=0x9999888877776666 len=105 att=1 r=node-comm-reliable-uplin
+DBG_DIRECT_GW_ROUTE_READY
+DBG_ROUTE_REQ_DIRECT_READY
+DBG_ROUTE_REQ_ASYNC_DONE target=0x9999888877776666 generation=1 ret=0 reason=node-comm-reliable-uplink
+DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=3 wait=0 q=0
+mesh node identity: ficr=0x39c685e9f83e730c node=0x708bc0aab970300e preset=mesh_anchor
+DBG_DIRECT_GW_TX seq=1 now=1736 reason=node-comm-reliable-uplink
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=1737 seq=1
+DBG_UWB_TX_CH9
+DBG_UWB_TX_CH9
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=906612 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3814 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=907824 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3601 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=909035 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3936 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=910247 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3234 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=911457 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=912668 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=913879 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3631 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=915090 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3417 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=916301 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4180 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=917512 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=918724 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3601 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=919935 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=921147 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3265 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=922358 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+
+Script done on 2026-08-12 15:00:40+02:00 [COMMAND_EXIT_CODE="0"]

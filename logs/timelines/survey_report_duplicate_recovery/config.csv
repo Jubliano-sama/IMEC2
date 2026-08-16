@@ -1,0 +1,7 @@
+key,value
+title,Exact report retry after a missed end-to-end ACK
+caption,The parent may suppress duplicates only while it still owns the report. Once custody ends the same retry must reach the gateway again so the gateway can replace the missed ACK.
+key_point,The old ACK-only rule dead-ends after parent custody clears; re-forwarding the exact retry completes in one additional parent/gateway exchange without route repair.
+start,0
+end,7000
+width,1800

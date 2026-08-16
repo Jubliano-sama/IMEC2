@@ -1,0 +1,64 @@
+{
+  "case_timeout_s": 30.0,
+  "failure_count": 5,
+  "failures": [
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145755410346Z-busy-line-seed-000010df-fault-f4174e32-cfg-e6a83b2fe5ca2400",
+      "fault_seed": "0xf4174e32",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x000010df --fault-seed 0xf4174e32 --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 120 --quiet",
+      "returncode": 1,
+      "seed": "0x000010df",
+      "timed_out": false
+    },
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145755410346Z-busy-line-seed-00001123-fault-f4174fce-cfg-9c67f10d6e06ac28",
+      "fault_seed": "0xf4174fce",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x00001123 --fault-seed 0xf4174fce --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 120 --quiet",
+      "returncode": 1,
+      "seed": "0x00001123",
+      "timed_out": false
+    },
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145755410346Z-busy-line-seed-00001139-fault-f4174fd4-cfg-ec0f7191291545d4",
+      "fault_seed": "0xf4174fd4",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x00001139 --fault-seed 0xf4174fd4 --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 120 --quiet",
+      "returncode": 1,
+      "seed": "0x00001139",
+      "timed_out": false
+    },
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145755410346Z-busy-line-seed-0000114d-fault-f4174fa0-cfg-bfb75d93115ec105",
+      "fault_seed": "0xf4174fa0",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x0000114d --fault-seed 0xf4174fa0 --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 120 --quiet",
+      "returncode": 1,
+      "seed": "0x0000114d",
+      "timed_out": false
+    },
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145755410346Z-busy-line-seed-000011b1-fault-f4174f5c-cfg-612d7d4a5f643819",
+      "fault_seed": "0xf4174f5c",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x000011b1 --fault-seed 0xf4174f5c --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 120 --quiet",
+      "returncode": 1,
+      "seed": "0x000011b1",
+      "timed_out": false
+    }
+  ],
+  "max_failure_artifacts": 25,
+  "recorded_at_utc": "20260813T145755410346Z",
+  "retained_artifact_count": 5,
+  "runner_sha256": "d49ace20bf7d77c8604ec95925ae307a69d366930f58cedd937ec5424629e58c",
+  "sanitizer_environment": {
+    "ASAN_OPTIONS": "detect_leaks=0:halt_on_error=1",
+    "LSAN_OPTIONS": null,
+    "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+  },
+  "scenario": "busy-line",
+  "shared_executable": {
+    "path": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163",
+    "sha256": "0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163"
+  },
+  "source": {
+    "git_head": "be8d53305411efd871702911de39178d78b99acf",
+    "tracked_worktree_dirty": true
+  }
+}

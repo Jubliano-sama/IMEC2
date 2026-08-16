@@ -1,0 +1,8 @@
+time,label,caption,kind,row
+0,0 s,topology setup starts,axis,
+7000,7 s,first relay timing handshake bounded,axis,
+14000,14 s,sequential depth-3 timing chain bounded,axis,
+20000,20 s,assignment evidence expected on healthy routes,axis,
+35000,35 s,normal click hard deadline,axis,
+55000,55 s,survey discovery executes,axis,
+90000,90 s,healthy three-pair survey target,axis,

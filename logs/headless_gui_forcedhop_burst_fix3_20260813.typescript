@@ -1,0 +1,103 @@
+Script started on 2026-08-13 04:17:26+02:00 [COMMAND=".venv/bin/python tools/mesh_ble_route_monitor.py --gateway 'IMEC Mesh Test Gateway' --duration-s 565 --include-all-mesh-data --verbose" TERM="linux" TTY="/dev/pts/13" COLUMNS="80" LINES="24"]
+resolved gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C source=scan preconnected=0
+attached gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C
+packet msg=CLICK_REPORT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=4236352323 seq=1
+packet msg=0x56 seq=56 src=0x9999888877776666
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=4236352323 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=4236352323 seq=2
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=4236352323 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=4236352323 seq=3
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=4236352323 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=4236352323 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=4236352323 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=4236352323 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=3700083781 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=3700083781 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=3700083781 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=3700083781 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=3700083781 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=3700083781 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3700083781 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3700083781 seq=2
+packet msg=CLICK_REPORT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2853727728 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2853727728 seq=2
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2853727728 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2853727728 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2853727728 seq=3
+packet msg=CLICK_REPORT seq=3 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2853727728 seq=3
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2853727728 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2338247538 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2338247538 seq=2
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2338247538 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2338247538 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=2338247538 seq=3
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2338247538 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=2853727728 seq=1
+packet msg=CLICK_REPORT seq=3 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3700083781 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3163815239 seq=1
+^CTraceback (most recent call last):
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/tools/mesh_ble_route_monitor.py", line 826, in run
+    await asyncio.wait_for(done.wait(), timeout=args.duration_s)
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/tasks.py", line 507, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/locks.py", line 213, in wait
+    await fut
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/tools/mesh_ble_route_monitor.py", line 899, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/tommie/Projects/IMEC2/tools/mesh_ble_route_monitor.py", line 895, in main
+    return asyncio.run(run(args))
+           ~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt
+
+Script done on 2026-08-13 04:21:10+02:00 [COMMAND_EXIT_CODE="130"]

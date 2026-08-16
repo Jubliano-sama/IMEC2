@@ -1,0 +1,5 @@
+id,label,order
+gateway,GATEWAY / GUI,1
+anchor_a,DIRECT ANCHOR A,2
+anchor_b,FORCED-1 ANCHOR B,3
+anchor_c,FORCED-2 ANCHOR C,4

@@ -1,0 +1,32 @@
+Script started on 2026-08-13 07:51:10+02:00 [COMMAND=".venv/bin/python /tmp/reboot_anchor_via_gateway.py 0" <not executed on terminal>]
+ROUTED_REBOOT_TARGET target=0x0000000000000000
+Traceback (most recent call last):
+  File "/tmp/reboot_anchor_via_gateway.py", line 72, in <module>
+    main()
+    ~~~~^^
+  File "/tmp/reboot_anchor_via_gateway.py", line 68, in main
+    provisioner.main()
+    ~~~~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1381, in main
+    asyncio.run(run(args))
+    ~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 983, in run
+    gateway_target = await _resolve_gateway_target(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 134, in _resolve_gateway_target
+    raise RuntimeError(f"gateway {name_or_address!r} was not found during BLE scan")
+RuntimeError: gateway 'IMEC Mesh Test Gateway' was not found during BLE scan
+
+Script done on 2026-08-13 07:51:22+02:00 [COMMAND_EXIT_CODE="1"]

@@ -1,0 +1,17 @@
+row,start,end,text,style
+current_gateway,0,40000,"Discovery flood + redrives\n0 / 10 / 20 / 30 / 40 s",solid
+current_gateway,90000,135000,"Pair 1 START barrier\n45 s",dashed
+current_gateway,135000,180000,"Pair 2 START barrier\n45 s",dashed
+current_gateway,180000,225000,"Pair 3 START barrier\n45 s",dashed
+current_rf,90000,95000,"Discovery RF + reports",emphasis
+current_rf,135000,140000,"Pair 1 + results",emphasis
+current_rf,180000,185000,"Pair 2 + results",emphasis
+current_rf,225000,230000,"Pair 3 + results",emphasis
+proposed_gateway,0,8000,"Discovery flood + redrives\n0 / 2 / 4 / 6 / 8 s",solid
+proposed_gateway,20000,35000,"Pair 1 repeated controls\n15 s shared barrier",solid
+proposed_gateway,35000,50000,"Pair 2 repeated controls\n15 s shared barrier",solid
+proposed_gateway,50000,65000,"Pair 3 repeated controls\n15 s shared barrier",solid
+proposed_rf,20000,25000,"Discovery RF + reports",emphasis
+proposed_rf,35000,40000,"Pair 1 + results",emphasis
+proposed_rf,50000,55000,"Pair 2 + results",emphasis
+proposed_rf,65000,70000,"Pair 3 + results",emphasis

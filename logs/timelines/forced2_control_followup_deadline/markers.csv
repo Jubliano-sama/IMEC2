@@ -1,0 +1,8 @@
+time,label
+0,"A wake"
+520,"A payload"
+1550,"B wake"
+1950,"B retune"
+2000,"old deadline"
+2010,"B payload"
+3950,"renewed deadline"

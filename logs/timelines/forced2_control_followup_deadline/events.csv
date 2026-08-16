@@ -1,0 +1,11 @@
+row,start,end,text,style,lane_index
+upstream,0,520,"wake train + turnaround\nextended survey payload",solid,0
+relay,520,1550,"accept A payload, schedule\nnext bounded flood wave",solid,0
+relay,1550,1950,"B CONTROL_FOLLOWUP wake train",emphasis,0
+relay,1950,2010,"60 ms retune",solid,0
+relay,2010,2090,"four extended payload copies",emphasis,0
+child,0,2000,"listener opened by A\nold fixed deadline",solid,0
+child,1900,1950,"B wake decoded near tail",emphasis,1
+child,1950,3950,"fixed: renew same listener\nfor one bounded relay window",solid,1
+outcome,2000,2010,"old listener closes",emphasis,0
+outcome,2010,2090,"old: miss payload\nfixed: capture payload",emphasis,1

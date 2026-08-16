@@ -1,0 +1,17 @@
+row,start,end,text,style
+host,0,20000,"Here-I-Am + exact 1/2/3-hop assignment",emphasis
+gateway,0,2000,"Gateway route advertisements",default
+direct,0,7000,"Direct gateway route + B timing",default
+forced1,0,7000,"Negotiate upstream with A",default
+forced1,7000,14000,"Then negotiate downstream with C\n320 ms counterphase",default
+forced2,7000,14000,"Exact depth-2 parent negotiation",default
+clicker,20000,35000,"400 ms wake/range burst\nthen retained reports",emphasis
+direct,20000,35000,"Click pre-empts cadence\nreport resumes afterward",shaded
+forced1,20000,35000,"Retain relay custody\nno route rediscovery",shaded
+forced2,20000,35000,"Retain relay custody\nno route rediscovery",shaded
+host,35000,90000,"Survey: 20 s discovery start\nthree 15 s pair barriers",emphasis
+gateway,35000,55000,"Control waves at 2/4/6/8 s\nexecute at +20 s",default
+direct,55000,90000,"Three pair actions share proven routes",default
+forced1,55000,90000,"Relay control/results on existing timings",default
+forced2,55000,90000,"Pair action + reliable result",default
+heartbeat,0,90000,"No protocol window reserved\ndrop unless route and radio are ready",quiet

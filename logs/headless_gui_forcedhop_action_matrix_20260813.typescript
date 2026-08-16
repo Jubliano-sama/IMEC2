@@ -1,0 +1,33 @@
+Script started on 2026-08-13 04:40:01+02:00 [COMMAND=".venv/bin/python tools/mesh_ble_route_monitor.py --gateway 'IMEC Mesh Test Gateway' --duration-s 175 --include-all-mesh-data --verbose" <not executed on terminal>]
+resolved gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C source=scan preconnected=0
+attached gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C
+packet msg=0x56 seq=56 src=0x9999888877776666
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2462828 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2462828 seq=2
+packet msg=SELF_TEST_REPORT seq=71 src=0xa2603d21d805ae52
+host_receipt msg=0x21 src=0xa2603d21d805ae52 session=19923015 seq=71
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=2462828 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=3471788883 seq=1
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=3471788883 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=3471788883 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=3471788883 seq=3
+packet msg=CLICK_REPORT seq=2 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=3471788883 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x20 src=0x36e3c2fe6cac46b2 session=3471788883 seq=3
+packet msg=CLICK_REPORT seq=1 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3471788883 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3471788883 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=3471788883 seq=3
+summary packets=14 synthetic=0 gap_events=0 missing=0 streams=0 resets=0 drop_sources=0 max_attempt=- max_hop=- decode_errors=0 capture_errors=0
+
+Script done on 2026-08-13 04:43:07+02:00 [COMMAND_EXIT_CODE="0"]

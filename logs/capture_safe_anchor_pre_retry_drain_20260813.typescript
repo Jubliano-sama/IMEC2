@@ -1,0 +1,8 @@
+Script started on 2026-08-13 01:36:02+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway 'IMEC Mesh Test Gateway' --command monitor --duration 30" <not executed on terminal>]
+BLE_CONNECTED gateway_id=0x9999888877776666 command=monitor
+BLE_CHUNK len=118 hex=475701280106010056000e000e00b80266667777888899996666777788889999000000004e008616014e010606000000040170002fdcd47e0800b8022fdcd47e2fdc00000e00b80207cbc8c619961a190000000000000000000000000000000007cbc8c619961a1903000000000000000000000001ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=45613070 seq=14 payload=014e010606000000040170002fdcd47e0800b8022fdcd47e2fdc00000e00b80207cbc8c619961a190000000000000000000000000000000007cbc8c619961a1903000000000000000000000001ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=1, stage=6, flags=6, attempt=0, command_status=0, reason=0, command_id=260, route_epoch=112, correlation_id=2127879215, gateway_sequence=45613064, host_session_id=2127879215, host_sequence=56367, event_sequence=45613070, anchor_id=1808923237796072199, pair_initiator_id=0, pair_responder_id=0, previous_hop_id=1808923237796072199, progress_count=3, total_count=0, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=1, discovery_slot=255)
+BLE_COMPLETE packets=1
+
+Script done on 2026-08-13 01:36:48+02:00 [COMMAND_EXIT_CODE="0"]

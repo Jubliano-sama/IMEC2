@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="557" viewBox="0 0 1800 557" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">CHANNEL-9 EVENT ACCEPT: CURRENT LISTENER CLOSES BEFORE A LEGAL RETRY</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="450.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="1758.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="114.0" class="row-label">FORCED-2 CHILD / PROPOSER</text>
+<rect x="202.0" y="70.0" width="239.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="321.7" y="87.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="321.7" dy="0.0">Current EVENT_ACCEPT listen</tspan><tspan x="321.7" dy="12.0">closes after 1 s</tspan></text>
+<rect x="441.4" y="70.0" width="1196.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1039.8" y="87.0" class="small center event-text" text-anchor="middle"><tspan x="1039.8" dy="0.0">Current implementation has already stopped listening</tspan><tspan x="1039.8" dy="12.0">and starts another proposal cycle</tspan></text>
+<rect x="202.0" y="114.0" width="1436.3" height="36.0" fill="#fbfbfb" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="920.2" y="131.0" class="small center event-text" text-anchor="middle"><tspan x="920.2" dy="0.0">Corrected single bounded listen</tspan><tspan x="920.2" dy="12.0">covers the existing responder retry contract</tspan></text>
+<line x1="44.0" y1="160.0" x2="1758.0" y2="160.0" class="major-line"/>
+<text x="123.0" y="202.0" class="row-label">FORCED-1 PARENT / RESPONDER</text>
+<rect x="202.0" y="190.0" width="19.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="221.2" y="190.0" width="1417.2" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="929.7" y="207.0" class="small center event-text" text-anchor="middle"><tspan x="929.7" dy="0.0">Existing bounded retry owner</tspan><tspan x="929.7" dy="12.0">waits for a legal Channel-5 gap</tspan></text>
+<line x1="211.6" y1="195.0" x2="211.6" y2="190.0" class="hairline"/>
+<rect x="202.0" y="162.0" width="190.0" height="25.0" class="callout"/>
+<text x="206.0" y="173.5" class="tiny" text-anchor="start"><tspan x="206.0" dy="0.0">Validate proposal</tspan><tspan x="206.0" dy="11.0">and retain exact ACCEPT</tspan></text>
+<line x1="44.0" y1="236.0" x2="1758.0" y2="236.0" class="major-line"/>
+<text x="123.0" y="284.0" class="row-label">SHARED CHANNEL-5 OPPORTUNITY</text>
+<rect x="202.0" y="266.0" width="239.4" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="321.7" y="283.0" class="small center event-text" text-anchor="middle"><tspan x="321.7" dy="0.0">May be unavailable because upstream</tspan><tspan x="321.7" dy="12.0">Channel-9</tspan><tspan x="321.7" dy="12.0">RX/TX and retune ownership has priority</tspan></text>
+<rect x="441.4" y="266.0" width="550.6" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="716.7" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="716.7" dy="0.0">Observed trace: repeated legal deferrals</tspan><tspan x="716.7" dy="12.0">while upstream timing remains owned</tspan></text>
+<rect x="992.0" y="266.0" width="23.9" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1015.9" y="266.0" width="622.4" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1327.1" y="295.0" class="small center event-text" text-anchor="middle"><tspan x="1327.1" dy="0.0">Unused remainder of retry budget</tspan></text>
+<line x1="1003.9" y1="271.0" x2="1003.9" y2="266.0" class="hairline"/>
+<rect x="908.9" y="238.0" width="190.0" height="25.0" class="callout"/>
+<text x="912.9" y="249.5" class="tiny" text-anchor="start"><tspan x="912.9" dy="0.0">First usable response gap</tspan><tspan x="912.9" dy="11.0">EVENT_ACCEPT transmits</tspan></text>
+<line x1="44.0" y1="324.0" x2="1758.0" y2="324.0" class="major-line"/>
+<text x="123.0" y="361.0" class="row-label">KEY POINT</text>
+<rect x="720.0" y="336.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="980.0" y="356.0" class="small center" text-anchor="middle"><tspan x="980.0" dy="0.0">Use one shared bound: EVENT_ACCEPT listener duration &gt;= EVENT_ACCEPT retry deadline. This</tspan><tspan x="980.0" dy="12.0">removes repeated proposal cycles without adding a new queue or route-repair mechanism.</tspan></text>
+<line x1="44.0" y1="390.0" x2="1758.0" y2="390.0" class="major-line"/>
+<line x1="44.0" y1="416.0" x2="44.0" y2="454.0" class="major-line"/>
+<line x1="44.0" y1="416.0" x2="1758.0" y2="416.0" class="axis-line"/>
+<line x1="202.0" y1="415.0" x2="202.0" y2="427.0" class="tick"/>
+<line x1="441.4" y1="415.0" x2="441.4" y2="427.0" class="tick"/>
+<line x1="992.0" y1="415.0" x2="992.0" y2="427.0" class="tick"/>
+<line x1="1638.3" y1="415.0" x2="1638.3" y2="427.0" class="tick"/>
+<text x="202.0" y="439.0" class="axis-time">t = 0</text>
+<text x="441.4" y="439.0" class="axis-time">+1 s</text>
+<text x="992.0" y="439.0" class="axis-time">+3.3 s</text>
+<text x="1638.3" y="439.0" class="axis-time">+6 s</text>
+<text x="202.0" y="468.5" class="tiny center" text-anchor="middle"><tspan x="202.0" dy="0.0">PROPOSE received</tspan></text>
+<text x="441.4" y="468.5" class="tiny center" text-anchor="middle"><tspan x="441.4" dy="0.0">old listener closes</tspan></text>
+<text x="992.0" y="463.0" class="tiny center" text-anchor="middle"><tspan x="992.0" dy="0.0">observed legal ACCEPT</tspan><tspan x="992.0" dy="11.0">opportunity</tspan></text>
+<text x="1638.3" y="468.5" class="tiny center" text-anchor="middle"><tspan x="1638.3" dy="0.0">responder retry deadline</tspan></text>
+<text x="900.0" y="523.0" class="caption center" text-anchor="middle"><tspan x="900.0" dy="0.0">The responder may legally defer an EVENT_ACCEPT anywhere inside its 6 s retry budget while existing Channel-9 ownership clears. A 1 s proposer listener therefore cannot cover the protocol it initiated; one 6 s listen does.</tspan></text>
+</svg>

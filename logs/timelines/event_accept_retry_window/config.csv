@@ -1,0 +1,8 @@
+key,value
+title,CHANNEL-9 EVENT ACCEPT: CURRENT LISTENER CLOSES BEFORE A LEGAL RETRY
+caption,"The responder may legally defer an EVENT_ACCEPT anywhere inside its 6 s retry budget while existing Channel-9 ownership clears. A 1 s proposer listener therefore cannot cover the protocol it initiated; one 6 s listen does."
+key_point,"Use one shared bound: EVENT_ACCEPT listener duration >= EVENT_ACCEPT retry deadline. This removes repeated proposal cycles without adding a new queue or route-repair mechanism."
+start,0
+end,6500
+width,1800
+unit,ms

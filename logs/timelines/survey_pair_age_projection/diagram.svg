@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4200" height="585" viewBox="0 0 4200 585" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">SURVEY PAIR DEADLINE PROJECTION: OBSERVED FAILURE AND FIX</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="478.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4158.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="96.0" class="row-label">INITIATOR</text>
+<rect x="2027.8" y="74.0" width="1202.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2628.9" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2628.9" dy="0.0">Initiator DS-TWR attempts</tspan><tspan x="2628.9" dy="12.0">first poll begins at shared t=0</tspan></text>
+<line x1="44.0" y1="124.0" x2="4158.0" y2="124.0" class="major-line"/>
+<text x="123.0" y="160.0" class="row-label">RESPONDER / OLD AGE</text>
+<rect x="2554.3" y="138.0" width="1603.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3356.1" y="155.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3356.1" dy="0.0">Observed responder RX</tspan><tspan x="3356.1" dy="12.0">starts 346 ms after initiator</tspan></text>
+<line x1="44.0" y1="188.0" x2="4158.0" y2="188.0" class="major-line"/>
+<text x="123.0" y="224.0" class="row-label">RESPONDER / CORRECTED AGE</text>
+<rect x="506.3" y="202.0" width="3651.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2332.2" y="219.0" class="small center event-text" text-anchor="middle"><tspan x="2332.2" dy="0.0">Correct responder RX</tspan><tspan x="2332.2" dy="12.0">starts 1000 ms before initiator</tspan></text>
+<line x1="44.0" y1="252.0" x2="4158.0" y2="252.0" class="major-line"/>
+<text x="123.0" y="306.0" class="row-label">RELAY AGE ACCOUNTING</text>
+<rect x="506.3" y="262.0" width="2048.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1530.3" y="285.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1530.3" dy="0.0">1346 ms relay residence omitted by old forward</tspan></text>
+<rect x="506.3" y="306.0" width="1521.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1267.1" y="329.0" class="small center event-text" text-anchor="middle"><tspan x="1267.1" dy="0.0">Corrected packet age includes relay queue and radio residence</tspan></text>
+<line x1="44.0" y1="352.0" x2="4158.0" y2="352.0" class="major-line"/>
+<text x="123.0" y="389.0" class="row-label">KEY POINT</text>
+<rect x="1920.0" y="364.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="2180.0" y="378.0" class="small center" text-anchor="middle"><tspan x="2180.0" dy="0.0">The protocol is feasible as designed. The failure was one missing timestamp at the forwarding</tspan><tspan x="2180.0" dy="12.0">boundary, not an undersized DS-TWR window: the old responder RX began after the initiator&#x27;s</tspan><tspan x="2180.0" dy="12.0">exchange, while the corrected projection begins 1000 ms before it.</tspan></text>
+<line x1="44.0" y1="418.0" x2="4158.0" y2="418.0" class="major-line"/>
+<line x1="44.0" y1="444.0" x2="44.0" y2="482.0" class="major-line"/>
+<line x1="44.0" y1="444.0" x2="4158.0" y2="444.0" class="axis-line"/>
+<line x1="506.3" y1="443.0" x2="506.3" y2="455.0" class="tick"/>
+<line x1="2027.8" y1="443.0" x2="2027.8" y2="455.0" class="tick"/>
+<line x1="2554.3" y1="443.0" x2="2554.3" y2="455.0" class="tick"/>
+<line x1="3229.9" y1="443.0" x2="3229.9" y2="455.0" class="tick"/>
+<text x="506.3" y="467.0" class="axis-time">-1000 ms</text>
+<text x="2027.8" y="467.0" class="axis-time">t = 0</text>
+<text x="2554.3" y="467.0" class="axis-time">+346 ms</text>
+<text x="3229.9" y="467.0" class="axis-time">+790 ms</text>
+<text x="506.3" y="496.5" class="tiny center" text-anchor="middle"><tspan x="506.3" dy="0.0">required responder start</tspan></text>
+<text x="2027.8" y="496.5" class="tiny center" text-anchor="middle"><tspan x="2027.8" dy="0.0">initiator starts</tspan></text>
+<text x="2554.3" y="496.5" class="tiny center" text-anchor="middle"><tspan x="2554.3" dy="0.0">observed old responder start</tspan></text>
+<text x="3229.9" y="496.5" class="tiny center" text-anchor="middle"><tspan x="3229.9" dy="0.0">initiator attempt horizon</tspan></text>
+<text x="2100.0" y="551.0" class="caption center" text-anchor="middle"><tspan x="2100.0" dy="0.0">Times are expressed in the initiator&#x27;s clock domain. The responder must already be listening at -1000 ms. The old relay path omitted 1346 ms of queue and radio residence, so it started at +346 ms instead. Stamping each fresh forward lets the existing physical sender add that residence to packet age and restores the shared deadline without changing survey timeouts.</tspan></text>
+</svg>

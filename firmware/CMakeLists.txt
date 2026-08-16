@@ -757,6 +757,7 @@ add_test(NAME app_mesh_smoke_fast COMMAND test_app_mesh_smoke_fast)
 add_executable(test_app_mesh_c5_priority
     tests/test_app_mesh_c5_priority.c
     app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_route_request_policy.c
 )
 target_include_directories(test_app_mesh_c5_priority PRIVATE app/src)
 target_link_libraries(test_app_mesh_c5_priority PRIVATE core)
@@ -792,6 +793,7 @@ add_executable(test_app_gateway_command_ingress
     tests/test_app_gateway_command_ingress.c
     app/src/app_gateway_command_ingress.c
     app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_route_request_policy.c
     app/src/app_mesh_gateway_command_flow.c
 )
 target_include_directories(test_app_gateway_command_ingress PRIVATE app/src)
@@ -1490,6 +1492,7 @@ set_tests_properties(node_comm_delivery_stress_scenarios
 add_executable(test_mesh_survey_phy_scenarios
     tests/mesh_integration/test_mesh_survey_phy_scenarios.c
     app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_route_request_policy.c
 )
 target_include_directories(test_mesh_survey_phy_scenarios PRIVATE app/src)
 target_link_libraries(test_mesh_survey_phy_scenarios PRIVATE mesh_sim)
@@ -1657,6 +1660,7 @@ set_tests_properties(gateway_survey_host_flow_control_scenarios
 add_executable(test_mesh_app_arbitration_scenarios
     tests/mesh_integration/test_mesh_app_arbitration_scenarios.c
     app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_route_request_policy.c
     app/src/app_mesh_ch9_ack.c
     app/src/app_mesh_command_orchestrator.c
     app/src/app_mesh_arbitration_zephyr.c

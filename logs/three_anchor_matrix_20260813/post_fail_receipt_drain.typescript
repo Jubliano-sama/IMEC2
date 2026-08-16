@@ -1,0 +1,5 @@
+BLE_CHUNK len=118 hex=47570128010601005600d900d900500366667777888899996666777788889999000000004e00c82e014e01060600000004019600b39e96cbd4005003b39e96cbb39e0000d90050030e3070b9aac08b7000000000000000000000000000000000b246ac6cfec2e33602000000000000000000000002ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=55574745 seq=217 payload=014e01060600000004019600b39e96cbd4005003b39e96cbb39e0000d90050030e3070b9aac08b7000000000000000000000000000000000b246ac6cfec2e33602000000000000000000000002ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=1, stage=6, flags=6, attempt=0, command_status=0, reason=0, command_id=260, route_epoch=150, correlation_id=3415645875, gateway_sequence=55574740, host_session_id=3415645875, host_sequence=40627, event_sequence=55574745, anchor_id=8109787393498820622, pair_initiator_id=0, pair_responder_id=0, previous_hop_id=3955219295762138802, progress_count=2, total_count=0, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=2, discovery_slot=255)
+BLE_CONNECTED gateway_id=0x9999888877776666 command=monitor
+BLE_COMPLETE packets=1

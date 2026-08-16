@@ -1,0 +1,450 @@
+Script started on 2026-08-09 00:57:03+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -f 4000000 -M attach -u E46070D247394D36" <not executed on terminal>]
+[34m0000442[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000476[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000489[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000490[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000491[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000496[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000504[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000519[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000530[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000531[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000533[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000534[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000536[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000536[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000536[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000539[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000542[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000543[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000574[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000574[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000574[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2112591 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2113803 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_UWB_RX_CH5
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1269 ms=582
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2695258 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1270 ms=463
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1271 ms=582
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1272 ms=600
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2696467 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1273 ms=487
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1274 ms=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2697678 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3845 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1275 ms=304
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1276 ms=359
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1277 ms=365
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2698888 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1278 ms=590
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1279 ms=572
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1280 ms=329
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2700098 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3143 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1281 ms=375
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1282 ms=302
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1283 ms=405
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2701308 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1284 ms=494
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1285 ms=550
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2702518 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3143 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1286 ms=313
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1287 ms=518
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1288 ms=393
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2703728 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3295 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1289 ms=315
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1290 ms=451
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1291 ms=508
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2704937 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1292 ms=285
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1293 ms=453
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1294 ms=514
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2706146 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1295 ms=435
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1296 ms=317
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1297 ms=258
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1298 ms=272
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2707356 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1299 ms=456
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1300 ms=554
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=2708566 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1301 ms=277
+DBG_NODE_COMM_FULL slot=0 occupied=1 handle=1 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=1 occupied=1 handle=3 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=2 occupied=1 handle=5 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_NODE_COMM_FULL slot=3 occupied=1 handle=6 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=7
+DBG_NODE_COMM_FULL slot=4 occupied=1 handle=7 profile=3 auto=0 type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=2
+DBG_NODE_COMM_FULL slot=5 occupied=1 handle=9 profile=2 auto=0 type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=1
+DBG_SURVEY_REPORT_BACKOFF survey=1 seq=3 round=1302 ms=559
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+
+Script done on 2026-08-09 00:57:20+02:00 [COMMAND_EXIT_CODE="0"]

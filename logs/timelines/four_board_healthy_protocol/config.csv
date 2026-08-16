@@ -1,0 +1,8 @@
+key,value
+title,FOUR-BOARD HEALTHY PATH: ROUTES FIRST, OPERATIONS REUSE THEM
+caption,"The one-time topology and timing negotiation precedes assignment. Normal clicks and surveys then reuse the same 1/2/3-hop routes; heartbeat has no reserved phase and is discarded whenever it cannot use an already-open slot."
+key_point,"The healthy path contains no route-repair allowance inside assignment, click, or survey. A missing route fails that operation visibly; background heartbeat never creates work."
+start,0
+end,90000
+width,2100
+unit,ms

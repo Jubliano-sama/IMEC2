@@ -1,0 +1,6 @@
+time,label
+0,"pair setup"
+25000,"RF starts"
+25200,"RF complete"
+67000,"all five results known"
+82000,"cleanup complete"

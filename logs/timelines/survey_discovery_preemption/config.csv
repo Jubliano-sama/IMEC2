@@ -1,0 +1,9 @@
+key,value
+title,"SURVEY DISCOVERY PREEMPTION: EARLY BLACKOUT VS JUST-IN-TIME PREP"
+caption,"Times are relative to the scheduled survey start. The observed anchor accepted the command about 86 seconds early. The old admission path immediately stopped ordinary mesh reception, so a child's already-retained command result exhausted its retries during the blackout. The corrected path keeps mesh reception active until the existing 1,103 ms physical-preparation boundary."
+key_point,"No new scheduler is needed. Admission records the future survey; the delayed worker performs the only transport preemption at -1.103 s, leaving the preceding 85 seconds available for established-route traffic."
+start,-90000
+end,3000
+width,4200
+unit,ms
+axis_caption_width,230

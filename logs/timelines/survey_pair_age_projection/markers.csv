@@ -1,0 +1,5 @@
+time,label,caption,kind,row
+-1000,-1000 ms,required responder start,axis,
+0,t = 0,initiator starts,axis,
+346,+346 ms,observed old responder start,axis,
+790,+790 ms,initiator attempt horizon,axis,

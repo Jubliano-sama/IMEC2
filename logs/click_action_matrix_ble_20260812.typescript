@@ -1,0 +1,11 @@
+Script started on 2026-08-12 13:31:43+02:00 [COMMAND=".venv/bin/python tools/mesh_ble_route_monitor.py --gateway 'IMEC Mesh Test Gateway' --duration-s 600 --include-all-mesh-data --verbose --jsonl-file logs/click_action_matrix_20260812.jsonl" <not executed on terminal>]
+resolved gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C source=scan preconnected=0
+attached gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C
+packet msg=0x56 seq=8 src=0x9999888877776666
+packet msg=ANCHOR_HEARTBEAT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x22 src=0x191a9619c6c8cb07 session=128 seq=1
+packet msg=ANCHOR_HEARTBEAT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x22 src=0x36e3c2fe6cac46b2 session=114 seq=1
+summary packets=3 synthetic=0 gap_events=0 missing=0 streams=0 resets=0 drop_sources=0 max_attempt=- max_hop=- decode_errors=0 capture_errors=0
+
+Script done on 2026-08-12 13:41:53+02:00 [COMMAND_EXIT_CODE="0"]

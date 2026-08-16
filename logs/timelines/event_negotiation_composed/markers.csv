@@ -1,0 +1,4 @@
+time,label,caption,kind,row
+0,t = 0,PROPOSE sent and listener opens,axis,
+1000,+1 s,latest admitted proposal processing,axis,
+7000,+7 s,complete negotiation deadline,axis,

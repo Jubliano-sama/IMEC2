@@ -1,0 +1,10 @@
+row,start,end,text,style,lane_index
+command,-85955,-85000,"START accepted\nfuture work queued",solid,0
+old,-85955,0,"Mesh reception stopped immediately\n85.955 s blackout",emphasis,0
+fixed,-85955,-1103,"Established-route traffic remains serviceable",solid,0
+fixed,-1103,0,"Existing worker quiesces mesh\nand prepares survey radio",emphasis,0
+child,-88279,-88100,"command result TX 1",emphasis,0
+child,-84439,-84260,"retry 2",emphasis,0
+child,-78039,-77860,"retry 3",emphasis,0
+child,-69079,-68900,"retry 4",emphasis,0
+survey,0,3000,"Survey discovery begins",solid,0

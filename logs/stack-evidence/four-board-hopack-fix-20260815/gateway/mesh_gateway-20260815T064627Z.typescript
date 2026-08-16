@@ -1,0 +1,836 @@
+Script started on 2026-08-15 08:41:27+02:00 [COMMAND="timeout --foreground --signal=INT 300 pyocd rtt -t nrf52833 -M pre-reset -a 0x20000410 -s 0x100 -u E46070D247233537 --up-channel-id 0" <not executed on terminal>]
+[34m0000362[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000375[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000628[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000735[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000744[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000745[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000746[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000750[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000753[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000754[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000756[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000757[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000760[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000762[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000766[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000766[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000766[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000770[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000775[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000777[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000801[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000801[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000803[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:da020b3be3749bf31053314489dbae518ac02f0ceb8e757647e3370533ec4844 epoch=2268795291830462962 uptime=1
+mesh node identity: ficr=0x88add51b1bcbe854 node=0x9999888877776666 preset=mesh_gateway
+DBG_LED_SELFTEST_CH5_RX
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1009
+DBG_GATEWAY_BOOT stage=ble_begin uptime=1022
+DBG_GATEWAY_BLE stage=entry enabled=1 uptime=1022
+DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=1028
+DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=1030
+DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=1030
+DBG_GATEWAY_BOOT stage=ch9_begin uptime=1030
+DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=1030
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=4 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x3f src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=4 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_GATEWAY_ACK_INPUT type=63 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=4 ackseq=2 len=0 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=2
+DBG_COORD state=idle owner=gateway-ack-immediate-channel9 reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_CH9_TX_CONFIG ret=0 now=2349 earliest=0 msg=32
+DBG_CH9_TX_SEND_AT now=2349 earliest=0 msg=32 len=105
+DBG_CH9_TX_RELEASE_IDLE msg=32 seq=2 reason=gateway-ack-immediate-channel9 ret=0
+DBG_UWB_TX_CH9
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_REARM_DEFER delay=0 ret=1 active=1
+DBG_MESH_RX_WORK_WAIT q=0
+DBG_MESH_RX_WORK_ENTER q=0
+DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=6 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=6 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_GATEWAY_ACK_INPUT type=63 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=6 ackseq=3 len=0 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=3
+DBG_COORD state=idle owner=gateway-ack-immediate-channel9 reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_CH9_TX_CONFIG ret=0 now=2871 earliest=0 msg=32
+DBG_CH9_TX_SEND_AT now=2871 earliest=0 msg=32 len=105
+DBG_CH9_TX_RELEASE_IDLE msg=32 seq=3 reason=gateway-ack-immediate-channel9 ret=0
+DBG_UWB_TX_CH9
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_REARM_DEFER delay=0 ret=1 active=1
+DBG_MESH_RX_WORK_WAIT q=0
+DBG_MESH_RX_WORK_ENTER q=0
+DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=4 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x3f src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=4 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_GATEWAY_ACK_INPUT type=63 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=4 ackseq=4 len=0 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=4
+DBG_COORD state=idle owner=gateway-ack-immediate-channel9 reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_CH9_TX_CONFIG ret=0 now=3538 earliest=0 msg=32
+DBG_CH9_TX_SEND_AT now=3538 earliest=0 msg=32 len=105
+DBG_CH9_TX_RELEASE_IDLE msg=32 seq=4 reason=gateway-ack-immediate-channel9 ret=0
+DBG_UWB_TX_CH9
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_REARM_DEFER delay=0 ret=1 active=1
+DBG_MESH_RX_WORK_WAIT q=0
+DBG_MESH_RX_WORK_ENTER q=0
+DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=36 errors=2 frames=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=5 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x3f src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=5 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_GATEWAY_ACK_INPUT type=63 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=5 ackseq=5 len=0 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=5
+DBG_COORD state=idle owner=gateway-ack-immediate-channel9 reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_CH9_TX_CONFIG ret=0 now=4436 earliest=0 msg=32
+DBG_CH9_TX_SEND_AT now=4436 earliest=0 msg=32 len=105
+DBG_CH9_TX_RELEASE_IDLE msg=32 seq=5 reason=gateway-ack-immediate-channel9 ret=0
+DBG_UWB_TX_CH9
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_REARM_DEFER delay=0 ret=1 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=5 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=gateway-ch9-continuous-rx handled=1 q=0
+DBG_MESH_RX_DIRECT_EXIT handled=1 q=0 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=0
+DBG_MESH_RX_WORK_ENTER q=0
+DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=21 flags=0x04 pl
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=21 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_GATEWAY_ACK_INPUT type=63 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=21 ackseq=6 len=0 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=6
+DBG_COORD state=idle owner=gateway-ack-immediate-channel9 reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_CH9_TX_CONFIG ret=0 now=6204 earliest=0 msg=32
+DBG_CH9_TX_SEND_AT now=6204 earliest=0 msg=32 len=105
+DBG_CH9_TX_RELEASE_IDLE msg=32 seq=6 reason=gateway-ack-immediate-channel9 ret=0
+DBG_UWB_TX_CH9
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_REARM_DEFER delay=0 ret=1 active=1
+DBG_MESH_RX_WORK_WAIT q=0
+DBG_MESH_RX_WORK_ENTER q=0
+DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_GATEWAY_RX_REARM_RUN delay=0 ret=1 active=1
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE_FAIL ch=9 len=175 q=100
+DBG_RX_REJECT mode=9 len=175 q=100
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_MESH_RX_DRAIN_EXIT owner=gateway-ch9-continuous-rx handled=1 q=0
+DBG_MESH_RX_DIRECT_EXIT handled=1 q=0 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=0
+DBG_MESH_RX_WORK_ENTER q=0
+DBG_MESH_RX_DRAIN_ENTER owner=work q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 q=1
+DBG_MESH_RX_DIRECT_WAIT q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=1
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=1 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_MESH_RX_WORK_EXIT handled=0 q=1
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 q=2
+DBG_MESH_RX_DIRECT_WAIT q=2 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=2 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=2
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=2 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=2
+DBG_MESH_RX_WORK_ENTER q=2
+DBG_MESH_RX_DRAIN_ENTER owner=work q=2
+DBG_MESH_RX_WORK_EXIT handled=0 q=2
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 q=3
+DBG_MESH_RX_DIRECT_WAIT q=3 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=3 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=3
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=3 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=3
+DBG_MESH_RX_WORK_ENTER q=3
+DBG_MESH_RX_DRAIN_ENTER owner=work q=3
+DBG_MESH_RX_WORK_EXIT handled=0 q=3
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE_FAIL ch=9 len=175 q=100
+DBG_RX_REJECT mode=9 len=175 q=100
+DBG_MESH_RX_DIRECT_WAIT q=3 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=3 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=3
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=3 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=0 len=175 fail=0 recover=0
+DBG_MESH_RX_WORK_WAIT q=3
+DBG_MESH_RX_WORK_ENTER q=3
+DBG_MESH_RX_DRAIN_ENTER owner=work q=3
+DBG_MESH_RX_WORK_EXIT handled=0 q=3
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 q=4
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=0 len=175 fail=0 recover=0
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE_FAIL ch=9 len=175 q=100
+DBG_RX_REJECT mode=9 len=175 q=100
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=0 len=175 fail=0 recover=0
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE_FAIL ch=9 len=175 q=100
+DBG_RX_REJECT mode=9 len=175 q=100
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=23 flags=0x04 pl
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=25 flags=0x04 pl
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=0 len=175 fail=0 recover=0
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=26 flags=0x04 pl
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x3f src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=28 flags=0x04 pl
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=0 len=175 fail=0 recover=0
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE_FAIL ch=9 len=175 q=100
+DBG_RX_REJECT mode=9 len=175 q=100
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=0 len=175 fail=0 recover=0
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE_FAIL ch=9 len=175 q=100
+DBG_RX_REJECT mode=9 len=175 q=100
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_UWB_RX_CH9
+DBG_GATEWAY_CH9_RX_RELEASE_IDLE
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x22 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=1 flags=0x04 ple
+DBG_UWB_RX_CH9
+DBG_MESH_RX_DIRECT_WAIT q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DIRECT_ENTER q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_DRAIN_ENTER owner=gateway-ch9-continuous-rx q=4
+DBG_MESH_RX_DIRECT_EXIT handled=0 q=4 reason=gateway-ch9-continuous-rx
+DBG_MESH_RX_WORK_WAIT q=4
+DBG_MESH_RX_WORK_ENTER q=4
+DBG_MESH_RX_DRAIN_ENTER owner=work q=4
+DBG_MESH_RX_WORK_EXIT handled=0 q=4
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=31 errors=2 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=77 errors=2 frames=0
+[34m0299981[0m [91mE[0m [31mError during board uninit: [2m[session][0m
+[34m0299982[0m [91mE[0m [31mProbe error during disconnect: [2m[session][0m
+[0m
+Script done on 2026-08-15 08:46:27+02:00 [COMMAND_EXIT_CODE="124"]

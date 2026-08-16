@@ -708,16 +708,28 @@ static bool mesh_queue_from_frame_at_internal(
         (context.packet.msg_type == MSG_COMMAND ||
          context.packet.msg_type == MSG_SURVEY_PAIR_PREPARE ||
          context.packet.msg_type == MSG_SURVEY_DISCOVERY_START) &&
-        !app_mesh_c5_gateway_control_copy_allowed(
+        !app_mesh_c5_gateway_control_rx_allowed(
+            context.packet.msg_type,
+            context.packet.ttl,
+            context.payload,
+            context.payload_len,
             context.packet.src_id,
             context.previous_hop_id,
             GATEWAY_ID,
             IS_ENABLED(
-                CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL))) {
+                CONFIG_IMEC_MESH_ROUTE_TEST_RELAY_REQUIRED_GATEWAY_CONTROL),
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+            CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS
+#else
+            0u
+#endif
+            )) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ANCHOR_DIRECT_GATEWAY_CONTROL_IGNORED msg=0x%02x seq=%u\n",
+            status_debug_printf("DBG_ANCHOR_DIRECT_GATEWAY_CONTROL_IGNORED msg=0x%02x seq=%u ttl=%u prev=0x%llx\n",
                                 context.packet.msg_type,
-                                context.packet.seq);
+                                context.packet.seq,
+                                context.packet.ttl,
+                                (unsigned long long)context.previous_hop_id);
         }
         return false;
     }
@@ -1208,7 +1220,7 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
                                          &claim,
                                          &embedded_route_frame) ||
         app_mesh_c5_wake_claim_requires_anchor_handoff(claim.flags, true) ||
-        !app_mesh_c5_route_wake_claim_allowed(
+        !app_mesh_c5_route_wake_should_listen(
             claim.clicker_id,
             GATEWAY_ID,
             claim.flags,

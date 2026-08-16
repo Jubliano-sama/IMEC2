@@ -1,0 +1,48 @@
+{
+  "case_timeout_s": 30.0,
+  "failure_count": 3,
+  "failures": [
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145235376131Z-busy-line-seed-00000001-fault-f4175eec-cfg-957db5250dd98b6f",
+      "fault_seed": "0xf4175eec",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x00000001 --fault-seed 0xf4175eec --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 300 --quiet",
+      "returncode": 1,
+      "seed": "0x00000001",
+      "timed_out": false
+    },
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145235376131Z-busy-line-seed-000000b2-fault-f4175e5f-cfg-aa0e9a0650acde86",
+      "fault_seed": "0xf4175e5f",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x000000b2 --fault-seed 0xf4175e5f --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 300 --quiet",
+      "returncode": 1,
+      "seed": "0x000000b2",
+      "timed_out": false
+    },
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T145235376131Z-busy-line-seed-0000013d-fault-f4175fd0-cfg-3ad56b8a06ada4ca",
+      "fault_seed": "0xf4175fd0",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163 --scenario busy-line --seed 0x0000013d --fault-seed 0xf4175fd0 --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 300 --quiet",
+      "returncode": 1,
+      "seed": "0x0000013d",
+      "timed_out": false
+    }
+  ],
+  "max_failure_artifacts": 25,
+  "recorded_at_utc": "20260813T145235376131Z",
+  "retained_artifact_count": 3,
+  "runner_sha256": "9ea01ec647eb39e22a98cb6b2aa348679b0e8a20aca77cea952389d77a1b1371",
+  "sanitizer_environment": {
+    "ASAN_OPTIONS": "detect_leaks=0:halt_on_error=1",
+    "LSAN_OPTIONS": null,
+    "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+  },
+  "scenario": "busy-line",
+  "shared_executable": {
+    "path": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163",
+    "sha256": "0063f1a777984574efa9b8dab6c8b5ebb8fdaf2deefdc667dfc1615dac3f8163"
+  },
+  "source": {
+    "git_head": "e77a6aa6b4aa66ba09257fd9fad8cb001c07ae4c",
+    "tracked_worktree_dirty": true
+  }
+}

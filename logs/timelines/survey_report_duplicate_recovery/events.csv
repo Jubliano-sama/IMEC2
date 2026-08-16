@@ -1,0 +1,13 @@
+row,start,end,text,style
+child,0,2200,"Report retained\nwaiting for gateway ACK",solid
+parent_active,0,2200,"Existing app queue / core custody\nexact duplicates are ACK-only",emphasis
+parent_active,2200,3000,"Report sent to gateway\nforwarded ACK sent once",solid
+gateway,2200,2450,"Report delivered\nhost receipt commits",emphasis
+gateway,2450,2700,"Gateway ACK returned",default
+child,2700,4000,"Forwarded gateway ACK missed\nreport remains retained",dashed
+old_rule,4000,7000,"ACK child hop only\nno gateway copy; permanent dead end",danger
+new_rule,4000,4250,"Re-forward exact retained bytes",emphasis
+gateway,4250,4500,"Duplicate recognized\nreplacement gateway ACK",emphasis
+new_rule,4500,4700,"Forward replacement ACK",default
+child,4700,5000,"Exact gateway ACK received\nreport retires",emphasis
+host,2200,2450,"One semantic report\ndedup stays host-side",quiet

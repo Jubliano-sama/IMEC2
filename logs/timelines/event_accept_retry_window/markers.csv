@@ -1,0 +1,5 @@
+time,label,caption,kind,row
+0,t = 0,PROPOSE received,axis,
+1000,+1 s,old listener closes,axis,
+3300,+3.3 s,observed legal ACCEPT opportunity,axis,
+6000,+6 s,responder retry deadline,axis,

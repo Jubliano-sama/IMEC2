@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4200" height="595" viewBox="0 0 4200 595" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">THREE-HOP SURVEY PAIR: MEASURED CRITICAL PATH</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="518.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4158.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="96.0" class="row-label">PAIR CONTROL TO BOTH ANCHORS</text>
+<rect x="202.0" y="74.0" width="1041.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="722.5" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="722.5" dy="0.0">four reliable PREPARE / START controls</tspan></text>
+<line x1="44.0" y1="124.0" x2="4158.0" y2="124.0" class="major-line"/>
+<text x="123.0" y="166.0" class="row-label">DS-TWR RADIO</text>
+<rect x="1243.1" y="154.0" width="8.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="1247.2" y1="150.0" x2="1247.2" y2="154.0" class="hairline"/>
+<rect x="1194.3" y="126.0" width="105.8" height="16.0" class="callout"/>
+<text x="1198.3" y="138.5" class="tiny" text-anchor="start"><tspan x="1198.3" dy="0.0">five DS-TWR samples</tspan></text>
+<line x1="44.0" y1="200.0" x2="4158.0" y2="200.0" class="major-line"/>
+<text x="123.0" y="236.0" class="row-label">FORCED RESPONDER RESULT CUSTODY</text>
+<rect x="1251.4" y="214.0" width="1740.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2121.7" y="231.0" class="small center event-text" text-anchor="middle"><tspan x="2121.7" dy="0.0">five exact result + ACK_CONFIRM handoffs</tspan><tspan x="2121.7" dy="12.0">over retained two-hop route</tspan></text>
+<line x1="44.0" y1="264.0" x2="4158.0" y2="264.0" class="major-line"/>
+<text x="123.0" y="300.0" class="row-label">GATEWAY DECISION / CLEANUP</text>
+<rect x="2992.0" y="278.0" width="624.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3304.3" y="301.0" class="small center event-text" text-anchor="middle"><tspan x="3304.3" dy="0.0">immediate exact-failure cleanup</tspan></text>
+<line x1="44.0" y1="328.0" x2="4158.0" y2="328.0" class="major-line"/>
+<text x="123.0" y="364.0" class="row-label">AVOIDABLE RERUN</text>
+<rect x="3616.7" y="342.0" width="541.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3887.3" y="365.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3887.3" dy="0.0">next identical attempt begins</tspan></text>
+<line x1="44.0" y1="392.0" x2="4158.0" y2="392.0" class="major-line"/>
+<text x="123.0" y="429.0" class="row-label">KEY POINT</text>
+<rect x="1920.0" y="404.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="2180.0" y="424.0" class="small center" text-anchor="middle"><tspan x="2180.0" dy="0.0">The route is already working. The simplest safe reduction is to stop rerunning a pair after all</tspan><tspan x="2180.0" dy="12.0">five sample slots return exact unusable results; keep reruns only for missing evidence.</tspan></text>
+<line x1="44.0" y1="458.0" x2="4158.0" y2="458.0" class="major-line"/>
+<line x1="44.0" y1="484.0" x2="44.0" y2="522.0" class="major-line"/>
+<line x1="44.0" y1="484.0" x2="4158.0" y2="484.0" class="axis-line"/>
+<line x1="202.0" y1="483.0" x2="202.0" y2="495.0" class="tick"/>
+<line x1="1243.1" y1="483.0" x2="1243.1" y2="495.0" class="tick"/>
+<line x1="1251.4" y1="483.0" x2="1251.4" y2="495.0" class="tick"/>
+<line x1="2992.0" y1="483.0" x2="2992.0" y2="495.0" class="tick"/>
+<line x1="3616.7" y1="483.0" x2="3616.7" y2="495.0" class="tick"/>
+<text x="202.0" y="507.0" class="axis-time">pair setup</text>
+<text x="1243.1" y="507.0" class="axis-time">RF starts</text>
+<text x="1299.2" y="507.0" class="axis-time">RF complete</text>
+<text x="2992.0" y="507.0" class="axis-time">all five results known</text>
+<text x="3616.7" y="507.0" class="axis-time">cleanup complete</text>
+<text x="2100.0" y="561.0" class="caption center" text-anchor="middle"><tspan x="2100.0" dy="0.0">The five DS-TWR exchanges finish together, but five individually receipted result records then serialize over the retained two-hop route. The gateway correctly starts cleanup as soon as the fifth explicit failure arrives; there is no 90-second idle observation wait. Repeating the identical five-failure batch is the avoidable cost.</tspan></text>
+</svg>

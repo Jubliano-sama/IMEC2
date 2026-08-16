@@ -1,0 +1,11 @@
+row,start,end,text,style,lane_index
+radio,0,1150,"sample 1 RX / report",emphasis,0
+radio,1160,2310,"sample 2 worst-case window",solid,0
+radio,2320,3470,"sample 3 worst-case window",solid,0
+radio,3480,4630,"sample 4 worst-case window",solid,0
+radio,4640,5790,"sample 5 worst-case window",solid,0
+old,1150,1180,"commit sees paused queue\nand stops RF producer",emphasis,0
+fixed,1150,5790,"five reserved records freeze successfully",solid,0
+transport,-100,5800,"intentionally paused for exclusive DS-TWR",emphasis,0
+transport,5800,6200,"resume once; service retained records",solid,0
+gateway,5900,6400,"collect five sample results",solid,0

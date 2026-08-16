@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4200" height="595" viewBox="0 0 4200 595" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">SURVEY PAIR: RF PRODUCTION VS PAUSED RESULT DELIVERY</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="518.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4158.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="96.0" class="row-label">SURVEY RESPONDER RF</text>
+<rect x="320.1" y="74.0" width="679.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="659.6" y="97.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="659.6" dy="0.0">sample 1 RX / report</tspan></text>
+<rect x="1005.0" y="74.0" width="679.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1344.5" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="1344.5" dy="0.0">sample 2 worst-case window</tspan></text>
+<rect x="1689.9" y="74.0" width="679.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2029.4" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="2029.4" dy="0.0">sample 3 worst-case window</tspan></text>
+<rect x="2374.8" y="74.0" width="679.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2714.4" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="2714.4" dy="0.0">sample 4 worst-case window</tspan></text>
+<rect x="3059.8" y="74.0" width="679.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3399.3" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="3399.3" dy="0.0">sample 5 worst-case window</tspan></text>
+<line x1="44.0" y1="124.0" x2="4158.0" y2="124.0" class="major-line"/>
+<text x="123.0" y="166.0" class="row-label">OLD RESULT ADMISSION</text>
+<rect x="999.1" y="154.0" width="17.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="1008.0" y1="159.0" x2="1008.0" y2="154.0" class="hairline"/>
+<rect x="913.0" y="126.0" width="190.0" height="25.0" class="callout"/>
+<text x="917.0" y="137.5" class="tiny" text-anchor="start"><tspan x="917.0" dy="0.0">commit sees paused queue</tspan><tspan x="917.0" dy="11.0">and stops RF producer</tspan></text>
+<line x1="44.0" y1="200.0" x2="4158.0" y2="200.0" class="major-line"/>
+<text x="123.0" y="236.0" class="row-label">CORRECTED RESULT ADMISSION</text>
+<rect x="999.1" y="214.0" width="2739.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2368.9" y="237.0" class="small center event-text" text-anchor="middle"><tspan x="2368.9" dy="0.0">five reserved records freeze successfully</tspan></text>
+<line x1="44.0" y1="264.0" x2="4158.0" y2="264.0" class="major-line"/>
+<text x="123.0" y="300.0" class="row-label">MESH TRANSPORT</text>
+<rect x="261.0" y="278.0" width="3483.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2002.9" y="301.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2002.9" dy="0.0">intentionally paused for exclusive DS-TWR</tspan></text>
+<rect x="3744.7" y="278.0" width="236.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3862.8" y="301.0" class="small center event-text" text-anchor="middle"><tspan x="3862.8" dy="0.0">resume once; service retained records</tspan></text>
+<line x1="44.0" y1="328.0" x2="4158.0" y2="328.0" class="major-line"/>
+<text x="123.0" y="364.0" class="row-label">GATEWAY COLLECTION</text>
+<rect x="3803.7" y="342.0" width="295.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3951.3" y="365.0" class="small center event-text" text-anchor="middle"><tspan x="3951.3" dy="0.0">collect five sample results</tspan></text>
+<line x1="44.0" y1="392.0" x2="4158.0" y2="392.0" class="major-line"/>
+<text x="123.0" y="429.0" class="row-label">KEY POINT</text>
+<rect x="1920.0" y="404.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="2180.0" y="418.0" class="small center" text-anchor="middle"><tspan x="2180.0" dy="0.0">RF production and mesh delivery are parallel ownership lanes. A paused scheduler means deliver</tspan><tspan x="2180.0" dy="12.0">later, not reject an already-reserved sample. Worst-case five-sample RF remains bounded to</tspan><tspan x="2180.0" dy="12.0">5.79 s.</tspan></text>
+<line x1="44.0" y1="458.0" x2="4158.0" y2="458.0" class="major-line"/>
+<line x1="44.0" y1="484.0" x2="44.0" y2="522.0" class="major-line"/>
+<line x1="44.0" y1="484.0" x2="4158.0" y2="484.0" class="axis-line"/>
+<line x1="320.1" y1="483.0" x2="320.1" y2="495.0" class="tick"/>
+<line x1="999.1" y1="483.0" x2="999.1" y2="495.0" class="tick"/>
+<line x1="3738.8" y1="483.0" x2="3738.8" y2="495.0" class="tick"/>
+<line x1="3744.7" y1="483.0" x2="3744.7" y2="495.0" class="tick"/>
+<text x="320.1" y="507.0" class="axis-time">RF begins</text>
+<text x="999.1" y="507.0" class="axis-time">old path stops</text>
+<text x="3738.8" y="507.0" class="axis-time">bounded RF end</text>
+<text x="3819.6" y="507.0" class="axis-time">transport resumes</text>
+<text x="2100.0" y="561.0" class="caption center" text-anchor="middle"><tspan x="2100.0" dy="0.0">The responder reserves five result slots before RF and intentionally pauses mesh transport. The old commit path treated the expected paused-workqueue error as failed admission after sample 1, so the RF producer stopped even though the sample remained retained. The corrected path freezes all five reserved records during RF and schedules them once transport resumes.</tspan></text>
+</svg>

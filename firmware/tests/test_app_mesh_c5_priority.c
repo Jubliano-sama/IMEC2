@@ -599,6 +599,110 @@ static void test_forced_hop_anchor_ignores_direct_gateway_route_wake(void)
                                                  true));
 }
 
+static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+
+    assert(!app_mesh_c5_gateway_control_rx_allowed(
+        MSG_SURVEY_DISCOVERY_START,
+        4u,
+        NULL,
+        0u,
+        gateway_id,
+        gateway_id,
+        gateway_id,
+        true,
+        2u));
+    assert(!app_mesh_c5_gateway_control_rx_allowed(
+        MSG_SURVEY_DISCOVERY_START,
+        3u,
+        NULL,
+        0u,
+        gateway_id,
+        relay_anchor_id,
+        gateway_id,
+        true,
+        2u));
+    assert(app_mesh_c5_gateway_control_rx_allowed(
+        MSG_SURVEY_DISCOVERY_START,
+        2u,
+        NULL,
+        0u,
+        gateway_id,
+        relay_anchor_id,
+        gateway_id,
+        true,
+        2u));
+    assert(app_mesh_c5_gateway_control_rx_allowed(
+        MSG_SURVEY_DISCOVERY_START,
+        3u,
+        NULL,
+        0u,
+        gateway_id,
+        relay_anchor_id,
+        gateway_id,
+        true,
+        1u));
+    assert(!app_mesh_c5_gateway_control_rx_allowed(
+        MSG_SURVEY_DISCOVERY_START,
+        2u,
+        NULL,
+        0u,
+        gateway_id,
+        relay_anchor_id,
+        gateway_id,
+        true,
+        1u));
+    assert(app_mesh_c5_gateway_control_rx_allowed(
+        MSG_SURVEY_PAIR_PREPARE,
+        2u,
+        NULL,
+        0u,
+        gateway_id,
+        relay_anchor_id,
+        gateway_id,
+        true,
+        2u));
+}
+
+static void test_forced_hop_listens_after_rejected_direct_control_wake(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    const uint8_t control_wake_flags =
+        FLAG_CONTROL_FOLLOWUP | FLAG_ROUTE_SETUP |
+        FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+    const uint8_t route_wake_flags =
+        FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+
+    assert(!app_mesh_c5_route_wake_claim_allowed(gateway_id,
+                                                  gateway_id,
+                                                  control_wake_flags,
+                                                  false,
+                                                  true));
+    assert(app_mesh_c5_route_wake_should_listen(gateway_id,
+                                                gateway_id,
+                                                control_wake_flags,
+                                                false,
+                                                true));
+    assert(!app_mesh_c5_route_wake_should_listen(gateway_id,
+                                                 gateway_id,
+                                                 route_wake_flags,
+                                                 true,
+                                                 false));
+    assert(app_mesh_c5_route_wake_should_listen(relay_anchor_id,
+                                                gateway_id,
+                                                control_wake_flags,
+                                                true,
+                                                true));
+    assert(app_mesh_c5_route_wake_should_listen(gateway_id,
+                                                gateway_id,
+                                                FLAG_COUNT_AS_CLICK,
+                                                true,
+                                                true));
+}
+
 static void test_gateway_control_route_hint_uses_first_transport_copy(void)
 {
     struct app_mesh_c5_control_route_history history = {0};
@@ -844,6 +948,8 @@ int main(void)
     test_gateway_control_followup_tx_rx_phr_symmetry();
     test_wake_claim_click_priority_policy();
     test_forced_hop_anchor_ignores_direct_gateway_route_wake();
+    test_forced_hop_generic_rx_requires_exact_control_depth();
+    test_forced_hop_listens_after_rejected_direct_control_wake();
     test_gateway_control_route_hint_uses_first_transport_copy();
     test_connected_gap_stays_armed_until_deadline_or_click();
     test_connected_gap_hands_allowed_control_to_extended_follower();

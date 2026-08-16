@@ -1,0 +1,32 @@
+Script started on 2026-08-13 06:18:53+02:00 [COMMAND="timeout --foreground --signal=INT 50 pyocd rtt -t nrf52833 -M pre-reset -a 0x20000410 -s 0x100 -u E4645C15CB0F3B37 --up-channel-id 0" TERM="linux" TTY="/dev/pts/9" COLUMNS="80" LINES="24"]
+CLICK
+[34m0000718[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000760[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0001033[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0001143[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0001152[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0001153[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0001154[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0001158[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0001161[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0001163[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0001166[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0001168[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0001171[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0001175[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0001184[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0001184[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0001184[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0001189[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0001198[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0001200[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0001232[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0001232[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0001234[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_clicker build=imec-stack-v1:mesh_clicker:54ff134290a048bce131b7ac04798af3d388f4dca5b9c2f7128d80ed351c0982 epoch=2991948417100335816 uptime=2
+mesh node identity: ficr=0xeb2d7862994bed50 node=0xa2603d21d805ae52 preset=mesh_clicker
+DBG_WATCHDOG_BOOT mode=inherited rr=0x01 count=1 immediate=1 crv=5898240 reset=0x00000002 err=0
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1008
+[0m
+Script done on 2026-08-13 06:19:43+02:00 [COMMAND_EXIT_CODE="124"]

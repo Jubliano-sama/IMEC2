@@ -1,0 +1,8 @@
+id,label,order
+host,HOST / GUI,1
+gateway,GATEWAY,2
+direct,DIRECT ANCHOR A,3
+forced1,FORCED-1 RELAY B,4
+forced2,FORCED-2 ANCHOR C,5
+clicker,CLICKER ACTION,6
+heartbeat,HEARTBEAT,7

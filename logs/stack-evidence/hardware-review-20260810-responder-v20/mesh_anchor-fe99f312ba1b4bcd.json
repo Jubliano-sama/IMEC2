@@ -1,0 +1,38 @@
+{
+  "artifact": {
+    "elf_sha256": "2ac8f5b5a5fabefe73bd417c53eaf37034b60f08c4c6ed04e8e7db29a52c73a0",
+    "hex_sha256": "6b67e01d0749f280ae1479899a32cd26e89f5b28c5de5d34a915a41c859bf248"
+  },
+  "capture_id": "fe99f312ba1b4bcdfa62e8fce165d7b7b01a461c7122a408dfd45bf7cea4b753",
+  "preset": "mesh_anchor",
+  "probe_id": "E46070D247394D36",
+  "provenance": {
+    "ended_at_utc": "2026-08-10T09:18:08Z",
+    "rtt_command": [
+      "pyocd",
+      "rtt",
+      "-t",
+      "nrf52833",
+      "-M",
+      "pre-reset",
+      "-u",
+      "E46070D247394D36",
+      "--up-channel-id",
+      "0"
+    ],
+    "started_at_utc": "2026-08-10T09:03:08Z",
+    "tool": "firmware/scripts/capture_stack_evidence.py",
+    "tool_sha256": "a3913d0662885c518a6ba73a0433af47e47151bd6598dcb5faab9334c380ed65",
+    "tty_wrapper": "script",
+    "workflow": "pyocd-rtt-pre-reset-v1"
+  },
+  "schema": 3,
+  "target": {
+    "build_identity": "imec-stack-v1:mesh_anchor:be1f0b53542df6ce156a0a3a6829592b3e04efc4b20054ccdb8df3d57f44a931",
+    "preset": "mesh_anchor"
+  },
+  "transcript": {
+    "path": "mesh_anchor-20260810T091808Z.typescript",
+    "sha256": "093b69a32a2d64f8b834161ef2b58b9deb407dc7f3cf3ac9b4fcd12829dc48bd"
+  }
+}

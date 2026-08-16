@@ -118,6 +118,8 @@ for mixed_phase_handler in (note_sample, finalize_lane):
 # The responder START freezes the shared time origin. The initiator START uses
 # elapsed packet age from the same origin, both carry the canonical delay, and
 # the observation window starts at the future release rather than send time.
+# START initiator is also submitted immediately so hop-2/3 ACK_CONFIRM cannot
+# consume the 15 s barrier before the second START is on the air.
 send_start = function_body(SURVEY, "gateway_survey_send_start")
 assert_ordered(
     send_start,
@@ -126,7 +128,8 @@ assert_ordered(
     "message_age_ms = 0u",
     "message_age_ms = now_ms -",
     "gateway_survey_start_release.started_at_ms",
-    "message_age_ms >= SURVEY_ROUND_START_EXECUTE_DELAY_MS",
+    "survey_round_start_initiator_send_allowed(",
+    "gateway_survey_start_release.initiator_submitted",
     "TLV_EXECUTE_DELAY_MS",
     "SURVEY_ROUND_START_EXECUTE_DELAY_MS",
     "outbound.packet.message_age_ms = message_age_ms",
@@ -138,6 +141,9 @@ assert_ordered(
     "SURVEY_ROUND_START_EXECUTE_DELAY_MS",
     "survey_gateway_observation_origin_freeze(",
     "&gateway_survey_round_observation_origin, release_ms",
+    "outbound.packet.dst_id = control->pair.initiator_id",
+    "gateway_survey_send_pair_control(",
+    "initiator_submitted = true",
 )
 
 # An accepted control result retires only its request-delivery handle. The

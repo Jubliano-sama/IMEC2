@@ -1,0 +1,2966 @@
+Script started on 2026-08-12 16:11:51+02:00 [COMMAND=".venv/bin/pyocd rtt --no-config -t nrf52833 -u E46070D247394D36 -f 4000000 -M attach -a 0x20000410 -s 0x100 --up-channel-id 0 --down-channel-id 0" TERM="dumb" TTY="/dev/pts/11" COLUMNS="80" LINES="24"]
+[34m0000479[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000514[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000527[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000529[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000531[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000535[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000539[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000540[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000561[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000574[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000576[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000577[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000580[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000580[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000580[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000582[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000585[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000586[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000599[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000599[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000600[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_anchor build=imec-stack-v1:mesh_anchor:5dcc04ae55e227891aa8603cae996bb8cac4b3686b064f1c5677f880ad4e213f epoch=8623312153745627406 uptime=251
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=330 attempt=1
+DBG_CH9_TX_SEND_AT now=330 earliest=265 msg=3f len=61
+DBG_CH9_TX_DONE now=333 dur=3 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_DIRECT_GW_ACK_DONE ret=-116 m=0 f=0 p=1 q=0 v=0 fail=1 sl=191 prev=0x0 len=0 att=1 r=node-comm-reliable-uplink
+DBG_DIRECT_GW_PROBE_MISS ret=-116 attempt=1
+DBG_DIRECT_GW_PROBE_BACKOFF ms=44 next_attempt=2 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=2 now=629 attempt=2/3 reason=node-comm-reliable-uplink
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=694 attempt=2
+DBG_CH9_TX_SEND_AT now=694 earliest=629 msg=3f len=61
+DBG_CH9_TX_DONE now=697 dur=3 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_DIRECT_GW_PROBE_KEEP_CH9_AWAKE seq=2 attempt=2 release_ret=0
+DBG_DIRECT_GW_ACK_DONE ret=0 m=1 f=1 p=1 q=0 v=1 fail=1 sl=50 prev=0x9999888877776666 len=105 att=2 r=node-comm-reliable-uplin
+DBG_DIRECT_GW_ROUTE_READY
+DBG_ROUTE_REPLY_RX_FRAME
+DBG_ROUTE_REPLY_DECODE_FAIL ret=-8 len=103 q=100
+DBG_ROUTE_REPLY_LISTEN_DONE captured=0 ret=-116
+DBG_C5_CONTACT phase=closing state=4 peer=0x191a9619c6c8cb07 purpose=gateway_command_flood reason=reply-listen-timeout
+DBG_ANCHOR_ROUTE_WAKE_HANDOFF_DONE src=0x191a9619c6c8cb07 embedded=0 ret=-116 pending=0
+DBG_ANCHOR_ROUTE_WAKE_DISPATCH_DONE handled=1 len=49 q=100
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=3 wait=0 q=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=268324 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3295 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=269534 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=270746 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=271958 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=273170 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4211 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=274382 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=275593 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=276805 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=278017 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=7659 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_WAKE_ACCEPT clicker=0xa2603d21d805ae52 evt=18350081 attempt=1 flags=0x20 disc_in=92 q=100
+DBG_ANCHOR_CLICK_WINDOW active=1 flags=0x20
+DBG_ANCHOR_DISC_WAIT now=278465 start=278540 deadline=278640 guard=8 listen=108 phr=std
+DBG_ANCHOR_DISC_CONFIG phr=std ret=0
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278492
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278499
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278505
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278511
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278517
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278524
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278530
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=278536
+DBG_ANCHOR_DISC_FRAME len=32 type=0x09 q=100 now=278601
+DBG_ANCHOR_CH5_HOLD_DONE deadline=279308 now=279308 frames=3 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=1 sample=2/12 round=0 seq=2 target_us=279318000 start=279308 now=279308 deadline=279361
+DBG_DS_RESP stage=arm evt=18350081 seq=2 round=0 now=279308 timeout=53
+DBG_DS_RESP stage=poll-decode ret=-77 len=52 type=0x13 now=279317 seq=2 round=0
+DBG_DS_RESP stage=arm evt=18350081 seq=2 round=0 now=279317 timeout=44
+DBG_DS_RESP stage=resp-armed now=279344 seq=2 round=0 tx_time=0x0ce6fd7b resp_tx=0xe6fdba01
+DBG_DS_RESP stage=resp-raw poll_rx=0xc8856edf q=100 reply_uus=8000
+DBG_DS_RESP stage=final-decode status=0 now=279360 seq=2 round=0 final_rx=0x05760c36
+DBG_DS_RESP stage=report-armed now=279361 seq=2 round=0
+DBG_DS_RESP stage=report-sent now=279366 seq=2 round=0
+DBG_DS_RESP stage=done ret=0 status=0 now=279366 seq=2 round=0
+DBG_ANCHOR_CH5_HOLD_DONE deadline=279407 now=279408 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=1 sample=5/12 round=1 seq=3 target_us=279417000 start=279407 now=279408 deadline=279460
+DBG_DS_RESP stage=arm evt=18350081 seq=3 round=1 now=279408 timeout=52
+DBG_DS_RESP stage=poll-other reason=target observed=0x191a9619c6c8cb07 expected=0x36e3c2fe6cac46b2 seq=2 round=1
+DBG_DS_RESP stage=arm evt=18350081 seq=3 round=1 now=279438 timeout=22
+DBG_DS_RESP stage=poll-rx ret=-116 sys=0x00000000 fail=0 now=279461 seq=3 round=1
+DBG_ANCHOR_CH5_HOLD_DONE deadline=279506 now=279506 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=1 sample=8/12 round=2 seq=4 target_us=279516000 start=279506 now=279506 deadline=279559
+DBG_DS_RESP stage=arm evt=18350081 seq=4 round=2 now=279506 timeout=53
+DBG_DS_RESP stage=poll-other reason=target observed=0x708bc0aab970300e expected=0x36e3c2fe6cac46b2 seq=4 round=1
+DBG_DS_RESP stage=arm evt=18350081 seq=4 round=2 now=279524 timeout=35
+DBG_DS_RESP stage=poll-other reason=target observed=0x191a9619c6c8cb07 expected=0x36e3c2fe6cac46b2 seq=3 round=2
+DBG_ANCHOR_CH5_HOLD_DONE deadline=279605 now=279606 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=1 sample=11/12 round=3 seq=5 target_us=279615000 start=279605 now=279606 deadline=27965
+DBG_DS_RESP stage=arm evt=18350081 seq=5 round=3 now=279606 timeout=52
+DBG_DS_RESP stage=poll-rx ret=-116 sys=0x00000000 fail=0 now=279659 seq=5 round=3
+DBG_STACK_RUN_BEGIN epoch=8623312153745627406 run=1 kind=cir_handling owner=anchor_uwb_scan queue=1 custody=1 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=1 type=32 sequence=0 previous=0 uptime=279661
+DBG_STACK_SAMPLE_BEGIN epoch=8623312153745627406 run=1 sample=1 kind=cir_handling owner=anchor_uwb_scan queue=1 custody=1 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=1 type=32 uptime=279661
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+DBG_STACK name=anchor_uwb_scan tid=0x2000bfc0 used=6608 free=624 size=7232 ret=0 run=1 sample=1
+DBG_STACK name=mesh_route tid=0x2000ae48 used=4992 free=3584 size=8576 ret=0 run=1 sample=1
+DBG_STACK name=sysworkq tid=0x2000ec48 used=2076 free=4068 size=6144 ret=0 run=1 sample=1
+DBG_STACK name=logging tid=0x2000e188 used=520 free=1528 size=2048 ret=0 run=1 sample=1
+DBG_STACK name=idle tid=0x2000ea18 used=64 free=256 size=320 ret=0 run=1 sample=1
+DBG_STACK_SAMPLE_END run=1 sample=1
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_COORD state=mesh-tx owner=report-tx reason=mesh-tx rx=0 tx=1 relay=0 route=0 ack=0 qack=0
+DBG_STACK_SAMPLE_BEGIN epoch=8623312153745627406 run=1 sample=2 kind=cir_handling owner=anchor_uwb_scan queue=1 custody=0 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=1 type=32 uptime=279676
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=2
+DBG_STACK name=anchor_uwb_scan tid=0x2000bfc0 used=6608 free=624 size=7232 ret=0 run=1 sample=2
+DBG_STACK name=mesh_route tid=0x2000ae48 used=4992 free=3584 size=8576 ret=0 run=1 sample=2
+DBG_STACK name=sysworkq tid=0x2000ec48 used=2076 free=4068 size=6144 ret=0 run=1 sample=2
+DBG_STACK name=logging tid=0x2000e188 used=520 free=1528 size=2048 ret=0 run=1 sample=2
+DBG_STACK name=idle tid=0x2000ea18 used=64 free=256 size=320 ret=0 run=1 sample=2
+DBG_STACK_SAMPLE_END run=1 sample=2
+DBG_DIRECT_GW_TX seq=1 now=279680 reason=queued-click-report
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=279704 seq=1
+DBG_CH9_TX_SEND_AT now=279705 earliest=279680 msg=20 len=216
+DBG_CH9_TX_DONE now=279711 dur=6 len=216 msg=20
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=279680 end=279930 reason=queued-click-report
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=1 next=0x9999888877776666 deadline=281711
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=1
+DBG_DIRECT_GW_TX_ACK_WAIT ret=-116 seq=1
+DBG_DIRECT_GW_KEEP_CH9_AWAKE q=1 seq=1 ack_ret=-116 release_ret=0
+DBG_CH9_TX_SINGLE_SEND_FAIL
+DBG_CH9_TX_SINGLE_FAIL ret=-11 seq=1
+DBG_CH9_EVENT_STATE state=busy_retry_later peer=0x9999888877776666 start=279680 end=279930 reason=queued-click-report
+DBG_CH9_TX_SINGLE_RETRYABLE ret=-11 seq=1
+DBG_DIRECT_GW_ACK_DEFER_CORE seq=1 ret=-11 state=1 deadline=281711 reason=queued-click-report
+DBG_STACK_RUN_END epoch=8623312153745627406 run=1 kind=cir_handling owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=1 type=32 samples=2 sequence=0 previous=0 uptime=279963
+DBG_COORD state=mesh-rx owner=uwb-rx reason=ch9-ack-wait rx=0 tx=0 relay=1 route=0 ack=1 qack=0
+DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=3 wait=0 q=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=281712
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=281715 win=3 complete=15 interval=380 wait=0 tx=1
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4241 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=5767 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=282930 win=3 complete=15 interval=380 wait=0 tx=1
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4241 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=284142 win=3 complete=15 interval=380 wait=0 tx=1
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4028 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=8789 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=285105
+DBG_RETRANSMIT_DIRECT_GW seq=1 now=285106
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=285128 seq=1
+DBG_CH9_TX_SEND_AT now=285130 earliest=285105 msg=20 len=216
+DBG_CH9_TX_DONE now=285135 dur=5 len=216 msg=20
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=285106 end=285356 reason=retransmit-direct-gateway
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=1 next=0x9999888877776666 deadline=287135
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=1
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x32 src=0x9999888877776666 dst=0x36e3c2fe6cac46b2 prev=0x9999888877776666 seq=89 q=1
+DBG_GATEWAY_ACK_RX
+DBG_DIRECT_GW_ACK_TRANSIT queued=1 valid=1 dst=0x36e3c2fe6cac46b2 seq=89
+DBG_DIRECT_GW_TX_ACK_WAIT ret=0 seq=1
+DBG_DWM_KEEP_IDLE reason=direct-gateway-payload ch9=0 ack=0 qack=0 ret=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_CH9_TX_ACK_IDLE
+DBG_LEGACY_ACK_NO_MATCH
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_WORK_EXIT handled=1 q=0
+DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=3 wait=0 q=0
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=285205
+DBG_RETRANSMIT_DIRECT_GW seq=1 now=285207
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=285207 seq=1
+DBG_CH9_TX_SEND_AT now=285207 earliest=285205 msg=33 len=105
+DBG_CH9_TX_DONE now=285211 dur=4 len=105 msg=33
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=285207 end=285457 reason=retransmit-direct-gateway
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=1 next=0x9999888877776666 deadline=287211
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=1
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x32 src=0x9999888877776666 dst=0x36e3c2fe6cac46b2 prev=0x9999888877776666 seq=90 q=1
+DBG_GATEWAY_ACK_RX
+DBG_DIRECT_GW_ACK_TRANSIT queued=1 valid=1 dst=0x36e3c2fe6cac46b2 seq=90
+DBG_DIRECT_GW_TX_ACK_WAIT ret=0 seq=1
+DBG_DWM_KEEP_IDLE reason=direct-gateway-payload ch9=0 ack=0 qack=0 ret=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_CH9_TX_ACK_IDLE
+DBG_LEGACY_ACK_CONFIRMED
+DBG_ACK_CONFIRM_TERMINAL stage=complete ret=0 original=32 seq=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_WORK_EXIT handled=1 q=0
+DBG_COORD state=idle owner=uwb-rx reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=285359 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3845 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=286570 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=4425 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_WAKE_ACCEPT clicker=0xa2603d21d805ae52 evt=18350081 attempt=5 flags=0x20 disc_in=62 q=100
+DBG_ANCHOR_CLICK_WINDOW active=1 flags=0x20
+DBG_ANCHOR_DISC_WAIT now=287014 start=287060 deadline=287160 guard=8 listen=108 phr=std
+DBG_ANCHOR_DISC_CONFIG phr=std ret=0
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=287042
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=287048
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=287054
+DBG_ANCHOR_DISC_FRAME len=32 type=0x09 q=100 now=287118
+DBG_ANCHOR_CH5_HOLD_DONE deadline=287824 now=287825 frames=3 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=5 sample=2/12 round=0 seq=2 target_us=287834000 start=287824 now=287826 deadline=287877
+DBG_DS_RESP stage=arm evt=18350081 seq=2 round=0 now=287826 timeout=51
+DBG_DS_RESP stage=poll-decode ret=-77 len=52 type=0x13 now=287834 seq=2 round=0
+DBG_DS_RESP stage=arm evt=18350081 seq=2 round=0 now=287835 timeout=42
+DBG_DS_RESP stage=resp-armed now=287860 seq=2 round=0 tx_time=0x0c6c28bf resp_tx=0x6c28fe01
+DBG_DS_RESP stage=resp-raw poll_rx=0x4db0b34b q=100 reply_uus=8000
+DBG_DS_RESP stage=final-decode status=0 now=287877 seq=2 round=0 final_rx=0x8aa15111
+DBG_DS_RESP stage=report-armed now=287878 seq=2 round=0
+DBG_DS_RESP stage=report-sent now=287883 seq=2 round=0
+DBG_DS_RESP stage=done ret=0 status=0 now=287883 seq=2 round=0
+DBG_ANCHOR_CH5_HOLD_DONE deadline=287923 now=287923 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=5 sample=5/12 round=1 seq=3 target_us=287933000 start=287923 now=287923 deadline=287976
+DBG_DS_RESP stage=arm evt=18350081 seq=3 round=1 now=287923 timeout=53
+DBG_DS_RESP stage=poll-other reason=target observed=0x191a9619c6c8cb07 expected=0x36e3c2fe6cac46b2 seq=2 round=1
+DBG_DS_RESP stage=arm evt=18350081 seq=3 round=1 now=287958 timeout=18
+DBG_DS_RESP stage=poll-rx ret=-116 sys=0x00000000 fail=0 now=287977 seq=3 round=1
+DBG_ANCHOR_CH5_HOLD_DONE deadline=288022 now=288023 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=5 sample=8/12 round=2 seq=4 target_us=288032000 start=288022 now=288023 deadline=288075
+DBG_DS_RESP stage=arm evt=18350081 seq=4 round=2 now=288023 timeout=52
+DBG_DS_RESP stage=poll-other reason=target observed=0x708bc0aab970300e expected=0x36e3c2fe6cac46b2 seq=4 round=1
+DBG_DS_RESP stage=arm evt=18350081 seq=4 round=2 now=288044 timeout=31
+DBG_DS_RESP stage=poll-rx ret=-116 sys=0x00000100 fail=0 now=288076 seq=4 round=2
+DBG_ANCHOR_CH5_HOLD_DONE deadline=288121 now=288122 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=18350081 attempt=5 sample=11/12 round=3 seq=5 target_us=288131000 start=288121 now=288122 deadline=28817
+DBG_DS_RESP stage=arm evt=18350081 seq=5 round=3 now=288122 timeout=52
+DBG_DS_RESP stage=poll-rx ret=-116 sys=0x00000000 fail=0 now=288175 seq=5 round=3
+DBG_STACK_RUN_BEGIN epoch=8623312153745627406 run=2 kind=cir_handling owner=anchor_uwb_scan queue=1 custody=1 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=45 type=32 sequence=0 previous=0 uptime=288177
+DBG_STACK_SAMPLE_BEGIN epoch=8623312153745627406 run=2 sample=3 kind=cir_handling owner=anchor_uwb_scan queue=1 custody=1 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=45 type=32 uptime=288177
+DBG_STACK_ISR_CONFIG size=8192 run=2 sample=3
+DBG_STACK name=anchor_uwb_scan tid=0x2000bfc0 used=6608 free=624 size=7232 ret=0 run=2 sample=3
+DBG_STACK name=mesh_route tid=0x2000ae48 used=5180 free=3396 size=8576 ret=0 run=2 sample=3
+DBG_STACK name=sysworkq tid=0x2000ec48 used=2076 free=4068 size=6144 ret=0 run=2 sample=3
+DBG_STACK name=logging tid=0x2000e188 used=520 free=1528 size=2048 ret=0 run=2 sample=3
+DBG_STACK name=idle tid=0x2000ea18 used=64 free=256 size=320 ret=0 run=2 sample=3
+DBG_STACK_SAMPLE_END run=2 sample=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_COORD state=mesh-tx owner=report-tx reason=mesh-tx rx=0 tx=1 relay=0 route=0 ack=0 qack=0
+DBG_STACK_SAMPLE_BEGIN epoch=8623312153745627406 run=2 sample=4 kind=cir_handling owner=anchor_uwb_scan queue=1 custody=0 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=45 type=32 uptime=288190
+DBG_STACK_ISR_CONFIG size=8192 run=2 sample=4
+DBG_STACK name=anchor_uwb_scan tid=0x2000bfc0 used=6608 free=624 size=7232 ret=0 run=2 sample=4
+DBG_STACK name=mesh_route tid=0x2000ae48 used=5180 free=3396 size=8576 ret=0 run=2 sample=4
+DBG_STACK name=sysworkq tid=0x2000ec48 used=2076 free=4068 size=6144 ret=0 run=2 sample=4
+DBG_STACK name=logging tid=0x2000e188 used=520 free=1528 size=2048 ret=0 run=2 sample=4
+DBG_STACK name=idle tid=0x2000ea18 used=64 free=256 size=320 ret=0 run=2 sample=4
+DBG_STACK_SAMPLE_END run=2 sample=4
+DBG_DIRECT_GW_TX seq=45 now=288193 reason=queued-click-report
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=288217 seq=45
+DBG_CH9_TX_SEND_AT now=288218 earliest=288193 msg=20 len=216
+DBG_CH9_TX_DONE now=288223 dur=5 len=216 msg=20
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=288193 end=288443 reason=queued-click-report
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=45 next=0x9999888877776666 deadline=290223
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=45
+DBG_DIRECT_GW_TX_ACK_WAIT ret=-116 seq=45
+DBG_DIRECT_GW_KEEP_CH9_AWAKE q=1 seq=45 ack_ret=-116 release_ret=0
+DBG_CH9_TX_SINGLE_SEND_FAIL
+DBG_CH9_TX_SINGLE_FAIL ret=-11 seq=45
+DBG_CH9_EVENT_STATE state=busy_retry_later peer=0x9999888877776666 start=288193 end=288443 reason=queued-click-report
+DBG_CH9_TX_SINGLE_RETRYABLE ret=-11 seq=45
+DBG_DIRECT_GW_ACK_DEFER_CORE seq=45 ret=-11 state=1 deadline=290223 reason=queued-click-report
+DBG_STACK_RUN_END epoch=8623312153745627406 run=2 kind=cir_handling owner=anchor_uwb_scan outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=3955219295762138802 dst=11068027678940948070 session=1142958350 seq=45 type=32 samples=2 sequence=0 previous=0 uptime=288476
+DBG_COORD state=mesh-rx owner=uwb-rx reason=ch9-ack-wait rx=0 tx=0 relay=1 route=0 ack=1 qack=0
+DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=3 wait=0 q=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=1 wait=0 rx=0 rxq=0 rxr=0 ack=1 ch9=0 rf=0 retry=5 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=5
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=290223
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=290225 win=3 complete=15 interval=380 wait=0 tx=1
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3875 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=291436 win=3 complete=15 interval=380 wait=0 tx=1
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=292253
+DBG_RETRANSMIT_DIRECT_GW seq=45 now=292255
+DBG_RETRANSMIT_DEFER reason=send-failed ret=0 send=-16 delay=32 seq=45 state=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=292287
+DBG_RETRANSMIT_DIRECT_GW seq=45 now=292288
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=292312 seq=45
+DBG_CH9_TX_SEND_AT now=292313 earliest=292287 msg=20 len=216
+DBG_CH9_TX_DONE now=292318 dur=5 len=216 msg=20
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=292288 end=292538 reason=retransmit-direct-gateway
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=45 next=0x9999888877776666 deadline=294318
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=45
+DBG_DIRECT_GW_TX_ACK_WAIT ret=-116 seq=45
+DBG_DWM_KEEP_IDLE reason=direct-gateway-payload ch9=0 ack=0 qack=0 ret=0
+DBG_RETRANSMIT_DEFER reason=send-failed ret=0 send=-11 delay=103 seq=45 state=2
+DBG_ANCHOR_MESH_RX_YIELD reason=anchor-low-duty-ch5-owner ch9=0 delay=0 scan_int=380 scan_win=3 wait=0 q=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=292648 win=3 complete=15 interval=380 wait=0 tx=1
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3295 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=292673
+DBG_RETRANSMIT_DIRECT_GW seq=45 now=292674
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=292698 seq=45
+DBG_CH9_TX_SEND_AT now=292699 earliest=292673 msg=20 len=216
+DBG_CH9_TX_DONE now=292704 dur=5 len=216 msg=20
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=292674 end=292924 reason=retransmit-direct-gateway
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=45 next=0x9999888877776666 deadline=294704
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=45
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x32 src=0x9999888877776666 dst=0x36e3c2fe6cac46b2 prev=0x9999888877776666 seq=95 q=1
+DBG_GATEWAY_ACK_RX
+DBG_DIRECT_GW_ACK_TRANSIT queued=1 valid=1 dst=0x36e3c2fe6cac46b2 seq=95
+DBG_DIRECT_GW_TX_ACK_WAIT ret=0 seq=45
+DBG_DWM_KEEP_IDLE reason=direct-gateway-payload ch9=0 ack=0 qack=0 ret=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_CH9_TX_ACK_IDLE
+DBG_LEGACY_ACK_NO_MATCH
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_WORK_EXIT handled=1 q=0
+DBG_TX_TIMEOUT_ENTER relay=1 route=0 ch9pend=0 bundle=0 now=292801
+DBG_RETRANSMIT_DIRECT_GW seq=45 now=292802
+DBG_DIRECT_GW_TX_CONFIG ret=0 now=292803 seq=45
+DBG_CH9_TX_SEND_AT now=292803 earliest=292801 msg=33 len=105
+DBG_CH9_TX_DONE now=292807 dur=4 len=105 msg=33
+DBG_UWB_TX_CH9
+DBG_CH9_TX_SINGLE_SEND_OK
+DBG_CH9_EVENT_STATE state=complete peer=0x9999888877776666 start=292802 end=293052 reason=retransmit-direct-gateway
+DBG_CH9_TX_ACK_CORE_OWNER src=0x36e3c2fe6cac46b2 seq=45 next=0x9999888877776666 deadline=294807
+DBG_DIRECT_GW_TX_ACK_TRANSIT_WAIT dst=0x9999888877776666 src=0x36e3c2fe6cac46b2 seq=45
+DBG_UWB_RX_CH9
+DBG_MESH_RX_QUEUED ch=9 msg=0x32 src=0x9999888877776666 dst=0x36e3c2fe6cac46b2 prev=0x9999888877776666 seq=96 q=1
+DBG_GATEWAY_ACK_RX
+DBG_DIRECT_GW_ACK_TRANSIT queued=1 valid=1 dst=0x36e3c2fe6cac46b2 seq=96
+DBG_DIRECT_GW_TX_ACK_WAIT ret=0 seq=45
+DBG_DWM_KEEP_IDLE reason=direct-gateway-payload ch9=0 ack=0 qack=0 ret=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_CH9_TX_ACK_IDLE
+DBG_LEGACY_ACK_CONFIRMED
+DBG_ACK_CONFIRM_TERMINAL stage=complete ret=0 original=32 seq=45
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_WORK_EXIT handled=1 q=0
+DBG_COORD state=idle owner=uwb-rx reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=293859 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=295071 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4211 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=296283 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=297494 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=298706 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=299918 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=301130 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4028 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=302342 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=303553 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=304765 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=305977 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=307189 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4028 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=308401 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=309612 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=310824 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=312035 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3692 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=313247 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4028 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=314458 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=315670 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=316882 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=318094 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3112 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=319305 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=320516 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3692 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=321728 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=322940 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3448 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=324152 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3326 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=325363 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=326574 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=327786 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=328998 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=330210 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3295 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=331421 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=332632 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=333844 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3479 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=335055 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3143 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=336266 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3692 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=337477 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=338689 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3662 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=339901 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3448 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=341113 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=4028 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+
+Script done on 2026-08-12 16:13:08+02:00 [COMMAND_EXIT_CODE="0"]

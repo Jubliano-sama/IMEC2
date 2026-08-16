@@ -1,0 +1,64 @@
+{
+  "artifact": {
+    "artifact_id": "6449000597004f6a55d7a481af009284dc9c92789a866f22463f5b88db03f53f",
+    "elf_sha256": "32fde371d1a955f63ccb2f285e26907447000eea9044deb65636b59531c11d72",
+    "hex_sha256": "d9e2504fb3c934b194441820ed32c79e73a4eeaede8fdf27bfdd1fef1cddf1d4"
+  },
+  "capture_id": "c9002585504b46821d320721e221c747f9de3f900d7cd627577bd432ba8a80a4",
+  "cohort": {
+    "artifact_id": "6449000597004f6a55d7a481af009284dc9c92789a866f22463f5b88db03f53f",
+    "cohort_id": "3550bc6d11430aae1b0d71eb70e3ae678e6add93171c5d5c160a7ba369e132e6",
+    "manifest_path": "/home/tommie/Projects/IMEC2/logs/stack-evidence/cohorts/cohort-3550bc6d11430aae1b0d71eb70e3ae678e6add93171c5d5c160a7ba369e132e6.json",
+    "source_id": "860b9ea2b7e57082f0d04ae95f1891f9a2eff7d19fc735f4addd419a0893da92"
+  },
+  "cohort_capture_id": "89e168434a2b113088b0525909668659c45883e81d39de4b8299220b4f57b39b",
+  "evidence_mode": "bench_only",
+  "preset": "mesh_anchor_forcedhop",
+  "probe_id": "E4645C15CB0F3B37",
+  "promotion_allowed": false,
+  "provenance": {
+    "ended_at_utc": "2026-08-14T10:11:29Z",
+    "rtt_command": [
+      "pyocd",
+      "rtt",
+      "-t",
+      "nrf52833",
+      "-M",
+      "pre-reset",
+      "-a",
+      "0x20000410",
+      "-s",
+      "0x100",
+      "-u",
+      "E4645C15CB0F3B37",
+      "--up-channel-id",
+      "0"
+    ],
+    "started_at_utc": "2026-08-14T10:06:28Z",
+    "tool": "firmware/scripts/capture_stack_evidence.py",
+    "tool_sha256": "a57bf49bf3427a6d62fb2ee0054d2f7f1c3e9210a5ebcc949e089949e3971b89",
+    "tty_wrapper": "script",
+    "workflow": "pyocd-rtt-pre-reset-v1"
+  },
+  "schema": 3,
+  "target": {
+    "build_identity": "imec-stack-v1:mesh_anchor_forcedhop:6f43998a7620fee2f10d7b441dc7c9bd31a562a331c48aa8604757b14e869a01",
+    "code_sector_map_sha256": "e693b4face9753240151907f4fe602bede29a5c237ae31c313ce0ff1e024b3e9",
+    "effective_uwb_short_addr": "0xcb07",
+    "flash_sha256": "aa4eb33c5edf81a8709e240011340e8ec2ac12df0b5cf5877293bd6c73ddb1c7",
+    "identity_source": "nrf_ficr_mapped",
+    "node_id": "0x191a9619c6c8cb07",
+    "physical_id": "0x5057d35a87868805",
+    "post_capture_flash_sha256": "aa4eb33c5edf81a8709e240011340e8ec2ac12df0b5cf5877293bd6c73ddb1c7",
+    "post_readback_completed_at_utc": "2026-08-14T10:11:32Z",
+    "post_readback_started_at_utc": "2026-08-14T10:11:29Z",
+    "pre_capture_flash_sha256": "67585048f6b007a251ad6b6342ea5166e07af11468d8f57fdd352d5fee25c050",
+    "pre_readback_completed_at_utc": "2026-08-14T10:06:28Z",
+    "pre_readback_started_at_utc": "2026-08-14T10:06:25Z",
+    "preset": "mesh_anchor_forcedhop"
+  },
+  "transcript": {
+    "path": "mesh_anchor_forcedhop-20260814T101129Z.typescript",
+    "sha256": "9c927c5d624384566299392f481fbb412f035b6eee74ec04df7c14c06cfbdbfa"
+  }
+}

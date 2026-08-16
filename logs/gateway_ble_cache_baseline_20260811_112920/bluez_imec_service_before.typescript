@@ -1,0 +1,17 @@
+Script started on 2026-08-11 11:32:46+02:00 [COMMAND="busctl introspect org.bluez /org/bluez/hci0/dev_EF_BD_42_B8_83_0C/service0010" <not executed on terminal>]
+NAME                                TYPE      SIGNATURE RESULT/VALUE                            FLAGS
+org.bluez.GattService1              interface -         -                                       -
+.Device                             property  o         "/org/bluez/hci0/dev_EF_BD_42_B8_83_0C" emits-change
+.Handle                             property  q         16                                      emits-change
+.Includes                           property  ao        0                                       emits-change
+.Primary                            property  b         true                                    emits-change
+.UUID                               property  s         "494d4543-0001-4757-8000-000000000001"  emits-change
+org.freedesktop.DBus.Introspectable interface -         -                                       -
+.Introspect                         method    -         s                                       -
+org.freedesktop.DBus.Properties     interface -         -                                       -
+.Get                                method    ss        v                                       -
+.GetAll                             method    s         a{sv}                                   -
+.Set                                method    ssv       -                                       -
+.PropertiesChanged                  signal    sa{sv}as  -                                       -
+
+Script done on 2026-08-11 11:32:46+02:00 [COMMAND_EXIT_CODE="0"]

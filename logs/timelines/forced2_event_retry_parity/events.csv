@@ -1,0 +1,10 @@
+row,start,end,text,style,lane_index
+child,0,120,"first PROPOSE succeeds\nphase must freeze here",emphasis,0
+parent,120,480,"retain one exact ACCEPT\nfor this immutable proposal",solid,0
+child,640,760,"retry 1: same bytes\nbut local phase overwritten",solid,0
+child,1280,1400,"retry 2: same bytes\nlocal phase overwritten again",solid,0
+child,1920,2040,"retry 3: same bytes\nlocal phase overwritten again",solid,0
+parent,2040,2160,"replayed ACCEPT succeeds\noriginal proposal authority",emphasis,0
+cadence,2160,2360,"B RX turn named by retained counter",solid,0
+cadence,2360,2560,"C TX turn named three counters later",solid,1
+failure,2560,3000,"same cadence period, opposite parity:\nB listens one turn after C transmits",emphasis,0

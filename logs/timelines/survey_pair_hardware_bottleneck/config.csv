@@ -1,0 +1,9 @@
+key,value
+title,"THREE-HOP SURVEY PAIR: MEASURED CRITICAL PATH"
+caption,"The five DS-TWR exchanges finish together, but five individually receipted result records then serialize over the retained two-hop route. The gateway correctly starts cleanup as soon as the fifth explicit failure arrives; there is no 90-second idle observation wait. Repeating the identical five-failure batch is the avoidable cost."
+key_point,"The route is already working. The simplest safe reduction is to stop rerunning a pair after all five sample slots return exact unusable results; keep reruns only for missing evidence."
+start,0
+end,95000
+width,4200
+unit,ms
+axis_caption_width,260

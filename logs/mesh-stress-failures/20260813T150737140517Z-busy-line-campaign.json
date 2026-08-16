@@ -1,0 +1,32 @@
+{
+  "case_timeout_s": 30.0,
+  "failure_count": 1,
+  "failures": [
+    {
+      "artifact_directory": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/20260813T150737140517Z-busy-line-seed-000021a9-fault-f4177f44-cfg-09471c82430c35ed",
+      "fault_seed": "0xf4177f44",
+      "replay": "timeout --signal=TERM --kill-after=1s 30s /home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-9f4428a4cd5f4c866aa809c4d8e784162a8cab2a8dd1bd0d1783859534f14cc4 --scenario busy-line --seed 0x000021a9 --fault-seed 0xf4177f44 --packets 2 --loss 50 --ack-loss 300 --duplicate 300 --delay 500 --max-delay-us 4000 --max-steps 800 --reset-step 40 --quiet",
+      "returncode": 1,
+      "seed": "0x000021a9",
+      "timed_out": false
+    }
+  ],
+  "max_failure_artifacts": 25,
+  "recorded_at_utc": "20260813T150737140517Z",
+  "retained_artifact_count": 1,
+  "runner_sha256": "d49ace20bf7d77c8604ec95925ae307a69d366930f58cedd937ec5424629e58c",
+  "sanitizer_environment": {
+    "ASAN_OPTIONS": "detect_leaks=0:halt_on_error=1",
+    "LSAN_OPTIONS": null,
+    "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+  },
+  "scenario": "busy-line",
+  "shared_executable": {
+    "path": "/home/tommie/Projects/IMEC2/logs/mesh-stress-failures/.mesh_stress-9f4428a4cd5f4c866aa809c4d8e784162a8cab2a8dd1bd0d1783859534f14cc4",
+    "sha256": "9f4428a4cd5f4c866aa809c4d8e784162a8cab2a8dd1bd0d1783859534f14cc4"
+  },
+  "source": {
+    "git_head": "be8d53305411efd871702911de39178d78b99acf",
+    "tracked_worktree_dirty": true
+  }
+}

@@ -1,0 +1,53 @@
+Script started on 2026-08-14 22:24:49+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway 'IMEC Mesh Test Gateway' --command survey --host-id 0x1122334455667788 --expected-anchors 3 --expected-pairs 3 --samples 5 --survey-duration-ms 1000 --command-budget-ms 900000 --duration 900 --connect-timeout 30 --survey-terminal-drain-quiet-s 3 --require-survey-success" <not executed on terminal>]
+BLE_CONNECTED gateway_id=0x9999888877776666 command=survey session=2154072933 frame=04c101401988776655443322116666777788889999658b6480658b013d0101010310020c011504658b64801a04e80301040f0205074c010678020306ab04a0bb0d05ae13010204905f010228050604e8030104a0bb0d05ae050103050219db9600
+BLE_NOTIFICATIONS_HELD seconds=0.000
+BLE_NOTIFICATIONS_ENABLED
+BLE_CHUNK len=118 hex=475701280106010056000e000e00400566667777888899996666777788889999000000004e005026014e010606000000040112011d0fadcc080040051d0fadcc1d0f00000e00400507cbc8c619961a1900000000000000000000000000000000b246ac6cfec2e33603000000000000000000000003ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=88080398 seq=14 payload=014e010606000000040112011d0fadcc080040051d0fadcc1d0f00000e00400507cbc8c619961a1900000000000000000000000000000000b246ac6cfec2e33603000000000000000000000003ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=1, stage=6, flags=6, attempt=0, command_status=0, reason=0, command_id=260, route_epoch=274, correlation_id=3433893661, gateway_sequence=88080392, host_session_id=3433893661, host_sequence=3869, event_sequence=88080398, anchor_id=1808923237796072199, pair_initiator_id=0, pair_responder_id=0, previous_hop_id=3955219295762138802, progress_count=3, total_count=0, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=3, discovery_slot=255)
+BLE_CHUNK len=118 hex=4757012801060100560017001700400566667777888899996666777788889999000000004e006522014e02020600000000011201658b648000000000658b6480658b000017004005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=88080407 seq=23 payload=014e02020600000000011201658b648000000000658b6480658b000017004005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=2, stage=2, flags=6, attempt=0, command_status=0, reason=0, command_id=256, route_epoch=274, correlation_id=2154072933, gateway_sequence=0, host_session_id=2154072933, host_sequence=35685, event_sequence=88080407, anchor_id=0, pair_initiator_id=0, pair_responder_id=0, previous_hop_id=0, progress_count=0, total_count=0, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=0, discovery_slot=255)
+BLE_CHUNK len=118 hex=4757012801060100560018001800400566667777888899996666777788889999000000004e00c33b014e02030000000000011201658b648000000000658b6480658b000018004005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=88080408 seq=24 payload=014e02030000000000011201658b648000000000658b6480658b000018004005000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=2, stage=3, flags=0, attempt=0, command_status=0, reason=0, command_id=256, route_epoch=274, correlation_id=2154072933, gateway_sequence=0, host_session_id=2154072933, host_sequence=35685, event_sequence=88080408, anchor_id=0, pair_initiator_id=0, pair_responder_id=0, previous_hop_id=0, progress_count=0, total_count=0, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=0, discovery_slot=255)
+BLE_CHUNK len=118 hex=475701280106010056001a001a00400566667777888899996666777788889999000000004e00d15a014e02040601000000011201658b6480658b6480658b6480658b00001a004005000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=88080410 seq=26 payload=014e02040601000000011201658b6480658b6480658b6480658b00001a004005000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=2, stage=4, flags=6, attempt=1, command_status=0, reason=0, command_id=256, route_epoch=274, correlation_id=2154072933, gateway_sequence=2154072933, host_session_id=2154072933, host_sequence=35685, event_sequence=88080410, anchor_id=0, pair_initiator_id=0, pair_responder_id=0, previous_hop_id=0, progress_count=0, total_count=6, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=0, discovery_slot=255)
+BLE_CHUNK len=51 hex=47570128010201004104658b658b648066667777888899996666777788889999000000000b00627710020001110200001e0100
+BLE_PACKET type=0x41 src=0x9999888877776666 dst=0x9999888877776666 session=2154072933 seq=35685 payload=10020001110200001e0100
+BLE_HOST_RECEIPT type=0x41 src=0x9999888877776666 session=2154072933 seq=35685
+BLE_CHUNK len=100 hex=47570128010301005514010025010000b246ac6cfec2e3366666777788889999000000003c0021951504658b64800a08b246ac6cfec2e336170a0e3070b9aac08b70a364170a07cbc8c619961a19a264b60870000000000000006e042501000011020000
+BLE_PACKET type=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 session=293 seq=1 payload=1504658b64800a08b246ac6cfec2e336170a0e3070b9aac08b70a364170a07cbc8c619961a19a264b60870000000000000006e042501000011020000
+BLE_HOST_RECEIPT type=0x55 src=0x36e3c2fe6cac46b2 session=293 seq=1
+BLE_CHUNK len=100 hex=475701280103010055140100ea0000000e3070b9aac08b706666777788889999000000003c00f9f61504658b64800a080e3070b9aac08b70170a07cbc8c619961a19a564170ab246ac6cfec2e336a364b60870000000000000006e04ea00000011020000
+BLE_PACKET type=0x55 src=0x708bc0aab970300e dst=0x9999888877776666 session=234 seq=1 payload=1504658b64800a080e3070b9aac08b70170a07cbc8c619961a19a564170ab246ac6cfec2e336a364b60870000000000000006e04ea00000011020000
+BLE_HOST_RECEIPT type=0x55 src=0x708bc0aab970300e session=234 seq=1
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1623, in <module>
+    main()
+    ~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1619, in main
+    asyncio.run(run(args))
+    ~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1387, in run
+    await await_qualification(
+    ...<7 lines>...
+    )
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1074, in await_qualification
+    raise_transport_errors(f"{label} qualification")
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1054, in raise_transport_errors
+    raise RuntimeError(f"{label} failed: " + "; ".join(disconnect_errors))
+RuntimeError: survey qualification failed: gateway disconnected during active command or monitoring
+
+Script done on 2026-08-14 22:33:58+02:00 [COMMAND_EXIT_CODE="1"]

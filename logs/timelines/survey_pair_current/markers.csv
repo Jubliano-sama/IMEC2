@@ -1,0 +1,7 @@
+time,label,caption,kind,row
+-2000,-2000 ms,responder starts transport preemption,axis,
+-1000,-1000 ms,responder RF starts and five result slots are reserved,axis,
+0,t = 0,initiator starts five DS-TWR attempts,axis,
+790,+790 ms,initiator worst-case attempt horizon ends,axis,
+4790,+4790 ms,responder absolute worst case ends and transport resumes,axis,
+6200,+6200 ms,diagram end; reservation remains valid until +9000 ms,axis,

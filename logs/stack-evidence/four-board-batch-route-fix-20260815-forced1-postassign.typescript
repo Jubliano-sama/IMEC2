@@ -1,0 +1,887 @@
+Script started on 2026-08-15 02:48:00+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -u E46070D247394D36 -f 4000000 -M attach" <not executed on terminal>]
+[34m0000407[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000449[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000463[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000464[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000466[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000470[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000473[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000489[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000504[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000510[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000511[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000512[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000515[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000515[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000515[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000517[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000521[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000522[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000564[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000564[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000564[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_anchor_forcedhop build=imec-stack-v1:mesh_anchor_forcedhop:d2d0a8a1d7a825d938689c7ec18dde9ea655bbb2e4111eb4093b393b99fc9634 epoch=9181701979279744760 uptime=251
+mesh node identity: ficr=0x39c685e9f83e730c node=0x708bc0aab970300e preset=mesh_anchor_forcedhop
+DBG_LED_SELFTEST_CH5_RX
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=4 attempt=1 seq=31 at=56652
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1258
+DBG_BOOT_ANCHOR_ROLE_BEGIN
+DBG_ANCHOR_BLE_DISABLED
+DBG_ANCHOR_CH5_SCAN_WQ_STARTED
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=2000
+DBG_ANCHOR_CH5_SCAN_SCHEDULED startup=2000 interval=380 win=3
+DBG_BOOT_ANCHOR_ROLE_DONE
+DBG_BOOT_MESH_RX_ANCHOR_LOW_DUTY_OWNER
+DBG_BOOT_MESH_TEST_BEGIN
+DBG_BOOT_MESH_TEST_DONE
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003c s=00000005 q=0000>0004 r=00000000 f=00000024 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_SUBMIT handle=1 profile=1 token=2228225 deadline=61263
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=1264 start=0 win=0
+DBG_UWB_TX_CH9
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=525476 next=525536 cnt=1372103321 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=525476 next=525882 cnt=112024751 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103321 now=525476 start=525536 end=525656
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=525536 end=525656 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=525477 start=525536 end=525656 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=525496 start=525536 guard=60
+DBG_CH9_RX_ARMED now=525496 start=525536 end=525656 deadline=525716
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=525717 start=525536 end=525656 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=525536 end=525656 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=525727 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20416 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024751 now=525822 start=525882 end=526002
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=525882 end=526002 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=525822 start=525882 end=526002 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=525841 start=525882 guard=60
+DBG_CH9_RX_ARMED now=525842 start=525882 end=526002 deadline=526062
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=526062 start=525882 end=526002 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=525882 end=526002 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=526756 next=526816 cnt=1372103323 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=526756 next=527162 cnt=112024753 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103323 now=526756 start=526816 end=526936
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=526816 end=526936 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=526756 start=526816 end=526936 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=526775 start=526816 guard=60
+DBG_CH9_RX_ARMED now=526775 start=526816 end=526936 deadline=526996
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=526997 start=526816 end=526936 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=526816 end=526936 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=527017 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20446 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024753 now=527102 start=527162 end=527282
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=527162 end=527282 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=527102 start=527162 end=527282 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=527121 start=527162 guard=60
+DBG_CH9_RX_ARMED now=527121 start=527162 end=527282 deadline=527342
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=527344 start=527162 end=527282 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=527162 end=527282 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=528036 next=528096 cnt=1372103325 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=528036 next=528442 cnt=112024755 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103325 now=528036 start=528096 end=528216
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=528096 end=528216 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=528037 start=528096 end=528216 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=528056 start=528096 guard=60
+DBG_CH9_RX_ARMED now=528056 start=528096 end=528216 deadline=528276
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=528277 start=528096 end=528216 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=528096 end=528216 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=528286 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20782 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024755 now=528382 start=528442 end=528562
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=528442 end=528562 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=528382 start=528442 end=528562 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=528402 start=528442 guard=60
+DBG_CH9_RX_ARMED now=528402 start=528442 end=528562 deadline=528622
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=528623 start=528442 end=528562 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=528442 end=528562 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=529316 next=529376 cnt=1372103327 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=529316 next=529722 cnt=112024757 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103327 now=529316 start=529376 end=529496
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=529376 end=529496 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=529317 start=529376 end=529496 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=529335 start=529376 guard=60
+DBG_CH9_RX_ARMED now=529336 start=529376 end=529496 deadline=529556
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=529557 start=529376 end=529496 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=529376 end=529496 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=529577 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20233 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024757 now=529662 start=529722 end=529842
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=529722 end=529842 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=529662 start=529722 end=529842 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=529682 start=529722 guard=60
+DBG_CH9_RX_ARMED now=529682 start=529722 end=529842 deadline=529902
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=529904 start=529722 end=529842 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=529722 end=529842 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=530596 next=530656 cnt=1372103329 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=530596 next=531002 cnt=112024759 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103329 now=530596 start=530656 end=530776
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=530656 end=530776 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=530597 start=530656 end=530776 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=530616 start=530656 guard=60
+DBG_CH9_RX_ARMED now=530616 start=530656 end=530776 deadline=530836
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=530838 start=530656 end=530776 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=530656 end=530776 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=530846 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20599 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024759 now=530942 start=531002 end=531122
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=531002 end=531122 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=530942 start=531002 end=531122 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=530962 start=531002 guard=60
+DBG_CH9_RX_ARMED now=530962 start=531002 end=531122 deadline=531182
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=531183 start=531002 end=531122 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=531002 end=531122 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=531876 next=531936 cnt=1372103331 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=531876 next=532282 cnt=112024761 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103331 now=531876 start=531936 end=532056
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=531936 end=532056 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=531876 start=531936 end=532056 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=531895 start=531936 guard=60
+DBG_CH9_RX_ARMED now=531895 start=531936 end=532056 deadline=532116
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=532118 start=531936 end=532056 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=531936 end=532056 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=532138 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20477 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024761 now=532222 start=532282 end=532402
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=532282 end=532402 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=532222 start=532282 end=532402 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=532241 start=532282 guard=60
+DBG_CH9_RX_ARMED now=532241 start=532282 end=532402 deadline=532462
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=532464 start=532282 end=532402 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=532282 end=532402 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=533156 next=533216 cnt=1372103333 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=533156 next=533562 cnt=112024763 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103333 now=533156 start=533216 end=533336
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=533216 end=533336 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=533157 start=533216 end=533336 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=533175 start=533216 guard=60
+DBG_CH9_RX_ARMED now=533175 start=533216 end=533336 deadline=533396
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=533398 start=533216 end=533336 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=533216 end=533336 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=533407 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20629 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024763 now=533502 start=533562 end=533682
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=533562 end=533682 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=533502 start=533562 end=533682 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=533522 start=533562 guard=60
+DBG_CH9_RX_ARMED now=533522 start=533562 end=533682 deadline=533742
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=533743 start=533562 end=533682 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=533562 end=533682 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=534436 next=534496 cnt=1372103335 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=534436 next=534842 cnt=112024765 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103335 now=534436 start=534496 end=534616
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=534496 end=534616 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=534436 start=534496 end=534616 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=534455 start=534496 guard=60
+DBG_CH9_RX_ARMED now=534455 start=534496 end=534616 deadline=534676
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=534677 start=534496 end=534616 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=534496 end=534616 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=534677 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20599 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024765 now=534782 start=534842 end=534962
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=534842 end=534962 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=534782 start=534842 end=534962 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=534802 start=534842 guard=60
+DBG_CH9_RX_ARMED now=534802 start=534842 end=534962 deadline=535022
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=535024 start=534842 end=534962 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=534842 end=534962 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=535716 next=535776 cnt=1372103337 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=535716 next=536122 cnt=112024767 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103337 now=535716 start=535776 end=535896
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=535776 end=535896 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=535717 start=535776 end=535896 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=535735 start=535776 guard=60
+DBG_CH9_RX_ARMED now=535735 start=535776 end=535896 deadline=535956
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=535958 start=535776 end=535896 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=535776 end=535896 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=535970 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20416 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024767 now=536062 start=536122 end=536242
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=536122 end=536242 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=536062 start=536122 end=536242 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=536081 start=536122 guard=60
+DBG_CH9_RX_ARMED now=536081 start=536122 end=536242 deadline=536302
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=536303 start=536122 end=536242 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=536122 end=536242 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=536996 next=537056 cnt=1372103339 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=536996 next=537402 cnt=112024769 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103339 now=536996 start=537056 end=537176
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=537056 end=537176 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=536996 start=537056 end=537176 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=537015 start=537056 guard=60
+DBG_CH9_RX_ARMED now=537016 start=537056 end=537176 deadline=537236
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=537237 start=537056 end=537176 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=537056 end=537176 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=537239 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20660 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024769 now=537342 start=537402 end=537522
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=537402 end=537522 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=537342 start=537402 end=537522 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=537361 start=537402 guard=60
+DBG_CH9_RX_ARMED now=537362 start=537402 end=537522 deadline=537582
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=537583 start=537402 end=537522 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=537402 end=537522 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=538276 next=538336 cnt=1372103341 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=538276 next=538682 cnt=112024771 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103341 now=538276 start=538336 end=538456
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=538336 end=538456 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=538277 start=538336 end=538456 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=538295 start=538336 guard=60
+DBG_CH9_RX_ARMED now=538295 start=538336 end=538456 deadline=538516
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=538518 start=538336 end=538456 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=538336 end=538456 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=538533 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20263 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024771 now=538622 start=538682 end=538802
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=538682 end=538802 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=538622 start=538682 end=538802 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=538641 start=538682 guard=60
+DBG_CH9_RX_ARMED now=538642 start=538682 end=538802 deadline=538862
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=538863 start=538682 end=538802 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=538682 end=538802 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=539556 next=539616 cnt=1372103343 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=539556 next=539962 cnt=112024773 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103343 now=539556 start=539616 end=539736
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=539616 end=539736 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=539557 start=539616 end=539736 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=539576 start=539616 guard=60
+DBG_CH9_RX_ARMED now=539576 start=539616 end=539736 deadline=539796
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=539798 start=539616 end=539736 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=539616 end=539736 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=539802 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20629 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024773 now=539902 start=539962 end=540082
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=539962 end=540082 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=539902 start=539962 end=540082 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=539922 start=539962 guard=60
+DBG_CH9_RX_ARMED now=539922 start=539962 end=540082 deadline=540142
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=540144 start=539962 end=540082 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=539962 end=540082 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=540836 next=540896 cnt=1372103345 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=540836 next=541242 cnt=112024775 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103345 now=540836 start=540896 end=541016
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=540896 end=541016 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=540837 start=540896 end=541016 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=540855 start=540896 guard=60
+DBG_CH9_RX_ARMED now=540855 start=540896 end=541016 deadline=541076
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=541078 start=540896 end=541016 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=540896 end=541016 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=541095 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20660 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024775 now=541182 start=541242 end=541362
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=541242 end=541362 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=541182 start=541242 end=541362 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=541201 start=541242 guard=60
+DBG_CH9_RX_ARMED now=541201 start=541242 end=541362 deadline=541422
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=541423 start=541242 end=541362 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=541242 end=541362 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=542116 next=542176 cnt=1372103347 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=542116 next=542522 cnt=112024777 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103347 now=542116 start=542176 end=542296
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=542176 end=542296 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=542116 start=542176 end=542296 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=542135 start=542176 guard=60
+DBG_CH9_RX_ARMED now=542135 start=542176 end=542296 deadline=542356
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=542358 start=542176 end=542296 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=542176 end=542296 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=542364 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20599 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024777 now=542462 start=542522 end=542642
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=542522 end=542642 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=542462 start=542522 end=542642 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=542482 start=542522 guard=60
+DBG_CH9_RX_ARMED now=542482 start=542522 end=542642 deadline=542702
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=542703 start=542522 end=542642 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=542522 end=542642 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=543396 next=543456 cnt=1372103349 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=543396 next=543802 cnt=112024779 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103349 now=543396 start=543456 end=543576
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=543456 end=543576 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=543396 start=543456 end=543576 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=543415 start=543456 guard=60
+DBG_CH9_RX_ARMED now=543415 start=543456 end=543576 deadline=543636
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=543638 start=543456 end=543576 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=543456 end=543576 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=543658 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20416 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024779 now=543742 start=543802 end=543922
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=543802 end=543922 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=543742 start=543802 end=543922 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=543761 start=543802 guard=60
+DBG_CH9_RX_ARMED now=543762 start=543802 end=543922 deadline=543982
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=543983 start=543802 end=543922 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=543802 end=543922 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=544676 next=544736 cnt=1372103351 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=544676 next=545082 cnt=112024781 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103351 now=544676 start=544736 end=544856
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=544736 end=544856 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=544677 start=544736 end=544856 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=544696 start=544736 guard=60
+DBG_CH9_RX_ARMED now=544696 start=544736 end=544856 deadline=544916
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=544918 start=544736 end=544856 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=544736 end=544856 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=544926 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20904 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024781 now=545022 start=545082 end=545202
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=545082 end=545202 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=545022 start=545082 end=545202 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=545041 start=545082 guard=60
+DBG_CH9_RX_ARMED now=545042 start=545082 end=545202 deadline=545262
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=545263 start=545082 end=545202 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=545082 end=545202 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=545956 next=546016 cnt=1372103353 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=545956 next=546362 cnt=112024783 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103353 now=545956 start=546016 end=546136
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=546016 end=546136 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=545957 start=546016 end=546136 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=545975 start=546016 guard=60
+DBG_CH9_RX_ARMED now=545975 start=546016 end=546136 deadline=546196
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=546197 start=546016 end=546136 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=546016 end=546136 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=546217 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20294 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024783 now=546302 start=546362 end=546482
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=546362 end=546482 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=546302 start=546362 end=546482 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=546322 start=546362 guard=60
+DBG_CH9_RX_ARMED now=546322 start=546362 end=546482 deadline=546542
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=546543 start=546362 end=546482 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=546362 end=546482 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=547236 next=547296 cnt=1372103355 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=547236 next=547642 cnt=112024785 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103355 now=547236 start=547296 end=547416
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=547296 end=547416 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=547237 start=547296 end=547416 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=547255 start=547296 guard=60
+DBG_CH9_RX_ARMED now=547255 start=547296 end=547416 deadline=547476
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=547478 start=547296 end=547416 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=547296 end=547416 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=547485 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20751 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024785 now=547582 start=547642 end=547762
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=547642 end=547762 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=547582 start=547642 end=547762 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=547601 start=547642 guard=60
+DBG_CH9_RX_ARMED now=547602 start=547642 end=547762 deadline=547822
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=547823 start=547642 end=547762 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=547642 end=547762 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_SKIP_STALE n=1 now=548516 next=548576 cnt=1372103357 reason=rx-select
+DBG_CH9_SKIP_STALE n=1 now=548516 next=548922 cnt=112024787 reason=rx-select
+DBG_CH9_RX_SLOT idx=0 cnt=1372103357 now=548516 start=548576 end=548696
+DBG_CH9_EVENT_STATE state=granted peer=0x36e3c2fe6cac46b2 start=548576 end=548696 reason=rx-slot
+DBG_CH9_RX_START idx=0 now=548517 start=548576 end=548696 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=548535 start=548576 guard=60
+DBG_CH9_RX_ARMED now=548535 start=548576 end=548696 deadline=548756
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=548756 start=548576 end=548696 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x36e3c2fe6cac46b2 start=548576 end=548696 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=548777 win=20 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=20 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=20
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=20385 complete=15
+DBG_ANCHOR_CH5_POST_CH9_RECOVERY_SCAN win=20 ret=-116 pre=0
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_CH9_RX_SLOT idx=1 cnt=112024787 now=548862 start=548922 end=549042
+DBG_CH9_EVENT_STATE state=granted peer=0x191a9619c6c8cb07 start=548922 end=549042 reason=rx-slot
+DBG_CH9_RX_START idx=1 now=548862 start=548922 end=549042 tail=60
+DBG_CH9_RX_CONFIG_OK
+DBG_CH9_RX_EARLY_ARM now=548881 start=548922 guard=60
+DBG_CH9_RX_ARMED now=548882 start=548922 end=549042 deadline=549102
+DBG_DWM_KEEP_IDLE reason=ch9-rx ch9=2 ack=0 qack=0 ret=0
+DBG_CH9_RX_EMPTY
+DBG_CH9_RX_TIMEOUT
+DBG_CH9_RX_MISS frames=0 now=549103 start=548922 end=549042 fail=0
+DBG_CH9_EVENT_STATE state=window_expired peer=0x191a9619c6c8cb07 start=548922 end=549042 reason=rx-slot
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+
+Script done on 2026-08-15 02:48:27+02:00 [COMMAND_EXIT_CODE="0"]

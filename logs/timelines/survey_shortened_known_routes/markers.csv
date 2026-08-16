@@ -1,0 +1,10 @@
+time,label,caption,kind,row
+0,0 s,survey accepted after route qualification,axis,
+20000,20 s,shortened discovery executes,axis,
+35000,35 s,shortened pair 1 executes,axis,
+50000,50 s,shortened pair 2 executes,axis,
+65000,65 s,shortened pair 3 executes,axis,
+90000,90 s,current discovery executes,axis,
+135000,135 s,current pair 1 executes,axis,
+180000,180 s,current pair 2 executes,axis,
+225000,225 s,current pair 3 executes,axis,

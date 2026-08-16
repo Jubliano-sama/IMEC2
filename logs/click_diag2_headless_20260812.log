@@ -1,0 +1,14 @@
+resolved gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C source=scan preconnected=0
+attached gateway=IMEC Mesh Test Gateway address=EF:BD:42:B8:83:0C
+packet msg=CLICK_REPORT seq=1 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=1698188953 seq=1
+packet msg=CLICK_REPORT seq=1 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=1698188953 seq=1
+packet msg=CLICK_REPORT seq=2 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=1698188953 seq=2
+packet msg=CLICK_REPORT seq=2 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=1698188953 seq=2
+packet msg=CLICK_REPORT seq=3 src=0x191a9619c6c8cb07
+host_receipt msg=0x20 src=0x191a9619c6c8cb07 session=1698188953 seq=3
+packet msg=CLICK_REPORT seq=3 src=0x708bc0aab970300e
+host_receipt msg=0x20 src=0x708bc0aab970300e session=1698188953 seq=3

@@ -1,0 +1,6 @@
+row,start,end,text,style,lane_index
+initiator,0,790,"Initiator DS-TWR attempts\nfirst poll begins at shared t=0",emphasis,0
+old,346,1400,"Observed responder RX\nstarts 346 ms after initiator",emphasis,0
+fixed,-1000,1400,"Correct responder RX\nstarts 1000 ms before initiator",solid,0
+relay,-1000,346,"1346 ms relay residence omitted by old forward",emphasis,0
+relay,-1000,0,"Corrected packet age includes relay queue and radio residence",solid,1

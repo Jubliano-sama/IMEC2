@@ -197,10 +197,52 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         self.assertNotIn("mesh_handle_channel5_wake_claim(", reject)
         self.assertNotIn("mesh_listen_for_route_reply(", reject)
 
+    def test_generic_rx_rejects_wrong_depth_gateway_control(self):
+        gate = REPORT.index("app_mesh_c5_gateway_control_rx_allowed(")
+        hops = REPORT.index(
+            "CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS", gate
+        )
+        drop = REPORT.index("return false;", hops)
+        discovery = REPORT.rindex("MSG_SURVEY_DISCOVERY_START", 0, gate)
+        prepare = REPORT.rindex("MSG_SURVEY_PAIR_PREPARE", 0, gate)
+
+        self.assertLess(discovery, gate)
+        self.assertLess(prepare, gate)
+        self.assertLess(gate, hops)
+        self.assertLess(hops, drop)
+        self.assertIn("context.packet.ttl", REPORT[gate:hops])
+
+    def test_rejected_direct_control_hands_off_to_followup_listener(self):
+        scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
+        handoff = function_body(REPORT, "mesh_anchor_handoff_route_wake_frame")
+        listen_gate = scan.index("if (!app_mesh_c5_route_wake_should_listen(")
+        leave_block = braced_block_after(
+            scan, "if (!app_mesh_c5_route_wake_should_listen("
+        )
+        allowed_note = scan.index(
+            "if (!app_mesh_c5_route_wake_claim_allowed(", listen_gate
+        )
+        listen_note = scan.index(
+            "DBG_ANCHOR_DIRECT_GATEWAY_WAKE_LISTEN", allowed_note
+        )
+        dispatch = scan.index("route_wake_handoff = true", listen_note)
+
+        self.assertLess(listen_gate, allowed_note)
+        self.assertLess(allowed_note, listen_note)
+        self.assertLess(listen_note, dispatch)
+        self.assertIn("anchor_relay_control_followup_boost_begin(", leave_block)
+        self.assertIn("goto scan_complete", leave_block)
+        self.assertNotIn("route_wake_handoff = true", leave_block)
+        self.assertIn(
+            "app_mesh_c5_route_wake_should_listen(",
+            handoff[: handoff.index("mesh_handle_channel5_wake_claim(")],
+        )
+        self.assertNotIn("anchor_wait_for_relayed_control_wake", ANCHOR_RADIO)
+
     def test_rejected_direct_control_uses_released_bounded_scan_slices(self):
         scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
         direct_reject = braced_block_after(
-            scan, "if (!app_mesh_c5_route_wake_claim_allowed("
+            scan, "if (!app_mesh_c5_route_wake_should_listen("
         )
 
         boost_begin = direct_reject.index(

@@ -1,0 +1,45 @@
+{
+  "inventory_id": "09bc30307ed50ff98606340e152cb446ff8b43d1e862f3b0c1644f404b1360c3",
+  "roles": {
+    "mesh_anchor": {
+      "artifact_id": "f2449072d55c16b0ef3bfbfba2c04c5949792c03e76dfa8f42a282e28412ab7f",
+      "capture_id": "c2814f976d96eb48735e705436f69978c360f3ff0bb5d7f79498e35400b9b593",
+      "capture_manifest_path": "/home/tommie/Projects/IMEC2/logs/stack-evidence/three-board-final-20260812/final3-anchor/mesh_anchor-c2814f976d96eb48.json",
+      "capture_manifest_sha256": "3679786e67e6cb00ea68601dfccca6015ab346a4ba18bbee832a3661cc30c31b",
+      "cohort_id": "321c1a0baa99d081d335b714ca13df7d304065ce7aa55425707ea031e69bfdaf",
+      "effective_uwb_short_addr": "0xcb07",
+      "node_id": "0x191a9619c6c8cb07",
+      "physical_id": "0x5057d35a87868805",
+      "probe_id": "E46070D247394D36",
+      "target_code_sector_map_sha256": "7e2e69d6265a5ee53f1781649ce02a1717c3bddb3eb0d13f63c899846419bf79"
+    },
+    "mesh_anchor_forcedhop": {
+      "artifact_id": "f1f112c0cdad44ffc9cc1cd988caede39a53df2aed522d44264e00afedc762d3",
+      "capture_id": "63555e6db0debfa05ffed4cfec011a6980992ed93e25b40ea385da3e664d67d5",
+      "capture_manifest_path": "/home/tommie/Projects/IMEC2/logs/stack-evidence/three-board-final-20260812/final3-forcedhop/mesh_anchor_forcedhop-63555e6db0debfa0.json",
+      "capture_manifest_sha256": "d9e862ed40d8ae3fb8e61f0ffd2a3e34654f3d6815f33e3451a6fd37d788dd1a",
+      "cohort_id": "57f23fa93e2f7e0f29d9fb8ce2d35b51a258a49585b731530be61edc09afce73",
+      "effective_uwb_short_addr": "0x46b2",
+      "node_id": "0x36e3c2fe6cac46b2",
+      "physical_id": "0x7fae87bd2de205b0",
+      "probe_id": "E4645C15CB0F3B37",
+      "target_code_sector_map_sha256": "4c495c3c323b23404818bbaf148cbe784c1ac94e4dac574393c187f7ec58792a"
+    },
+    "mesh_gateway": {
+      "artifact_id": "3fe2101cc5c9b344c59c1c5eb524487e4ca5e9f08b0b78f61f0c6e21a255f374",
+      "capture_id": "d9f7af0d02c8ae4ed5e78056f264dbfe3fb241e3ba75d9b84e551287d42500bb",
+      "capture_manifest_path": "/home/tommie/Projects/IMEC2/logs/stack-evidence/three-board-final-20260812/final2-gateway/mesh_gateway-d9f7af0d02c8ae4e.json",
+      "capture_manifest_sha256": "9a44ca91c6705516b3bd53b0878c9a0d2ff2227876f22b465fa54c57e9ceadfa",
+      "cohort_id": "1bb4f265c1bcf41545eb8ffee9b1bfca6bc565130427b4bd2c38416fd132441c",
+      "effective_uwb_short_addr": "0x6666",
+      "node_id": "0x9999888877776666",
+      "physical_id": "0x88add51b1bcbe854",
+      "probe_id": "E46070D247233537",
+      "target_code_sector_map_sha256": "5cc41d0b8db44be035517aff3ffa8e67145e2fc7714af5ae2525779e32a90206"
+    }
+  },
+  "schema": 1,
+  "source_id": "7cf99c8768f5d476f80f040f85b05b2400c9bb71cc85326e5ca6eba0a9e36cef",
+  "toolchain_id": "ae2daa6e80aab9ad85e63ec1691f468cf031bf63c93a3037d00202faf6bf2611",
+  "topology_id": "688d32c9144b3d0b4c54a73a2ee387c5e46781e9c8652c20c57b992b0fb88afe"
+}

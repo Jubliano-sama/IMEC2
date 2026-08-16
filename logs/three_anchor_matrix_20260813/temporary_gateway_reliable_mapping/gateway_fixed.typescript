@@ -1,0 +1,73 @@
+Script started on 2026-08-13 16:36:50+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -f 4000000 -M pre-reset -u E4645C15CB0F3B37" TERM="linux" TTY="/dev/pts/2" COLUMNS="80" LINES="24"]
+[34m0000609[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000648[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000931[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0001037[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0001043[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0001044[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0001045[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0001048[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0001050[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0001051[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0001052[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0001053[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0001055[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0001057[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0001061[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0001061[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0001061[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0001063[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0001067[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0001068[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0001114[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0001114[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0001116[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=1917102559904862840 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=3880464375297240712 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=15184397828668313005 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=6686467387289779292 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=8347319804592123609 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=8738020376106855208 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=15371349901247256140 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=14890870735362650904 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=14190353164452338368 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=14274269530709566243 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=12501629216625627572 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=6960079947363883928 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=10308395975865598 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=17354937942831250774 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=5437089920902561986 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=8049158766153519003 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=6829079951374021203 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=9303977916221434828 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=10070378223707397957 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=1225792507846192287 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=16923828629512497391 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=16215997221373012711 uptime=2
+mesh node identity: ficr=0x5057d35a87868805 node=0x9999888877776666 preset=mesh_gateway
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:0c7db79cfe55a68c2e9894cdeed223f6a3a8bd106e627d1c2cb445ca3b3ddc20 epoch=7835901523023984075 uptime=2
+[34m0049478[0m [91mE[0m [31mError during board uninit: [2m[session][0m
+[34m0049479[0m [91mE[0m [31mProbe error during disconnect: [2m[session][0m
+[0m
+Script done on 2026-08-13 16:37:40+02:00 [COMMAND_EXIT_CODE="0"]

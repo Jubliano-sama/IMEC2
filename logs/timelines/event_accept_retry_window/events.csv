@@ -1,0 +1,10 @@
+row,start,end,text,style
+proposer,0,1000,"Current EVENT_ACCEPT listen\ncloses after 1 s",emphasis
+proposer,1000,6000,"Current implementation has already stopped listening\nand starts another proposal cycle",dashed
+proposer,0,6000,"Corrected single bounded listen\ncovers the existing responder retry contract",ghost
+responder,0,80,"Validate proposal\nand retain exact ACCEPT",default
+responder,80,6000,"Existing bounded retry owner\nwaits for a legal Channel-5 gap",shaded
+radio,0,1000,"May be unavailable because upstream Channel-9\nRX/TX and retune ownership has priority",quiet
+radio,1000,3300,"Observed trace: repeated legal deferrals\nwhile upstream timing remains owned",dashed
+radio,3300,3400,"First usable response gap\nEVENT_ACCEPT transmits",emphasis
+radio,3400,6000,"Unused remainder of retry budget",quiet

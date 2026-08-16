@@ -1,0 +1,6 @@
+resolved gateway=EF:BD:42:B8:83:0C address=EF:BD:42:B8:83:0C source=scan preconnected=0
+attached gateway=EF:BD:42:B8:83:0C address=EF:BD:42:B8:83:0C
+packet msg=ANCHOR_HEARTBEAT seq=1 src=0x36e3c2fe6cac46b2
+host_receipt msg=0x22 src=0x36e3c2fe6cac46b2 session=166 seq=1
+packet msg=0x56 seq=71 src=0x9999888877776666
+summary packets=2 synthetic=0 gap_events=0 missing=0 streams=0 resets=0 drop_sources=0 max_attempt=- max_hop=- decode_errors=0 capture_errors=0

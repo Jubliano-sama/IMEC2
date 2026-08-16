@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="683" viewBox="0 0 2600 683" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">FORCED-2 SURVEY CONTROL: DEEPER WAKE ARRIVES AT OLD DEADLINE</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="606.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="2558.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="96.0" class="row-label">A: DIRECT RELAY</text>
+<rect x="202.0" y="74.0" width="306.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="355.1" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="355.1" dy="0.0">wake train + turnaround</tspan><tspan x="355.1" dy="12.0">extended survey payload</tspan></text>
+<line x1="44.0" y1="124.0" x2="2558.0" y2="124.0" class="major-line"/>
+<text x="123.0" y="176.0" class="row-label">B: FORCED-1 RELAY</text>
+<rect x="508.3" y="174.0" width="606.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="811.6" y="191.0" class="small center event-text" text-anchor="middle"><tspan x="811.6" dy="0.0">accept A payload, schedule</tspan><tspan x="811.6" dy="12.0">next bounded flood wave</tspan></text>
+<rect x="1114.9" y="174.0" width="235.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1232.8" y="197.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1232.8" dy="0.0">B CONTROL_FOLLOWUP wake train</tspan></text>
+<rect x="1350.5" y="174.0" width="35.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="1385.9" y="174.0" width="47.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="1368.2" y1="150.0" x2="1368.2" y2="174.0" class="hairline"/>
+<rect x="1332.0" y="126.0" width="72.5" height="16.0" class="callout"/>
+<text x="1336.0" y="138.5" class="tiny" text-anchor="start"><tspan x="1336.0" dy="0.0">60 ms retune</tspan></text>
+<line x1="1409.4" y1="170.0" x2="1409.4" y2="174.0" class="hairline"/>
+<rect x="1335.8" y="146.0" width="147.2" height="16.0" class="callout"/>
+<text x="1339.8" y="158.5" class="tiny" text-anchor="start"><tspan x="1339.8" dy="0.0">four extended payload copies</tspan></text>
+<line x1="44.0" y1="220.0" x2="2558.0" y2="220.0" class="major-line"/>
+<text x="123.0" y="284.0" class="row-label">C: FORCED-2 LISTENER</text>
+<rect x="202.0" y="250.0" width="1178.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="791.0" y="267.0" class="small center event-text" text-anchor="middle"><tspan x="791.0" dy="0.0">listener opened by A</tspan><tspan x="791.0" dy="12.0">old fixed deadline</tspan></text>
+<rect x="1321.1" y="294.0" width="29.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1350.5" y="294.0" width="1178.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1939.5" y="311.0" class="small center event-text" text-anchor="middle"><tspan x="1939.5" dy="0.0">fixed: renew same listener</tspan><tspan x="1939.5" dy="12.0">for one bounded relay window</tspan></text>
+<line x1="1335.8" y1="246.0" x2="1335.8" y2="294.0" class="hairline"/>
+<rect x="1273.3" y="222.0" width="125.1" height="16.0" class="callout"/>
+<text x="1277.3" y="234.5" class="tiny" text-anchor="start"><tspan x="1277.3" dy="0.0">B wake decoded near tail</tspan></text>
+<line x1="44.0" y1="340.0" x2="2558.0" y2="340.0" class="major-line"/>
+<text x="123.0" y="414.0" class="row-label">OLD VS FIXED RESULT</text>
+<rect x="1380.0" y="390.0" width="5.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1385.9" y="434.0" width="47.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="1382.9" y1="366.0" x2="1382.9" y2="390.0" class="hairline"/>
+<rect x="1333.0" y="342.0" width="99.9" height="16.0" class="callout"/>
+<text x="1337.0" y="354.5" class="tiny" text-anchor="start"><tspan x="1337.0" dy="0.0">old listener closes</tspan></text>
+<line x1="1409.4" y1="395.0" x2="1409.4" y2="434.0" class="hairline"/>
+<rect x="1314.4" y="362.0" width="190.0" height="25.0" class="callout"/>
+<text x="1318.4" y="373.5" class="tiny" text-anchor="start"><tspan x="1318.4" dy="0.0">old: miss payload</tspan><tspan x="1318.4" dy="11.0">fixed: capture payload</tspan></text>
+<line x1="44.0" y1="480.0" x2="2558.0" y2="480.0" class="major-line"/>
+<text x="123.0" y="517.0" class="row-label">KEY POINT</text>
+<rect x="1120.0" y="492.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="1380.0" y="512.0" class="small center" text-anchor="middle"><tspan x="1380.0" dy="0.0">A valid deeper-relay wake starts one new bounded follow-up window. It reuses the same listener</tspan><tspan x="1380.0" dy="12.0">and custody; it does not add a retry queue or extend the survey deadline.</tspan></text>
+<line x1="44.0" y1="546.0" x2="2558.0" y2="546.0" class="major-line"/>
+<line x1="44.0" y1="572.0" x2="44.0" y2="610.0" class="major-line"/>
+<line x1="44.0" y1="572.0" x2="2558.0" y2="572.0" class="axis-line"/>
+<line x1="202.0" y1="571.0" x2="202.0" y2="583.0" class="tick"/>
+<line x1="508.3" y1="571.0" x2="508.3" y2="583.0" class="tick"/>
+<line x1="1114.9" y1="571.0" x2="1114.9" y2="583.0" class="tick"/>
+<line x1="1350.5" y1="571.0" x2="1350.5" y2="583.0" class="tick"/>
+<line x1="1380.0" y1="571.0" x2="1380.0" y2="583.0" class="tick"/>
+<line x1="1385.9" y1="571.0" x2="1385.9" y2="583.0" class="tick"/>
+<line x1="2528.5" y1="571.0" x2="2528.5" y2="583.0" class="tick"/>
+<text x="194.2" y="595.0" class="axis-time">A wake</text>
+<text x="500.5" y="595.0" class="axis-time">A payload</text>
+<text x="1107.2" y="595.0" class="axis-time">B wake</text>
+<text x="1342.8" y="595.0" class="axis-time">B retune</text>
+<text x="1397.2" y="595.0" class="axis-time">old deadline</text>
+<text x="1453.0" y="595.0" class="axis-time">B payload</text>
+<text x="2520.8" y="595.0" class="axis-time">renewed deadline</text>
+<text x="1300.0" y="649.0" class="caption center" text-anchor="middle"><tspan x="1300.0" dy="0.0">C opens one bounded listener after A&#x27;s wake. B receives and relays the same survey control later in the flood. C hears B&#x27;s short wake near the end of the old window, but the old implementation kept the nearly-expired deadline and stopped before B&#x27;s extended payload.</tspan></text>
+</svg>

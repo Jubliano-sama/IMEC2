@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="627" viewBox="0 0 2200 627" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">Three-anchor survey barriers with already-proven routes</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="490.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="2158.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="96.0" class="row-label">CURRENT GATEWAY CONTROL</text>
+<rect x="202.0" y="74.0" width="326.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="365.0" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="365.0" dy="0.0">Discovery flood + redrives</tspan><tspan x="365.0" dy="12.0">0 / 10 / 20 / 30 / 40 s</tspan></text>
+<rect x="935.5" y="74.0" width="366.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1118.9" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="1118.9" dy="0.0">Pair 1 START barrier</tspan><tspan x="1118.9" dy="12.0">45 s</tspan></text>
+<rect x="1302.2" y="74.0" width="366.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1485.6" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="1485.6" dy="0.0">Pair 2 START barrier</tspan><tspan x="1485.6" dy="12.0">45 s</tspan></text>
+<rect x="1669.0" y="74.0" width="366.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1852.4" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="1852.4" dy="0.0">Pair 3 START barrier</tspan><tspan x="1852.4" dy="12.0">45 s</tspan></text>
+<line x1="44.0" y1="124.0" x2="2158.0" y2="124.0" class="major-line"/>
+<text x="123.0" y="166.0" class="row-label">CURRENT ANCHOR RF</text>
+<rect x="935.5" y="154.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1302.2" y="154.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1669.0" y="154.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="2035.7" y="154.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="955.9" y1="150.0" x2="955.9" y2="154.0" class="hairline"/>
+<rect x="896.4" y="126.0" width="119.0" height="16.0" class="callout"/>
+<text x="900.4" y="138.5" class="tiny" text-anchor="start"><tspan x="900.4" dy="0.0">Discovery RF + reports</tspan></text>
+<line x1="1322.6" y1="150.0" x2="1322.6" y2="154.0" class="hairline"/>
+<rect x="1279.3" y="126.0" width="86.7" height="16.0" class="callout"/>
+<text x="1283.3" y="138.5" class="tiny" text-anchor="start"><tspan x="1283.3" dy="0.0">Pair 1 + results</tspan></text>
+<line x1="1689.4" y1="150.0" x2="1689.4" y2="154.0" class="hairline"/>
+<rect x="1646.0" y="126.0" width="86.7" height="16.0" class="callout"/>
+<text x="1650.0" y="138.5" class="tiny" text-anchor="start"><tspan x="1650.0" dy="0.0">Pair 2 + results</tspan></text>
+<line x1="2056.1" y1="150.0" x2="2056.1" y2="154.0" class="hairline"/>
+<rect x="2012.8" y="126.0" width="86.7" height="16.0" class="callout"/>
+<text x="2016.8" y="138.5" class="tiny" text-anchor="start"><tspan x="2016.8" dy="0.0">Pair 3 + results</tspan></text>
+<line x1="44.0" y1="200.0" x2="2158.0" y2="200.0" class="major-line"/>
+<text x="123.0" y="248.0" class="row-label">SHORTENED GATEWAY CONTROL</text>
+<rect x="202.0" y="230.0" width="65.2" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="365.0" y="230.0" width="122.2" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="426.1" y="247.0" class="small center event-text" text-anchor="middle"><tspan x="426.1" dy="0.0">Pair 1 repeated</tspan><tspan x="426.1" dy="12.0">controls</tspan><tspan x="426.1" dy="12.0">15 s shared barrier</tspan></text>
+<rect x="487.2" y="230.0" width="122.2" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="548.4" y="247.0" class="small center event-text" text-anchor="middle"><tspan x="548.4" dy="0.0">Pair 2 repeated</tspan><tspan x="548.4" dy="12.0">controls</tspan><tspan x="548.4" dy="12.0">15 s shared barrier</tspan></text>
+<rect x="609.5" y="230.0" width="122.2" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="670.6" y="247.0" class="small center event-text" text-anchor="middle"><tspan x="670.6" dy="0.0">Pair 3 repeated</tspan><tspan x="670.6" dy="12.0">controls</tspan><tspan x="670.6" dy="12.0">15 s shared barrier</tspan></text>
+<line x1="234.6" y1="235.0" x2="234.6" y2="230.0" class="hairline"/>
+<rect x="202.0" y="202.0" width="190.0" height="25.0" class="callout"/>
+<text x="206.0" y="213.5" class="tiny" text-anchor="start"><tspan x="206.0" dy="0.0">Discovery flood + redrives</tspan><tspan x="206.0" dy="11.0">0 / 2 / 4 / 6 / 8 s</tspan></text>
+<line x1="44.0" y1="288.0" x2="2158.0" y2="288.0" class="major-line"/>
+<text x="123.0" y="330.0" class="row-label">SHORTENED ANCHOR RF</text>
+<rect x="365.0" y="318.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="487.2" y="318.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="609.5" y="318.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="731.8" y="318.0" width="40.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="385.4" y1="314.0" x2="385.4" y2="318.0" class="hairline"/>
+<rect x="325.9" y="290.0" width="119.0" height="16.0" class="callout"/>
+<text x="329.9" y="302.5" class="tiny" text-anchor="start"><tspan x="329.9" dy="0.0">Discovery RF + reports</tspan></text>
+<line x1="507.6" y1="314.0" x2="507.6" y2="318.0" class="hairline"/>
+<rect x="464.3" y="290.0" width="86.7" height="16.0" class="callout"/>
+<text x="468.3" y="302.5" class="tiny" text-anchor="start"><tspan x="468.3" dy="0.0">Pair 1 + results</tspan></text>
+<line x1="629.9" y1="314.0" x2="629.9" y2="318.0" class="hairline"/>
+<rect x="586.5" y="290.0" width="86.7" height="16.0" class="callout"/>
+<text x="590.5" y="302.5" class="tiny" text-anchor="start"><tspan x="590.5" dy="0.0">Pair 2 + results</tspan></text>
+<line x1="752.1" y1="314.0" x2="752.1" y2="318.0" class="hairline"/>
+<rect x="708.8" y="290.0" width="86.7" height="16.0" class="callout"/>
+<text x="712.8" y="302.5" class="tiny" text-anchor="start"><tspan x="712.8" dy="0.0">Pair 3 + results</tspan></text>
+<line x1="44.0" y1="364.0" x2="2158.0" y2="364.0" class="major-line"/>
+<text x="123.0" y="401.0" class="row-label">KEY POINT</text>
+<rect x="920.0" y="376.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="1180.0" y="390.0" class="small center" text-anchor="middle"><tspan x="1180.0" dy="0.0">The old constants spend 225 seconds waiting before useful RF across discovery and three</tspan><tspan x="1180.0" dy="12.0">serialized pairs. A 20-second discovery barrier plus three 15-second pair barriers leaves</tspan><tspan x="1180.0" dy="12.0">repeated control copies while moving the complete nominal survey inside about 90 seconds.</tspan></text>
+<line x1="44.0" y1="430.0" x2="2158.0" y2="430.0" class="major-line"/>
+<line x1="44.0" y1="456.0" x2="44.0" y2="494.0" class="major-line"/>
+<line x1="44.0" y1="456.0" x2="2158.0" y2="456.0" class="axis-line"/>
+<line x1="202.0" y1="455.0" x2="202.0" y2="467.0" class="tick"/>
+<line x1="365.0" y1="455.0" x2="365.0" y2="467.0" class="tick"/>
+<line x1="487.2" y1="455.0" x2="487.2" y2="467.0" class="tick"/>
+<line x1="609.5" y1="455.0" x2="609.5" y2="467.0" class="tick"/>
+<line x1="731.8" y1="455.0" x2="731.8" y2="467.0" class="tick"/>
+<line x1="935.5" y1="455.0" x2="935.5" y2="467.0" class="tick"/>
+<line x1="1302.2" y1="455.0" x2="1302.2" y2="467.0" class="tick"/>
+<line x1="1669.0" y1="455.0" x2="1669.0" y2="467.0" class="tick"/>
+<line x1="2035.7" y1="455.0" x2="2035.7" y2="467.0" class="tick"/>
+<text x="202.0" y="479.0" class="axis-time">0 s</text>
+<text x="365.0" y="479.0" class="axis-time">20 s</text>
+<text x="487.2" y="479.0" class="axis-time">35 s</text>
+<text x="609.5" y="479.0" class="axis-time">50 s</text>
+<text x="731.8" y="479.0" class="axis-time">65 s</text>
+<text x="935.5" y="479.0" class="axis-time">90 s</text>
+<text x="1302.2" y="479.0" class="axis-time">135 s</text>
+<text x="1669.0" y="479.0" class="axis-time">180 s</text>
+<text x="2035.7" y="479.0" class="axis-time">225 s</text>
+<text x="202.0" y="503.0" class="tiny center" text-anchor="middle"><tspan x="202.0" dy="0.0">survey accepted after route</tspan><tspan x="202.0" dy="11.0">qualification</tspan></text>
+<text x="365.0" y="508.5" class="tiny center" text-anchor="middle"><tspan x="365.0" dy="0.0">shortened discovery executes</tspan></text>
+<text x="487.2" y="538.5" class="tiny center" text-anchor="middle"><tspan x="487.2" dy="0.0">shortened pair 1 executes</tspan></text>
+<text x="609.5" y="508.5" class="tiny center" text-anchor="middle"><tspan x="609.5" dy="0.0">shortened pair 2 executes</tspan></text>
+<text x="731.8" y="538.5" class="tiny center" text-anchor="middle"><tspan x="731.8" dy="0.0">shortened pair 3 executes</tspan></text>
+<text x="935.5" y="508.5" class="tiny center" text-anchor="middle"><tspan x="935.5" dy="0.0">current discovery executes</tspan></text>
+<text x="1302.2" y="508.5" class="tiny center" text-anchor="middle"><tspan x="1302.2" dy="0.0">current pair 1 executes</tspan></text>
+<text x="1669.0" y="508.5" class="tiny center" text-anchor="middle"><tspan x="1669.0" dy="0.0">current pair 2 executes</tspan></text>
+<text x="2035.8" y="508.5" class="tiny center" text-anchor="middle"><tspan x="2035.8" dy="0.0">current pair 3 executes</tspan></text>
+<text x="1100.0" y="593.0" class="caption center" text-anchor="middle"><tspan x="1100.0" dy="0.0">Failure deadlines remain unchanged. Only the shared execution barriers and semantic redrive cadence shrink after Here-I-Am and exact 1/2/3-hop assignment have already proven the routes.</tspan></text>
+</svg>

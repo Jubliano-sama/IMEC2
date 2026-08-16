@@ -1,0 +1,8 @@
+Script started on 2026-08-11 11:31:07+02:00 [COMMAND="bluetoothctl devices" <not executed on terminal>]
+Device 46:7B:C1:46:74:1C 46-7B-C1-46-74-1C
+Device D9:01:00:02:26:2D D9-01-00-02-26-2D
+Device 54:4A:16:5E:A0:7F SANITAS SBF70
+Device 94:3C:96:30:18:59 KPN DIW7022
+Device EF:BD:42:B8:83:0C IMEC Mesh Test Gateway
+
+Script done on 2026-08-11 11:31:07+02:00 [COMMAND_EXIT_CODE="0"]

@@ -1,0 +1,7 @@
+key,value
+title,Three-anchor survey barriers with already-proven routes
+caption,Failure deadlines remain unchanged. Only the shared execution barriers and semantic redrive cadence shrink after Here-I-Am and exact 1/2/3-hop assignment have already proven the routes.
+key_point,The old constants spend 225 seconds waiting before useful RF across discovery and three serialized pairs. A 20-second discovery barrier plus three 15-second pair barriers leaves repeated control copies while moving the complete nominal survey inside about 90 seconds.
+start,0
+end,240000
+width,2200

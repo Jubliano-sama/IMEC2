@@ -1,0 +1,6 @@
+row,start,end,text,style,lane_index
+control,0,25000,"four reliable PREPARE / START controls",solid,0
+rf,25000,25200,"five DS-TWR samples",emphasis,0
+results,25200,67000,"five exact result + ACK_CONFIRM handoffs\nover retained two-hop route",solid,0
+gateway,67000,82000,"immediate exact-failure cleanup",solid,0
+repeat,82000,95000,"next identical attempt begins",emphasis,0

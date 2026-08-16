@@ -1,0 +1,5 @@
+Script started on 2026-08-12 01:38:10+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway EF:BD:42:B8:83:0C --command monitor --duration 30" <not executed on terminal>]
+BLE_CONNECTED gateway_id=0x9999888877776666 command=monitor
+BLE_COMPLETE packets=0
+
+Script done on 2026-08-12 01:38:44+02:00 [COMMAND_EXIT_CODE="0"]

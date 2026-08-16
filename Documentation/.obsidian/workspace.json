@@ -1,0 +1,196 @@
+{
+  "main": {
+    "id": "7ab8bf0de830a59f",
+    "type": "split",
+    "children": [
+      {
+        "id": "a154887b2ea855c1",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "9292d7b884686e8c",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "IMEC2_Firmware_State_Machine_Design.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "IMEC2_Firmware_State_Machine_Design"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "b08a22c2b9d1e347",
+    "type": "split",
+    "children": [
+      {
+        "id": "71e3a0d32dea289b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "be4468b2f5417547",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "c4f093f916d9c1ba",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "850779e6820dbd3d",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 323.1000061035156
+  },
+  "right": {
+    "id": "d2e34be8f96df66d",
+    "type": "split",
+    "children": [
+      {
+        "id": "4b11726b4b671e10",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7c26426f7989ec37",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "UWB+BLE Architecture 0.6.6.1.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "e4113e9543db9840",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "UWB+BLE Architecture 0.6.6.1.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "a18685829832138d",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "677a2f782e3556cd",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "c1399f1d39dc759d",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "UWB+BLE Architecture 0.6.6.1.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "9292d7b884686e8c",
+  "lastOpenFiles": [
+    "UWB+BLE Architecture.md",
+    "IMEC2_Firmware_State_Machine_Design.md"
+  ]
+}

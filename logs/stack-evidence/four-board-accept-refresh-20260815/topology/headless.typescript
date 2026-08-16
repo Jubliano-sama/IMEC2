@@ -1,0 +1,25 @@
+Script started on 2026-08-15 07:08:37+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway 'IMEC Mesh Test Gateway' --command qualify-reachability --expected-anchors 3 --expected-direct-anchors 1 --expected-multihop-anchors 2 --expected-anchor-hop 0x36e3c2fe6cac46b2=1 --expected-anchor-hop 0x708bc0aab970300e=2 --expected-anchor-hop 0x191a9619c6c8cb07=3 --assignment-timeout 120 --route-refresh-timeout 120 --command-budget-ms 120000 --notification-hold-s 0 --connect-timeout 30" <not executed on terminal>]
+usage: provision_mesh_anchor.py [-h] --gateway GATEWAY
+                                --command {here-i-am,assign-slots,qualify-reachability,survey,abort-survey,monitor}
+                                [--host-id HOST_ID] [--duration DURATION]
+                                [--connect-timeout CONNECT_TIMEOUT]
+                                [--repeat REPEAT] [--interval INTERVAL]
+                                [--survey-id SURVEY_ID]
+                                [--survey-duration-ms SURVEY_DURATION_MS]
+                                [--discovery-slots DISCOVERY_SLOTS]
+                                [--samples SAMPLES]
+                                [--notification-hold-s NOTIFICATION_HOLD_S]
+                                [--survey-terminal-drain-quiet-s SURVEY_TERMINAL_DRAIN_QUIET_S]
+                                [--require-survey-success]
+                                [--require-assignment-success]
+                                [--expected-anchors EXPECTED_ANCHORS]
+                                [--expected-pairs EXPECTED_PAIRS]
+                                [--expected-direct-anchors EXPECTED_DIRECT_ANCHORS]
+                                [--expected-multihop-anchors EXPECTED_MULTIHOP_ANCHORS]
+                                [--expected-anchor-hop NODE_ID=HOPS]
+                                [--route-refresh-timeout ROUTE_REFRESH_TIMEOUT]
+                                [--assignment-timeout ASSIGNMENT_TIMEOUT]
+                                [--command-budget-ms COMMAND_BUDGET_MS]
+provision_mesh_anchor.py: error: assignment --command-budget-ms must be at least 526204
+
+Script done on 2026-08-15 07:08:37+02:00 [COMMAND_EXIT_CODE="2"]

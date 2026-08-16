@@ -1,0 +1,7 @@
+key,value
+title,Three-anchor survey report serialization observed on hardware
+caption,Times are aligned to the simultaneous report staging boundary; the 90 s host deadline expires while child reports are repeatedly rejected as relay-busy.
+key_point,A finishes in 5.7 s. B and C already have valid routes and Channel-9 timings, but B's single core owner makes C retry and route-repair while B itself takes about 69 s to reach A.
+start,0
+end,92000
+width,2200

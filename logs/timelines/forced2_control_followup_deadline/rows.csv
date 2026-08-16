@@ -1,0 +1,5 @@
+id,label,order
+upstream,A: DIRECT RELAY,1
+relay,B: FORCED-1 RELAY,2
+child,C: FORCED-2 LISTENER,3
+outcome,OLD VS FIXED RESULT,4

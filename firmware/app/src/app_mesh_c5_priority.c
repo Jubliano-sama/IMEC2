@@ -1,4 +1,5 @@
 #include "app_mesh_c5_priority.h"
+#include "app_mesh_route_request_policy.h"
 #include "gateway_command.h"
 #include "survey.h"
 
@@ -302,6 +303,32 @@ bool app_mesh_c5_route_wake_claim_allowed(
             !require_relayed_gateway_control);
 }
 
+bool app_mesh_c5_route_wake_should_listen(
+    uint64_t source_id,
+    uint64_t gateway_id,
+    uint8_t claim_flags,
+    bool require_relayed_route_req,
+    bool require_relayed_gateway_control)
+{
+    if (app_mesh_c5_route_wake_claim_allowed(source_id,
+                                            gateway_id,
+                                            claim_flags,
+                                            require_relayed_route_req,
+                                            require_relayed_gateway_control)) {
+        return true;
+    }
+
+    /*
+     * A forced child must still enter the follow-up listener after a
+     * rejected direct gateway control wake. The listener rejects the
+     * hop-0 payload and waits for the relayed copy; leaving Channel 5
+     * after the gateway train expires before that copy can arrive.
+     */
+    return require_relayed_gateway_control &&
+           source_id == gateway_id &&
+           app_mesh_c5_wake_followup_is_control(claim_flags);
+}
+
 bool app_mesh_c5_gateway_control_copy_allowed(
     uint64_t source_id,
     uint64_t previous_hop_id,
@@ -311,6 +338,43 @@ bool app_mesh_c5_gateway_control_copy_allowed(
     return !require_relayed_gateway_control ||
            source_id != gateway_id ||
            previous_hop_id != gateway_id;
+}
+
+bool app_mesh_c5_gateway_control_rx_allowed(
+    uint8_t msg_type,
+    uint8_t packet_ttl,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t source_id,
+    uint64_t previous_hop_id,
+    uint64_t gateway_id,
+    bool require_relayed_gateway_control,
+    uint8_t required_gateway_relay_hops)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+    uint8_t origin_ttl = 0u;
+
+    if (!app_mesh_c5_gateway_control_copy_allowed(source_id,
+                                                  previous_hop_id,
+                                                  gateway_id,
+                                                  require_relayed_gateway_control)) {
+        return false;
+    }
+    if (required_gateway_relay_hops == 0u) {
+        return true;
+    }
+    if (msg_type == MSG_COMMAND &&
+        gateway_command_extract_id(payload, payload_len, &command_id) !=
+            PROTO_OK) {
+        return false;
+    }
+    if (!app_mesh_c5_gateway_control_origin_ttl(msg_type,
+                                               (uint16_t)command_id,
+                                               &origin_ttl)) {
+        return false;
+    }
+    return app_mesh_gateway_control_relay_hops_allowed(
+        origin_ttl, packet_ttl, required_gateway_relay_hops);
 }
 
 bool app_mesh_c5_control_route_hint_is_first(

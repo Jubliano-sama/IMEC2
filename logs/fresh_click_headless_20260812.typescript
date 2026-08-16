@@ -1,0 +1,5 @@
+Script started on 2026-08-12 18:07:27+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway 'IMEC Mesh Test Gateway' --command monitor --duration 85 --notification-hold-s 0" <not executed on terminal>]
+BLE_CONNECTED gateway_id=0x9999888877776666 command=monitor
+BLE_COMPLETE packets=0
+
+Script done on 2026-08-12 18:09:08+02:00 [COMMAND_EXIT_CODE="0"]

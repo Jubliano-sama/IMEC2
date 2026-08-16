@@ -1,0 +1,31 @@
+Script started on 2026-08-12 14:02:50+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -u E4645C15CB0F3B37 -f 4000000 -M pre-reset --up-channel-id 1 --down-channel-id 0" TERM="dumb" TTY="/dev/pts/4" COLUMNS="80" LINES="24"]
+[34m0000578[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000616[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000867[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000972[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000978[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000979[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000979[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000982[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000984[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000985[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000986[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000987[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000988[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000989[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000992[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000992[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000992[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000994[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000998[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000999[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0001043[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0001043[0m [36mI[0m Reading from up channel 1 ("Logger") [2m[rtt_cmd][0m
+[34m0001044[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+*** Booting nRF Connect SDK v2.9.0-7787b2649840 ***
+*** Using Zephyr OS v3.7.99-1f8f3dc29142 ***
+local debug input skipped for retained clicker idle
+[00:00:55.734,375] [1;33m<wrn> app_clicker: scheduled click DS-TWR failed: anchor=0x708bc0aab970300e anchor_index=2 sample=3/12 round=0 seq=3 ret=-5 status=rx-timeout(1)[0m
+[00:00:55.775,726] [1;33m<wrn> app_clicker: schLONG
+[0m
+Script done on 2026-08-12 14:03:27+02:00 [COMMAND_EXIT_CODE="0"]

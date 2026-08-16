@@ -1,0 +1,5 @@
+Script started on 2026-08-08 22:35:52+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -M pre-reset -u E46070D247233537 -f 4000000" <not executed on terminal>]
+[34m0000450[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000462[0m [1m[91mC[0m [91mUnable to claim interface for probe E46070D247233537 [2m[__main__][0m
+[0m
+Script done on 2026-08-08 22:35:52+02:00 [COMMAND_EXIT_CODE="1"]

@@ -1,0 +1,5 @@
+id,label,order
+proposer,CHILD / PROPOSER,1
+receiver,PARENT RX WORKER,2
+responder,PARENT ACCEPT OWNER,3
+radio,PARENT RADIO OPPORTUNITIES,4

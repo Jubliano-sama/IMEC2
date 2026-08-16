@@ -1,0 +1,25 @@
+Script started on 2026-08-14 01:17:11+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway 'IMEC Mesh Test Gateway' --command survey --host-id 0x1122334455667788 --expected-anchors 3 --expected-pairs 3 --expected-direct-anchors 1 --expected-multihop-anchors 2 --expected-anchor-hop 0x36e3c2fe6cac46b2=1 --expected-anchor-hop 0x708bc0aab970300e=2 --expected-anchor-hop 0x191a9619c6c8cb07=3 --samples 1 --survey-duration-ms 1000 --duration 300 --command-budget-ms 300000 --require-survey-success --survey-terminal-drain-quiet-s 2" <not executed on terminal>]
+usage: provision_mesh_anchor.py [-h] --gateway GATEWAY
+                                --command {here-i-am,assign-slots,qualify-reachability,survey,abort-survey,monitor}
+                                [--host-id HOST_ID] [--duration DURATION]
+                                [--connect-timeout CONNECT_TIMEOUT]
+                                [--repeat REPEAT] [--interval INTERVAL]
+                                [--survey-id SURVEY_ID]
+                                [--survey-duration-ms SURVEY_DURATION_MS]
+                                [--discovery-slots DISCOVERY_SLOTS]
+                                [--samples SAMPLES]
+                                [--notification-hold-s NOTIFICATION_HOLD_S]
+                                [--survey-terminal-drain-quiet-s SURVEY_TERMINAL_DRAIN_QUIET_S]
+                                [--require-survey-success]
+                                [--require-assignment-success]
+                                [--expected-anchors EXPECTED_ANCHORS]
+                                [--expected-pairs EXPECTED_PAIRS]
+                                [--expected-direct-anchors EXPECTED_DIRECT_ANCHORS]
+                                [--expected-multihop-anchors EXPECTED_MULTIHOP_ANCHORS]
+                                [--expected-anchor-hop NODE_ID=HOPS]
+                                [--route-refresh-timeout ROUTE_REFRESH_TIMEOUT]
+                                [--assignment-timeout ASSIGNMENT_TIMEOUT]
+                                [--command-budget-ms COMMAND_BUDGET_MS]
+provision_mesh_anchor.py: error: --samples must be exactly 5
+
+Script done on 2026-08-14 01:17:12+02:00 [COMMAND_EXIT_CODE="2"]

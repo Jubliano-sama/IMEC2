@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="715" viewBox="0 0 2200 715" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">Three-anchor survey report serialization observed on hardware</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="578.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="2158.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="96.0" class="row-label">GATEWAY / GUI</text>
+<rect x="202.0" y="74.0" width="1913.5" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1158.7" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="1158.7" dy="0.0">Wait for 3 discovery reports</tspan><tspan x="1158.7" dy="12.0">90 s semantic deadline</tspan></text>
+<line x1="44.0" y1="124.0" x2="2158.0" y2="124.0" class="major-line"/>
+<text x="123.0" y="162.0" class="row-label">DIRECT ANCHOR A</text>
+<rect x="202.0" y="134.0" width="120.5" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="262.2" y="151.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="262.2" dy="0.0">A local report</tspan><tspan x="262.2" dy="12.0">TX + gateway</tspan><tspan x="262.2" dy="12.0">receipt</tspan></text>
+<rect x="404.0" y="134.0" width="1265.9" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1036.9" y="157.0" class="small center event-text" text-anchor="middle"><tspan x="1036.9" dy="0.0">A/B cadence converges slowly</tspan><tspan x="1036.9" dy="12.0">first B report captured near +69 s</tspan></text>
+<line x1="44.0" y1="192.0" x2="2158.0" y2="192.0" class="major-line"/>
+<text x="123.0" y="266.0" class="row-label">FORCED-1 ANCHOR B</text>
+<rect x="202.0" y="242.0" width="1467.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="935.9" y="259.0" class="small center event-text" text-anchor="middle"><tspan x="935.9" dy="0.0">B local report owns the one core TX slot</tspan><tspan x="935.9" dy="12.0">retries toward A</tspan></text>
+<rect x="464.5" y="286.0" width="18.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="600.6" y="286.0" width="18.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="737.8" y="286.0" width="17.0" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<rect x="992.9" y="286.0" width="17.0" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<line x1="473.6" y1="227.0" x2="473.6" y2="286.0" class="hairline"/>
+<rect x="378.6" y="194.0" width="190.0" height="25.0" class="callout"/>
+<text x="382.6" y="205.5" class="tiny" text-anchor="start"><tspan x="382.6" dy="0.0">C report received</tspan><tspan x="382.6" dy="11.0">rejected relay-busy; starts C5 repair</tspan></text>
+<line x1="609.7" y1="247.0" x2="609.7" y2="286.0" class="hairline"/>
+<rect x="514.7" y="214.0" width="190.0" height="25.0" class="callout"/>
+<text x="518.7" y="225.5" class="tiny" text-anchor="start"><tspan x="518.7" dy="0.0">C duplicate received</tspan><tspan x="518.7" dy="11.0">rejected relay-busy again</tspan></text>
+<line x1="746.3" y1="227.0" x2="746.3" y2="286.0" class="hairline"/>
+<rect x="666.1" y="194.0" width="160.4" height="25.0" class="callout"/>
+<text x="670.1" y="205.5" class="tiny" text-anchor="start"><tspan x="670.1" dy="0.0">C duplicate received</tspan><tspan x="670.1" dy="11.0">relay-busy</tspan></text>
+<line x1="1001.4" y1="227.0" x2="1001.4" y2="286.0" class="hairline"/>
+<rect x="921.2" y="194.0" width="160.4" height="25.0" class="callout"/>
+<text x="925.2" y="205.5" class="tiny" text-anchor="start"><tspan x="925.2" dy="0.0">C duplicate received</tspan><tspan x="925.2" dy="11.0">relay-busy</tspan></text>
+<line x1="44.0" y1="332.0" x2="2158.0" y2="332.0" class="major-line"/>
+<text x="123.0" y="396.0" class="row-label">FORCED-2 ANCHOR C</text>
+<rect x="202.0" y="362.0" width="1913.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1158.7" y="379.0" class="small center event-text" text-anchor="middle"><tspan x="1158.7" dy="0.0">C report retained</tspan><tspan x="1158.7" dy="12.0">retries toward B but cannot enter B&#x27;s queue</tspan></text>
+<rect x="301.0" y="406.0" width="2.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="464.3" y="406.0" width="2.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="601.6" y="406.0" width="2.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="845.3" y="406.0" width="2.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<line x1="302.0" y1="358.0" x2="302.0" y2="406.0" class="hairline"/>
+<rect x="275.0" y="334.0" width="54.0" height="16.0" class="callout"/>
+<text x="279.0" y="346.5" class="tiny" text-anchor="start"><tspan x="279.0" dy="0.0">C TX #1</tspan></text>
+<line x1="465.3" y1="358.0" x2="465.3" y2="406.0" class="hairline"/>
+<rect x="438.3" y="334.0" width="54.0" height="16.0" class="callout"/>
+<text x="442.3" y="346.5" class="tiny" text-anchor="start"><tspan x="442.3" dy="0.0">C TX #2</tspan></text>
+<line x1="602.6" y1="358.0" x2="602.6" y2="406.0" class="hairline"/>
+<rect x="575.6" y="334.0" width="54.0" height="16.0" class="callout"/>
+<text x="579.6" y="346.5" class="tiny" text-anchor="start"><tspan x="579.6" dy="0.0">C TX #3</tspan></text>
+<line x1="846.3" y1="358.0" x2="846.3" y2="406.0" class="hairline"/>
+<rect x="819.3" y="334.0" width="54.0" height="16.0" class="callout"/>
+<text x="823.3" y="346.5" class="tiny" text-anchor="start"><tspan x="823.3" dy="0.0">C TX #4</tspan></text>
+<line x1="44.0" y1="452.0" x2="2158.0" y2="452.0" class="major-line"/>
+<text x="123.0" y="489.0" class="row-label">KEY POINT</text>
+<rect x="920.0" y="464.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="1180.0" y="490.0" class="small center" text-anchor="middle"><tspan x="1180.0" dy="0.0">A finishes in 5.7 s. B and C already have valid routes and Channel-9 timings</tspan></text>
+<line x1="44.0" y1="518.0" x2="2158.0" y2="518.0" class="major-line"/>
+<line x1="44.0" y1="544.0" x2="44.0" y2="582.0" class="major-line"/>
+<line x1="44.0" y1="544.0" x2="2158.0" y2="544.0" class="axis-line"/>
+<line x1="202.0" y1="543.0" x2="202.0" y2="555.0" class="tick"/>
+<line x1="322.5" y1="543.0" x2="322.5" y2="555.0" class="tick"/>
+<line x1="464.5" y1="543.0" x2="464.5" y2="555.0" class="tick"/>
+<line x1="1669.8" y1="543.0" x2="1669.8" y2="555.0" class="tick"/>
+<line x1="2115.5" y1="543.0" x2="2115.5" y2="555.0" class="tick"/>
+<text x="202.0" y="567.0" class="axis-time">0 s</text>
+<text x="322.5" y="567.0" class="axis-time">+5.7 s</text>
+<text x="464.5" y="567.0" class="axis-time">+12.3 s</text>
+<text x="1669.8" y="567.0" class="axis-time">+69 s</text>
+<text x="2115.5" y="567.0" class="axis-time">90 s</text>
+<text x="202.0" y="596.5" class="tiny center" text-anchor="middle"><tspan x="202.0" dy="0.0">all three reports staged</tspan></text>
+<text x="322.5" y="626.5" class="tiny center" text-anchor="middle"><tspan x="322.5" dy="0.0">A terminal ACK complete</tspan></text>
+<text x="464.5" y="596.5" class="tiny center" text-anchor="middle"><tspan x="464.5" dy="0.0">B captures C but returns busy</tspan></text>
+<text x="1669.8" y="596.5" class="tiny center" text-anchor="middle"><tspan x="1669.8" dy="0.0">A first captures B</tspan></text>
+<text x="2089.9" y="596.5" class="tiny center" text-anchor="middle"><tspan x="2089.9" dy="0.0">GUI survey deadline expires</tspan></text>
+<text x="1100.0" y="681.0" class="caption center" text-anchor="middle"><tspan x="1100.0" dy="0.0">Times are aligned to the simultaneous report staging boundary; the 90 s host deadline expires while child reports are repeatedly rejected as relay-busy.</tspan></text>
+</svg>

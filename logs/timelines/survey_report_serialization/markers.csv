@@ -1,0 +1,6 @@
+time,label,caption,kind,row
+0,0 s,all three reports staged,axis,
+5667,+5.7 s,A terminal ACK complete,axis,
+12348,+12.3 s,B captures C but returns busy,axis,
+69039,+69 s,A first captures B,axis,
+90000,90 s,GUI survey deadline expires,axis,

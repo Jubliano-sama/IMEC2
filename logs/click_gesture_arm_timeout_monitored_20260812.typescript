@@ -1,0 +1,6 @@
+Script started on 2026-08-12 18:52:25+02:00 [COMMAND=".venv/bin/python tools/clicker_rtt_control.py --probe-id E4645C15CB0F3B37 --command LONG --capture-s 5" <not executed on terminal>]
+DBG_CLICKER_RTT command=LONG accepted=1 ret=0
+DBG_CLICKER_SELF_TEST state=ARMED window_ms=3000
+DBG_CLICKER_SELF_TEST state=CANCELLED
+
+Script done on 2026-08-12 18:52:31+02:00 [COMMAND_EXIT_CODE="0"]

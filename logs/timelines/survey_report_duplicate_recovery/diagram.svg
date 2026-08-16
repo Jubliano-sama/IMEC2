@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="799" viewBox="0 0 1800 799" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">Exact report retry after a missed end-to-end ACK</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="662.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="1758.0" y2="60.0" class="major-line"/>
+<text x="123.0" y="102.0" class="row-label">FORCED CHILD</text>
+<rect x="202.0" y="90.0" width="489.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="446.5" y="107.0" class="small center event-text" text-anchor="middle"><tspan x="446.5" dy="0.0">Report retained</tspan><tspan x="446.5" dy="12.0">waiting for gateway ACK</tspan></text>
+<rect x="802.2" y="90.0" width="289.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="946.7" y="107.0" class="small center event-text" text-anchor="middle"><tspan x="946.7" dy="0.0">Forwarded gateway ACK missed</tspan><tspan x="946.7" dy="12.0">report remains retained</tspan></text>
+<rect x="1246.7" y="90.0" width="66.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="1280.1" y1="95.0" x2="1280.1" y2="90.0" class="hairline"/>
+<rect x="1185.1" y="62.0" width="190.0" height="25.0" class="callout"/>
+<text x="1189.1" y="73.5" class="tiny" text-anchor="start"><tspan x="1189.1" dy="0.0">Exact gateway ACK received</tspan><tspan x="1189.1" dy="11.0">report retires</tspan></text>
+<line x1="44.0" y1="136.0" x2="1758.0" y2="136.0" class="major-line"/>
+<text x="123.0" y="172.0" class="row-label">PARENT WHILE OWNER ACTIVE</text>
+<rect x="202.0" y="150.0" width="489.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="446.5" y="167.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="446.5" dy="0.0">Existing app queue / core custody</tspan><tspan x="446.5" dy="12.0">exact duplicates are ACK-only</tspan></text>
+<rect x="691.0" y="150.0" width="177.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="779.9" y="167.0" class="small center event-text" text-anchor="middle"><tspan x="779.9" dy="0.0">Report sent to gateway</tspan><tspan x="779.9" dy="12.0">forwarded ACK sent once</tspan></text>
+<line x1="44.0" y1="200.0" x2="1758.0" y2="200.0" class="major-line"/>
+<text x="123.0" y="236.0" class="row-label">OLD RULE AFTER OWNER CLEARS</text>
+<rect x="1091.1" y="214.0" width="666.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1424.6" y="231.0" class="small center event-text" text-anchor="middle"><tspan x="1424.6" dy="0.0">ACK child hop only</tspan><tspan x="1424.6" dy="12.0">no gateway copy; permanent dead end</tspan></text>
+<line x1="44.0" y1="264.0" x2="1758.0" y2="264.0" class="major-line"/>
+<text x="123.0" y="316.0" class="row-label">CORRECTED RULE AFTER OWNER CLEARS</text>
+<rect x="1091.1" y="314.0" width="55.6" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="1202.3" y="314.0" width="44.5" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<line x1="1118.9" y1="290.0" x2="1118.9" y2="314.0" class="hairline"/>
+<rect x="1036.8" y="266.0" width="164.3" height="16.0" class="callout"/>
+<text x="1040.8" y="278.5" class="tiny" text-anchor="start"><tspan x="1040.8" dy="0.0">Re-forward exact retained bytes</tspan></text>
+<line x1="1224.5" y1="310.0" x2="1224.5" y2="314.0" class="hairline"/>
+<rect x="1161.5" y="286.0" width="126.0" height="16.0" class="callout"/>
+<text x="1165.5" y="298.5" class="tiny" text-anchor="start"><tspan x="1165.5" dy="0.0">Forward replacement ACK</tspan></text>
+<line x1="44.0" y1="360.0" x2="1758.0" y2="360.0" class="major-line"/>
+<text x="123.0" y="414.0" class="row-label">GATEWAY</text>
+<rect x="691.0" y="390.0" width="55.6" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="746.6" y="390.0" width="55.6" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="774.4" y="407.0" class="small center event-text" text-anchor="middle"><tspan x="774.4" dy="0.0">Gateway</tspan><tspan x="774.4" dy="12.0">ACK</tspan><tspan x="774.4" dy="12.0">returne</tspan><tspan x="774.4" dy="12.0">d</tspan></text>
+<rect x="1146.7" y="390.0" width="55.6" height="60.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<line x1="718.8" y1="395.0" x2="718.8" y2="390.0" class="hairline"/>
+<rect x="624.5" y="362.0" width="188.6" height="25.0" class="callout"/>
+<text x="628.5" y="373.5" class="tiny" text-anchor="start"><tspan x="628.5" dy="0.0">Report delivered</tspan><tspan x="628.5" dy="11.0">host receipt commits</tspan></text>
+<line x1="1174.5" y1="395.0" x2="1174.5" y2="390.0" class="hairline"/>
+<rect x="1079.5" y="362.0" width="190.0" height="25.0" class="callout"/>
+<text x="1083.5" y="373.5" class="tiny" text-anchor="start"><tspan x="1083.5" dy="0.0">Duplicate recognized</tspan><tspan x="1083.5" dy="11.0">replacement gateway ACK</tspan></text>
+<line x1="44.0" y1="460.0" x2="1758.0" y2="460.0" class="major-line"/>
+<text x="123.0" y="502.0" class="row-label">HEADLESS GUI</text>
+<rect x="691.0" y="490.0" width="55.6" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<line x1="718.8" y1="495.0" x2="718.8" y2="490.0" class="hairline"/>
+<rect x="623.8" y="462.0" width="190.0" height="25.0" class="callout"/>
+<text x="627.8" y="473.5" class="tiny" text-anchor="start"><tspan x="627.8" dy="0.0">One semantic report</tspan><tspan x="627.8" dy="11.0">dedup stays host-side</tspan></text>
+<line x1="44.0" y1="536.0" x2="1758.0" y2="536.0" class="major-line"/>
+<text x="123.0" y="573.0" class="row-label">KEY POINT</text>
+<rect x="720.0" y="548.0" width="520.0" height="42.0" class="box shaded"/>
+<text x="980.0" y="568.0" class="small center" text-anchor="middle"><tspan x="980.0" dy="0.0">The old ACK-only rule dead-ends after parent custody clears; re-forwarding the exact retry</tspan><tspan x="980.0" dy="12.0">completes in one additional parent/gateway exchange without route repair.</tspan></text>
+<line x1="44.0" y1="602.0" x2="1758.0" y2="602.0" class="major-line"/>
+<line x1="44.0" y1="628.0" x2="44.0" y2="666.0" class="major-line"/>
+<line x1="44.0" y1="628.0" x2="1758.0" y2="628.0" class="axis-line"/>
+<line x1="202.0" y1="627.0" x2="202.0" y2="639.0" class="tick"/>
+<line x1="691.0" y1="627.0" x2="691.0" y2="639.0" class="tick"/>
+<line x1="802.2" y1="627.0" x2="802.2" y2="639.0" class="tick"/>
+<line x1="868.9" y1="627.0" x2="868.9" y2="639.0" class="tick"/>
+<line x1="1091.1" y1="627.0" x2="1091.1" y2="639.0" class="tick"/>
+<line x1="1246.7" y1="627.0" x2="1246.7" y2="639.0" class="tick"/>
+<text x="202.0" y="651.0" class="axis-time">0 ms</text>
+<text x="691.0" y="651.0" class="axis-time">2.2 s</text>
+<text x="802.2" y="651.0" class="axis-time">2.7 s</text>
+<text x="868.9" y="651.0" class="axis-time">3.0 s</text>
+<text x="1091.1" y="651.0" class="axis-time">4.0 s</text>
+<text x="1246.7" y="651.0" class="axis-time">4.7 s</text>
+<text x="202.0" y="680.5" class="tiny center" text-anchor="middle"><tspan x="202.0" dy="0.0">first report already admitted</tspan></text>
+<text x="691.0" y="680.5" class="tiny center" text-anchor="middle"><tspan x="691.0" dy="0.0">parent forwards report</tspan></text>
+<text x="802.2" y="705.0" class="tiny center" text-anchor="middle"><tspan x="802.2" dy="0.0">child misses returned gateway</tspan><tspan x="802.2" dy="11.0">ACK</tspan></text>
+<text x="868.9" y="680.5" class="tiny center" text-anchor="middle"><tspan x="868.9" dy="0.0">parent custody clears</tspan></text>
+<text x="1091.1" y="680.5" class="tiny center" text-anchor="middle"><tspan x="1091.1" dy="0.0">child sends exact retry</tspan></text>
+<text x="1246.7" y="680.5" class="tiny center" text-anchor="middle"><tspan x="1246.7" dy="0.0">replacement ACK reaches child</tspan></text>
+<text x="900.0" y="765.0" class="caption center" text-anchor="middle"><tspan x="900.0" dy="0.0">The parent may suppress duplicates only while it still owns the report. Once custody ends the same retry must reach the gateway again so the gateway can replace the missed ACK.</tspan></text>
+</svg>

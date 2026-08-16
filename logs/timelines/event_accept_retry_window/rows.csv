@@ -1,0 +1,4 @@
+id,label,order
+proposer,FORCED-2 CHILD / PROPOSER,1
+responder,FORCED-1 PARENT / RESPONDER,2
+radio,SHARED CHANNEL-5 OPPORTUNITY,3

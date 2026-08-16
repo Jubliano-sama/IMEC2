@@ -1,0 +1,17 @@
+row,start,end,text,style,lane_index
+mesh,-2200,-1960,"Connected CH9 reservation\n120 ms window + 60 ms guards",default,0
+mesh,-1960,-1940,"20 ms C5 gap",quiet,0
+mesh,-1940,-1880,"60 ms retune budget",quiet,0
+mesh,-1880,-1640,"Counterphase CH9 reservation",default,0
+mesh,-1640,-1000,"Transport pause drains the active owner\nno route deletion or cadence renegotiation",emphasis,0
+mesh,-1000,4790,"Mesh radio work remains quiesced\nqueued routes, retries, and reports stay in RAM custody",dashed,0
+mesh,4790,6200,"Transport resumes\nexisting cadence and queued work are rearmed",default,0
+responder,-2000,-1000,"Begin custody-preserving preemption\nabort only active mesh RX and wait for safe boundary",emphasis,0
+responder,-1000,4790,"Responder DS-TWR worst case\n5 x 1150 ms windows + 4 x 10 ms gaps",emphasis,0
+responder,0,790,"Normal successful overlap\ninitiator exchanges arrive inside responder RX",solid,1
+initiator,-1000,0,"Begin custody-preserving preemption\nreach the shared execution boundary",emphasis,0
+initiator,0,790,"Five initiator attempts worst case\n5 x 150 ms + 4 x 10 ms gaps",emphasis,0
+initiator,790,6200,"Radio parked; transport resumes\nresult delivery uses retained known route",default,0
+custody,-1000,4790,"Five atomic result slots reserved\nscheduler wake deferred while mesh is paused",emphasis,0
+custody,4790,6200,"Resume rearms expiry and delivery work\ncommitted samples drain over the retained route",solid,0
+custody,-1000,6200,"10 s reservation lease continues beyond diagram\nexpiry at +9000 ms",dashed,1

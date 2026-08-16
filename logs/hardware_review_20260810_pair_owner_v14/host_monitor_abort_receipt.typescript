@@ -1,0 +1,11 @@
+Script started on 2026-08-10 03:00:24+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway EF:BD:42:B8:83:0C --command monitor --duration 40" <not executed on terminal>]
+BLE_CHUNK len=51 hex=4757012801020100410408000100000007cbc8c619961a196666777788889999000000000b00265a10020301110200001e0100
+BLE_PACKET type=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 session=1 seq=8 payload=10020301110200001e0100
+BLE_CONNECTED gateway_id=0x9999888877776666 command=monitor
+BLE_HOST_RECEIPT type=0x41 src=0x191a9619c6c8cb07 session=1 seq=8
+BLE_CHUNK len=118 hex=4757012801060100560027002700000066667777888899996666777788889999000000004e004a6d014e02090601000002010100d80949e0d80949e0d80949e0d809000027000000000000000000000007cbc8c619961a19b246ac6cfec2e336000000000000000001000100000000000000000000ff
+BLE_PACKET type=0x56 src=0x9999888877776666 dst=0x9999888877776666 session=39 seq=39 payload=014e02090601000002010100d80949e0d80949e0d80949e0d809000027000000000000000000000007cbc8c619961a19b246ac6cfec2e336000000000000000001000100000000000000000000ff
+GATEWAY_COMMAND_EVENT GatewayCommandEvent(command_kind=2, stage=9, flags=6, attempt=1, command_status=0, reason=0, command_id=258, route_epoch=1, correlation_id=3762883032, gateway_sequence=3762883032, host_session_id=3762883032, host_sequence=2520, event_sequence=39, anchor_id=0, pair_initiator_id=1808923237796072199, pair_responder_id=3955219295762138802, previous_hop_id=0, progress_count=1, total_count=1, success_count=0, failure_count=0, duplicate_count=0, lost_event_count=0, hop_count=0, discovery_slot=255)
+BLE_COMPLETE packets=2
+
+Script done on 2026-08-10 03:01:08+02:00 [COMMAND_EXIT_CODE="0"]

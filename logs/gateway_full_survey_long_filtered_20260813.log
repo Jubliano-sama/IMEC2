@@ -1,0 +1,668 @@
+DBG_SURVEY_DISCOVERY_FLOOD_REDRIVE handle=39 due=10758687 latest=10768687 execute=10808687 attempts=4
+DBG_SURVEY_DISCOVERY_FLOOD_TERMINAL handle=39 reason=0 attempts=4
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=2 ackseq=808 len=60 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=808
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=808 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x55 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=4 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x55 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=4 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=85 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=4 ackseq=809 len=60 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=809
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=809 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=4 q=1
+DBG_SURVEY_REPORT_ACK_CONFIRM survey=290082072 anchor=0x191a9619c6c8cb07 confirmed=1 reports=2
+DBG_GATEWAY_ACK_INPUT type=51 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=4 ackseq=810 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=810
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=810 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 q=1
+DBG_GATEWAY_ACK_INPUT type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=2 ackseq=811 len=60 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=811
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=811 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x55 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 q=1
+DBG_GATEWAY_ACK_INPUT type=85 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=2 ackseq=812 len=60 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=812
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=812 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x55 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x55 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=85 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=3 ackseq=813 len=60 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=813
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=813 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 q=1
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=2 q=2
+DBG_SURVEY_REPORT_ACK_CONFIRM survey=290082072 anchor=0x708bc0aab970300e confirmed=2 reports=3
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=3 ackseq=814 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=814
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=814 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_SURVEY_REPORT_ACK_CONFIRM survey=290082072 anchor=0x36e3c2fe6cac46b2 confirmed=3 reports=3
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=2 ackseq=815 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=815
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=815 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=2 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=35 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=35 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=40 attempts=2 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=35 ackseq=816 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=816
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=816 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=35 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=35 ackseq=817 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=817
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=817 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=1
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=1
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=35 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=35 ackseq=818 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=818
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=818 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=36 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=36 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=41 attempts=2 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=36 ackseq=819 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=819
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=819 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=36 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=36 q=1
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=36 ackseq=820 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=820
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=820 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=36 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=36 ackseq=821 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=821
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=821 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=2
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=2
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=37 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=37 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=37 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=37 q=2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=1
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=42 attempts=2 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=37 ackseq=822 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=822
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=822 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=37 ackseq=823 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=823
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=823 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=37 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=37 ackseq=824 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=824
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=824 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=3
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=3
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=38 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=38 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=0 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=38 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=38 q=2
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=2 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=1
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=43 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=38 ackseq=825 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=825
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=825 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_GATEWAY_ACK_INPUT type=65 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=38 ackseq=826 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=826
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=826 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=38 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=38 ackseq=827 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=827
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=827 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_ROUND_PAIR_START survey=290082072 round=1 initiator=0x191a9619c6c8cb07 responder=0x708bc0aab970300e attempt=1 ret=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=1 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=1 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=1 ackseq=828 len=109 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=828
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=828 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=1 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=1 ackseq=829 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=829
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=829 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=2 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=2 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=2 ackseq=830 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=830
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=830 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=2 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=2 ackseq=831 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=831
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=831 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=3 ackseq=832 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=832
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=832 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=3 ackseq=833 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=833
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=833 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=3 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=3 ackseq=834 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=834
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=834 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=4 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=4 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=4 ackseq=835 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=835
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=835 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=4 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=4 ackseq=836 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=836
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=836 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=5 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=5 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=5 ackseq=837 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=837
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=837 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=0
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=5 ackseq=838 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=838
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=838 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=39 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=39 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=44 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=39 ackseq=839 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=839
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=839 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=39 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=39 ackseq=840 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=840
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=840 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=1
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=1
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=40 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=40 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=45 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=40 ackseq=841 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=841
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=841 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=40 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=40 ackseq=842 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=842
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=842 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=2
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=2
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=41 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=41 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=46 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=41 ackseq=843 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=843
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=843 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=41 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=41 ackseq=844 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=844
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=844 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=3
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=3
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=42 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=42 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=47 attempts=2 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=42 ackseq=845 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=845
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=845 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x191a9619c6c8cb07 dst=0x9999888877776666 prev=0x191a9619c6c8cb07 seq=42 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x191a9619c6c8cb07 dst=0x9999888877776666 rxseq=42 ackseq=846 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=846
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=846 dst=0x191a9619c6c8cb07 next=0x191a9619c6c8cb07
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_ROUND_PAIR_START survey=290082072 round=2 initiator=0x191a9619c6c8cb07 responder=0x36e3c2fe6cac46b2 attempt=1 ret=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=6 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=6 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=6 ackseq=847 len=109 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=847
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=847 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=6 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=6 q=1
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=6 ackseq=848 len=109 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=848
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=848 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=6 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=6 ackseq=849 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=849
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=849 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=850 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=850
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=850 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=851 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=851
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=851 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=852 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=852
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=852 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=853 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=853
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=853 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=854 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=854
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=854 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=855 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=855
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=855 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=7 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=7 ackseq=856 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=856
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=856 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=8 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=8 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=8 ackseq=857 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=857
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=857 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=8 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=8 ackseq=858 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=858
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=858 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=9 flags=0x14 ple
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=9 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=9 ackseq=859 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=859
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=859 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=9 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=9 ackseq=860 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=860
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=860 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=10 ackseq=861 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=861
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=861 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 q=1
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=10 ackseq=862 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=862
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=862 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 q=1
+DBG_GATEWAY_ACK_INPUT type=83 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=10 ackseq=863 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=863
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=863 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=10 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=10 ackseq=864 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=864
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=864 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=43 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=43 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=43 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=43 q=2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=1
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=48 attempts=2 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=43 ackseq=865 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=865
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=865 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_GATEWAY_ACK_INPUT type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=43 ackseq=866 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=866
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=866 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=43 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=43 ackseq=867 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=867
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=867 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=1
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=1
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=44 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=44 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=49 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=44 ackseq=868 len=11 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=868
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=868 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=44 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=44 ackseq=869 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=869
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=869 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=2
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=2
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=45 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=45 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=45 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=45 q=2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=50 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=45 ackseq=870 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=870
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=870 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_GATEWAY_ACK_INPUT type=65 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=45 ackseq=871 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=871
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=871 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=45 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=45 ackseq=872 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=872
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=872 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=3
+DBG_SURVEY_DRIVE_RESUME survey=290082072 stage=3
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=46 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=46 q=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=46 flags=0x04 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x41 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=46 q=2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=1
+DBG_SURVEY_CONTROL_CANCEL_TAKE handle=51 attempts=1 state=3
+DBG_GATEWAY_ACK_INPUT type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=46 ackseq=873 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=873
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_GATEWAY_ACK_SEND ret=0 seq=873 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_GATEWAY_ACK_INPUT type=65 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=46 ackseq=874 len=11 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=874
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=874 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=46 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=46 ackseq=875 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=875
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=875 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_SURVEY_ROUND_PAIR_START survey=290082072 round=3 initiator=0x36e3c2fe6cac46b2 responder=0x708bc0aab970300e attempt=1 ret=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 prev=0x36e3c2fe6cac46b2 seq=46 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x36e3c2fe6cac46b2 dst=0x9999888877776666 rxseq=46 ackseq=876 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=876
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=876 dst=0x36e3c2fe6cac46b2 next=0x36e3c2fe6cac46b2
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=11 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=11 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=11 ackseq=877 len=109 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=877
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=877 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=11 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=11 ackseq=878 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=878
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=878 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=12 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=12 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=12 ackseq=879 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=879
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=879 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=12 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=12 ackseq=880 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=880
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=880 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=13 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=13 q=1
+DBG_GATEWAY_RX_SCHEDULE delay=2 ret=1 defer=0 qrx=1 qtx=0 relay=0 wait=0 ack=0 adv_due=0 active=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=13 ackseq=881 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=881
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=881 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=13 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=13 ackseq=882 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=882
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=882 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=14 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=14 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=14 ackseq=883 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=883
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=883 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=14 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=14 ackseq=884 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=884
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=884 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=14 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=14 ackseq=885 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=885
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=885 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=15 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=15 q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=15 ackseq=886 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=886
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=886 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_GATEWAY_RX_DECODE ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=15 flags=0x14 pl
+DBG_MESH_RX_QUEUED ch=9 msg=0x53 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=15 q=1
+DBG_GATEWAY_ACK_INPUT type=83 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=15 ackseq=887 len=96 flags=0x14 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=887
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=887 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0
+DBG_MESH_RX_QUEUED ch=9 msg=0x33 src=0x708bc0aab970300e dst=0x9999888877776666 prev=0x708bc0aab970300e seq=15 q=1
+DBG_GATEWAY_ACK_INPUT type=51 src=0x708bc0aab970300e dst=0x9999888877776666 rxseq=15 ackseq=888 len=44 flags=0x04 meta=0
+DBG_GATEWAY_ACK_GUARD ms=10 seq=888
+DBG_GATEWAY_ACK_TX_LED
+DBG_GATEWAY_ACK_SEND ret=0 seq=888 dst=0x708bc0aab970300e next=0x708bc0aab970300e
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=1 q=0

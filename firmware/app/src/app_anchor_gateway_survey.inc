@@ -2984,6 +2984,7 @@ static int gateway_survey_send_start(
                 .pair = control->pair,
                 .started_at_ms = now_ms,
                 .valid = true,
+                .initiator_submitted = false,
             };
         message_age_ms = 0u;
     } else {
@@ -3002,7 +3003,9 @@ static int gateway_survey_send_start(
         }
         message_age_ms = now_ms -
                          gateway_survey_start_release.started_at_ms;
-        if (message_age_ms >= SURVEY_ROUND_START_EXECUTE_DELAY_MS) {
+        if (!survey_round_start_initiator_send_allowed(
+                message_age_ms,
+                gateway_survey_start_release.initiator_submitted)) {
             return -ETIMEDOUT;
         }
     }
@@ -3106,11 +3109,39 @@ static int gateway_survey_send_start(
         const uint32_t release_ms =
             gateway_survey_start_release.started_at_ms +
             SURVEY_ROUND_START_EXECUTE_DELAY_MS;
+        uint32_t sibling_handle = 0u;
+        uint32_t sibling_timeout_ms;
+        uint32_t sibling_token;
+        int sibling_ret;
 
         (void)survey_gateway_observation_origin_freeze(
             &gateway_survey_round_observation_origin, release_ms);
         gateway_survey_round_observation_deadline_ms =
             gateway_survey_operation_deadline_ms;
+
+        /*
+         * The 15 s barrier is an execution instant, not a confirm wait.
+         * Submit START initiator immediately so hop-2/3 ACK_CONFIRM cannot
+         * consume the shared release before the second START is on the air.
+         */
+        outbound.packet.dst_id = control->pair.initiator_id;
+        outbound.packet.seq = gateway_next_command_seq();
+        outbound.packet.message_age_ms = 0u;
+        outbound.queued_at_ms = now_ms;
+        outbound.queued_at_valid = true;
+        sibling_timeout_ms = gateway_survey_request_timeout_ms(
+            control->pair.initiator_id);
+        sibling_token = gateway_survey_next_transaction_token();
+        if (sibling_timeout_ms > 0u) {
+            sibling_ret = gateway_survey_send_pair_control(
+                &outbound,
+                (uint64_t)now_ms + sibling_timeout_ms,
+                sibling_token,
+                &sibling_handle);
+            if (sibling_ret == 0) {
+                gateway_survey_start_release.initiator_submitted = true;
+            }
+        }
     }
 #endif
     return ret;

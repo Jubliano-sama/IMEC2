@@ -1,0 +1,5 @@
+Script started on 2026-08-12 18:07:38+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -u E4645C15CB0F3B37 -f 4000000 -M attach -a 0x20000410 -s 0x100" <not executed on terminal>]
+[34m0000637[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000674[0m [1m[91mC[0m [91mUnable to claim interface for probe E4645C15CB0F3B37 [2m[__main__][0m
+[0m
+Script done on 2026-08-12 18:07:39+02:00 [COMMAND_EXIT_CODE="1"]

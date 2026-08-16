@@ -1,0 +1,7 @@
+row,start,end,text,style
+proposer,0,7000,"One receive window\ncovers queue + response retry",emphasis
+receiver,0,1000,"Bounded proposal queue\nprocess or expire",default
+receiver,1000,7000,"No stale proposal may start here",quiet
+responder,1000,7000,"Exact ACCEPT retained\naccepted-exchange authority remains valid",shaded
+radio,0,1000,"Existing Channel-9 work\nmay delay RX dispatch",quiet
+radio,1000,7000,"Six-second bounded retry\nuses the first legal Channel-5 gap",default

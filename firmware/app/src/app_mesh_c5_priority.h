@@ -128,11 +128,27 @@ bool app_mesh_c5_route_wake_claim_allowed(
     uint8_t claim_flags,
     bool require_relayed_route_req,
     bool require_relayed_gateway_control);
+bool app_mesh_c5_route_wake_should_listen(
+    uint64_t source_id,
+    uint64_t gateway_id,
+    uint8_t claim_flags,
+    bool require_relayed_route_req,
+    bool require_relayed_gateway_control);
 bool app_mesh_c5_gateway_control_copy_allowed(
     uint64_t source_id,
     uint64_t previous_hop_id,
     uint64_t gateway_id,
     bool require_relayed_gateway_control);
+bool app_mesh_c5_gateway_control_rx_allowed(
+    uint8_t msg_type,
+    uint8_t packet_ttl,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t source_id,
+    uint64_t previous_hop_id,
+    uint64_t gateway_id,
+    bool require_relayed_gateway_control,
+    uint8_t required_gateway_relay_hops);
 bool app_mesh_c5_control_route_hint_is_first(
     struct app_mesh_c5_control_route_history *history,
     const struct app_mesh_c5_control_route_identity *identity);

@@ -1,0 +1,5 @@
+id,label,order
+mesh,MESH / CHANNEL 9,1
+responder,DIRECT ANCHOR A / RESPONDER,2
+initiator,FORCED2 ANCHOR C / INITIATOR,3
+custody,NODE-COMM RESULT CUSTODY,4

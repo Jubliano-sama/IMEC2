@@ -1,0 +1,9 @@
+key,value
+title,"SURVEY PAIR: RF PRODUCTION VS PAUSED RESULT DELIVERY"
+caption,"The responder reserves five result slots before RF and intentionally pauses mesh transport. The old commit path treated the expected paused-workqueue error as failed admission after sample 1, so the RF producer stopped even though the sample remained retained. The corrected path freezes all five reserved records during RF and schedules them once transport resumes."
+key_point,"RF production and mesh delivery are parallel ownership lanes. A paused scheduler means deliver later, not reject an already-reserved sample. Worst-case five-sample RF remains bounded to 5.79 s."
+start,-200
+end,6500
+width,4200
+unit,ms
+axis_caption_width,230

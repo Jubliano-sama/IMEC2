@@ -1,0 +1,9 @@
+usage: mesh_ble_route_monitor.py [-h] [--gateway GATEWAY] [--host-id HOST_ID]
+                                 [--scan-timeout SCAN_TIMEOUT]
+                                 [--connect-timeout CONNECT_TIMEOUT]
+                                 [--list-devices] [--duration-s DURATION_S]
+                                 [--count COUNT] [--include-all-mesh-data]
+                                 [--no-service-filter] [--jsonl]
+                                 [--jsonl-file JSONL_FILE] [--jsonl-fsync]
+                                 [--verbose]
+mesh_ble_route_monitor.py: error: unrecognized arguments: --gateway-logs

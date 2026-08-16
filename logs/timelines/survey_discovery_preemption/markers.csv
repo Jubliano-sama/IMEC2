@@ -1,0 +1,5 @@
+time,label,caption,kind,row
+-85955,-85.955 s,command admitted and queued,axis,
+-69079,-69.079 s,last observed child retry,axis,
+-1103,-1.103 s,just-in-time preparation begins,axis,
+0,t = 0,physical discovery starts,axis,

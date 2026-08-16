@@ -1,0 +1,14 @@
+row,start,end,text,style
+gateway,0,90000,"Wait for 3 discovery reports\n90 s semantic deadline",shaded
+anchor_a,0,5667,"A local report\nTX + gateway receipt",emphasis
+anchor_a,9500,69039,"A/B cadence converges slowly\nfirst B report captured near +69 s",dashed
+anchor_b,0,69039,"B local report owns the one core TX slot\nretries toward A",solid
+anchor_b,12348,13200,"C report received\nrejected relay-busy; starts C5 repair",emphasis
+anchor_b,18748,19600,"C duplicate received\nrejected relay-busy again",emphasis
+anchor_b,25200,26000,"C duplicate received\nrelay-busy",quiet
+anchor_b,37200,38000,"C duplicate received\nrelay-busy",quiet
+anchor_c,0,90000,"C report retained\nretries toward B but cannot enter B's queue",solid
+anchor_c,4656,4750,"C TX #1",default
+anchor_c,12336,12430,"C TX #2",default
+anchor_c,18794,18890,"C TX #3",default
+anchor_c,30256,30350,"C TX #4",default

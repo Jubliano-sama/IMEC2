@@ -1,0 +1,9 @@
+key,value
+title,"SURVEY PAIR DEADLINE PROJECTION: OBSERVED FAILURE AND FIX"
+caption,"Times are expressed in the initiator's clock domain. The responder must already be listening at -1000 ms. The old relay path omitted 1346 ms of queue and radio residence, so it started at +346 ms instead. Stamping each fresh forward lets the existing physical sender add that residence to packet age and restores the shared deadline without changing survey timeouts."
+key_point,"The protocol is feasible as designed. The failure was one missing timestamp at the forwarding boundary, not an undersized DS-TWR window: the old responder RX began after the initiator's exchange, while the corrected projection begins 1000 ms before it."
+start,-1200
+end,1400
+width,4200
+unit,ms
+axis_caption_width,210

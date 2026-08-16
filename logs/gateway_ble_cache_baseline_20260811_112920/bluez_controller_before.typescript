@@ -1,0 +1,37 @@
+Script started on 2026-08-11 11:30:37+02:00 [COMMAND="bluetoothctl show" <not executed on terminal>]
+Controller E0:E2:58:AA:C0:DE (public)
+	Manufacturer: 0x0002 (2)
+	Version: 0x0d (13)
+	Name: pop-os
+	Alias: pop-os
+	Class: 0x006c0104 (7078148)
+	Powered: yes
+	Discoverable: no
+	DiscoverableTimeout: 0x000000b4 (180)
+	Pairable: yes
+	UUID: A/V Remote Control        (0000110e-0000-1000-8000-00805f9b34fb)
+	UUID: Handsfree Audio Gateway   (0000111f-0000-1000-8000-00805f9b34fb)
+	UUID: PnP Information           (00001200-0000-1000-8000-00805f9b34fb)
+	UUID: Audio Sink                (0000110b-0000-1000-8000-00805f9b34fb)
+	UUID: Audio Source              (0000110a-0000-1000-8000-00805f9b34fb)
+	UUID: A/V Remote Control Target (0000110c-0000-1000-8000-00805f9b34fb)
+	UUID: Generic Access Profile    (00001800-0000-1000-8000-00805f9b34fb)
+	UUID: Generic Attribute Profile (00001801-0000-1000-8000-00805f9b34fb)
+	UUID: Device Information        (0000180a-0000-1000-8000-00805f9b34fb)
+	UUID: Vendor specific           (03b80e5a-ede8-4b33-a751-6ce34ec4c700)
+	UUID: Handsfree                 (0000111e-0000-1000-8000-00805f9b34fb)
+	Modalias: usb:v1D6Bp0246d0548
+	Discovering: yes
+	Roles: central
+	Roles: peripheral
+Advertising Features:
+	ActiveInstances: 0x00 (0)
+	SupportedInstances: 0x0c (12)
+	SupportedIncludes: tx-power
+	SupportedIncludes: appearance
+	SupportedIncludes: local-name
+	SupportedSecondaryChannels: 1M
+	SupportedSecondaryChannels: 2M
+	SupportedSecondaryChannels: Coded
+
+Script done on 2026-08-11 11:30:37+02:00 [COMMAND_EXIT_CODE="0"]

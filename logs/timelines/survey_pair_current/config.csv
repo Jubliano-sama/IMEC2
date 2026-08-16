@@ -1,0 +1,9 @@
+key,value
+title,"IMEC2 SURVEY PAIR: MESH QUIESCE, DS-TWR, AND RESULT CUSTODY"
+caption,"Current firmware timing. t=0 is the initiator's shared execution time; the responder starts 1 s early. Mesh transport is paused before either RF role and resumes with the same retained routes and queued owners."
+key_point,"The parallel timing is feasible: responder preemption starts at -2 s, responder RX starts at -1 s, initiator preemption starts at -1 s, and both overlap for the initiator's five bounded attempts. The five result reservations live for 10 s, covering the responder's 5.79 s absolute worst case. The 640 ms connected cadence is absent during the pair because the existing transport is quiesced, not repaired or renegotiated."
+start,-2200
+end,6200
+width,7000
+unit,ms
+axis_caption_width,210

@@ -1,0 +1,7 @@
+time,label
+0,"first proposal"
+640,"retry 1"
+1280,"retry 2"
+1920,"retry 3"
+2160,"ACCEPT"
+2560,"miss"

@@ -1,0 +1,7 @@
+time,label,caption,kind,row
+0,0 ms,first report already admitted,axis,
+2200,2.2 s,parent forwards report,axis,
+2700,2.7 s,child misses returned gateway ACK,axis,
+3000,3.0 s,parent custody clears,axis,
+4000,4.0 s,child sends exact retry,axis,
+4700,4.7 s,replacement ACK reaches child,axis,

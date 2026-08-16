@@ -1,0 +1,5 @@
+id,label,order
+child,C: FORCED-2 PROPOSER,1
+parent,B: FORCED-1 RESPONDER,2
+cadence,NEGOTIATED CHANNEL-9 TURNS,3
+failure,OBSERVED RESULT,4

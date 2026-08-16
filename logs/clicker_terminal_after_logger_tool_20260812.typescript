@@ -1,0 +1,4 @@
+Script started on 2026-08-12 19:08:10+02:00 [COMMAND=".venv/bin/python tools/clicker_rtt_control.py --probe-id E4645C15CB0F3B37 --capture-s 3" TERM="dumb" TTY="/dev/pts/0" COLUMNS="80" LINES="24"]
+DBG_CLICKER_RTT command=INVALID accepted=0
+
+Script done on 2026-08-12 19:08:14+02:00 [COMMAND_EXIT_CODE="0"]

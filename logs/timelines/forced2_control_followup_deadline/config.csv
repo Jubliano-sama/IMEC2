@@ -1,0 +1,9 @@
+key,value
+title,"FORCED-2 SURVEY CONTROL: DEEPER WAKE ARRIVES AT OLD DEADLINE"
+caption,"C opens one bounded listener after A's wake. B receives and relays the same survey control later in the flood. C hears B's short wake near the end of the old window, but the old implementation kept the nearly-expired deadline and stopped before B's extended payload."
+key_point,"A valid deeper-relay wake starts one new bounded follow-up window. It reuses the same listener and custody; it does not add a retry queue or extend the survey deadline."
+start,0
+end,4000
+width,2600
+unit,ms
+axis_caption_width,280
