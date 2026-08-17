@@ -432,13 +432,12 @@ static bool gateway_survey_round_finalize_observation(void)
         if (!deadline && !all_missing_samples_unusable) {
             continue;
         }
-        /* Five explicit responder failures are a complete answer, not lost
-         * transport evidence. Repeating the same RF batch only repeats a
-         * measured ranging failure and can consume most of the operation
-         * budget. Reserve reruns for attempts with genuinely missing sample
-         * evidence. */
-        final_failure = all_missing_samples_unusable ||
-                        lane->reruns_started >=
+        /* Five responder outcomes close this attempt now so the round does
+         * not wait the observation deadline. They are not terminal proof:
+         * RX timeouts happen when the initiator never got the radio, and
+         * the contract reruns missing or unusable samples up to the
+         * configured bound. */
+        final_failure = lane->reruns_started >=
                             gateway_survey_max_pair_reruns;
         outcome = final_failure ? SURVEY_PAIR_ROUND_CLEANUP_FAIL :
                                   SURVEY_PAIR_ROUND_CLEANUP_RETRY;

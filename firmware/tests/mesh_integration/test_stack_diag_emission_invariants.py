@@ -164,7 +164,7 @@ assert run_end.index("emit_ret == 0") < run_end.index("memset(run, 0")
 assert "app_stack_diag_run_end(run->run_id, outcome, &state) == 0" in WORKLOAD_SOURCE
 
 gateway_control_submit = function_body(
-    "gateway_survey_send_outbound", GATEWAY_SURVEY_SOURCE
+    "gateway_survey_arm_control_transaction", GATEWAY_SURVEY_SOURCE
 )
 gateway_control_admit = gateway_control_submit.index(
     "app_stack_workload_diag_gateway_control_admit(&outbound->packet, 1u, 1u)"

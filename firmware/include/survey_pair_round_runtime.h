@@ -56,6 +56,7 @@ struct survey_pair_round_lane {
     uint8_t reruns_started;
     uint8_t prepared_mask;
     uint8_t started_mask;
+    uint8_t cleanup_required_mask;
     uint8_t cleanup_mask;
     enum survey_pair_round_lane_state state;
     enum survey_pair_round_cleanup_outcome cleanup_outcome;

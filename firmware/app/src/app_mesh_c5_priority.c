@@ -426,6 +426,14 @@ bool app_mesh_c5_control_followup_yields_to_ack(uint8_t claim_flags,
            !app_mesh_c5_wake_claim_preempts_mesh(claim_flags);
 }
 
+bool app_mesh_c5_command_followup_holds_same_train_wake(
+    uint8_t contact_purpose,
+    bool click_priority)
+{
+    return contact_purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD &&
+           !click_priority;
+}
+
 uint32_t app_mesh_c5_route_reply_listen_window_ms(
     uint8_t route_ttl,
     const struct app_mesh_c5_route_reply_window_timing *timing)

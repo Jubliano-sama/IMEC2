@@ -142,11 +142,10 @@ int survey_pair_round_runtime_begin(
 
 static int survey_pair_round_runtime_load_lane(
     struct survey_pair_round_runtime *runtime,
-    uint8_t lane_index,
+    struct survey_pair_round_lane *lane,
     uint8_t plan_pair_index,
     uint8_t reruns_started)
 {
-    struct survey_pair_round_lane *lane = &runtime->lanes[lane_index];
     int ret;
 
     memset(lane, 0, sizeof(*lane));
@@ -205,6 +204,12 @@ bool survey_pair_round_runtime_batch_complete(
 int survey_pair_round_runtime_load_next_batch(
     struct survey_pair_round_runtime *runtime)
 {
+    struct survey_pair_round_lane staged[SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES];
+    uint8_t staged_count = 0u;
+    uint8_t next_pair = 0u;
+    uint8_t next_round = 0u;
+    uint8_t pending_rerun_count;
+    enum survey_pair_round_batch_kind batch_kind;
     int ret;
 
     if (runtime == NULL) {
@@ -218,74 +223,82 @@ int survey_pair_round_runtime_load_next_batch(
         return PROTO_ERR_BUSY;
     }
 
-    memset(runtime->lanes, 0, sizeof(runtime->lanes));
-    runtime->lane_count = 0u;
-    runtime->batch_kind = SURVEY_PAIR_ROUND_BATCH_NONE;
+    next_pair = runtime->next_pair_in_round;
+    next_round = runtime->next_planner_round;
+    pending_rerun_count = runtime->pending_rerun_count;
+    memset(staged, 0, sizeof(staged));
 
-    if (runtime->pending_rerun_count != 0u) {
-        const uint8_t rerun_count = runtime->pending_rerun_count;
-
-        if (rerun_count > runtime->max_parallel_pairs) {
+    if (pending_rerun_count != 0u) {
+        if (pending_rerun_count > runtime->max_parallel_pairs) {
             return PROTO_ERR_NO_SPACE;
         }
-        for (uint8_t i = 0u; i < rerun_count; i++) {
+        for (uint8_t i = 0u; i < pending_rerun_count; i++) {
             ret = survey_pair_round_runtime_load_lane(
                 runtime,
-                i,
+                &staged[i],
                 runtime->pending_reruns[i].plan_pair_index,
                 runtime->pending_reruns[i].reruns_started);
             if (ret != PROTO_OK) {
                 return ret;
             }
         }
-        runtime->lane_count = rerun_count;
-        runtime->pending_rerun_count = 0u;
-        runtime->batch_kind = SURVEY_PAIR_ROUND_BATCH_RERUN;
+        staged_count = pending_rerun_count;
+        pending_rerun_count = 0u;
+        batch_kind = SURVEY_PAIR_ROUND_BATCH_RERUN;
     } else {
         uint8_t pair_count_in_round;
 
-        if (runtime->next_planner_round >= runtime->round_count) {
+        if (next_round >= runtime->round_count) {
             return PROTO_ERR_NOT_FOUND;
         }
         pair_count_in_round = 0u;
         for (size_t i = 0u; i < runtime->plan->pair_count; i++) {
-            if (runtime->metadata[i].round_index ==
-                runtime->next_planner_round) {
+            if (runtime->metadata[i].round_index == next_round) {
                 pair_count_in_round =
                     runtime->metadata[i].pair_count_in_round;
                 break;
             }
         }
-        while (runtime->lane_count < runtime->max_parallel_pairs &&
-               runtime->next_pair_in_round < pair_count_in_round) {
+        while (staged_count < runtime->max_parallel_pairs &&
+               next_pair < pair_count_in_round) {
             uint8_t plan_pair_index;
 
             ret = survey_pair_round_runtime_find_planned_index(
                 runtime,
-                runtime->next_planner_round,
-                runtime->next_pair_in_round,
+                next_round,
+                next_pair,
                 &plan_pair_index);
             if (ret != PROTO_OK) {
                 return ret;
             }
             ret = survey_pair_round_runtime_load_lane(
                 runtime,
-                runtime->lane_count,
+                &staged[staged_count],
                 plan_pair_index,
                 0u);
             if (ret != PROTO_OK) {
                 return ret;
             }
-            runtime->lane_count++;
-            runtime->next_pair_in_round++;
+            staged_count++;
+            next_pair++;
         }
-        if (runtime->next_pair_in_round == pair_count_in_round) {
-            runtime->next_planner_round++;
-            runtime->next_pair_in_round = 0u;
+        if (next_pair == pair_count_in_round) {
+            next_round++;
+            next_pair = 0u;
         }
-        runtime->batch_kind = SURVEY_PAIR_ROUND_BATCH_PLANNED;
+        batch_kind = SURVEY_PAIR_ROUND_BATCH_PLANNED;
     }
 
+    memset(runtime->lanes, 0, sizeof(runtime->lanes));
+    if (staged_count > 0u) {
+        memcpy(runtime->lanes, staged,
+               (size_t)staged_count * sizeof(staged[0]));
+    }
+    runtime->lane_count = staged_count;
+    runtime->next_pair_in_round = next_pair;
+    runtime->next_planner_round = next_round;
+    runtime->pending_rerun_count = pending_rerun_count;
+    runtime->batch_kind = batch_kind;
     runtime->batch_sequence++;
     if (runtime->batch_sequence == 0u) {
         runtime->batch_sequence = 1u;
@@ -423,7 +436,8 @@ int survey_pair_round_runtime_note_sample(
     for (uint8_t i = 0u; i < runtime->lane_count; i++) {
         struct survey_pair_round_lane *candidate = &runtime->lanes[i];
 
-        if (candidate->state != SURVEY_PAIR_ROUND_LANE_OBSERVING ||
+        if ((candidate->state != SURVEY_PAIR_ROUND_LANE_OBSERVING &&
+             candidate->state != SURVEY_PAIR_ROUND_LANE_ARMED) ||
             !survey_pair_round_runtime_pair_equal(&candidate->pair,
                                                   &sample->pair)) {
             continue;
@@ -561,6 +575,7 @@ int survey_pair_round_runtime_require_cleanup(
         lane->state != SURVEY_PAIR_ROUND_LANE_OBSERVING) {
         return PROTO_ERR_STALE;
     }
+    lane->cleanup_required_mask = cleanup_mask;
     lane->cleanup_mask = cleanup_mask;
     lane->cleanup_outcome = outcome;
     lane->state = SURVEY_PAIR_ROUND_LANE_CLEANUP;
@@ -588,7 +603,7 @@ int survey_pair_round_runtime_note_cleanup_complete(
         return PROTO_ERR_STALE;
     }
     if (completed_mask == 0u ||
-        (completed_mask & (uint8_t)~lane->cleanup_mask) != 0u) {
+        (completed_mask & (uint8_t)~lane->cleanup_required_mask) != 0u) {
         return PROTO_ERR_MALFORMED;
     }
     lane->cleanup_mask &= (uint8_t)~completed_mask;

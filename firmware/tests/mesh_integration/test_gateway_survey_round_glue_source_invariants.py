@@ -118,8 +118,8 @@ for mixed_phase_handler in (note_sample, finalize_lane):
 # The responder START freezes the shared time origin. The initiator START uses
 # elapsed packet age from the same origin, both carry the canonical delay, and
 # the observation window starts at the future release rather than send time.
-# START initiator is also submitted immediately so hop-2/3 ACK_CONFIRM cannot
-# consume the 15 s barrier before the second START is on the air.
+# Each endpoint has one tracked START identity: responder first, then the
+# official initiator after that transaction is terminal.
 send_start = function_body(SURVEY, "gateway_survey_send_start")
 assert_ordered(
     send_start,
@@ -129,7 +129,6 @@ assert_ordered(
     "message_age_ms = now_ms -",
     "gateway_survey_start_release.started_at_ms",
     "survey_round_start_initiator_send_allowed(",
-    "gateway_survey_start_release.initiator_submitted",
     "TLV_EXECUTE_DELAY_MS",
     "SURVEY_ROUND_START_EXECUTE_DELAY_MS",
     "outbound.packet.message_age_ms = message_age_ms",
@@ -141,10 +140,11 @@ assert_ordered(
     "SURVEY_ROUND_START_EXECUTE_DELAY_MS",
     "survey_gateway_observation_origin_freeze(",
     "&gateway_survey_round_observation_origin, release_ms",
-    "outbound.packet.dst_id = control->pair.initiator_id",
-    "gateway_survey_send_pair_control(",
-    "initiator_submitted = true",
 )
+assert "initiator_submitted" not in send_start
+assert "gateway_survey_send_pair_control(" not in send_start
+assert "gateway_survey_adopt_submitted_initiator_start(" not in SURVEY
+assert "DBG_SURVEY_SIBLING_START_RESULT" not in SURVEY
 
 # An accepted control result retires only its request-delivery handle. The
 # persistent round owner retains the complete semantic identity and advances
@@ -168,6 +168,7 @@ assert_ordered(
     "gateway_survey_schedule_drive()",
 )
 assert "gateway_survey_round_fail_current_control(" in confirmation
+assert "COMMAND_INVALID_STATE" not in confirmation
 ack_confirm = function_body(SURVEY, "gateway_note_survey_ack_confirm")
 assert "app_gateway_survey_round_note_control_ack_confirm(" in ack_confirm
 assert "gateway_survey_work_schedule(" in ack_confirm
@@ -194,6 +195,13 @@ assert_ordered(
     "gateway_survey_control_inflight()",
     "app_gateway_survey_round_current_control(",
     "gateway_survey_send_control(&control)",
+)
+cleanup_prepare = function_body(SURVEY, "gateway_survey_prepare_cleanup_delivery")
+assert_ordered(
+    cleanup_prepare,
+    ".absolute_deadline_ms = cleanup_deadline_ms",
+    "now_ms >= cleanup->absolute_deadline_ms",
+    "gateway_survey_prepare_pair_control(",
 )
 cleanup_service = function_body(SURVEY, "gateway_survey_service_cleanup")
 assert "gateway_survey_round.control_confirmation.valid" in cleanup_service

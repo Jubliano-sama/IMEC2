@@ -2764,6 +2764,19 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     break;
                 }
 
+                if (mesh_decode_channel5_wake_claim(frame,
+                                                    frame_len,
+                                                    &click_claim,
+                                                    NULL) &&
+                    app_mesh_c5_command_followup_holds_same_train_wake(
+                        contact_purpose,
+                        app_mesh_c5_wake_claim_preempts_mesh(
+                            click_claim.flags))) {
+                    status_debug_note(
+                        "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED\n");
+                    continue;
+                }
+
                 if (mesh_handle_channel5_wake_claim(frame,
                                                     frame_len,
                                                     quality,

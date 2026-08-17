@@ -1110,6 +1110,11 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
                                       size_t payload_len,
                                       uint64_t previous_hop_id,
                                       uint32_t received_at_ms);
+static bool mesh_decode_channel5_wake_claim(
+    const uint8_t *frame,
+    size_t frame_len,
+    struct uwb_wake_claim_frame *claim,
+    bool *embedded_route_frame_out);
 static bool mesh_handle_channel5_wake_claim(const uint8_t *frame,
                                             size_t frame_len,
                                             uint8_t link_quality,

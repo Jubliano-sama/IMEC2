@@ -211,6 +211,8 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         self.assertLess(gate, hops)
         self.assertLess(hops, drop)
         self.assertIn("context.packet.ttl", REPORT[gate:hops])
+        valid = REPORT.index("*valid_mesh_frame = true;")
+        self.assertLess(drop, valid)
 
     def test_rejected_direct_control_hands_off_to_followup_listener(self):
         scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
@@ -442,6 +444,36 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         self.assertIn("goto scan_complete", boosted_skip)
         self.assertNotIn("uwb_anchor_note_false_wake_cooldown", boosted_skip)
         self.assertLess(boosted_skip_pos, normal_cooldown)
+
+    def test_command_followup_listener_holds_same_train_wakes(self):
+        listener = function_body(REPORT, "mesh_listen_for_route_reply")
+        rx_frame = listener.index('status_debug_note("DBG_ROUTE_REPLY_RX_FRAME\\n")')
+        hold_policy = listener.index(
+            "app_mesh_c5_command_followup_holds_same_train_wake(", rx_frame
+        )
+        hold_note = listener.index(
+            "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED", hold_policy
+        )
+        hold_continue = listener.index("continue;", hold_note)
+        handle = listener.index("mesh_handle_channel5_wake_claim(", hold_continue)
+        preempt = listener.index(
+            "DBG_ROUTE_REPLY_RX_PREEMPT_BOUNDED", handle
+        )
+
+        self.assertLess(rx_frame, hold_policy)
+        self.assertLess(hold_policy, hold_note)
+        self.assertLess(hold_note, hold_continue)
+        self.assertLess(hold_continue, handle)
+        self.assertLess(handle, preempt)
+        self.assertIn("contact_purpose", listener[hold_policy:hold_continue])
+        self.assertNotIn(
+            "mesh_handle_channel5_wake_claim(",
+            listener[rx_frame:hold_continue],
+        )
+        self.assertNotIn(
+            "DBG_ROUTE_REPLY_RX_PREEMPT_BOUNDED",
+            listener[rx_frame:hold_continue],
+        )
 
     def test_insufficient_first_relay_reopens_standard_probe_for_deeper_control(self):
         probe = function_body(

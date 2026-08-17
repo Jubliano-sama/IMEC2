@@ -440,8 +440,7 @@ static void test_partial_start_cleans_both_leases_before_rerun_commitment(void)
     assert(app_gateway_survey_round_note_cleanup_complete(
                &round,
                0u,
-               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) ==
-           PROTO_ERR_MALFORMED);
+               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
     assert(!app_gateway_survey_round_batch_complete(&round));
     assert(responder_lease.phase == SURVEY_PAIR_LEASE_START_PENDING);
 

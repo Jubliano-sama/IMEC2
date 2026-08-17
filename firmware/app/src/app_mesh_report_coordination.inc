@@ -1485,8 +1485,20 @@ static int mesh_gateway_accept_semantic_delivery(
             &identity);
 
         /* ACK_CONFIRM advances an operation barrier only when the retained
-         * gateway history proves the exact acknowledged semantic bytes. */
+         * gateway history proves the exact acknowledged semantic bytes. A
+         * parse-valid confirm still gets a hop ACK when that volatile slot
+         * is gone, otherwise single-flight stalls the rest of a burst. */
         if (ret != PROTO_OK) {
+            struct mesh_gateway_ack_confirm_identity parsed;
+
+            if (ret == PROTO_ERR_NOT_FOUND &&
+                mesh_gateway_ack_confirm_payload_parse(
+                    &pending->packet,
+                    pending->payload,
+                    pending->payload_len,
+                    &parsed) == PROTO_OK) {
+                return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+            }
             return -EINVAL;
         }
         ret = mesh_report_gateway_note_ack_confirm(

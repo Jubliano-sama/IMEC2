@@ -225,16 +225,13 @@ static void test_start_release_is_separate_from_failure_horizons(void)
            SURVEY_PAIR_PREPARED_LEASE_MS);
 }
 
-static void test_initiator_start_survives_hop3_confirm_when_sibling_sent(void)
+static void test_initiator_start_uses_shared_execute_age_only(void)
 {
-    assert(survey_round_start_initiator_send_allowed(0u, false));
-    assert(survey_round_start_initiator_send_allowed(14999u, false));
+    assert(survey_round_start_initiator_send_allowed(0u));
+    assert(survey_round_start_initiator_send_allowed(14999u));
     assert(!survey_round_start_initiator_send_allowed(
-        SURVEY_ROUND_START_EXECUTE_DELAY_MS, false));
-    assert(!survey_round_start_initiator_send_allowed(27500u, false));
-    assert(survey_round_start_initiator_send_allowed(
-        SURVEY_ROUND_START_EXECUTE_DELAY_MS, true));
-    assert(survey_round_start_initiator_send_allowed(27500u, true));
+        SURVEY_ROUND_START_EXECUTE_DELAY_MS));
+    assert(!survey_round_start_initiator_send_allowed(27500u));
 }
 
 int main(void)
@@ -243,6 +240,6 @@ int main(void)
     test_round_commitment_binds_complete_plan();
     test_manual_pair_commitment_binds_generation_and_pair();
     test_start_release_is_separate_from_failure_horizons();
-    test_initiator_start_survives_hop3_confirm_when_sibling_sent();
+    test_initiator_start_uses_shared_execute_age_only();
     return 0;
 }

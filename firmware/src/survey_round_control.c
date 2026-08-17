@@ -10,13 +10,8 @@ _Static_assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
                    SURVEY_PAIR_PREPARED_LEASE_MS,
                "survey START release must fit the prepared lease");
 
-bool survey_round_start_initiator_send_allowed(
-    uint32_t message_age_ms,
-    bool sibling_already_submitted)
+bool survey_round_start_initiator_send_allowed(uint32_t message_age_ms)
 {
-    if (sibling_already_submitted) {
-        return true;
-    }
     return message_age_ms < SURVEY_ROUND_START_EXECUTE_DELAY_MS;
 }
 

@@ -100,7 +100,7 @@ class GatewaySurveyPhaseOwnerOrderTests(unittest.TestCase):
             "deadline fallback must not accept non-responder evidence",
         )
 
-    def test_fully_observed_unusable_attempt_fails_without_deadline_or_rerun(
+    def test_fully_observed_unusable_attempt_reruns_before_terminal_failure(
         self,
     ) -> None:
         note_sample = function_body(
@@ -120,15 +120,17 @@ class GatewaySurveyPhaseOwnerOrderTests(unittest.TestCase):
         self.assertIn(
             "if (!deadline && !all_missing_samples_unusable)", finalize
         )
-        decision = finalize.index(
-            "final_failure = all_missing_samples_unusable ||"
-        )
+        decision = finalize.index("final_failure = lane->reruns_started >=")
         retry = finalize.index("SURVEY_PAIR_ROUND_CLEANUP_RETRY")
         self.assertLess(decision, retry)
-        self.assertIn(
-            "lane->reruns_started >=",
+        self.assertNotIn(
+            "all_missing_samples_unusable ||",
             finalize[decision:retry],
-            "missing-result attempts retain their configured rerun budget",
+            "responder timeouts are missing initiator evidence, not a spent rerun",
+        )
+        self.assertIn(
+            "gateway_survey_max_pair_reruns",
+            finalize[decision:retry],
         )
 
     def test_round_drive_gates_successor_on_exact_terminal_proof(self) -> None:

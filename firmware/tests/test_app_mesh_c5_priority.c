@@ -518,6 +518,18 @@ static void test_gateway_control_followup_tx_rx_phr_symmetry(void)
     }
 }
 
+static void test_command_followup_holds_same_train_wakes(void)
+{
+    assert(app_mesh_c5_command_followup_holds_same_train_wake(
+        C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD, false));
+    assert(!app_mesh_c5_command_followup_holds_same_train_wake(
+        C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD, true));
+    assert(!app_mesh_c5_command_followup_holds_same_train_wake(
+        C5_CONTACT_PURPOSE_ROUTE_SOLICIT, false));
+    assert(!app_mesh_c5_command_followup_holds_same_train_wake(
+        C5_CONTACT_PURPOSE_ROUTE_REPLY, false));
+}
+
 static void test_wake_claim_click_priority_policy(void)
 {
     assert(!app_mesh_c5_wake_claim_preempts_mesh(FLAG_DIAGNOSTIC |
@@ -946,6 +958,7 @@ int main(void)
     test_channel5_control_phr_policy();
     test_gateway_control_origin_ttl_matches_command_profile();
     test_gateway_control_followup_tx_rx_phr_symmetry();
+    test_command_followup_holds_same_train_wakes();
     test_wake_claim_click_priority_policy();
     test_forced_hop_anchor_ignores_direct_gateway_route_wake();
     test_forced_hop_generic_rx_requires_exact_control_depth();

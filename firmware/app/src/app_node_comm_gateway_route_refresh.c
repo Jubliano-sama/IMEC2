@@ -649,7 +649,13 @@ finish:
     }
     if (route_refresh.operation_generation != operation.generation &&
         !route_refresh.paused) {
+        const bool successor_active = route_refresh.active;
+
         route_refresh.in_flight = false;
+        if (successor_active) {
+            (void)refresh_schedule(0u);
+            return;
+        }
         app_node_comm_sync_unlock();
         return;
     }

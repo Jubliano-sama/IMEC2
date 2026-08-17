@@ -341,16 +341,15 @@ class SurveyDiscoveryTransportPreemptionSourceInvariantTests(unittest.TestCase):
     def test_pair_preempts_mesh_before_radio_and_resumes_after_parking(self):
         worker = function_body(RUNTIME, "survey_work_handler")
         pair_ready = function_body(RUNTIME, "pair_start_delivery_ready")
+        lead = function_body(RUNTIME, "pair_start_transport_preempt_lead_ms")
+        delay = function_body(RUNTIME, "pair_start_release_delay_ms")
 
-        early = pair_ready.index(
-            "SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS"
-        )
-        begin_early = pair_ready.index(
-            "survey_transport_preempt_begin()", early
-        )
-        schedule = pair_ready.index("deadline_schedule(", begin_early)
-        self.assertLess(early, begin_early)
-        self.assertLess(begin_early, schedule)
+        self.assertIn("SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS", lead)
+        self.assertIn("SURVEY_PAIR_START_SKEW_MARGIN_MS", lead)
+        self.assertIn("!as_responder", lead)
+        self.assertIn("pair_start_release_delay_ms(", pair_ready)
+        self.assertIn("survey_transport_preempt_begin()", delay)
+        self.assertIn("deadline_schedule(", pair_ready)
 
         pair_start = worker.index("app_node_comm_stop_role_scan()",
                                   worker.index("if (!pair_due)"))
@@ -366,6 +365,33 @@ class SurveyDiscoveryTransportPreemptionSourceInvariantTests(unittest.TestCase):
         self.assertLess(run, release)
         self.assertLess(release, resume)
         self.assertLess(resume, report)
+
+    def test_pair_rf_does_not_yield_the_shared_start_window_to_queued_relay_tx(
+        self,
+    ) -> None:
+        worker = function_body(RUNTIME, "survey_work_handler")
+        pair_start = worker.index(
+            "if (app_anchor_survey_runtime_discovery_is_pending())"
+        )
+        pair_claim = worker.index(
+            "survey_transport_preempt_begin()", pair_start
+        )
+        pair_gate = worker[pair_start:pair_claim]
+
+        self.assertIn("if (anchor_uwb_window_active())", pair_gate)
+        self.assertNotIn(
+            "runtime_ops.relay_tx_active()",
+            pair_gate.split("if (anchor_uwb_window_active())", 1)[0],
+        )
+        click_gate = pair_gate[
+            pair_gate.index("if (anchor_uwb_window_active())") :
+        ]
+        self.assertNotIn(
+            "||",
+            click_gate.split("{", 1)[0],
+            "queued START-result ACK_CONFIRM must not own the pair RF window",
+        )
+        self.assertIn("survey_transport_preempt_begin()", worker[pair_claim:])
 
     def test_prep_budget_includes_bounded_transport_quiescence(self):
         self.assertRegex(

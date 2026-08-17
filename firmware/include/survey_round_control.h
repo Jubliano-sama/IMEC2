@@ -25,9 +25,7 @@ extern "C" {
  */
 #define SURVEY_ROUND_START_EXECUTE_DELAY_MS 15000u
 
-bool survey_round_start_initiator_send_allowed(
-    uint32_t message_age_ms,
-    bool sibling_already_submitted);
+bool survey_round_start_initiator_send_allowed(uint32_t message_age_ms);
 
 struct survey_round_plan_entry {
     struct survey_pair pair;

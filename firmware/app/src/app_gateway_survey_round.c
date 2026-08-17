@@ -739,6 +739,15 @@ int app_gateway_survey_round_note_sample(
         sample,
         &matched_index,
         &duplicate);
+    if (ret == PROTO_ERR_STALE) {
+        ret = app_gateway_survey_round_preflight_sample(
+            round,
+            SURVEY_PAIR_ROUND_LANE_ARMED,
+            reporter_id,
+            sample,
+            &matched_index,
+            &duplicate);
+    }
     if (ret != PROTO_OK) {
         return ret;
     }

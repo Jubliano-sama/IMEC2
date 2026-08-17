@@ -167,6 +167,16 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         self.assertLess(release, restart)
         self.assertLess(release, state_lock)
 
+    def test_obsolete_refresh_worker_reschedules_live_successor(self):
+        worker = function_body(self.refresh, "refresh_work_handler")
+        stale = worker.index(
+            "route_refresh.operation_generation != operation.generation"
+        )
+        branch = worker[stale : worker.index("refresh_operation_commit_locked(", stale)]
+
+        self.assertIn("route_refresh.in_flight = false", branch)
+        self.assertIn("refresh_schedule(0u)", branch)
+
     def test_protocol_clients_use_public_route_refresh_facade(self):
         request = function_body(
             self.adapter, "app_node_comm_request_route_refresh"

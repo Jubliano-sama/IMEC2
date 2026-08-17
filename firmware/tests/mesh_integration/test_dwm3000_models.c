@@ -122,9 +122,9 @@ static void test_delayed_tx_and_rounding(void)
                   propagation,
                   &interval),
               PROTO_OK);
-    CHECK_U64(interval.rmarker_rctu, UINT64_C(1000208078));
-    CHECK_U64(interval.start_rctu, UINT64_C(933103310));
-    CHECK_U64(interval.end_rctu, UINT64_C(1054537422));
+    CHECK_U64(interval.rmarker_rctu, UINT64_C(1000208038));
+    CHECK_U64(interval.start_rctu, UINT64_C(933103270));
+    CHECK_U64(interval.end_rctu, UINT64_C(1054537382));
     CHECK_U64(interval.end_rctu - interval.start_rctu,
               UINT64_C(121434112));
 

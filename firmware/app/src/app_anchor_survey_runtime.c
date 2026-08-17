@@ -1503,6 +1503,37 @@ static int run_pair_responder(const struct survey_pair *pair,
     return last_ret;
 }
 
+/*
+ * The responder opens RX one skew margin before the shared execute
+ * instant. The initiator must already have paused mesh TX to that peer,
+ * or a hop-1 child's Channel-9 retries fill the parent's poll window.
+ */
+static uint32_t pair_start_transport_preempt_lead_ms(bool as_responder)
+{
+    uint32_t lead_ms = SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS;
+
+    if (!as_responder &&
+        lead_ms <= UINT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS) {
+        lead_ms += SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    }
+    return lead_ms;
+}
+
+static uint32_t pair_start_release_delay_ms(uint32_t release_remaining_ms,
+                                            bool as_responder)
+{
+    const uint32_t lead_ms =
+        pair_start_transport_preempt_lead_ms(as_responder);
+
+    if (release_remaining_ms > lead_ms) {
+        return release_remaining_ms - lead_ms;
+    }
+    if (survey_transport_preempt_begin() < 0) {
+        return MIN(release_remaining_ms, SURVEY_NON_RF_SERVICE_POLL_MS);
+    }
+    return release_remaining_ms;
+}
+
 static bool pair_start_delivery_ready(void)
 {
     struct survey_pair_control_id control_id = {0};
@@ -1527,21 +1558,9 @@ static bool pair_start_delivery_ready(void)
                 &pair_lease, k_uptime_get_32(), as_responder);
         k_spin_unlock(&survey_lock, key);
         if (release_remaining_ms != 0u) {
-            uint32_t schedule_delay_ms = release_remaining_ms;
+            uint32_t schedule_delay_ms = pair_start_release_delay_ms(
+                release_remaining_ms, as_responder);
 
-            if (release_remaining_ms >
-                SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS) {
-                schedule_delay_ms -=
-                    SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS;
-            } else {
-                int preempt_ret = survey_transport_preempt_begin();
-
-                if (preempt_ret < 0) {
-                    schedule_delay_ms = MIN(
-                        release_remaining_ms,
-                        SURVEY_NON_RF_SERVICE_POLL_MS);
-                }
-            }
             status_debug_printf(
                 "DBG_SURVEY_PAIR_RELEASE_WAIT remaining=%u delay=%u preempt=%u\n",
                 release_remaining_ms,
@@ -1596,21 +1615,9 @@ static bool pair_start_delivery_ready(void)
         return false;
     }
     if (release_remaining_ms != 0u) {
-        uint32_t schedule_delay_ms = release_remaining_ms;
+        uint32_t schedule_delay_ms = pair_start_release_delay_ms(
+            release_remaining_ms, as_responder);
 
-        if (release_remaining_ms >
-            SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS) {
-            schedule_delay_ms -=
-                SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS;
-        } else {
-            int preempt_ret = survey_transport_preempt_begin();
-
-            if (preempt_ret < 0) {
-                schedule_delay_ms = MIN(
-                    release_remaining_ms,
-                    SURVEY_NON_RF_SERVICE_POLL_MS);
-            }
-        }
         (void)deadline_schedule(SURVEY_ANCHOR_DEADLINE_PHASE_SAFETY,
                                 operation_generation,
                                 schedule_delay_ms,
@@ -2122,11 +2129,15 @@ static void survey_work_handler(struct k_work *work)
             "DBG_SURVEY_PAIR_RF_BLOCK stage=discovery-pending\n");
         return;
     }
-    if (anchor_uwb_window_active() ||
-        runtime_ops.relay_tx_active()) {
+    /*
+     * A click still owns the radio. Queued mesh TX does not: START-result
+     * ACK_CONFIRM retries stay pending across the shared execute instant,
+     * and yielding to them lets the responder finish five poll timeouts
+     * before the initiator ever transmits. Pause that owner and claim.
+     */
+    if (anchor_uwb_window_active()) {
         status_debug_printf(
-            "DBG_SURVEY_PAIR_RF_BLOCK stage=radio-owner click=%u relay=%u\n",
-            anchor_uwb_window_active() ? 1u : 0u,
+            "DBG_SURVEY_PAIR_RF_BLOCK stage=radio-owner click=1 relay=%u\n",
             runtime_ops.relay_tx_active() ? 1u : 0u);
         (void)schedule_pair_rf_retry(&pair_control_id,
                                      pair.operation_generation,

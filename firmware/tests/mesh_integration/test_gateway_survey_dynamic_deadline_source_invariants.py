@@ -98,6 +98,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             SURVEY, "gateway_survey_transaction_timeout_ms"
         )
         send = function_body(SURVEY, "gateway_survey_send_outbound")
+        arm = function_body(SURVEY, "gateway_survey_arm_control_transaction")
 
         self.assertIn(
             "gateway_survey_natural_request_timeout_ms(target_id)",
@@ -115,24 +116,25 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
 
         request_deadline = send.index("request_deadline_ms =")
-        semantic_deadline = send.index("transaction_deadline_ms =")
         submit = send.index("gateway_survey_send_pair_control(")
         submit_request_deadline = send.index("request_deadline_ms", submit)
-        transaction = send.index("survey_gateway_transaction_begin(", submit)
-        transaction_semantic_deadline = send.index(
+        arm_call = send.index("gateway_survey_arm_control_transaction(")
+        semantic_deadline = arm.index("transaction_deadline_ms =")
+        transaction = arm.index("survey_gateway_transaction_begin(")
+        transaction_semantic_deadline = arm.index(
             "transaction_deadline_ms", transaction
         )
-        result_wait = send.index(
+        result_wait = arm.index(
             "gateway_begin_command_result_wait_until(", transaction
         )
-        result_semantic_deadline = send.index(
+        result_semantic_deadline = arm.index(
             "(uint32_t)transaction_deadline_ms", result_wait
         )
 
-        self.assertLess(request_deadline, semantic_deadline)
-        self.assertLess(semantic_deadline, submit)
+        self.assertLess(request_deadline, submit)
         self.assertLess(submit, submit_request_deadline)
-        self.assertLess(submit_request_deadline, transaction)
+        self.assertLess(submit_request_deadline, arm_call)
+        self.assertLess(semantic_deadline, transaction)
         self.assertLess(transaction, transaction_semantic_deadline)
         self.assertLess(transaction_semantic_deadline, result_wait)
         self.assertLess(result_wait, result_semantic_deadline)
@@ -210,10 +212,13 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         reject = branch.index("if (ret != PROTO_OK)", history)
         note = branch.index("mesh_report_gateway_note_ack_confirm(", reject)
+        miss = branch[reject:note]
 
         self.assertLess(history, reject)
         self.assertLess(reject, note)
-        self.assertIn("return -EINVAL", branch[reject:note])
+        self.assertIn("mesh_gateway_ack_confirm_payload_parse(", miss)
+        self.assertIn("APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE", miss)
+        self.assertIn("return -EINVAL", miss)
 
     def test_discovery_ack_confirm_matches_exact_live_report_owner(self) -> None:
         note = function_body(SURVEY, "gateway_note_survey_ack_confirm")

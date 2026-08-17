@@ -60,10 +60,10 @@ static atomic_t receive_abort_enabled;
 #endif
 
 #ifndef DWM3000_TX_ANT_DLY
-#define DWM3000_TX_ANT_DLY 16385u
+#define DWM3000_TX_ANT_DLY 16345u
 #endif
 #ifndef DWM3000_RX_ANT_DLY
-#define DWM3000_RX_ANT_DLY 16385u
+#define DWM3000_RX_ANT_DLY 16345u
 #endif
 #define DWM3000_UUS_TO_DWT_TIME 63898ULL
 #define DWM3000_TIME_UNITS (1.0 / (499.2e6 * 128.0))

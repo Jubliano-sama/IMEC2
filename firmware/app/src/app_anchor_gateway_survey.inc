@@ -2771,50 +2771,31 @@ static int gateway_survey_control_round_id(uint16_t *round_id)
 }
 #endif
 
-static int gateway_survey_send_outbound(struct mesh_outbound *outbound,
-                                        enum command_id command_id,
-                                        const char *reason)
-{
 #if DEVICE_ROLE == ROLE_GATEWAY
+static int gateway_survey_arm_control_transaction(
+    struct mesh_outbound *outbound,
+    enum command_id command_id,
+    const uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN],
+    uint32_t client_token,
+    uint32_t delivery_handle,
+    const char *reason)
+{
     struct node_transaction_key key;
-    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
     uint64_t now_ms;
-    uint64_t request_deadline_ms;
     uint64_t transaction_deadline_ms;
-    uint32_t request_timeout_ms;
     uint32_t transaction_timeout_ms;
-    uint32_t client_token;
-    uint32_t delivery_handle;
     int ret;
 
-    if (outbound == NULL) {
+    if (outbound == NULL || request_digest == NULL || delivery_handle == 0u) {
         return -EINVAL;
     }
-    ret = gateway_survey_outbound_digest(outbound, request_digest);
-    if (ret < 0) {
-        return ret;
-    }
     now_ms = (uint64_t)k_uptime_get();
-    request_timeout_ms = gateway_survey_request_timeout_ms(
-        outbound->packet.dst_id);
     transaction_timeout_ms = gateway_survey_transaction_timeout_ms(
         outbound->packet.dst_id);
-    if (request_timeout_ms == 0u || transaction_timeout_ms == 0u ||
-        transaction_timeout_ms < request_timeout_ms) {
+    if (transaction_timeout_ms == 0u) {
         return -ETIMEDOUT;
     }
-    request_deadline_ms = now_ms + request_timeout_ms;
     transaction_deadline_ms = now_ms + transaction_timeout_ms;
-    client_token = gateway_survey_next_transaction_token();
-    ret = gateway_survey_send_pair_control(
-        outbound,
-        request_deadline_ms,
-        client_token,
-        &delivery_handle);
-    if (ret < 0) {
-        return ret;
-    }
-
     key = (struct node_transaction_key) {
         .requester_id = outbound->packet.src_id,
         .responder_id = outbound->packet.dst_id,
@@ -2831,7 +2812,6 @@ static int gateway_survey_send_outbound(struct mesh_outbound *outbound,
                                            transaction_deadline_ms,
                                            now_ms);
     if (ret < 0) {
-        (void)app_node_comm_abandon_delivery(delivery_handle);
         return ret;
     }
     ret = gateway_begin_command_result_wait_until(
@@ -2841,7 +2821,6 @@ static int gateway_survey_send_outbound(struct mesh_outbound *outbound,
     if (ret < 0) {
         enum node_transaction_action action;
 
-        (void)app_node_comm_abandon_delivery(delivery_handle);
         (void)node_transaction_cancel(&gateway_survey_transaction.active,
                                       now_ms, &action);
         return ret;
@@ -2867,6 +2846,57 @@ static int gateway_survey_send_outbound(struct mesh_outbound *outbound,
     (void)gateway_survey_work_schedule(
         SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
         GATEWAY_SURVEY_TRANSACTION_POLL_MS);
+    return 0;
+}
+#endif
+
+static int gateway_survey_send_outbound(struct mesh_outbound *outbound,
+                                        enum command_id command_id,
+                                        const char *reason)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint64_t now_ms;
+    uint64_t request_deadline_ms;
+    uint32_t request_timeout_ms;
+    uint32_t client_token;
+    uint32_t delivery_handle;
+    int ret;
+
+    if (outbound == NULL) {
+        return -EINVAL;
+    }
+    ret = gateway_survey_outbound_digest(outbound, request_digest);
+    if (ret < 0) {
+        return ret;
+    }
+    now_ms = (uint64_t)k_uptime_get();
+    request_timeout_ms = gateway_survey_request_timeout_ms(
+        outbound->packet.dst_id);
+    if (request_timeout_ms == 0u) {
+        return -ETIMEDOUT;
+    }
+    request_deadline_ms = now_ms + request_timeout_ms;
+    client_token = gateway_survey_next_transaction_token();
+    ret = gateway_survey_send_pair_control(
+        outbound,
+        request_deadline_ms,
+        client_token,
+        &delivery_handle);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = gateway_survey_arm_control_transaction(outbound,
+                                                 command_id,
+                                                 request_digest,
+                                                 client_token,
+                                                 delivery_handle,
+                                                 reason);
+    if (ret < 0) {
+        (void)app_node_comm_abandon_delivery(delivery_handle);
+        return ret;
+    }
     return 0;
 #else
     ARG_UNUSED(outbound);
@@ -2984,7 +3014,6 @@ static int gateway_survey_send_start(
                 .pair = control->pair,
                 .started_at_ms = now_ms,
                 .valid = true,
-                .initiator_submitted = false,
             };
         message_age_ms = 0u;
     } else {
@@ -3003,9 +3032,7 @@ static int gateway_survey_send_start(
         }
         message_age_ms = now_ms -
                          gateway_survey_start_release.started_at_ms;
-        if (!survey_round_start_initiator_send_allowed(
-                message_age_ms,
-                gateway_survey_start_release.initiator_submitted)) {
+        if (!survey_round_start_initiator_send_allowed(message_age_ms)) {
             return -ETIMEDOUT;
         }
     }
@@ -3109,39 +3136,11 @@ static int gateway_survey_send_start(
         const uint32_t release_ms =
             gateway_survey_start_release.started_at_ms +
             SURVEY_ROUND_START_EXECUTE_DELAY_MS;
-        uint32_t sibling_handle = 0u;
-        uint32_t sibling_timeout_ms;
-        uint32_t sibling_token;
-        int sibling_ret;
 
         (void)survey_gateway_observation_origin_freeze(
             &gateway_survey_round_observation_origin, release_ms);
         gateway_survey_round_observation_deadline_ms =
             gateway_survey_operation_deadline_ms;
-
-        /*
-         * The 15 s barrier is an execution instant, not a confirm wait.
-         * Submit START initiator immediately so hop-2/3 ACK_CONFIRM cannot
-         * consume the shared release before the second START is on the air.
-         */
-        outbound.packet.dst_id = control->pair.initiator_id;
-        outbound.packet.seq = gateway_next_command_seq();
-        outbound.packet.message_age_ms = 0u;
-        outbound.queued_at_ms = now_ms;
-        outbound.queued_at_valid = true;
-        sibling_timeout_ms = gateway_survey_request_timeout_ms(
-            control->pair.initiator_id);
-        sibling_token = gateway_survey_next_transaction_token();
-        if (sibling_timeout_ms > 0u) {
-            sibling_ret = gateway_survey_send_pair_control(
-                &outbound,
-                (uint64_t)now_ms + sibling_timeout_ms,
-                sibling_token,
-                &sibling_handle);
-            if (sibling_ret == 0) {
-                gateway_survey_start_release.initiator_submitted = true;
-            }
-        }
     }
 #endif
     return ret;
@@ -3233,9 +3232,18 @@ static int gateway_survey_prepare_cleanup_delivery(
         }
     }
     if (!cleanup->active) {
+        uint64_t request_horizon_ms =
+            UINT64_MAX - now_ms < SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS ?
+                UINT64_MAX :
+                now_ms + SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS;
+
         *cleanup = (struct gateway_survey_cleanup_delivery) {
             .pair = gateway_survey_transaction.pair,
             .target_id = target_id,
+            .request_deadline_ms =
+                request_horizon_ms < cleanup_deadline_ms ?
+                    request_horizon_ms : cleanup_deadline_ms,
+            .absolute_deadline_ms = cleanup_deadline_ms,
             .client_token = gateway_survey_next_transaction_token(),
             .sequence = gateway_next_command_seq(),
             .round_id = round_id,
@@ -3262,6 +3270,10 @@ static int gateway_survey_prepare_cleanup_delivery(
                                       round_commitment,
                                       sizeof(round_commitment))) {
         return -ESTALE;
+    }
+    if (now_ms >= cleanup->request_deadline_ms ||
+        now_ms >= cleanup->absolute_deadline_ms) {
+        return -ETIMEDOUT;
     }
     ret = gateway_survey_prepare_pair_control(&route, &hop_count);
     if (ret < 0) {

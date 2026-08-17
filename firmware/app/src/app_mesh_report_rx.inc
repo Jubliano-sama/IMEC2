@@ -696,9 +696,6 @@ static bool mesh_queue_from_frame_at_internal(
         return false;
     }
 #endif
-    if (valid_mesh_frame != NULL) {
-        *valid_mesh_frame = true;
-    }
     if (previous_hop_id != NULL) {
         *previous_hop_id = context.previous_hop_id;
     }
@@ -773,6 +770,9 @@ static bool mesh_queue_from_frame_at_internal(
                                 pending.packet.seq);
         }
         return false;
+    }
+    if (valid_mesh_frame != NULL) {
+        *valid_mesh_frame = true;
     }
     app_mesh_test_note_wake_event(&pending.packet,
                                   pending.previous_hop_id,

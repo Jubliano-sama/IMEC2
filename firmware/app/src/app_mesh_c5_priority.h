@@ -156,6 +156,9 @@ bool app_mesh_c5_wake_followup_uses_extended_phr(uint8_t claim_flags);
 bool app_mesh_c5_wake_followup_is_control(uint8_t claim_flags);
 bool app_mesh_c5_control_followup_yields_to_ack(uint8_t claim_flags,
                                                 bool ch9_ack_wait_active);
+bool app_mesh_c5_command_followup_holds_same_train_wake(
+    uint8_t contact_purpose,
+    bool click_priority);
 uint32_t app_mesh_c5_route_reply_listen_window_ms(
     uint8_t route_ttl,
     const struct app_mesh_c5_route_reply_window_timing *timing);
