@@ -658,7 +658,8 @@ int app_gateway_survey_round_preflight_sample(
     if (round == NULL || sample == NULL || duplicate == NULL) {
         return PROTO_ERR_ARG;
     }
-    if ((admissible_lane_state != SURVEY_PAIR_ROUND_LANE_ARMED &&
+    if ((admissible_lane_state != SURVEY_PAIR_ROUND_LANE_ARMING &&
+         admissible_lane_state != SURVEY_PAIR_ROUND_LANE_ARMED &&
          admissible_lane_state != SURVEY_PAIR_ROUND_LANE_OBSERVING) ||
         !round->runtime.active ||
         sample->round_id != round->runtime.batch_sequence) {
@@ -712,6 +713,49 @@ int app_gateway_survey_round_preflight_sample(
     return PROTO_OK;
 }
 
+int app_gateway_survey_round_preflight_admissible_sample(
+    const struct app_gateway_survey_round *round,
+    uint64_t reporter_id,
+    const struct survey_sample *sample,
+    size_t *lane_index,
+    bool *duplicate)
+{
+    int ret;
+
+    ret = app_gateway_survey_round_preflight_sample(
+        round,
+        SURVEY_PAIR_ROUND_LANE_OBSERVING,
+        reporter_id,
+        sample,
+        lane_index,
+        duplicate);
+    if (ret == PROTO_ERR_STALE) {
+        ret = app_gateway_survey_round_preflight_sample(
+            round,
+            SURVEY_PAIR_ROUND_LANE_ARMED,
+            reporter_id,
+            sample,
+            lane_index,
+            duplicate);
+    }
+    /*
+     * START_INITIATOR ACK-confirm is what promotes ARMING to ARMED and then
+     * OBSERVING. A hop-1 responder can finish DS-TWR before that confirm
+     * arrives, so semantic admission must keep the same fallback the commit
+     * path uses.
+     */
+    if (ret == PROTO_ERR_STALE) {
+        ret = app_gateway_survey_round_preflight_sample(
+            round,
+            SURVEY_PAIR_ROUND_LANE_ARMING,
+            reporter_id,
+            sample,
+            lane_index,
+            duplicate);
+    }
+    return ret;
+}
+
 int app_gateway_survey_round_note_sample(
     struct app_gateway_survey_round *round,
     uint64_t reporter_id,
@@ -732,22 +776,12 @@ int app_gateway_survey_round_note_sample(
         round->phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING) {
         return PROTO_ERR_STALE;
     }
-    ret = app_gateway_survey_round_preflight_sample(
+    ret = app_gateway_survey_round_preflight_admissible_sample(
         round,
-        SURVEY_PAIR_ROUND_LANE_OBSERVING,
         reporter_id,
         sample,
         &matched_index,
         &duplicate);
-    if (ret == PROTO_ERR_STALE) {
-        ret = app_gateway_survey_round_preflight_sample(
-            round,
-            SURVEY_PAIR_ROUND_LANE_ARMED,
-            reporter_id,
-            sample,
-            &matched_index,
-            &duplicate);
-    }
     if (ret != PROTO_OK) {
         return ret;
     }

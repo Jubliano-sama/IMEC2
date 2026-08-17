@@ -332,6 +332,10 @@ int survey_pair_round_runtime_mark_observing(
     if (!runtime->active || lane_index >= runtime->lane_count) {
         return PROTO_ERR_NOT_FOUND;
     }
+    if (runtime->lanes[lane_index].state ==
+        SURVEY_PAIR_ROUND_LANE_OBSERVING) {
+        return PROTO_OK;
+    }
     if (runtime->lanes[lane_index].state !=
         SURVEY_PAIR_ROUND_LANE_ARMED) {
         return PROTO_ERR_STALE;
@@ -390,9 +394,16 @@ int survey_pair_round_runtime_note_started(
         return PROTO_ERR_MALFORMED;
     }
     lane = &runtime->lanes[lane_index];
+    if ((endpoint_mask & (uint8_t)~lane->prepared_mask) != 0u) {
+        return PROTO_ERR_STALE;
+    }
+    if (lane->state == SURVEY_PAIR_ROUND_LANE_ARMED ||
+        lane->state == SURVEY_PAIR_ROUND_LANE_OBSERVING) {
+        return ((endpoint_mask & (uint8_t)~lane->started_mask) == 0u) ?
+                   PROTO_OK : PROTO_ERR_STALE;
+    }
     if (lane->state != SURVEY_PAIR_ROUND_LANE_ARMING ||
-        lane->prepared_mask != SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK ||
-        (endpoint_mask & (uint8_t)~lane->prepared_mask) != 0u) {
+        lane->prepared_mask != SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK) {
         return PROTO_ERR_STALE;
     }
     lane->started_mask |= endpoint_mask;
@@ -437,7 +448,8 @@ int survey_pair_round_runtime_note_sample(
         struct survey_pair_round_lane *candidate = &runtime->lanes[i];
 
         if ((candidate->state != SURVEY_PAIR_ROUND_LANE_OBSERVING &&
-             candidate->state != SURVEY_PAIR_ROUND_LANE_ARMED) ||
+             candidate->state != SURVEY_PAIR_ROUND_LANE_ARMED &&
+             candidate->state != SURVEY_PAIR_ROUND_LANE_ARMING) ||
             !survey_pair_round_runtime_pair_equal(&candidate->pair,
                                                   &sample->pair)) {
             continue;

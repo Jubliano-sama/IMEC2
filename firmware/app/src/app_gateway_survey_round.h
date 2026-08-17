@@ -192,11 +192,21 @@ void app_gateway_survey_round_clear_control_confirmation(
 
 /*
  * Purely classify one sample against the current batch. The caller selects
- * OBSERVING after this lane's ordered START responder/initiator controls.
+ * the lane state that may own this result.
  */
 int app_gateway_survey_round_preflight_sample(
     const struct app_gateway_survey_round *round,
     enum survey_pair_round_lane_state admissible_lane_state,
+    uint64_t reporter_id,
+    const struct survey_sample *sample,
+    size_t *lane_index,
+    bool *duplicate);
+/*
+ * Admit a sample against OBSERVING, then ARMED, then ARMING. A forced-hop
+ * responder can finish DS-TWR before START ACK-confirm promotes the lane.
+ */
+int app_gateway_survey_round_preflight_admissible_sample(
+    const struct app_gateway_survey_round *round,
     uint64_t reporter_id,
     const struct survey_sample *sample,
     size_t *lane_index,

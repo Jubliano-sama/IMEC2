@@ -1775,42 +1775,76 @@ static int gateway_manual_survey_pair_note_sample(
 #endif
 
 #if DEVICE_ROLE == ROLE_GATEWAY
+static void gateway_survey_log_pair_result_drop(
+    uint64_t reporter_id,
+    const struct survey_sample *sample,
+    int ret)
+{
+    uint64_t initiator_id = 0u;
+    uint64_t responder_id = 0u;
+    unsigned int lane_state = 0xffu;
+
+    if (sample != NULL) {
+        initiator_id = sample->pair.initiator_id;
+        responder_id = sample->pair.responder_id;
+        for (uint8_t i = 0u; i < gateway_survey_round.runtime.lane_count; i++) {
+            const struct survey_pair_round_lane *lane =
+                &gateway_survey_round.runtime.lanes[i];
+
+            if (lane->pair.initiator_id == initiator_id &&
+                lane->pair.responder_id == responder_id) {
+                lane_state = (unsigned int)lane->state;
+                break;
+            }
+        }
+    }
+    status_debug_printf(
+        "DBG_SURVEY_SEMANTIC_DROP msg=0x53 ret=%d phase=%u lane_state=%u "
+        "expected_pair=%04llx/%04llx reporter=%04llx\n",
+        ret,
+        (unsigned int)gateway_survey_round.phase,
+        lane_state,
+        (unsigned long long)(initiator_id & 0xffffu),
+        (unsigned long long)(responder_id & 0xffffu),
+        (unsigned long long)(reporter_id & 0xffffu));
+}
+
 static int gateway_survey_round_preflight_sample(
     uint64_t reporter_id,
     const struct survey_sample *sample,
     uint64_t received_at_ms)
 {
-    enum survey_pair_round_lane_state admissible_lane_state;
     bool duplicate = false;
     int ret;
 
     if (!gateway_survey_round_active() || sample == NULL ||
         !gateway_survey_round_observation_origin.valid) {
+        gateway_survey_log_pair_result_drop(reporter_id, sample, -ESTALE);
         return -ESTALE;
     }
-    if (gateway_survey_round.phase ==
-            APP_GATEWAY_SURVEY_ROUND_OBSERVING ||
-        gateway_survey_round.phase ==
-            APP_GATEWAY_SURVEY_ROUND_DISPATCHING) {
-        admissible_lane_state = SURVEY_PAIR_ROUND_LANE_OBSERVING;
-    } else {
+    if (gateway_survey_round.phase != APP_GATEWAY_SURVEY_ROUND_OBSERVING &&
+        gateway_survey_round.phase != APP_GATEWAY_SURVEY_ROUND_DISPATCHING) {
+        gateway_survey_log_pair_result_drop(reporter_id, sample, -ESTALE);
         return -ESTALE;
     }
     if (!gateway_survey_receive_in_interval(
             received_at_ms,
             gateway_survey_round_observation_origin.started_at_ms,
             gateway_survey_round_observation_deadline_ms)) {
+        gateway_survey_log_pair_result_drop(reporter_id, sample, -ESTALE);
         return -ESTALE;
     }
-    ret = app_gateway_survey_round_preflight_sample(
+    ret = app_gateway_survey_round_preflight_admissible_sample(
         &gateway_survey_round,
-        admissible_lane_state,
         reporter_id,
         sample,
         NULL,
         &duplicate);
     if (ret != PROTO_OK) {
-        return ret == PROTO_ERR_STALE ? -ESTALE : -EBADMSG;
+        int drop = ret == PROTO_ERR_STALE ? -ESTALE : -EBADMSG;
+
+        gateway_survey_log_pair_result_drop(reporter_id, sample, drop);
+        return drop;
     }
     return duplicate ? APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE :
                        APP_GATEWAY_SEMANTIC_ACCEPT_NEW;

@@ -717,6 +717,91 @@ static void test_armed_lane_accepts_current_attempt_sample(void)
     assert(runtime.lanes[0].state == SURVEY_PAIR_ROUND_LANE_ARMED);
 }
 
+static void test_arming_lane_accepts_current_attempt_sample(void)
+{
+    struct survey_gateway_context plan;
+    struct survey_pair_round_metadata metadata[1];
+    struct survey_pair_round_runtime runtime;
+    struct survey_sample sample;
+    size_t lane_index = SIZE_MAX;
+    bool accepted_new = false;
+
+    plan_init(&plan, metadata, 1u, 1u);
+    assert(survey_pair_round_runtime_begin(&runtime,
+                                           &plan,
+                                           metadata,
+                                           1u,
+                                           1u,
+                                           0u) == PROTO_OK);
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(survey_pair_round_runtime_note_prepared(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+    assert(survey_pair_round_runtime_note_prepared(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
+    assert(survey_pair_round_runtime_note_started(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
+    assert(runtime.lanes[0].state == SURVEY_PAIR_ROUND_LANE_ARMING);
+    sample = lane_sample(&runtime, &runtime.lanes[0], 0u, 1250, RANGE_OK);
+    assert(survey_pair_round_runtime_note_sample(
+               &runtime,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &accepted_new) == PROTO_OK);
+    assert(lane_index == 0u);
+    assert(accepted_new);
+    assert(runtime.lanes[0].state == SURVEY_PAIR_ROUND_LANE_ARMING);
+    assert(survey_pair_round_runtime_note_started(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+    assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) ==
+           PROTO_OK);
+    assert(runtime.lanes[0].state == SURVEY_PAIR_ROUND_LANE_OBSERVING);
+    assert(runtime.lanes[0].usable_result_mask == 0x1u);
+}
+
+static void test_start_confirm_is_idempotent_after_armed_sample(void)
+{
+    struct survey_gateway_context plan;
+    struct survey_pair_round_metadata metadata[1];
+    struct survey_pair_round_runtime runtime;
+    struct survey_sample sample;
+
+    plan_init(&plan, metadata, 1u, 1u);
+    assert(survey_pair_round_runtime_begin(&runtime,
+                                           &plan,
+                                           metadata,
+                                           1u,
+                                           1u,
+                                           0u) == PROTO_OK);
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    arm_lane(&runtime, 0u);
+    sample = lane_sample(&runtime, &runtime.lanes[0], 0u, 1300, RANGE_OK);
+    assert(survey_pair_round_runtime_note_sample(
+               &runtime,
+               sample.pair.responder_id,
+               &sample,
+               NULL,
+               NULL) == PROTO_OK);
+    assert(survey_pair_round_runtime_note_started(
+               &runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+    assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) ==
+           PROTO_OK);
+    assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) ==
+           PROTO_OK);
+    assert(runtime.lanes[0].state == SURVEY_PAIR_ROUND_LANE_OBSERVING);
+    assert(runtime.lanes[0].usable_result_mask == 0x1u);
+}
+
 static void test_compact_pair_indices_fail_before_runtime_mutation(void)
 {
     struct survey_gateway_context plan;
@@ -762,6 +847,8 @@ int main(void)
     test_batch_load_failure_does_not_advance_cursors();
     test_duplicate_cleanup_completion_is_idempotent();
     test_armed_lane_accepts_current_attempt_sample();
+    test_arming_lane_accepts_current_attempt_sample();
+    test_start_confirm_is_idempotent_after_armed_sample();
     test_compact_pair_indices_fail_before_runtime_mutation();
     puts("survey pair round runtime tests passed");
     return 0;

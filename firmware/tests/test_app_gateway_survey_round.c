@@ -1347,6 +1347,277 @@ static void test_sample_conflict_is_rejected_without_round_mutation(void)
     assert(memcmp(&round, &before, sizeof(round)) == 0);
 }
 
+static uint32_t test_control_session_id(const struct survey_pair *pair)
+{
+    return pair->operation_generation == 0u ? pair->survey_id :
+           survey_operation_session_id(pair->operation_generation);
+}
+
+static void confirm_current_control(struct app_gateway_survey_round *round)
+{
+    struct app_gateway_survey_round_control control;
+
+    assert(app_gateway_survey_round_current_control(round, &control) ==
+           PROTO_OK);
+    assert(app_gateway_survey_round_note_control_success(
+               round,
+               control.command_id,
+               control.target_id,
+               test_control_session_id(&control.pair)) == PROTO_OK);
+}
+
+static void dispatch_until_stage(
+    struct app_gateway_survey_round *round,
+    enum app_gateway_survey_control_stage stop_before)
+{
+    while (round->phase == APP_GATEWAY_SURVEY_ROUND_DISPATCHING) {
+        struct app_gateway_survey_round_control control;
+
+        assert(app_gateway_survey_round_current_control(round, &control) ==
+               PROTO_OK);
+        if (control.stage == stop_before) {
+            return;
+        }
+        confirm_current_control(round);
+    }
+}
+
+static struct survey_sample make_lane_sample(
+    const struct app_gateway_survey_round *round,
+    size_t lane_index,
+    uint16_t sample_index,
+    int32_t distance_mm)
+{
+    const struct survey_pair_round_lane *lane =
+        app_gateway_survey_round_lane(round, lane_index);
+
+    assert(lane != NULL);
+    return (struct survey_sample) {
+        .pair = lane->pair,
+        .round_id = round->runtime.batch_sequence,
+        .sample_index = sample_index,
+        .distance_mm = distance_mm,
+        .quality = 80u,
+        .range_status = RANGE_OK,
+    };
+}
+
+static void begin_single_pair_round(struct survey_gateway_context *context,
+                                    struct app_gateway_survey_round *round)
+{
+    context_init(context, 1u, 4u);
+    assert(app_gateway_survey_round_begin(round, context, 1u, 0u) ==
+           PROTO_OK);
+}
+
+static void assert_sample_admitted_and_confirm_is_idempotent(
+    struct app_gateway_survey_round *round,
+    enum survey_pair_round_lane_state expected_state)
+{
+    const struct survey_pair_round_lane *lane;
+    struct survey_sample sample;
+    struct app_gateway_survey_round_control control;
+    size_t lane_index = SIZE_MAX;
+    bool accepted_new = false;
+    bool duplicate = true;
+
+    lane = app_gateway_survey_round_lane(round, 0u);
+    assert(lane != NULL);
+    assert(lane->state == expected_state);
+    assert(round->phase == APP_GATEWAY_SURVEY_ROUND_DISPATCHING);
+    sample = make_lane_sample(round, 0u, 0u, 1250);
+
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &duplicate) == PROTO_OK);
+    assert(lane_index == 0u);
+    assert(!duplicate);
+
+    assert(app_gateway_survey_round_note_sample(
+               round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &accepted_new) == PROTO_OK);
+    assert(lane_index == 0u);
+    assert(accepted_new);
+    lane = app_gateway_survey_round_lane(round, 0u);
+    assert(lane->usable_result_mask == 0x1u);
+    assert(lane->state == expected_state);
+
+    duplicate = false;
+    accepted_new = true;
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &duplicate) == PROTO_OK);
+    assert(duplicate);
+    assert(app_gateway_survey_round_note_sample(
+               round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &accepted_new) == PROTO_OK);
+    assert(!accepted_new);
+    lane = app_gateway_survey_round_lane(round, 0u);
+    assert(lane->usable_result_mask == 0x1u);
+
+    assert(app_gateway_survey_round_current_control(round, &control) ==
+           PROTO_OK);
+    assert(control.stage == APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR);
+    confirm_current_control(round);
+    lane = app_gateway_survey_round_lane(round, 0u);
+    assert(lane->state == SURVEY_PAIR_ROUND_LANE_OBSERVING);
+    assert(lane->usable_result_mask == 0x1u);
+
+    duplicate = false;
+    assert(app_gateway_survey_round_preflight_sample(
+               round,
+               SURVEY_PAIR_ROUND_LANE_OBSERVING,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &duplicate) == PROTO_OK);
+    assert(duplicate);
+}
+
+static void test_f1dd_result_arrives_while_lane_is_arming(void)
+{
+    struct survey_gateway_context context;
+    struct app_gateway_survey_round round;
+
+    begin_single_pair_round(&context, &round);
+    dispatch_until_stage(&round,
+                         APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR);
+    assert_sample_admitted_and_confirm_is_idempotent(
+        &round, SURVEY_PAIR_ROUND_LANE_ARMING);
+}
+
+static void test_result_arrives_while_lane_is_armed(void)
+{
+    struct survey_gateway_context context;
+    struct app_gateway_survey_round round;
+
+    begin_single_pair_round(&context, &round);
+    dispatch_until_stage(&round,
+                         APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR);
+    assert(survey_pair_round_runtime_note_started(
+               &round.runtime,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
+    assert_sample_admitted_and_confirm_is_idempotent(
+        &round, SURVEY_PAIR_ROUND_LANE_ARMED);
+}
+
+static void test_pair_result_admission_rejects_mismatched_identities(void)
+{
+    struct survey_gateway_context context;
+    struct app_gateway_survey_round round;
+    const struct survey_pair_round_lane *lane;
+    struct survey_sample sample;
+    struct survey_sample rejected;
+    size_t lane_index = SIZE_MAX;
+    bool accepted_new = true;
+    bool duplicate = true;
+
+    begin_single_pair_round(&context, &round);
+    dispatch_until_stage(&round,
+                         APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR);
+    lane = app_gateway_survey_round_lane(&round, 0u);
+    sample = make_lane_sample(&round, 0u, 0u, 1400);
+
+    rejected = sample;
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               &round,
+               sample.pair.initiator_id,
+               &rejected,
+               &lane_index,
+               &duplicate) == PROTO_ERR_MALFORMED);
+    assert(app_gateway_survey_round_note_sample(
+               &round,
+               sample.pair.initiator_id,
+               &rejected,
+               &lane_index,
+               &accepted_new) == PROTO_ERR_MALFORMED);
+
+    rejected = sample;
+    rejected.pair.initiator_id = sample.pair.responder_id;
+    rejected.pair.responder_id = sample.pair.initiator_id;
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               &round,
+               rejected.pair.responder_id,
+               &rejected,
+               &lane_index,
+               &duplicate) == PROTO_ERR_STALE);
+
+    rejected = sample;
+    rejected.round_id = (uint16_t)(sample.round_id + 1u);
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               &round,
+               sample.pair.responder_id,
+               &rejected,
+               &lane_index,
+               &duplicate) == PROTO_ERR_STALE);
+
+    rejected = sample;
+    rejected.pair.survey_id = sample.pair.survey_id + 1u;
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               &round,
+               sample.pair.responder_id,
+               &rejected,
+               &lane_index,
+               &duplicate) == PROTO_ERR_STALE);
+
+    assert(lane->usable_result_mask == 0u);
+    assert(lane->state == SURVEY_PAIR_ROUND_LANE_ARMING);
+}
+
+static void test_pair_result_admission_rejects_unready_lanes(void)
+{
+    struct survey_gateway_context context;
+    struct app_gateway_survey_round round;
+    struct survey_sample sample;
+    size_t lane_index = SIZE_MAX;
+    bool duplicate = true;
+
+    begin_single_pair_round(&context, &round);
+    sample = make_lane_sample(&round, 0u, 0u, 1500);
+    assert(app_gateway_survey_round_lane(&round, 0u)->state ==
+           SURVEY_PAIR_ROUND_LANE_READY);
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               &round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &duplicate) == PROTO_ERR_STALE);
+
+    dispatch_current_batch(&round);
+    assert(app_gateway_survey_round_finalize_lane(
+               &round,
+               0u,
+               0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
+    assert(app_gateway_survey_round_lane(&round, 0u)->state ==
+           SURVEY_PAIR_ROUND_LANE_SUCCEEDED);
+    assert(app_gateway_survey_round_preflight_admissible_sample(
+               &round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &duplicate) == PROTO_ERR_STALE);
+    assert(app_gateway_survey_round_note_sample(
+               &round,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               NULL) == PROTO_ERR_STALE);
+}
+
 int main(void)
 {
     test_maximum_25_sparse_pairs_serialize_and_complete();
@@ -1365,6 +1636,10 @@ int main(void)
     test_ack_confirm_physical_deadline_is_closed_open_across_wrap();
     test_outcome_event_identity_survives_retry_and_blocks_batch_advance();
     test_sample_conflict_is_rejected_without_round_mutation();
+    test_f1dd_result_arrives_while_lane_is_arming();
+    test_result_arrives_while_lane_is_armed();
+    test_pair_result_admission_rejects_mismatched_identities();
+    test_pair_result_admission_rejects_unready_lanes();
     puts("app gateway survey round tests passed");
     return 0;
 }
