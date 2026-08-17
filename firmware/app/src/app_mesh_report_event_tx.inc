@@ -1007,6 +1007,67 @@ static bool mesh_event_retry_after_failure(
     return scheduled;
 }
 
+static bool mesh_outbound_is_survey_uplink(const struct mesh_outbound *out)
+{
+    return out != NULL &&
+           (out->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
+            out->packet.msg_type == MSG_SURVEY_PAIR_RESULT);
+}
+
+static bool mesh_event_propose_has_pending_survey_uplink(void)
+{
+    if (mesh_route_waiting_tx_valid &&
+        mesh_outbound_is_survey_uplink(&mesh_route_waiting_tx)) {
+        return true;
+    }
+#if DEVICE_ROLE == ROLE_ANCHOR
+    {
+        struct mesh_outbound queued;
+
+        if (report_tx_queue_peek(&queued) == 0 &&
+            mesh_outbound_is_survey_uplink(&queued)) {
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+static uint8_t mesh_event_survey_route_hops(void)
+{
+    const struct route_candidate *selected =
+        route_selected(&mesh_runtime.upstream);
+
+    return selected == NULL ? 0u : selected->hop_count;
+}
+
+static uint32_t mesh_event_survey_cadence_wait_deadline_ms(uint32_t now_ms)
+{
+    return now_ms +
+           survey_pair_control_timeout_ms(mesh_event_survey_route_hops());
+}
+
+static bool mesh_event_propose_keep_waiting(const char *reason)
+{
+    uint32_t now_ms = k_uptime_get_32();
+
+    if (!mesh_event_propose_retry.active ||
+        !mesh_event_propose_has_pending_survey_uplink()) {
+        return false;
+    }
+    if (app_mesh_event_retry_extend_deadline(
+            &mesh_event_propose_retry,
+            now_ms,
+            mesh_event_survey_cadence_wait_deadline_ms(now_ms)) != 0) {
+        return false;
+    }
+    return mesh_event_retry_after_failure(
+        &mesh_event_propose_retry,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        true,
+        reason);
+}
+
 static int mesh_propose_event_after_channel5_contact_authorized(
     uint64_t peer_id,
     const char *reason,
@@ -1133,7 +1194,9 @@ static int mesh_propose_event_after_channel5_contact_authorized(
             &request,
             &retry_key,
             now_ms,
-            now_ms + MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS,
+            mesh_event_propose_has_pending_survey_uplink() ?
+                mesh_event_survey_cadence_wait_deadline_ms(now_ms) :
+                (now_ms + MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS),
             mesh_event_propose_record.timing.event_interval_ms,
             0u);
         if (ret < 0) {
@@ -1170,7 +1233,8 @@ static int mesh_propose_event_after_channel5_contact_authorized(
                 &mesh_event_propose_retry,
                 APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
                 rf_started,
-                "event-propose-send")) {
+                "event-propose-send") &&
+            !mesh_event_propose_keep_waiting("event-propose-cadence-wait")) {
             mesh_event_propose_clear();
             return -ETIMEDOUT;
         }
@@ -1190,11 +1254,6 @@ static int mesh_propose_event_after_channel5_contact_authorized(
     }
 
     if (require_accept) {
-        /* The retry owner was created before wake/contact preparation. Once
-         * the immutable PROPOSE reaches RF, keep its correlation alive for
-         * the complete queue-plus-ACCEPT listener that starts now. */
-        mesh_event_propose_retry.deadline_ms =
-            k_uptime_get_32() + MESH_EVENT_NEGOTIATION_DEADLINE_MS;
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_EVENT_ACCEPT_LISTEN\n");
         }
@@ -1221,7 +1280,8 @@ static int mesh_propose_event_after_channel5_contact_authorized(
                     &mesh_event_propose_retry,
                     APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
                     true,
-                    "event-accept-missed")) {
+                    "event-accept-missed") &&
+                !mesh_event_propose_keep_waiting("event-accept-cadence-wait")) {
                 mesh_event_propose_clear();
                 return -ETIMEDOUT;
             }
@@ -2527,10 +2587,12 @@ static void mesh_event_negotiation_retry_work_handler(struct k_work *work)
 
     now_ms = k_uptime_get_32();
     if (app_mesh_event_retry_expired(&mesh_event_propose_retry, now_ms)) {
-        mesh_event_propose_clear();
-        if (mesh_route_waiting_tx_valid) {
-            mesh_schedule_route_waiting_retry_after(
-                "event-propose-expired", 1u);
+        if (!mesh_event_propose_keep_waiting("event-propose-cadence-wait")) {
+            mesh_event_propose_clear();
+            if (mesh_route_waiting_tx_valid) {
+                mesh_schedule_route_waiting_retry_after(
+                    "event-propose-expired", 1u);
+            }
         }
     } else if (app_mesh_event_retry_due(&mesh_event_propose_retry, now_ms)) {
         uint64_t peer_id = mesh_event_propose_retry.peer_id;
@@ -2559,7 +2621,8 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         !mesh_id_is_unicast(peer_id) ||
-        peer_id == DEVICE_ID) {
+        peer_id == DEVICE_ID ||
+        peer_id == GATEWAY_ID) {
         return;
     }
 

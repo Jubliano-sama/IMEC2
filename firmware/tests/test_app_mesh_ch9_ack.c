@@ -348,6 +348,35 @@ static void test_ack_complete_keeps_idle_route_test_timing_open(void)
     const struct app_mesh_ch9_ack_complete_state state = {
         .route_test_enabled = true,
         .transmitter_role = false,
+        .cadence_parent = false,
+        .report_tx_queue_used = 0u,
+        .route_waiting_tx_valid = false,
+        .ack_batch_valid = false,
+    };
+
+    assert(!app_mesh_ch9_ack_complete_should_close_timing(&state));
+}
+
+static void test_ack_complete_closes_idle_cadence_parent(void)
+{
+    const struct app_mesh_ch9_ack_complete_state state = {
+        .route_test_enabled = true,
+        .transmitter_role = false,
+        .cadence_parent = true,
+        .report_tx_queue_used = 0u,
+        .route_waiting_tx_valid = false,
+        .ack_batch_valid = false,
+    };
+
+    assert(app_mesh_ch9_ack_complete_should_close_timing(&state));
+}
+
+static void test_ack_complete_does_not_close_gateway_peer(void)
+{
+    const struct app_mesh_ch9_ack_complete_state state = {
+        .route_test_enabled = true,
+        .transmitter_role = false,
+        .cadence_parent = false,
         .report_tx_queue_used = 0u,
         .route_waiting_tx_valid = false,
         .ack_batch_valid = false,
@@ -361,6 +390,7 @@ static void test_ack_complete_does_not_close_when_work_remains(void)
     const struct app_mesh_ch9_ack_complete_state state = {
         .route_test_enabled = true,
         .transmitter_role = false,
+        .cadence_parent = true,
         .report_tx_queue_used = 1u,
         .route_waiting_tx_valid = true,
         .ack_batch_valid = true,
@@ -1679,6 +1709,8 @@ int main(void)
     test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff();
     test_duplicate_sender_retry_does_not_reset_ack_retry_round();
     test_ack_complete_keeps_idle_route_test_timing_open();
+    test_ack_complete_closes_idle_cadence_parent();
+    test_ack_complete_does_not_close_gateway_peer();
     test_ack_complete_does_not_close_when_work_remains();
     test_ack_complete_policy_is_disabled_outside_route_test();
     test_direct_gateway_ack_matches_transit_original_source();

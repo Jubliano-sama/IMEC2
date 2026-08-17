@@ -1229,14 +1229,17 @@ bool app_mesh_direct_gateway_ack_matches(const struct mesh_outbound *sent,
 bool app_mesh_ch9_ack_complete_should_close_timing(
     const struct app_mesh_ch9_ack_complete_state *state)
 {
-    if (state == NULL || !state->route_test_enabled) {
+    if (state == NULL || !state->route_test_enabled ||
+        state->transmitter_role || !state->cadence_parent) {
         return false;
     }
 
     /*
-     * ACK completion only closes the finite payload/ACK attempt. The repeating
-     * channel-9 timing remains supervised until explicit policy, replacement,
-     * or missed-event expiry clears it.
+     * One downstream cadence per parent. After this hop's current uplink
+     * burst is ACK-complete and nothing remains to send or confirm, close
+     * so a sibling or deeper child can attach serially.
      */
-    return false;
+    return state->report_tx_queue_used == 0u &&
+           !state->route_waiting_tx_valid &&
+           !state->ack_batch_valid;
 }

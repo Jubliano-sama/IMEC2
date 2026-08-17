@@ -883,6 +883,42 @@ static void test_accept_rx_cache_is_scoped_to_one_live_session(void)
            APP_MESH_EVENT_REQUEST_NEW);
 }
 
+static void test_extend_deadline_keeps_same_parent_waiting(void)
+{
+    const uint8_t payload[] = {0x51u};
+    struct app_mesh_event_request_identity request = request_identity(
+        LOCAL_ID, 0x61u, 9u, payload, sizeof(payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        request.session_id, request.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state state = {0};
+    uint32_t delay_ms = 0u;
+
+    assert(app_mesh_event_retry_begin(&state,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      1000u,
+                                      7000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+    assert(app_mesh_event_retry_expired(&state, 7000u));
+    assert(app_mesh_event_retry_extend_deadline(&state, 7000u, 187000u) == 0);
+    assert(!app_mesh_event_retry_expired(&state, 7000u));
+    assert(!app_mesh_event_retry_expired(&state, 186999u));
+    assert(app_mesh_event_retry_note_failure(
+               &state,
+               APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+               7000u,
+               0x11u,
+               true,
+               &delay_ms));
+    assert(delay_ms > 0u);
+    assert(state.peer_id == PEER_ID);
+    assert(app_mesh_event_retry_extend_deadline(&state, 8000u, 10000u) == 0);
+    assert(!app_mesh_event_retry_expired(&state, 186999u));
+}
+
 int main(void)
 {
     test_counterphase_shift_preserves_frozen_proposal_shape();
@@ -899,6 +935,7 @@ int main(void)
     test_retry_due_zero_remains_armed_across_uptime_wrap();
     test_completed_accept_does_not_block_another_peer();
     test_accept_rx_cache_is_scoped_to_one_live_session();
+    test_extend_deadline_keeps_same_parent_waiting();
     puts("app mesh event retry tests passed");
     return 0;
 }

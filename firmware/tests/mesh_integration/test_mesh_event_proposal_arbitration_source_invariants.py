@@ -411,6 +411,16 @@ ordinary_discard = select_ack.index("mesh_ch9_ack_batch_discard_if_safe(", repai
 assert stale < physical_commit < late_terminal < repair < repair_reason < ordinary_discard
 assert '"ack-tx-stale"' in select_ack[ordinary_discard:]
 
+survey_uplink = function_body(event_tx, "mesh_outbound_is_survey_uplink")
+assert "MSG_SURVEY_DISCOVERY_REPORT" in survey_uplink
+assert "MSG_SURVEY_PAIR_RESULT" in survey_uplink
+assert "MSG_CLICK_REPORT" not in survey_uplink
+keep_waiting = function_body(event_tx, "mesh_event_propose_keep_waiting")
+assert "mesh_event_propose_has_pending_survey_uplink" in keep_waiting
+assert "survey_pair_control_timeout_ms" in function_body(
+    event_tx, "mesh_event_survey_cadence_wait_deadline_ms"
+)
+
 propose = function_body(
     event_tx, "mesh_propose_event_after_channel5_contact_authorized"
 )

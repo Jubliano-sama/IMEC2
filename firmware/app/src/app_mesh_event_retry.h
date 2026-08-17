@@ -92,6 +92,10 @@ int app_mesh_event_retry_begin(
     uint32_t deadline_ms,
     uint32_t event_interval_ms,
     uint16_t phase_slop_ms);
+int app_mesh_event_retry_extend_deadline(
+    struct app_mesh_event_retry_state *state,
+    uint32_t now_ms,
+    uint32_t deadline_ms);
 int app_mesh_event_retry_resume_backoff(
     struct app_mesh_event_retry_state *state,
     uint16_t retry_round);

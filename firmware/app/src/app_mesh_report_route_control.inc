@@ -1729,6 +1729,8 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     const struct app_mesh_ch9_ack_complete_state complete_state = {
         .route_test_enabled = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST),
         .transmitter_role = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER),
+        .cadence_parent = mesh_id_is_unicast(ack_peer_id) &&
+                          ack_peer_id != GATEWAY_ID,
         .report_tx_queue_used = report_tx_queue_used(),
         .route_waiting_tx_valid = mesh_route_waiting_tx_valid,
         .ack_batch_valid =

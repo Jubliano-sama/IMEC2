@@ -88,14 +88,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn('"event-accept"', call)
         self.assertIn("MESH_EVENT_NEGOTIATION_DEADLINE_MS", call)
         self.assertNotIn("MESH_ROUTE_TEST_REPLY_RX_WINDOW_MS", call)
-
-        rebase = propose.index(
-            "mesh_event_propose_retry.deadline_ms =", listen - 500
-        )
-        self.assertLess(rebase, listen)
-        self.assertIn(
-            "k_uptime_get_32() + MESH_EVENT_NEGOTIATION_DEADLINE_MS",
-            propose[rebase:listen],
+        self.assertNotIn(
+            "mesh_event_propose_retry.deadline_ms =",
+            propose[max(0, listen - 500) : listen],
         )
 
         duration = function_body(REPORT, "mesh_c5_exchange_duration_ms")

@@ -54,6 +54,7 @@ struct app_mesh_ch9_tx_retry_result {
 struct app_mesh_ch9_ack_complete_state {
     bool route_test_enabled;
     bool transmitter_role;
+    bool cadence_parent;
     uint8_t report_tx_queue_used;
     bool route_waiting_tx_valid;
     bool ack_batch_valid;

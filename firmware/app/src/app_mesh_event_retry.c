@@ -164,6 +164,21 @@ int app_mesh_event_retry_begin(
     return 0;
 }
 
+int app_mesh_event_retry_extend_deadline(
+    struct app_mesh_event_retry_state *state,
+    uint32_t now_ms,
+    uint32_t deadline_ms)
+{
+    if (state == NULL || !state->active ||
+        deadline_reached(now_ms, deadline_ms)) {
+        return -EINVAL;
+    }
+    if (!deadline_reached(state->deadline_ms, deadline_ms)) {
+        state->deadline_ms = deadline_ms;
+    }
+    return 0;
+}
+
 int app_mesh_event_retry_resume_backoff(
     struct app_mesh_event_retry_state *state,
     uint16_t retry_round)
