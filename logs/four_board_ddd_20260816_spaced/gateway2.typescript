@@ -1,0 +1,4 @@
+Script started on 2026-08-16 19:02:24+02:00 [COMMAND=".venv/bin/pyocd rtt -t nrf52833 -u E46070D247233537 -f 4000000 -M pre-reset" <not executed on terminal>]
+[33mWaiting for a debug probe matching unique ID 'E46070D247233537' to be connected...[0m
+
+Script done on 2026-08-16 19:02:52+02:00 [COMMAND_EXIT_CODE="0"]
