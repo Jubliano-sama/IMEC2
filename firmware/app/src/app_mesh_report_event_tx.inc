@@ -1047,6 +1047,99 @@ static uint32_t mesh_event_survey_cadence_wait_deadline_ms(uint32_t now_ms)
            survey_pair_control_timeout_ms(mesh_event_survey_route_hops());
 }
 
+static uint32_t survey_identity_backoff_ms(uint64_t node_id,
+                                           uint64_t parent_id,
+                                           uint8_t deferral_count)
+{
+    uint32_t seed = (uint32_t)(node_id ^ (parent_id >> 16) ^ (parent_id << 16));
+    uint32_t jitter = (seed % 101u);
+    uint32_t base_ms = 100u + (uint32_t)deferral_count * 150u;
+    uint32_t total_ms = base_ms + jitter;
+
+    if (total_ms > 1000u) {
+        total_ms = 1000u;
+    }
+    return total_ms;
+}
+
+static bool survey_peer_frame_in_flight(uint64_t peer_id)
+{
+    if (!mesh_id_is_unicast(peer_id)) {
+        return false;
+    }
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (app_mesh_ch9_ack_table_pending_for_peer(&mesh_ch9_ack_table, peer_id)) {
+        return true;
+    }
+    if (mesh_ch9_tx_pending.active &&
+        mesh_ch9_tx_pending.next_hop_id == peer_id &&
+        mesh_ch9_tx_pending.count > 0u) {
+        return true;
+    }
+#endif
+    if (mesh_relay_tx_active(&mesh_runtime) &&
+        mesh_runtime.pending.next_hop_id == peer_id) {
+        return true;
+    }
+    if (mesh_event_propose_retry.active &&
+        mesh_event_propose_retry.peer_id == peer_id) {
+        return true;
+    }
+    return false;
+}
+
+static bool survey_release_ch9_if_current(
+    struct mesh_relay *relay,
+    struct mesh_event_owner *owner,
+    uint64_t peer_id,
+    uint32_t session_id,
+    uint32_t owner_generation)
+{
+    if (relay == NULL || owner == NULL ||
+        !owner->active ||
+        owner->peer_id != peer_id ||
+        owner->session_id != session_id ||
+        owner->generation != owner_generation ||
+        survey_peer_frame_in_flight(peer_id)) {
+        return false;
+    }
+
+    mesh_relay_clear_channel9_timing(relay, peer_id);
+    mesh_event_owner_abandon(owner);
+    mesh_restore_anchor_low_duty_if_no_ch9("survey-ch9-release");
+    return true;
+}
+
+static bool mesh_event_propose_survey_retry_after_failure(
+    struct app_mesh_event_retry_state *state,
+    uint32_t now_ms,
+    const char *reason)
+{
+    if (state == NULL || !state->active ||
+        !mesh_event_propose_has_pending_survey_uplink()) {
+        return false;
+    }
+    (void)app_mesh_event_retry_extend_deadline(
+        state,
+        now_ms,
+        mesh_event_survey_cadence_wait_deadline_ms(now_ms));
+    if (uptime_deadline_reached(now_ms, state->deadline_ms)) {
+        return false;
+    }
+    uint8_t deferrals = (uint8_t)state->pre_rf_deferrals;
+    if (state->pre_rf_deferrals != UINT16_MAX) {
+        state->pre_rf_deferrals++;
+    }
+    uint32_t delay_ms = survey_identity_backoff_ms(DEVICE_ID, state->peer_id, deferrals);
+    uint32_t due_ms = now_ms + delay_ms;
+    if (uptime_deadline_reached(due_ms, state->deadline_ms)) {
+        return false;
+    }
+    state->retry_due_ms = due_ms;
+    state->retry_due_armed = true;
+    return true;
+}
+
 static bool mesh_event_propose_keep_waiting(const char *reason)
 {
     uint32_t now_ms = k_uptime_get_32();
@@ -1054,6 +1147,12 @@ static bool mesh_event_propose_keep_waiting(const char *reason)
     if (!mesh_event_propose_retry.active ||
         !mesh_event_propose_has_pending_survey_uplink()) {
         return false;
+    }
+    if (mesh_event_propose_survey_retry_after_failure(
+            &mesh_event_propose_retry,
+            now_ms,
+            reason)) {
+        return true;
     }
     if (app_mesh_event_retry_extend_deadline(
             &mesh_event_propose_retry,
@@ -1276,7 +1375,11 @@ static int mesh_propose_event_after_channel5_contact_authorized(
             LOG_WRN("mesh channel-9 event ACCEPT not received: peer=0x%016llx ret=%d",
                     (unsigned long long)peer_id,
                     ret);
-            if (!mesh_event_retry_after_failure(
+            if (!mesh_event_propose_survey_retry_after_failure(
+                    &mesh_event_propose_retry,
+                    k_uptime_get_32(),
+                    "survey-slot-defer") &&
+                !mesh_event_retry_after_failure(
                     &mesh_event_propose_retry,
                     APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
                     true,
@@ -2128,6 +2231,7 @@ static bool mesh_handle_event_control(const struct proto_packet *packet,
         mesh_event_accept_rx_clear_peer(previous_hop_id);
         mesh_event_accept_completed_clear_peer(previous_hop_id);
         mesh_relay_clear_channel9_timing(&mesh_runtime, previous_hop_id);
+        mesh_event_owner_abandon(owner);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_CH9_EVENT_END_RX\n");
         }
@@ -3064,7 +3168,8 @@ static bool mesh_try_repair_selected_parent_event(
         selected_next_hop, "initial-tx-event-repair");
     repair_active = mesh_event_propose_retry.active;
     hard_failure = !repair_active && repair_ret < 0 &&
-        mesh_parent_contact_failure_is_hard(repair_ret);
+        mesh_parent_contact_failure_is_hard(repair_ret) &&
+        !mesh_event_propose_has_pending_survey_uplink();
 
     if (repair_active && mesh_event_propose_retry.retry_due_armed) {
         uint32_t now_ms = k_uptime_get_32();

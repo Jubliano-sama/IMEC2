@@ -1161,6 +1161,19 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
             }
             (void)app_mesh_ch9_ack_table_clear_peer(&mesh_ch9_ack_table,
                                                      peer_id);
+#if DEVICE_ROLE == ROLE_ANCHOR
+            {
+                struct mesh_event_owner *owner = mesh_event_owner_for_peer(peer_id);
+                if (owner != NULL && owner->active && owner->peer_id == peer_id) {
+                    (void)survey_release_ch9_if_current(
+                        &mesh_runtime,
+                        owner,
+                        peer_id,
+                        owner->session_id,
+                        owner->generation);
+                }
+            }
+#endif
         }
 	    } else {
 	        uint32_t retry_delay_ms = 0u;

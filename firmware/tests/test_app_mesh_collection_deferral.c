@@ -242,8 +242,8 @@ static void test_generic_gateway_host_tx_uses_same_ram_deferral(void)
     struct mesh_relay relay;
     struct route_candidate route = direct_gateway_route(7u);
     struct proto_packet packet = {
-        .msg_type = MSG_ANCHOR_HEARTBEAT,
-        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .msg_type = MSG_CLICK_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_COUNT_AS_CLICK,
         .src_id = ANCHOR_A,
         .dst_id = GATEWAY,
         .session_id = 11u,
@@ -270,7 +270,7 @@ static void test_generic_gateway_host_tx_uses_same_ram_deferral(void)
     assert(ctx.schedule_count == 1);
     assert(mesh_relay_tx_active(&relay));
     assert(relay.pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
-    assert(relay.pending.packet.msg_type == MSG_ANCHOR_HEARTBEAT);
+    assert(relay.pending.packet.msg_type == MSG_CLICK_REPORT);
 
     mesh_relay_cancel_tx(&relay);
     assert(!mesh_relay_tx_active(&relay));

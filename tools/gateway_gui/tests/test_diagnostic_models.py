@@ -6,9 +6,9 @@ import unittest
 
 from tools.gateway_gui.diagnostic_models import (
     AnchorBaseline, ClickLocationModel, CommandTimelineModel, SurveyGeometryModel,
-    TopologyBaselineModel, WakeEvidence, WakeTrainMonitor,
+    SurveyTopologyClassification, TopologyBaselineModel, WakeEvidence, WakeTrainMonitor,
     WAKE_COLLISION, WAKE_LATE, WAKE_NORMAL, WAKE_UNKNOWN, COLLISION_WINDOW_MS,
-    command_run_status, command_step_sentence,
+    classify_survey_topology, command_run_status, command_step_sentence,
 )
 from tools.gateway_gui.diagnostic_views import MeshDiagnosticsView
 from tools.gateway_gui.command_telemetry import GatewayCommandEvent
@@ -960,6 +960,42 @@ class WakeAndTopologyTests(unittest.TestCase):
                          ("Started", "Command", "Status", "Anchors / Pairs", "Attempts", "Result"))
         self.assertEqual(MeshDiagnosticsView.ANCHOR_COLUMNS,
                          ("Anchor ID", "Hop to gateway", "Discovery slot", "Reply status", "Last seen", "Baseline comparison"))
+
+    def test_classify_survey_topology(self):
+        res_direct = classify_survey_topology(hops_by_anchor={1: 0, 2: 0})
+        self.assertEqual(res_direct.level, "green")
+        self.assertEqual(res_direct.topology, "Direct")
+
+        res_f1 = classify_survey_topology(hops_by_anchor={1: 0, 2: 1}, parent_by_anchor={2: 1})
+        self.assertEqual(res_f1.level, "green")
+        self.assertEqual(res_f1.topology, "F1")
+
+        res_f1f1d = classify_survey_topology(
+            hops_by_anchor={1: 0, 2: 1, 3: 1},
+            parent_by_anchor={2: 1, 3: 1},
+        )
+        self.assertEqual(res_f1f1d.level, "amber")
+        self.assertEqual(res_f1f1d.topology, "F1F1D")
+        self.assertIn("sequential slot reuse", res_f1f1d.message)
+
+        res_f2 = classify_survey_topology(
+            hops_by_anchor={1: 0, 2: 1, 3: 2},
+            parent_by_anchor={2: 1, 3: 2},
+        )
+        self.assertEqual(res_f2.level, "amber")
+        self.assertEqual(res_f2.topology, "F2F1D")
+        self.assertIn("two-hop", res_f2.message)
+
+        res_deep = classify_survey_topology(hops_by_anchor={1: 0, 2: 1, 3: 2, 4: 3})
+        self.assertEqual(res_deep.level, "red")
+        self.assertEqual(res_deep.topology, "Unsupported")
+
+        res_exhausted = classify_survey_topology(
+            hops_by_anchor={1: 0, 2: 1},
+            deadline_exhausted=True,
+        )
+        self.assertEqual(res_exhausted.level, "red")
+        self.assertEqual(res_exhausted.topology, "Exhausted")
 
 
 if __name__ == "__main__":

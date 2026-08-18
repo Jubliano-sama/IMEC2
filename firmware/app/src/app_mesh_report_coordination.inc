@@ -1639,8 +1639,8 @@ static int mesh_gateway_preflight_semantic_delivery(
             pending->first_received_at_ms,
             pending->result_validation_token,
             pending->previous_hop_id);
-    case MSG_SURVEY_DISCOVERY_REPORT: {
-        int ret = gateway_survey_preflight_semantic_delivery(
+    case MSG_SURVEY_DISCOVERY_REPORT:
+        return gateway_survey_preflight_semantic_delivery(
             &pending->packet,
             pending->payload,
             pending->payload_len,
@@ -1648,10 +1648,6 @@ static int mesh_gateway_preflight_semantic_delivery(
             pending->previous_hop_id,
             pending->radio_channel,
             pending->link_quality);
-
-        return ret == -ESTALE ?
-               APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW : ret;
-    }
     case MSG_SURVEY_PAIR_RESULT:
         /*
          * A stale pair result still belongs to the sender's bounded result

@@ -235,6 +235,15 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
         return;
     }
 
+    if (failed->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
+        failed->packet.msg_type == MSG_SURVEY_PAIR_RESULT) {
+        selected = route_selected(&mesh_runtime.upstream);
+        failure_count = selected == NULL ? 1u : selected->failure_count;
+        delay_ms = survey_identity_backoff_ms(DEVICE_ID, timed_out_next_hop_id, failure_count);
+        report_tx_schedule_backoff(delay_ms, "ch9-survey-route-timeout");
+        return;
+    }
+
     action = route_record_failure_at(&mesh_runtime.upstream,
                                      ROUTE_FAILURE_GATEWAY_ACK,
                                      now_ms);

@@ -1135,6 +1135,17 @@ static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
                                                       const char *reason);
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason);
 static void mesh_event_owner_abandon_peer(uint64_t peer_id);
+static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id);
+static bool survey_peer_frame_in_flight(uint64_t peer_id);
+static bool survey_release_ch9_if_current(
+    struct mesh_relay *relay,
+    struct mesh_event_owner *owner,
+    uint64_t peer_id,
+    uint32_t session_id,
+    uint32_t owner_generation);
+static uint32_t survey_identity_backoff_ms(uint64_t node_id,
+                                           uint64_t parent_id,
+                                           uint8_t deferral_count);
 static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
                                            uint64_t peer_id,
                                            const char *reason);

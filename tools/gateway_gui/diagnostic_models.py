@@ -1171,3 +1171,89 @@ def solve_geometry(
     if solver == "Spring energy":
         return solve_anchor_layout(pairs)
     raise ValueError(f"Unknown geometry solver: {solver}")
+
+
+@dataclass(frozen=True)
+class SurveyTopologyClassification:
+    level: str
+    topology: str
+    message: str
+
+
+def classify_survey_topology(
+    *,
+    hops_by_anchor: dict[int, int] | None = None,
+    parent_by_anchor: dict[int, int] | None = None,
+    deadline_exhausted: bool = False,
+) -> SurveyTopologyClassification:
+    """Classify anchor survey topology robustness and routing depth.
+
+    Supported topologies:
+    - Direct (0 forced hops) or single child (F1): Green / robust.
+    - F1F1D (2 forced-1 anchors sharing the same parent): Amber warning.
+      Both anchors share downstream Channel-9 capacity and require sequential slot reuse.
+    - F2F1D (forced-2 anchor routed through a forced-1 anchor): Amber warning.
+      Deepest supported survey topology with reduced radio margin.
+    - >2 forced hops: Red / unsupported topology.
+    - Deadline exhausted: Red / placement too fragile.
+    """
+    if hops_by_anchor is None:
+        hops_by_anchor = {}
+    if parent_by_anchor is None:
+        parent_by_anchor = {}
+
+    max_hops = max(hops_by_anchor.values()) if hops_by_anchor else 0
+
+    if max_hops > 2:
+        return SurveyTopologyClassification(
+            level="red",
+            topology="Unsupported",
+            message=(
+                f"Unsupported survey topology: maximum route depth is {max_hops} hops. "
+                "Survey supports at most 2 forced hops (F2F1D)."
+            ),
+        )
+
+    if deadline_exhausted:
+        return SurveyTopologyClassification(
+            level="red",
+            topology="Exhausted",
+            message=(
+                "Survey deadline exhausted before completion. The current anchor "
+                "placement is too fragile or radio contention is too high."
+            ),
+        )
+
+    if max_hops == 2:
+        return SurveyTopologyClassification(
+            level="amber",
+            topology="F2F1D",
+            message=(
+                "Survey completed through a two-hop anchor route (F2F1D). "
+                "This is the deepest supported survey topology and has reduced radio margin."
+            ),
+        )
+
+    if parent_by_anchor:
+        parent_counts: dict[int, int] = {}
+        for anchor, parent in parent_by_anchor.items():
+            if parent != 0 and hops_by_anchor.get(anchor, 1) == 1:
+                parent_counts[parent] = parent_counts.get(parent, 0) + 1
+        if any(count >= 2 for count in parent_counts.values()):
+            return SurveyTopologyClassification(
+                level="amber",
+                topology="F1F1D",
+                message=(
+                    "Survey completed, but the anchor layout is fragile (F1F1D). "
+                    "Multiple anchors share one downstream Channel-9 slot, requiring sequential slot reuse. "
+                    "Consider repositioning an anchor or adding a direct anchor."
+                ),
+            )
+
+    topology_name = "Direct" if max_hops == 0 else "F1"
+    return SurveyTopologyClassification(
+        level="green",
+        topology=topology_name,
+        message="Survey topology is healthy and well within RF timing budgets.",
+    )
+

@@ -4604,12 +4604,38 @@ after_gateway_ack:
             goto gateway_confirmation_done;
         }
         LOG_INF("mesh pending legacy TX gateway acknowledged");
+        if (confirmed_packet != NULL &&
+            (confirmed_packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
+             confirmed_packet->msg_type == MSG_SURVEY_PAIR_RESULT) &&
+            report_tx_queue_used() == 0u &&
+            !mesh_route_waiting_tx_valid &&
+            !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
+            const struct route_candidate *selected =
+                route_selected(&mesh_runtime.upstream);
+            uint64_t parent_id = selected != NULL ? selected->next_hop_id : 0u;
+            if (mesh_id_is_unicast(parent_id) && parent_id != GATEWAY_ID) {
+                mesh_close_channel9_connection(parent_id, "survey-report-confirmed");
+            }
+        }
         mesh_schedule_tx_timeout();
     }
 gateway_confirmation_done:
 #endif
     if (result->actions & MESH_RELAY_ACTION_TX_HOP_PROGRESS) {
         LOG_INF("mesh pending TX hop progress acknowledged");
+        if (confirmed_packet != NULL &&
+            (confirmed_packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
+             confirmed_packet->msg_type == MSG_SURVEY_PAIR_RESULT) &&
+            report_tx_queue_used() == 0u &&
+            !mesh_route_waiting_tx_valid &&
+            !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
+            const struct route_candidate *selected =
+                route_selected(&mesh_runtime.upstream);
+            uint64_t parent_id = selected != NULL ? selected->next_hop_id : 0u;
+            if (mesh_id_is_unicast(parent_id) && parent_id != GATEWAY_ID) {
+                mesh_close_channel9_connection(parent_id, "survey-hop-progress");
+            }
+        }
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_RELAY_BUSY) {
