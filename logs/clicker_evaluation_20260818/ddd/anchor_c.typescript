@@ -1,0 +1,1630 @@
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=131927 win=3 complete=15 interval=380 wait=0 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3784 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_RX_CH5
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=195757 attempt=3
+DBG_CH9_TX_SEND_AT now=195757 earliest=195694 msg=3f len=61
+DBG_CH9_TX_DONE now=195761 dur=4 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_DIRECT_GW_ACK_DONE ret=-116 m=0 f=0 p=1 q=0 v=0 fail=1 sl=195 prev=0x0 len=0 att=3 r=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-116 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=196013 next=196513 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=3 ttl=4 rand=124475973 delay=4862 next=200875
+DBG_ROUTE_REPLY_WINDOW ttl=4 win=24875 base=1000 attempt=3
+DBG_COORD state=mesh-tx owner=route-waiting-packet reason=mesh-tx rx=0 tx=2 relay=0 route=1 ack=0 qack=0
+DBG_C5_CONTACT phase=closing state=4 peer=0x708bc0aab970300e purpose=route_solicit reason=replace
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=125
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_C5_CONTACT phase=accepted state=2 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=196526 win=3 complete=15 interval=380 wait=1 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3265 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_C5_CONTACT phase=exchange state=3 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=157 msg=35 reason=route-request-control
+DBG_UWB_TX_CH5
+DBG_ROUTE_REQ_CONTROL_TX ret=0 seq=5 ttl=4
+DBG_C5_CONTACT phase=exchange state=3 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_ROUTE_REPLY_LISTEN_START
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_LISTEN_CONFIG ret=0 ext=1
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_C5_RX_FAIL status=0x00001700 finfo=0x00000000 fail=4 phy=4 ch=5 plen=3 pac=2 txc=9 rxc=9 sfd=2 rate=0 phr=1 phrr=0 sfdto=4
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=42 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=61
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ROUTE_REPLY_RX_FRAME
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x35 src=0x56da25fe4af6d141 dst=0x0 prev=0x56da25fe4af6d141 seq=4 q=1
+DBG_MESH_RX_DEFERRED q=1 msg=0x35
+DBG_ROUTE_REPLY_LISTEN_YIELD_REQUEST src=0x56da25fe4af6d141 prev=0x56da25fe4af6d141 target=0x9999888877776666
+DBG_ROUTE_REPLY_LISTEN_DONE captured=1 ret=-11
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=reply-listen-done
+DBG_ROUTE_REQ_REPLY_MISS listen_ret=-11 win=24875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3779 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_RET ret=0 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=0 action=0 delay=0
+DBG_COORD state=mesh-rx owner=report-tx reason=mesh-rx rx=1 tx=2 relay=0 route=1 ack=0 qack=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197100 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3749 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3749 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197127 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197127 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3708 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3708 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197168 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197168 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3667 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3667 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197209 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197209 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3626 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197249 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197250 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3624 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3624 reason=route-waiting-packet
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3610 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3610 reason=route-waiting-packet
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3585 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3585 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197291 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197291 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3583 reason=route-waiting-packet
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197308 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3542 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3542 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197334 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197334 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197351 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197351 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=3501 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=3501 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=197375 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=197375 start=0 win=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=4730 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_WAKE_ACCEPT clicker=0x6e8e6a1c97671f6f evt=16842754 attempt=1 flags=0x20 disc_in=173 q=100
+DBG_DIRECT_GW_PROBE_TX seq=14 now=197473 attempt=2/3 reason=route-request-rebroadcast-probe
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=108 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=15 now=197582 attempt=3/3 reason=route-request-rebroadcast-probe
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_COORD state=click owner=route-request-rebroadcast reason=click rx=0 tx=2 relay=0 route=1 ack=0 qack=0
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ANCHOR_CLICK_WINDOW active=1 flags=0x20
+DBG_ANCHOR_DISC_WAIT now=197583 start=197627 deadline=197727 guard=8 listen=108 phr=std
+DBG_ANCHOR_DISC_CONFIG phr=std ret=0
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=197604
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=197611
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=197617
+DBG_ANCHOR_DISC_FRAME len=49 type=0x08 q=100 now=197623
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ANCHOR_DISC_FRAME len=32 type=0x09 q=100 now=197687
+DBG_ANCHOR_DISC_DECODE evt=16842754 attempt=1 slots=50 flags=0x20
+DBG_ANCHOR_DISC_REPLY_ARM evt=16842754 attempt=1 slot=2 state=1
+DBG_ANCHOR_DISC_REPLY_TX evt=16842754 attempt=1 slot=2 ret=0
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ANCHOR_CH5_HOLD_DONE deadline=198362 now=198363 frames=0 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=16842754 attempt=1 sample=1/8 round=0 seq=1 target_us=198372000 start=198362 now=198363 deadline=198432
+DBG_DS_RESP stage=arm evt=16842754 seq=1 round=0 now=198363 timeout=69
+DBG_DS_RESP stage=resp-armed now=198381 seq=1 round=0 tx_time=0x0bb39fa9 resp_tx=0xb39fe7d9
+DBG_DS_RESP stage=resp-raw poll_rx=0x95279c99 q=100 reply_uus=8000
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_DS_RESP stage=final-decode status=0 now=198397 seq=1 round=0 final_rx=0xd218355b
+DBG_DS_RESP stage=report-armed now=198398 seq=1 round=0
+DBG_DS_RESP stage=report-sent now=198403 seq=1 round=0
+DBG_DS_RESP stage=done ret=0 status=0 now=198403 seq=1 round=0
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ANCHOR_CH5_HOLD_DONE deadline=198512 now=198512 frames=4 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=16842754 attempt=1 sample=4/8 round=1 seq=2 target_us=198522000 start=198512 now=198512 deadline=198582
+DBG_DS_RESP stage=arm evt=16842754 seq=2 round=1 now=198512 timeout=70
+DBG_DS_RESP stage=poll-other reason=target observed=0x708bc0aab970300e expected=0x191a9619c6c8cb07 seq=3 round=0
+DBG_DS_RESP stage=arm evt=16842754 seq=2 round=1 now=198523 timeout=60
+DBG_DS_RESP stage=poll-decode ret=-77 len=52 type=0x11 now=198530 seq=2 round=1
+DBG_DS_RESP stage=arm evt=16842754 seq=2 round=1 now=198531 timeout=52
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_DS_RESP stage=poll-decode ret=-77 len=59 type=0x12 now=198539 seq=2 round=1
+DBG_DS_RESP stage=arm evt=16842754 seq=2 round=1 now=198539 timeout=43
+DBG_DS_RESP stage=poll-decode ret=-77 len=52 type=0x13 now=198547 seq=2 round=1
+DBG_DS_RESP stage=arm evt=16842754 seq=2 round=1 now=198548 timeout=34
+DBG_DS_RESP stage=poll-rx ret=-116 sys=0x00000000 fail=0 now=198582 seq=2 round=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ANCHOR_CH5_HOLD_DONE deadline=198662 now=198663 frames=1 errors=0 deferred=0
+DBG_DS_SAMPLE_ARM evt=16842754 attempt=1 sample=7/8 round=2 seq=3 target_us=198672000 start=198662 now=198663 deadline=198732
+DBG_DS_RESP stage=arm evt=16842754 seq=3 round=2 now=198663 timeout=69
+DBG_DS_RESP stage=poll-other reason=target observed=0x56da25fe4af6d141 expected=0x191a9619c6c8cb07 seq=3 round=1
+DBG_DS_RESP stage=arm evt=16842754 seq=3 round=2 now=198674 timeout=58
+DBG_ROUTE_WAIT_COORD_DEFER state=click reason=click q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coordinator delay=50 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_DS_RESP stage=poll-other reason=target observed=0x708bc0aab970300e expected=0x191a9619c6c8cb07 seq=4 round=1
+DBG_STACK_RUN_BEGIN epoch=11494824602306941631 run=1 kind=cir_handling owner=anchor_uwb_scan queue=3 custody=3 credit=0 retry=0 drain=0 src=1808923237796072199 dst=11068027678940948070 session=1379513527 seq=1 type=32 sequence=0 previous=0 uptime=198734
+DBG_STACK_SAMPLE_BEGIN epoch=11494824602306941631 run=1 sample=1 kind=cir_handling owner=anchor_uwb_scan queue=3 custody=3 credit=0 retry=0 drain=0 src=1808923237796072199 dst=11068027678940948070 session=1379513527 seq=1 type=32 uptime=198735
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+DBG_STACK name=anchor_uwb_scan tid=0x2000bee0 used=5600 free=1632 size=7232 ret=0 run=1 sample=1
+DBG_STACK name=mesh_route tid=0x2000ada0 used=5468 free=4004 size=9472 ret=0 run=1 sample=1
+DBG_STACK name=sysworkq tid=0x2000eba0 used=192 free=5184 size=5376 ret=0 run=1 sample=1
+DBG_STACK name=logging tid=0x2000e0e0 used=520 free=1528 size=2048 ret=0 run=1 sample=1
+DBG_STACK name=idle tid=0x2000e970 used=64 free=256 size=320 ret=0 run=1 sample=1
+DBG_STACK_SAMPLE_END run=1 sample=1
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_COORD state=mesh-tx owner=report-tx reason=mesh-tx rx=0 tx=3 relay=0 route=1 ack=0 qack=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198787 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198788 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=2086 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=2086 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198797 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198797 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198822 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198822 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=2051 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=2051 reason=route-waiting-packet
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=2036 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=2011 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=2011 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198865 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198865 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198880 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198907 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198907 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1966 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1966 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198909 start=0 win=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198923 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1926 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198950 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198950 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1924 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1924 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1883 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1883 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=198993 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=198993 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199006 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199007 start=0 win=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1842 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1842 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199034 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199034 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199073 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1801 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1801 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199074 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199075 start=0 win=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199113 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1760 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1760 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199115 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199115 start=0 win=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199129 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199129 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1720 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1720 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199156 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199156 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199170 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1679 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199197 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199197 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1677 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1677 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1636 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1636 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199239 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199240 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1622 reason=route-waiting-packet
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1595 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1595 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199280 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199280 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1555 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1555 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199321 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199321 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199335 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199335 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1514 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1514 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199362 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199362 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1475 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1475 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199401 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199401 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199441 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199442 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1432 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1432 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199443 early=0 q=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1391 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1391 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199484 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199484 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1350 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1350 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199525 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199525 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1348 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1308 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1308 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199568 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199568 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1292 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1292 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199607 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199607 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1267 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1267 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1228 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1228 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199648 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199648 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1187 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1187 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199688 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199689 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1146 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1146 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199729 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199729 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1129 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199768 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199768 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1105 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1088 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199809 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1065 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=1065 reason=route-waiting-packet
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1045 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199850 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199850 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1024 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1007 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=985 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=985 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199890 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199891 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=964 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=964 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199912 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199912 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=944 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=923 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=923 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199953 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199953 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=904 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=904 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199972 start=0 win=0
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=882 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=199993 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=199993 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=863 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=863 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200013 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200013 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=842 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=842 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200053 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200054 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200073 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200073 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=779 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=779 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200096 early=0 q=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=762 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=762 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200137 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200137 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=737 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=737 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200156 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200156 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200180 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=694 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=694 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=677 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=655 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=655 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200220 early=0 q=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=636 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200261 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=613 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=613 reason=route-waiting-packet
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=595 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=595 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=572 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=572 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200304 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200304 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=531 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=531 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200345 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200345 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=490 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=490 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200385 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200385 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=450 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=450 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200426 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200426 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200465 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200465 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=409 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=409 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200467 start=0 win=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200508 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200508 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=366 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=366 reason=route-waiting-packet
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=349 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=329 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200546 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200547 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=308 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=308 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200568 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200568 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=286 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=286 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=267 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=246 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=246 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=226 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=205 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=205 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=186 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=186 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200690 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200690 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=162 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=162 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200713 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200714 start=0 win=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200731 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200731 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=122 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200754 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200754 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200773 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200774 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=79 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=79 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200797 early=0 q=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200814 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200814 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=38 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_REQ_PREPROBE_BACKOFF target=0x9999888877776666 delay=38 reason=route-waiting-packet
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-11 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=200837 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=200838 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_ROUTE_REQ_CALL target=0x9999888877776666 reason=route-waiting-packet active=1 attempts=3 next=200875
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=200938 attempt=1
+DBG_CH9_TX_SEND_AT now=200939 earliest=200876 msg=3f len=61
+DBG_CH9_TX_DONE now=200942 dur=3 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_DIRECT_GW_ACK_DONE ret=-116 m=0 f=0 p=1 q=0 v=0 fail=1 sl=196 prev=0x0 len=0 att=1 r=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-116 attempt=1
+DBG_DIRECT_GW_PROBE_BACKOFF ms=31 next_attempt=2 busy_defer=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=201207 win=3 complete=15 interval=380 wait=1 tx=0
+DBG_DIRECT_GW_PROBE_TX seq=17 now=201225 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=112 next_attempt=3 busy_defer=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=5554 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_ROUTE_WAKE_DISPATCH src=0x56da25fe4af6d141 evt=234133 attempt=1 flags=0x92 len=49 q=100
+DBG_C5_CONTACT phase=closing state=4 peer=0x56da25fe4af6d141 purpose=route_solicit reason=expired
+DBG_C5_CONTACT phase=open state=2 peer=0x56da25fe4af6d141 purpose=route_solicit reason=wake-claim
+DBG_C5_CONTACT phase=accepted state=2 peer=0x56da25fe4af6d141 purpose=route_solicit reason=wake-claim
+DBG_ROUTE_REPLY_LISTEN_START
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_LISTEN_CONFIG ret=0 ext=1
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_C5_RX_FAIL status=0x00001300 finfo=0x00000000 fail=4 phy=4 ch=5 plen=3 pac=2 txc=9 rxc=9 sfd=2 rate=0 phr=1 phrr=0 sfdto=4
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DIRECT_GW_PROBE_TX seq=18 now=201337 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=201337 next=201837 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=1424743026 delay=12956 next=214293
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=closing state=4 peer=0x56da25fe4af6d141 purpose=route_solicit reason=replace
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=44 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DIRECT_GW_PROBE_TX seq=20 now=201384 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=103 next_attempt=3 busy_defer=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=42 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=42 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=42 outcome=restore ret=0
+DBG_DIRECT_GW_PROBE_TX seq=21 now=201488 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=201489 next=201989 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=3753395519 delay=14404 next=215893
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=762 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=762 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=201490 early=0 q=0
+DBG_DIRECT_GW_PROBE_TX seq=23 now=201528 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=64 next_attempt=3 busy_defer=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=40 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DIRECT_GW_PROBE_TX seq=24 now=201592 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=201593 next=202093 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=2383395774 delay=9887 next=211480
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=905 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=905 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=201594 early=0 q=0
+DBG_DIRECT_GW_PROBE_TX seq=26 now=201633 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=89 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=27 now=201723 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=201723 next=202223 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=1527345296 delay=10402 next=212125
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1679 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1679 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=201725 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=201726 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=29 now=201778 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=73 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=30 now=201852 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=201852 next=202352 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=2056040715 delay=15743 next=217595
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1700 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1700 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=201854 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=201854 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=32 now=201911 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=75 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=33 now=201987 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=201987 next=202487 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=1912617372 delay=10325 next=212312
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1986 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1986 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=201989 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=201989 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=35 now=202028 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=80 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=36 now=202109 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=202109 next=202609 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=1285622311 delay=13629 next=215738
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1644 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1644 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=202111 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=202111 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=38 now=202171 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=113 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=39 now=202285 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=202285 next=202785 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=4237692576 delay=10931 next=213216
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1843 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1843 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=202287 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=202287 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=41 now=202327 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=116 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=42 now=202444 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=202444 next=202944 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=3706724522 delay=13240 next=215684
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1779 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1779 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=202446 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=202446 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=44 now=202486 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=92 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=45 now=202579 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=202579 next=203079 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=3879071055 delay=10232 next=212811
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1766 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1766 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=202581 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=202581 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=47 now=202631 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=71 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=48 now=202703 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=202703 next=203203 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=564214059 delay=15542 next=218245
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1914 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1914 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=202705 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=202705 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_REPLY_LISTEN_DONE captured=0 ret=-116
+DBG_ANCHOR_ROUTE_WAKE_HANDOFF_DONE src=0x56da25fe4af6d141 embedded=0 ret=-116 pending=0
+DBG_ANCHOR_ROUTE_WAKE_DISPATCH_DONE handled=1 len=49 q=100
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_DIRECT_GW_PROBE_TX seq=50 now=202764 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=202828 attempt=2
+DBG_CH9_TX_SEND_AT now=202829 earliest=202764 msg=3f len=61
+DBG_CH9_TX_DONE now=202832 dur=3 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_DIRECT_GW_ACK_DONE ret=-116 m=0 f=0 p=1 q=0 v=0 fail=1 sl=195 prev=0x0 len=0 att=2 r=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-116 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=100 next_attempt=3 busy_defer=0
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_ARM now=203123 win=3 complete=15 interval=380 wait=1 tx=0
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_DONE ret=-116 len=0 fail=1 pre=0 q=0 rx_us=3265 complete=15
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_DIRECT_GW_PROBE_TX seq=51 now=203184 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_CONFIG ret=0 now=203247 attempt=3
+DBG_CH9_TX_SEND_AT now=203248 earliest=203184 msg=3f len=61
+DBG_CH9_TX_DONE now=203251 dur=3 len=61 msg=3f
+DBG_UWB_TX_CH9
+DBG_DIRECT_GW_ACK_DONE ret=-116 m=0 f=0 p=1 q=0 v=0 fail=1 sl=195 prev=0x0 len=0 att=3 r=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-116 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=203503 next=204003 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=634951903 delay=8544 next=212047
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 wait=1 rx=0 rxq=0 rxr=0 ack=0 ch9=0 rf=1 retry=20 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=20
+DBG_MESH_WAKE_POLITE_ACTIVITY phase=pre target=0x9999888877776666 retry=0 ret=0 fail=3 reason=route-waiting-packet
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-fail
+DBG_MESH_WAKE_POLITE_BACKOFF phase=pre target=0x9999888877776666 retry=1/3 delay=352 reason=route-waiting-packet
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=3
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=380
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_MESH_WAKE_POLITE_ACTIVITY phase=pre target=0x9999888877776666 retry=1 ret=0 fail=3 reason=route-waiting-packet
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-fail
+DBG_MESH_WAKE_POLITE_BACKOFF phase=pre target=0x9999888877776666 retry=2/3 delay=790 reason=route-waiting-packet
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_DWM_CH5_RX_HUNT_START acq=3 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_ANCHOR_CH5_SCAN_DONE ret=0 len=49 fail=0 pre=1 q=100 rx_us=6744 complete=15
+DBG_UWB_RX_CH5
+DBG_ANCHOR_CH5_FRAME len=49 q=100 wake_ret=0
+DBG_ANCHOR_ROUTE_WAKE_DISPATCH src=0x708bc0aab970300e evt=220366 attempt=1 flags=0x92 len=49 q=100
+DBG_C5_CONTACT phase=open state=2 peer=0x708bc0aab970300e purpose=route_solicit reason=wake-claim
+DBG_C5_CONTACT phase=accepted state=2 peer=0x708bc0aab970300e purpose=route_solicit reason=wake-claim
+DBG_ANCHOR_ROUTE_WAKE_HANDOFF src=0x708bc0aab970300e evt=220366 attempt=1 flags=0x92 embedded=0 listen=1412
+DBG_C5_CONTACT phase=exchange state=3 peer=0x708bc0aab970300e purpose=route_solicit reason=anchor-route-wake-followup
+DBG_ROUTE_REPLY_LISTEN_START
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_C5_RX_FAIL status=0x00001700 finfo=0x00000000 fail=4 phy=4 ch=5 plen=3 pac=2 txc=9 rxc=9 sfd=2 rate=0 phr=1 phrr=0 sfdto=4
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=44 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_ACTIVITY_EXTEND ret=0 status=0x00000100 complete=15
+DBG_DWM_CH5_RX_ACTIVITY_WAIT status=0x00000100 remain=15
+DBG_DWM_CH5_RX_ACTIVITY_DONE raw=51 payload=49 status=0x00006f00 rearm=0 extended=1
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=43 outcome=restore ret=0
+DBG_DWM_CH5_RX_HUNT_START acq=61 complete=15 cap=1021
+DBG_DWM_CH5_RX_HUNT_EMPTY ret=-116 status=0x00000000 acq=61
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ROUTE_REPLY_CLICK_PROBE_DONE duration_ms=98 outcome=restore ret=0
+DBG_ROUTE_REPLY_RX_FRAME
+DBG_ROUTE_REPLY_UNRELATED msg=0x35 src=0x191a9619c6c8cb07 dst=0x0 prev=0x708bc0aab970300e target=0x708bc0aab970300e session=18
+DBG_C5_CONTACT phase=closing state=4 peer=0x708bc0aab970300e purpose=route_solicit reason=replace
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1609 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1609 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=204699 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=204699 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_ROUTE_WAIT_RETRY reason=route-wait-coalesce delay=0 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_DECISION tx=-118 action=4 delay=0 req_attempt=0 req_ret=0
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=1
+DBG_DIRECT_GW_PROBE_TX seq=53 now=204761 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=72 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=54 now=204834 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=204834 next=205334 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=170375924 delay=10630 next=215464
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1659 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1659 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=204836 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=204836 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=56 now=204890 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=72 next_attempt=3 busy_defer=0
+DBG_DIRECT_GW_PROBE_TX seq=57 now=204963 attempt=3/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=3
+DBG_ROUTE_REQ_CH9_TIMING ref=204963 next=205463 guard=60 win=120
+DBG_ROUTE_REQ_BACKOFF attempt=4 ttl=6 rand=2898203583 delay=9353 next=214316
+DBG_ROUTE_REPLY_WINDOW ttl=6 win=38425 base=1000 attempt=4
+DBG_C5_CONTACT phase=open state=1 peer=0x9999888877776666 purpose=route_solicit reason=route-waiting-packet
+DBG_WAKE_TRAIN_GUARD_FAIL
+DBG_C5_CONTACT phase=closing state=4 peer=0x9999888877776666 purpose=route_solicit reason=wake-train-guard-fail
+DBG_ROUTE_REQ_RF_BUSY_DEFER phase=wake ret=-16 restored=1 delay=1692 active=1 attempts=3 next=200875
+DBG_ROUTE_WAIT_RETRY reason=route-waiting-packet delay=1692 msg=0x20 dst=0x9999888877776666 seq=1 active=1
+DBG_ROUTE_WAIT_AFTER_REQ req_ret=-16 action=0 delay=0
+DBG_ROUTE_WAIT_TRY msg=0x20 dst=0x9999888877776666 ready=1 now=204965 early=0 q=0
+DBG_CH9_UNAVAIL ret=-7 sel=-7 act=0 now=204965 start=0 win=0
+DBG_CH9_ROUTE_STATE epoch=1 selected=255
+DBG_DIRECT_GW_PROBE_TX seq=59 now=205001 attempt=2/3 reason=route-waiting-packet
+DBG_DIRECT_GW_PROBE_MISS ret=-16 attempt=2
+DBG_DIRECT_GW_PROBE_BACKOFF ms=116 next_attempt=3 busy_defer=0

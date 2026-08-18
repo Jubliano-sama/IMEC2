@@ -1,0 +1,259 @@
+DBG_CLICKER_RTT command=INVALID accepted=0
+DBG_CLICKER_RTT command=CLICK accepted=1 ret=0
+DBG_CLICKER_CLICK state=START
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_CLICKER_DISCOVERY_REPLY anchor=0x708bc0aab970300e slot=0 quality=100 candidates=1
+DBG_CLICKER_DISCOVERY_REPLY anchor=0x56da25fe4af6d141 slot=1 quality=100 candidates=2
+DBG_CLICKER_DISCOVERY_REPLY anchor=0x191a9619c6c8cb07 slot=2 quality=100 candidates=3
+DBG_CLICKER_DISCOVERY rx=3 decoded=3 candidates=3 malformed=0 rejected=0 window=608 ret=3
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=16 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=1 type=16 sequence=0 previous=0 uptime=164892
+DBG_DS_INIT stage=arm evt=16842755 seq=1 round=0 now=164892 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=164909 seq=1 round=0 tx_time=0x0136024e final_tx=0x36028dd9 report=1
+DBG_DS_INIT stage=final-raw poll_tx=0xf911f5d9 resp_rx=0x178a4208 q=100
+DBG_DS_INIT stage=report-rx ret=0 status=0 sys=0x00002ff0 now=164925 seq=1 round=0
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=16 sample=16 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=1 type=16 uptime=164925
+DBG_STACK_ISR_CONFIG size=8192 run=16 sample=16
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=16 sample=16
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=16 sample=16
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=16 sample=16
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=16 sample=16
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=16 sample=16
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=16 sample=16
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=16 sample=16
+DBG_STACK_SAMPLE_END run=16 sample=16
+DBG_STACK_RUN_END epoch=400758554765455445 run=16 kind=click_activity owner=clicker_action outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=1 type=16 samples=1 sequence=0 previous=0 uptime=164956
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=17 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=2 type=16 sequence=0 previous=0 uptime=164957
+DBG_DS_INIT stage=arm evt=16842755 seq=2 round=0 now=164957 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=164974 seq=2 round=0 tx_time=0x022bfdad final_tx=0x2bfdebd9 report=1
+DBG_DS_INIT stage=final-raw poll_tx=0xef0d57d9 resp_rx=0x0d85a0d0 q=100
+DBG_DS_INIT stage=report-rx ret=0 status=0 sys=0x00002ff0 now=164989 seq=2 round=0
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=17 sample=17 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=2 type=16 uptime=164990
+DBG_STACK_ISR_CONFIG size=8192 run=17 sample=17
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=17 sample=17
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=17 sample=17
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=17 sample=17
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=17 sample=17
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=17 sample=17
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=17 sample=17
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=17 sample=17
+DBG_STACK_SAMPLE_END run=17 sample=17
+DBG_STACK_RUN_END epoch=400758554765455445 run=17 kind=click_activity owner=clicker_action outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=2 type=16 samples=1 sequence=0 previous=0 uptime=165012
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=18 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=8109787393498820622 session=16842755 seq=3 type=16 sequence=0 previous=0 uptime=165036
+DBG_DS_INIT stage=arm evt=16842755 seq=3 round=0 now=165036 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=final-armed now=165053 seq=3 round=0 tx_time=0x0358db5d final_tx=0x58db9bd9 report=1
+DBG_DS_INIT stage=final-raw poll_tx=0x1beb05d9 resp_rx=0x3a63508f q=100
+DBG_DS_INIT stage=report-rx ret=0 status=0 sys=0x00002ff0 now=165068 seq=3 round=0
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=18 sample=18 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=8109787393498820622 session=16842755 seq=3 type=16 uptime=165069
+DBG_STACK_ISR_CONFIG size=8192 run=18 sample=18
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=18 sample=18
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=18 sample=18
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=18 sample=18
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=18 sample=18
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=18 sample=18
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=18 sample=18
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=18 sample=18
+DBG_STACK_SAMPLE_END run=18 sample=18
+DBG_STACK_RUN_END epoch=400758554765455445 run=18 kind=click_activity owner=clicker_action outcome=ack queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=8109787393498820622 session=16842755 seq=3 type=16 samples=1 sequence=0 previous=0 uptime=165088
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=19 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=2 type=16 sequence=0 previous=0 uptime=165112
+DBG_DS_INIT stage=arm evt=16842755 seq=2 round=1 now=165113 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=resp-rx ret=-5 status=1 sys=0x00000000 now=165133 seq=2 round=1
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=19 sample=19 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=2 type=16 uptime=165134
+DBG_STACK_ISR_CONFIG size=8192 run=19 sample=19
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=19 sample=19
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=19 sample=19
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=19 sample=19
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=19 sample=19
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=19 sample=19
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=19 sample=19
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=19 sample=19
+DBG_STACK_SAMPLE_END run=19 sample=19
+DBG_STACK_RUN_END epoch=400758554765455445 run=19 kind=click_activity owner=clicker_action outcome=error queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=2 type=16 samples=1 sequence=0 previous=0 uptime=165171
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=20 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=3 type=16 sequence=0 previous=0 uptime=165172
+DBG_DS_INIT stage=arm evt=16842755 seq=3 round=1 now=165193 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=resp-rx ret=-5 status=1 sys=0x00000000 now=165213 seq=3 round=1
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=20 sample=20 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=3 type=16 uptime=165214
+DBG_STACK_ISR_CONFIG size=8192 run=20 sample=20
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=20 sample=20
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=20 sample=20
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=20 sample=20
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=20 sample=20
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=20 sample=20
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=20 sample=20
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=20 sample=20
+DBG_STACK_SAMPLE_END run=20 sample=20
+DBG_STACK_RUN_END epoch=400758554765455445 run=20 kind=click_activity owner=clicker_action outcome=error queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=3 type=16 samples=1 sequence=0 previous=0 uptime=165249
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=21 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=8109787393498820622 session=16842755 seq=4 type=16 sequence=0 previous=0 uptime=165249
+DBG_DS_INIT stage=arm evt=16842755 seq=4 round=1 now=165250 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=resp-rx ret=-5 status=1 sys=0x00000000 now=165270 seq=4 round=1
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=21 sample=21 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=8109787393498820622 session=16842755 seq=4 type=16 uptime=165271
+DBG_STACK_ISR_CONFIG size=8192 run=21 sample=21
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=21 sample=21
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=21 sample=21
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=21 sample=21
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=21 sample=21
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=21 sample=21
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=21 sample=21
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=21 sample=21
+DBG_STACK_SAMPLE_END run=21 sample=21
+DBG_STACK_RUN_END epoch=400758554765455445 run=21 kind=click_activity owner=clicker_action outcome=error queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=8109787393498820622 session=16842755 seq=4 type=16 samples=1 sequence=0 previous=0 uptime=165309
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=22 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=3 type=16 sequence=0 previous=0 uptime=165309
+DBG_DS_INIT stage=arm evt=16842755 seq=3 round=2 now=165333 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=resp-rx ret=-5 status=1 sys=0x00000000 now=165353 seq=3 round=2
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=22 sample=22 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=3 type=16 uptime=165354
+DBG_STACK_ISR_CONFIG size=8192 run=22 sample=22
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=22 sample=22
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=22 sample=22
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=22 sample=22
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=22 sample=22
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=22 sample=22
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=22 sample=22
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=22 sample=22
+DBG_STACK_SAMPLE_END run=22 sample=22
+DBG_STACK_RUN_END epoch=400758554765455445 run=22 kind=click_activity owner=clicker_action outcome=error queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=1808923237796072199 session=16842755 seq=3 type=16 samples=1 sequence=0 previous=0 uptime=165390
+DBG_STACK_RUN_BEGIN epoch=400758554765455445 run=23 kind=click_activity owner=clicker_action queue=1 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=4 type=16 sequence=0 previous=0 uptime=165391
+DBG_DS_INIT stage=arm evt=16842755 seq=4 round=2 now=165391 timeout=40 reply_uus=8000
+DBG_DS_INIT stage=resp-rx ret=-5 status=2 sys=0x00000000 now=165408 seq=4 round=2
+DBG_STACK_SAMPLE_BEGIN epoch=400758554765455445 run=23 sample=23 kind=click_activity owner=clicker_action queue=1 custody=1 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=4 type=16 uptime=165409
+DBG_STACK_ISR_CONFIG size=8192 run=23 sample=23
+DBG_STACK name=BT RX WQ tid=0x2000a7b0 used=296 free=728 size=1024 ret=0 run=23 sample=23
+DBG_STACK name=clicker_action tid=0x20003708 used=4976 free=3216 size=8192 ret=0 run=23 sample=23
+DBG_STACK name=mesh_route tid=0x20008cc0 used=192 free=6592 size=6784 ret=0 run=23 sample=23
+DBG_STACK name=sysworkq tid=0x2000afe8 used=536 free=5608 size=6144 ret=0 run=23 sample=23
+DBG_STACK name=MPSL Work tid=0x2000ada0 used=492 free=532 size=1024 ret=0 run=23 sample=23
+DBG_STACK name=logging tid=0x200096b8 used=520 free=1528 size=2048 ret=0 run=23 sample=23
+DBG_STACK name=idle tid=0x2000ae78 used=64 free=256 size=320 ret=0 run=23 sample=23
+DBG_STACK_SAMPLE_END run=23 sample=23
+DBG_STACK_RUN_END epoch=400758554765455445 run=23 kind=click_activity owner=clicker_action outcome=error queue=0 custody=0 credit=0 retry=0 drain=0 src=7966421461896732527 dst=6258356406294335809 session=16842755 seq=4 type=16 samples=1 sequence=0 previous=0 uptime=165451
+DBG_CLICKER_CLICK state=COMPLETE ret=0
