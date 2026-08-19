@@ -996,6 +996,25 @@ class WakeAndTopologyTests(unittest.TestCase):
         )
         self.assertEqual(res_exhausted.level, "red")
         self.assertEqual(res_exhausted.topology, "Exhausted")
+    def test_show_topology_handles_in_progress_and_none_result(self):
+        from unittest.mock import MagicMock
+        from tools.gateway_gui.diagnostic_views import MeshDiagnosticsView
+        import tkinter as tk
+
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except Exception:
+            return
+
+        try:
+            view = MeshDiagnosticsView(root, accept_baseline=lambda: None)
+            enum_event = event(anchor=0x1234, stage=6)
+            view.show_topology(None, {0x1234: enum_event})
+            self.assertIn("Enumerating anchors", view.topology_var.get())
+            self.assertEqual(len(view.topology.get_children()), 1)
+        finally:
+            root.destroy()
 
 
 if __name__ == "__main__":

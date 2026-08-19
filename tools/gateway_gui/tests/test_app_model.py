@@ -21,6 +21,7 @@ from tools.gateway_gui.command_telemetry import (
     GatewayCommandEvent,
     GatewayCommandRequestTracker,
 )
+from tools.gateway_gui.diagnostic_models import CommandTimelineModel
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
@@ -34,6 +35,7 @@ from tools.gateway_gui.protocol import (
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
+    parse_stream_record,
     SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
@@ -1215,6 +1217,45 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(gui.packet_by_iid, {})
         self.assertEqual(gui.status_text.get(), "Gateway external RAM and deduplication state cleared.")
         gui._append_log.assert_called()
+
+    def test_expected_anchors_default_is_three(self) -> None:
+        self.assertEqual(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT, "3")
+
+    def test_enumeration_updates_topology_view_live_with_discovered_anchors(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.status_text = FakeVariable()  # type: ignore[assignment]
+        gui.transport = Mock()
+        gui.command_timeline_model = CommandTimelineModel()
+        gui.command_request_tracker = GatewayCommandRequestTracker()
+        gui.command_orchestrator = GatewayCommandOrchestrator(gui.command_request_tracker)
+        gui.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
+        gui.topology_model = Mock()
+        gui.topology_model.observe.return_value = None
+        gui.mesh_diagnostics_view = Mock()
+        gui.geometry_model = Mock()
+        gui.geometry_model.observe_command_event.return_value = False
+        gui._apply_gateway_command_transition = Mock()  # type: ignore[assignment]
+
+        packet = parse_stream_record(
+            stream_record(
+                gateway_assignment_event_payload(
+                    anchor_id=0x56DA25FE4AF6D141,
+                    discovery_slot=0,
+                    event_sequence=1,
+                ),
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=0,
+                packet_src_id=0x9999888877776666,
+                packet_dst_id=0x9999888877776666,
+                packet_session_id=100,
+                packet_seq=1,
+            )
+        )
+        gui._observe_diagnostic_packet(packet)
+        gui.mesh_diagnostics_view.show_topology.assert_called_once()
+        call_args = gui.mesh_diagnostics_view.show_topology.call_args
+        self.assertIsNone(call_args[0][0])
+        self.assertIn(0x56DA25FE4AF6D141, call_args[0][1])
 
 if __name__ == "__main__":
     unittest.main()

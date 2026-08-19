@@ -119,9 +119,9 @@ class GatewayDiagnosticsMixin:
             if self.geometry_model.observe_command_event(event):
                 self.anchor_geometry_view.show_model(self.geometry_model)
             comparison = self.topology_model.observe(event)
-            if comparison is not None:
-                anchors = self.command_timeline_model.enumerated_anchors.get(
-                    event.correlation_key, {})
+            anchors = self.command_timeline_model.enumerated_anchors.get(
+                event.correlation_key, {})
+            if comparison is not None or anchors or event.command_kind == 1:
                 self.mesh_diagnostics_view.show_topology(comparison, anchors)
             return
         if packet.msg_type == MSG_COMMAND_RESULT:

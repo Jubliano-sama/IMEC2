@@ -142,8 +142,7 @@ ERROR_BG = "#fbe9e8"
 HEADER = "#252b30"
 SELECTION = "#d8ebe6"
 DEFAULT_COMMAND_BUDGET_TEXT = ""
-DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT = ""
-
+DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT = "3"
 
 class Tooltip:
     def __init__(self, widget: tk.Widget, text: str) -> None:
@@ -376,187 +375,98 @@ class GatewayGui(GatewayDiagnosticsMixin):
         parent.grid_propagate(False)
         parent.grid_columnconfigure(0, weight=1)
 
-        identity = ttk.LabelFrame(parent, text="Host Identity", padding=10)
-        identity.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        identity.grid_columnconfigure(1, weight=1)
-        ttk.Label(identity, text="Host ID").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        host_entry = ttk.Entry(identity, textvariable=self.host_id_text)
-        host_entry.grid(row=0, column=1, sticky="ew")
-        Tooltip(host_entry, "Source ID placed in host command envelopes. Accepts decimal or 0x-prefixed hexadecimal.")
-        ttk.Label(identity, text="Command limit (ms)").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
-        command_budget_entry = ttk.Entry(
-            identity, textvariable=self.command_budget_text)
-        command_budget_entry.grid(row=1, column=1, sticky="ew", pady=(6, 0))
-        Tooltip(
-            command_budget_entry,
-            "Optional total firmware deadline. Leave blank for the robust command-specific default; a short limit can intentionally end before all retries finish.",
-        )
+        # Primary Mesh Network Actions
+        operations = ttk.LabelFrame(parent, text="Mesh Network Operations", padding=10)
+        operations.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        operations.grid_columnconfigure(0, weight=1)
+        operations.grid_columnconfigure(1, weight=1)
 
-        discovery = ttk.LabelFrame(parent, text="Anchor-Pair Survey", padding=10)
-        discovery.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        discovery.grid_columnconfigure(1, weight=1)
-        self._labeled_spin(discovery, 0, "Survey ID", self.survey_id_text, 1, 0xFFFFFFFF)
-        auto_survey_id = ttk.Checkbutton(
-            discovery,
-            text="Generate a fresh ID for every survey",
-            variable=self.survey_id_auto,
-        )
-        auto_survey_id.grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 3))
-        Tooltip(
-            auto_survey_id,
-            "Enabled by default so delayed packets from an older run cannot match a new one. Clear it to send the exact Survey ID above.",
-        )
-        self._labeled_spin(
-            discovery, 2, "Discovery slots", self.discovery_slots_text, 1, 50
-        )
-        self._labeled_spin(
-            discovery, 3, "Discovery slot (ms)",
-            self.discovery_slot_ms_text, 30, 1000
-        )
-        self._labeled_spin(
-            discovery, 4, "Discovery rounds",
-            self.discovery_round_count_text, 1, 4
-        )
-        self._labeled_spin(
-            discovery, 5, "Report grace (ms)", self.duration_text, 1, 60000
-        )
-        self._labeled_spin(
-            discovery, 6, "Discovery phase budget (ms)",
-            self.discovery_budget_text, 1000,
-            OPERATION_POLICY_COMMAND_BUDGET_MAX_MS,
-        )
-        self._labeled_spin(
-            discovery, 7, "Pair reruns", self.pair_max_reruns_text, 0, 2
-        )
-        ttk.Label(discovery, text="Concurrent pairs").grid(
-            row=8, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
-        )
-        parallel_entry = ttk.Entry(
-            discovery, textvariable=self.pair_max_parallel_text
-        )
-        parallel_entry.grid(row=8, column=1, sticky="ew", pady=(4, 0))
-        Tooltip(
-            parallel_entry,
-            "Use 'auto' to expose all 25 safe lanes; the neighborhood conflict "
-            "classifier still serializes pairs that can interfere.",
-        )
-        ttk.Label(
-            discovery,
-            text="Start delay: 20s (fixed). Samples: 5 per pair (fixed).",
-            style="Muted.TLabel",
-            wraplength=295,
-            justify="left",
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(5, 8))
-        self.discovery_button = ttk.Button(
-            discovery,
-            text="Start anchor-pair survey",
-            style="Primary.TButton",
-            command=self._send_discovery,
-        )
-        self.discovery_button.grid(row=10, column=0, columnspan=2, sticky="ew")
-        Tooltip(
-            self.discovery_button,
-            "Send gateway-local CMD_SURVEY_REACHABILITY (0x0100). Firmware starts survey discovery and reports COMMAND_RESULT.",
-        )
+        ttk.Label(operations, text="Expected Anchors").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        anchors_entry = ttk.Entry(operations, textvariable=self.assignment_expected_anchors_text)
+        anchors_entry.grid(row=0, column=1, sticky="ew")
+        Tooltip(anchors_entry, "Number of anchors in the fleet (default 3). Enables right-sized slot allocation and fast completion.")
 
-        refresh = ttk.LabelFrame(parent, text="Gateway-Local Commands", padding=10)
-        refresh.grid(row=2, column=0, sticky="ew", pady=(0, 10))
-        refresh.grid_columnconfigure(0, weight=1)
-        refresh.grid_columnconfigure(1, weight=1)
-        ttk.Label(refresh, text="Connected gateway DEVICE_ID").grid(row=0, column=0, sticky="w")
-        gateway_identity = ttk.Label(refresh, textvariable=self.gateway_id_text)
-        gateway_identity.grid(row=1, column=0, sticky="w", pady=(3, 4))
-        Tooltip(gateway_identity, "Read directly from the connected gateway identity characteristic.")
-        ttk.Label(
-            refresh,
-            textvariable=self.gateway_id_source,
-            style="Muted.TLabel",
-            wraplength=295,
-            justify="left",
-        ).grid(row=2, column=0, sticky="w", pady=(0, 8))
-        self._labeled_spin(
-            refresh,
-            3,
-            "Expected anchors (blank = full 8-hop scan)",
-            self.assignment_expected_anchors_text,
-            1,
-            50,
-        )
-        self._labeled_spin(
-            refresh,
-            4,
-            "Deepest hop (1..8, blank = auto)",
-            self.deepest_hop_text,
-            1,
-            8,
-        )
-        self._labeled_spin(
-            refresh,
-            5,
-            "Assignment budget (ms)",
-            self.assignment_budget_text,
-            1000,
-            GATEWAY_COMMAND_BUDGET_MAX_MS,
-        )
-        self._labeled_spin(
-            refresh,
-            6,
-            "Response spread (ms)",
-            self.assignment_response_spread_text,
-            20,
-            10000,
-        )
-        self.refresh_button = ttk.Button(
-            refresh,
-            text="Refresh mesh routes (Here I Am)",
-            style="Primary.TButton",
-            command=self._send_here_i_am,
-        )
-        self.refresh_button.grid(row=7, column=0, columnspan=2, sticky="ew")
-        Tooltip(
-            self.refresh_button,
-            "Send local CMD_FORCE_REDISCOVERY (0x000c). The gateway responds and schedules a priority GATEWAY_ROUTE_ADV flood.",
-        )
         self.assignment_button = ttk.Button(
-            refresh,
-            text="Enumerate anchors and assign slots",
+            operations,
+            text="1. Enumerate & Assign Slots",
             style="Primary.TButton",
             command=self._send_assign_discovery_slots,
         )
         self.assignment_button.grid(
-            row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
         Tooltip(
             self.assignment_button,
-            "Send gateway-local CMD_ASSIGN_DISCOVERY_SLOTS (0x0104). Firmware collects anchor claims, floods the assignment table, and returns the assigned-anchor count.",
+            "Discovers all network anchors, refreshes routing trees, and assigns unique, collision-free discovery slots.",
         )
+
+        self.discovery_button = ttk.Button(
+            operations,
+            text="2. Start Anchor Survey",
+            style="Primary.TButton",
+            command=self._send_discovery,
+        )
+        self.discovery_button.grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        Tooltip(
+            self.discovery_button,
+            "Performs deterministic UWB ranging discovery using assigned slots and measures anchor-pair geometry.",
+        )
+
+        self.refresh_button = ttk.Button(
+            operations,
+            text="Refresh Routes (Here I Am)",
+            command=self._send_here_i_am,
+        )
+        self.refresh_button.grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        Tooltip(
+            self.refresh_button,
+            "Broadcasts a route advertisement flood to rebuild reverse routing paths to the gateway.",
+        )
+
         self.clear_memory_button = ttk.Button(
-            refresh,
-            text="Clear gateway memory (host RAM)",
+            operations,
+            text="Clear Gateway Memory",
             style="Danger.TButton",
             command=self._clear_gateway_memory,
         )
         self.clear_memory_button.grid(
-            row=9, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.clear_memory_button,
-            "Clear gateway external RAM: resets host deduplication cache, geometry models, survey history, command telemetry, and CIR reassembly buffers.",
+            "Resets host deduplication cache, geometry models, survey history, and command telemetry.",
         )
-        self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
-        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        contract = ttk.LabelFrame(parent, text="Command Surface", padding=10)
-        contract.grid(row=3, column=0, sticky="ew")
+        self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
         ttk.Label(
-            contract,
-            text="Only the three host workflows proven by the current firmware are exposed. Arbitrary TLVs are intentionally not sent.",
+            operations,
+            textvariable=self.command_availability_text,
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+        # Advanced / Protocol Settings
+        advanced = ttk.LabelFrame(parent, text="Protocol Parameters", padding=10)
+        advanced.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        advanced.grid_columnconfigure(0, weight=1)
+        advanced.grid_columnconfigure(1, weight=1)
+
+        ttk.Label(advanced, text="Host ID").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(advanced, textvariable=self.host_id_text).grid(row=0, column=1, sticky="ew")
+
+        self._labeled_spin(advanced, 1, "Survey ID", self.survey_id_text, 1, 0xFFFFFFFF)
+        auto_survey = ttk.Checkbutton(advanced, text="Auto-generate fresh Survey ID", variable=self.survey_id_auto)
+        auto_survey.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 4))
+
+        self._labeled_spin(advanced, 3, "Discovery slot (ms)", self.discovery_slot_ms_text, 30, 1000)
+        self._labeled_spin(advanced, 4, "Discovery rounds", self.discovery_round_count_text, 1, 4)
+        self._labeled_spin(advanced, 5, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
+        self._labeled_spin(advanced, 6, "Pair reruns", self.pair_max_reruns_text, 0, 2)
     def _labeled_spin(
         self,
         parent: ttk.LabelFrame,
@@ -992,6 +902,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         return self.gateway_id
 
     def _submit_gateway_command(self, plan: GatewayCommandPlan) -> bool:
+        barrier = getattr(self, "assignment_replay_barrier", None)
+        if isinstance(barrier, GatewayAssignmentReplayBarrier) and not barrier.active:
+            barrier.reset()
         dispatch = self.command_orchestrator.begin(plan)
         if dispatch is None:
             self.status_text.set("A gateway command is already active")
@@ -1332,6 +1245,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._clear_gateway_identity("Reading the gateway firmware DEVICE_ID...")
         names = {
             "connecting": "Connecting...",
+            "reconnecting": "Reconnecting...",
             "connected": "Connected",
             "disconnecting": "Disconnecting...",
             "disconnected": "Disconnected",
@@ -1340,9 +1254,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.connection_label.configure(
             style="Connected.Status.TLabel" if self.connected else "Status.TLabel"
         )
-        busy = state in ("connecting", "disconnecting")
+        busy = state in ("connecting", "reconnecting", "disconnecting")
         self.connect_button.configure(state="disabled" if self.connected or busy else "normal")
-        self.disconnect_button.configure(state="normal" if self.connected else "disabled")
+        self.disconnect_button.configure(state="normal" if self.connected or state == "reconnecting" else "disabled")
         self._update_command_state()
         if self.connected and self.gateway_id is not None:
             self.status_text.set(

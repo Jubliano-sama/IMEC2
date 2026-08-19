@@ -258,33 +258,54 @@ class MeshDiagnosticsView(ttk.Frame):
                 f"{index + 1}. {command_step_sentence(event)}" for index, event in enumerate(events)
             ))
 
-    def show_topology(self, result: TopologyComparison,
+    def show_topology(self, result: TopologyComparison | None,
                       anchors: dict[int, GatewayCommandEvent] | None = None) -> None:
-        if not result.complete:
-            summary = result.eligibility_reason
-        elif result.status == "no_baseline":
-            summary = f"Enumeration complete: {len(result.actual)} anchor(s) found. No baseline has been accepted yet."
-        elif result.status == "exact":
-            summary = f"Topology unchanged: all {len(result.actual)} expected anchor(s) replied."
+        anchors_dict = anchors or {}
+        if result is None:
+            if anchors_dict:
+                summary = f"Enumerating anchors: {len(anchors_dict)} anchor(s) discovered..."
+            else:
+                summary = "No complete anchor enumeration is available."
+            eligibility_reason = "Enumeration in progress; waiting for terminal result..."
+            complete = False
+            expected: set[int] = set()
+            actual: set[int] = set(anchors_dict.keys())
         else:
-            summary = f"Topology changed: {len(result.added)} new anchor(s), {len(result.missing)} expected anchor(s) missing."
+            complete = result.complete
+            if not result.complete:
+                summary = result.eligibility_reason
+            elif result.status == "no_baseline":
+                summary = f"Enumeration complete: {len(result.actual)} anchor(s) found. No baseline has been accepted yet."
+            elif result.status == "exact":
+                summary = f"Topology unchanged: all {len(result.actual)} expected anchor(s) replied."
+            else:
+                summary = f"Topology changed: {len(result.added)} new anchor(s), {len(result.missing)} expected anchor(s) missing."
+            eligibility_reason = result.eligibility_reason
+            expected = set(result.expected)
+            actual = set(result.actual) | set(anchors_dict.keys())
+
         self.topology_var.set(summary)
-        self.baseline_reason_var.set(result.eligibility_reason)
-        self.accept_baseline_button.configure(state="normal" if result.complete else "disabled")
+        self.baseline_reason_var.set(eligibility_reason)
+        self.accept_baseline_button.configure(state="normal" if complete else "disabled")
         self.topology.delete(*self.topology.get_children())
-        expected, actual = set(result.expected), set(result.actual)
-        for anchor_id in sorted(expected | actual):
-            comparison = "Unchanged" if anchor_id in expected and anchor_id in actual else "Missing" if anchor_id in expected else "Added"
-            detail = (anchors or {}).get(anchor_id)
+        for anchor_id in sorted(expected | actual | set(anchors_dict.keys())):
+            if result is None or not result.complete:
+                comparison = "Discovered" if anchor_id in anchors_dict else "Pending"
+            elif anchor_id in expected and anchor_id in actual:
+                comparison = "Unchanged"
+            elif anchor_id in expected:
+                comparison = "Missing"
+            else:
+                comparison = "Added"
+            detail = anchors_dict.get(anchor_id)
             self.topology.insert("", "end", values=(
                 anchor_label(anchor_id),
-                detail.hop_count if detail is not None else "-",
+                detail.hop_count if detail is not None and detail.hop_count != 0 else ("1" if detail is not None else "-"),
                 detail.discovery_slot if detail is not None and detail.discovery_slot != 255 else "Pending",
                 "Assigned" if detail is not None and detail.discovery_slot != 255 else "Replied" if anchor_id in actual else "No reply",
                 f"Event {detail.event_sequence}" if detail is not None else "Current run",
                 comparison,
             ))
-
 
 def _projector(points: Iterable[tuple[float, float]], width: int, height: int):
     values = list(points)

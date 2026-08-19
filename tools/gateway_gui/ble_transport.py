@@ -57,7 +57,9 @@ class BleTransport:
         self._connection_generation = 0
         self._decoder = GatewayReceiveBuffer()
         self._write_lock: asyncio.Lock | None = None
-
+        self._auto_reconnect = True
+        self._last_target: str | None = None
+        self._reconnect_task: asyncio.Task[Any] | None = None
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
@@ -146,7 +148,9 @@ class BleTransport:
         finally:
             self._emit("scan_state", active=False)
 
-    def connect(self, target: str, timeout_s: float = 12.0) -> None:
+    def connect(self, target: str, timeout_s: float = 15.0) -> None:
+        self._last_target = target.strip()
+        self._cancel_reconnect_task()
         self._submit(self._connect(target.strip(), timeout_s), "BLE connect")
 
     async def _connect(self, target: str, timeout_s: float) -> None:
@@ -211,8 +215,9 @@ class BleTransport:
             self._connection_generation += 1
             await self._disconnect_client_quietly(client)
             self._emit("connection_state", state="disconnected", target=target)
+            if getattr(self, "_auto_reconnect", False) and getattr(self, "_last_target", None) and getattr(getattr(self, "_thread", None), "is_alive", lambda: False)():
+                self._schedule_reconnect(target)
             raise
-
     def _connection_is_current(self, client: Any, generation: int) -> bool:
         return (
             generation == self._connection_generation
@@ -252,6 +257,36 @@ class BleTransport:
         for packet in result.packets:
             self._emit("packet", packet=packet)
 
+    def _cancel_reconnect_task(self) -> None:
+        task = getattr(self, "_reconnect_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            self._reconnect_task = None
+    def _schedule_reconnect(self, target: str, delay_s: float = 1.5) -> None:
+        self._cancel_reconnect_task()
+        thread = getattr(self, "_thread", None)
+        loop = getattr(self, "_loop", None)
+        if thread is None or not thread.is_alive() or loop is None or not target:
+            return
+        async def _reconnect() -> None:
+            await asyncio.sleep(delay_s)
+            if self._client is not None and self._client.is_connected:
+                return
+            self._emit("connection_state", state="connecting", target=target)
+            self._emit(
+                "transport_error",
+                message=f"Attempting automatic reconnect to {target}...",
+            )
+            try:
+                await self._connect(target, timeout_s=15.0)
+            except Exception as exc:
+                self._emit(
+                    "transport_error",
+                    message=f"Auto-reconnect failed: {type(exc).__name__}: {exc}",
+                )
+
+        self._reconnect_task = self._loop.create_task(_reconnect())
+
     def _on_disconnected(self, client: Any, generation: int) -> None:
         if not self._connection_is_current(client, generation):
             return
@@ -259,15 +294,26 @@ class BleTransport:
         self._connecting_client = None
         self._connection_generation += 1
         self._decoder = GatewayReceiveBuffer()
-        self._emit("connection_state", state="disconnected", target="")
-        self._emit(
-            "transport_error", message="Gateway disconnected unexpectedly"
-        )
-
+        target = getattr(self, "_last_target", None)
+        thread = getattr(self, "_thread", None)
+        if getattr(self, "_auto_reconnect", False) and target and thread is not None and thread.is_alive():
+            self._emit("connection_state", state="reconnecting", target=target)
+            self._emit(
+                "transport_error",
+                message=f"Gateway link dropped; auto-reconnecting to {target}...",
+            )
+            self._schedule_reconnect(target)
+        else:
+            self._emit("connection_state", state="disconnected", target="")
+            self._emit(
+                "transport_error", message="Gateway disconnected unexpectedly"
+            )
     def disconnect(self) -> None:
         self._submit(self._disconnect(), "BLE disconnect")
 
     async def _disconnect(self) -> None:
+        self._last_target = None
+        self._cancel_reconnect_task()
         client = (
             self._client
             if self._client is not None
@@ -325,6 +371,8 @@ class BleTransport:
                     response=False,
                 )
                 chunks += 1
+                if offset + chunk_size < len(frame):
+                    await asyncio.sleep(0.005)
             self._emit(
                 "tx_written",
                 label=label,
