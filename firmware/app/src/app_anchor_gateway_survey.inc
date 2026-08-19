@@ -1317,32 +1317,6 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
         duration_ms =
             policy_candidate.updates.discovery.report_grace_ms;
     }
-    /* Right-sized enumeration optimization: collapse slot space from the
-     * unconstrained default (50 or 6) to the exact enumerated anchor count N.
-     * The gateway durable roster already holds N, each anchor's stable slot
-     * s in [0,N-1], and hop depth for staggering.  Using N slots makes the
-     * report upload window N*2.27s (6.8s for N=3) and enables deterministic
-     * collision-free UWB probing on slot s, so 1-2 rounds suffice. */
-#if DEVICE_ROLE == ROLE_GATEWAY
-    {
-        uint64_t roster_ids[UWB_DISCOVERY_SLOT_COUNT];
-        uint8_t roster_slots[UWB_DISCOVERY_SLOT_COUNT];
-        size_t roster_count = 0u;
-        uint16_t roster_epoch = 0u;
-        int roster_ret = gateway_get_registered_membership_roster_with_slots(
-            roster_ids, roster_slots, ARRAY_SIZE(roster_ids),
-            &roster_count, &roster_epoch);
-        if (roster_ret == 0 && roster_count > 0u &&
-            roster_count <= UWB_DISCOVERY_SLOT_COUNT) {
-            config.slot_count = (uint8_t)roster_count;
-            config.round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT;
-            status_debug_printf(
-                "DBG_SURVEY_RIGHT_SIZED slots=%u rounds=%u roster_epoch=%u N=%u\n",
-                config.slot_count, config.round_count, roster_epoch,
-                (unsigned int)roster_count);
-        }
-    }
-#endif
     config.survey_id = survey_id;
     discovery_duration_ms = survey_discovery_duration_ms(&config);
     report_custody_ms = survey_discovery_report_custody_ms(

@@ -183,11 +183,10 @@ static void test_roster_extension_preserves_prior_slots(void)
     size_t decoded_count = 0u;
     uint8_t slot_count = 0u;
     uint64_t lower_hash_id = 1u;
-    /* Hop-aware ordering: suffix sorted by hop count then hash.  The
-     * expected suffix keeps hop order 3,1,2 (hops 3,4,5) which is already
-     * hop-sorted, so no hash sort is applied.  The extension must preserve
-     * that hop-aware order and keep hop sidecar aligned. */
-    (void)expected_new;
+
+    assert(discovery_assignment_sort_anchor_ids(
+               expected_new,
+               sizeof(expected_new) / sizeof(expected_new[0])) == PROTO_OK);
     assert(discovery_assignment_order_roster_extension(
                anchor_ids,
                hop_counts,

@@ -1021,23 +1021,6 @@ static void test_discovery_round_scheduler_has_one_continuous_window(void)
                &config, anchor_id, config.round_count, 0u,
                &(struct survey_discovery_attempt_schedule){0}) ==
            PROTO_ERR_ARG);
-
-    for (uint8_t slot = 0u; slot < config.slot_count; slot++) {
-        uint32_t slot_tx_ms = 0u;
-        struct survey_discovery_attempt_schedule slot_sched = {0};
-
-        assert(survey_discovery_opportunity_slot_tx_ms(&config, slot, 0u,
-                                                       &slot_tx_ms) == PROTO_OK);
-        assert(slot_tx_ms == (uint32_t)slot * config.slot_ms);
-        assert(survey_discovery_schedule_slot_attempt(&config, slot, 0u, 0u,
-                                                      &slot_sched) == PROTO_OK);
-        assert(slot_sched.tx_ms == slot_tx_ms + SURVEY_DISCOVERY_RX_GUARD_MS);
-    }
-    assert(survey_discovery_opportunity_slot_tx_ms(&config, config.slot_count,
-                                                   0u, &(uint32_t){0}) == PROTO_ERR_ARG);
-    assert(survey_discovery_schedule_slot_attempt(&config, config.slot_count,
-                                                  0u, 0u,
-                                                  &(struct survey_discovery_attempt_schedule){0}) == PROTO_ERR_ARG);
 }
 
 static void test_pending_discovery_report_survives_queue_and_route_pressure(void)

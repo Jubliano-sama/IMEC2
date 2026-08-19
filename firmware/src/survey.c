@@ -658,52 +658,34 @@ int survey_discovery_opportunity_window_ms(
     return PROTO_OK;
 }
 
-int survey_discovery_opportunity_slot_tx_ms(
-    const struct survey_discovery_config *config,
-    uint8_t slot,
-    uint8_t opportunity,
-    uint32_t *tx_ms)
-{
-    uint32_t start_ms;
-    uint32_t end_ms;
-    uint64_t tx;
-
-    if (tx_ms == NULL || config == NULL ||
-        survey_discovery_opportunity_window_ms(config,
-                                               opportunity,
-                                               &start_ms,
-                                               &end_ms) != PROTO_OK ||
-        slot >= config->slot_count) {
-        return PROTO_ERR_ARG;
-    }
-    tx = (uint64_t)start_ms + (uint64_t)slot * config->slot_ms;
-    if (tx >= end_ms || tx > UINT32_MAX) {
-        return PROTO_ERR_NO_SPACE;
-    }
-    *tx_ms = (uint32_t)tx;
-    return PROTO_OK;
-}
-
 int survey_discovery_opportunity_tx_ms(
     const struct survey_discovery_config *config,
     uint64_t anchor_id,
     uint8_t opportunity,
     uint32_t *tx_ms)
 {
+    uint32_t start_ms;
+    uint32_t end_ms;
     uint8_t slot;
+    uint64_t tx;
 
-    if (tx_ms == NULL || anchor_id == 0u || config == NULL ||
-        survey_discovery_config_validate(config) != PROTO_OK) {
+    if (tx_ms == NULL || anchor_id == 0u ||
+        survey_discovery_opportunity_window_ms(config,
+                                               opportunity,
+                                               &start_ms,
+                                               &end_ms) != PROTO_OK) {
         return PROTO_ERR_ARG;
     }
     slot = survey_discovery_opportunity_slot(anchor_id,
                                              config->survey_id,
                                              opportunity,
                                              config->slot_count);
-    return survey_discovery_opportunity_slot_tx_ms(config,
-                                                   slot,
-                                                   opportunity,
-                                                   tx_ms);
+    tx = (uint64_t)start_ms + (uint64_t)slot * config->slot_ms;
+    if (tx >= end_ms || tx > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *tx_ms = (uint32_t)tx;
+    return PROTO_OK;
 }
 
 uint32_t survey_discovery_probe_tx_budget_ms(void)
@@ -724,9 +706,9 @@ uint32_t survey_discovery_probe_tx_budget_ms(void)
     return (uint32_t)airtime_ms + SURVEY_DISCOVERY_TX_TRANSITION_GUARD_MS;
 }
 
-int survey_discovery_schedule_slot_attempt(
+int survey_discovery_schedule_attempt(
     const struct survey_discovery_config *config,
-    uint8_t slot,
+    uint64_t anchor_id,
     uint8_t opportunity,
     uint32_t earliest_relative_ms,
     struct survey_discovery_attempt_schedule *schedule)
@@ -735,7 +717,7 @@ int survey_discovery_schedule_slot_attempt(
     uint32_t tx_budget_ms;
     int ret;
 
-    if (schedule == NULL || config == NULL) {
+    if (schedule == NULL || anchor_id == 0u) {
         return PROTO_ERR_ARG;
     }
     memset(schedule, 0, sizeof(*schedule));
@@ -745,8 +727,8 @@ int survey_discovery_schedule_slot_attempt(
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = survey_discovery_opportunity_slot_tx_ms(config, slot, opportunity,
-                                                  &raw_tx_ms);
+    ret = survey_discovery_opportunity_tx_ms(config, anchor_id, opportunity,
+                                             &raw_tx_ms);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -768,30 +750,6 @@ int survey_discovery_schedule_slot_attempt(
         return PROTO_ERR_BUSY;
     }
     return PROTO_OK;
-}
-
-int survey_discovery_schedule_attempt(
-    const struct survey_discovery_config *config,
-    uint64_t anchor_id,
-    uint8_t opportunity,
-    uint32_t earliest_relative_ms,
-    struct survey_discovery_attempt_schedule *schedule)
-{
-    uint8_t slot;
-
-    if (schedule == NULL || anchor_id == 0u || config == NULL ||
-        survey_discovery_config_validate(config) != PROTO_OK) {
-        return PROTO_ERR_ARG;
-    }
-    slot = survey_discovery_opportunity_slot(anchor_id,
-                                             config->survey_id,
-                                             opportunity,
-                                             config->slot_count);
-    return survey_discovery_schedule_slot_attempt(config,
-                                                  slot,
-                                                  opportunity,
-                                                  earliest_relative_ms,
-                                                  schedule);
 }
 
 static bool survey_time_reached(uint32_t now_ms, uint32_t deadline_ms)

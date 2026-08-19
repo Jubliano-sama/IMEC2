@@ -493,21 +493,10 @@ int survey_discovery_opportunity_tx_ms(
     uint64_t anchor_id,
     uint8_t opportunity,
     uint32_t *tx_ms);
-int survey_discovery_opportunity_slot_tx_ms(
-    const struct survey_discovery_config *config,
-    uint8_t slot,
-    uint8_t opportunity,
-    uint32_t *tx_ms);
 uint32_t survey_discovery_probe_tx_budget_ms(void);
 int survey_discovery_schedule_attempt(
     const struct survey_discovery_config *config,
     uint64_t anchor_id,
-    uint8_t opportunity,
-    uint32_t earliest_relative_ms,
-    struct survey_discovery_attempt_schedule *schedule);
-int survey_discovery_schedule_slot_attempt(
-    const struct survey_discovery_config *config,
-    uint8_t slot,
     uint8_t opportunity,
     uint32_t earliest_relative_ms,
     struct survey_discovery_attempt_schedule *schedule);
