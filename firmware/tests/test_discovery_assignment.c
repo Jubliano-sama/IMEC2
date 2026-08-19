@@ -184,9 +184,11 @@ static void test_roster_extension_preserves_prior_slots(void)
     uint8_t slot_count = 0u;
     uint64_t lower_hash_id = 1u;
 
-    assert(discovery_assignment_sort_anchor_ids(
+    assert(discovery_assignment_order_roster_extension(
                expected_new,
-               sizeof(expected_new) / sizeof(expected_new[0])) == PROTO_OK);
+               &hop_counts[2],
+               sizeof(expected_new) / sizeof(expected_new[0]),
+               0u) == PROTO_OK);
     assert(discovery_assignment_order_roster_extension(
                anchor_ids,
                hop_counts,

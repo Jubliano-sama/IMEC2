@@ -206,6 +206,15 @@ static bool anchor_id_before(uint64_t left, uint64_t right)
            (left_hash == right_hash && left < right);
 }
 
+static bool anchor_order_before(uint64_t left, uint8_t left_hop,
+                                uint64_t right, uint8_t right_hop)
+{
+    if (left_hop != right_hop) {
+        return left_hop < right_hop;
+    }
+    return anchor_id_before(left, right);
+}
+
 static int discovery_assignment_sort_anchor_ids_with_hops(
     uint64_t *anchor_ids,
     uint8_t *hop_counts,
@@ -223,7 +232,10 @@ static int discovery_assignment_sort_anchor_ids_with_hops(
         if (current == 0u) {
             return PROTO_ERR_MALFORMED;
         }
-        while (j > 0u && anchor_id_before(current, anchor_ids[j - 1u])) {
+        while (j > 0u &&
+               anchor_order_before(current, current_hop_count,
+                                   anchor_ids[j - 1u],
+                                   hop_counts == NULL ? 0u : hop_counts[j - 1u])) {
             anchor_ids[j] = anchor_ids[j - 1u];
             if (hop_counts != NULL) {
                 hop_counts[j] = hop_counts[j - 1u];
