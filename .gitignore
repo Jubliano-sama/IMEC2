@@ -12,6 +12,7 @@ old code/
 test/
 tools/*
 !tools/
+!tools/gateway_gui/
 !tools/mesh_ble_route_monitor.py
 zephyr/
 

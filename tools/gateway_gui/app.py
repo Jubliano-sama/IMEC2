@@ -531,8 +531,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.assignment_button,
             "Send gateway-local CMD_ASSIGN_DISCOVERY_SLOTS (0x0104). Firmware collects anchor claims, floods the assignment table, and returns the assigned-anchor count.",
         )
+        self.clear_memory_button = ttk.Button(
+            refresh,
+            text="Clear gateway memory (host RAM)",
+            style="Danger.TButton",
+            command=self._clear_gateway_memory,
+        )
+        self.clear_memory_button.grid(
+            row=9, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        Tooltip(
+            self.clear_memory_button,
+            "Clear gateway external RAM: resets host deduplication cache, geometry models, survey history, command telemetry, and CIR reassembly buffers.",
+        )
         self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
-        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         contract = ttk.LabelFrame(parent, text="Command Surface", padding=10)
         contract.grid(row=3, column=0, sticky="ew")
@@ -2188,6 +2201,31 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.sample_warning_text.set("Select a click report to inspect aligned samples.")
         self.cir_state_text.set("Select a CIR diagnostic fragment to inspect its assembly.")
 
+    def _clear_gateway_memory(self) -> None:
+        """Clear external gateway host RAM: deduplication, geometry models, and packet buffers."""
+        self._clear_packets()
+        self.delivery_dedup.clear()
+        getattr(self, "_assignment_replay_receipts", {}).clear()
+        if hasattr(self, "assignment_replay_barrier"):
+            self.assignment_replay_barrier.reset()
+        if hasattr(self, "command_request_tracker"):
+            self.command_request_tracker.reset()
+        if hasattr(self, "geometry_model"):
+            self.geometry_model.reset()
+        if hasattr(self, "click_location_model"):
+            self.click_location_model.reset()
+        if hasattr(self, "wake_monitor"):
+            self.wake_monitor.reset()
+        if hasattr(self, "command_timeline_model"):
+            self.command_timeline_model.reset()
+        if hasattr(self, "anchor_geometry_view"):
+            self.anchor_geometry_view.show(self.geometry_model.state)
+        if hasattr(self, "click_diagnostics_view"):
+            self.click_diagnostics_view.show(self.click_location_model.state, {})
+        if hasattr(self, "mesh_diagnostics_view"):
+            self.mesh_diagnostics_view.show(self.command_timeline_model.state)
+        self._append_log("info", "Cleared gateway external RAM: dedup state, geometry models, and packet history reset.")
+        self.status_text.set("Gateway external RAM and deduplication state cleared.")
     @staticmethod
     def _clear_tree(tree: ttk.Treeview) -> None:
         children = tree.get_children()

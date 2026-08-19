@@ -78,6 +78,9 @@ class GatewayCommandRequestTracker:
         self.timeout_s = timeout_s
         self.pending: PendingGatewayCommand | None = None
         self.last_outcome = "idle"
+    def reset(self) -> None:
+        self.pending = None
+        self.last_outcome = "idle"
 
     def begin(self, command_kind: int, host_session_id: int, host_sequence: int,
               *, now: float | None = None,

@@ -657,6 +657,10 @@ class WakeTrainMonitor:
         self._order: deque[tuple[object, ...]] = deque()
         self._evidence: dict[tuple[object, ...], WakeEvidence] = {}
         self._diagnostics: dict[tuple[object, ...], WakeDiagnostic] = {}
+    def reset(self) -> None:
+        self._order.clear()
+        self._evidence.clear()
+        self._diagnostics.clear()
 
     @property
     def counters(self) -> dict[str, int]:
@@ -736,6 +740,13 @@ class ClickLocationModel:
         self._ranges_by_key: OrderedDict[
             tuple[int, int, int], dict[str, float]
         ] = OrderedDict()
+        self.state = ClickDiagnosticState("no_geometry", "No solved anchor geometry.", None, 0)
+    def reset(self) -> None:
+        self.geometry_generation = 0
+        self.positions_m.clear()
+        self.current_key = None
+        self.ranges_m.clear()
+        self._ranges_by_key.clear()
         self.state = ClickDiagnosticState("no_geometry", "No solved anchor geometry.", None, 0)
 
     def set_geometry(self, positions: dict[str, tuple[float, float]], generation: int) -> ClickDiagnosticState:
@@ -1004,6 +1015,10 @@ class CommandTimelineModel:
         self.events: dict[tuple[tuple[int, int, int, int], int], GatewayCommandEvent] = {}
         self.terminals: dict[tuple[int, int, int, int], GatewayCommandEvent] = {}
         self.enumerated_anchors: dict[tuple[int, int, int, int], dict[int, GatewayCommandEvent]] = {}
+    def reset(self) -> None:
+        self.events.clear()
+        self.terminals.clear()
+        self.enumerated_anchors.clear()
 
     def observe(self, event: GatewayCommandEvent) -> None:
         key = event.correlation_key

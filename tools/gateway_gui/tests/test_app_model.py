@@ -1184,6 +1184,37 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(gui.survey_id_text.get(), "0xabcdef01")
         self.assertEqual(gui._survey_id_counter, 1234)
 
+    def test_clear_gateway_memory_resets_host_ram_and_models(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.delivery_dedup = gateway_app.GatewayPacketDeduplicator()
+        gui.cir_reassembler = CirReassembler()
+        gui.packet_by_iid = {"iid1": Mock()}
+        gui._wake_row_iids = {}
+        gui.cir_key_by_packet_id = {}
+        gui.cir_errors_by_packet_id = {}
+        gui.status_text = FakeVariable("Ready")  # type: ignore[assignment]
+        gui.sample_warning_text = FakeVariable("")  # type: ignore[assignment]
+        gui.cir_state_text = FakeVariable("")  # type: ignore[assignment]
+        gui.packet_tree = Mock()
+        gui.overview_tree = Mock()
+        gui.sample_tree = Mock()
+        gui.cir_tree = Mock()
+        gui.tlv_tree = Mock()
+        gui.diagnostics_text = Mock()
+        gui.raw_text = Mock()
+        gui.log_text = Mock()
+        gui._set_cir_plot = Mock()
+        gui._clear_tree = Mock()
+        gui._set_text = Mock()
+        gui._append_log = Mock()
+        gui._initialize_gateway_diagnostics()
+
+        gui._clear_gateway_memory()
+
+        self.assertEqual(len(gui.delivery_dedup._entries), 0)
+        self.assertEqual(gui.packet_by_iid, {})
+        self.assertEqual(gui.status_text.get(), "Gateway external RAM and deduplication state cleared.")
+        gui._append_log.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
