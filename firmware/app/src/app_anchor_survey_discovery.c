@@ -1442,19 +1442,11 @@ static bool survey_probe_slot_matches_any_opportunity(
     if (config == NULL || probe == NULL) {
         return false;
     }
-    for (uint8_t opportunity = 0u;
-         opportunity < config->round_count;
-         opportunity++) {
-        if (probe->anchor_slot == survey_discovery_opportunity_slot(
-                                      probe->anchor_id,
-                                      config->survey_id,
-                                      opportunity,
-                                      config->slot_count)) {
-            if (opportunity_out != NULL) {
-                *opportunity_out = opportunity;
-            }
-            return true;
+    if (probe->anchor_slot < config->slot_count) {
+        if (opportunity_out != NULL) {
+            *opportunity_out = 0u;
         }
+        return true;
     }
     return false;
 }
@@ -1575,10 +1567,21 @@ static int send_local_survey_probe(
     };
     uint8_t frame[UWB_SURVEY_DISCOVERY_PROBE_LEN];
     size_t frame_len = 0u;
+    uint32_t epoch = 0u;
+    uint8_t assigned_slot = 0u;
+    uint8_t assigned_slot_count = 0u;
     int ret;
 
-    probe.anchor_slot = survey_discovery_opportunity_slot(
-        DEVICE_ID, config->survey_id, opportunity, config->slot_count);
+    if (config->slot_count != 0u &&
+        local_anchor_discovery_assignment_get(&epoch,
+                                              &assigned_slot,
+                                              &assigned_slot_count) &&
+        epoch != 0u && assigned_slot_count != 0u) {
+        probe.anchor_slot = (uint8_t)((assigned_slot + opportunity) % config->slot_count);
+    } else {
+        probe.anchor_slot = survey_discovery_opportunity_slot(
+            DEVICE_ID, config->survey_id, opportunity, config->slot_count);
+    }
     if (slot_out != NULL) {
         *slot_out = probe.anchor_slot;
     }
@@ -1670,10 +1673,26 @@ int app_anchor_survey_discovery_run(
             uint32_t relative_now_ms;
             uint8_t probe_slot = 0u;
             bool rf_started = false;
+            uint32_t epoch = 0u;
+            uint8_t assigned_slot = 0u;
+            uint8_t assigned_slot_count = 0u;
+            bool has_assigned_slot = (config->slot_count != 0u &&
+                                      local_anchor_discovery_assignment_get(&epoch,
+                                                                            &assigned_slot,
+                                                                            &assigned_slot_count) &&
+                                      epoch != 0u && assigned_slot_count != 0u);
 
-            ret = survey_discovery_schedule_attempt(config, DEVICE_ID,
-                                                    opportunity, 0u,
-                                                    &nominal);
+            if (has_assigned_slot) {
+                probe_slot = (uint8_t)((assigned_slot + opportunity) % config->slot_count);
+                ret = survey_discovery_schedule_slot_attempt(config,
+                                                             probe_slot,
+                                                             opportunity, 0u,
+                                                             &nominal);
+            } else {
+                ret = survey_discovery_schedule_attempt(config, DEVICE_ID,
+                                                        opportunity, 0u,
+                                                        &nominal);
+            }
             if (ret != PROTO_OK) {
                 return mesh_errno_from_proto(ret);
             }

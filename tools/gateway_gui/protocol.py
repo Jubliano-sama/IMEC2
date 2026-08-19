@@ -2339,6 +2339,11 @@ def build_assign_discovery_slots_command(
             if operation_policy is not None
             else ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
         )
+        deepest_hop = (
+            operation_policy.assignment.deepest_hop
+            if operation_policy is not None
+            else 0
+        )
         required_budget_ms = assignment_required_budget_ms(
             response_spread_ms,
             (
@@ -2346,6 +2351,7 @@ def build_assign_discovery_slots_command(
                 if operation_policy is not None
                 else expected_anchor_count or 0
             ),
+            deepest_hop=deepest_hop,
         )
         if command_budget_ms < required_budget_ms:
             raise ValueError(

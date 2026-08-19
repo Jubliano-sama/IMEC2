@@ -107,6 +107,7 @@ SURVEY_TERMINAL_DRAIN_MAX_S = 90.0
 def _assignment_operation_policy(
     expected_anchor_count: int,
     command_budget_ms: int | None,
+    deepest_hop: int = 0,
 ) -> OperationPolicyProfile:
     """Mirror the desktop GUI's explicit assignment policy on the wire."""
     return OperationPolicyProfile(
@@ -118,6 +119,7 @@ def _assignment_operation_policy(
                 else command_budget_ms
             ),
             response_spread_ms=ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            deepest_hop=deepest_hop,
         )
     )
 
@@ -1205,6 +1207,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             operation_policy = _assignment_operation_policy(
                 args.expected_anchors,
                 command_budget_ms,
+                deepest_hop=getattr(args, "deepest_hop", 0),
             )
             route_args = {
                 "host_id": args.host_id,
@@ -1312,6 +1315,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     assignment_policy = _assignment_operation_policy(
                         args.expected_anchors,
                         command_budget_ms,
+                        deepest_hop=getattr(args, "deepest_hop", 0),
                     )
                     command_args["command_budget_ms"] = (
                         assignment_policy.assignment.operation_budget_ms
@@ -1344,6 +1348,15 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             "operation cannot satisfy the proof"
                         )
                     survey_id = args.survey_id or identity
+                    survey_policy = _survey_operation_policy(
+                        expected_anchor_count=args.expected_anchors,
+                        command_budget_ms=command_budget_ms,
+                        discovery_slot_count=args.discovery_slots,
+                        report_grace_ms=args.survey_duration_ms,
+                    )
+                    command_args["command_budget_ms"] = (
+                        survey_policy.discovery.operation_budget_ms
+                    )
                     command = build_anchor_discovery_command(
                         **command_args,
                         survey_id=survey_id,
@@ -1355,12 +1368,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             if args.require_survey_success
                             else None
                         ),
-                        operation_policy=_survey_operation_policy(
-                            expected_anchor_count=args.expected_anchors,
-                            command_budget_ms=command_budget_ms,
-                            discovery_slot_count=args.discovery_slots,
-                            report_grace_ms=args.survey_duration_ms,
-                        ),
+                        operation_policy=survey_policy,
                     )
                     if args.require_survey_success:
                         qualification = SurveyQualification(
@@ -1495,6 +1503,12 @@ def main() -> None:
             "per expected anchor"
         ),
     )
+    parser.add_argument(
+        "--deepest-hop",
+        type=int,
+        default=0,
+        help="Deepest expected hop count across the mesh (0 = automatic from expected anchors)",
+    )
     parser.add_argument("--route-refresh-timeout", type=float, default=60.0)
     parser.add_argument("--assignment-timeout", type=float, default=240.0)
     parser.add_argument(
@@ -1563,6 +1577,7 @@ def main() -> None:
         required_assignment_budget_ms = assignment_required_budget_ms(
             ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             args.expected_anchors,
+            deepest_hop=args.deepest_hop,
         )
         if args.command_budget_ms < required_assignment_budget_ms:
             parser.error(

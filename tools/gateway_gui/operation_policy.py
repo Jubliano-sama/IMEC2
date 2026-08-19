@@ -74,6 +74,7 @@ def _bounded(label: str, value: int, minimum: int, maximum: int) -> None:
 def assignment_required_budget_ms(
     response_spread_ms: int,
     expected_anchor_count: int = 0,
+    deepest_hop: int = 0,
 ) -> int:
     _bounded(
         "assignment response spread",
@@ -87,7 +88,9 @@ def assignment_required_budget_ms(
         0,
         EXPECTED_ANCHOR_COUNT_MAX,
     )
-    effective_hop_count = min(expected_anchor_count or 8, 8)
+    if deepest_hop != 0:
+        _bounded("deepest hop", deepest_hop, 1, 8)
+    effective_hop_count = min(deepest_hop or expected_anchor_count or 8, 8)
     prior_hop_count = effective_hop_count - 1
     prior_hop_custody_ms = (
         prior_hop_count * 30_000
@@ -147,6 +150,7 @@ class AssignmentOperationPolicy:
     expected_anchor_count: int = 0
     operation_budget_ms: int = ASSIGNMENT_DEFAULT_BUDGET_MS
     response_spread_ms: int = ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
+    deepest_hop: int = 0
 
     family: ClassVar[int] = OPERATION_POLICY_FAMILY_ASSIGNMENT
 
@@ -169,9 +173,12 @@ class AssignmentOperationPolicy:
             ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
             ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
         )
+        if self.deepest_hop != 0:
+            _bounded("deepest hop", self.deepest_hop, 1, 8)
         required_budget_ms = assignment_required_budget_ms(
             self.response_spread_ms,
             self.expected_anchor_count,
+            self.deepest_hop,
         )
         if self.operation_budget_ms < required_budget_ms:
             raise ValueError(

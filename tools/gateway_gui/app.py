@@ -225,11 +225,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.assignment_expected_anchors_text = tk.StringVar(
             value=DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
         )
+        self.deepest_hop_text = tk.StringVar(value="")
         self.assignment_budget_text = tk.StringVar(
             value=str(ASSIGNMENT_DEFAULT_BUDGET_MS)
         )
         self.assignment_response_spread_text = tk.StringVar(
             value=str(ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS)
+        )
+        self.assignment_expected_anchors_text.trace_add(
+            "write", self._on_assignment_parameters_changed
+        )
+        self.deepest_hop_text.trace_add(
+            "write", self._on_assignment_parameters_changed
+        )
+        self.assignment_response_spread_text.trace_add(
+            "write", self._on_assignment_parameters_changed
         )
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
@@ -398,62 +408,53 @@ class GatewayGui(GatewayDiagnosticsMixin):
             "Enabled by default so delayed packets from an older run cannot match a new one. Clear it to send the exact Survey ID above.",
         )
         self._labeled_spin(
-            discovery, 2, "Start delay (ms)",
-            self.discovery_start_delay_text,
-            DISCOVERY_START_DELAY_MIN_MS,
-            DISCOVERY_START_DELAY_MAX_MS,
+            discovery, 2, "Discovery slots", self.discovery_slots_text, 1, 50
         )
         self._labeled_spin(
             discovery, 3, "Discovery slot (ms)",
             self.discovery_slot_ms_text, 30, 1000
         )
         self._labeled_spin(
-            discovery, 4, "Discovery slots", self.discovery_slots_text, 1, 50
-        )
-        self._labeled_spin(
-            discovery, 5, "Discovery rounds",
+            discovery, 4, "Discovery rounds",
             self.discovery_round_count_text, 1, 4
         )
         self._labeled_spin(
-            discovery, 6, "Report grace (ms)", self.duration_text, 1, 60000
+            discovery, 5, "Report grace (ms)", self.duration_text, 1, 60000
         )
         self._labeled_spin(
-            discovery, 7, "Discovery phase budget (ms)",
+            discovery, 6, "Discovery phase budget (ms)",
             self.discovery_budget_text, 1000,
             OPERATION_POLICY_COMMAND_BUDGET_MAX_MS,
         )
         self._labeled_spin(
-            discovery, 8, "Pair reruns", self.pair_max_reruns_text, 0, 2
+            discovery, 7, "Pair reruns", self.pair_max_reruns_text, 0, 2
         )
         ttk.Label(discovery, text="Concurrent pairs").grid(
-            row=9, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
+            row=8, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
         )
         parallel_entry = ttk.Entry(
             discovery, textvariable=self.pair_max_parallel_text
         )
-        parallel_entry.grid(row=9, column=1, sticky="ew", pady=(4, 0))
+        parallel_entry.grid(row=8, column=1, sticky="ew", pady=(4, 0))
         Tooltip(
             parallel_entry,
             "Use 'auto' to expose all 25 safe lanes; the neighborhood conflict "
             "classifier still serializes pairs that can interfere.",
         )
-        self._labeled_spin(
-            discovery, 10, "Pair samples", self.sample_count_text, 5, 5
-        )
         ttk.Label(
             discovery,
-            text="Each pair collects exactly 5 samples in its shared survey round.",
+            text="Start delay: 20s (fixed). Samples: 5 per pair (fixed).",
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(5, 8))
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(5, 8))
         self.discovery_button = ttk.Button(
             discovery,
             text="Start anchor-pair survey",
             style="Primary.TButton",
             command=self._send_discovery,
         )
-        self.discovery_button.grid(row=12, column=0, columnspan=2, sticky="ew")
+        self.discovery_button.grid(row=10, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.discovery_button,
             "Send gateway-local CMD_SURVEY_REACHABILITY (0x0100). Firmware starts survey discovery and reports COMMAND_RESULT.",
@@ -485,6 +486,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._labeled_spin(
             refresh,
             4,
+            "Deepest hop (1..8, blank = auto)",
+            self.deepest_hop_text,
+            1,
+            8,
+        )
+        self._labeled_spin(
+            refresh,
+            5,
             "Assignment budget (ms)",
             self.assignment_budget_text,
             1000,
@@ -492,7 +501,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         self._labeled_spin(
             refresh,
-            5,
+            6,
             "Response spread (ms)",
             self.assignment_response_spread_text,
             20,
@@ -504,7 +513,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             style="Primary.TButton",
             command=self._send_here_i_am,
         )
-        self.refresh_button.grid(row=6, column=0, columnspan=2, sticky="ew")
+        self.refresh_button.grid(row=7, column=0, columnspan=2, sticky="ew")
         Tooltip(
             self.refresh_button,
             "Send local CMD_FORCE_REDISCOVERY (0x000c). The gateway responds and schedules a priority GATEWAY_ROUTE_ADV flood.",
@@ -516,14 +525,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._send_assign_discovery_slots,
         )
         self.assignment_button.grid(
-            row=7, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=8, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.assignment_button,
             "Send gateway-local CMD_ASSIGN_DISCOVERY_SLOTS (0x0104). Firmware collects anchor claims, floods the assignment table, and returns the assigned-anchor count.",
         )
         self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
-        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(refresh, textvariable=self.command_availability_text, style="Muted.TLabel", wraplength=295, justify="left").grid(row=9, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         contract = ttk.LabelFrame(parent, text="Command Surface", padding=10)
         contract.grid(row=3, column=0, sticky="ew")
@@ -838,11 +847,49 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         return budget_ms
 
+    def _on_assignment_parameters_changed(self, *args: object) -> None:
+        try:
+            expected_raw = self.assignment_expected_anchors_text.get().strip()
+            expected = int(expected_raw) if expected_raw else 0
+            hop_raw = self.deepest_hop_text.get().strip()
+            deepest = int(hop_raw) if hop_raw else 0
+            spread_raw = self.assignment_response_spread_text.get().strip()
+            spread = (
+                int(spread_raw)
+                if spread_raw
+                else ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
+            )
+            if (
+                0 <= expected <= EXPECTED_ANCHOR_COUNT_MAX
+                and (deepest == 0 or 1 <= deepest <= 8)
+                and ASSIGNMENT_RESPONSE_SPREAD_MIN_MS
+                <= spread
+                <= ASSIGNMENT_RESPONSE_SPREAD_MAX_MS
+            ):
+                budget = assignment_required_budget_ms(
+                    spread, expected, deepest
+                )
+                self.assignment_budget_text.set(str(budget))
+            if 1 <= expected <= 50:
+                self.discovery_slots_text.set(str(expected))
+        except (ValueError, TypeError):
+            pass
+
     def _operation_policy_profile(self) -> OperationPolicyProfile:
         expected_raw = self.assignment_expected_anchors_text.get().strip()
         expected_anchor_count = (
             self._parse_int("Expected anchors", expected_raw)
             if expected_raw else 0
+        )
+        deepest_hop_var = getattr(self, "deepest_hop_text", None)
+        deepest_hop_raw = (
+            deepest_hop_var.get().strip()
+            if deepest_hop_var is not None
+            else ""
+        )
+        deepest_hop = (
+            self._parse_int("Deepest hop", deepest_hop_raw)
+            if deepest_hop_raw else 0
         )
         parallel_raw = self.pair_max_parallel_text.get().strip().lower()
         if parallel_raw in {"auto", "auto25", "auto (25)"}:
@@ -861,11 +908,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     "Assignment response spread",
                     self.assignment_response_spread_text.get(),
                 ),
+                deepest_hop=deepest_hop,
             ),
             discovery=DiscoveryOperationPolicy(
-                start_delay_ms=self._parse_int(
-                    "Discovery start delay", self.discovery_start_delay_text.get()
-                ),
+                start_delay_ms=DISCOVERY_DEFAULT_START_DELAY_MS,
                 slot_ms=self._parse_int(
                     "Discovery slot duration", self.discovery_slot_ms_text.get()
                 ),

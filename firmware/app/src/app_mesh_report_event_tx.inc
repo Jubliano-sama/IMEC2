@@ -2721,6 +2721,7 @@ static void mesh_event_negotiation_retry_work_handler(struct k_work *work)
 
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
 {
+#if DEVICE_ROLE != ROLE_GATEWAY
     int ret;
 
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
@@ -2754,12 +2755,17 @@ static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason)
     mesh_event_accept_completed_clear_peer(peer_id);
     mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
     mesh_restore_anchor_low_duty_if_no_ch9("event-end-tx");
+#else
+    ARG_UNUSED(peer_id);
+    ARG_UNUSED(reason);
+#endif
 }
 
 static uint8_t mesh_capture_downstream_channel9_peers(
     uint64_t *peer_ids,
     uint8_t capacity)
 {
+#if DEVICE_ROLE != ROLE_GATEWAY
     uint8_t count = 0u;
 
     if (peer_ids == NULL || capacity == 0u) {
@@ -2775,10 +2781,16 @@ static uint8_t mesh_capture_downstream_channel9_peers(
         }
     }
     return count;
+#else
+    ARG_UNUSED(peer_ids);
+    ARG_UNUSED(capacity);
+    return 0u;
+#endif
 }
 
 static bool mesh_channel9_peer_timing_exists(uint64_t peer_id)
 {
+#if DEVICE_ROLE != ROLE_GATEWAY
     for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
         if (mesh_runtime.event_timings[i].valid &&
             mesh_runtime.event_timings[i].next_hop_id == peer_id) {
@@ -2786,12 +2798,17 @@ static bool mesh_channel9_peer_timing_exists(uint64_t peer_id)
         }
     }
     return false;
+#else
+    ARG_UNUSED(peer_id);
+    return false;
+#endif
 }
 
 static void mesh_notify_removed_downstream_peers(const uint64_t *peer_ids,
                                                  uint8_t count,
                                                  const char *reason)
 {
+#if DEVICE_ROLE != ROLE_GATEWAY
     if (peer_ids == NULL) {
         return;
     }
@@ -2800,6 +2817,11 @@ static void mesh_notify_removed_downstream_peers(const uint64_t *peer_ids,
             mesh_close_channel9_connection(peer_ids[i], reason);
         }
     }
+#else
+    ARG_UNUSED(peer_ids);
+    ARG_UNUSED(count);
+    ARG_UNUSED(reason);
+#endif
 }
 
 #if DEVICE_ROLE == ROLE_ANCHOR

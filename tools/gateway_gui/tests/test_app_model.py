@@ -235,6 +235,7 @@ class AppModelTests(unittest.TestCase):
         gui: GatewayGui, *, expected_anchors: str = ""
     ) -> None:
         gui.assignment_expected_anchors_text = FakeVariable(expected_anchors)  # type: ignore[assignment]
+        gui.deepest_hop_text = FakeVariable("")  # type: ignore[assignment]
         gui.assignment_budget_text = FakeVariable(
             str(gateway_app.ASSIGNMENT_DEFAULT_BUDGET_MS)
         )  # type: ignore[assignment]
