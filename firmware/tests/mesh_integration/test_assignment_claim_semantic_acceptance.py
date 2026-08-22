@@ -10,6 +10,9 @@ from source_text import read_composed_source
 ROOT = Path(__file__).resolve().parents[2]
 ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 ANCHOR_HEADER = (ROOT / "app/src/app_anchor.h").read_text(encoding="utf-8")
+SURVEY_DISCOVERY = read_composed_source(
+    ROOT / "app/src/app_anchor_survey_discovery.c"
+)
 GATEWAY = read_composed_source(ROOT / "app/src/app_gateway_ble.c")
 REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
 RELAY = (ROOT / "src/mesh_relay.c").read_text(encoding="utf-8")
@@ -52,6 +55,111 @@ def has_owned_return(fragment: str, value: str) -> bool:
 
 
 class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
+    def test_survey_accepts_the_occupied_span_of_the_exact_assignment(self):
+        match = function_body(
+            SURVEY_DISCOVERY, "survey_assignment_matches_config"
+        )
+
+        self.assertIn("epoch != config->assignment_epoch", match)
+        self.assertIn("table_seq != config->assignment_table_seq", match)
+        self.assertIn(
+            "discovery_assignment_table_commitment_equal", match
+        )
+        self.assertIn("config->slot_count > slot_count", match)
+        self.assertIn("slot >= config->slot_count", match)
+        self.assertNotIn("slot_count != config->slot_count", match)
+
+    def test_first_contact_route_depth_can_only_postpone_before_submit(self):
+        delay = function_body(ANCHOR, "anchor_discovery_response_delay_ms")
+        postpone = function_body(
+            ANCHOR, "anchor_discovery_postpone_for_deeper_route"
+        )
+        worker = function_body(ANCHOR, "anchor_discovery_claim_work_handler")
+        schedule = function_body(ANCHOR, "anchor_schedule_discovery_response")
+
+        self.assertIn("pending->first_contact_random", delay)
+        self.assertIn("first_contact_origin_ms", schedule)
+        self.assertIn("first_contact_random = sys_rand32_get()", schedule)
+        self.assertIn("hop_count <= snapshot->hop_count", postpone)
+        self.assertIn(
+            "hop_count > anchor_discovery_claim_pending.hop_count", postpone
+        )
+        self.assertIn(
+            "not_before_ms >\n            anchor_discovery_claim_pending.next_attempt_not_before_ms",
+            postpone,
+        )
+        refresh = worker.index("anchor_discovery_postpone_for_deeper_route")
+        submit = worker.index("anchor_send_discovery_response")
+        self.assertLess(refresh, submit)
+
+    def test_survey_report_depth_postpones_retained_not_before(self):
+        retry = function_body(
+            SURVEY_DISCOVERY, "app_anchor_survey_discovery_retry_report"
+        )
+        prepare = function_body(SURVEY_DISCOVERY, "prepare_discovery_report")
+
+        depth = retry.index(
+            "gateway_hop_count > survey_report_first_contact_schedule.hop_count"
+        )
+        postpone = retry.index(
+            "app_mesh_local_delivery_postpone_not_before", depth
+        )
+        retire = retry.index(
+            "app_mesh_local_delivery_retire_elapsed_not_before", postpone
+        )
+        submit = retry.index("app_node_comm_submit_delivery", retire)
+        self.assertLess(depth, postpone)
+        self.assertLess(postpone, retire)
+        self.assertLess(retire, submit)
+        self.assertIn("survey_report_first_contact_remember", prepare)
+
+    def test_survey_converts_zero_based_route_hops_to_rf_depth(self):
+        selected_depth = function_body(
+            REPORT, "app_mesh_report_selected_gateway_hop_count"
+        )
+        survey_depth = function_body(
+            SURVEY_DISCOVERY, "survey_report_gateway_hop_count"
+        )
+
+        select = selected_depth.index("route_selected(&mesh_runtime.upstream)")
+        unknown = selected_depth.index(
+            "selected == NULL || selected->hop_count == UINT8_MAX", select
+        )
+        unknown_return = selected_depth.index("return 0u", unknown)
+        conversion = re.search(
+            r"return\s+\(uint8_t\)\(selected->hop_count\s*\+\s*"
+            r"(\d+)u\);",
+            selected_depth,
+        )
+        self.assertIsNotNone(conversion)
+        convert = conversion.start()
+        lookup = survey_depth.index(
+            "app_mesh_report_selected_gateway_hop_count()"
+        )
+        fallback = survey_depth.index(
+            "hop_count == 0u || hop_count > SURVEY_DEFAULT_TTL", lookup
+        )
+        conservative = survey_depth.index(
+            "SURVEY_DEFAULT_TTL : hop_count", fallback
+        )
+
+        self.assertLess(select, unknown)
+        self.assertLess(unknown, unknown_return)
+        self.assertLess(unknown_return, convert)
+        self.assertNotIn("return selected->hop_count;", selected_depth)
+        self.assertLess(lookup, fallback)
+        self.assertLess(fallback, conservative)
+        self.assertEqual(
+            len(re.findall("selected->hop_count", selected_depth)), 2
+        )
+        self.assertEqual(survey_depth.count("SURVEY_DEFAULT_TTL"), 2)
+
+        # A direct route stores zero intermediate relays, while its child
+        # stores one. Survey scheduling needs their one- and two-hop RF depth.
+        route_to_rf_offset = int(conversion.group(1))
+        self.assertEqual(0 + route_to_rf_offset, 1)
+        self.assertEqual(1 + route_to_rf_offset, 2)
+
     def test_table_ack_window_owns_the_shared_fast_retry_contract(self):
         self.assertRegex(
             DISCOVERY_ASSIGNMENT_HEADER,
@@ -62,7 +170,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             DISCOVERY_ASSIGNMENT_HEADER,
         )
         self.assertIn(
-            "discovery_assignment_table_collection_window_ms",
+            "discovery_assignment_table_collection_window_for_topology_ms",
             DISCOVERY_ASSIGNMENT_HEADER,
         )
         self.assertNotRegex(
@@ -80,7 +188,8 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         )
         stage = window.index("GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS")
         table_window = window.index(
-            "discovery_assignment_table_collection_window_ms(", stage
+            "discovery_assignment_table_collection_window_for_topology_ms(",
+            stage,
         )
         claim_return = window.index(
             "gateway_command_budget_weighted_window_ms(", table_window
@@ -210,7 +319,8 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE", deadline_branch
         )
         self.assertIn(
-            "gateway_discovery_assignment_state.operation_deadline_ms",
+            "gateway_discovery_assignment_state\n"
+            "                .operation_deadline_ms",
             deadline_branch,
         )
         self.assertNotIn("APP_GATEWAY_SEMANTIC_ACCEPT", validation)
@@ -218,21 +328,17 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
     def test_every_assignment_state_gate_is_visible_in_hardware_traces(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
 
-        for reason in ("reason=envelope", "reason=rf-start"):
-            with self.subTest(reason=reason):
-                self.assertIn(
-                    f"DBG_DISCOVERY_SLOT_CLAIM_STATE_REJECT {reason}",
-                    claim,
-                )
+        self.assertIn("DBG_ENUM_REJECT reason=envelope", claim)
+        self.assertIn("DBG_ENUM_REJECT phase=%u reason=rf", claim)
         for reason in (
             "reason=inactive",
             "reason=epoch",
             "reason=deadline",
-            "reason=ack-state",
+            "reason=state",
         ):
             with self.subTest(retired_reason=reason):
                 self.assertIn(
-                    f"DBG_DISCOVERY_SLOT_RESULT_RETIRED {reason}",
+                    f"DBG_ENUM_RETIRE phase=%u {reason}",
                     claim,
                 )
 
@@ -282,7 +388,12 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "APP_GATEWAY_SEMANTIC_ACCEPT_NEW", first_ack
         )
         self.assertLess(first_ack, new_accept)
-        self.assertNotIn("GATEWAY_ASSIGNMENT_RETURN(-EAGAIN)", ack)
+        durable_gate = ack.index(
+            "gateway_registered_membership_proves_assignment_ack("
+        )
+        retry = ack.index("GATEWAY_ASSIGNMENT_RETURN(-EAGAIN)", durable_gate)
+        self.assertLess(durable_gate, retry)
+        self.assertLess(retry, first_ack)
         self.assertIn(
             "discovery_assignment_ack_quorum_settle_should_arm(",
             ack,
@@ -373,17 +484,17 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "zero or out-of-range wire values cannot become route evidence",
         )
 
-        complete = function_body(
+        prepare_table = function_body(
             ANCHOR,
-            "gateway_discovery_assignment_complete_success_locked",
+            "gateway_discovery_assignment_prepare_durable_table_locked",
         )
-        prepare = complete.index(
+        prepare = prepare_table.index(
             "app_gateway_assignment_publisher_prepare_table("
         )
-        persist = complete.index(
+        persist = prepare_table.index(
             "gateway_set_registered_membership_roster(", prepare
         )
-        publisher_call = complete[prepare:persist]
+        publisher_call = prepare_table[prepare:persist]
         self.assertIn(
             "gateway_discovery_assignment_state.anchor_hop_counts",
             publisher_call,
@@ -493,7 +604,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         )
 
         missing = publish.index(
-            "gateway_discovery_assignment_missing_ack_count_locked() == 0u"
+            "gateway_discovery_assignment_missing_confirmation_count_locked() =="
         )
         pending = publish.index("late_table_redrive_pending", missing)
         table = publish.index(
@@ -589,11 +700,8 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             ANCHOR,
             "gateway_discovery_assignment_ack_proof_admission",
         )
-        live = proof.index(
-            "gateway_discovery_assignment_live_proof("
-        )
         durable = proof.index(
-            "gateway_registered_membership_proves_assignment_ack(", live
+            "gateway_registered_membership_proves_assignment_ack("
         )
         accepted = proof.index("if (proof_ret == 1)", durable)
         roster = proof.index(
@@ -609,7 +717,6 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             reconcile,
         )
 
-        self.assertLess(live, durable)
         self.assertLess(durable, accepted)
         self.assertLess(accepted, roster)
         self.assertLess(roster, reconcile)
@@ -656,6 +763,152 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertNotIn("gateway_membership_snapshot_state =", projection)
         self.assertNotIn("gateway_membership_roster_state =", projection)
         self.assertNotIn("app_durable_state_", projection)
+
+    def test_table_is_durable_before_rf_and_before_ack_acceptance(self):
+        prepare = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_prepare_durable_table_locked",
+        )
+        publisher = prepare.index(
+            "app_gateway_assignment_publisher_prepare_table("
+        )
+        durable = prepare.index(
+            "gateway_set_registered_membership_roster(", publisher
+        )
+        marker = prepare.index(
+            "GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING", publisher
+        )
+        self.assertLess(publisher, marker)
+        self.assertLess(marker, durable)
+        self.assertIn(
+            "publication.acknowledged_mask = responder_slot_mask",
+            prepare,
+        )
+
+        publish = function_body(
+            ANCHOR, "gateway_discovery_assignment_publish_table"
+        )
+        durable_prepare = publish.index(
+            "gateway_discovery_assignment_prepare_durable_table_locked()"
+        )
+        rf_submit = publish.index(
+            "gateway_discovery_assignment_submit_control_flood_locked(",
+            durable_prepare,
+        )
+        self.assertLess(durable_prepare, rf_submit)
+
+        claim = function_body(
+            ANCHOR, "gateway_discovery_assignment_note_claim"
+        )
+        ack_branch = claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)"
+        )
+        proof_gate = claim.index(
+            "gateway_registered_membership_proves_assignment_ack(",
+            ack_branch,
+        )
+        ack_mutation = claim.index(
+            "gateway_discovery_assignment_state.ack_mask |=", proof_gate
+        )
+        accepted = claim.index(
+            "APP_GATEWAY_SEMANTIC_ACCEPT_NEW", ack_mutation
+        )
+        self.assertLess(proof_gate, ack_mutation)
+        self.assertLess(ack_mutation, accepted)
+
+        replay = function_body(
+            GATEWAY, "gateway_replay_pending_assignment_publication"
+        )
+        pending = replay.index(
+            "GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING"
+        )
+        rf_resume = replay.index(
+            "app_anchor_gateway_assignment_resume_pending_table(", pending
+        )
+        host_prepare = replay.index(
+            "app_gateway_assignment_publisher_prepare_table(", rf_resume
+        )
+        self.assertLess(pending, rf_resume)
+        self.assertLess(rf_resume, host_prepare)
+
+    def test_confirm_pending_replay_restores_valid_table_policy_before_retry(self):
+        resume = function_body(
+            ANCHOR, "app_anchor_gateway_assignment_resume_pending_table"
+        )
+        reset = resume.index("memset(&gateway_discovery_assignment_state,")
+        spread = resume.index(
+            "gateway_discovery_assignment_state.response_spread_ms =",
+            reset,
+        )
+        default_budget = resume.index(
+            "gateway_discovery_assignment_state.command_budget_ms =",
+            spread,
+        )
+        retry = resume.index(
+            "gateway_discovery_assignment_reschedule(", default_budget
+        )
+
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS",
+            resume[spread:default_budget],
+        )
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS",
+            resume[default_budget:retry],
+        )
+        self.assertLess(reset, spread)
+        self.assertLess(spread, default_budget)
+        self.assertLess(default_budget, retry)
+
+        command = function_body(
+            ANCHOR, "gateway_build_discovery_assignment_command"
+        )
+        self.assertIn(
+            ".response_spread_ms =\n"
+            "                    gateway_discovery_assignment_state.response_spread_ms",
+            command,
+        )
+
+    def test_table_entry_scratch_is_not_live_during_delivery(self):
+        self.assertIn(
+            "static __attribute__((noinline)) int\n"
+            "gateway_discovery_assignment_build_table_locked",
+            ANCHOR,
+        )
+        builder = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_build_table_locked",
+        )
+        publish = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_publish_table",
+        )
+
+        self.assertNotIn("struct discovery_assignment_entry entries", builder)
+        self.assertIn(
+            "discovery_assignment_append_table_from_roster(", builder
+        )
+        self.assertIn(
+            "discovery_assignment_table_commitment_from_roster(", builder
+        )
+        self.assertNotIn(
+            "gateway_discovery_assignment_submit_control_flood_locked(",
+            builder,
+        )
+        self.assertNotIn("struct discovery_assignment_entry entries", publish)
+        materialize = publish.index(
+            "gateway_discovery_assignment_build_table_locked(&outbound)"
+        )
+        durable = publish.index(
+            "gateway_discovery_assignment_prepare_durable_table_locked()",
+            materialize,
+        )
+        delivery = publish.index(
+            "gateway_discovery_assignment_submit_control_flood_locked(",
+            durable,
+        )
+        self.assertLess(materialize, durable)
+        self.assertLess(durable, delivery)
 
     def test_candidate_ack_capacity_is_reserved_after_validation_before_mutation(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
@@ -872,18 +1125,18 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
 
     def test_append_only_roster_has_no_production_clear_caller(self):
         start = function_body(ANCHOR, "gateway_start_discovery_assignment")
-        complete = function_body(
+        prepare = function_body(
             ANCHOR,
-            "gateway_discovery_assignment_complete_success_locked",
+            "gateway_discovery_assignment_prepare_durable_table_locked",
         )
         self.assertIn(
             "gateway_discovery_assignment_state.claim_count =\n"
             "        prior_anchor_count",
             start,
         )
-        self.assertIn("published_slot_mask |=", complete)
-        self.assertNotIn("gateway_discovery_assignment_state.ack_mask", complete)
-        self.assertNotIn("!acknowledged", complete)
+        self.assertIn("published_slot_mask |=", prepare)
+        self.assertNotIn("gateway_discovery_assignment_state.ack_mask", prepare)
+        self.assertNotIn("!acknowledged", prepare)
 
         for path in (ROOT / "app/src").glob("*"):
             if path.suffix not in {".c", ".inc"}:
@@ -900,15 +1153,16 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
                     f"production clear caller remains in {path.name}",
                 )
 
-    def test_table_publication_does_not_wait_for_optional_anchor_acks(self):
+    def test_table_publication_waits_for_current_responder_confirmations(self):
         service = function_body(
             ANCHOR, "gateway_discovery_assignment_service_delivery"
         )
         finalize = function_body(
             ANCHOR, "gateway_discovery_assignment_finalize_work_handler"
         )
-        complete = function_body(
-            ANCHOR, "gateway_discovery_assignment_complete_success_locked"
+        prepare = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_prepare_durable_table_locked",
         )
 
         response_window = service.index(
@@ -919,7 +1173,10 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE)",
             response_window,
         )
-        self.assertIn("wait_ms = 0u", service[table_wait:table_wait + 300])
+        self.assertIn(
+            "wait_ms = gateway_discovery_assignment_window_ms_locked()",
+            service[table_wait:table_wait + 300],
+        )
 
         fast_complete = finalize.index(
             "gateway_discovery_assignment_state.table_delivery_succeeded"
@@ -928,15 +1185,18 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "gateway_discovery_assignment_complete_success_locked()",
             fast_complete,
         )
-        self.assertNotIn(
-            "missing_ack_count == 0u",
+        self.assertIn(
+            "missing_proof_count == 0u",
             finalize[fast_complete:completion],
         )
 
-        self.assertIn("published_slot_mask |=", complete)
+        self.assertIn("published_slot_mask |=", prepare)
         self.assertIn(
-            "publication.acknowledged_mask = published_slot_mask",
-            complete,
+            "publication.acknowledged_mask = responder_slot_mask",
+            prepare,
+        )
+        complete = function_body(
+            ANCHOR, "gateway_discovery_assignment_complete_success_locked"
         )
         self.assertIn("event.success_count = published_count", complete)
         self.assertIn("event.failure_count = 0u", complete)

@@ -123,9 +123,21 @@ class MeshReportRoleStorageTests(unittest.TestCase):
         self.assertNotIn("mesh_result_action_tx", self.report_source)
 
     def test_gateway_store_is_initialized_then_attached_after_relay_init(self) -> None:
-        self.assertIn("sizeof(mesh_gateway_ack_store) == 9456u", self.report_source)
+        self.assertIn("sizeof(mesh_gateway_ack_store) == 9544u", self.report_source)
         self.assertIn(
-            "sizeof(struct mesh_gateway_ack_store) == 9456u",
+            "sizeof(struct mesh_gateway_ack_store) == 9544u",
+            self.relay_header,
+        )
+        self.assertIn(
+            "MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u",
+            self.relay_header,
+        )
+        self.assertIn(
+            "MESH_RELAY_GATEWAY_ACK_CLEANUP_RESERVE_CAPACITY 2u",
+            self.relay_header,
+        )
+        self.assertIn(
+            "MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 202u",
             self.relay_header,
         )
         self.assertRegex(

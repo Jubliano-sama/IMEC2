@@ -42,8 +42,8 @@ static const struct node_comm_profile_policy profile_policies[] = {
          * pending assignment TABLE ACK must remain reliable, but it must not
          * consume every newly repaired route while the gateway's bounded
          * survey collection window is open. Keep durable measurements above
-         * protocol responses while leaving owed control responses and
-         * bounded gateway control above both classes.
+         * ordinary uplinks, while causal protocol and control responses stay
+         * above the stored measurement.
          */
         .priority = 230u,
     },
@@ -60,7 +60,12 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .successful_attempts_required = 1u,
         .retry_backoff_shift_cap =
             NODE_COMM_PROTOCOL_RESPONSE_RETRY_SHIFT_CAP,
-        .priority = 220u,
+        /*
+         * A causal response advances the command that created it.  It must get
+         * the next reliable RF opportunity ahead of older durable reports;
+         * those reports retain custody and resume after the response.
+         */
+        .priority = 240u,
     },
     [NODE_COMM_PROFILE_CONTROL_RESPONSE] = {
         .retry_delay_ms = 200u,
@@ -129,6 +134,13 @@ static bool slot_lease_rf_started(const struct node_comm_request_slot *slot)
     return slot_is_live(slot) && slot->lease_active &&
            slot->owner.delivery.state == FW_DELIVERY_WAIT_ACK;
 }
+
+static int validate_callback_generation(
+    struct node_comm *comm,
+    struct node_comm_request_slot *slot,
+    uint32_t handle,
+    uint32_t delivery_generation,
+    enum fw_event_type type);
 
 static struct fw_event delivery_event(uint32_t handle,
                                       uint32_t generation,
@@ -1635,6 +1647,66 @@ int node_comm_lease_await_confirmation(struct node_comm *comm,
     return 0;
 }
 
+int node_comm_requeue_awaiting_confirmation(
+    struct node_comm *comm,
+    uint32_t handle,
+    uint32_t delivery_generation,
+    uint64_t now_ms)
+{
+    struct node_comm_request_slot *slot;
+    int ret;
+
+    if (comm == NULL || handle == 0u || delivery_generation == 0u) {
+        return -EINVAL;
+    }
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot_is_terminal(slot)) {
+        return slot->owner.terminal.delivery_generation ==
+                       delivery_generation ?
+                   -EALREADY : -ESTALE;
+    }
+    if (!slot_is_live(slot)) {
+        return -EAGAIN;
+    }
+    ret = validate_callback_generation(
+        comm, slot, handle, delivery_generation,
+        FW_EVENT_HIGHER_PRIORITY_TRAFFIC);
+    if (ret < 0) {
+        return ret;
+    }
+
+    (void)node_comm_service(comm, now_ms);
+    slot = find_handle(comm, handle);
+    if (slot == NULL) {
+        return -ENOENT;
+    }
+    if (slot_is_terminal(slot)) {
+        return slot->owner.terminal.delivery_generation ==
+                       delivery_generation ?
+                   -EALREADY : -ESTALE;
+    }
+    if (!slot_is_live(slot) ||
+        slot_delivery_generation(slot) != delivery_generation) {
+        return -ESTALE;
+    }
+    if (slot->lease_active ||
+        slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK) {
+        return -EAGAIN;
+    }
+    ret = delivery_apply(
+        comm, slot, FW_EVENT_HIGHER_PRIORITY_TRAFFIC, 0u);
+    if (ret < 0) {
+        return ret;
+    }
+    slot->waiting_resource = false;
+    slot->retry_due_active = false;
+    slot->retry_due_ms = 0u;
+    return 0;
+}
+
 int node_comm_confirm_delivery(struct node_comm *comm,
                                uint32_t handle,
                                uint64_t now_ms)
@@ -1746,20 +1818,25 @@ int node_comm_confirm_delivery_external_proof_for_generation(
         /* The application records the proof and resolves it at lease exit. */
         return -EINPROGRESS;
     }
-    if (slot->owner.delivery.state == FW_DELIVERY_RETRY) {
+    if (slot->owner.delivery.state == FW_DELIVERY_RETRY &&
+        slot->owner.delivery.attempts_started == 0u) {
         ret = delivery_apply(comm, slot, FW_EVENT_RETRY_ALLOWED,
                              FW_EVENT_FLAG_PATH_USABLE);
         if (ret < 0) {
             return ret;
         }
     }
-    if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX) {
+    if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX &&
+        slot->owner.delivery.attempts_started == 0u) {
         ret = delivery_apply(comm, slot, FW_EVENT_RF_STARTED, 0u);
         if (ret < 0) {
             return ret;
         }
     }
-    if (slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK) {
+    if (slot->owner.delivery.state != FW_DELIVERY_WAIT_ACK &&
+        !((slot->owner.delivery.state == FW_DELIVERY_RETRY ||
+           slot->owner.delivery.state == FW_DELIVERY_WAIT_TX) &&
+          slot->owner.delivery.attempts_started > 0u)) {
         return -EAGAIN;
     }
     return terminalize(comm, slot, NODE_COMM_TERMINAL_DELIVERED, now_ms) ?

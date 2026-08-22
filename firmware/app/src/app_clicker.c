@@ -814,6 +814,12 @@ static int clicker_send_wake_claim_train_until(
         while (k_uptime_get() < close_ms) {
             struct uwb_wake_claim_frame claim;
             int64_t remaining_ms = close_ms - k_uptime_get();
+
+            if (remaining_ms <= 0) {
+                /* Tick rolled past close_ms after the loop check: the train
+                 * simply ended, and a zero-length claim would be malformed. */
+                break;
+            }
             uint16_t remaining_u16 = delay_ms_to_u16(remaining_ms);
 
             ret = uwb_clicker_build_wake_claim(

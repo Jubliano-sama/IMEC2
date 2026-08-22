@@ -380,6 +380,13 @@ enum fw_sm_result fw_delivery_sm_handle(void *context,
         }
         break;
     case FW_DELIVERY_WAIT_TX:
+        if (event->type == FW_EVENT_GATEWAY_ACK_RECEIVED &&
+            machine->attempts_started > 0u) {
+            machine->owns_custody = false;
+            return delivery_transition(machine, event, transition,
+                                       FW_DELIVERY_DELIVERED,
+                                       FW_EFFECT_DELIVERY_COMPLETE, true);
+        }
         if (event->type == FW_EVENT_RF_DEFERRED) {
             return fw_transition_finish(transition, FW_SM_APPLIED,
                                         (uint16_t)machine->state,
@@ -412,8 +419,20 @@ enum fw_sm_result fw_delivery_sm_handle(void *context,
                                        FW_DELIVERY_RETRY,
                                        FW_EFFECT_START_TIMER, false);
         }
+        if (event->type == FW_EVENT_HIGHER_PRIORITY_TRAFFIC) {
+            return delivery_transition(machine, event, transition,
+                                       FW_DELIVERY_RETRY,
+                                       FW_EFFECT_DELIVERY_SEND, false);
+        }
         break;
     case FW_DELIVERY_RETRY:
+        if (event->type == FW_EVENT_GATEWAY_ACK_RECEIVED &&
+            machine->attempts_started > 0u) {
+            machine->owns_custody = false;
+            return delivery_transition(machine, event, transition,
+                                       FW_DELIVERY_DELIVERED,
+                                       FW_EFFECT_DELIVERY_COMPLETE, true);
+        }
         if (event->type == FW_EVENT_RETRY_ALLOWED) {
             if ((event->payload.flags & FW_EVENT_FLAG_PATH_USABLE) != 0u) {
                 return delivery_transition(machine, event, transition,

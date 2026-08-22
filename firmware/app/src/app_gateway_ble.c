@@ -708,9 +708,17 @@ static ssize_t gateway_ble_packet_rx_write(struct bt_conn *conn,
             /*
              * A write request receives the ATT error returned below.  A write
              * command has no response, so disconnect it explicitly to make the
-             * failed admission observable and force a complete-frame retry.
+            * failed admission observable and force a complete-frame retry.
              */
             if (write_command && conn != NULL) {
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+                status_debug_printf(
+                    "DBG_GATEWAY_BLE event=local-disconnect cause=ingress ret=%d len=%u flags=0x%02x uptime=%u\n",
+                    ret,
+                    len,
+                    flags,
+                    k_uptime_get_32());
+#endif
                 (void)bt_conn_disconnect(conn,
                                          BT_HCI_ERR_REMOTE_USER_TERM_CONN);
             }
@@ -1220,6 +1228,9 @@ static void gateway_ble_reset_link(uint32_t expected_generation,
 {
     struct bt_conn *conn = NULL;
     uint32_t now_ms = k_uptime_get_32();
+    uint32_t observed_deadline_ms;
+    uint8_t observed_failure_count;
+    bool observed_in_flight;
     int ret;
     k_spinlock_key_t key = k_spin_lock(&gateway_ble_tx_lock);
 
@@ -1239,6 +1250,9 @@ static void gateway_ble_reset_link(uint32_t expected_generation,
     if (gateway_ble_conn != NULL) {
         conn = bt_conn_ref(gateway_ble_conn);
     }
+    observed_in_flight = gateway_ble_tx_in_flight;
+    observed_deadline_ms = gateway_ble_tx_deadline_ms;
+    observed_failure_count = gateway_ble_notify_failure_count;
     gateway_ble_tx_reset_locked();
     k_spin_unlock(&gateway_ble_tx_lock, key);
     gateway_ble_stream_cancel_active();
@@ -1247,6 +1261,16 @@ static void gateway_ble_reset_link(uint32_t expected_generation,
         gateway_ble_schedule_recovery(reason);
         return;
     }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf(
+        "DBG_GATEWAY_BLE event=local-disconnect cause=%s timeout=%u in_flight=%u deadline=%u failures=%u uptime=%u\n",
+        reason == NULL ? "unknown" : reason,
+        timeout_reset ? 1u : 0u,
+        observed_in_flight ? 1u : 0u,
+        observed_deadline_ms,
+        observed_failure_count,
+        now_ms);
+#endif
     ret = bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
     bt_conn_unref(conn);
     if (ret < 0 && ret != -ENOTCONN) {

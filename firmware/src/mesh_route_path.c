@@ -248,7 +248,8 @@ int mesh_route_control_ttl_validate(uint8_t msg_type,
     case MSG_ROUTE_REQ:
         original_request_ttl = (uint16_t)remaining_ttl + hop_count;
         if (original_request_ttl == 1u || original_request_ttl == 2u ||
-            original_request_ttl == 4u || original_request_ttl == 6u) {
+            original_request_ttl == 4u || original_request_ttl == 6u ||
+            original_request_ttl == MESH_NETWORK_MAX_HOPS) {
             return PROTO_OK;
         }
         return PROTO_ERR_MALFORMED;

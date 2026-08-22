@@ -1,0 +1,26 @@
+Script started on 2026-08-20 21:02:15+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway EF:BD:42:B8:83:0C --command qualify-reachability --require-assignment-success --expected-anchors 3 --expected-direct-anchors 2 --expected-multihop-anchors 1 --expected-anchor-hop 0x708bc0aab970300e=2 --expected-anchor-hop 0x191a9619c6c8cb07=1 --expected-anchor-hop 0x56da25fe4af6d141=1 --deepest-hop 2 --route-refresh-timeout 90 --assignment-timeout 240 --connect-timeout 10" <not executed on terminal>]
+usage: provision_mesh_anchor.py [-h] --gateway GATEWAY
+                                --command {here-i-am,assign-slots,qualify-reachability,survey,abort-survey,monitor}
+                                [--host-id HOST_ID] [--duration DURATION]
+                                [--connect-timeout CONNECT_TIMEOUT]
+                                [--repeat REPEAT] [--interval INTERVAL]
+                                [--survey-id SURVEY_ID]
+                                [--survey-duration-ms SURVEY_DURATION_MS]
+                                [--discovery-slots DISCOVERY_SLOTS]
+                                [--samples SAMPLES]
+                                [--notification-hold-s NOTIFICATION_HOLD_S]
+                                [--survey-terminal-drain-quiet-s SURVEY_TERMINAL_DRAIN_QUIET_S]
+                                [--require-survey-success]
+                                [--require-assignment-success]
+                                [--expected-anchors EXPECTED_ANCHORS]
+                                [--expected-pairs EXPECTED_PAIRS]
+                                [--expected-direct-anchors EXPECTED_DIRECT_ANCHORS]
+                                [--expected-multihop-anchors EXPECTED_MULTIHOP_ANCHORS]
+                                [--expected-anchor-hop NODE_ID=HOPS]
+                                [--deepest-hop DEEPEST_HOP]
+                                [--route-refresh-timeout ROUTE_REFRESH_TIMEOUT]
+                                [--assignment-timeout ASSIGNMENT_TIMEOUT]
+                                [--command-budget-ms COMMAND_BUDGET_MS]
+provision_mesh_anchor.py: error: --require-assignment-success requires --command assign-slots
+
+Script done on 2026-08-20 21:02:15+02:00 [COMMAND_EXIT_CODE="2"]

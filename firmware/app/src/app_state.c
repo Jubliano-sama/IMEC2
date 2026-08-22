@@ -624,6 +624,33 @@ bool local_anchor_discovery_assignment_get(uint32_t *epoch,
     return valid;
 }
 
+bool local_anchor_discovery_assignment_identity_get(
+    uint32_t *epoch,
+    uint32_t *table_seq,
+    struct discovery_assignment_table_commitment *table_commitment,
+    uint8_t *anchor_slot,
+    uint8_t *slot_count)
+{
+    k_spinlock_key_t key;
+    bool valid;
+
+    if (epoch == NULL || table_seq == NULL || table_commitment == NULL ||
+        anchor_slot == NULL || slot_count == NULL) {
+        return false;
+    }
+    key = k_spin_lock(&anchor_discovery_assignment_lock);
+    *epoch = anchor_discovery_assignment_policy.committed_epoch;
+    *table_seq = anchor_discovery_assignment_policy.committed_table_seq;
+    *table_commitment =
+        anchor_discovery_assignment_policy.committed_table_commitment;
+    *anchor_slot = anchor_discovery_assignment_slot;
+    *slot_count = anchor_discovery_assignment_slot_count;
+    valid = app_discovery_assignment_policy_normal_click_reply_allowed(
+        &anchor_discovery_assignment_policy);
+    k_spin_unlock(&anchor_discovery_assignment_lock, key);
+    return valid;
+}
+
 uint8_t local_survey_discovery_slot(uint8_t slot_count)
 {
     uint32_t epoch = 0u;

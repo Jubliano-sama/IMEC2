@@ -6,6 +6,11 @@
 #include <assert.h>
 #include <string.h>
 
+_Static_assert(SURVEY_DEFAULT_TTL == MESH_NETWORK_MAX_HOPS,
+               "survey custody must span the complete production mesh");
+_Static_assert(SURVEY_DEFAULT_TTL == 8u,
+               "survey depth regression expects the eight-hop product bound");
+
 static struct survey_sample sample(void)
 {
     struct survey_sample value = {
@@ -376,6 +381,8 @@ static void test_discovery_post_rf_terminal_preserves_delayed_report_horizon(voi
     assert(survey_gateway_discovery_collection_survives_terminal(
         true, 1u));
     assert(survey_gateway_discovery_collection_survives_terminal(
+        true, 0u));
+    assert(survey_gateway_discovery_collection_survives_terminal(
         false, 2u));
     assert(!survey_gateway_discovery_collection_survives_terminal(
         false, 0u));
@@ -386,10 +393,10 @@ static void test_discovery_post_rf_terminal_preserves_delayed_report_horizon(voi
      * collection horizon alive, then close normally when that report arrives.
      */
     assert(survey_gateway_collection_decide(
-               false, false, 0u, 1u, true) ==
+               false, false, false, 0u, 1u, true) ==
            SURVEY_GATEWAY_COLLECTION_WAIT);
     assert(survey_gateway_collection_decide(
-               true, false, 1u, 1u, true) ==
+               true, false, false, 1u, 1u, true) ==
            SURVEY_GATEWAY_COLLECTION_CLOSE);
 }
 
@@ -686,6 +693,17 @@ static void append_conflicting_survey_singleton(uint8_t *payload,
         assert(tlv_append_u8(payload, payload_cap, payload_len, type,
                              1u) == PROTO_OK);
         break;
+    case TLV_SURVEY_ASSIGNMENT_IDENTITY: {
+        uint8_t identity[2u * sizeof(uint32_t) +
+                         SEMANTIC_DIGEST_SHA256_LEN] = {0};
+
+        proto_put_u32_le(&identity[0], 2u);
+        proto_put_u32_le(&identity[sizeof(uint32_t)], 3u);
+        identity[2u * sizeof(uint32_t)] = 0xa5u;
+        assert(tlv_append_bytes(payload, payload_cap, payload_len, type,
+                                identity, sizeof(identity)) == PROTO_OK);
+        break;
+    }
     default:
         assert(false);
     }
@@ -816,19 +834,22 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 20000u,
-        .slot_ms = 40u,
+        .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+        .assignment_epoch = 17u,
+        .assignment_table_seq = 29u,
+        .assignment_table_commitment = {.bytes = {0x5au}},
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 50u,
         .round_count = 4u,
     };
-    uint8_t payload[48];
+    uint8_t payload[128];
     size_t payload_len = 0u;
     struct survey_discovery_config decoded = {0};
     const uint8_t *tlv_value = NULL;
     uint8_t tlv_len = 0u;
 
     assert(survey_discovery_config_validate(&config) == PROTO_OK);
-    assert(survey_discovery_duration_ms(&config) == 8000u);
+    assert(survey_discovery_duration_ms(&config) == 40000u);
     assert(survey_append_discovery_start_tlvs(payload,
                                               sizeof(payload),
                                               &payload_len,
@@ -853,9 +874,22 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
                     &tlv_len) == PROTO_OK);
     assert(tlv_len == 1u);
     assert(tlv_value[0] == config.slot_count);
+    assert(tlv_find(payload,
+                    payload_len,
+                    TLV_SURVEY_ASSIGNMENT_IDENTITY,
+                    &tlv_value,
+                    &tlv_len) == PROTO_OK);
+    assert(tlv_len == 2u * sizeof(uint32_t) +
+                      SEMANTIC_DIGEST_SHA256_LEN);
+    assert(proto_get_u32_le(&tlv_value[0]) == config.assignment_epoch);
+    assert(proto_get_u32_le(&tlv_value[sizeof(uint32_t)]) ==
+           config.assignment_table_seq);
+    assert(memcmp(&tlv_value[2u * sizeof(uint32_t)],
+                  config.assignment_table_commitment.bytes,
+                  SEMANTIC_DIGEST_SHA256_LEN) == 0);
     assert(tlv_find(payload, payload_len, TLV_DURATION_MS, &tlv_value, &tlv_len) == PROTO_OK);
     assert(tlv_len == 4u);
-    assert(proto_get_u32_le(tlv_value) == 8000u);
+    assert(proto_get_u32_le(tlv_value) == 40000u);
 
     assert(survey_extract_discovery_start_tlvs(payload,
                                                payload_len,
@@ -865,6 +899,11 @@ static void test_discovery_start_tlvs_round_trip_timing_config(void)
     assert(decoded.slot_ms == config.slot_ms);
     assert(decoded.slot_count == config.slot_count);
     assert(decoded.round_count == config.round_count);
+    assert(decoded.assignment_epoch == config.assignment_epoch);
+    assert(decoded.assignment_table_seq == config.assignment_table_seq);
+    assert(memcmp(decoded.assignment_table_commitment.bytes,
+                  config.assignment_table_commitment.bytes,
+                  SEMANTIC_DIGEST_SHA256_LEN) == 0);
 }
 
 static void test_discovery_start_rejects_conflicting_singletons(void)
@@ -874,17 +913,21 @@ static void test_discovery_start_rejects_conflicting_singletons(void)
         TLV_DISCOVERY_START_DELAY_MS,
         TLV_DISCOVERY_SLOT_MS,
         TLV_DISCOVERY_SLOT_COUNT,
+        TLV_SURVEY_ASSIGNMENT_IDENTITY,
         TLV_DURATION_MS,
     };
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 20000u,
-        .slot_ms = 40u,
+        .assignment_epoch = 17u,
+        .assignment_table_seq = 29u,
+        .assignment_table_commitment = {.bytes = {0x5au}},
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 50u,
         .round_count = 4u,
     };
     struct survey_discovery_config decoded;
-    uint8_t payload[96];
+    uint8_t payload[128];
     size_t payload_len;
 
     for (size_t i = 0u;
@@ -910,18 +953,19 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
-        .start_delay_ms = 20000u,
-        .slot_ms = 40u,
+        .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 50u,
-        .round_count = 2u,
+        .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
     };
     const struct operation_policy policy = {
         .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
         .value.discovery = {
-            .start_delay_ms = 20000u,
-            .slot_ms = 40u,
+            .start_delay_ms =
+                OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+            .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
             .slot_count = 50u,
-            .round_count = 2u,
+            .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
             .report_grace_ms = 250u,
             .operation_budget_ms = 600000u,
         },
@@ -936,8 +980,9 @@ static void test_discovery_round_count_comes_from_runtime_profile(void)
                payload, sizeof(payload), &payload_len, &policy) == PROTO_OK);
     assert(survey_extract_discovery_start_tlvs(
                payload, payload_len, &decoded) == PROTO_OK);
-    assert(decoded.round_count == 2u);
-    assert(survey_discovery_duration_ms(&decoded) == 4000u);
+    assert(decoded.round_count ==
+           OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT);
+    assert(survey_discovery_duration_ms(&decoded) == 40000u);
 }
 
 static void test_discovery_slot_validation_uses_physical_probe_budget(void)
@@ -973,7 +1018,7 @@ static void test_discovery_round_scheduler_has_one_continuous_window(void)
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 6u,
         .round_count = 4u,
     };
@@ -1088,13 +1133,31 @@ static void test_discovery_report_custody_tracks_upstream_hops(void)
     assert(two_hop_ms == 34000u);
     assert(two_hop_ms > SURVEY_DISCOVERY_REPORT_CUSTODY_TIMEOUT_MS);
     assert(three_hop_ms == 38000u);
-    assert(maximum_ms == 42000u);
+    assert(maximum_ms == 58000u);
     assert(maximum_ms == SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS);
 
     assert(survey_discovery_report_custody_ms(0u) == maximum_ms);
     assert(survey_discovery_report_custody_ms(SURVEY_DEFAULT_TTL + 1u) ==
            maximum_ms);
     assert(survey_discovery_report_custody_ms(UINT8_MAX) == maximum_ms);
+}
+
+static void test_discovery_start_delay_covers_the_known_or_worst_case_depth(void)
+{
+    for (uint8_t hop_count = 1u; hop_count <= 5u; hop_count++) {
+        /* Floor is 2 s; depths 1-5 are sized by redrives + PHY prep. */
+        assert(survey_discovery_required_start_delay_ms(hop_count) ==
+               (uint32_t)(hop_count + SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
+                       SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
+                   SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS + 1u);
+    }
+    assert(survey_discovery_required_start_delay_ms(6u) == 21104u);
+    assert(survey_discovery_required_start_delay_ms(7u) == 23104u);
+    assert(survey_discovery_required_start_delay_ms(8u) == 25104u);
+
+    assert(survey_discovery_required_start_delay_ms(0u) == 25104u);
+    assert(survey_discovery_required_start_delay_ms(9u) == 25104u);
+    assert(survey_discovery_required_start_delay_ms(UINT8_MAX) == 25104u);
 }
 
 static void test_discovery_report_deadline_stays_fixed_after_eligibility(void)
@@ -1263,7 +1326,7 @@ static void test_multi_output_survey_parsers_fail_atomically(void)
         .operation_generation = UINT64_C(0x1234000000000001),
         .survey_id = 0x10203040u,
         .start_delay_ms = 90000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 4u,
         .round_count = 2u,
     };
@@ -1456,7 +1519,7 @@ static void test_discovery_timing_uses_packet_age(void)
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 50u,
         .round_count = 4u,
     };
@@ -1469,7 +1532,7 @@ static void test_discovery_timing_uses_packet_age(void)
     assert(!timing.expired);
     assert(timing.wait_ms == 1500u);
     assert(timing.elapsed_ms == 0u);
-    assert(timing.duration_ms == 8000u);
+    assert(timing.duration_ms == 40000u);
     assert(survey_discovery_start_at_ms(&timing, 1000u, &start_at_ms) ==
            PROTO_OK);
     assert(start_at_ms == 2500u);
@@ -1489,17 +1552,17 @@ static void test_discovery_timing_uses_packet_age(void)
            PROTO_OK);
     assert(start_at_ms == 2500u);
 
-    assert(survey_discovery_timing_from_age(&config, 9560u, &timing) == PROTO_OK);
+    assert(survey_discovery_timing_from_age(&config, 41560u, &timing) == PROTO_OK);
     assert(!timing.pending);
     assert(timing.active);
     assert(!timing.expired);
 
-    assert(survey_discovery_timing_from_age(&config, 10000u, &timing) == PROTO_OK);
+    assert(survey_discovery_timing_from_age(&config, 42000u, &timing) == PROTO_OK);
     assert(!timing.pending);
     assert(!timing.active);
     assert(timing.expired);
-    assert(timing.elapsed_ms == 8000u);
-    assert(survey_discovery_start_at_ms(&timing, 10500u, &start_at_ms) ==
+    assert(timing.elapsed_ms == 40000u);
+    assert(survey_discovery_start_at_ms(&timing, 42500u, &start_at_ms) ==
            PROTO_ERR_ARG);
 }
 
@@ -1508,19 +1571,22 @@ static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 6u,
         .round_count = 4u,
     };
     uint32_t delay_ms = 0u;
 
-    assert(survey_discovery_report_delay_ms(&config, 0u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 960u);
-    assert(survey_discovery_report_delay_ms(&config, 3u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 960u + (3u * 2270u));
-    assert(survey_discovery_report_delay_ms(&config, 6u, 2270u, &delay_ms) ==
+    assert(survey_discovery_report_delay_ms(&config, 0u, 1u, 2270u, &delay_ms) == PROTO_OK);
+    assert(delay_ms == 4800u);
+    assert(survey_discovery_report_delay_ms(&config, 3u, 1u, 2270u, &delay_ms) == PROTO_OK);
+    assert(delay_ms == 4800u + (3u * 2270u));
+    assert(survey_discovery_report_delay_ms(&config, 3u, 2u, 2270u,
+                                            &delay_ms) == PROTO_OK);
+    assert(delay_ms == 4800u + (9u * 2270u));
+    assert(survey_discovery_report_delay_ms(&config, 6u, 1u, 2270u, &delay_ms) ==
            PROTO_ERR_MALFORMED);
-    assert(survey_discovery_report_delay_ms(&config, 0u, 0u, &delay_ms) ==
+    assert(survey_discovery_report_delay_ms(&config, 0u, 1u, 0u, &delay_ms) ==
            PROTO_ERR_MALFORMED);
 }
 
@@ -1529,7 +1595,7 @@ static void test_discovery_report_delay_rejects_overflow(void)
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 2000u,
-        .slot_ms = 1000u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 50u,
         .round_count = 4u,
     };
@@ -1537,6 +1603,7 @@ static void test_discovery_report_delay_rejects_overflow(void)
 
     assert(survey_discovery_report_delay_ms(&config,
                                             49u,
+                                            SURVEY_DEFAULT_TTL,
                                             UINT32_MAX,
                                             &delay_ms) == PROTO_ERR_NO_SPACE);
 }
@@ -1546,7 +1613,7 @@ static void test_discovery_packets_use_diagnostic_ids(void)
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 50u,
         .round_count = 4u,
     };
@@ -3118,16 +3185,17 @@ static void test_gateway_control_timeout_tracks_accepted_route_depth(void)
            NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS);
     assert(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS == 30000u);
     assert(SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS == 15000u);
-    assert(SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS == 90000u);
+    assert(SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS == 135000u);
+    assert(SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS == 135000u);
 
-    assert(survey_gateway_hop_count_from_report_ttl(SURVEY_DEFAULT_TTL) == 1u);
-    assert(survey_gateway_hop_count_from_report_ttl(
-               SURVEY_DEFAULT_TTL - 1u) == 2u);
-    assert(survey_gateway_hop_count_from_report_ttl(1u) ==
-           SURVEY_DEFAULT_TTL);
+    for (uint8_t remaining_ttl = SURVEY_DEFAULT_TTL;
+         remaining_ttl > 0u;
+         remaining_ttl--) {
+        assert(survey_gateway_hop_count_from_report_ttl(remaining_ttl) ==
+               (uint8_t)(SURVEY_DEFAULT_TTL - remaining_ttl + 1u));
+    }
     assert(survey_gateway_hop_count_from_report_ttl(0u) == 0u);
-    assert(survey_gateway_hop_count_from_report_ttl(
-               SURVEY_DEFAULT_TTL + 1u) == 0u);
+    assert(survey_gateway_hop_count_from_report_ttl(9u) == 0u);
 
     assert(survey_pair_control_timeout_ms(1u) ==
            SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS);
@@ -3145,21 +3213,16 @@ static void test_gateway_control_timeout_tracks_accepted_route_depth(void)
     assert(survey_pair_control_timeout_ms(1u) == 30000u);
     assert(survey_pair_control_timeout_ms(2u) == 45000u);
     assert(survey_pair_control_timeout_ms(3u) == 60000u);
-    assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL) == 75000u);
+    assert(survey_pair_control_timeout_ms(SURVEY_DEFAULT_TTL) == 135000u);
     assert(4u * SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS == 4000u);
 
     assert(survey_pair_control_round_trip_timeout_ms(1u) ==
-           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
-               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+           2u * SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS);
     assert(survey_pair_control_round_trip_timeout_ms(2u) ==
-           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
-               SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS +
-               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+           2u * (SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
+                 SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS));
     assert(survey_pair_control_round_trip_timeout_ms(SURVEY_DEFAULT_TTL) ==
-           SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +
-               ((SURVEY_DEFAULT_TTL - 1u) *
-                SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS) +
-               SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
+           2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS);
     assert(survey_pair_control_round_trip_timeout_ms(0u) ==
            2u * SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS);
     assert(survey_pair_control_round_trip_timeout_ms(
@@ -4670,7 +4733,7 @@ static void test_survey_packet_initializers_reject_zero_sequence_atomically(void
     const struct survey_discovery_config config = {
         .survey_id = value.pair.survey_id,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 4u,
         .round_count = 2u,
     };
@@ -4762,7 +4825,7 @@ static void test_survey_packet_initializers_accept_sequence_wrap_boundary(void)
     const struct survey_discovery_config config = {
         .survey_id = value.pair.survey_id,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 4u,
         .round_count = 2u,
     };
@@ -5016,6 +5079,7 @@ int main(void)
     test_discovery_round_scheduler_has_one_continuous_window();
     test_pending_discovery_report_survives_queue_and_route_pressure();
     test_discovery_report_custody_tracks_upstream_hops();
+    test_discovery_start_delay_covers_the_known_or_worst_case_depth();
     test_discovery_report_deadline_stays_fixed_after_eligibility();
     test_discovery_slot_count_tlv_defaults_and_overrides();
     test_discovery_expected_node_count_is_optional_and_bounded();

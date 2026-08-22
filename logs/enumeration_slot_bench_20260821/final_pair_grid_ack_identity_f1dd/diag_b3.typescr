@@ -1,0 +1,257 @@
+Script started on 2026-08-21 04:17:08+02:00 [COMMAND="timeout --foreground --signal=INT 10 .venv/bin/pyocd rtt -t nrf52833 -M attach -a 0x20000410 -s 0x100 -u E46070D247394D36 --up-channel-id 0" <not executed on terminal>]
+[34m0000444[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000475[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000487[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000488[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000489[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000494[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000498[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000504[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000519[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000530[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000532[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000533[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000536[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000536[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000536[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000537[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000540[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000541[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000555[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000555[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000556[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_SURVEY_PAIR_RELEASE_DUE
+DBG_SURVEY_PAIR_RF_BLOCK stage=result-custody occupied=1
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+DBG_ANCHOR_CH5_SCAN_HANDLER role=2
+DBG_MESH_WORK_DEFER owner=role-scan ret=-110
+DBG_ANCHOR_CH9_REARM delay=0 ret=-110 ack=0
+DBG_ANCHOR_CH5_SCAN_BLOCKED win=0 survey=0 tx=0 retry_gap=0 wait=0 rx=0 rxq=0 rxr=0 ack=0 ch9=1 rf=0 retry=245 interval=380
+DBG_ANCHOR_CH5_SCAN_RESCHED ret=1 delay=245
+[34m0009983[0m [1m[91mC[0m [91mError:  [2m[__main__][0m
+timeout: the monitored command dumped core
+
+Script done on 2026-08-21 04:17:19+02:00 [COMMAND_EXIT_CODE="124"]

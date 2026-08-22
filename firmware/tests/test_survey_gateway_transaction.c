@@ -1064,15 +1064,15 @@ static void test_completed_validation_uses_full_processing_hold_across_wrap(void
 static void test_pair_plan_default_and_explicit_maximum_budgets(void)
 {
     assert(SURVEY_GATEWAY_PAIR_MINIMUM_CONTROL_MS == 12000u);
-    assert(SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS == 174000u);
-    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 360000u);
+    assert(SURVEY_GATEWAY_TRANSACTION_CLEANUP_TIMEOUT_MS == 540000u);
+    assert(SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS == 1800000u);
 
-    /* The default covers thirty serialized floors: ample for K3 plus reruns. */
+    /* The 30-minute safety boundary covers the complete 150-pair store once. */
     assert(survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        30u,
+        150u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS));
     assert(!survey_gateway_transaction_pair_plan_fits_minimum_budget(
-        30u,
+        150u,
         SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS - 1u));
 
     /* The explicit one-hour command maximum retains the larger-fleet option. */
@@ -1126,6 +1126,59 @@ static void test_due_registry_retains_earliest_observation_due(void)
     assert(delay_ms == 48u);
 }
 
+static void test_final_sample_immediate_due_preempts_old_observation(void)
+{
+    struct survey_gateway_due_registry registry;
+    struct test_due_arm arm = {0};
+    uint32_t delay_ms;
+    const uint32_t now_ms = 1000u;
+
+    survey_gateway_due_registry_init(&registry);
+
+    /* Model the live failure boundary: the observation owner already has its
+     * long phase deadline and a second owner is also registered when the last
+     * pair sample asks to drive the round immediately. */
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry,
+               SURVEY_GATEWAY_DUE_ROUND_OBSERVATION,
+               now_ms,
+               261000u,
+               due_arm,
+               &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry,
+               SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+               now_ms,
+               1000u,
+               due_arm,
+               &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry,
+               SURVEY_GATEWAY_DUE_ROUND_OBSERVATION,
+               now_ms,
+               0u,
+               due_arm,
+               &arm) == 0);
+    assert(arm.call_count == 3u);
+    assert(arm.delays[0] == 261000u);
+    assert(arm.delays[1] == 1000u);
+    assert(arm.delays[2] == 0u);
+    assert(survey_gateway_due_registry_next(
+        &registry, now_ms, &delay_ms));
+    assert(delay_ms == 0u);
+
+    /* The immediate callback consumes only the final-sample owner. The later
+     * boundary stays registered and is physically rearmed afterwards. */
+    assert(survey_gateway_due_registry_consume_due(&registry, now_ms));
+    assert(survey_gateway_due_registry_next(
+        &registry, now_ms, &delay_ms));
+    assert(delay_ms == 1000u);
+    assert(survey_gateway_due_registry_rearm(
+               &registry, now_ms, due_arm, &arm) == 0);
+    assert(arm.call_count == 4u);
+    assert(arm.delays[3] == 1000u);
+}
+
 static void test_due_registry_same_owner_only_moves_earlier(void)
 {
     struct survey_gateway_due_registry registry;
@@ -1161,6 +1214,45 @@ static void test_due_registry_same_owner_only_moves_earlier(void)
                &registry, SURVEY_GATEWAY_DUE_CONTROL_DELIVERY,
                now_ms + 1u, 50u, due_arm, &arm) == 0);
     assert(arm.delays[4] == 50u);
+}
+
+static void test_due_registry_stale_callback_cannot_consume_a_later_owner(void)
+{
+    struct survey_gateway_due_registry registry;
+    struct test_due_arm arm = {0};
+    uint32_t delay_ms;
+    const uint32_t now_ms = 100u;
+
+    survey_gateway_due_registry_init(&registry);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_ROUND_OBSERVATION,
+               now_ms, 2u, due_arm, &arm) == 0);
+    assert(survey_gateway_due_registry_schedule_after(
+               &registry, SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+               now_ms, 50u, due_arm, &arm) == 0);
+
+    assert(!survey_gateway_due_registry_consume_due(&registry, now_ms));
+    assert(survey_gateway_due_registry_next(&registry, now_ms, &delay_ms));
+    assert(delay_ms == 2u);
+
+    survey_gateway_due_registry_cancel(
+        &registry, SURVEY_GATEWAY_DUE_ROUND_OBSERVATION);
+    assert(survey_gateway_due_registry_next(&registry, now_ms, &delay_ms));
+    assert(delay_ms == 50u);
+
+    /* The already-armed 2 ms callback is now stale, not the 50 ms owner. */
+    assert(!survey_gateway_due_registry_consume_due(&registry, now_ms + 2u));
+    assert(survey_gateway_due_registry_next(
+        &registry, now_ms + 2u, &delay_ms));
+    assert(delay_ms == 48u);
+    assert(!survey_gateway_due_registry_consume_due(&registry, now_ms + 49u));
+    assert(survey_gateway_due_registry_next(
+        &registry, now_ms + 49u, &delay_ms));
+    assert(delay_ms == 1u);
+
+    assert(survey_gateway_due_registry_consume_due(&registry, now_ms + 50u));
+    assert(!survey_gateway_due_registry_next(
+        &registry, now_ms + 50u, &delay_ms));
 }
 
 static void test_observation_origin_keeps_a_wrapped_zero_start(void)
@@ -1261,7 +1353,9 @@ int main(void)
     test_completed_validation_uses_full_processing_hold_across_wrap();
     test_pair_plan_default_and_explicit_maximum_budgets();
     test_due_registry_retains_earliest_observation_due();
+    test_final_sample_immediate_due_preempts_old_observation();
     test_due_registry_same_owner_only_moves_earlier();
+    test_due_registry_stale_callback_cannot_consume_a_later_owner();
     test_observation_origin_keeps_a_wrapped_zero_start();
     test_due_registry_keeps_order_across_uptime_wrap();
     test_same_owner_due_and_receive_interval_cross_uptime_wrap();

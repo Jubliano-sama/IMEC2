@@ -1,0 +1,20 @@
+time,label,caption,kind,row
+0,"shared start","all matching anchors enter the same Ch5 schedule",axis,
+600,"round 2","same collision-free 200 ms slot map",axis,
+1200,"round 3","same collision-free 200 ms slot map",axis,
+1800,"round 4","same collision-free 200 ms slot map",axis,
+2400,"probes done / D gate","all radios leave the exclusive probe phase",axis,
+4670,"DDD slot 1","second direct anchor gets its first opportunity",axis,
+6940,"DDD slot 2","third direct anchor gets its first opportunity",axis,
+11480,"F1 gate","one-relay child gets its first opportunity",axis,
+20560,"F2 gate","two-relay child gets its first opportunity",axis,
+22830,"priority grid done","this is not a survey timeout",axis,
+2400,"D opens",,row,direct
+11480,"F1 opens",,row,forced1
+20560,"F2 opens",,row,forced2
+2400,"slot 0",,row,ddd
+4670,"slot 1",,row,ddd
+6940,"slot 2",,row,ddd
+100,"slot 0",,row,slots
+300,"slot 1",,row,slots
+500,"slot 2",,row,slots

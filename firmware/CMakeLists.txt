@@ -157,6 +157,13 @@ add_executable(test_discovery_assignment tests/test_discovery_assignment.c)
 target_link_libraries(test_discovery_assignment PRIVATE core)
 add_test(NAME discovery_assignment COMMAND test_discovery_assignment)
 
+add_executable(test_flood_parent_learning
+    tests/test_flood_parent_learning.c)
+target_link_libraries(test_flood_parent_learning PRIVATE core)
+add_test(NAME flood_parent_learning COMMAND test_flood_parent_learning)
+set_tests_properties(flood_parent_learning PROPERTIES
+    LABELS "mesh_integration;hardware_models;assignment;communication")
+
 add_executable(test_semantic_digest tests/test_semantic_digest.c)
 target_link_libraries(test_semantic_digest PRIVATE core)
 add_test(NAME semantic_digest COMMAND test_semantic_digest)
@@ -900,6 +907,11 @@ add_test(NAME mesh_forwarded_ack_late_authorization_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_forwarded_ack_late_authorization_source_invariants.py)
 set_tests_properties(mesh_forwarded_ack_late_authorization_source_invariants PROPERTIES
     LABELS "mesh_integration;hardware_models;communication;route;static_analysis")
+add_test(NAME mesh_route_wake_boost_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_route_wake_boost_source_invariants.py)
+set_tests_properties(mesh_route_wake_boost_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;route;timing;wake;static_analysis")
 
 add_executable(test_app_mesh_rx_policy
     tests/test_app_mesh_rx_policy.c

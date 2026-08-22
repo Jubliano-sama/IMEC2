@@ -100,7 +100,10 @@ uint32_t mesh_relay_outbox_expiry_s_for_packet(
                                       CMD_SURVEY_PREPARE_PAIR) ||
         command_result_has_command_id(payload,
                                       payload_len,
-                                      CMD_SURVEY_START_PAIR)) {
+                                      CMD_SURVEY_START_PAIR) ||
+        command_result_has_command_id(payload,
+                                      payload_len,
+                                      CMD_SURVEY_ABORT)) {
         return SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S;
     }
     if (command_result_has_command_id(payload,
@@ -2267,6 +2270,22 @@ int mesh_relay_commit_transit_gateway_ack_forward(
     return PROTO_OK;
 }
 
+int mesh_relay_release_topology_gateway_ack_forward(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *retained_ack,
+    uint32_t now_ms)
+{
+    uint32_t actions = MESH_RELAY_ACTION_NONE;
+    int ret = mesh_relay_commit_transit_gateway_ack_forward(
+        relay, retained_ack, now_ms, &actions);
+
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    return (actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) != 0u ?
+           PROTO_OK : PROTO_ERR_STALE;
+}
+
 static int build_forward(const struct mesh_relay *relay,
                          const struct proto_packet *packet,
                          const uint8_t *payload,
@@ -2897,7 +2916,9 @@ static bool survey_gateway_control_semantics_valid(
                 survey_operation_session_id(config.operation_generation) ||
             operation_policy_set_from_tlvs(
                 payload, payload_len, &policies) != PROTO_OK ||
-            policies.assignment_present) {
+            policies.assignment_present ||
+            !policies.discovery_present ||
+            !policies.pair_present) {
             return false;
         }
         ret = survey_discovery_timing_from_age(

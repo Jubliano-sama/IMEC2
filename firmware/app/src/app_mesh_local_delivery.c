@@ -403,6 +403,33 @@ int app_mesh_local_delivery_retire_elapsed_not_before(
     return delivery_commit(delivery, &candidate);
 }
 
+int app_mesh_local_delivery_postpone_not_before(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t not_before_ms)
+{
+    struct app_mesh_local_delivery_snapshot candidate;
+    int ret;
+
+    if (!app_mesh_local_delivery_active(delivery) ||
+        !delivery->snapshot.outbound.earliest_tx_valid) {
+        return -ENOENT;
+    }
+    if (delivery->snapshot.attempts_remaining !=
+            APP_MESH_LOCAL_DELIVERY_MAX_ATTEMPTS ||
+        delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_STARTING ||
+        delivery->snapshot.state == APP_MESH_LOCAL_DELIVERY_TRACKED) {
+        return -EALREADY;
+    }
+    if ((int32_t)(not_before_ms -
+                  delivery->snapshot.outbound.earliest_tx_ms) <= 0) {
+        return 0;
+    }
+    candidate = delivery->snapshot;
+    candidate.outbound.earliest_tx_ms = not_before_ms;
+    ret = delivery_commit(delivery, &candidate);
+    return ret < 0 ? ret : 1;
+}
+
 int app_mesh_local_delivery_recover(
     struct app_mesh_local_delivery *delivery,
     const struct app_mesh_local_delivery_snapshot *snapshot,

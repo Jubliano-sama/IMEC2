@@ -27,8 +27,17 @@ extern "C" {
 #define MESH_RELAY_GATEWAY_ACK_CAPACITY \
     (MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX * \
      MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN)
+/* A failed pair can require ABORT results from both endpoints while each
+ * endpoint's ordinary replay partition is still occupied by exact terminal
+ * proof debt. Keep those two cleanup identities outside the shared ordinary
+ * pool so cleanup can always reach semantic admission without weakening or
+ * evicting any unconfirmed record. */
+#define MESH_RELAY_GATEWAY_ACK_CLEANUP_RESERVE_CAPACITY 2u
+#define MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY \
+    (MESH_RELAY_GATEWAY_ACK_CAPACITY + \
+     MESH_RELAY_GATEWAY_ACK_CLEANUP_RESERVE_CAPACITY)
 #define MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES \
-    ((MESH_RELAY_GATEWAY_ACK_CAPACITY + 7u) / 8u)
+    ((MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY + 7u) / 8u)
 #define MESH_RELAY_FLOOD_SEEN_SIZE 16u
 #define MESH_RELAY_EVENT_TIMINGS 16u
 #define MESH_RELAY_DOWNLINK_MAX_FAILURES ROUTE_MAX_FAILURES
@@ -387,8 +396,10 @@ _Static_assert(sizeof(struct mesh_command_replay_window) == 48u,
  * External gateway-only acceptance history. The production gateway overlays
  * this store on anchor-only batch state instead of charging every relay role.
  * Semantic identities remain exact terminal-proof authority after their
- * phase deadline. Each source has a fixed four-identity partition; a fifth
- * accepted identity may replace only a confirmed source-local tombstone.
+ * phase deadline. Each source has a fixed four-identity ordinary partition;
+ * the two serialized pair endpoints share two ABORT-result reserve entries.
+ * A fifth ordinary identity may replace only a confirmed source-local
+ * tombstone.
  * Assignment candidates use normal partitions within the append-only
  * 50-member roster bound, never a 51st origin. A candidate identity is
  * reserved only after the gateway assignment state machine validates the
@@ -415,7 +426,7 @@ struct mesh_gateway_ack_store {
     uint64_t origin_src_ids[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX];
     uint32_t origin_batch_ids[MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX];
     struct mesh_gateway_ack_identity_entry
-        identities[MESH_RELAY_GATEWAY_ACK_CAPACITY];
+        identities[MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY];
     uint8_t candidate_identity_bits[
         MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES];
     /* ACK-history retention and exact ACK_CONFIRM reception are independent
@@ -445,13 +456,15 @@ struct mesh_anchor_downlink_store {
 
 _Static_assert(sizeof(struct mesh_gateway_ack_identity_entry) == 44u,
                "gateway ACK identity must retain a full semantic commitment");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 25u,
+_Static_assert(MESH_RELAY_GATEWAY_ACK_CANDIDATE_BITMAP_BYTES == 26u,
                "gateway ACK candidate bitmap must cover every identity");
-_Static_assert(sizeof(struct mesh_gateway_ack_store) == 9456u,
+_Static_assert(sizeof(struct mesh_gateway_ack_store) == 9544u,
                "gateway ACK store must fit role-overlaid static storage");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY == 200u,
                "gateway ACK history must cover 50 four-packet members");
-_Static_assert(MESH_RELAY_GATEWAY_ACK_CAPACITY <= UINT8_MAX,
+_Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY == 202u,
+               "gateway ACK history must reserve both pair cleanup results");
+_Static_assert(MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY <= UINT8_MAX,
                "per-origin identity counts must not overflow");
 _Static_assert(MESH_RELAY_ANCHOR_DOWNLINK_ROUTES >=
                    MESH_RELAY_DOWNLINK_ROUTES,
@@ -715,6 +728,27 @@ int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
                                              uint64_t candidate_id,
                                              uint32_t now_ms);
 /*
+ * Survey cleanup owns a serialized, exact COMMAND_RESULT expectation. Reserve
+ * that outer identity before the ABORT command can reach RF so a saturated
+ * source partition cannot reject the result before semantic validation. The
+ * application must release the same identity only when that cleanup lifecycle
+ * completes or reaches its proven safe-release boundary.
+ */
+int mesh_relay_reserve_gateway_ack_cleanup_result(
+    struct mesh_relay *relay,
+    const struct proto_packet *expected_result,
+    uint32_t now_ms);
+int mesh_relay_release_gateway_ack_cleanup_result(
+    struct mesh_relay *relay,
+    const struct proto_packet *expected_result);
+/* A pair may need one exact ABORT result identity per endpoint. Return BUSY
+ * until both cleanup suffix slots are free or confirmed-and-replaceable, and
+ * publish the exact remaining time until all blocking identities expire. */
+int mesh_relay_gateway_ack_cleanup_pair_capacity(
+    struct mesh_relay *relay,
+    uint32_t now_ms,
+    uint32_t *retry_delay_ms);
+/*
  * A strictly validated RFC1982-newer source boot proves that the source can
  * no longer emit ACK_CONFIRM for gateway ACKs accepted before that reboot.
  * Preserve those exact semantic identities for duplicate repair, but make
@@ -759,6 +793,23 @@ int mesh_relay_note_gateway_control_reverse_route(
     uint8_t link_quality,
     uint8_t origin_ttl,
     uint32_t now_ms);
+/*
+ * A locally accepted gateway-originated broadcast command flood proves a
+ * fresh reverse first hop even before any route discovery runs. The caller
+ * supplies the physical ingress hop and the command's own flood epoch;
+ * origin_ttl is the TTL used by the gateway before any relay forwarded the
+ * frame and the stored upstream hop count is derived from the received
+ * packet TTL against it. Cost-based selection keeps any existing better
+ * parent selected, and a same-parent refresh preserves its failure and
+ * hold-down state instead of resetting them.
+ */
+int mesh_relay_note_flood_parent_candidate(struct mesh_relay *relay,
+                                           const struct proto_packet *packet,
+                                           uint64_t previous_hop_id,
+                                           uint8_t link_quality,
+                                           uint8_t origin_ttl,
+                                           uint32_t route_epoch,
+                                           uint32_t now_ms);
 void mesh_relay_remove_direct_gateway_route(struct mesh_relay *relay);
 int mesh_relay_select_next_hop(const struct mesh_relay *relay,
                                uint64_t dst_id,
@@ -792,6 +843,11 @@ int mesh_relay_set_channel9_timing_guarded_direction(
 void mesh_relay_clear_channel9_timing(struct mesh_relay *relay,
                                       uint64_t next_hop_id);
 void mesh_relay_abandon_transit_reservations(struct mesh_relay *relay);
+int mesh_relay_abandon_upstream_parent_at(
+    struct mesh_relay *relay,
+    uint64_t expected_parent_id,
+    uint32_t now_ms,
+    enum route_delivery_action *action_out);
 void mesh_relay_invalidate_upstream_route(struct mesh_relay *relay);
 void mesh_relay_invalidate_active_route_path(struct mesh_relay *relay);
 void mesh_relay_clear_routes_preserve_epoch(struct mesh_relay *relay);
@@ -1075,6 +1131,17 @@ int mesh_relay_commit_transit_gateway_ack_forward(
     const struct mesh_outbound *forwarded_ack,
     uint32_t now_ms,
     uint32_t *actions);
+/*
+ * A topology-operation source retains its own end-to-end retry until it sees
+ * the gateway ACK. After one bounded child-contact repair fails, a relay may
+ * release only this exact retained ACK handoff and let that source retry by
+ * its selected or alternate route. Ordinary data must keep using the physical
+ * commit API above.
+ */
+int mesh_relay_release_topology_gateway_ack_forward(
+    struct mesh_relay *relay,
+    const struct mesh_outbound *retained_ack,
+    uint32_t now_ms);
 int mesh_relay_commit_gateway_ack_confirm_terminal(
     struct mesh_relay *relay,
     const struct proto_packet *confirm_packet,

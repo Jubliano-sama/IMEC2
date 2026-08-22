@@ -33,6 +33,7 @@ extern struct mesh_relay mesh_runtime;
 extern struct mesh_event_diagnostics mesh_event_stats;
 extern struct uwb_anchor_session anchor_uwb_session;
 extern uint32_t anchor_uwb_scan_interval_ms;
+int anchor_uwb_scan_schedule_ms(uint32_t delay_ms);
 
 const char *role_name(void);
 const char *command_status_name(enum command_status status);
@@ -104,6 +105,12 @@ local_anchor_discovery_assignment_provisioning_state(void);
 bool local_anchor_discovery_assignment_get(uint32_t *epoch,
                                            uint8_t *anchor_slot,
                                            uint8_t *slot_count);
+bool local_anchor_discovery_assignment_identity_get(
+    uint32_t *epoch,
+    uint32_t *table_seq,
+    struct discovery_assignment_table_commitment *table_commitment,
+    uint8_t *anchor_slot,
+    uint8_t *slot_count);
 uint8_t local_survey_discovery_slot(uint8_t slot_count);
 uint64_t clicker_priority_id(uint32_t event_seq, uint8_t attempt_index);
 uint64_t clicker_nonce(uint32_t event_seq);

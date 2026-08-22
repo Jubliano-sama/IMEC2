@@ -1,0 +1,11 @@
+key,value
+title,"ENUMERATION-AWARE SURVEY: 200 ms PROBES, DEPTH-FIRST CONTACT"
+caption,"Three-anchor D-F1-F2 example, relative to the shared probe start. The START delivery and preparation barrier happens before t=0. Four rounds of exact 200 ms Channel-5 slots finish at 2.4 s. Later Channel-9 cells use the implemented 2270 ms report-service allowance. Retries, alternate routes, and pair work may continue past the right edge."
+key_point,"Hard rule: a probe stays inside its exact stable enumeration slot. Soft rule: a child delays only its first connection attempt, ordered by hop depth and then stable slot. The relay keeps no child roster and sends no BUSY reply. Existing one-upstream plus one-downstream ownership, RAM custody, retries, route fallback, and gateway proof remain responsible for delivery."
+start,0
+end,25000
+width,5000
+unit,ms
+axis_caption_width,190
+row_label_width,330
+max_inline_lines,4

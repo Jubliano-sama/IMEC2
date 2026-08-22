@@ -143,10 +143,55 @@ static void test_scoped_prepare_rejects_cross_operation_policy(void)
                &candidate) == -EINVAL);
 }
 
+static void test_survey_prepare_requires_both_policies_and_accepts_floor_start(void)
+{
+    struct operation_policy discovery = {
+        .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
+    };
+    struct operation_policy pair = {
+        .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
+    };
+    struct app_operation_policy_candidate candidate;
+    uint8_t payload[OPERATION_POLICY_DISCOVERY_TLV_LEN +
+                    OPERATION_POLICY_PAIR_TLV_LEN] = {0};
+    uint8_t pair_only[OPERATION_POLICY_PAIR_TLV_LEN] = {0};
+    size_t payload_len = 0u;
+    size_t discovery_len;
+    size_t pair_only_len;
+    const uint8_t survey_mask = APP_OPERATION_POLICY_DISCOVERY_MASK |
+                                APP_OPERATION_POLICY_PAIR_MASK;
+
+    operation_policy_discovery_defaults(&discovery.value.discovery);
+    discovery.value.discovery.start_delay_ms =
+        OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS;
+    operation_policy_pair_defaults(&pair.value.pair);
+
+    assert(operation_policy_append_tlv(payload, sizeof(payload),
+                                       &payload_len, &discovery) == PROTO_OK);
+    discovery_len = payload_len;
+    assert(operation_policy_append_tlv(payload, sizeof(payload),
+                                       &payload_len, &pair) == PROTO_OK);
+    assert(app_operation_policy_prepare_payload(
+               payload, payload_len, survey_mask, survey_mask,
+               &candidate) == 0);
+    assert(candidate.updates.discovery_present);
+    assert(candidate.updates.pair_present);
+    assert(candidate.updates.discovery.start_delay_ms == 2000u);
+
+    assert(app_operation_policy_prepare_payload(
+               payload, discovery_len, survey_mask, survey_mask,
+               &candidate) == -EBADMSG);
+    pair_only_len = pair_policy_payload(pair_only, sizeof(pair_only));
+    assert(app_operation_policy_prepare_payload(
+               pair_only, pair_only_len, survey_mask, survey_mask,
+               &candidate) == -EBADMSG);
+}
+
 int main(void)
 {
     test_parse_and_resolve_do_not_mutate_active_policy();
     test_rejected_updates_leave_active_policy_unchanged();
     test_scoped_prepare_rejects_cross_operation_policy();
+    test_survey_prepare_requires_both_policies_and_accepts_floor_start();
     return 0;
 }

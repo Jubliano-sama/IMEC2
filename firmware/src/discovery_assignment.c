@@ -1,5 +1,7 @@
 #include "discovery_assignment.h"
 
+#include "operation_policy.h"
+
 #include <stdbool.h>
 #include <string.h>
 
@@ -596,11 +598,12 @@ int discovery_assignment_append_table_tlvs(
     return PROTO_OK;
 }
 
-int discovery_assignment_append_table_from_anchor_ids(
+static int discovery_assignment_append_table_from_roster_internal(
     uint8_t *payload,
     size_t payload_cap,
     size_t *offset,
     const uint64_t *anchor_ids,
+    const uint8_t *anchor_slots,
     size_t anchor_count)
 {
     uint8_t raw[DISCOVERY_ASSIGNMENT_ENTRIES_PER_TLV *
@@ -635,18 +638,23 @@ int discovery_assignment_append_table_from_anchor_ids(
             size_t raw_offset = i * DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN;
             uint64_t anchor_id = anchor_ids[index];
             uint64_t hash = discovery_assignment_hash(anchor_id);
+            uint8_t slot = anchor_slots == NULL ?
+                           (uint8_t)index : anchor_slots[index];
 
-            if (anchor_id == 0u) {
+            if (anchor_id == 0u || slot >= UWB_DISCOVERY_SLOT_COUNT) {
                 return PROTO_ERR_MALFORMED;
             }
             for (size_t prior = 0u; prior < index; prior++) {
-                if (anchor_ids[prior] == anchor_id) {
+                uint8_t prior_slot = anchor_slots == NULL ?
+                                     (uint8_t)prior : anchor_slots[prior];
+
+                if (anchor_ids[prior] == anchor_id || prior_slot == slot) {
                     return PROTO_ERR_MALFORMED;
                 }
             }
             proto_put_u64_le(&raw[raw_offset], anchor_id);
             proto_put_u64_le(&raw[raw_offset + 8u], hash);
-            raw[raw_offset + 16u] = (uint8_t)index;
+            raw[raw_offset + 16u] = slot;
         }
         ret = tlv_append_bytes(payload, payload_cap, offset,
                                TLV_DISCOVERY_ASSIGNMENT_TABLE,
@@ -657,6 +665,42 @@ int discovery_assignment_append_table_from_anchor_ids(
         anchor_index += chunk_count;
     }
     return PROTO_OK;
+}
+
+int discovery_assignment_append_table_from_roster(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const uint64_t *anchor_ids,
+    const uint8_t *anchor_slots,
+    size_t anchor_count)
+{
+    if (anchor_slots == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    return discovery_assignment_append_table_from_roster_internal(
+        payload,
+        payload_cap,
+        offset,
+        anchor_ids,
+        anchor_slots,
+        anchor_count);
+}
+
+int discovery_assignment_append_table_from_anchor_ids(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const uint64_t *anchor_ids,
+    size_t anchor_count)
+{
+    return discovery_assignment_append_table_from_roster_internal(
+        payload,
+        payload_cap,
+        offset,
+        anchor_ids,
+        NULL,
+        anchor_count);
 }
 
 int discovery_assignment_parse_table_tlvs(
@@ -751,8 +795,53 @@ int discovery_assignment_parse_table_tlvs(
     return PROTO_OK;
 }
 
-bool discovery_assignment_table_commitment(
+int discovery_assignment_response_lane(
     const struct discovery_assignment_entry *entries,
+    size_t entry_count,
+    uint64_t anchor_id,
+    uint8_t *lane,
+    uint8_t *lane_count)
+{
+    size_t own_index = SIZE_MAX;
+    uint8_t rank = 0u;
+
+    if (entries == NULL || lane == NULL || lane_count == NULL ||
+        anchor_id == 0u || entry_count == 0u ||
+        entry_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return PROTO_ERR_ARG;
+    }
+    for (size_t i = 0u; i < entry_count; i++) {
+        if (entries[i].anchor_id == 0u ||
+            entries[i].slot >= UWB_DISCOVERY_SLOT_COUNT) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (size_t prior = 0u; prior < i; prior++) {
+            if (entries[prior].anchor_id == entries[i].anchor_id ||
+                entries[prior].slot == entries[i].slot) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+        if (entries[i].anchor_id == anchor_id) {
+            own_index = i;
+        }
+    }
+    if (own_index == SIZE_MAX) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    for (size_t i = 0u; i < entry_count; i++) {
+        if (entries[i].slot < entries[own_index].slot) {
+            rank++;
+        }
+    }
+    *lane = rank;
+    *lane_count = (uint8_t)entry_count;
+    return PROTO_OK;
+}
+
+static bool discovery_assignment_table_commitment_internal(
+    const struct discovery_assignment_entry *entries,
+    const uint64_t *anchor_ids,
+    const uint8_t *anchor_slots,
     size_t entry_count,
     uint8_t slot_count,
     struct discovery_assignment_table_commitment *commitment)
@@ -769,7 +858,11 @@ bool discovery_assignment_table_commitment(
         return false;
     }
     memset(commitment, 0, sizeof(*commitment));
-    if (entries == NULL || entry_count == 0u ||
+    if ((entries == NULL &&
+         (anchor_ids == NULL || anchor_slots == NULL)) ||
+        (entries != NULL &&
+         (anchor_ids != NULL || anchor_slots != NULL)) ||
+        entry_count == 0u ||
         entry_count > UWB_DISCOVERY_SLOT_COUNT || slot_count == 0u ||
         slot_count > UWB_DISCOVERY_SLOT_COUNT || entry_count > slot_count) {
         return false;
@@ -785,16 +878,25 @@ bool discovery_assignment_table_commitment(
     }
 
     for (size_t i = 0u; i < entry_count; i++) {
-        const struct discovery_assignment_entry *entry = &entries[i];
+        uint64_t anchor_id = entries == NULL ?
+                             anchor_ids[i] : entries[i].anchor_id;
+        uint64_t hash = entries == NULL ?
+                        discovery_assignment_hash(anchor_id) : entries[i].hash;
+        uint8_t entry_slot = entries == NULL ?
+                             anchor_slots[i] : entries[i].slot;
 
-        if (entry->anchor_id == 0u ||
-            entry->hash != discovery_assignment_hash(entry->anchor_id) ||
-            entry->slot >= slot_count) {
+        if (anchor_id == 0u ||
+            hash != discovery_assignment_hash(anchor_id) ||
+            entry_slot >= slot_count) {
             return false;
         }
         for (size_t prior = 0u; prior < i; prior++) {
-            if (entries[prior].anchor_id == entry->anchor_id ||
-                entries[prior].slot == entry->slot) {
+            uint64_t prior_id = entries == NULL ?
+                                  anchor_ids[prior] : entries[prior].anchor_id;
+            uint8_t prior_slot = entries == NULL ?
+                                 anchor_slots[prior] : entries[prior].slot;
+
+            if (prior_id == anchor_id || prior_slot == entry_slot) {
                 return false;
             }
         }
@@ -806,27 +908,69 @@ bool discovery_assignment_table_commitment(
      * commitment, while the slot byte still binds every gap and owner.
      */
     for (uint8_t slot = 0u; slot < slot_count; slot++) {
-        const struct discovery_assignment_entry *entry = NULL;
+        size_t entry_index = entry_count;
         uint8_t encoded[DISCOVERY_ASSIGNMENT_ENTRY_WIRE_LEN];
 
         for (size_t i = 0u; i < entry_count; i++) {
-            if (entries[i].slot == slot) {
-                entry = &entries[i];
+            uint8_t entry_slot = entries == NULL ?
+                                 anchor_slots[i] : entries[i].slot;
+
+            if (entry_slot == slot) {
+                entry_index = i;
                 break;
             }
         }
-        if (entry == NULL) {
+        if (entry_index == entry_count) {
             continue;
         }
-        proto_put_u64_le(encoded, entry->anchor_id);
-        proto_put_u64_le(&encoded[8], entry->hash);
-        encoded[16] = entry->slot;
+        if (entries == NULL) {
+            proto_put_u64_le(encoded, anchor_ids[entry_index]);
+            proto_put_u64_le(
+                &encoded[8],
+                discovery_assignment_hash(anchor_ids[entry_index]));
+            encoded[16] = anchor_slots[entry_index];
+        } else {
+            proto_put_u64_le(encoded, entries[entry_index].anchor_id);
+            proto_put_u64_le(&encoded[8], entries[entry_index].hash);
+            encoded[16] = entries[entry_index].slot;
+        }
         if (!semantic_digest_sha256_update(
                 &context, encoded, sizeof(encoded))) {
             return false;
         }
     }
     return semantic_digest_sha256_final(&context, commitment->bytes);
+}
+
+bool discovery_assignment_table_commitment(
+    const struct discovery_assignment_entry *entries,
+    size_t entry_count,
+    uint8_t slot_count,
+    struct discovery_assignment_table_commitment *commitment)
+{
+    return discovery_assignment_table_commitment_internal(
+        entries,
+        NULL,
+        NULL,
+        entry_count,
+        slot_count,
+        commitment);
+}
+
+bool discovery_assignment_table_commitment_from_roster(
+    const uint64_t *anchor_ids,
+    const uint8_t *anchor_slots,
+    size_t anchor_count,
+    uint8_t slot_count,
+    struct discovery_assignment_table_commitment *commitment)
+{
+    return discovery_assignment_table_commitment_internal(
+        NULL,
+        anchor_ids,
+        anchor_slots,
+        anchor_count,
+        slot_count,
+        commitment);
 }
 
 bool discovery_assignment_table_commitment_equal(
@@ -856,26 +1000,17 @@ int discovery_assignment_append_table_commitment(
                             sizeof(commitment->bytes));
 }
 
-static uint32_t response_prior_hop_custody_ms(uint32_t effective_hop_count)
-{
-    uint32_t prior_hop_count = effective_hop_count - 1u;
-    uint32_t additional_hop_pairs = prior_hop_count > 1u ?
-        (prior_hop_count * (prior_hop_count - 1u)) / 2u : 0u;
-
-    return prior_hop_count *
-               DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS +
-           additional_hop_pairs *
-               DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS;
-}
-
 static uint32_t response_max_initial_delay_ms(uint16_t response_spread_ms,
+                                              uint8_t slot_count,
                                               uint32_t effective_hop_count)
 {
+    uint32_t jitter_cap_ms =
+        DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms);
+    uint32_t last_cell = effective_hop_count * slot_count - 1u;
+
     return DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-           (effective_hop_count *
-            DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(
-                response_spread_ms, UWB_DISCOVERY_SLOT_COUNT)) - 1u +
-           response_prior_hop_custody_ms(effective_hop_count);
+           last_cell * OPERATION_POLICY_FIRST_CONTACT_SLOT_MS +
+           jitter_cap_ms - 1u;
 }
 
 int discovery_assignment_response_delay_ms(uint8_t slot,
@@ -887,10 +1022,8 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint32_t *delay_ms)
 {
     uint32_t effective_hop_count;
-    uint32_t prior_hop_count;
-    uint32_t prior_hop_custody_ms;
-    uint32_t slot_width_ms;
-    uint32_t hop_band_ms;
+    uint32_t first_contact_cell;
+    uint32_t jitter_cap_ms;
     uint32_t retry_base;
     uint64_t delay;
 
@@ -901,29 +1034,25 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
         return PROTO_ERR_ARG;
     }
 
-    effective_hop_count = hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
+    effective_hop_count = hop_count == 0u ? 1u :
                           hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
                           DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
-    prior_hop_count = effective_hop_count - 1u;
-    prior_hop_custody_ms =
-        response_prior_hop_custody_ms(effective_hop_count);
-    slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
-        response_spread_ms, slot_count);
-    hop_band_ms = DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(
-        response_spread_ms, slot_count);
+    first_contact_cell =
+        ((effective_hop_count - 1u) * slot_count) + slot;
+    jitter_cap_ms =
+        DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms);
     retry_base = retry_base_ms(retry_round);
     /*
-     * A response retains the relay's channel-9 radio until it is delivered or
-     * fails terminally.  Start at hop one and place every farther hop after all
-     * nearer custody windows, so adjacent levels can never demand the same
-     * half-duplex relay concurrently even at opposite jitter/slot extremes.
+     * First contact is ordered by RF depth and then the enumeration slot.  The
+     * fixed cell is a not-before allowance rather than a relay reservation:
+     * custody and randomized retries remain owned by the existing reliable
+     * transport, so a slow child never shifts everybody else's grid.
      */
     delay = DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-            ((uint64_t)prior_hop_count * hop_band_ms) +
-            prior_hop_custody_ms +
-            ((uint64_t)slot * slot_width_ms) +
+            ((uint64_t)first_contact_cell *
+             OPERATION_POLICY_FIRST_CONTACT_SLOT_MS) +
             (retry_round == 0u ? 0u : retry_base) +
-            (random_value % slot_width_ms);
+            (random_value % jitter_cap_ms);
     if (delay > UINT32_MAX) {
         return PROTO_ERR_NO_SPACE;
     }
@@ -943,7 +1072,7 @@ uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count)
 {
     uint8_t effective_hop_count =
-        hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
+        hop_count == 0u ? 1u :
         hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
             DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
 
@@ -975,6 +1104,15 @@ uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch)
 uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
                                                    uint8_t max_hop_count)
 {
+    return discovery_assignment_collection_window_for_topology_ms(
+        response_spread_ms, UWB_DISCOVERY_SLOT_COUNT, max_hop_count);
+}
+
+uint32_t discovery_assignment_collection_window_for_topology_ms(
+    uint16_t response_spread_ms,
+    uint8_t slot_count,
+    uint8_t max_hop_count)
+{
     uint32_t effective_hop_count;
     uint32_t max_initial_delay_ms;
 
@@ -982,11 +1120,14 @@ uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
         response_spread_ms > DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
         return 0u;
     }
+    if (slot_count == 0u || slot_count > UWB_DISCOVERY_SLOT_COUNT) {
+        return 0u;
+    }
     effective_hop_count = max_hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
                           max_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
                           DISCOVERY_ASSIGNMENT_MAX_HOPS : max_hop_count;
     max_initial_delay_ms = response_max_initial_delay_ms(
-        response_spread_ms, effective_hop_count);
+        response_spread_ms, slot_count, effective_hop_count);
     return discovery_assignment_response_custody_ms(
                (uint8_t)effective_hop_count) +
            max_initial_delay_ms;
@@ -996,9 +1137,18 @@ uint32_t discovery_assignment_table_collection_window_ms(
     uint16_t response_spread_ms,
     uint8_t max_hop_count)
 {
+    return discovery_assignment_table_collection_window_for_topology_ms(
+        response_spread_ms, UWB_DISCOVERY_SLOT_COUNT, max_hop_count);
+}
+
+uint32_t discovery_assignment_table_collection_window_for_topology_ms(
+    uint16_t response_spread_ms,
+    uint8_t slot_count,
+    uint8_t max_hop_count)
+{
     uint32_t first_handle_window_ms =
-        discovery_assignment_collection_window_ms(response_spread_ms,
-                                                  max_hop_count);
+        discovery_assignment_collection_window_for_topology_ms(
+            response_spread_ms, slot_count, max_hop_count);
     uint32_t response_custody_ms;
     uint64_t table_window_ms;
 

@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 21, in <module>
+    from tools.gateway_gui.protocol import (  # noqa: E402
+    ...<28 lines>...
+    )
+  File "/home/tommie/Projects/IMEC2/tools/gateway_gui/protocol.py", line 14, in <module>
+    from .operation_policy import (
+    ...<9 lines>...
+    )
+ImportError: cannot import name 'SURVEY_OPERATION_SAFETY_LIMIT_MS' from 'tools.gateway_gui.operation_policy' (/home/tommie/Projects/IMEC2/tools/gateway_gui/operation_policy.py)

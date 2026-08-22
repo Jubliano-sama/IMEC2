@@ -491,22 +491,16 @@ static uint32_t response_delay_ms(uint8_t slot,
     return delay_ms;
 }
 
-static uint32_t expected_hop_band_start_ms(uint8_t hop_count,
-                                           uint8_t slot_count,
-                                           uint16_t response_spread_ms)
+static uint32_t expected_first_contact_start_ms(uint8_t hop_count,
+                                                uint8_t slot,
+                                                uint8_t slot_count)
 {
-    uint32_t start_ms = DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS;
-    uint32_t hop_band_ms = DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(
-        response_spread_ms, slot_count);
-
-    for (uint8_t nearer_hop = 1u; nearer_hop < hop_count; nearer_hop++) {
-        start_ms += hop_band_ms;
-        start_ms += discovery_assignment_response_custody_ms(nearer_hop);
-    }
-    return start_ms;
+    return DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+           ((((uint32_t)hop_count - 1u) * slot_count) + slot) *
+               OPERATION_POLICY_FIRST_CONTACT_SLOT_MS;
 }
 
-static void test_response_delay_serializes_near_hops_and_bounded_backoff(void)
+static void test_response_delay_orders_first_contact_and_bounded_backoff(void)
 {
     static const uint16_t spreads[] = {
         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
@@ -521,36 +515,31 @@ static void test_response_delay_serializes_near_hops_and_bounded_backoff(void)
          spread_index < sizeof(spreads) / sizeof(spreads[0]);
          spread_index++) {
         uint16_t spread_ms = spreads[spread_index];
-        uint32_t slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
-            spread_ms, UWB_DISCOVERY_SLOT_COUNT);
+        uint32_t jitter_cap_ms =
+            DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(spread_ms);
 
         for (uint8_t hop = 1u; hop <= DISCOVERY_ASSIGNMENT_MAX_HOPS; hop++) {
             uint32_t earliest_ms = response_delay_ms(
                 0u, UWB_DISCOVERY_SLOT_COUNT, hop, spread_ms, 0u);
 
-            assert(earliest_ms == expected_hop_band_start_ms(
-                                      hop,
-                                      UWB_DISCOVERY_SLOT_COUNT,
-                                      spread_ms));
+            assert(earliest_ms == expected_first_contact_start_ms(
+                                      hop, 0u, UWB_DISCOVERY_SLOT_COUNT));
             if (hop < DISCOVERY_ASSIGNMENT_MAX_HOPS) {
                 uint32_t latest_ms = response_delay_ms(
                     UWB_DISCOVERY_SLOT_COUNT - 1u,
                     UWB_DISCOVERY_SLOT_COUNT,
                     hop,
                     spread_ms,
-                    slot_width_ms - 1u);
+                    jitter_cap_ms - 1u);
                 uint32_t next_earliest_ms = response_delay_ms(
                     0u,
                     UWB_DISCOVERY_SLOT_COUNT,
                     hop + 1u,
                     spread_ms,
                     0u);
-                uint64_t latest_deadline_ms =
-                    discovery_assignment_response_deadline_ms(
-                        0u, latest_ms, hop);
 
                 assert(earliest_ms < next_earliest_ms);
-                assert(latest_deadline_ms < next_earliest_ms);
+                assert(latest_ms < next_earliest_ms);
             }
         }
     }
@@ -561,18 +550,19 @@ static void test_response_delay_serializes_near_hops_and_bounded_backoff(void)
     assert(retry_delay > first_delay);
 
     /* Reproduce the three-board HIL topology exactly: hop-one slot 0,
-     * hop-two slot 10, and hop-three slot 29. Even the latest jittered send
-     * plus full route custody must finish before the next board may send. */
+     * hop-two slot 10, and hop-three slot 29. First contact is monotonic by
+     * depth and slot; reliable custody is deliberately allowed to overlap the
+     * later not-before cells. */
     {
         static const uint8_t bench_slots[] = {0u, 10u, 29u};
         uint32_t earliest_ms[3];
-        uint64_t latest_deadline_ms[3];
-        uint32_t slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
-            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 30u);
+        uint32_t latest_ms[3];
+        uint32_t jitter_cap_ms =
+            DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS);
 
         for (size_t index = 0u; index < 3u; index++) {
             uint8_t hop = (uint8_t)index + 1u;
-            uint32_t latest_ms;
 
             earliest_ms[index] = response_delay_ms(
                 bench_slots[index],
@@ -580,20 +570,17 @@ static void test_response_delay_serializes_near_hops_and_bounded_backoff(void)
                 hop,
                 DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
                 0u);
-            latest_ms = response_delay_ms(
+            latest_ms[index] = response_delay_ms(
                 bench_slots[index],
                 30u,
                 hop,
                 DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-                slot_width_ms - 1u);
-            latest_deadline_ms[index] =
-                discovery_assignment_response_deadline_ms(
-                    0u, latest_ms, hop);
+                jitter_cap_ms - 1u);
         }
         assert(earliest_ms[0] < earliest_ms[1]);
         assert(earliest_ms[1] < earliest_ms[2]);
-        assert(latest_deadline_ms[0] < earliest_ms[1]);
-        assert(latest_deadline_ms[1] < earliest_ms[2]);
+        assert(latest_ms[0] < earliest_ms[1]);
+        assert(latest_ms[1] < earliest_ms[2]);
     }
 
     assert(discovery_assignment_response_delay_ms(
@@ -636,34 +623,34 @@ static void test_collection_window_covers_spread_and_hops(void)
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 0u,
                (DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS / 50u) - 1u,
                &delay_ms) == PROTO_OK);
-    assert(delay_ms == 1099u);
+    assert(delay_ms == 111349u);
     assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 1u) ==
-           32099u);
+           142349u);
     assert(discovery_assignment_response_delay_ms(
                49u, 50u, 8u,
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 0u,
                (DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS / 50u) - 1u,
                &delay_ms) == PROTO_OK);
-    assert(delay_ms == 428099u);
+    assert(delay_ms == 905849u);
     assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 8u) ==
-           529099u);
+           1006849u);
     assert(discovery_assignment_response_deadline_ms(
                UINT64_MAX - 100u, delay_ms, 8u) == UINT64_MAX);
     assert(discovery_assignment_membership_epoch(UINT32_C(0x12345678)) ==
            UINT16_C(0x444c));
     assert(discovery_assignment_membership_epoch(UINT32_C(0x00010001)) == 1u);
-    assert(direct == 31099u);
-    assert(forced_hop == 184099u);
+    assert(direct == 142329u);
+    assert(forced_hop == 512829u);
     assert(unknown ==
            DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS +
                DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS(
                    DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS));
-    assert(unknown == 528099u);
+    assert(unknown == 1006829u);
     assert(direct >= 31000u);
     assert(forced_hop >= 61000u);
     assert(unknown >= 101000u);
     assert(discovery_assignment_collection_window_ms(0u, 1u) == 0u);
-    assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 600099u);
+    assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 1008099u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS == 10000u);
     assert(DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS == 3000u);
     assert(DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS == 5u);
@@ -675,8 +662,8 @@ static void test_collection_window_covers_spread_and_hops(void)
            10u);
     assert(DISCOVERY_ASSIGNMENT_CLAIM_FAST_HANDLE_RETRIES == 2u);
     assert(DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS == 598u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1576004u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 1591204u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1800000u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 1800000u);
     assert(DISCOVERY_ASSIGNMENT_CLAIM_MAX_ROUNDS == 1u);
     assert(DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS == 1u);
     assert(discovery_assignment_control_flood_deadline_ms(1000u, 50000u) ==
@@ -728,14 +715,14 @@ static void test_table_window_covers_every_fast_ack_handle(void)
            natural_window +
                DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES * custody +
                DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS);
-    assert(natural_window == 72099u);
-    assert(table_window == 193496u);
+    assert(natural_window == 265829u);
+    assert(table_window == 387226u);
     assert(discovery_assignment_table_collection_window_ms(
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-               DISCOVERY_ASSIGNMENT_MAX_HOPS) == 829496u);
+               DISCOVERY_ASSIGNMENT_MAX_HOPS) == 1308226u);
 
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1576004u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 1591204u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1800000u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 1800000u);
 }
 
 static void test_claim_window_covers_two_fresh_handles(void)
@@ -754,15 +741,15 @@ static void test_claim_window_covers_two_fresh_handles(void)
     assert(DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS ==
            (DISCOVERY_ASSIGNMENT_RETRY_BASE_MS * 2u - 1u) +
                (DISCOVERY_ASSIGNMENT_RETRY_BASE_MS * 4u - 1u));
-    assert(natural_window == 528099u);
-    assert(bounded_claim_window == 728697u);
+    assert(natural_window == 1006829u);
+    assert(bounded_claim_window == 1207427u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
-               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS) ==
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS) == 2548664u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) == 2551204u);
+    assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) >
            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
-               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) == 1735204u);
-    assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
-               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) <= 1800000u);
 }
 
 static void test_claim_ack_settle_scales_and_duplicate_restarts_deadline(void)
@@ -1119,10 +1106,13 @@ static void test_sparse_explicit_slots_round_trip_without_compaction(void)
         UINT64_C(0x5000000000000003),
         UINT64_C(0x5000000000000004),
     };
-    const uint8_t slots[4] = {0u, 1u, 2u, 4u};
+    uint8_t slots[4] = {0u, 1u, 2u, 4u};
     uint8_t payload[256];
+    uint8_t roster_payload[256];
     struct discovery_assignment_table_commitment commitment;
+    struct discovery_assignment_table_commitment roster_commitment;
     size_t payload_len = 0u;
+    size_t roster_payload_len = 0u;
     size_t decoded_count = 0u;
     uint8_t slot_count = 0u;
 
@@ -1136,6 +1126,15 @@ static void test_sparse_explicit_slots_round_trip_without_compaction(void)
     assert(discovery_assignment_append_table_tlvs(
                payload, sizeof(payload), &payload_len, entries, 4u) ==
            PROTO_OK);
+    assert(discovery_assignment_append_table_from_roster(
+               roster_payload,
+               sizeof(roster_payload),
+               &roster_payload_len,
+               ids,
+               slots,
+               4u) == PROTO_OK);
+    assert(roster_payload_len == payload_len);
+    assert(memcmp(roster_payload, payload, payload_len) == 0);
     assert(discovery_assignment_parse_table_tlvs(
                payload, payload_len, decoded, 4u, &decoded_count,
                &slot_count) == PROTO_OK);
@@ -1143,6 +1142,10 @@ static void test_sparse_explicit_slots_round_trip_without_compaction(void)
     assert(slot_count == UWB_DISCOVERY_SLOT_COUNT);
     assert(discovery_assignment_table_commitment(
         decoded, decoded_count, slot_count, &commitment));
+    assert(discovery_assignment_table_commitment_from_roster(
+        ids, slots, 4u, slot_count, &roster_commitment));
+    assert(discovery_assignment_table_commitment_equal(
+        &commitment, &roster_commitment));
     for (size_t i = 0u; i < decoded_count; i++) {
         assert(decoded[i].anchor_id == ids[i]);
         assert(decoded[i].slot == slots[i]);
@@ -1153,6 +1156,17 @@ static void test_sparse_explicit_slots_round_trip_without_compaction(void)
     assert(discovery_assignment_append_table_tlvs(
                payload, sizeof(payload), &payload_len, entries, 4u) ==
            PROTO_ERR_MALFORMED);
+    slots[3] = slots[2];
+    roster_payload_len = 0u;
+    assert(discovery_assignment_append_table_from_roster(
+               roster_payload,
+               sizeof(roster_payload),
+               &roster_payload_len,
+               ids,
+               slots,
+               4u) == PROTO_ERR_MALFORMED);
+    assert(!discovery_assignment_table_commitment_from_roster(
+        ids, slots, 4u, UWB_DISCOVERY_SLOT_COUNT, &roster_commitment));
 }
 
 static void test_table_rejects_missing_and_corrupt_entries(void)
@@ -1229,6 +1243,107 @@ static void test_table_rejects_missing_and_corrupt_entries(void)
            PROTO_ERR_MALFORMED);
 }
 
+static void test_hop_aware_staggering_ddd_f1f1d_f2f1d(void)
+{
+    const uint64_t id_a = UINT64_C(0x56DA25FE4AF6D141);
+    const uint64_t id_b = UINT64_C(0xE4645C15CB365D30);
+    const uint64_t id_c = UINT64_C(0xE46070D247394D36);
+    const uint8_t n = 3u;
+
+    /* Scenario 1: DDD (3 direct anchors, hop 0) */
+    {
+        uint64_t ids[3] = {id_b, id_c, id_a};
+        uint8_t hops[3] = {0u, 0u, 0u};
+
+        assert(discovery_assignment_order_roster_extension(ids, hops, 3, 0u) == PROTO_OK);
+        for (size_t i = 0u; i < 3u; i++) {
+            assert(hops[i] == 0u);
+        }
+        assert(ids[0] == id_b);
+        assert(ids[1] == id_a);
+        assert(ids[2] == id_c);
+
+        /* Verify collision-free deterministic probing slots across rounds */
+        for (uint8_t round = 0u; round < 2u; round++) {
+            bool slot_used[3] = {false};
+            for (uint8_t s = 0u; s < n; s++) {
+                uint8_t probe_slot = (uint8_t)((s + round) % n);
+                assert(probe_slot < n);
+                assert(!slot_used[probe_slot]);
+                slot_used[probe_slot] = true;
+            }
+            for (size_t i = 0u; i < n; i++) {
+                assert(slot_used[i]);
+            }
+        }
+    }
+
+    /* Scenario 2: F1F1D (1 direct anchor, 2 one-hop anchors) */
+    {
+        uint64_t ids[3] = {id_a, id_b, id_c};
+        uint8_t hops[3] = {1u, 0u, 1u};
+
+        assert(discovery_assignment_order_roster_extension(ids, hops, 3, 0u) == PROTO_OK);
+        /* Direct anchor (id_b) must get slot 0 (index 0) */
+        assert(hops[0] == 0u);
+        assert(ids[0] == id_b);
+        /* Hop-1 anchors get slots 1 and 2 */
+        assert(hops[1] == 1u);
+        assert(hops[2] == 1u);
+        assert(ids[1] == id_a);
+        assert(ids[2] == id_c);
+
+        /* Direct parent uploads at slot 0 (delay 0), transitions to relay mode
+         * before child F1_a (slot 1) and child F1_b (slot 2) upload. */
+    }
+
+    /* Scenario 3: F2F1D (1 direct anchor, 1 one-hop anchor, 1 two-hop anchor) */
+    {
+        uint64_t ids[3] = {id_c, id_b, id_a};
+        uint8_t hops[3] = {2u, 0u, 1u};
+
+        assert(discovery_assignment_order_roster_extension(ids, hops, 3, 0u) == PROTO_OK);
+        /* Direct anchor (id_b) must get slot 0 */
+        assert(hops[0] == 0u);
+        assert(ids[0] == id_b);
+        /* 1-hop anchor (id_a) must get slot 1 */
+        assert(hops[1] == 1u);
+        assert(ids[1] == id_a);
+        /* 2-hop anchor (id_c) must get slot 2 */
+        assert(hops[2] == 2u);
+        assert(ids[2] == id_c);
+    }
+}
+
+static void test_sparse_stable_slots_use_compact_response_lanes(void)
+{
+    const struct discovery_assignment_entry entries[] = {
+        {.anchor_id = UINT64_C(0x11), .slot = 49u},
+        {.anchor_id = UINT64_C(0x22), .slot = 3u},
+        {.anchor_id = UINT64_C(0x33), .slot = 27u},
+    };
+    uint8_t lane = UINT8_MAX;
+    uint8_t lane_count = 0u;
+
+    assert(discovery_assignment_response_lane(
+               entries, 3u, UINT64_C(0x22), &lane, &lane_count) ==
+           PROTO_OK);
+    assert(lane == 0u);
+    assert(lane_count == 3u);
+    assert(discovery_assignment_response_lane(
+               entries, 3u, UINT64_C(0x33), &lane, &lane_count) ==
+           PROTO_OK);
+    assert(lane == 1u);
+    assert(discovery_assignment_response_lane(
+               entries, 3u, UINT64_C(0x11), &lane, &lane_count) ==
+           PROTO_OK);
+    assert(lane == 2u);
+    assert(discovery_assignment_response_lane(
+               entries, 3u, UINT64_C(0x44), &lane, &lane_count) ==
+           PROTO_ERR_NOT_FOUND);
+}
+
+
 int main(void)
 {
     test_table_commitment_known_vector_and_legacy_collision();
@@ -1240,7 +1355,7 @@ int main(void)
     test_ordered_epoch_helpers_wrap_and_reject_ambiguity();
     test_response_custody_matches_logical_epoch_and_phase();
     test_response_custody_allows_only_valid_supersession_boundaries();
-    test_response_delay_serializes_near_hops_and_bounded_backoff();
+    test_response_delay_orders_first_contact_and_bounded_backoff();
     test_collection_window_covers_spread_and_hops();
     test_table_window_covers_every_fast_ack_handle();
     test_claim_window_covers_two_fresh_handles();
@@ -1252,5 +1367,7 @@ int main(void)
     test_full_table_fits_one_extended_packet_and_round_trips();
     test_sparse_explicit_slots_round_trip_without_compaction();
     test_table_rejects_missing_and_corrupt_entries();
+    test_sparse_stable_slots_use_compact_response_lanes();
+    test_hop_aware_staggering_ddd_f1f1d_f2f1d();
     return 0;
 }

@@ -1,0 +1,39 @@
+row,start,end,text,style,lane_index
+phase,0,20430,"CLAIM responses\ndepth then temporary slot",emphasis,0
+phase,20430,25430,"Immutable TABLE flood\nexact epoch + commitment",solid,0
+phase,25430,45860,"TABLE response cells\ndepth then stable slot",emphasis,0
+phase,45860,48000,"Settle or bounded recovery\ninside operation cap",dashed,0
+gateway,0,20430,"Collect current responders\nN is a quorum target, never a cap",quiet,0
+gateway,20430,25430,"Durably retain exact TABLE before first publication RF",solid,0
+gateway,25430,45860,"ACK exact responses\ncount ACK_CONFIRM 0/3 ... 3/3",emphasis,0
+gateway,45860,48000,"Success only at 3/3\ntimeout remains incomplete",dashed,0
+direct,0,2270,"CLAIM response\nfirst possible cell",emphasis,0
+direct,2270,20430,"Custody or idle; does not occupy later depth cells",quiet,0
+direct,25430,27700,"TABLE ACK then ACK_CONFIRM\ncommit on exact gateway ACK",emphasis,0
+direct,27700,48000,"Confirmed",quiet,0
+forced1,0,9080,"Wait: parent gets upstream opportunity first",quiet,0
+forced1,9080,11350,"CLAIM response\none-parent contact",solid,0
+forced1,11350,20430,"Custody or randomized recovery",dashed,0
+forced1,25430,34510,"Wait for hop-1 stable-slot cell",quiet,0
+forced1,34510,36780,"TABLE ACK then ACK_CONFIRM",solid,0
+forced1,36780,48000,"Confirmed",quiet,0
+forced2,0,18160,"Wait: D and F1 establish toward gateway",quiet,0
+forced2,18160,20430,"CLAIM response\ntwo-relay contact",default,0
+forced2,20430,25430,"TABLE flood received through established path",quiet,0
+forced2,25430,43590,"Wait for hop-2 stable-slot cell",quiet,0
+forced2,43590,45860,"TABLE ACK then ACK_CONFIRM",default,0
+forced2,45860,48000,"Confirmed",quiet,0
+relay,0,2270,"D upstream only",emphasis,0
+relay,9080,11350,"F1 child contact; D keeps at most one downstream",solid,0
+relay,18160,20430,"F2 child contact after F1 upstream opportunity",default,0
+relay,25430,27700,"D confirmation",emphasis,0
+relay,34510,36780,"F1 confirmation",solid,0
+relay,43590,45860,"F2 confirmation",default,0
+table,0,20430,"Responder set freezes after CLAIM collection; late new anchors wait for the next run",shaded,0
+table,20430,25430,"Retained sparse slots stay fixed; new responders fill free slots in depth/identity order",solid,0
+table,25430,45860,"Every current responder proves this exact TABLE",emphasis,0
+table,45860,48000,"Pending TABLE survives reset until confirmation debt is cleared",dashed,0
+gui,0,20430,"Collecting responses x/N",emphasis,0
+gui,20430,25430,"Publishing exact slot table",solid,0
+gui,25430,45860,"Confirmations x/R",emphasis,0
+gui,45860,48000,"Complete or Incomplete; countdown never fabricates success",dashed,0

@@ -109,6 +109,17 @@ void route_refresh_selected_at(struct route_table *table, uint32_t now_ms);
 enum route_delivery_action route_record_failure_at(struct route_table *table,
                                                    enum route_failure_kind kind,
                                                    uint32_t now_ms);
+/* Immediately hold down the selected parent after a bounded contact attempt
+ * is exhausted, then select an already-known alternate before discovery. */
+enum route_delivery_action route_abandon_selected_at(
+    struct route_table *table,
+    uint32_t now_ms);
+enum route_delivery_action route_abandon_candidate_at(
+    struct route_table *table,
+    uint64_t next_hop_id,
+    uint64_t gateway_id,
+    uint32_t route_epoch,
+    uint32_t now_ms);
 uint32_t route_retry_backoff_ms(uint8_t failure_count);
 
 #ifdef __cplusplus

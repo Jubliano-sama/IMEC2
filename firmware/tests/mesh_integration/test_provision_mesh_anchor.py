@@ -701,8 +701,8 @@ class CommandBudgetContractTests(unittest.TestCase):
             discovery_default,
             host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS,
         )
-        self.assertEqual(360_000, survey_default)
-        self.assertEqual(240_000, discovery_default)
+        self.assertEqual(1_800_000, survey_default)
+        self.assertEqual(260_277, discovery_default)
         self.assertGreater(survey_default, discovery_default)
         self.assertEqual(
             route_refresh_default,
@@ -723,6 +723,9 @@ class CommandBudgetContractTests(unittest.TestCase):
         survey_header = (
             REPO_ROOT / "firmware" / "include" / "survey.h"
         ).read_text(encoding="utf-8")
+        mesh_header = (
+            REPO_ROOT / "firmware" / "include" / "mesh.h"
+        ).read_text(encoding="utf-8")
         report_capacity = self._literal_macro(
             survey_header, "SURVEY_GATEWAY_MAX_REPORTS"
         )
@@ -736,15 +739,58 @@ class CommandBudgetContractTests(unittest.TestCase):
             survey_header,
             "SURVEY_DISCOVERY_REPORT_CUSTODY_PER_ADDITIONAL_HOP_MS",
         )
-        max_hops = self._literal_macro(survey_header, "SURVEY_DEFAULT_TTL")
+        max_hops = self._literal_macro(mesh_header, "MESH_NETWORK_MAX_HOPS")
         direct_ms = report_capacity * service_ms + flow_guard_ms
         firmware_max_ms = direct_ms + (max_hops - 1) * per_hop_ms
 
-        self.assertEqual(42_000, firmware_max_ms)
+        self.assertEqual(58_000, firmware_max_ms)
         self.assertEqual(
             firmware_max_ms,
             host_operation_policy.DISCOVERY_REPORT_CUSTODY_MAX_MS,
         )
+
+    def test_headless_survey_policy_uses_depth_aware_start_and_exact_budget(
+        self,
+    ) -> None:
+        expected_start_by_depth = {
+            1: 11_104,
+            5: 19_104,
+            6: 21_104,
+            7: 23_104,
+            8: 25_104,
+            0: 25_104,
+        }
+        for deepest_hop, expected_start_ms in expected_start_by_depth.items():
+            with self.subTest(deepest_hop=deepest_hop):
+                policy = provision._survey_operation_policy(
+                    expected_anchor_count=6,
+                    discovery_slot_count=6,
+                    report_grace_ms=250,
+                    deepest_hop=deepest_hop,
+                )
+                self.assertEqual(
+                    expected_start_ms,
+                    policy.discovery.start_delay_ms,
+                )
+                self.assertEqual(
+                    host_operation_policy.discovery_required_budget_ms(
+                        expected_start_ms,
+                        host_operation_policy.DISCOVERY_DEFAULT_SLOT_MS,
+                        6,
+                        host_operation_policy.DISCOVERY_DEFAULT_ROUND_COUNT,
+                        250,
+                        deepest_hop,
+                    ),
+                    policy.discovery.operation_budget_ms,
+                )
+
+        with self.assertRaisesRegex(ValueError, "deepest hop"):
+            provision._survey_operation_policy(
+                expected_anchor_count=6,
+                discovery_slot_count=6,
+                report_grace_ms=250,
+                deepest_hop=9,
+            )
 
     def test_cli_rejects_survey_budget_below_selected_discovery_horizon(
         self,
@@ -756,7 +802,7 @@ class CommandBudgetContractTests(unittest.TestCase):
             host_operation_policy.DISCOVERY_DEFAULT_ROUND_COUNT,
             1_000,
         )
-        self.assertEqual(140_743, required_ms)
+        self.assertEqual(261_027, required_ms)
 
         argv = [
             "provision_mesh_anchor.py",
@@ -848,9 +894,18 @@ class CommandBudgetContractTests(unittest.TestCase):
         gateway_header = (
             REPO_ROOT / "firmware" / "include" / "gateway_command.h"
         ).read_text(encoding="utf-8")
-        control_timeout = re.search(
-            r"#define\s+SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS\s+(\d+)u\b",
-            survey_header,
+        mesh_header = (
+            REPO_ROOT / "firmware" / "include" / "mesh.h"
+        ).read_text(encoding="utf-8")
+        control_base_ms = self._literal_macro(
+            survey_header, "SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS"
+        )
+        control_per_hop_ms = self._literal_macro(
+            survey_header, "SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS"
+        )
+        max_hops = self._literal_macro(mesh_header, "MESH_NETWORK_MAX_HOPS")
+        control_timeout_ms = (
+            control_base_ms + (max_hops - 1) * control_per_hop_ms
         )
         validation_hold = re.search(
             r"#define\s+GATEWAY_COMMAND_RESULT_VALIDATION_MAX_HOLD_MS\s+"
@@ -858,11 +913,10 @@ class CommandBudgetContractTests(unittest.TestCase):
             gateway_header,
         )
 
-        self.assertIsNotNone(control_timeout)
         self.assertIsNotNone(validation_hold)
-        assert control_timeout is not None and validation_hold is not None
+        assert validation_hold is not None
         self.assertEqual(
-            int(control_timeout.group(1)) / 1000.0,
+            control_timeout_ms / 1000.0,
             provision.SURVEY_TERMINAL_DRAIN_MAX_S,
         )
         self.assertEqual(
@@ -932,6 +986,270 @@ class RouteRefreshQualificationTests(unittest.TestCase):
 
 
 class AssignmentQualificationTests(unittest.TestCase):
+    def test_table_ack_depth_wins_over_stale_claim_route_sidecar(self) -> None:
+        direct_d = 0x1000
+        direct_c = 0x1001
+        forced_b = 0x1002
+        events = [
+            command_event(
+                4,
+                event_sequence=1,
+                command_kind=1,
+                command_id=0x0104,
+            ),
+            command_event(
+                6,
+                event_sequence=2,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=direct_d,
+                previous_hop_id=direct_d,
+                progress_count=1,
+                hop_count=1,
+                discovery_slot=0xFF,
+            ),
+            # The anchor still estimates itself at depth two, even though this
+            # CLAIM reached the gateway directly (previous hop is itself).
+            command_event(
+                6,
+                event_sequence=3,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=direct_c,
+                previous_hop_id=direct_c,
+                progress_count=2,
+                hop_count=2,
+                discovery_slot=0xFF,
+            ),
+            command_event(
+                6,
+                event_sequence=4,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=forced_b,
+                previous_hop_id=direct_d,
+                progress_count=3,
+                hop_count=2,
+                discovery_slot=0xFF,
+            ),
+            command_event(
+                7,
+                event_sequence=5,
+                command_kind=1,
+                command_id=0x0104,
+                progress_count=3,
+                total_count=3,
+            ),
+            # Per-anchor TABLE ACK confirmations carry the current, reliable
+            # depth proof and arrive before the durable publisher drains.
+            command_event(
+                8,
+                event_sequence=6,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=direct_c,
+                attempt=0,
+                progress_count=1,
+                total_count=3,
+                hop_count=1,
+                discovery_slot=2,
+            ),
+            command_event(
+                8,
+                event_sequence=7,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=direct_d,
+                attempt=0,
+                progress_count=2,
+                total_count=3,
+                hop_count=1,
+                discovery_slot=1,
+            ),
+            command_event(
+                8,
+                event_sequence=8,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=forced_b,
+                attempt=0,
+                progress_count=3,
+                total_count=3,
+                hop_count=2,
+                discovery_slot=0,
+            ),
+            # The reliable mapping batch was snapshotted before those ACKs,
+            # so C's slot is authoritative while its hop sidecar is stale.
+            command_event(
+                6,
+                event_sequence=9,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=forced_b,
+                progress_count=1,
+                total_count=3,
+                success_count=1,
+                hop_count=2,
+                discovery_slot=0,
+            ),
+            command_event(
+                6,
+                event_sequence=10,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=direct_d,
+                progress_count=2,
+                total_count=3,
+                success_count=1,
+                hop_count=1,
+                discovery_slot=1,
+            ),
+            command_event(
+                6,
+                event_sequence=11,
+                command_kind=1,
+                command_id=0x0104,
+                anchor_id=direct_c,
+                progress_count=3,
+                total_count=3,
+                success_count=1,
+                hop_count=2,
+                discovery_slot=2,
+            ),
+            command_event(
+                7,
+                event_sequence=12,
+                command_kind=1,
+                command_id=0x0104,
+                progress_count=3,
+                total_count=3,
+                success_count=3,
+            ),
+            command_event(
+                8,
+                event_sequence=13,
+                command_kind=1,
+                command_id=0x0104,
+                progress_count=3,
+                total_count=3,
+            ),
+            command_event(
+                12,
+                event_sequence=14,
+                command_kind=1,
+                command_id=0x0104,
+                progress_count=3,
+                total_count=3,
+                success_count=3,
+            ),
+        ]
+
+        qualification = provision.AssignmentQualification(
+            0x12345,
+            0x2345,
+            0x12345,
+            3,
+            require_hop_evidence=True,
+            expected_direct_anchors=2,
+            expected_multihop_anchors=1,
+            expected_anchor_hops={direct_d: 1, direct_c: 1, forced_b: 2},
+        )
+        for event in events:
+            qualification.observe(event)
+
+        qualification.validate()
+        self.assertEqual(2, qualification.direct_count)
+        self.assertEqual(1, qualification.multihop_count)
+
+        outside_roster = provision.AssignmentQualification(
+            0x12345, 0x2345, 0x12345, 3, require_hop_evidence=True
+        )
+        for event in events:
+            if (
+                event.stage == 6
+                and event.anchor_id == forced_b
+                and event.discovery_slot == 0xFF
+            ):
+                event = dataclasses.replace(event, previous_hop_id=0xDEADBEEF)
+            outside_roster.observe(event)
+        with self.assertRaisesRegex(RuntimeError, "outside the qualified roster"):
+            outside_roster.validate()
+
+    def test_live_ack_confirm_progress_is_distinct_from_table_publication(self) -> None:
+        events = successful_assignment_events(3, direct_count=3)
+        qualification = provision.AssignmentQualification(
+            0x12345, 0x2345, 0x12345, 3
+        )
+        for event in events[:4]:
+            qualification.observe(event)
+        for index in range(3):
+            qualification.observe(
+                command_event(
+                    8,
+                    event_sequence=100 + index,
+                    command_kind=1,
+                    command_id=0x0104,
+                    host_session_id=0x12345,
+                    host_sequence=0x2345,
+                    correlation_id=0x12345,
+                    anchor_id=0x1000 + index,
+                    progress_count=index + 1,
+                    total_count=3,
+                    hop_count=1,
+                    discovery_slot=index,
+                )
+            )
+        for event in events[4:]:
+            qualification.observe(event)
+
+        qualification.validate()
+        self.assertEqual(
+            {0x1000: 0, 0x1001: 1, 0x1002: 2},
+            qualification.confirmed_slots,
+        )
+
+    def test_ack_confirm_slot_must_match_reliable_publication(self) -> None:
+        events = successful_assignment_events(3, direct_count=3)
+        qualification = provision.AssignmentQualification(
+            0x12345, 0x2345, 0x12345, 3
+        )
+        qualification.observe(
+            command_event(
+                8,
+                event_sequence=100,
+                command_kind=1,
+                command_id=0x0104,
+                host_session_id=0x12345,
+                host_sequence=0x2345,
+                correlation_id=0x12345,
+                anchor_id=0x1000,
+                progress_count=1,
+                total_count=3,
+                hop_count=1,
+                discovery_slot=2,
+            )
+        )
+        for event in events:
+            qualification.observe(event)
+
+        with self.assertRaisesRegex(RuntimeError, "confirmed slot 2, published slot 0"):
+            qualification.validate()
+
+    def test_sparse_retained_slots_are_valid(self) -> None:
+        events = successful_assignment_events(3, direct_count=3)
+        sparse_slots = {0x1000: 1, 0x1001: 4, 0x1002: 9}
+        qualification = provision.AssignmentQualification(
+            0x12345, 0x2345, 0x12345, 3
+        )
+        for event in events:
+            if event.stage == 6 and event.discovery_slot != 0xFF:
+                event = dataclasses.replace(
+                    event, discovery_slot=sparse_slots[event.anchor_id]
+                )
+            qualification.observe(event)
+
+        qualification.validate()
+
     def test_exact_per_anchor_hop_map_passes_and_mismatch_fails(self) -> None:
         events = successful_assignment_events(3, direct_count=1)
         expected = {0x1000: 1, 0x1001: 3, 0x1002: 4}
@@ -1131,17 +1449,17 @@ class AssignmentQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "lost events"):
             lost.validate()
 
-    def test_contradictory_or_changed_hop_evidence_cannot_qualify(self) -> None:
+    def test_outside_roster_or_changed_hop_evidence_cannot_qualify(self) -> None:
         events = successful_assignment_events(3, direct_count=1)
-        contradictory = provision.AssignmentQualification(
+        outside_roster = provision.AssignmentQualification(
             0x12345, 0x2345, 0x12345, 3, require_hop_evidence=True
         )
         for index, event in enumerate(events):
-            if index == 1:
-                event = dataclasses.replace(event, previous_hop_id=0x1001)
-            contradictory.observe(event)
-        with self.assertRaisesRegex(RuntimeError, "contradictory previous-hop"):
-            contradictory.validate()
+            if index == 2:
+                event = dataclasses.replace(event, previous_hop_id=0xDEADBEEF)
+            outside_roster.observe(event)
+        with self.assertRaisesRegex(RuntimeError, "outside the qualified roster"):
+            outside_roster.validate()
 
         changed = provision.AssignmentQualification(
             0x12345, 0x2345, 0x12345, 3
@@ -1219,12 +1537,21 @@ class FakeBleakClient:
         self.services = FakeServices()
         self.notify_enabled = False
         self.notify_callback: object | None = None
+        self.is_connected = False
 
     async def __aenter__(self):
-        self.operations.append(("connect", self.gateway))
+        await self.connect()
         return self
 
     async def __aexit__(self, *_args: object) -> None:
+        await self.disconnect()
+
+    async def connect(self) -> None:
+        self.is_connected = True
+        self.operations.append(("connect", self.gateway))
+
+    async def disconnect(self) -> None:
+        self.is_connected = False
         self.operations.append(("disconnect", self.gateway))
 
     async def read_gatt_char(self, _uuid: object) -> bytes:
@@ -1234,7 +1561,7 @@ class FakeBleakClient:
     async def write_gatt_char(
         self, _characteristic: object, data: bytes, *, response: bool
     ) -> None:
-        assert response is False
+        assert response is True
         self.operations.append(
             ("write", (bytes(data), self.notify_enabled, response))
         )
@@ -1259,6 +1586,8 @@ def args(**overrides: object) -> argparse.Namespace:
         "host_id": 1,
         "duration": 1.0,
         "connect_timeout": 12.0,
+        "reconnect_attempts": 3,
+        "reconnect_delay_s": 1.5,
         "repeat": 1,
         "interval": 0.05,
         "survey_id": 0,
@@ -1279,6 +1608,27 @@ def args(**overrides: object) -> argparse.Namespace:
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+class QualificationTimeoutProbe(float):
+    """Record when a resolved timeout is turned into an absolute deadline."""
+
+    effective_budget_ms: int
+    deadline_origins: list[float]
+
+    def __new__(
+        cls,
+        timeout_s: float,
+        effective_budget_ms: int,
+    ) -> "QualificationTimeoutProbe":
+        instance = super().__new__(cls, timeout_s)
+        instance.effective_budget_ms = effective_budget_ms
+        instance.deadline_origins = []
+        return instance
+
+    def __radd__(self, started_at: float) -> float:
+        self.deadline_origins.append(float(started_at))
+        return float(started_at) + float(self)
 
 
 class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
@@ -1398,6 +1748,55 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
     ) -> list[bytes]:
         return await self._run_unqualified_command_with_packets(packets)
 
+    async def test_unqualified_survey_preserves_optional_expected_anchor_tlv(
+        self,
+    ) -> None:
+        built_commands: list[tuple[dict[str, object], object]] = []
+        real_build_anchor_discovery_command = (
+            provision.build_anchor_discovery_command
+        )
+
+        def capture_command(**kwargs: object) -> object:
+            command = real_build_anchor_discovery_command(**kwargs)
+            built_commands.append((dict(kwargs), command))
+            return command
+
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(
+                provision,
+                "build_anchor_discovery_command",
+                side_effect=capture_command,
+            ),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            await provision.run(
+                args(
+                    command="survey",
+                    duration=0.001,
+                    expected_anchors=3,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+
+        self.assertEqual(1, len(built_commands))
+        command_args, command = built_commands[0]
+        self.assertEqual(3, command_args["expected_anchor_count"])
+        self.assertEqual(
+            3,
+            command.packet.value(host_protocol.TLV_EXPECTED_NODE_COUNT),
+        )
+
+        omitted_args = dict(command_args)
+        omitted_args["expected_anchor_count"] = None
+        omitted = real_build_anchor_discovery_command(**omitted_args)
+        self.assertIsNone(
+            omitted.packet.value(host_protocol.TLV_EXPECTED_NODE_COUNT)
+        )
+
     async def _run_monitor_with_packets(self, packets: list[Packet]) -> list[bytes]:
         FakeDecoder.packets = packets
         FakeBleakClient.notification_count = len(packets)
@@ -1502,7 +1901,13 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(6, policy.discovery.slot_count)
         self.assertEqual(1000, policy.discovery.report_grace_ms)
         self.assertEqual(
-            host_operation_policy.DISCOVERY_DEFAULT_BUDGET_MS,
+            host_operation_policy.discovery_required_budget_ms(
+                host_operation_policy.DISCOVERY_DEFAULT_START_DELAY_MS,
+                host_operation_policy.DISCOVERY_DEFAULT_SLOT_MS,
+                6,
+                host_operation_policy.DISCOVERY_DEFAULT_ROUND_COUNT,
+                1000,
+            ),
             policy.discovery.operation_budget_ms,
         )
         self.assertEqual(3, len(qualification.pair_successes))
@@ -2259,6 +2664,59 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([], writes)
 
+    async def test_no_response_write_cannot_drop_final_delimiter_silently(
+        self,
+    ) -> None:
+        class DropFinalChunkForNoResponseClient(FakeBleakClient):
+            attempted_writes: list[tuple[bytes, bool]] = []
+            delivered_writes: list[tuple[bytes, bool]] = []
+
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                chunk = bytes(data)
+                type(self).attempted_writes.append((chunk, response))
+                if not response and chunk.endswith(b"\x00"):
+                    # BlueZ may report a locally queued write command as done
+                    # even though the gateway never admits the frame delimiter.
+                    return
+                type(self).delivered_writes.append((chunk, response))
+                await super().write_gatt_char(
+                    characteristic,
+                    chunk,
+                    response=response,
+                )
+
+        with (
+            mock.patch.object(
+                provision, "BleakClient", DropFinalChunkForNoResponseClient
+            ),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            await provision.run(
+                args(
+                    command="survey",
+                    duration=0.001,
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                )
+            )
+
+        attempted = DropFinalChunkForNoResponseClient.attempted_writes
+        delivered = DropFinalChunkForNoResponseClient.delivered_writes
+        self.assertTrue(attempted)
+        self.assertTrue(all(response for _chunk, response in attempted))
+        self.assertEqual(attempted, delivered)
+        self.assertTrue(
+            b"".join(chunk for chunk, _response in delivered).endswith(b"\x00")
+        )
+
     async def test_concurrent_notifications_serialize_exact_receipt_writes(self) -> None:
         packets = [
             gateway_stream_pair_packet(
@@ -2311,7 +2769,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 *,
                 response: bool,
             ) -> None:
-                assert response is False
+                assert response is True
                 type(self).active_writes += 1
                 type(self).max_active_writes = max(
                     type(self).max_active_writes,
@@ -2383,8 +2841,8 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(writes), len(expected_chunks))
         self.assertEqual(expected_chunks, writes[-len(expected_chunks):])
         self.assertTrue(
-            all(record[2] is False for record in write_records),
-            "every command and host-receipt chunk must use WWR",
+            all(record[2] is True for record in write_records),
+            "every command and host-receipt chunk must use ATT write requests",
         )
         self.assertEqual(1, ConcurrentNotificationClient.max_active_writes)
 
@@ -2670,11 +3128,18 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         ]
         command_args: dict[str, object] = {}
         route_args: dict[str, object] = {}
+        commands: list[object] = []
+        timeout_probes: list[QualificationTimeoutProbe] = []
         real_build_assignment = provision.build_assign_discovery_slots_command
         real_build_here_i_am = provision.build_here_i_am_command
-        budget_ms = host_operation_policy.assignment_required_budget_ms(
-            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
-            3,
+        real_required_budget = provision.assignment_required_budget_ms
+        real_qualification_timeout = provision._qualification_timeout_s
+        budget_ms = (
+            host_operation_policy.assignment_required_budget_ms(
+                host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+                3,
+            )
+            + 1
         )
 
         def fake_decode(payload: bytes, **_kwargs: object) -> object:
@@ -2682,16 +3147,44 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
 
         def capture_assignment(**kwargs: object) -> object:
             command_args.update(kwargs)
-            return real_build_assignment(**kwargs)
+            command = real_build_assignment(**kwargs)
+            commands.append(command)
+            return command
 
         def capture_here_i_am(**kwargs: object) -> object:
             route_args.update(kwargs)
-            return real_build_here_i_am(**kwargs)
+            command = real_build_here_i_am(**kwargs)
+            commands.append(command)
+            return command
+
+        def capture_timeout(
+            requested_timeout_s: float,
+            effective_budget_ms: int,
+        ) -> QualificationTimeoutProbe:
+            probe = QualificationTimeoutProbe(
+                real_qualification_timeout(
+                    requested_timeout_s,
+                    effective_budget_ms,
+                ),
+                effective_budget_ms,
+            )
+            timeout_probes.append(probe)
+            return probe
 
         with (
             mock.patch.object(provision, "BleakClient", FakeBleakClient),
             mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
             mock.patch.object(provision, "decode_gateway_command_event", fake_decode),
+            mock.patch.object(
+                provision,
+                "assignment_required_budget_ms",
+                wraps=real_required_budget,
+            ) as required_budget,
+            mock.patch.object(
+                provision,
+                "_qualification_timeout_s",
+                side_effect=capture_timeout,
+            ),
             mock.patch.object(
                 provision,
                 "build_assign_discovery_slots_command",
@@ -2731,6 +3224,268 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(budget_ms, route_args["command_budget_ms"])
         self.assertEqual(policy, route_args["operation_policy"])
+        required_budget.assert_not_called()
+        self.assertEqual(2, len(commands))
+        self.assertEqual(
+            [budget_ms, budget_ms],
+            [
+                command.packet.value(host_protocol.TLV_COMMAND_BUDGET_MS)
+                for command in commands
+            ],
+        )
+        self.assertEqual(
+            [budget_ms, budget_ms],
+            [
+                probe.effective_budget_ms
+                for probe in timeout_probes
+                if probe.deadline_origins
+            ],
+        )
+
+    async def test_assign_slots_omitted_budget_binds_one_topology_budget_everywhere(
+        self,
+    ) -> None:
+        expected_anchors = 3
+        deepest_hop = 2
+        identity = 0x12345
+        events = successful_assignment_events(
+            expected_anchors,
+            session_id=identity,
+            direct_count=1,
+        )
+        FakeDecoder.events = events
+        FakeBleakClient.write_notification_counts = [len(events)]
+        built_commands: list[tuple[dict[str, object], object]] = []
+        timeout_probes: list[QualificationTimeoutProbe] = []
+        real_build_assignment = provision.build_assign_discovery_slots_command
+        real_required_budget = provision.assignment_required_budget_ms
+        real_qualification_timeout = provision._qualification_timeout_s
+        expected_budget_ms = host_operation_policy.assignment_required_budget_ms(
+            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            expected_anchors,
+            deepest_hop,
+        )
+
+        def fake_decode(payload: bytes, **_kwargs: object) -> object:
+            return events[payload[0]]
+
+        def capture_assignment(**kwargs: object) -> object:
+            command = real_build_assignment(**kwargs)
+            built_commands.append((dict(kwargs), command))
+            return command
+
+        def capture_timeout(
+            requested_timeout_s: float,
+            effective_budget_ms: int,
+        ) -> QualificationTimeoutProbe:
+            probe = QualificationTimeoutProbe(
+                real_qualification_timeout(
+                    requested_timeout_s,
+                    effective_budget_ms,
+                ),
+                effective_budget_ms,
+            )
+            timeout_probes.append(probe)
+            return probe
+
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "decode_gateway_command_event", fake_decode),
+            mock.patch.object(
+                provision,
+                "assignment_required_budget_ms",
+                wraps=real_required_budget,
+            ) as required_budget,
+            mock.patch.object(
+                provision,
+                "build_assign_discovery_slots_command",
+                side_effect=capture_assignment,
+            ),
+            mock.patch.object(
+                provision,
+                "_qualification_timeout_s",
+                side_effect=capture_timeout,
+            ),
+            mock.patch.object(provision, "_new_identity", return_value=identity),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await provision.run(
+                args(
+                    command="assign-slots",
+                    require_survey_success=False,
+                    require_assignment_success=True,
+                    notification_hold_s=0.0,
+                    expected_anchors=expected_anchors,
+                    expected_direct_anchors=1,
+                    expected_multihop_anchors=2,
+                    deepest_hop=deepest_hop,
+                )
+            )
+
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+        required_budget.assert_called_once_with(
+            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            expected_anchors,
+            deepest_hop=deepest_hop,
+        )
+        self.assertEqual(1, len(built_commands))
+        command_args, command = built_commands[0]
+        policy = command_args["operation_policy"]
+        self.assertIsInstance(policy, host_operation_policy.OperationPolicyProfile)
+        self.assertEqual(
+            expected_budget_ms,
+            policy.assignment.operation_budget_ms,
+        )
+        self.assertEqual(deepest_hop, policy.assignment.deepest_hop)
+        self.assertEqual(expected_budget_ms, command_args["command_budget_ms"])
+        self.assertEqual(
+            expected_budget_ms,
+            command.packet.value(host_protocol.TLV_COMMAND_BUDGET_MS),
+        )
+        self.assertEqual(
+            [expected_budget_ms],
+            [
+                probe.effective_budget_ms
+                for probe in timeout_probes
+                if probe.deadline_origins
+            ],
+        )
+
+    async def test_combined_reachability_omitted_budget_binds_one_topology_budget_everywhere(
+        self,
+    ) -> None:
+        expected_anchors = 3
+        deepest_hop = 2
+        route_events = successful_route_events(
+            session_id=0x11111,
+            retries=0,
+            first_sequence=1,
+        )
+        assignment_events = successful_assignment_events(
+            expected_anchors,
+            session_id=0x22222,
+            direct_count=1,
+            first_sequence=100,
+        )
+        events = route_events + assignment_events
+        FakeDecoder.events = events
+        FakeBleakClient.write_notification_counts = [
+            len(route_events),
+            len(assignment_events),
+        ]
+        built_commands: list[tuple[dict[str, object], object]] = []
+        timeout_probes: list[QualificationTimeoutProbe] = []
+        real_build_assignment = provision.build_assign_discovery_slots_command
+        real_build_here_i_am = provision.build_here_i_am_command
+        real_required_budget = provision.assignment_required_budget_ms
+        real_qualification_timeout = provision._qualification_timeout_s
+        expected_budget_ms = host_operation_policy.assignment_required_budget_ms(
+            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            expected_anchors,
+            deepest_hop,
+        )
+
+        def fake_decode(payload: bytes, **_kwargs: object) -> object:
+            return events[payload[0]]
+
+        def capture_command(builder: object, kwargs: dict[str, object]) -> object:
+            command = builder(**kwargs)
+            built_commands.append((dict(kwargs), command))
+            return command
+
+        def capture_assignment(**kwargs: object) -> object:
+            return capture_command(real_build_assignment, kwargs)
+
+        def capture_here_i_am(**kwargs: object) -> object:
+            return capture_command(real_build_here_i_am, kwargs)
+
+        def capture_timeout(
+            requested_timeout_s: float,
+            effective_budget_ms: int,
+        ) -> QualificationTimeoutProbe:
+            probe = QualificationTimeoutProbe(
+                real_qualification_timeout(
+                    requested_timeout_s,
+                    effective_budget_ms,
+                ),
+                effective_budget_ms,
+            )
+            timeout_probes.append(probe)
+            return probe
+
+        with (
+            mock.patch.object(provision, "BleakClient", FakeBleakClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "decode_gateway_command_event", fake_decode),
+            mock.patch.object(
+                provision,
+                "assignment_required_budget_ms",
+                wraps=real_required_budget,
+            ) as required_budget,
+            mock.patch.object(
+                provision,
+                "build_assign_discovery_slots_command",
+                side_effect=capture_assignment,
+            ),
+            mock.patch.object(
+                provision,
+                "build_here_i_am_command",
+                side_effect=capture_here_i_am,
+            ),
+            mock.patch.object(
+                provision,
+                "_qualification_timeout_s",
+                side_effect=capture_timeout,
+            ),
+            mock.patch.object(
+                provision,
+                "_new_identity",
+                side_effect=[0x11111, 0x22222],
+            ),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await provision.run(
+                args(
+                    command="qualify-reachability",
+                    require_survey_success=False,
+                    notification_hold_s=0.0,
+                    expected_anchors=expected_anchors,
+                    expected_direct_anchors=1,
+                    expected_multihop_anchors=2,
+                    deepest_hop=deepest_hop,
+                )
+            )
+
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+        required_budget.assert_called_once_with(
+            host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            expected_anchors,
+            deepest_hop=deepest_hop,
+        )
+        self.assertEqual(2, len(built_commands))
+        policies = []
+        for command_args, command in built_commands:
+            policies.append(command_args["operation_policy"])
+            self.assertEqual(expected_budget_ms, command_args["command_budget_ms"])
+            self.assertEqual(
+                expected_budget_ms,
+                command.packet.value(host_protocol.TLV_COMMAND_BUDGET_MS),
+            )
+        self.assertEqual(policies[0], policies[1])
+        self.assertEqual(
+            expected_budget_ms,
+            policies[0].assignment.operation_budget_ms,
+        )
+        self.assertEqual(deepest_hop, policies[0].assignment.deepest_hop)
+        self.assertEqual(
+            [expected_budget_ms, expected_budget_ms],
+            [
+                probe.effective_budget_ms
+                for probe in timeout_probes
+                if probe.deadline_origins
+            ],
+        )
 
     async def test_combined_reachability_accepts_durable_mapping_without_optional_hops(
         self,
@@ -2786,10 +3541,314 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(3, len(qualification.assigned_slots))
         self.assertEqual(0, len(qualification.hop_paths))
 
-    async def test_strict_assignment_disconnect_fails_immediately(self) -> None:
+    async def test_completed_command_reconnects_same_gateway_without_resend(
+        self,
+    ) -> None:
+        events = successful_assignment_events(
+            3,
+            session_id=0x12345,
+            direct_count=1,
+        )
+
+        class ReconnectDecoder:
+            def feed(self, raw: bytes) -> object:
+                packet = types.SimpleNamespace(
+                    msg_type=provision.MSG_GATEWAY_COMMAND_EVENT,
+                    src_id=1,
+                    dst_id=GATEWAY_ID,
+                    session_id=0x12345,
+                    seq=raw[0] + 1,
+                    payload=raw,
+                )
+                return types.SimpleNamespace(errors=[], packets=[packet])
+
+        class ReconnectingClient(FakeBleakClient):
+            notify_starts = 0
+            command_written = False
+
+            async def start_notify(
+                self, _uuid: object, callback: object
+            ) -> None:
+                type(self).notify_starts += 1
+                self.notify_enabled = True
+                self.notify_callback = callback
+                self.operations.append(("start_notify", None))
+                if type(self).notify_starts == 2:
+                    for index in range(len(events)):
+                        callback(None, bytearray((index,)))
+
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                await super().write_gatt_char(
+                    characteristic,
+                    data,
+                    response=response,
+                )
+                if not type(self).command_written:
+                    type(self).command_written = True
+                    self.is_connected = False
+                    assert self.disconnected_callback is not None
+                    asyncio.get_running_loop().call_soon(
+                        self.disconnected_callback,
+                        self,
+                    )
+
+        def fake_decode(payload: bytes, **_kwargs: object) -> object:
+            return events[payload[0]]
+
+        identity = mock.Mock(return_value=0x12345)
+        with (
+            mock.patch.object(provision, "BleakClient", ReconnectingClient),
+            mock.patch.object(
+                provision, "GatewayReceiveBuffer", ReconnectDecoder
+            ),
+            mock.patch.object(
+                provision, "decode_gateway_command_event", fake_decode
+            ),
+            mock.patch.object(provision, "_new_identity", identity),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await provision.run(
+                args(
+                    command="assign-slots",
+                    require_survey_success=False,
+                    require_assignment_success=True,
+                    notification_hold_s=0.0,
+                    expected_direct_anchors=1,
+                    expected_multihop_anchors=2,
+                    reconnect_attempts=2,
+                    reconnect_delay_s=0.0,
+                )
+            )
+
+        writes = [
+            value[0]
+            for name, value in FakeBleakClient.operations
+            if name == "write"
+        ]
+        assignment_commands = [
+            frame
+            for frame in writes
+            if parse_cobs_packet(frame).value(provision.TLV_COMMAND_ID)
+            == provision.CMD_ASSIGN_DISCOVERY_SLOTS
+        ]
+        self.assertEqual(1, len(assignment_commands))
+        self.assertEqual(
+            2,
+            sum(name == "connect" for name, _value in FakeBleakClient.operations),
+        )
+        self.assertEqual(
+            2,
+            sum(
+                name == "read_identity"
+                for name, _value in FakeBleakClient.operations
+            ),
+        )
+        identity.assert_called_once_with()
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+        assert isinstance(qualification, provision.AssignmentQualification)
+        self.assertEqual(0x12345, qualification.correlation_id)
+        self.assertEqual(0x12345, qualification.host_session_id)
+        self.assertEqual(0x2345, qualification.host_sequence)
+
+    async def test_reconnect_rejects_a_different_gateway_without_resend(
+        self,
+    ) -> None:
+        class WrongGatewayClient(FakeBleakClient):
+            identity_reads = 0
+            command_written = False
+
+            async def read_gatt_char(self, _uuid: object) -> bytes:
+                type(self).identity_reads += 1
+                self.operations.append(("read_identity", None))
+                identity = (
+                    GATEWAY_ID
+                    if type(self).identity_reads == 1
+                    else GATEWAY_ID + 1
+                )
+                return identity.to_bytes(8, "little")
+
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                await super().write_gatt_char(
+                    characteristic,
+                    data,
+                    response=response,
+                )
+                if not type(self).command_written:
+                    type(self).command_written = True
+                    self.is_connected = False
+                    assert self.disconnected_callback is not None
+                    asyncio.get_running_loop().call_soon(
+                        self.disconnected_callback,
+                        self,
+                    )
+
+        identity = mock.Mock(return_value=0x12345)
+        with (
+            mock.patch.object(provision, "BleakClient", WrongGatewayClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", identity),
+            mock.patch("builtins.print"),
+            self.assertRaisesRegex(RuntimeError, "identity mismatch"),
+        ):
+            await provision.run(
+                args(
+                    command="assign-slots",
+                    require_survey_success=False,
+                    require_assignment_success=True,
+                    notification_hold_s=0.0,
+                    reconnect_attempts=2,
+                    reconnect_delay_s=0.0,
+                )
+            )
+
+        self.assertEqual(
+            1,
+            sum(name == "write" for name, _value in FakeBleakClient.operations),
+        )
+        self.assertEqual(
+            2,
+            sum(name == "connect" for name, _value in FakeBleakClient.operations),
+        )
+        identity.assert_called_once_with()
+
+    async def test_disconnect_during_command_write_is_fatal_and_never_retried(
+        self,
+    ) -> None:
+        class WriteDisconnectClient(FakeBleakClient):
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                await super().write_gatt_char(
+                    characteristic,
+                    data,
+                    response=response,
+                )
+                self.is_connected = False
+                assert self.disconnected_callback is not None
+                self.disconnected_callback(self)
+                raise EOFError("link dropped before write completion")
+
+        with (
+            mock.patch.object(provision, "BleakClient", WriteDisconnectClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+            self.assertRaisesRegex(RuntimeError, "ambiguous"),
+        ):
+            await provision.run(
+                args(
+                    command="assign-slots",
+                    require_survey_success=False,
+                    require_assignment_success=True,
+                    notification_hold_s=0.0,
+                    reconnect_attempts=3,
+                    reconnect_delay_s=0.0,
+                )
+            )
+
+        self.assertEqual(
+            1,
+            sum(name == "connect" for name, _value in FakeBleakClient.operations),
+        )
+        self.assertEqual(
+            1,
+            sum(name == "write" for name, _value in FakeBleakClient.operations),
+        )
+
+    async def test_reconnect_does_not_restart_qualification_deadline(self) -> None:
+        class SlowReconnectClient(FakeBleakClient):
+            command_written = False
+            connects = 0
+
+            async def connect(self) -> None:
+                type(self).connects += 1
+                if type(self).connects == 2:
+                    await asyncio.sleep(0.045)
+                await super().connect()
+
+            async def write_gatt_char(
+                self,
+                characteristic: object,
+                data: bytes,
+                *,
+                response: bool,
+            ) -> None:
+                await super().write_gatt_char(
+                    characteristic,
+                    data,
+                    response=response,
+                )
+                if not type(self).command_written:
+                    type(self).command_written = True
+                    self.is_connected = False
+                    assert self.disconnected_callback is not None
+                    asyncio.get_running_loop().call_soon(
+                        self.disconnected_callback,
+                        self,
+                    )
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with (
+            mock.patch.object(provision, "BleakClient", SlowReconnectClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch.object(
+                provision,
+                "_qualification_timeout_s",
+                side_effect=lambda requested, _budget: requested,
+            ),
+            mock.patch("builtins.print"),
+            self.assertRaisesRegex(RuntimeError, "timed out"),
+        ):
+            await provision.run(
+                args(
+                    command="assign-slots",
+                    require_survey_success=False,
+                    require_assignment_success=True,
+                    assignment_timeout=0.06,
+                    notification_hold_s=0.0,
+                    reconnect_attempts=1,
+                    reconnect_delay_s=0.0,
+                )
+            )
+        elapsed = loop.time() - started
+
+        self.assertLess(
+            elapsed,
+            0.09,
+            "reconnect consumed the original deadline instead of restarting it",
+        )
+        self.assertEqual(
+            2,
+            sum(name == "connect" for name, _value in FakeBleakClient.operations),
+        )
+        self.assertEqual(
+            1,
+            sum(name == "write" for name, _value in FakeBleakClient.operations),
+        )
+
+    async def test_disconnect_before_command_exhausts_bounded_reconnects(self) -> None:
         class DisconnectingClient(FakeBleakClient):
             async def start_notify(self, uuid: object, callback: object) -> None:
                 await super().start_notify(uuid, callback)
+                self.is_connected = False
                 assert self.disconnected_callback is not None
                 self.disconnected_callback(self)
 
@@ -2799,20 +3858,25 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(provision, "_new_identity", return_value=0x12345),
             mock.patch("builtins.print"),
         ):
-            with self.assertRaisesRegex(RuntimeError, "disconnected"):
+            with self.assertRaisesRegex(RuntimeError, "reconnect exhausted"):
                 await provision.run(
                     args(
                         command="assign-slots",
                         require_survey_success=False,
                         require_assignment_success=True,
                         notification_hold_s=0.0,
+                        reconnect_attempts=1,
+                        reconnect_delay_s=0.0,
                     )
                 )
 
-    async def test_non_strict_monitor_disconnect_is_also_fatal(self) -> None:
+    async def test_monitor_fails_if_reconnect_cannot_finish_before_deadline(
+        self,
+    ) -> None:
         class DisconnectingClient(FakeBleakClient):
             async def start_notify(self, uuid: object, callback: object) -> None:
                 await super().start_notify(uuid, callback)
+                self.is_connected = False
                 assert self.disconnected_callback is not None
                 self.disconnected_callback(self)
 
@@ -2825,8 +3889,11 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 await provision.run(
                     args(
                         command="monitor",
+                        duration=0.001,
                         require_survey_success=False,
                         notification_hold_s=0.0,
+                        reconnect_attempts=1,
+                        reconnect_delay_s=0.01,
                     )
                 )
 

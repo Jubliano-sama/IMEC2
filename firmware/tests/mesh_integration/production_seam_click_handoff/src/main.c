@@ -38,6 +38,13 @@ BUILD_ASSERT(HARNESS_REPAIR_WORKQUEUE_PRIORITY <
 BUILD_ASSERT(APP_NODE_COMM_MAX_DELIVERIES == 6u,
              "production facade capacity changed");
 
+/* This seam links app_node_comm.c without the mesh report owner; the real
+ * Channel-9 cadence release lives there and has no surface to observe here. */
+void app_mesh_report_close_channel9_idle_parent(const char *reason)
+{
+    (void)reason;
+}
+
 static const uint64_t clicker_id = UINT64_C(0x1111222233334444);
 static const uint64_t anchor_id = UINT64_C(0x2222333344445555);
 static const uint64_t gateway_id = UINT64_C(0x9999888877776666);
@@ -442,12 +449,16 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
                                 bool send_wake_train,
-                                struct app_mesh_tx_observation *observation)
+                                struct app_mesh_tx_observation *observation,
+                                uint32_t *scheduled_retry_delay_ms)
 {
     ARG_UNUSED(view);
     ARG_UNUSED(purpose);
     ARG_UNUSED(reason);
     ARG_UNUSED(send_wake_train);
+    if (scheduled_retry_delay_ms != NULL) {
+        *scheduled_retry_delay_ms = 0u;
+    }
     if (observation != NULL) {
         memset(observation, 0, sizeof(*observation));
     }
@@ -654,7 +665,7 @@ static void forwarded_ack_repair_token_build(void)
         "could not mint the multi-hop forwarded-ACK repair capability");
 
     repair_candidate.packet = (struct proto_packet) {
-        .msg_type = MSG_MESH_EVENT_PROPOSE,
+        .msg_type = MSG_MESH_EVENT_ACCEPT,
         .src_id = anchor_id,
         .dst_id = repair_peer_id,
         .session_id = 0xC300u,

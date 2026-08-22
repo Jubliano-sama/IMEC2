@@ -3,6 +3,7 @@
 
 #include "protocol.h"
 #include "node_comm.h"
+#include "operation_policy.h"
 #include "semantic_digest.h"
 #include "uwb.h"
 
@@ -21,16 +22,6 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS 20u
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS 10000u
 #define DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS 1000u
-#define DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(response_spread_ms, \
-                                                    slot_count) \
-    (((response_spread_ms) / (slot_count)) == 0u ? 1u : \
-                                                   ((response_spread_ms) / \
-                                                    (slot_count)))
-#define DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS(response_spread_ms, \
-                                                  slot_count) \
-    ((uint32_t)(slot_count) * \
-     DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS((response_spread_ms), \
-                                                 (slot_count)))
 #define DISCOVERY_ASSIGNMENT_MAX_HOPS 8u
 #define DISCOVERY_ASSIGNMENT_RETRY_BASE_MS 100u
 #define DISCOVERY_ASSIGNMENT_RETRY_MAX_MS 4000u
@@ -63,19 +54,16 @@ extern "C" {
     (DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS + \
      ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
       DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
-#define DISCOVERY_ASSIGNMENT_RESPONSE_PRIOR_HOP_CUSTODY_MAX_MS \
-    (((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
-      DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS) + \
-     ((((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
-        (DISCOVERY_ASSIGNMENT_MAX_HOPS - 2u)) / 2u) * \
-      DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
+#define DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms) \
+    ((response_spread_ms) < OPERATION_POLICY_FIRST_CONTACT_SLOT_MS ? \
+         (response_spread_ms) : OPERATION_POLICY_FIRST_CONTACT_SLOT_MS)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
     response_spread_ms) \
     (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
-     (DISCOVERY_ASSIGNMENT_MAX_HOPS * \
-      DISCOVERY_ASSIGNMENT_RESPONSE_HOP_BAND_MS( \
-          (response_spread_ms), UWB_DISCOVERY_SLOT_COUNT)) - 1u + \
-     DISCOVERY_ASSIGNMENT_RESPONSE_PRIOR_HOP_CUSTODY_MAX_MS)
+     ((((uint32_t)DISCOVERY_ASSIGNMENT_MAX_HOPS * \
+        UWB_DISCOVERY_SLOT_COUNT) - 1u) * \
+      OPERATION_POLICY_FIRST_CONTACT_SLOT_MS) + \
+     DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms) - 1u)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS)
@@ -118,11 +106,9 @@ extern "C" {
      DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS +       \
      DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS)
 #define DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS \
-    DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS( \
-        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS)
+    OPERATION_POLICY_COMMAND_BUDGET_MAX_MS
 #define DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS \
-    DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS( \
-        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS)
+    OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS
 
 enum discovery_assignment_phase {
     DISCOVERY_ASSIGNMENT_PHASE_CLAIM = 1,
@@ -244,6 +230,18 @@ int discovery_assignment_append_table_tlvs(
     size_t *offset,
     const struct discovery_assignment_entry *entries,
     size_t entry_count);
+/*
+ * Encode the gateway's existing parallel roster arrays directly. This keeps
+ * the full 50-entry scratch table off the constrained gateway workqueue stack
+ * while producing the same wire bytes as discovery_assignment_append_table_tlvs().
+ */
+int discovery_assignment_append_table_from_roster(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const uint64_t *anchor_ids,
+    const uint8_t *anchor_slots,
+    size_t anchor_count);
 int discovery_assignment_append_table_from_anchor_ids(
     uint8_t *payload,
     size_t payload_cap,
@@ -257,9 +255,26 @@ int discovery_assignment_parse_table_tlvs(
     size_t entry_cap,
     size_t *entry_count,
     uint8_t *slot_count);
+/*
+ * Stable assignment slots are durable identities and may be sparse.  Timing
+ * must instead use a compact rank across the entries that are present in this
+ * TABLE, otherwise a retained slot such as 49 creates 49 empty RF windows.
+ */
+int discovery_assignment_response_lane(
+    const struct discovery_assignment_entry *entries,
+    size_t entry_count,
+    uint64_t anchor_id,
+    uint8_t *lane,
+    uint8_t *lane_count);
 bool discovery_assignment_table_commitment(
     const struct discovery_assignment_entry *entries,
     size_t entry_count,
+    uint8_t slot_count,
+    struct discovery_assignment_table_commitment *commitment);
+bool discovery_assignment_table_commitment_from_roster(
+    const uint64_t *anchor_ids,
+    const uint8_t *anchor_slots,
+    size_t anchor_count,
     uint8_t slot_count,
     struct discovery_assignment_table_commitment *commitment);
 bool discovery_assignment_table_commitment_equal(
@@ -286,8 +301,16 @@ uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
 uint16_t discovery_assignment_membership_epoch(uint32_t assignment_epoch);
 uint32_t discovery_assignment_collection_window_ms(uint16_t response_spread_ms,
                                                    uint8_t max_hop_count);
+uint32_t discovery_assignment_collection_window_for_topology_ms(
+    uint16_t response_spread_ms,
+    uint8_t slot_count,
+    uint8_t max_hop_count);
 uint32_t discovery_assignment_table_collection_window_ms(
     uint16_t response_spread_ms,
+    uint8_t max_hop_count);
+uint32_t discovery_assignment_table_collection_window_for_topology_ms(
+    uint16_t response_spread_ms,
+    uint8_t slot_count,
     uint8_t max_hop_count);
 uint64_t discovery_assignment_control_flood_deadline_ms(
     uint64_t now_ms,

@@ -3034,6 +3034,21 @@ static int mesh_complete_gateway_ack_confirm(
         "DBG_ACK_CONFIRM_TERMINAL stage=complete ret=0 original=%u seq=%u\n",
         original_packet.msg_type,
         original_packet.seq);
+    if (app_node_comm_pending_delivery_count() == 0u &&
+        report_tx_queue_used() == 0u &&
+        !mesh_route_waiting_tx_valid &&
+        !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
+        const struct route_candidate *selected =
+            route_selected(&mesh_runtime.upstream);
+        uint64_t parent_id =
+            selected != NULL ? selected->next_hop_id : 0u;
+
+        if (mesh_id_is_unicast(parent_id) &&
+            parent_id != GATEWAY_ID) {
+            mesh_close_channel9_connection(
+                parent_id, "ack-confirm-terminal-confirmed");
+        }
+    }
     return 0;
 }
 
@@ -3814,7 +3829,8 @@ after_gateway_ack:
                         mesh_propose_event_after_channel5_contact_authorized(
                             forward_ack->next_hop_id,
                             "forwarded-gateway-ack-event-repair",
-                            &authorization);
+                            &authorization,
+                            false);
                     if (promote_ret != 0 && promote_ret != -EAGAIN &&
                         promote_ret != -EBUSY) {
                         LOG_ERR("forwarded gateway ACK could not promote reciprocal ACCEPT owner: peer=0x%016llx ret=%d",
@@ -4227,9 +4243,10 @@ after_gateway_ack:
                             &mesh_route_ready_event_owner,
                             debug_next_hop,
                             repair_generation);
-                        repair_ret = mesh_propose_event_after_channel5_contact(
+                        repair_ret = mesh_propose_event_for_outbound(
                             debug_next_hop,
-                            "retransmit-event-repair");
+                            "retransmit-event-repair",
+                            retransmit);
                         if (repair_ret == 0) {
                             if (mesh_route_ready_event_owner_matches(
                                     &mesh_route_ready_event_owner,
@@ -4243,33 +4260,63 @@ after_gateway_ack:
                                 k_uptime_get_32() + RELAY_BUSY_RETRY_MIN_MS);
                         } else if (mesh_parent_contact_failure_is_hard(
                                        repair_ret)) {
-                            uint64_t downstream_peers[MESH_RELAY_EVENT_TIMINGS];
                             uint32_t failure_now_ms = k_uptime_get_32();
-                            uint8_t downstream_peer_count =
-                                mesh_capture_downstream_channel9_peers(
-                                    downstream_peers,
-                                    ARRAY_SIZE(downstream_peers));
+                            uint64_t downstream_peers[
+                                MESH_RELAY_EVENT_TIMINGS];
+                            uint8_t downstream_peer_count = 0u;
+                            uint64_t selected_after_repair = 0u;
+                            int select_after_repair =
+                                mesh_relay_select_next_hop(
+                                    &mesh_runtime,
+                                    retransmit->packet.dst_id,
+                                    &selected_after_repair);
+                            bool topology_route_changed =
+                                mesh_outbound_is_topology_operation_uplink(
+                                    retransmit) &&
+                                (select_after_repair != PROTO_OK ||
+                                 selected_after_repair != debug_next_hop);
 
-                            failure_ret = mesh_relay_note_pending_parent_failure_status(
-                                &mesh_runtime,
-                                failure_now_ms,
-                                sys_rand32_get(),
-                                &failure_actions,
-                                &failure_status);
-                            defer_ret = failure_ret;
-                            if (failure_ret == PROTO_OK) {
-                                mesh_notify_removed_downstream_peers(
-                                    downstream_peers,
-                                    downstream_peer_count,
-                                    "parent-route-failed");
+                            if (topology_route_changed) {
+                                defer_ret = mesh_relay_note_retransmit_deferred(
+                                    &mesh_runtime,
+                                    retransmit,
+                                    failure_now_ms + 25u +
+                                        (sys_rand32_get() % 51u));
+                                if (select_after_repair != PROTO_OK) {
+                                    (void)mesh_schedule_route_request(
+                                        retransmit->packet.dst_id,
+                                        "retransmit-topology-route-exhausted");
+                                }
+                            } else {
+                                downstream_peer_count =
+                                    mesh_capture_downstream_channel9_peers(
+                                        downstream_peers,
+                                        ARRAY_SIZE(downstream_peers));
+
+                                failure_ret =
+                                    mesh_relay_note_pending_parent_failure_status(
+                                        &mesh_runtime,
+                                        failure_now_ms,
+                                        sys_rand32_get(),
+                                        &failure_actions,
+                                        &failure_status);
+                                defer_ret = failure_ret;
+                                if (failure_ret == PROTO_OK) {
+                                    mesh_notify_removed_downstream_peers(
+                                        downstream_peers,
+                                        downstream_peer_count,
+                                        "parent-route-failed");
+                                }
                             }
-                            if (failure_ret == PROTO_OK &&
+                            if (!topology_route_changed &&
+                                failure_ret == PROTO_OK &&
                                 (failure_actions &
                                  MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
                                 (void)mesh_schedule_route_request(
                                     retransmit->packet.dst_id,
                                     "retransmit-event-repair-failed");
-                            } else if (failure_ret != PROTO_OK) {
+                            } else if (!topology_route_changed &&
+                                       failure_ret != PROTO_OK) {
                                 status_debug_note(
                                     "DBG_RETRANSMIT_EVENT_REPAIR_ACCOUNT_FAIL\n");
                                 mesh_relay_invalidate_upstream_route(
@@ -4562,8 +4609,30 @@ after_gateway_ack:
 #if DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_CLICKER
     if (result->actions &
         MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING) {
-        LOG_INF("gateway ACK-confirm RAM custody retained");
-        mesh_schedule_tx_timeout();
+        int accepted_ret = -ENOENT;
+
+        if (confirmed_packet != NULL && confirmed_digest != NULL &&
+            confirmed_packet->src_id == DEVICE_ID &&
+            mesh_report_callbacks != NULL &&
+            mesh_report_callbacks->anchor_delivery_gateway_accepted != NULL) {
+            accepted_ret =
+                mesh_report_callbacks->anchor_delivery_gateway_accepted(
+                    confirmed_packet, confirmed_digest);
+        }
+        if (accepted_ret < 0 && accepted_ret != -ENOENT) {
+            LOG_ERR("ACK-confirm blocked by durable acceptance: type=%u session=%u seq=%u ret=%d",
+                    confirmed_packet == NULL ? 0u :
+                        confirmed_packet->msg_type,
+                    confirmed_packet == NULL ? 0u :
+                        confirmed_packet->session_id,
+                    confirmed_packet == NULL ? 0u :
+                        confirmed_packet->seq,
+                    accepted_ret);
+            app_watchdog_stop_feeding();
+        } else {
+            LOG_INF("gateway ACK-confirm RAM custody retained");
+            mesh_schedule_tx_timeout();
+        }
     }
     if (result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) {
         const bool locally_originated =
@@ -4585,6 +4654,24 @@ after_gateway_ack:
                 mesh_schedule_tx_timeout();
                 goto gateway_confirmation_done;
             }
+            /* This source owns teardown. Keep one parent cadence across a
+             * burst of queued results, and close it only after the final
+             * result's ACK_CONFIRM has itself reached the gateway. */
+            if (app_node_comm_pending_delivery_count() == 0u &&
+                report_tx_queue_used() == 0u &&
+                !mesh_route_waiting_tx_valid &&
+                !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
+                const struct route_candidate *selected =
+                    route_selected(&mesh_runtime.upstream);
+                uint64_t parent_id =
+                    selected != NULL ? selected->next_hop_id : 0u;
+
+                if (mesh_id_is_unicast(parent_id) &&
+                    parent_id != GATEWAY_ID) {
+                    mesh_close_channel9_connection(
+                        parent_id, "survey-burst-confirmed");
+                }
+            }
             LOG_INF("mesh pending TX gateway confirmation committed");
             mesh_schedule_tx_timeout();
             goto gateway_confirmation_done;
@@ -4604,17 +4691,19 @@ after_gateway_ack:
             goto gateway_confirmation_done;
         }
         LOG_INF("mesh pending legacy TX gateway acknowledged");
-        if (confirmed_packet != NULL &&
-            (confirmed_packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-             confirmed_packet->msg_type == MSG_SURVEY_PAIR_RESULT) &&
+        if (app_node_comm_pending_delivery_count() == 0u &&
             report_tx_queue_used() == 0u &&
             !mesh_route_waiting_tx_valid &&
             !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
             const struct route_candidate *selected =
                 route_selected(&mesh_runtime.upstream);
-            uint64_t parent_id = selected != NULL ? selected->next_hop_id : 0u;
-            if (mesh_id_is_unicast(parent_id) && parent_id != GATEWAY_ID) {
-                mesh_close_channel9_connection(parent_id, "survey-report-confirmed");
+            uint64_t parent_id =
+                selected != NULL ? selected->next_hop_id : 0u;
+
+            if (mesh_id_is_unicast(parent_id) &&
+                parent_id != GATEWAY_ID) {
+                mesh_close_channel9_connection(
+                    parent_id, "uplink-burst-confirmed");
             }
         }
         mesh_schedule_tx_timeout();
@@ -4623,19 +4712,6 @@ gateway_confirmation_done:
 #endif
     if (result->actions & MESH_RELAY_ACTION_TX_HOP_PROGRESS) {
         LOG_INF("mesh pending TX hop progress acknowledged");
-        if (confirmed_packet != NULL &&
-            (confirmed_packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-             confirmed_packet->msg_type == MSG_SURVEY_PAIR_RESULT) &&
-            report_tx_queue_used() == 0u &&
-            !mesh_route_waiting_tx_valid &&
-            !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
-            const struct route_candidate *selected =
-                route_selected(&mesh_runtime.upstream);
-            uint64_t parent_id = selected != NULL ? selected->next_hop_id : 0u;
-            if (mesh_id_is_unicast(parent_id) && parent_id != GATEWAY_ID) {
-                mesh_close_channel9_connection(parent_id, "survey-hop-progress");
-            }
-        }
         mesh_schedule_tx_timeout();
     }
     if (result->actions & MESH_RELAY_ACTION_TX_RELAY_BUSY) {
@@ -5559,7 +5635,8 @@ gateway_semantic_result_ready:
             ret = mesh_report_anchor_handle_local_command(
                 &pending->packet,
                 pending->payload,
-                pending->payload_len);
+                pending->payload_len,
+                pending->previous_hop_id);
             if (ret > 0 &&
                 pending->packet.msg_type == MSG_COMMAND &&
                 pending->packet.dst_id == DEVICE_ID) {

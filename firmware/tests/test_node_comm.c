@@ -522,7 +522,7 @@ static void test_same_priority_deferred_head_blocks_younger_ready_record(void)
     assert(lease.handle == younger_handle);
 }
 
-static void test_durable_survey_result_preempts_assignment_response(void)
+static void test_protocol_response_preempts_durable_survey_result(void)
 {
     struct node_comm comm;
     struct node_comm_request assignment_response = request_with(
@@ -535,13 +535,10 @@ static void test_durable_survey_result_preempts_assignment_response(void)
 
     init_running(&comm, 0u);
     assignment_handle = submit_request(&comm, &assignment_response, 0u);
-    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
-    assert(lease.handle == assignment_handle);
-    assert(node_comm_lease_defer_pre_rf(&comm, &lease, 250u, 0u) == 0);
-
     survey_handle = submit_request(&comm, &survey_result, 1u);
     assert(node_comm_acquire(&comm, 1u, &lease) == 0);
-    assert(lease.handle == survey_handle);
+    assert(lease.handle == assignment_handle);
+    assert(lease.handle != survey_handle);
 }
 
 static void test_deferred_durable_survey_blocks_lower_but_not_controls(void)
@@ -1337,8 +1334,8 @@ static void test_all_delivery_profiles_use_priority_then_fifo_order(void)
     const enum node_comm_delivery_profile expected[] = {
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
-        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
+        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_BEST_EFFORT,
     };
@@ -1584,6 +1581,69 @@ static void test_gateway_confirmation_is_exact_and_does_not_hold_scheduler(void)
     assert(event.attempts_started == 1u);
     assert(node_comm_take_terminal_event_for(&comm, response_handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+}
+
+static void
+test_priority_yield_requeues_exact_confirmation_owner_without_refunding_rf(void)
+{
+    struct node_comm comm;
+    struct node_comm_request durable = request_with(
+        920u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 10000u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t generation = 0u;
+    uint32_t handle;
+    uint8_t attempts = 0u;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &durable, 0u);
+    assert(node_comm_delivery_generation(&comm, handle, &generation) == 0);
+    assert(generation != 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(lease.delivery_generation == generation);
+    assert(lease.attempt_number == 1u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 1u) == 0);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+
+    assert(node_comm_requeue_awaiting_confirmation(
+               &comm, handle, generation + 1u, 2u) == -ESTALE);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+    assert(node_comm_requeue_awaiting_confirmation(
+               &comm, handle, generation, 2u) == 0);
+    assert(node_comm_delivery_generation(&comm, handle, &generation) == 0);
+    assert(node_comm_attempts_started(&comm, handle, &attempts) == 0);
+    assert(attempts == 1u);
+    assert(!node_comm_peek_terminal_event_for(&comm, handle, &event));
+
+    assert(node_comm_acquire(&comm, 2u, &lease) == 0);
+    assert(lease.handle == handle);
+    assert(lease.delivery_generation == generation);
+    assert(lease.attempt_number == 2u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 3u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 3u) == 0);
+    assert(node_comm_confirm_delivery(&comm, handle, 4u) == 0);
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 2u);
+
+    /* A late exact ACK for the cancelled attempt also remains one real RF. */
+    durable.client_token++;
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &durable, 0u);
+    assert(node_comm_delivery_generation(&comm, handle, &generation) == 0);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 1u) == 0);
+    assert(node_comm_lease_await_confirmation(&comm, &lease, 1u) == 0);
+    assert(node_comm_requeue_awaiting_confirmation(
+               &comm, handle, generation, 2u) == 0);
+    assert(node_comm_confirm_delivery_external_proof(
+               &comm, handle, 2u) == 0);
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
 }
 
 static void test_external_gateway_proof_recovers_only_unleased_pre_rf_states(void)
@@ -2065,7 +2125,7 @@ int main(void)
     test_stop_cancel_emits_one_terminal_per_request();
     test_priority_then_fifo_selection();
     test_same_priority_deferred_head_blocks_younger_ready_record();
-    test_durable_survey_result_preempts_assignment_response();
+    test_protocol_response_preempts_durable_survey_result();
     test_deferred_durable_survey_blocks_lower_but_not_controls();
     test_non_durable_deferred_classes_remain_non_hol();
     test_cancel_retires_exact_wait_retry_owner_without_rf();
@@ -2089,6 +2149,7 @@ int main(void)
     test_stop_during_resuming_does_not_rebase_retry_twice();
     test_all_delivery_profiles_use_priority_then_fifo_order();
     test_gateway_confirmation_is_exact_and_does_not_hold_scheduler();
+    test_priority_yield_requeues_exact_confirmation_owner_without_refunding_rf();
     test_external_gateway_proof_recovers_only_unleased_pre_rf_states();
     test_late_gateway_confirmation_cannot_revive_expired_delivery();
     test_backend_rf_starts_are_accounted_without_changing_retry_policy();

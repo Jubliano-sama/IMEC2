@@ -1,0 +1,56 @@
+row,start,end,text,style,lane_index
+phase,0,2400,"Exclusive Channel 5 probes\n4 rounds x 3 occupied slots x 200 ms",emphasis,0
+phase,2400,22830,"Ordered first-contact opportunities; actual Channel 9 delivery remains custody driven",default,0
+phase,22830,25000,"Collection and pair ranging continue until data-complete or the 30 min safety ceiling",dashed,0
+slots,0,200,"",emphasis,0
+slots,200,400,"",solid,0
+slots,400,600,"",default,0
+slots,600,800,"",emphasis,0
+slots,800,1000,"",solid,0
+slots,1000,1200,"",default,0
+slots,1200,1400,"",emphasis,0
+slots,1400,1600,"",solid,0
+slots,1600,1800,"",default,0
+slots,1800,2000,"",emphasis,0
+slots,2000,2200,"",solid,0
+slots,2200,2400,"",default,0
+direct,0,2400,"Listen except exact slot 0 in every round",quiet,0
+direct,8,30,"",emphasis,1
+direct,608,630,"",emphasis,1
+direct,1208,1230,"",emphasis,1
+direct,1808,1830,"",emphasis,1
+direct,2400,4670,"First contact opportunity\ndepth 0, stable slot 0",emphasis,2
+direct,4670,25000,"Success, RAM custody, or randomized recovery; never transmit early",dashed,2
+forced1,0,2400,"Listen except exact slot 1 in every round",quiet,0
+forced1,208,230,"",solid,1
+forced1,808,830,"",solid,1
+forced1,1408,1430,"",solid,1
+forced1,2008,2030,"",solid,1
+forced1,2400,11480,"Pre-RF wait; no retry is consumed",quiet,2
+forced1,11480,13750,"First contact opportunity\ndepth 1, stable slot 1",solid,2
+forced1,13750,25000,"Success, RAM custody, or randomized recovery",dashed,2
+forced2,0,2400,"Listen except exact slot 2 in every round",quiet,0
+forced2,408,430,"",default,1
+forced2,1008,1030,"",default,1
+forced2,1608,1630,"",default,1
+forced2,2208,2230,"",default,1
+forced2,2400,20560,"Pre-RF wait; no retry is consumed",quiet,2
+forced2,20560,22830,"First contact opportunity\ndepth 2, stable slot 2",default,2
+forced2,22830,25000,"Success, RAM custody, or randomized recovery",dashed,2
+ddd,2400,4670,"direct slot 0",emphasis,0
+ddd,4670,6940,"direct slot 1",solid,0
+ddd,6940,9210,"direct slot 2",default,0
+ddd,9210,25000,"All three direct anchors have had an uncontended first opportunity",quiet,0
+priority,2400,4670,"h0 / s0",emphasis,0
+priority,4670,6940,"h0 / s1",solid,0
+priority,6940,9210,"h0 / s2",default,0
+priority,9210,11480,"h1 / s0",emphasis,0
+priority,11480,13750,"h1 / s1",solid,0
+priority,13750,16020,"h1 / s2",default,0
+priority,16020,18290,"h2 / s0",emphasis,0
+priority,18290,20560,"h2 / s1",solid,0
+priority,20560,22830,"h2 / s2",default,0
+retry,2400,25000,"No ACCEPT: one randomized retry at the same parent, then each alternate route. Only after known routes are exhausted: route discovery plus a longer randomized backoff. Relays stay silent when unavailable.",shaded,0
+gui,0,2400,"Probing 1/4 ... 4/4",emphasis,0
+gui,2400,22830,"Collecting reports x/N; countdown uses slot span S, anchor count N, and maximum depth D",solid,0
+gui,22830,25000,"Pair plan tightens the estimate; an overrun shows 'Over estimate by ... - retrying' and does not abort",dashed,0

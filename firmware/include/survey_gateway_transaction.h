@@ -182,7 +182,7 @@ int survey_gateway_due_registry_schedule_after(
 void survey_gateway_due_registry_cancel(
     struct survey_gateway_due_registry *registry,
     enum survey_gateway_due_owner owner);
-void survey_gateway_due_registry_consume_due(
+bool survey_gateway_due_registry_consume_due(
     struct survey_gateway_due_registry *registry,
     uint32_t now_ms);
 bool survey_gateway_due_registry_next(

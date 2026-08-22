@@ -1611,23 +1611,28 @@ static int test_gateway_reset_reinstalls_fifty_accepted_reverse_hints(void)
 
 static int test_survey_ttl_exhaustion_fails_explicitly(void)
 {
-    uint8_t nodes[6];
-    uint16_t connections[5];
+    enum {
+        CHAIN_ANCHOR_COUNT = SURVEY_DEFAULT_TTL + 1u,
+    };
+    uint8_t nodes[CHAIN_ANCHOR_COUNT + 1u];
+    uint16_t connections[CHAIN_ANCHOR_COUNT];
     struct proto_packet packet;
     uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
     size_t payload_len = 0u;
     int ret = MESH_SIM_OK;
 
     mesh_sim_init(&world, UINT32_C(0x5a17ff02));
-    for (uint8_t i = 0u; i < 5u; i++) {
+    for (uint8_t i = 0u; i < CHAIN_ANCHOR_COUNT; i++) {
         REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
                                   ANCHOR_ID_BASE + i, GATEWAY_ID, ROUTE_EPOCH,
                                   &nodes[i]) == MESH_SIM_OK);
     }
     REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
-                              GATEWAY_ID, ROUTE_EPOCH, &nodes[5]) == MESH_SIM_OK);
-    for (uint8_t child = 0u; child < 5u; child++) {
-        uint8_t parent = child == 0u ? nodes[5] : nodes[child - 1u];
+                              GATEWAY_ID, ROUTE_EPOCH,
+                              &nodes[CHAIN_ANCHOR_COUNT]) == MESH_SIM_OK);
+    for (uint8_t child = 0u; child < CHAIN_ANCHOR_COUNT; child++) {
+        uint8_t parent = child == 0u ? nodes[CHAIN_ANCHOR_COUNT] :
+                                      nodes[child - 1u];
         uint32_t first_event_ms = MESH_RADIO_EVENT_FIRST_DELAY_MS +
             ((child & 1u) != 0u ? MESH_RADIO_EVENT_INTERVAL_MS / 2u : 0u);
         struct mesh_event_params params = connection_params(first_event_ms);
@@ -1640,17 +1645,26 @@ static int test_survey_ttl_exhaustion_fails_explicitly(void)
                                        child, ROUTE_EPOCH) ==
                 PROTO_OK);
     }
-    REQUIRE(build_report(5u, 4u, 88u, &packet, payload, &payload_len) ==
-            PROTO_OK);
+    REQUIRE(build_report(CHAIN_ANCHOR_COUNT,
+                         CHAIN_ANCHOR_COUNT - 1u,
+                         88u,
+                         &packet,
+                         payload,
+                         &payload_len) == PROTO_OK);
     REQUIRE(packet.ttl == SURVEY_DEFAULT_TTL);
-    REQUIRE(mesh_sim_queue_originated(&world, nodes[4], &packet, payload,
+    REQUIRE(mesh_sim_queue_originated(&world,
+                                      nodes[CHAIN_ANCHOR_COUNT - 1u],
+                                      &packet,
+                                      payload,
                                       payload_len) == MESH_SIM_OK);
     for (unsigned int step = 0u; step < 256u && ret == MESH_SIM_OK; step++) {
-        ret = run_earliest_connection(&world, connections, 5u);
+        ret = run_earliest_connection(&world,
+                                      connections,
+                                      CHAIN_ANCHOR_COUNT);
     }
     REQUIRE(ret == MESH_SIM_OK);
-    REQUIRE(world.roles[nodes[5]].delivery_count == 0u);
-    REQUIRE(world.roles[nodes[4]].relay.pending.state ==
+    REQUIRE(world.roles[nodes[CHAIN_ANCHOR_COUNT]].delivery_count == 0u);
+    REQUIRE(world.roles[nodes[CHAIN_ANCHOR_COUNT - 1u]].relay.pending.state ==
             MESH_RELAY_TX_WAIT_GATEWAY_ACK);
     return 0;
 }
@@ -1725,6 +1739,239 @@ static int test_partial_directed_components_plan_deterministically(void)
     return 0;
 }
 
+static int test_staggered_survey_discovery_ddd_f1f1d_f2f1d(void)
+{
+    /* Scenario 1: DDD (3 direct anchors) */
+    {
+        uint8_t nodes[3];
+        uint16_t connections[3];
+        uint8_t gateway;
+
+        mesh_sim_init(&world, UINT32_C(0x5a17ddd0));
+        REQUIRE(survey_gateway_begin_operation(&survey_context, SURVEY_ID,
+                                               OPERATION_GENERATION, 3u) == PROTO_OK);
+        for (size_t i = 0u; i < 3u; i++) {
+            REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                      ANCHOR_ID_BASE + i, GATEWAY_ID,
+                                      ROUTE_EPOCH, &nodes[i]) == MESH_SIM_OK);
+        }
+        REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                                  GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
+        for (size_t i = 0u; i < 3u; i++) {
+            uint32_t first_event_ms = MESH_RADIO_EVENT_FIRST_DELAY_MS +
+                                      (uint32_t)i * (MESH_RADIO_EVENT_INTERVAL_MS / 3u);
+            struct mesh_event_params params = connection_params(first_event_ms);
+
+            REQUIRE(mesh_sim_set_link(&world, nodes[i], gateway, 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[i], gateway,
+                                            &params, true, &connections[i]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[i], gateway,
+                                           0u, ROUTE_EPOCH) == PROTO_OK);
+        }
+        /* Queue reports in staggered slot order (slot 0, slot 1, slot 2) */
+        for (size_t i = 0u; i < 3u; i++) {
+            struct proto_packet packet;
+            uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+            size_t payload_len = 0u;
+
+            REQUIRE(build_report(3u, i, (uint16_t)(i + 1u), &packet,
+                                 payload, &payload_len) == PROTO_OK);
+            REQUIRE(mesh_sim_queue_originated(&world, nodes[i], &packet,
+                                              payload, payload_len) == MESH_SIM_OK);
+            REQUIRE(drive_until_drained(&world, connections, 3u,
+                                        gateway, i + 1u) == MESH_SIM_OK);
+        }
+        REQUIRE(world.roles[gateway].delivery_count == 3u);
+        REQUIRE(network_idle(&world));
+        for (size_t i = 0u; i < 3u; i++) {
+            REQUIRE(note_delivery(&world.roles[gateway].deliveries[i]) == PROTO_OK);
+        }
+        REQUIRE(survey_context.report_count == 3u);
+    }
+
+    /* Scenario 2: F1F1D (1 direct anchor parent, 2 one-hop children) */
+    {
+        uint8_t nodes[3];
+        uint16_t connections[3];
+        uint8_t gateway;
+        mesh_sim_init(&world, UINT32_C(0x5a17f1f1));
+        REQUIRE(survey_gateway_begin_operation(&survey_context, SURVEY_ID,
+                                               OPERATION_GENERATION, 3u) == PROTO_OK);
+        for (size_t i = 0u; i < 3u; i++) {
+            REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                      ANCHOR_ID_BASE + i, GATEWAY_ID,
+                                      ROUTE_EPOCH, &nodes[i]) == MESH_SIM_OK);
+        }
+        REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                                  GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
+
+        /* Node 0 is direct (hop 0) to Gateway */
+        {
+            struct mesh_event_params params = connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS);
+            REQUIRE(mesh_sim_set_link(&world, nodes[0], gateway, 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[0], gateway,
+                                            &params, true, &connections[0]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[0], gateway,
+                                           0u, ROUTE_EPOCH) == PROTO_OK);
+        }
+        /* Node 1 (F1_a) connects to Node 0 */
+        {
+            struct mesh_event_params params = connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS +
+                                                                 MESH_RADIO_EVENT_INTERVAL_MS / 4u);
+            REQUIRE(mesh_sim_set_link(&world, nodes[1], nodes[0], 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[1], nodes[0],
+                                            &params, true, &connections[1]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[1], nodes[0],
+                                           1u, ROUTE_EPOCH) == PROTO_OK);
+            REQUIRE(mesh_sim_install_downlink(&world, nodes[0],
+                                              ANCHOR_ID_BASE + 1u,
+                                              nodes[1], 1u,
+                                              ROUTE_EPOCH) == MESH_SIM_OK);
+        }
+        /* Node 2 (F1_b) connects to Node 0 */
+        {
+            struct mesh_event_params params = connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS +
+                                                                 MESH_RADIO_EVENT_INTERVAL_MS / 2u);
+            REQUIRE(mesh_sim_set_link(&world, nodes[2], nodes[0], 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[2], nodes[0],
+                                            &params, true, &connections[2]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[2], nodes[0],
+                                           1u, ROUTE_EPOCH) == PROTO_OK);
+            REQUIRE(mesh_sim_install_downlink(&world, nodes[0],
+                                              ANCHOR_ID_BASE + 2u,
+                                              nodes[2], 1u,
+                                              ROUTE_EPOCH) == MESH_SIM_OK);
+        }
+
+        /* Direct parent (node 0, slot 0) reports first and drains to gateway */
+        {
+            struct proto_packet packet;
+            uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+            size_t payload_len = 0u;
+
+            REQUIRE(build_report(3u, 0u, 1u, &packet, payload, &payload_len) == PROTO_OK);
+            REQUIRE(mesh_sim_queue_originated(&world, nodes[0], &packet,
+                                              payload, payload_len) == MESH_SIM_OK);
+            REQUIRE(drive_until_drained(&world, connections, 3u,
+                                        gateway, 1u) == MESH_SIM_OK);
+            REQUIRE(world.roles[nodes[0]].relay.pending.state == MESH_RELAY_TX_IDLE);
+        }
+
+        /* Child 1 (node 1, slot 1) reports via parent relay node 0 */
+        {
+            struct proto_packet packet;
+            uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+            size_t payload_len = 0u;
+
+            REQUIRE(build_report(3u, 1u, 2u, &packet, payload, &payload_len) == PROTO_OK);
+            REQUIRE(mesh_sim_queue_originated(&world, nodes[1], &packet,
+                                              payload, payload_len) == MESH_SIM_OK);
+            REQUIRE(drive_until_drained(&world, connections, 3u,
+                                        gateway, 2u) == MESH_SIM_OK);
+        }
+
+        /* Child 2 (node 2, slot 2) reports via parent relay node 0 */
+        {
+            struct proto_packet packet;
+            uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+            size_t payload_len = 0u;
+
+            REQUIRE(build_report(3u, 2u, 3u, &packet, payload, &payload_len) == PROTO_OK);
+            REQUIRE(mesh_sim_queue_originated(&world, nodes[2], &packet,
+                                              payload, payload_len) == MESH_SIM_OK);
+            REQUIRE(drive_until_drained(&world, connections, 3u,
+                                        gateway, 3u) == MESH_SIM_OK);
+        }
+        REQUIRE(world.roles[gateway].delivery_count == 3u);
+        REQUIRE(network_idle(&world));
+        for (size_t i = 0u; i < 3u; i++) {
+            REQUIRE(note_delivery(&world.roles[gateway].deliveries[i]) == PROTO_OK);
+        }
+        REQUIRE(survey_context.report_count == 3u);
+    }
+
+    /* Scenario 3: F2F1D (1 direct anchor, 1 one-hop anchor, 1 two-hop anchor) */
+    {
+        uint8_t nodes[3];
+        uint16_t connections[3];
+        uint8_t gateway;
+
+        mesh_sim_init(&world, UINT32_C(0x5a17f2f1));
+        REQUIRE(survey_gateway_begin_operation(&survey_context, SURVEY_ID,
+                                               OPERATION_GENERATION, 3u) == PROTO_OK);
+        for (size_t i = 0u; i < 3u; i++) {
+            REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                      ANCHOR_ID_BASE + i, GATEWAY_ID,
+                                      ROUTE_EPOCH, &nodes[i]) == MESH_SIM_OK);
+        }
+        REQUIRE(mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY, GATEWAY_ID,
+                                  GATEWAY_ID, ROUTE_EPOCH, &gateway) == MESH_SIM_OK);
+
+        /* Node 0 (D, hop 0) -> Gateway */
+        {
+            struct mesh_event_params params = connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS);
+            REQUIRE(mesh_sim_set_link(&world, nodes[0], gateway, 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[0], gateway,
+                                            &params, true, &connections[0]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[0], gateway,
+                                           0u, ROUTE_EPOCH) == PROTO_OK);
+        }
+        /* Node 1 (F1, hop 1) -> Node 0 */
+        {
+            struct mesh_event_params params = connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS +
+                                                                 MESH_RADIO_EVENT_INTERVAL_MS / 2u);
+            REQUIRE(mesh_sim_set_link(&world, nodes[1], nodes[0], 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[1], nodes[0],
+                                            &params, true, &connections[1]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[1], nodes[0],
+                                           1u, ROUTE_EPOCH) == PROTO_OK);
+            REQUIRE(mesh_sim_install_downlink(&world, nodes[0],
+                                              ANCHOR_ID_BASE + 1u,
+                                              nodes[1], 1u,
+                                              ROUTE_EPOCH) == MESH_SIM_OK);
+        }
+        /* Node 2 (F2, hop 2) -> Node 1 */
+        {
+            struct mesh_event_params params = connection_params(MESH_RADIO_EVENT_FIRST_DELAY_MS);
+            REQUIRE(mesh_sim_set_link(&world, nodes[2], nodes[1], 96u, 1u) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_add_connection(&world, nodes[2], nodes[1],
+                                            &params, true, &connections[2]) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_route(&world, nodes[2], nodes[1],
+                                           2u, ROUTE_EPOCH) == PROTO_OK);
+            REQUIRE(mesh_sim_install_downlink(&world, nodes[0],
+                                              ANCHOR_ID_BASE + 2u,
+                                              nodes[1], 2u,
+                                              ROUTE_EPOCH) == MESH_SIM_OK);
+            REQUIRE(mesh_sim_install_downlink(&world, nodes[1],
+                                              ANCHOR_ID_BASE + 2u,
+                                              nodes[2], 1u,
+                                              ROUTE_EPOCH) == MESH_SIM_OK);
+        }
+
+        /* Staggered delivery: Node 0 (slot 0) -> Node 1 (slot 1) -> Node 2 (slot 2) */
+        for (size_t i = 0u; i < 3u; i++) {
+            struct proto_packet packet;
+            uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+            size_t payload_len = 0u;
+
+            REQUIRE(build_report(3u, i, (uint16_t)(i + 1u), &packet,
+                                 payload, &payload_len) == PROTO_OK);
+            REQUIRE(mesh_sim_queue_originated(&world, nodes[i], &packet,
+                                              payload, payload_len) == MESH_SIM_OK);
+            REQUIRE(drive_until_drained(&world, connections, 3u,
+                                        gateway, i + 1u) == MESH_SIM_OK);
+        }
+        REQUIRE(world.roles[gateway].delivery_count == 3u);
+        REQUIRE(network_idle(&world));
+        for (size_t i = 0u; i < 3u; i++) {
+            REQUIRE(note_delivery(&world.roles[gateway].deliveries[i]) == PROTO_OK);
+        }
+        REQUIRE(survey_context.report_count == 3u);
+    }
+    return 0;
+}
+
+
 int main(void)
 {
     static const size_t anchor_counts[] = {2u, 6u, 16u, 32u, 50u};
@@ -1746,7 +1993,8 @@ int main(void)
         test_multihop_route_loss_recovers_exactly_once() != 0 ||
         test_three_node_pair_results_are_responder_only() != 0 ||
         test_gateway_reset_reinstalls_fifty_accepted_reverse_hints() != 0 ||
-        test_survey_ttl_exhaustion_fails_explicitly() != 0) {
+        test_survey_ttl_exhaustion_fails_explicitly() != 0 ||
+        test_staggered_survey_discovery_ddd_f1f1d_f2f1d() != 0) {
         return EXIT_FAILURE;
     }
     printf("PASS mesh_survey_topology_scenarios\n");

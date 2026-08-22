@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="5200" height="818" viewBox="0 0 5200 818" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">ENUMERATION: DEPTH-FIRST RESPONSES AND EXACT TABLE CONFIRMATION</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="711.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="5158.0" y2="60.0" class="major-line"/>
+<text x="219.0" y="96.0" class="row-label">ENUMERATION PHASE</text>
+<rect x="394.0" y="74.0" width="2027.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1407.8" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1407.8" dy="0.0">CLAIM responses</tspan><tspan x="1407.8" dy="12.0">depth then temporary slot</tspan></text>
+<rect x="2421.7" y="74.0" width="496.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2669.8" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="2669.8" dy="0.0">Immutable TABLE flood</tspan><tspan x="2669.8" dy="12.0">exact epoch + commitment</tspan></text>
+<rect x="2917.9" y="74.0" width="2027.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3931.8" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3931.8" dy="0.0">TABLE response cells</tspan><tspan x="3931.8" dy="12.0">depth then stable slot</tspan></text>
+<rect x="4945.6" y="74.0" width="212.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="5051.8" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="5051.8" dy="0.0">Settle or bounded recovery</tspan><tspan x="5051.8" dy="12.0">inside operation cap</tspan></text>
+<line x1="44.0" y1="124.0" x2="5158.0" y2="124.0" class="major-line"/>
+<text x="219.0" y="160.0" class="row-label">GATEWAY</text>
+<rect x="394.0" y="138.0" width="2027.7" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1407.8" y="155.0" class="small center event-text" text-anchor="middle"><tspan x="1407.8" dy="0.0">Collect current responders</tspan><tspan x="1407.8" dy="12.0">N is a quorum target, never a cap</tspan></text>
+<rect x="2421.7" y="138.0" width="496.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2669.8" y="161.0" class="small center event-text" text-anchor="middle"><tspan x="2669.8" dy="0.0">Durably retain exact TABLE before first publication RF</tspan></text>
+<rect x="2917.9" y="138.0" width="2027.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3931.8" y="155.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3931.8" dy="0.0">ACK exact responses</tspan><tspan x="3931.8" dy="12.0">count ACK_CONFIRM 0/3 ... 3/3</tspan></text>
+<rect x="4945.6" y="138.0" width="212.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="5051.8" y="155.0" class="small center event-text" text-anchor="middle"><tspan x="5051.8" dy="0.0">Success only at 3/3</tspan><tspan x="5051.8" dy="12.0">timeout remains incomplete</tspan></text>
+<line x1="44.0" y1="188.0" x2="5158.0" y2="188.0" class="major-line"/>
+<text x="219.0" y="224.0" class="row-label">D - RF HOP 1 / TEMP SLOT 0</text>
+<rect x="394.0" y="202.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="506.6" y="219.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="506.6" dy="0.0">CLAIM response</tspan><tspan x="506.6" dy="12.0">first possible cell</tspan></text>
+<rect x="619.3" y="202.0" width="1802.4" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1520.5" y="225.0" class="small center event-text" text-anchor="middle"><tspan x="1520.5" dy="0.0">Custody or idle; does not occupy later depth cells</tspan></text>
+<rect x="2917.9" y="202.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3030.6" y="219.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3030.6" dy="0.0">TABLE ACK then ACK_CONFIRM</tspan><tspan x="3030.6" dy="12.0">commit on exact gateway ACK</tspan></text>
+<rect x="3143.2" y="202.0" width="2014.8" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="4150.6" y="225.0" class="small center event-text" text-anchor="middle"><tspan x="4150.6" dy="0.0">Confirmed</tspan></text>
+<line x1="44.0" y1="252.0" x2="5158.0" y2="252.0" class="major-line"/>
+<text x="219.0" y="288.0" class="row-label">F1 - RF HOP 2 / TEMP SLOT 1</text>
+<rect x="394.0" y="266.0" width="901.2" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="844.6" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="844.6" dy="0.0">Wait: parent gets upstream opportunity first</tspan></text>
+<rect x="1295.2" y="266.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1407.8" y="283.0" class="small center event-text" text-anchor="middle"><tspan x="1407.8" dy="0.0">CLAIM response</tspan><tspan x="1407.8" dy="12.0">one-parent contact</tspan></text>
+<rect x="1520.5" y="266.0" width="901.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="1971.1" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="1971.1" dy="0.0">Custody or randomized recovery</tspan></text>
+<rect x="2917.9" y="266.0" width="901.2" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="3368.5" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="3368.5" dy="0.0">Wait for hop-1 stable-slot cell</tspan></text>
+<rect x="3819.1" y="266.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3931.8" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="3931.8" dy="0.0">TABLE ACK then ACK_CONFIRM</tspan></text>
+<rect x="4044.4" y="266.0" width="1113.6" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="4601.2" y="289.0" class="small center event-text" text-anchor="middle"><tspan x="4601.2" dy="0.0">Confirmed</tspan></text>
+<line x1="44.0" y1="316.0" x2="5158.0" y2="316.0" class="major-line"/>
+<text x="219.0" y="352.0" class="row-label">F2 - RF HOP 3 / TEMP SLOT 2</text>
+<rect x="394.0" y="330.0" width="1802.4" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1295.2" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="1295.2" dy="0.0">Wait: D and F1 establish toward gateway</tspan></text>
+<rect x="2196.4" y="330.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2309.0" y="347.0" class="small center event-text" text-anchor="middle"><tspan x="2309.0" dy="0.0">CLAIM response</tspan><tspan x="2309.0" dy="12.0">two-relay contact</tspan></text>
+<rect x="2421.7" y="330.0" width="496.3" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="2669.8" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="2669.8" dy="0.0">TABLE flood received through established path</tspan></text>
+<rect x="2917.9" y="330.0" width="1802.4" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="3819.1" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="3819.1" dy="0.0">Wait for hop-2 stable-slot cell</tspan></text>
+<rect x="4720.3" y="330.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4833.0" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="4833.0" dy="0.0">TABLE ACK then ACK_CONFIRM</tspan></text>
+<rect x="4945.6" y="330.0" width="212.4" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="5051.8" y="353.0" class="small center event-text" text-anchor="middle"><tspan x="5051.8" dy="0.0">Confirmed</tspan></text>
+<line x1="44.0" y1="380.0" x2="5158.0" y2="380.0" class="major-line"/>
+<text x="219.0" y="416.0" class="row-label">RELAY RADIO OWNERSHIP</text>
+<rect x="394.0" y="394.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="506.6" y="417.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="506.6" dy="0.0">D upstream only</tspan></text>
+<rect x="1295.2" y="394.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1407.8" y="411.0" class="small center event-text" text-anchor="middle"><tspan x="1407.8" dy="0.0">F1 child contact; D keeps at most one</tspan><tspan x="1407.8" dy="12.0">downstream</tspan></text>
+<rect x="2196.4" y="394.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2309.0" y="411.0" class="small center event-text" text-anchor="middle"><tspan x="2309.0" dy="0.0">F2 child contact after F1 upstream</tspan><tspan x="2309.0" dy="12.0">opportunity</tspan></text>
+<rect x="2917.9" y="394.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3030.6" y="417.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3030.6" dy="0.0">D confirmation</tspan></text>
+<rect x="3819.1" y="394.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3931.8" y="417.0" class="small center event-text" text-anchor="middle"><tspan x="3931.8" dy="0.0">F1 confirmation</tspan></text>
+<rect x="4720.3" y="394.0" width="225.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4833.0" y="417.0" class="small center event-text" text-anchor="middle"><tspan x="4833.0" dy="0.0">F2 confirmation</tspan></text>
+<line x1="44.0" y1="444.0" x2="5158.0" y2="444.0" class="major-line"/>
+<text x="219.0" y="480.0" class="row-label">STABLE TABLE AND CONFIRM QUORUM</text>
+<rect x="394.0" y="458.0" width="2027.7" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="1407.8" y="481.0" class="small center event-text" text-anchor="middle"><tspan x="1407.8" dy="0.0">Responder set freezes after CLAIM collection; late new anchors wait for the next run</tspan></text>
+<rect x="2421.7" y="458.0" width="496.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2669.8" y="481.0" class="small center event-text" text-anchor="middle"><tspan x="2669.8" dy="0.0">Retained sparse slots stay fixed; new responders fill free slots in depth/identity order</tspan></text>
+<rect x="2917.9" y="458.0" width="2027.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3931.8" y="481.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3931.8" dy="0.0">Every current responder proves this exact TABLE</tspan></text>
+<rect x="4945.6" y="458.0" width="212.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="5051.8" y="475.0" class="small center event-text" text-anchor="middle"><tspan x="5051.8" dy="0.0">Pending TABLE survives reset until</tspan><tspan x="5051.8" dy="12.0">confirmation debt is cleared</tspan></text>
+<line x1="44.0" y1="508.0" x2="5158.0" y2="508.0" class="major-line"/>
+<text x="219.0" y="544.0" class="row-label">GUI PHASE / COUNTDOWN</text>
+<rect x="394.0" y="522.0" width="2027.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1407.8" y="545.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1407.8" dy="0.0">Collecting responses x/N</tspan></text>
+<rect x="2421.7" y="522.0" width="496.3" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2669.8" y="545.0" class="small center event-text" text-anchor="middle"><tspan x="2669.8" dy="0.0">Publishing exact slot table</tspan></text>
+<rect x="2917.9" y="522.0" width="2027.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3931.8" y="545.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3931.8" dy="0.0">Confirmations x/R</tspan></text>
+<rect x="4945.6" y="522.0" width="212.4" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="5051.8" y="539.0" class="small center event-text" text-anchor="middle"><tspan x="5051.8" dy="0.0">Complete or Incomplete; countdown</tspan><tspan x="5051.8" dy="12.0">never fabricates success</tspan></text>
+<line x1="44.0" y1="572.0" x2="5158.0" y2="572.0" class="major-line"/>
+<text x="219.0" y="615.5" class="row-label">KEY POINT</text>
+<rect x="2516.0" y="584.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="2776.0" y="598.5" class="small center" text-anchor="middle"><tspan x="2776.0" dy="0.0">Anchors initiate contact. Direct responses go first, then F1, then F2. A failed parent gets one</tspan><tspan x="2776.0" dy="12.0">randomized retry before a known alternate is tried. The gateway succeeds only after all three</tspan><tspan x="2776.0" dy="12.0">current CLAIM responders confirm the exact durable TABLE; retained anchors that did not</tspan><tspan x="2776.0" dy="12.0">answer this run are not in that quorum.</tspan></text>
+<line x1="44.0" y1="651.0" x2="5158.0" y2="651.0" class="major-line"/>
+<line x1="44.0" y1="677.0" x2="44.0" y2="715.0" class="major-line"/>
+<line x1="44.0" y1="677.0" x2="5158.0" y2="677.0" class="axis-line"/>
+<line x1="394.0" y1="676.0" x2="394.0" y2="688.0" class="tick"/>
+<line x1="619.3" y1="676.0" x2="619.3" y2="688.0" class="tick"/>
+<line x1="1295.2" y1="676.0" x2="1295.2" y2="688.0" class="tick"/>
+<line x1="2196.4" y1="676.0" x2="2196.4" y2="688.0" class="tick"/>
+<line x1="2421.7" y1="676.0" x2="2421.7" y2="688.0" class="tick"/>
+<line x1="2917.9" y1="676.0" x2="2917.9" y2="688.0" class="tick"/>
+<line x1="3143.2" y1="676.0" x2="3143.2" y2="688.0" class="tick"/>
+<line x1="4044.4" y1="676.0" x2="4044.4" y2="688.0" class="tick"/>
+<line x1="4945.6" y1="676.0" x2="4945.6" y2="688.0" class="tick"/>
+<text x="394.0" y="700.0" class="axis-time">response origin</text>
+<text x="619.3" y="700.0" class="axis-time">D cell closes</text>
+<text x="1295.2" y="700.0" class="axis-time">F1 slot 1 opens</text>
+<text x="2196.4" y="700.0" class="axis-time">F2 slot 2 opens</text>
+<text x="2421.7" y="700.0" class="axis-time">responses close</text>
+<text x="2917.9" y="700.0" class="axis-time">TABLE responses open</text>
+<text x="3143.2" y="700.0" class="axis-time">D confirmed</text>
+<text x="4044.4" y="700.0" class="axis-time">F1 confirmed</text>
+<text x="4945.6" y="700.0" class="axis-time">F2 confirmed</text>
+<text x="394.0" y="724.0" class="tiny center" text-anchor="middle"><tspan x="394.0" dy="0.0">CLAIM custody is complete; depth/slot</tspan><tspan x="394.0" dy="11.0">cells begin</tspan></text>
+<text x="619.3" y="729.5" class="tiny center" text-anchor="middle"><tspan x="619.3" dy="0.0">next direct temporary slot would follow</tspan></text>
+<text x="1295.2" y="729.5" class="tiny center" text-anchor="middle"><tspan x="1295.2" dy="0.0">all RF-hop-1 cells are earlier</tspan></text>
+<text x="2196.4" y="724.0" class="tiny center" text-anchor="middle"><tspan x="2196.4" dy="0.0">all RF-hop-1 and RF-hop-2 cells are</tspan><tspan x="2196.4" dy="11.0">earlier</tspan></text>
+<text x="2421.7" y="729.5" class="tiny center" text-anchor="middle"><tspan x="2421.7" dy="0.0">freeze current responders</tspan></text>
+<text x="2917.9" y="729.5" class="tiny center" text-anchor="middle"><tspan x="2917.9" dy="0.0">same ordering, now with stable slots</tspan></text>
+<text x="3143.2" y="729.5" class="tiny center" text-anchor="middle"><tspan x="3143.2" dy="0.0">exact TABLE gateway ACK observed</tspan></text>
+<text x="4044.4" y="729.5" class="tiny center" text-anchor="middle"><tspan x="4044.4" dy="0.0">parent path remains available first</tspan></text>
+<text x="4945.6" y="729.5" class="tiny center" text-anchor="middle"><tspan x="4945.6" dy="0.0">current responder quorum reaches 3/3</tspan></text>
+<text x="2600.0" y="784.0" class="caption center" text-anchor="middle"><tspan x="2600.0" dy="0.0">Three-anchor D-F1-F2 example after the CLAIM flood. Each 2270 ms first-contact cell belongs to one estimated RF depth and temporary or stable slot. The TABLE flood is shown as a separate control interval; its real bounded custody window is topology-derived. Dashed recovery can continue inside the operation cap, but never pulls a deeper anchor into an earlier cell.</tspan></text>
+</svg>

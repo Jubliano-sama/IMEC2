@@ -24,27 +24,36 @@ extern "C" {
 #define OPERATION_POLICY_COMMAND_BUDGET_MAX_MS 1800000u
 
 #define OPERATION_POLICY_ASSIGNMENT_DEFAULT_EXPECTED_ANCHOR_COUNT 0u
-#define OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS 1591204u
+#define OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS 1800000u
 #define OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS 20u
 #define OPERATION_POLICY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS 10000u
 #define OPERATION_POLICY_ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS 1000u
 
+/*
+ * Firmware-owned allowance for one uncontended first Channel-9 contact.  It
+ * includes wake/propose/accept and the first payload handoff.  The host may
+ * select retry spread and an operation ceiling, but it cannot shrink this RF
+ * safety cell.
+ */
+#define OPERATION_POLICY_FIRST_CONTACT_SLOT_MS 2270u
+
 #define OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 20000u
-#define OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 20000u
-#define OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 20000u
-#define OPERATION_POLICY_DISCOVERY_SLOT_MIN_MS 30u
-#define OPERATION_POLICY_DISCOVERY_SLOT_MAX_MS 1000u
-#define OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS 40u
+#define OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 25104u
+/* Unknown topology uses the exact eight-hop control-delivery bound. */
+#define OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 25104u
+#define OPERATION_POLICY_DISCOVERY_SLOT_MIN_MS 200u
+#define OPERATION_POLICY_DISCOVERY_SLOT_MAX_MS 200u
+#define OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS 200u
 #define OPERATION_POLICY_DISCOVERY_SLOT_COUNT_MIN 1u
 #define OPERATION_POLICY_DISCOVERY_SLOT_COUNT_MAX 50u
 #define OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_COUNT 6u
-#define OPERATION_POLICY_DISCOVERY_ROUND_COUNT_MIN 1u
+#define OPERATION_POLICY_DISCOVERY_ROUND_COUNT_MIN 4u
 #define OPERATION_POLICY_DISCOVERY_ROUND_COUNT_MAX 4u
 #define OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT 4u
 #define OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MIN_MS 1u
 #define OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MAX_MS 60000u
 #define OPERATION_POLICY_DISCOVERY_DEFAULT_REPORT_GRACE_MS 250u
-#define OPERATION_POLICY_DISCOVERY_DEFAULT_BUDGET_MS 240000u
+#define OPERATION_POLICY_DISCOVERY_DEFAULT_BUDGET_MS 260277u
 
 #define OPERATION_POLICY_PAIR_MAX_RERUNS 2u
 #define OPERATION_POLICY_PAIR_DEFAULT_MAX_RERUNS 2u
@@ -97,7 +106,7 @@ enum operation_policy_family {
 struct operation_policy_assignment {
     uint16_t expected_anchor_count;
     uint32_t operation_budget_ms;
-    /* Equal randomized spreading for every responder; never hop-ranked. */
+    /* Randomized offset inside a firmware-owned hop/slot first-contact cell. */
     uint16_t response_spread_ms;
 };
 
@@ -138,6 +147,7 @@ struct operation_policy_discovery_budget_terms {
     uint32_t report_custody_ms;
     uint32_t report_delivery_tail_ms;
     uint32_t terminal_scheduling_guard_ms;
+    uint8_t max_hop_count;
 };
 
 void operation_policy_assignment_defaults(

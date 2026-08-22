@@ -16,6 +16,9 @@ MAIN = (ROOT / "app/src/main.c").read_text(encoding="utf-8")
 SURVEY = (ROOT / "app/src/app_gateway_survey_observability.c").read_text(
     encoding="utf-8"
 )
+SURVEY_ROUND = (ROOT / "app/src/app_gateway_survey_round.c").read_text(
+    encoding="utf-8"
+)
 GATEWAY_COMMAND = (ROOT / "src/gateway_command.c").read_text(
     encoding="utf-8"
 )
@@ -106,7 +109,7 @@ collection_owner = survey_work.index(
     "gateway_survey_wait_for_discovery_collection()", cleanup_service
 )
 round_drive = survey_work.index(
-    "gateway_survey_round_drive()", boundary_flush
+    "gateway_survey_round_drive(", boundary_flush
 )
 assert (
     active_gate < deadline_gate < cleanup_service < collection_owner <
@@ -261,6 +264,143 @@ assert handle.index("gateway_ble_accept_host_receipt_frame") < handle.index(
 delivery = (ROOT / "app/src/app_mesh_report_delivery.inc").read_text(
     encoding="utf-8"
 )
+
+# A delayed pair result can arrive after its automatic survey batch has
+# advanced, including after the runtime has loaded a different planned pair.
+# That live operation's immutable plan plus a strictly newer batch is terminal
+# proof for recovered-raw custody.  The same batch is also retired once its
+# exact lane is in CLEANUP: an orphan transit result must not prevent the ABORT
+# which advances that batch.  A generic -ESTALE also covers no owner, an
+# expired manual owner, a current live lane, and an obsolete operation; none of
+# those classifications may fabricate host acceptance or a gateway ACK.
+pair_preflight = function_body(ANCHOR, "gateway_survey_preflight_pair_result")
+retired_round = function_body(
+    ANCHOR, "gateway_survey_pair_result_is_retired_automatic_round"
+)
+exact_round_preflight = function_body(
+    SURVEY_ROUND, "app_gateway_survey_round_preflight_sample"
+)
+round_pair_equal = function_body(
+    SURVEY_ROUND, "app_gateway_survey_round_pair_equal"
+)
+payload_validation = pair_preflight.index("survey_pair_result_payload_validate")
+malformed_return = pair_preflight.index("return -EBADMSG", payload_validation)
+identity_validation = pair_preflight.index(
+    "sample.pair.operation_generation == 0u", malformed_return
+)
+identity_return = pair_preflight.index("return -EPROTO", identity_validation)
+transport_validation = pair_preflight.index(
+    "survey_pair_result_transport_sequence", identity_return
+)
+transport_return = pair_preflight.index("return -EPROTO", transport_validation)
+round_preflight = pair_preflight.index(
+    "ret = gateway_survey_round_preflight_sample", transport_return
+)
+manual_preflight = pair_preflight.index(
+    "ret = gateway_manual_survey_pair_preflight_sample", round_preflight
+)
+stale_recovery_gate = pair_preflight.index("if (ret == -ESTALE &&", manual_preflight)
+retired_round_gate = pair_preflight.index(
+    "gateway_survey_pair_result_is_retired_automatic_round", stale_recovery_gate
+)
+recovered_raw = pair_preflight.index(
+    "return APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW", retired_round_gate
+)
+ordinary_return = pair_preflight.index("return ret", recovered_raw)
+assert (
+    payload_validation
+    < malformed_return
+    < identity_validation
+    < identity_return
+    < transport_validation
+    < transport_return
+    < round_preflight
+    < manual_preflight
+    < stale_recovery_gate
+    < retired_round_gate
+    < recovered_raw
+    < ordinary_return
+), (
+    "only a structurally valid result proven to belong to a retired batch of "
+    "the live automatic operation may enter recovered-raw host custody"
+)
+assert pair_preflight.count("APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW") == 1
+for required in (
+    "gateway_survey_round_active()",
+    "gateway_survey_round.runtime.active",
+    "gateway_survey_round.runtime.batch_sequence",
+    "sample->round_id",
+    "context->pair_count > SURVEY_GATEWAY_MAX_PAIRS",
+    "survey_gateway_pair_at(context",
+    "planned_pair.operation_generation ==",
+    "sample->pair.operation_generation",
+    "planned_pair.survey_id == sample->pair.survey_id",
+    "planned_pair.initiator_id == sample->pair.initiator_id",
+    "planned_pair.responder_id == sample->pair.responder_id",
+    "planned_pair.sample_count == sample->pair.sample_count",
+    "app_gateway_survey_round_preflight_sample(",
+    "SURVEY_PAIR_ROUND_LANE_CLEANUP",
+):
+    assert required in retired_round, (
+        "retired pair-result recovery must bind the older round to one exact "
+        f"pair in the live automatic plan: missing {required}"
+    )
+assert re.search(
+    r"sample->round_id\s*>\s*"
+    r"gateway_survey_round\.runtime\.batch_sequence",
+    retired_round,
+), "a future round must remain ordinary stale rejection"
+current_round_branch = retired_round.index(
+    "sample->round_id == gateway_survey_round.runtime.batch_sequence"
+)
+older_plan_lookup = retired_round.index(
+    "survey_gateway_pair_at(context", current_round_branch
+)
+assert current_round_branch < older_plan_lookup, (
+    "after future rounds fail and the current round gets exact CLEANUP-only "
+    "classification, older rounds must retain immutable-plan recovery"
+)
+cleanup_state = retired_round.index("SURVEY_PAIR_ROUND_LANE_CLEANUP")
+exact_cleanup_call = retired_round.index(
+    "app_gateway_survey_round_preflight_sample("
+)
+assert exact_cleanup_call < cleanup_state
+assert retired_round.count("SURVEY_PAIR_ROUND_LANE_CLEANUP") == 1
+for forbidden_state in (
+    "SURVEY_PAIR_ROUND_LANE_READY",
+    "SURVEY_PAIR_ROUND_LANE_ARMING",
+    "SURVEY_PAIR_ROUND_LANE_ARMED",
+    "SURVEY_PAIR_ROUND_LANE_OBSERVING",
+    "SURVEY_PAIR_ROUND_LANE_SUCCEEDED",
+    "SURVEY_PAIR_ROUND_LANE_FAILED",
+    "SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED",
+):
+    assert forbidden_state not in retired_round, (
+        "current-batch recovered raw must name only the exact CLEANUP lane: "
+        f"found {forbidden_state}"
+    )
+for field in (
+    "operation_generation",
+    "survey_id",
+    "initiator_id",
+    "responder_id",
+    "sample_count",
+):
+    assert f"left->{field} == right->{field}" in round_pair_equal
+assert "SURVEY_PAIR_ROUND_LANE_CLEANUP" in exact_round_preflight
+assert "candidate->state != admissible_lane_state" in exact_round_preflight
+assert "app_gateway_survey_round_pair_equal(" in exact_round_preflight
+assert "matched != NULL" in exact_round_preflight
+assert "matched == NULL" in exact_round_preflight
+assert "gateway_manual_survey_pair_state" not in retired_round
+assert "APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW" not in retired_round
+for current_preflight in (
+    "gateway_survey_round_preflight_sample",
+    "gateway_manual_survey_pair_preflight_sample",
+):
+    body = function_body(ANCHOR, current_preflight)
+    assert "APP_GATEWAY_SEMANTIC_ACCEPT_NEW" in body
+    assert "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE" in body
 
 # A host-gated gateway delivery can complete long after the RF turn and after
 # route maintenance has changed the downlink cache.  The immutable queued RX

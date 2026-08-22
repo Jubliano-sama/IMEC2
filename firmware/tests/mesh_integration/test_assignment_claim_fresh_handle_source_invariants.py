@@ -145,7 +145,7 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
     def test_claim_retries_keep_the_route_depth_captured_at_admission(self):
         scheduler = function_body(ANCHOR, "anchor_schedule_discovery_response")
         worker = function_body(ANCHOR, "anchor_discovery_claim_work_handler")
-        sender = function_body(ANCHOR, "anchor_send_discovery_response")
+        builder = function_body(ANCHOR, "anchor_build_discovery_response")
 
         self.assertEqual(
             1,
@@ -169,8 +169,8 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
             worker,
             "terminal and admission retries must keep the admitted response immutable",
         )
-        self.assertIn("TLV_HOP_COUNT", sender)
-        self.assertIn("pending->hop_count", sender)
+        self.assertIn("TLV_HOP_COUNT", builder)
+        self.assertIn("pending->hop_count", builder)
 
     def test_restored_ack_waits_for_a_real_route_before_capturing_depth(self):
         resume = function_body(
@@ -270,7 +270,7 @@ class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
         self.assertIsNotNone(gui_default)
         self.assertIsNotNone(gui_discovery_policy_max)
         self.assertIsNotNone(gui_command_max)
-        self.assertEqual(1_591_204, firmware_default)
+        self.assertEqual(1_800_000, firmware_default)
         self.assertEqual(firmware_default, int(gui_default.group(1).replace("_", "")))
         self.assertEqual(1_800_000, discovery_policy_max)
         self.assertEqual(

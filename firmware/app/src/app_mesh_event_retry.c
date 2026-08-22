@@ -265,6 +265,37 @@ bool app_mesh_event_retry_note_failure(
     return true;
 }
 
+bool app_mesh_event_retry_note_failure_limited(
+    struct app_mesh_event_retry_state *state,
+    enum app_mesh_rf_retry_policy policy,
+    uint32_t now_ms,
+    uint32_t attempt_entropy,
+    bool rf_started,
+    uint16_t max_rf_retries,
+    uint32_t *delay_ms)
+{
+    if (delay_ms != NULL) {
+        *delay_ms = 0u;
+    }
+    if (state == NULL || !state->active) {
+        return false;
+    }
+    if (rf_started && state->rf_attempts >= max_rf_retries) {
+        if (state->rf_attempts != UINT16_MAX) {
+            state->rf_attempts++;
+        }
+        state->retry_due_ms = 0u;
+        state->retry_due_armed = false;
+        return false;
+    }
+    return app_mesh_event_retry_note_failure(state,
+                                             policy,
+                                             now_ms,
+                                             attempt_entropy,
+                                             rf_started,
+                                             delay_ms);
+}
+
 void app_mesh_event_retry_note_send_success(
     struct app_mesh_event_retry_state *state)
 {

@@ -1470,7 +1470,7 @@ class ProtocolTests(unittest.TestCase):
             "gateway_id": 0xAABBCCDDEEFF0011,
             "session_id": 1,
             "seq": 2,
-            "command_budget_ms": 1_600_000,
+            "command_budget_ms": 1_800_000,
         }
         commands = (
             build_here_i_am_command(**common),
@@ -1485,7 +1485,7 @@ class ProtocolTests(unittest.TestCase):
         for command in commands:
             with self.subTest(command=command.label):
                 self.assertEqual(
-                    command.packet.value(TLV_COMMAND_BUDGET_MS), 1_600_000
+                    command.packet.value(TLV_COMMAND_BUDGET_MS), 1_800_000
                 )
                 budget_tlv = next(
                     value for value in command.packet.tlvs
@@ -1508,7 +1508,7 @@ class ProtocolTests(unittest.TestCase):
             build_assign_discovery_slots_command(**common).packet.value(
                 TLV_COMMAND_BUDGET_MS
             ),
-            1_600_000,
+            1_800_000,
         )
 
         maximum = {**common, "command_budget_ms": GATEWAY_COMMAND_BUDGET_MAX_MS}
@@ -1523,6 +1523,15 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaisesRegex(ValueError, "command budget"):
                     build_here_i_am_command(**{**common, "command_budget_ms": invalid})
+
+        with self.assertRaisesRegex(ValueError, "for a survey"):
+            build_anchor_discovery_command(
+                **{**common, "command_budget_ms": 1_800_001},
+                survey_id=3,
+                duration_ms=250,
+                discovery_slot_count=3,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+            )
 
     def test_bare_builders_reject_budgets_firmware_cannot_admit(self) -> None:
         common: dict[str, Any] = {
@@ -1549,7 +1558,7 @@ class ProtocolTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            ValueError, "survey discovery policy: minimum 139993"
+            ValueError, "survey discovery policy: minimum 260277"
         ):
             build_anchor_discovery_command(
                 **common,
@@ -1557,7 +1566,33 @@ class ProtocolTests(unittest.TestCase):
                 duration_ms=250,
                 discovery_slot_count=6,
                 sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                command_budget_ms=139_992,
+                command_budget_ms=260_276,
+            )
+
+        maximum_roster = build_anchor_discovery_command(
+            **common,
+            survey_id=3,
+            duration_ms=250,
+            discovery_slot_count=6,
+            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+            expected_anchor_count=50,
+            command_budget_ms=260_277,
+        )
+        self.assertEqual(
+            50,
+            maximum_roster.packet.value(TLV_EXPECTED_NODE_COUNT),
+        )
+        with self.assertRaisesRegex(
+            ValueError, "survey discovery policy: minimum 260277"
+        ):
+            build_anchor_discovery_command(
+                **common,
+                survey_id=3,
+                duration_ms=250,
+                discovery_slot_count=6,
+                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
+                expected_anchor_count=50,
+                command_budget_ms=260_276,
             )
 
         # Route refresh is different: firmware accepts a shorter explicit
@@ -1570,7 +1605,7 @@ class ProtocolTests(unittest.TestCase):
         profile = OperationPolicyProfile(
             assignment=AssignmentOperationPolicy(5, 1_600_000, 750),
             discovery=DiscoveryOperationPolicy(
-                20_000, 80, 12, 3, 1_500, 500_000
+                25_104, 200, 12, 4, 1_500, 500_000
             ),
             pair=PairOperationPolicy(1, 8),
         )

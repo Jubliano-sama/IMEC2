@@ -90,7 +90,8 @@ struct app_mesh_report_callbacks {
         int64_t received_at_ms);
     int (*anchor_handle_local_command)(const struct proto_packet *packet,
                                        const uint8_t *payload,
-                                       size_t payload_len);
+                                       size_t payload_len,
+                                       uint64_t ingress_hop_id);
     void (*anchor_handle_survey_discovery_start)(const struct proto_packet *packet,
                                                  const uint8_t *payload,
                                                  size_t payload_len);
@@ -113,6 +114,9 @@ struct app_mesh_report_callbacks {
         const struct proto_packet *confirm_packet,
         const struct mesh_gateway_ack_confirm_identity *identity,
         uint64_t first_received_at_ms);
+    int (*anchor_delivery_gateway_accepted)(
+        const struct proto_packet *packet,
+        const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
     int (*anchor_survey_delivery_gateway_confirmed)(
         const struct proto_packet *packet,
         const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
@@ -157,6 +161,14 @@ enum mesh_c5_control_send_mode {
 
 int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks);
 int app_mesh_report_attach_gateway_ack_store(void);
+int app_mesh_report_reserve_gateway_ack_cleanup_result(
+    const struct proto_packet *expected_result,
+    uint32_t now_ms);
+int app_mesh_report_release_gateway_ack_cleanup_result(
+    const struct proto_packet *expected_result);
+int app_mesh_report_gateway_ack_cleanup_pair_capacity(
+    uint32_t now_ms,
+    uint32_t *retry_delay_ms);
 bool app_mesh_report_gateway_delivery_confirmation_pending(
     uint64_t src_id,
     uint8_t msg_type,
@@ -175,6 +187,8 @@ bool app_mesh_report_gateway_operation_confirmation_pending(
 bool app_mesh_report_gateway_origin_confirmation_pending(uint64_t src_id,
                                                          uint32_t now_ms);
 int app_mesh_report_attach_anchor_downlink_store(void);
+/* Returns one-based RF hops to the gateway, or zero when no route is known. */
+uint8_t app_mesh_report_selected_gateway_hop_count(void);
 int anchor_append_sequence_time_tlvs(uint8_t *payload,
                                      size_t payload_cap,
                                      size_t *payload_len,
@@ -221,7 +235,8 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
                                 bool send_wake_train,
-                                struct app_mesh_tx_observation *observation);
+                                struct app_mesh_tx_observation *observation,
+                                uint32_t *scheduled_retry_delay_ms);
 int mesh_try_send_control_response_view(
     const struct app_mesh_outbound_view *view,
     const char *reason,
@@ -347,5 +362,5 @@ int mesh_node_comm_gateway_delivery_due_begin(bool *wait_for_scan_boundary);
 bool mesh_node_comm_gateway_delivery_due_pending(void);
 bool mesh_node_comm_gateway_delivery_due_ready(void);
 bool mesh_node_comm_gateway_delivery_due_end(void);
-
+void app_mesh_report_close_channel9_idle_parent(const char *reason);
 #endif

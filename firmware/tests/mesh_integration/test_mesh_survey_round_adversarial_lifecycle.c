@@ -2,6 +2,7 @@
 #include "mesh.h"
 #include "mesh_sim.h"
 #include "mesh_sim_invariants.h"
+#include "operation_policy.h"
 #include "survey.h"
 #include "survey_pair_lease.h"
 #include "survey_round_control.h"
@@ -360,10 +361,16 @@ static int build_discovery_start(uint32_t survey_id,
     const struct survey_discovery_config config = {
         .operation_generation = OPERATION_GENERATION_N,
         .survey_id = survey_id,
-        .start_delay_ms = 100u,
-        .slot_ms = 80u,
+        .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 8u,
-        .round_count = SURVEY_DISCOVERY_MAX_ROUND_COUNT,
+        .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
+    };
+    struct operation_policy discovery_policy = {
+        .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
+    };
+    struct operation_policy pair_policy = {
+        .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
     };
     size_t payload_len = 0u;
     int ret;
@@ -374,6 +381,24 @@ static int build_discovery_start(uint32_t survey_id,
     memset(outbound, 0, sizeof(*outbound));
     ret = survey_append_discovery_start_tlvs(
         outbound->payload, sizeof(outbound->payload), &payload_len, &config);
+    operation_policy_discovery_defaults(
+        &discovery_policy.value.discovery);
+    discovery_policy.value.discovery.slot_count = config.slot_count;
+    operation_policy_pair_defaults(&pair_policy.value.pair);
+    if (ret == PROTO_OK) {
+        ret = operation_policy_append_tlv(
+            outbound->payload,
+            sizeof(outbound->payload),
+            &payload_len,
+            &discovery_policy);
+    }
+    if (ret == PROTO_OK) {
+        ret = operation_policy_append_tlv(
+            outbound->payload,
+            sizeof(outbound->payload),
+            &payload_len,
+            &pair_policy);
+    }
     if (ret == PROTO_OK) {
         ret = survey_init_discovery_start_packet(
             &outbound->packet, GATEWAY_ID, &config, seq,
@@ -1041,6 +1066,62 @@ static enum survey_pair_lease_decision apply_start(
         now_ms, now_ms + remaining_delay_ms);
 }
 
+static void decode_local_control(const struct mesh_outbound *outbound,
+                                 struct decoded_control *decoded)
+{
+    memset(decoded, 0, sizeof(*decoded));
+    decoded->packet = outbound->packet;
+    decoded->payload_len = outbound->payload_len;
+    memcpy(decoded->payload, outbound->payload, outbound->payload_len);
+}
+
+/* Model the application admission boundary around the production lease.  The
+ * source invariant separately pins this exact role/custody gate in the Zephyr
+ * handler; this model proves the resulting lifecycle with the real lease. */
+static enum command_status apply_start_with_result_custody(
+    struct fixture *state,
+    const struct decoded_control *control,
+    size_t occupied_result_count,
+    size_t *result_service_count)
+{
+    struct survey_pair pair;
+    uint16_t round_id;
+    enum survey_pair_lease_decision decision;
+
+    if (parse_pair_control(control, CMD_SURVEY_START_PAIR,
+                           &pair, &round_id) != PROTO_OK) {
+        return COMMAND_MALFORMED_PAYLOAD;
+    }
+    if (pair.responder_id == LEAF_ID && occupied_result_count > 0u) {
+        if (result_service_count != NULL) {
+            (*result_service_count)++;
+        }
+        return COMMAND_BUSY;
+    }
+    decision = apply_start(state, control);
+    return decision == SURVEY_PAIR_LEASE_ACCEPTED ||
+           decision == SURVEY_PAIR_LEASE_DUPLICATE ||
+           decision == SURVEY_PAIR_LEASE_SUPERSEDED ?
+               COMMAND_OK : COMMAND_INVALID_STATE;
+}
+
+static bool release_start_and_note_transport_preempt(
+    struct survey_pair_lease *lease,
+    const struct decoded_control *control,
+    bool *transport_preempted)
+{
+    const struct survey_pair_control_id start_id = {
+        .session_id = control->packet.session_id,
+        .command_seq = control->packet.seq,
+    };
+
+    if (!survey_pair_lease_release_start(lease, &start_id)) {
+        return false;
+    }
+    *transport_preempted = true;
+    return true;
+}
+
 static bool apply_abort(struct fixture *state,
                         const struct decoded_control *control)
 {
@@ -1064,6 +1145,121 @@ static bool apply_abort(struct fixture *state,
         control->packet.session_id,
         round_id,
         commitment);
+}
+
+static bool run_responder_result_custody_admission_matrix(
+    struct fixture *state)
+{
+    struct survey_pair responder_pair = {
+        .operation_generation = OPERATION_GENERATION_N,
+        .initiator_id = RELAY_ID,
+        .responder_id = LEAF_ID,
+        .survey_id = SURVEY_ID_N,
+        .sample_count = 5u,
+    };
+    struct survey_pair initiator_pair = responder_pair;
+    struct mesh_outbound prepare;
+    struct mesh_outbound start;
+    struct decoded_control decoded_prepare;
+    struct decoded_control decoded_start;
+    struct survey_pair_lease prepared_snapshot;
+    size_t result_service_count = 0u;
+    bool transport_preempted = false;
+
+    survey_pair_lease_reset(&state->lease);
+    CHECK(build_pair_control(&responder_pair, ROUND_ID_N,
+                             CMD_SURVEY_PREPARE_PAIR, 180u,
+                             &prepare) == PROTO_OK,
+          "result-custody responder PREPARE build failed");
+    decode_local_control(&prepare, &decoded_prepare);
+    CHECK(apply_prepare(state, &decoded_prepare,
+                        SURVEY_PAIR_PREPARED_LEASE_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
+          "result-custody responder PREPARE was not accepted");
+    prepared_snapshot = state->lease;
+
+    CHECK(build_pair_control(&responder_pair, ROUND_ID_N,
+                             CMD_SURVEY_START_PAIR, 181u,
+                             &start) == PROTO_OK,
+          "result-custody responder START build failed");
+    decode_local_control(&start, &decoded_start);
+    CHECK(apply_start_with_result_custody(
+              state, &decoded_start, 1u, &result_service_count) ==
+              COMMAND_BUSY &&
+          result_service_count == 1u &&
+          memcmp(&state->lease, &prepared_snapshot,
+                 sizeof(state->lease)) == 0 &&
+          state->lease.phase == SURVEY_PAIR_LEASE_PREPARED &&
+          !state->lease.start_id_valid &&
+          !release_start_and_note_transport_preempt(
+              &state->lease, &decoded_start, &transport_preempted) &&
+          !transport_preempted &&
+          survey_pair_lease_invariant(&state->lease),
+          "prior-round custody mutated/released responder START or paused RF");
+
+    /* Gateway cleanup retires the rejected attempt.  Once old result custody
+     * drains, a new round and command identity can acquire and release START. */
+    CHECK(survey_pair_lease_abort(&state->lease) &&
+              state->lease.phase == SURVEY_PAIR_LEASE_IDLE,
+          "BUSY responder attempt did not retain cleanup-able PREPARED state");
+    CHECK(build_pair_control(&responder_pair, ROUND_ID_NEXT,
+                             CMD_SURVEY_PREPARE_PAIR, 182u,
+                             &prepare) == PROTO_OK,
+          "drained responder rerun PREPARE build failed");
+    decode_local_control(&prepare, &decoded_prepare);
+    CHECK(apply_prepare(state, &decoded_prepare,
+                        SURVEY_PAIR_PREPARED_LEASE_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
+          "drained responder rerun PREPARE was not accepted");
+    CHECK(build_pair_control(&responder_pair, ROUND_ID_NEXT,
+                             CMD_SURVEY_START_PAIR, 183u,
+                             &start) == PROTO_OK,
+          "drained responder rerun START build failed");
+    decode_local_control(&start, &decoded_start);
+    CHECK(apply_start_with_result_custody(
+              state, &decoded_start, 0u, &result_service_count) ==
+              COMMAND_OK &&
+          state->lease.phase == SURVEY_PAIR_LEASE_START_PENDING &&
+          release_start_and_note_transport_preempt(
+              &state->lease, &decoded_start, &transport_preempted) &&
+          transport_preempted,
+          "drained responder could not accept/release a new-round START");
+    CHECK(survey_pair_lease_abort(&state->lease),
+          "drained responder START could not be retired");
+
+    /* Existing result custody is only a responder admission constraint. */
+    initiator_pair.initiator_id = LEAF_ID;
+    initiator_pair.responder_id = RELAY_ID;
+    transport_preempted = false;
+    result_service_count = 0u;
+    survey_pair_lease_reset(&state->lease);
+    CHECK(build_pair_control(&initiator_pair, ROUND_ID_N,
+                             CMD_SURVEY_PREPARE_PAIR, 190u,
+                             &prepare) == PROTO_OK,
+          "initiator custody-control PREPARE build failed");
+    decode_local_control(&prepare, &decoded_prepare);
+    CHECK(apply_prepare(state, &decoded_prepare,
+                        SURVEY_PAIR_PREPARED_LEASE_MS) ==
+              SURVEY_PAIR_LEASE_ACCEPTED,
+          "initiator custody-control PREPARE was not accepted");
+    CHECK(build_pair_control(&initiator_pair, ROUND_ID_N,
+                             CMD_SURVEY_START_PAIR, 191u,
+                             &start) == PROTO_OK,
+          "initiator custody-control START build failed");
+    decode_local_control(&start, &decoded_start);
+    CHECK(apply_start_with_result_custody(
+              state, &decoded_start, 1u, &result_service_count) ==
+              COMMAND_OK &&
+          result_service_count == 0u &&
+          state->lease.phase == SURVEY_PAIR_LEASE_START_PENDING &&
+          release_start_and_note_transport_preempt(
+              &state->lease, &decoded_start, &transport_preempted) &&
+          transport_preempted,
+          "result custody incorrectly blocked an initiator START");
+    CHECK(survey_pair_lease_abort(&state->lease) &&
+              survey_pair_lease_invariant(&state->lease),
+          "initiator custody-control START did not retire cleanly");
+    return true;
 }
 
 static bool run_pair_control_and_reset_matrix(struct fixture *state,
@@ -1309,6 +1505,7 @@ static bool run_scenario(void)
           "fixture accidentally permits direct gateway-to-leaf RF");
     if (!run_discovery_announce_matrix(&scenario) ||
         !run_report_idempotence_and_pair_plan(&scenario, &planned_pair) ||
+        !run_responder_result_custody_admission_matrix(&scenario) ||
         !run_pair_control_and_reset_matrix(&scenario, &planned_pair)) {
         return false;
     }

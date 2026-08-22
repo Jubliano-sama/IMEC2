@@ -31,6 +31,20 @@ static enum mesh_range_report_batch_abort_queue_operation
 void app_anchor_note_channel9_window_released(void)
 {
 }
+
+/* The anchor radio owner is not part of this seam; route wake trains here
+ * never assume a sender-side operation boost. */
+bool anchor_relay_control_followup_boost_active(void)
+{
+    return false;
+}
+
+int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
+{
+    ARG_UNUSED(delay_ms);
+    return 0;
+}
+
 static uint32_t range_abort_queue_fault_index;
 static bool range_fragment_put_fault_armed;
 static uint8_t range_fragment_put_fault_index;
@@ -1157,6 +1171,77 @@ static void seed_stale_direct_reverse_route_for_test(uint64_t target_id,
     };
 }
 
+enum survey_start_policy_mask_for_test {
+    SURVEY_START_POLICY_ASSIGNMENT_FOR_TEST = 0x01u,
+    SURVEY_START_POLICY_DISCOVERY_FOR_TEST = 0x02u,
+    SURVEY_START_POLICY_PAIR_FOR_TEST = 0x04u,
+};
+
+static size_t survey_discovery_start_with_policy_mask_for_test(
+    struct proto_packet *packet,
+    uint8_t *payload,
+    size_t payload_cap,
+    uint64_t operation_generation,
+    uint32_t survey_id,
+    uint16_t sequence,
+    uint8_t policy_mask)
+{
+    const struct survey_discovery_config config = {
+        .operation_generation = operation_generation,
+        .survey_id = survey_id,
+        .assignment_epoch = UINT32_C(0x41001234),
+        .assignment_table_seq = UINT32_C(0x42005678),
+        .assignment_table_commitment = { .bytes = { 0xa5u } },
+        .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
+        .slot_count = 4u,
+        .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
+    };
+    size_t payload_len = 0u;
+
+    zassert_equal(survey_append_discovery_start_tlvs(
+                      payload, payload_cap, &payload_len, &config),
+                  PROTO_OK);
+    if ((policy_mask & SURVEY_START_POLICY_ASSIGNMENT_FOR_TEST) != 0u) {
+        struct operation_policy policy = {
+            .family = OPERATION_POLICY_FAMILY_ASSIGNMENT,
+        };
+
+        operation_policy_assignment_defaults(&policy.value.assignment);
+        zassert_equal(operation_policy_append_tlv(
+                          payload, payload_cap, &payload_len, &policy),
+                      PROTO_OK);
+    }
+    if ((policy_mask & SURVEY_START_POLICY_DISCOVERY_FOR_TEST) != 0u) {
+        struct operation_policy policy = {
+            .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
+        };
+
+        operation_policy_discovery_defaults(&policy.value.discovery);
+        policy.value.discovery.slot_count = config.slot_count;
+        zassert_equal(operation_policy_append_tlv(
+                          payload, payload_cap, &payload_len, &policy),
+                      PROTO_OK);
+    }
+    if ((policy_mask & SURVEY_START_POLICY_PAIR_FOR_TEST) != 0u) {
+        struct operation_policy policy = {
+            .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
+        };
+
+        operation_policy_pair_defaults(&policy.value.pair);
+        zassert_equal(operation_policy_append_tlv(
+                          payload, payload_cap, &payload_len, &policy),
+                      PROTO_OK);
+    }
+    zassert_equal(survey_init_discovery_start_packet(packet,
+                                                      GATEWAY_ID,
+                                                      &config,
+                                                      sequence,
+                                                      (uint8_t)payload_len),
+                  PROTO_OK);
+    return payload_len;
+}
+
 static size_t survey_discovery_start_for_test(
     struct proto_packet *packet,
     uint8_t *payload,
@@ -1165,26 +1250,137 @@ static size_t survey_discovery_start_for_test(
     uint32_t survey_id,
     uint16_t sequence)
 {
-    const struct survey_discovery_config config = {
-        .operation_generation = operation_generation,
-        .survey_id = survey_id,
-        .start_delay_ms = 2000u,
-        .slot_ms = 40u,
-        .slot_count = 4u,
-        .round_count = SURVEY_DISCOVERY_MAX_ROUND_COUNT,
-    };
-    size_t payload_len = 0u;
+    return survey_discovery_start_with_policy_mask_for_test(
+        packet,
+        payload,
+        payload_cap,
+        operation_generation,
+        survey_id,
+        sequence,
+        SURVEY_START_POLICY_DISCOVERY_FOR_TEST |
+            SURVEY_START_POLICY_PAIR_FOR_TEST);
+}
 
-    zassert_equal(survey_append_discovery_start_tlvs(
-                      payload, payload_cap, &payload_len, &config),
+static uint32_t survey_start_admit_calls_for_test;
+static uint32_t survey_start_abort_calls_for_test;
+static uint32_t survey_start_queue_calls_for_test;
+
+static bool survey_start_abort_requested_for_test(void)
+{
+    return false;
+}
+
+static void survey_start_abort_pair_for_test(void)
+{
+    survey_start_abort_calls_for_test++;
+}
+
+static enum app_anchor_survey_discovery_admission
+survey_start_admit_for_test(const struct survey_discovery_config *config)
+{
+    zassert_not_null(config);
+    survey_start_admit_calls_for_test++;
+    return APP_ANCHOR_SURVEY_DISCOVERY_ACCEPTED;
+}
+
+static int survey_start_queue_for_test(
+    const struct survey_discovery_config *config,
+    uint32_t start_ms,
+    uint32_t delay_ms)
+{
+    zassert_not_null(config);
+    zassert_true(start_ms != 0u);
+    zassert_true(delay_ms < config->start_delay_ms);
+    survey_start_queue_calls_for_test++;
+    return 0;
+}
+
+ZTEST(production_seam_report_custody,
+      test_anchor_discovery_start_requires_exact_policy_family_set)
+{
+    static const uint8_t invalid_policy_masks[] = {
+        SURVEY_START_POLICY_DISCOVERY_FOR_TEST,
+        SURVEY_START_POLICY_PAIR_FOR_TEST,
+        SURVEY_START_POLICY_ASSIGNMENT_FOR_TEST |
+            SURVEY_START_POLICY_DISCOVERY_FOR_TEST |
+            SURVEY_START_POLICY_PAIR_FOR_TEST,
+    };
+    const struct app_anchor_survey_discovery_ops ops = {
+        .abort_requested = survey_start_abort_requested_for_test,
+        .abort_pair = survey_start_abort_pair_for_test,
+        .admit_start = survey_start_admit_for_test,
+        .queue_start = survey_start_queue_for_test,
+        .schedule_work_ms = survey_result_schedule_for_test,
+        .boot_incarnation = survey_discovery_boot_for_test,
+        .next_sequence = survey_discovery_sequence_next_for_test,
+    };
+    const uint64_t operation_generation =
+        UINT64_C(0x0000001200000034);
+    struct discovery_assignment_table_commitment commitment = {
+        .bytes = { 0xa5u },
+    };
+    struct survey_discovery_config generic_config;
+    struct proto_packet packet;
+    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
+    size_t payload_len;
+
+    discovery_ops = ops;
+    discovery_initialized = true;
+    survey_start_admit_calls_for_test = 0u;
+    survey_start_abort_calls_for_test = 0u;
+    survey_start_queue_calls_for_test = 0u;
+    local_anchor_reset_discovery_assignment();
+    zassert_equal(local_anchor_discovery_assignment_note_claim(
+                      UINT32_C(0x41001234)),
+                  APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    zassert_equal(local_anchor_discovery_assignment_note_table(
+                      UINT32_C(0x41001234),
+                      UINT32_C(0x42005678),
+                      &commitment),
+                  APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    zassert_equal(local_anchor_commit_discovery_assignment(
+                      UINT32_C(0x41001234),
+                      UINT32_C(0x42005678),
+                      &commitment,
+                      2u,
+                      4u),
                   PROTO_OK);
-    zassert_equal(survey_init_discovery_start_packet(packet,
-                                                      GATEWAY_ID,
-                                                      &config,
-                                                      sequence,
-                                                      (uint8_t)payload_len),
-                  PROTO_OK);
-    return payload_len;
+
+    for (size_t i = 0u;
+         i < sizeof(invalid_policy_masks) / sizeof(invalid_policy_masks[0]);
+         i++) {
+        payload_len = survey_discovery_start_with_policy_mask_for_test(
+            &packet,
+            payload,
+            sizeof(payload),
+            operation_generation,
+            UINT32_C(0x33445566),
+            (uint16_t)(0x3400u + i),
+            invalid_policy_masks[i]);
+        memset(&generic_config, 0, sizeof(generic_config));
+        zassert_equal(survey_extract_discovery_start_tlvs(
+                          payload, payload_len, &generic_config),
+                      PROTO_OK,
+                      "generic parser rejected policy-presence variant %zu",
+                      i);
+        app_anchor_survey_discovery_handle_start(
+            &packet, payload, payload_len);
+    }
+    zassert_equal(survey_start_admit_calls_for_test, 0u);
+    zassert_equal(survey_start_abort_calls_for_test, 0u);
+    zassert_equal(survey_start_queue_calls_for_test, 0u);
+
+    payload_len = survey_discovery_start_for_test(
+        &packet,
+        payload,
+        sizeof(payload),
+        operation_generation,
+        UINT32_C(0x33445566),
+        0x3500u);
+    app_anchor_survey_discovery_handle_start(&packet, payload, payload_len);
+    zassert_equal(survey_start_admit_calls_for_test, 1u);
+    zassert_equal(survey_start_abort_calls_for_test, 1u);
+    zassert_equal(survey_start_queue_calls_for_test, 1u);
 }
 
 ZTEST(production_seam_report_custody,
@@ -1325,6 +1521,9 @@ ZTEST(production_seam_report_custody,
     const struct survey_discovery_config config = {
         .operation_generation = operation_generation,
         .survey_id = UINT32_C(0x32000044),
+        .assignment_epoch = UINT32_C(0x41000044),
+        .assignment_table_seq = UINT32_C(0x42000044),
+        .assignment_table_commitment = { .bytes = { 0xa5u } },
         .start_delay_ms = SURVEY_DISCOVERY_START_DELAY_MS,
         .slot_ms = SURVEY_DISCOVERY_SLOT_MS,
         .slot_count = SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT,
@@ -1355,9 +1554,27 @@ ZTEST(production_seam_report_custody,
     survey_result_schedule_calls = 0u;
     survey_discovery_sequence_for_test = 0u;
 
+    local_anchor_reset_discovery_assignment();
+    zassert_equal(local_anchor_discovery_assignment_note_claim(
+                      config.assignment_epoch),
+                  APP_DISCOVERY_ASSIGNMENT_CLAIM_RESPOND);
+    zassert_equal(local_anchor_discovery_assignment_note_table(
+                      config.assignment_epoch,
+                      config.assignment_table_seq,
+                      &config.assignment_table_commitment),
+                  APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY);
+    zassert_equal(local_anchor_commit_discovery_assignment(
+                      config.assignment_epoch,
+                      config.assignment_table_seq,
+                      &config.assignment_table_commitment,
+                      2u,
+                      config.slot_count),
+                  PROTO_OK);
+
     zassert_equal(survey_discovery_report_delay_ms(
                       &config,
                       local_survey_discovery_slot(config.slot_count),
+                      survey_report_gateway_hop_count(),
                       SURVEY_RESULT_MESH_SLOT_MS,
                       &report_delay_ms),
                   PROTO_OK);
@@ -3512,7 +3729,7 @@ ZTEST(production_seam_report_custody,
     memcpy(&ack_table_before, &mesh_ch9_ack_table, sizeof(ack_table_before));
 
     zassert_equal(mesh_propose_event_after_channel5_contact_authorized(
-                      peer_id, "stale-forwarded-ack-token", &stale),
+                      peer_id, "stale-forwarded-ack-token", &stale, false),
                   -ESTALE);
     zassert_mem_equal(&mesh_event_accept_retry,
                       &accept_before,
@@ -3530,7 +3747,7 @@ ZTEST(production_seam_report_custody,
     wrong_peer = fresh;
     wrong_peer.peer_id ^= UINT64_C(1);
     zassert_equal(mesh_propose_event_after_channel5_contact_authorized(
-                      peer_id, "wrong-forwarded-ack-peer", &wrong_peer),
+                      peer_id, "wrong-forwarded-ack-peer", &wrong_peer, false),
                   -EBUSY);
     zassert_mem_equal(&mesh_event_accept_retry,
                       &accept_before,
@@ -3551,7 +3768,7 @@ ZTEST(production_seam_report_custody,
                                         &route_preempt_blocker_work) >= 0);
     zassert_ok(k_sem_take(&route_preempt_blocker_entered, K_SECONDS(1)));
     zassert_ok(mesh_propose_event_after_channel5_contact_authorized(
-        peer_id, "fresh-forwarded-ack-token", &fresh));
+        peer_id, "fresh-forwarded-ack-token", &fresh, false));
     zassert_true(app_mesh_c5_tx_authorization_token_equal(
         &mesh_event_accept_retry.c5_repair_authorization, &fresh));
     zassert_true(mesh_event_accept_retry.retry.retry_due_armed);

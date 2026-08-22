@@ -382,6 +382,22 @@ void app_watchdog_stop_feeding(void)
 {
     watchdog_stop_calls++;
 }
+#if !defined(APP_NODE_COMM_GATEWAY_ROLE) || !APP_NODE_COMM_GATEWAY_ROLE
+static uint32_t close_channel9_idle_parent_calls;
+static const char *last_close_channel9_idle_parent_reason;
+
+/*
+ * Spy for the production closer that lives in app_mesh_report_delivery.inc.
+ * No native target compiles that translation unit, so the anchor-role adapter
+ * builds only need the symbol to link; the tests observe the exact reason
+ * string the facade passes when it releases the parent cadence.
+ */
+void app_mesh_report_close_channel9_idle_parent(const char *reason)
+{
+    close_channel9_idle_parent_calls++;
+    last_close_channel9_idle_parent_reason = reason;
+}
+#endif
 
 void app_node_comm_gateway_route_refresh_pause(uint32_t now_ms)
 {
@@ -632,7 +648,8 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
                                 bool send_wake_train,
-                                struct app_mesh_tx_observation *observation)
+                                struct app_mesh_tx_observation *observation,
+                                uint32_t *scheduled_retry_delay_ms)
 {
     struct mesh_outbound out = {0};
     bool sent_now = false;
@@ -641,6 +658,8 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
 
     assert(view != NULL);
     assert(view->packet != NULL);
+    assert(scheduled_retry_delay_ms != NULL);
+    *scheduled_retry_delay_ms = 0u;
     assert(view->payload_len <= sizeof(out.payload));
     index = try_flood_calls;
     assert(index < sizeof(try_flood_wake_train) /
@@ -2590,6 +2609,54 @@ static void test_auto_reaped_control_flood_retries_without_leaking_handle(void)
     assert(!app_node_comm_take_delivery_event_for(handle, &event));
 }
 
+#if !defined(APP_NODE_COMM_GATEWAY_ROLE) || !APP_NODE_COMM_GATEWAY_ROLE
+static void test_auto_reap_closes_channel9_idle_parent_with_reaped_reason(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(90u);
+    struct node_comm_terminal_event event;
+    uint32_t close_calls_before;
+    uint32_t first_delay_ms;
+    uint32_t handle;
+
+    reset_fixture();
+    try_flood_results[0] = -EBUSY;
+    try_flood_sent[0] = false;
+    assert(app_node_comm_submit_delivery(
+               &envelope,
+               NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+               1000u,
+               91u,
+               &handle) == 0);
+    assert(app_node_comm_auto_reap_delivery(handle) == 0);
+    assert(app_node_comm_retry_backoff_ms(
+               &envelope, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+               1u, &first_delay_ms) == 0);
+
+    assert(app_node_comm_service_deliveries() == -EBUSY);
+    atomic_store(&fake_now_ms, first_delay_ms);
+    for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
+        assert(app_node_comm_service_deliveries() == 0);
+        atomic_fetch_add(&fake_now_ms, 40);
+    }
+
+    assert(try_flood_calls == 5u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+    assert(!app_node_comm_take_delivery_event_for(handle, &event));
+
+    /* The exhausted record was auto-reaped: the parent cadence closer must
+     * have run exactly once with the facade's reap reason. */
+    assert(close_channel9_idle_parent_calls >= 1u);
+    assert(last_close_channel9_idle_parent_reason != NULL);
+    assert(strcmp(last_close_channel9_idle_parent_reason,
+                  "node-comm-terminal-reaped") == 0);
+    /* Idle services without a reaped terminal record never re-close. */
+    close_calls_before = close_channel9_idle_parent_calls;
+    atomic_fetch_add(&fake_now_ms, 40);
+    (void)app_node_comm_service_deliveries();
+    assert(close_channel9_idle_parent_calls == close_calls_before);
+}
+#endif
+
 static void test_best_effort_uplink_sends_once_without_reliable_custody(void)
 {
     struct mesh_outbound heartbeat = reliable_uplink_envelope(13u);
@@ -4052,18 +4119,16 @@ static void test_adapter_resource_wait_uses_exact_core_owner_trace(void)
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
 }
 
-static void test_single_flight_wait_preserves_priority_and_fifo(void)
+static void test_single_flight_wait_preserves_ordinary_fifo(void)
 {
     struct mesh_outbound first = reliable_uplink_envelope(63u);
     struct mesh_outbound second = reliable_uplink_envelope(64u);
     struct mesh_outbound third = reliable_uplink_envelope(65u);
-    struct mesh_outbound protocol = reliable_uplink_envelope(66u);
     struct mesh_outbound control = control_response_envelope(67u);
     struct node_comm_terminal_event event;
     uint32_t first_handle;
     uint32_t second_handle;
     uint32_t third_handle;
-    uint32_t protocol_handle;
 
     reset_fixture();
     assert(app_node_comm_submit_delivery(
@@ -4076,14 +4141,12 @@ static void test_single_flight_wait_preserves_priority_and_fifo(void)
     /*
      * Queue enough work to reproduce a busy single-flight backend under load.
      * Polling that backend must not turn queued work into independently
-     * jittered retries: after the owner completes, protocol work must retain
-     * priority and ordinary reliable uplinks must retain FIFO order.
+     * jittered retries: after the owner completes, ordinary reliable uplinks
+     * must retain FIFO order.
      */
     assert(app_node_comm_submit_delivery(
         &second, NODE_COMM_PROFILE_RELIABLE_UPLINK,
         10000u, 604u, &second_handle) == 0);
-    assert(app_node_comm_submit_protocol_response(
-        &protocol, 10000u, 606u, &protocol_handle) == 0);
     assert(app_node_comm_submit_control_response(
         &control, 10000u, 607u) == 0);
 
@@ -4104,26 +4167,180 @@ static void test_single_flight_wait_preserves_priority_and_fifo(void)
 
     assert(app_node_comm_service_deliveries() == 0);
     assert(try_uplink_calls == 2u);
-    assert(try_uplink_envelopes[1].packet.seq == protocol.packet.seq);
-    assert(note_gateway_confirmed_envelope(&protocol) == 0);
-    assert(app_node_comm_take_delivery_event_for(protocol_handle, &event));
+    assert(try_uplink_envelopes[1].packet.seq == second.packet.seq);
+    assert(note_gateway_confirmed_envelope(&second) == 0);
+    assert(app_node_comm_take_delivery_event_for(second_handle, &event));
     assert(app_node_comm_submit_delivery(
         &third, NODE_COMM_PROFILE_RELIABLE_UPLINK,
         10000u, 605u, &third_handle) == 0);
 
     assert(app_node_comm_service_deliveries() == 0);
     assert(try_uplink_calls == 3u);
-    assert(try_uplink_envelopes[2].packet.seq == second.packet.seq);
-    assert(note_gateway_confirmed_envelope(&second) == 0);
-    assert(app_node_comm_take_delivery_event_for(second_handle, &event));
-
-    assert(app_node_comm_service_deliveries() == 0);
-    assert(try_uplink_calls == 4u);
-    assert(try_uplink_envelopes[3].packet.seq == third.packet.seq);
+    assert(try_uplink_envelopes[2].packet.seq == third.packet.seq);
     assert(note_gateway_confirmed_envelope(&third) == 0);
     assert(app_node_comm_take_delivery_event_for(third_handle, &event));
     assert(app_node_comm_pending_delivery_count() == 0u);
 }
+
+#if !defined(APP_NODE_COMM_GATEWAY_ROLE) || !APP_NODE_COMM_GATEWAY_ROLE
+static void
+test_protocol_response_preempts_inflight_survey_report_without_losing_custody(void)
+{
+    struct mesh_outbound background = survey_report_envelope(171u);
+    struct mesh_outbound protocol = reliable_uplink_envelope(172u);
+    struct node_comm_terminal_event event;
+    uint8_t expected_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint32_t background_generation = 0u;
+    uint32_t observed_generation = 0u;
+    uint32_t background_handle = 0u;
+    uint32_t protocol_handle = 0u;
+    uint32_t request_token;
+    uint8_t attempts = 0u;
+
+    reset_fixture();
+    atomic_store(&fake_now_ms, 500);
+    protocol.packet.msg_type = MSG_COMMAND_RESULT;
+    protocol.packet.src_id = background.packet.src_id;
+    protocol.packet.dst_id = background.packet.dst_id;
+    protocol.packet.session_id = background.packet.session_id + 1u;
+    protocol.next_hop_id = background.next_hop_id;
+
+    assert(app_node_comm_submit_delivery(
+               &background,
+               NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+               UINT64_MAX,
+               1710u,
+               &background_handle) == 0);
+    assert(app_node_comm_delivery_generation(
+               background_handle, &background_generation) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 1u);
+    assert(try_uplink_envelopes[0].packet.seq == background.packet.seq);
+    assert(durable_attempt_begin_calls == 1u);
+    assert(durable_attempt_complete_calls == 1u);
+    assert(durable_attempt_complete_rf_started[0]);
+    assert(app_node_comm_delivery_attempts_started(
+               background_handle, &attempts) == 0);
+    assert(attempts == 1u);
+    assert(!app_node_comm_peek_delivery_event_for(background_handle, &event));
+
+    cancel_uplink_complete_immediately = false;
+    assert(app_node_comm_submit_protocol_response(
+               &protocol, 10000u, 1720u, &protocol_handle) == 0);
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    assert(try_uplink_calls == 1u);
+    assert(cancel_uplink_calls == 1u);
+    assert(last_cancelled_uplink.seq == background.packet.seq);
+    assert(last_cancel_uplink_delivery_handle == background_handle);
+    assert(last_cancel_uplink_delivery_generation == background_generation);
+    assert(mesh_packet_semantic_digest(&background.packet,
+                                       background.payload,
+                                       background.payload_len,
+                                       expected_digest));
+    assert(memcmp(expected_digest,
+                  last_cancel_uplink_semantic_digest,
+                  sizeof(expected_digest)) == 0);
+    request_token = last_cancel_uplink_request_token;
+    assert(request_token != 0u);
+    assert(app_node_comm_pending_delivery_count() == 2u);
+
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    app_node_comm_backend_release_ready(
+        background_handle, request_token + 1u);
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    assert(cancel_uplink_calls == 1u);
+    assert(try_uplink_calls == 1u);
+    assert(app_node_comm_delivery_attempts_started(
+               background_handle, &attempts) == 0);
+    assert(attempts == 1u);
+
+    cancel_uplink_completion_ready = true;
+    app_node_comm_backend_release_ready(background_handle, request_token);
+    cancel_uplink_complete_immediately = true;
+    try_uplink_confirmed[1] = true;
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 2u);
+    assert(try_uplink_envelopes[1].packet.seq == protocol.packet.seq);
+    assert(app_node_comm_take_delivery_event_for(protocol_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+    assert(app_node_comm_delivery_generation(
+               background_handle, &observed_generation) == 0);
+    assert(observed_generation == background_generation);
+    assert(app_node_comm_delivery_attempts_started(
+               background_handle, &attempts) == 0);
+    assert(attempts == 1u);
+    assert(!app_node_comm_peek_delivery_event_for(background_handle, &event));
+
+    try_uplink_confirmed[2] = true;
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 3u);
+    assert(try_uplink_envelopes[2].packet.seq == background.packet.seq);
+    assert(try_uplink_delivery_generations[2] == background_generation);
+    assert(durable_attempt_begin_calls == 2u);
+    assert(durable_attempt_complete_calls == 2u);
+    assert(durable_attempt_begin_packets[1].seq == background.packet.seq);
+    assert(durable_attempt_complete_packets[1].seq == background.packet.seq);
+    assert(app_node_comm_take_delivery_event_for(background_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 2u);
+    assert(event.client_token == 1710u);
+    assert(cancel_uplink_calls == 3u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+}
+
+static void test_protocol_preemption_gateway_ack_race_never_resurrects_report(void)
+{
+    struct mesh_outbound background = survey_report_envelope(173u);
+    struct mesh_outbound protocol = reliable_uplink_envelope(174u);
+    struct node_comm_terminal_event event;
+    uint32_t background_handle = 0u;
+    uint32_t protocol_handle = 0u;
+    uint32_t request_token;
+
+    reset_fixture();
+    atomic_store(&fake_now_ms, 500);
+    protocol.packet.msg_type = MSG_COMMAND_RESULT;
+    protocol.packet.src_id = background.packet.src_id;
+    protocol.packet.dst_id = background.packet.dst_id;
+    protocol.packet.session_id = background.packet.session_id + 1u;
+    protocol.next_hop_id = background.next_hop_id;
+    assert(app_node_comm_submit_delivery(
+               &background,
+               NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+               UINT64_MAX,
+               1730u,
+               &background_handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+
+    cancel_uplink_complete_immediately = false;
+    assert(app_node_comm_submit_protocol_response(
+               &protocol, 10000u, 1740u, &protocol_handle) == 0);
+    assert(app_node_comm_service_deliveries() == -EAGAIN);
+    request_token = last_cancel_uplink_request_token;
+    assert(request_token != 0u);
+
+    /* Semantic delivery wins while exact backend cancellation is pending. */
+    assert(note_gateway_confirmed_envelope(&background) == 0);
+    assert(!app_node_comm_take_delivery_event_for(background_handle, &event));
+    assert(try_uplink_calls == 1u);
+
+    cancel_uplink_completion_ready = true;
+    app_node_comm_backend_release_ready(background_handle, request_token);
+    cancel_uplink_complete_immediately = true;
+    try_uplink_confirmed[1] = true;
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_uplink_calls == 2u);
+    assert(try_uplink_envelopes[1].packet.seq == protocol.packet.seq);
+    assert(app_node_comm_take_delivery_event_for(background_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+    assert(app_node_comm_take_delivery_event_for(protocol_handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(!app_node_comm_peek_delivery_event_for(background_handle, &event));
+    assert(app_node_comm_pending_delivery_count() == 0u);
+}
+#endif
 
 static void test_cancelling_reliable_uplink_releases_backend_owner(void)
 {
@@ -5528,6 +5745,9 @@ int main(void)
     test_positive_work_schedule_result_is_normalized_to_acceptance();
     test_durable_completion_retry_does_not_delay_earlier_policy_work();
     test_delivery_schedule_uses_role_queue_path();
+#if !defined(APP_NODE_COMM_GATEWAY_ROLE) || !APP_NODE_COMM_GATEWAY_ROLE
+    test_auto_reap_closes_channel9_idle_parent_with_reaped_reason();
+#endif
     if (DEVICE_ROLE == ROLE_GATEWAY) {
         test_gateway_due_kick_aborts_active_scan_at_safe_boundary();
         test_gateway_scan_boundary_retry_failure_retains_gate_and_fails_closed();
@@ -5576,7 +5796,11 @@ int main(void)
     test_unpublished_external_backend_attempt_fails_closed();
     test_reliable_uplink_failure_preserves_reason_and_releases_owner();
     test_adapter_resource_wait_uses_exact_core_owner_trace();
-    test_single_flight_wait_preserves_priority_and_fifo();
+    test_single_flight_wait_preserves_ordinary_fifo();
+#if !defined(APP_NODE_COMM_GATEWAY_ROLE) || !APP_NODE_COMM_GATEWAY_ROLE
+    test_protocol_response_preempts_inflight_survey_report_without_losing_custody();
+    test_protocol_preemption_gateway_ack_race_never_resurrects_report();
+#endif
     test_cancelling_reliable_uplink_releases_backend_owner();
     test_protocol_response_preempts_ordinary_reliable_uplink();
     test_protocol_capacity_is_reserved_and_abandonment_reaps_slots();

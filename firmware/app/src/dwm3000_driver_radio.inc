@@ -1,8 +1,14 @@
 #line 487 __BASE_FILE__
 static void clear_all_events(void);
 
-static void invalidate_radio_state(void)
+static void invalidate_radio_state_tagged(const char *tag)
 {
+    status_debug_printf(
+        "DBG_DWM_INVALIDATE tag=%s active_phy=%u configured=%u awake=%u\n",
+        tag == NULL ? "unknown" : tag,
+        (unsigned int)active_phy_mode,
+        radio_configured ? 1u : 0u,
+        radio_awake ? 1u : 0u);
     radio_configured = false;
     radio_awake = false;
     radio_restored_from_sleep = false;
@@ -10,8 +16,12 @@ static void invalidate_radio_state(void)
     radio_state_unknown = true;
 }
 
-static void mark_radio_awake_unconfigured(void)
+static void mark_radio_awake_unconfigured_tagged(const char *tag)
 {
+    status_debug_printf(
+        "DBG_DWM_MARK_UNCONFIGURED tag=%s prev_phy=%u\n",
+        tag == NULL ? "unknown" : tag,
+        (unsigned int)active_phy_mode);
     radio_configured = false;
     radio_awake = true;
     radio_restored_from_sleep = false;
@@ -27,7 +37,7 @@ static int take_port_error(const char *operation)
         return 0;
     }
     driver_stats.spi_failures++;
-    invalidate_radio_state();
+    invalidate_radio_state_tagged(__func__);
     LOG_ERR("DWM3000 port error: operation=%s ret=%d",
             operation == NULL ? "unknown" : operation,
             ret);
@@ -56,7 +66,7 @@ static int check_device_fatal_status(const char *operation)
     if (ret >= 0) {
         driver_stats.spi_failures++;
     }
-    invalidate_radio_state();
+    invalidate_radio_state_tagged(__func__);
     LOG_ERR("DWM3000 fatal command/SPI status: operation=%s status_hi=0x%08x",
             operation == NULL ? "unknown" : operation,
             status_hi);
@@ -272,10 +282,10 @@ static int initialise_radio(bool idle_after_init)
     }
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
-        invalidate_radio_state();
+        invalidate_radio_state_tagged(__func__);
         return ret;
     }
-    mark_radio_awake_unconfigured();
+    mark_radio_awake_unconfigured_tagged(__func__);
     return 0;
 }
 
@@ -435,7 +445,7 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
     const dwt_config_t *config = config_for_phy(phy_mode);
     int ret;
 
-    invalidate_radio_state();
+    invalidate_radio_state_tagged(__func__);
 
     ret = dwm3000_port_init();
     if (ret < 0) {
@@ -461,6 +471,15 @@ static int configure_radio_from_reset(enum dwm3000_phy_mode phy_mode)
             status_debug_printf("DBG_DWM_RESET_HW_FAIL phy=%d ret=%d\n",
                                 phy_mode, ret);
         }
+        return ret;
+    }
+
+    /* nRESET leaves the DW3000 with its wake logic latched off on some
+     * power-state histories; re-assert the wake pin so the first fast-SPI
+     * transactions land on an awake device instead of returning the device
+     * ID for every register. */
+    ret = dwm3000_port_wakeup();
+    if (ret < 0) {
         return ret;
     }
 
@@ -506,7 +525,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     ret = dwm3000_port_set_slow_spi();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
-        invalidate_radio_state();
+        invalidate_radio_state_tagged(__func__);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_SLOW_SPI_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
@@ -516,7 +535,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     ret = dwm3000_port_wakeup();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
-        invalidate_radio_state();
+        invalidate_radio_state_tagged(__func__);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_PIN_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);
@@ -540,7 +559,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     }
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
-        invalidate_radio_state();
+        invalidate_radio_state_tagged(__func__);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             uint32_t sys_status = dwt_read32bitreg(SYS_STATUS_ID);
 
@@ -573,7 +592,7 @@ static int wake_configured_radio(enum dwm3000_phy_mode requested_phy)
     ret = dwm3000_port_set_fast_spi();
     if (ret < 0) {
         driver_stats.sleep_wake_failures++;
-        invalidate_radio_state();
+        invalidate_radio_state_tagged(__func__);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_DWM_WAKE_FAST_SPI_FAIL phy=%d ret=%d\n",
                                 requested_phy, ret);

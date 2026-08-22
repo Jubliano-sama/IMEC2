@@ -1,6 +1,8 @@
 #ifndef SURVEY_H
 #define SURVEY_H
 
+#include "discovery_assignment.h"
+#include "mesh.h"
 #include "protocol.h"
 #include "node_comm.h"
 
@@ -24,22 +26,30 @@ extern "C" {
  */
 #define SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT 5u
 #define SURVEY_GATEWAY_MAX_REPORTS 50u
-#define SURVEY_DEFAULT_TTL 4u
+#define SURVEY_DEFAULT_TTL MESH_NETWORK_MAX_HOPS
 /*
- * A normal three-anchor survey must terminate as one bounded user action,
- * even when a report or pair control never settles. Larger experimental
- * fleets may still request a longer command budget explicitly.
+ * The topology-derived host estimate is a service target, not a correctness
+ * deadline.  Valid report and pair retry work may continue after it; one
+ * absolute 30-minute safety boundary still prevents an abandoned operation
+ * from owning the gateway forever.
  */
-#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 360000u
+#define SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS 1800000u
+#define SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS 1800000u
 /*
  * A known reverse path gets a route-depth-aware natural control deadline.
  * The base covers one complete gateway-ACK custody/retry horizon; each
  * additional RF hop reserves another bounded relay/control interval. Unknown
- * or invalid route depth deliberately retains the established 90 s ceiling.
+ * or invalid route depth uses the same eight-hop maximum, while known shallow
+ * routes fail sooner instead of waiting for a fleet-wide fixed timeout.
  */
 #define SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS 30000u
 #define SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS 15000u
-#define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS 90000u
+#define SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS                     \
+    (SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +                            \
+     ((SURVEY_DEFAULT_TTL - 1u) *                                    \
+      SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS))
+#define SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS \
+    SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS
 /*
  * Redrive a terminal-but-unanswered pair control independently from its
  * route-depth failure deadline.  A one-second cadence leaves several full
@@ -47,12 +57,9 @@ extern "C" {
  * controls of a healthy pair inside the six-minute three-anchor operation.
  */
 #define SURVEY_PAIR_CONTROL_REDRIVE_INTERVAL_MS 1000u
-#define SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS 12000u
+#define SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS \
+    SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS
 #define SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS 3000u
-#define SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS                     \
-    (SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS +                            \
-     ((SURVEY_DEFAULT_TTL - 1u) *                                    \
-      SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS))
 /*
  * Gateway host output deliberately has one bounded in-RAM owner, not an NVS
  * journal. A different survey record is therefore flow-controlled at the
@@ -87,6 +94,9 @@ extern "C" {
 #define SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S \
     ((SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS + 999u) / 1000u)
 #define SURVEY_PAIR_INITIATOR_TIMEOUT_MS 150u
+#define SURVEY_PAIR_SAMPLE_GAP_MS 10u
+#define SURVEY_PAIR_SAMPLE_CELL_MS \
+    (SURVEY_PAIR_INITIATOR_TIMEOUT_MS + SURVEY_PAIR_SAMPLE_GAP_MS)
 #define SURVEY_PAIR_START_SKEW_MARGIN_MS 1000u
 /*
  * START transport may take many seconds across the mesh, so the two START
@@ -96,6 +106,10 @@ extern "C" {
  */
 #define SURVEY_PAIR_RESPONDER_WINDOW_MS                                      \
     (SURVEY_PAIR_START_SKEW_MARGIN_MS + SURVEY_PAIR_INITIATOR_TIMEOUT_MS)
+#define SURVEY_PAIR_BATCH_WINDOW_MS                                      \
+    (SURVEY_PAIR_RESPONDER_WINDOW_MS +                                  \
+     ((SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT - 1u) *                     \
+      SURVEY_PAIR_SAMPLE_CELL_MS))
 #define SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS                         \
     (2u * (SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS +              \
            SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS))
@@ -107,6 +121,22 @@ extern "C" {
 #if SURVEY_PAIR_INITIATOR_TIMEOUT_MS >                                       \
     (UINT32_MAX - SURVEY_PAIR_START_SKEW_MARGIN_MS)
 #error "Survey pair responder window overflows uint32_t"
+#endif
+#if SURVEY_PAIR_INITIATOR_TIMEOUT_MS > \
+    (UINT32_MAX - SURVEY_PAIR_SAMPLE_GAP_MS)
+#error "Survey pair sample cell overflows uint32_t"
+#endif
+#if SURVEY_PAIR_SAMPLE_GAP_MS == 0u || \
+    SURVEY_PAIR_SAMPLE_CELL_MS <= SURVEY_PAIR_INITIATOR_TIMEOUT_MS
+#error "Survey pair samples need a positive post-attempt gap"
+#endif
+#if (SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT - 1u) >                       \
+    ((UINT32_MAX - SURVEY_PAIR_RESPONDER_WINDOW_MS) /                  \
+     SURVEY_PAIR_SAMPLE_CELL_MS)
+#error "Survey pair batch window overflows uint32_t"
+#endif
+#if SURVEY_PAIR_BATCH_WINDOW_MS > 2147483647u
+#error "Survey pair batch window must fit wrap-safe signed time arithmetic"
 #endif
 #if SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS > 2147483647u
 #error "Survey pair control timeout must fit wrap-safe signed time arithmetic"
@@ -183,6 +213,14 @@ _Static_assert(SURVEY_PAIR_RESULT_TRANSPORT_SEQUENCE_MAX <= UINT16_MAX,
 #define SURVEY_DISCOVERY_MAX_START_DELAY_MS 90000u
 #define SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS 2000u
 #define SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT 4u
+#define SURVEY_DISCOVERY_START_DELAY_FLOOR_MS 20000u
+#define SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS 63u
+#define SURVEY_DISCOVERY_PHY_PREP_MARGIN_MS 40u
+#define SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS 1000u
+#define SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS \
+    (SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS + \
+     SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS + \
+     SURVEY_DISCOVERY_PHY_PREP_MARGIN_MS)
 #define SURVEY_DISCOVERY_MAX_ROUND_COUNT 4u
 #define SURVEY_DISCOVERY_REPORT_MAX_BURST_RECORDS \
     SURVEY_GATEWAY_MAX_REPORTS
@@ -286,6 +324,9 @@ struct survey_discovery_config {
     uint64_t operation_generation;
     uint32_t survey_id;
     uint32_t start_delay_ms;
+    uint32_t assignment_epoch;
+    uint32_t assignment_table_seq;
+    struct discovery_assignment_table_commitment assignment_table_commitment;
     uint16_t slot_ms;
     uint8_t slot_count;
     uint8_t round_count;
@@ -533,6 +574,7 @@ int survey_discovery_start_at_ms(const struct survey_discovery_timing *timing,
                                  uint32_t *start_at_ms);
 int survey_discovery_report_delay_ms(const struct survey_discovery_config *config,
                                      uint8_t anchor_slot,
+                                     uint8_t gateway_hop_count,
                                      uint32_t report_slot_ms,
                                      uint32_t *delay_ms);
 int survey_gateway_begin(struct survey_gateway_context *context,
@@ -596,6 +638,7 @@ int survey_gateway_reach_report_compare(
     size_t entry_count,
     enum command_status report_status);
 uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl);
+uint32_t survey_discovery_required_start_delay_ms(uint8_t max_hop_count);
 uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count);
 uint32_t survey_pair_control_round_trip_timeout_ms(
     uint8_t gateway_hop_count);

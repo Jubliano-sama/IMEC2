@@ -109,12 +109,14 @@ void survey_gateway_due_registry_cancel(
     registry->valid_mask &= (uint8_t)~(UINT8_C(1) << owner);
 }
 
-void survey_gateway_due_registry_consume_due(
+bool survey_gateway_due_registry_consume_due(
     struct survey_gateway_due_registry *registry,
     uint32_t now_ms)
 {
+    bool consumed = false;
+
     if (registry == NULL) {
-        return;
+        return false;
     }
     for (size_t i = 0u; i < SURVEY_GATEWAY_DUE_OWNER_COUNT; i++) {
         const uint8_t owner_bit = (uint8_t)(UINT8_C(1) << i);
@@ -122,8 +124,10 @@ void survey_gateway_due_registry_consume_due(
         if ((registry->valid_mask & owner_bit) != 0u &&
             survey_gateway_due_reached(now_ms, registry->due_ms[i])) {
             registry->valid_mask &= (uint8_t)~owner_bit;
+            consumed = true;
         }
     }
+    return consumed;
 }
 
 bool survey_gateway_receive_in_interval(uint64_t first_received_at_ms,

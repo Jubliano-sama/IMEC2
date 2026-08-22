@@ -219,7 +219,8 @@ static void test_single_relay_delivery(void)
     connections[0] = child_connection;
     connections[1] = gateway_connection;
     payload_len = mesh_data_payload(payload, sizeof(payload), 1u);
-    packet = mesh_data_packet(1u, 0x1001u, 4u, (uint16_t)payload_len);
+    packet = mesh_data_packet(1u, 0x1001u, MESH_DEFAULT_TTL,
+                              (uint16_t)payload_len);
     assert(mesh_sim_queue_originated(&world,
                                      transmitter,
                                      &packet,
@@ -235,7 +236,8 @@ static void test_single_relay_delivery(void)
     run_next_connection(&world, gateway_connection, false);
     assert(world.roles[gateway].delivery_count == 1u);
     assert(world.roles[gateway].deliveries[0].packet.msg_type == MSG_MESH_DATA);
-    assert(world.roles[gateway].deliveries[0].packet.ttl == 3u);
+    assert(world.roles[gateway].deliveries[0].packet.ttl ==
+           MESH_DEFAULT_TTL - 1u);
     assert(world.roles[gateway].deliveries[0].previous_hop_id == ANCHOR_1_ID);
 
     run_connections_until_confirmed(&world,
@@ -336,7 +338,8 @@ static void test_two_relay_delivery(void)
 
     assert(world.roles[transmitter].relay.pending.state == MESH_RELAY_TX_IDLE);
     assert(world.roles[gateway].delivery_count == 1u);
-    assert(world.roles[gateway].deliveries[0].packet.ttl == 2u);
+    assert(world.roles[gateway].deliveries[0].packet.ttl ==
+           MESH_DEFAULT_TTL - 2u);
     assert(world.roles[gateway].deliveries[0].previous_hop_id == ANCHOR_2_ID);
     assert(count_transitions_for_message(&world,
                                          MESH_SIM_TRANSITION_TX_START,
@@ -673,7 +676,7 @@ static void test_click_preempts_transit_and_origin_retries(void)
                                             3u);
     transit_packet = mesh_data_packet(3u,
                                       0x1003u,
-                                      4u,
+                                      MESH_DEFAULT_TTL,
                                       (uint16_t)transit_payload_len);
     click_payload_len = build_click_report(click_payload,
                                            sizeof(click_payload),
@@ -1023,7 +1026,7 @@ static void test_channel9_runtime_timing_and_deadline(void)
                                 params.event_interval_ms,
                                 true);
     payload_len = mesh_data_payload(payload, sizeof(payload), 0x7001u);
-    packet = mesh_data_packet(0x701u, 0x70000001u, 4u,
+    packet = mesh_data_packet(0x701u, 0x70000001u, MESH_DEFAULT_TTL,
                               (uint16_t)payload_len);
     assert(mesh_sim_queue_originated(&world,
                                      transmitter,

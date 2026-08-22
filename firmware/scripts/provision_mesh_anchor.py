@@ -37,6 +37,7 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
     SERVICE_UUID,
     SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
     build_anchor_discovery_command,
@@ -53,17 +54,15 @@ from tools.gateway_gui.delivery_dedup import (  # noqa: E402
     is_host_delivery_packet,
 )
 from tools.gateway_gui.operation_policy import (  # noqa: E402
-    ASSIGNMENT_DEFAULT_BUDGET_MS,
     DISCOVERY_DEFAULT_ROUND_COUNT,
-    DISCOVERY_DEFAULT_BUDGET_MS,
     DISCOVERY_DEFAULT_SLOT_MS,
-    DISCOVERY_DEFAULT_START_DELAY_MS,
     ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
     AssignmentOperationPolicy,
     DiscoveryOperationPolicy,
     OperationPolicyProfile,
     assignment_required_budget_ms,
     discovery_required_budget_ms,
+    discovery_required_start_delay_ms,
 )
 from tools.gateway_gui.command_telemetry import (  # noqa: E402
     GatewayCommandEvent,
@@ -99,9 +98,12 @@ CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_FORCE_REDISCOVERY = 0x000C
 DISCOVERY_SLOT_UNAVAILABLE = 0xFF
+DISCOVERY_SLOT_COUNT = 50
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
 SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S = 5.0
-SURVEY_TERMINAL_DRAIN_MAX_S = 90.0
+SURVEY_TERMINAL_DRAIN_MAX_S = 135.0
+BLE_RECONNECT_ATTEMPTS_DEFAULT = 3
+BLE_RECONNECT_DELAY_DEFAULT_S = 1.5
 
 
 def _assignment_operation_policy(
@@ -110,14 +112,19 @@ def _assignment_operation_policy(
     deepest_hop: int = 0,
 ) -> OperationPolicyProfile:
     """Mirror the desktop GUI's explicit assignment policy on the wire."""
+    effective_budget_ms = (
+        assignment_required_budget_ms(
+            ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            expected_anchor_count,
+            deepest_hop=deepest_hop,
+        )
+        if command_budget_ms is None
+        else command_budget_ms
+    )
     return OperationPolicyProfile(
         assignment=AssignmentOperationPolicy(
             expected_anchor_count=expected_anchor_count,
-            operation_budget_ms=(
-                ASSIGNMENT_DEFAULT_BUDGET_MS
-                if command_budget_ms is None
-                else command_budget_ms
-            ),
+            operation_budget_ms=effective_budget_ms,
             response_spread_ms=ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             deepest_hop=deepest_hop,
         )
@@ -127,26 +134,33 @@ def _assignment_operation_policy(
 def _survey_operation_policy(
     *,
     expected_anchor_count: int,
-    command_budget_ms: int | None,
     discovery_slot_count: int,
     report_grace_ms: int,
+    deepest_hop: int = 0,
 ) -> OperationPolicyProfile:
     """Bind headless survey arguments to the policy firmware validates."""
+    start_delay_ms = discovery_required_start_delay_ms(deepest_hop)
+    discovery_budget_ms = discovery_required_budget_ms(
+        start_delay_ms,
+        DISCOVERY_DEFAULT_SLOT_MS,
+        discovery_slot_count,
+        DISCOVERY_DEFAULT_ROUND_COUNT,
+        report_grace_ms,
+        deepest_hop,
+    )
     return OperationPolicyProfile(
         assignment=AssignmentOperationPolicy(
             expected_anchor_count=expected_anchor_count,
+            deepest_hop=deepest_hop,
         ),
         discovery=DiscoveryOperationPolicy(
-            start_delay_ms=DISCOVERY_DEFAULT_START_DELAY_MS,
+            start_delay_ms=start_delay_ms,
             slot_ms=DISCOVERY_DEFAULT_SLOT_MS,
             slot_count=discovery_slot_count,
             round_count=DISCOVERY_DEFAULT_ROUND_COUNT,
             report_grace_ms=report_grace_ms,
-            operation_budget_ms=(
-                DISCOVERY_DEFAULT_BUDGET_MS
-                if command_budget_ms is None
-                else command_budget_ms
-            ),
+            operation_budget_ms=discovery_budget_ms,
+            deepest_hop=deepest_hop,
         ),
     )
 
@@ -410,7 +424,9 @@ class AssignmentQualification:
     expected_anchor_hops: dict[int, int] = field(default_factory=dict)
     anchors: set[int] = field(default_factory=set)
     assigned_slots: dict[int, int] = field(default_factory=dict)
+    confirmed_slots: dict[int, int] = field(default_factory=dict)
     hop_paths: dict[int, tuple[int, int]] = field(default_factory=dict)
+    hop_evidence_ranks: dict[int, int] = field(default_factory=dict)
     flood_attempts: set[int] = field(default_factory=set)
     table_attempts: set[int] = field(default_factory=set)
     collection_complete: bool = False
@@ -483,33 +499,22 @@ class AssignmentQualification:
                         event.discovery_slot != DISCOVERY_SLOT_UNAVAILABLE
                         and event.previous_hop_id == 0
                     )
-                    if mapping_depth_only:
-                        if prior_path is None:
-                            self.hop_paths[event.anchor_id] = path
-                        elif prior_path[0] != event.hop_count:
-                            self._error(
-                                f"anchor 0x{event.anchor_id:016x} changed hop evidence"
-                            )
-                    elif event.previous_hop_id == 0:
+                    evidence_rank = 2 if mapping_depth_only else 1
+                    prior_rank = self.hop_evidence_ranks.get(event.anchor_id, 0)
+                    if not mapping_depth_only and event.previous_hop_id == 0:
                         self._error(
                             f"anchor 0x{event.anchor_id:016x} has hop count "
                             "without previous hop"
                         )
-                    elif event.hop_count == 1 and (
-                        event.previous_hop_id != event.anchor_id
-                    ):
-                        self._error(
-                            f"direct anchor 0x{event.anchor_id:016x} has "
-                            "contradictory previous-hop evidence"
+                    elif evidence_rank > prior_rank:
+                        self.hop_paths[event.anchor_id] = (
+                            event.hop_count,
+                            prior_path[1]
+                            if mapping_depth_only and prior_path is not None
+                            else event.previous_hop_id,
                         )
-                    elif event.hop_count > 1 and (
-                        event.previous_hop_id == event.anchor_id
-                    ):
-                        self._error(
-                            f"multihop anchor 0x{event.anchor_id:016x} "
-                            "claims itself as the previous hop"
-                        )
-                    elif prior_path is not None and (
+                        self.hop_evidence_ranks[event.anchor_id] = evidence_rank
+                    elif evidence_rank == prior_rank and prior_path is not None and (
                         prior_path[0] != event.hop_count
                         or (
                             prior_path[1] != 0
@@ -519,8 +524,6 @@ class AssignmentQualification:
                         self._error(
                             f"anchor 0x{event.anchor_id:016x} changed hop evidence"
                         )
-                    elif not mapping_depth_only:
-                        self.hop_paths[event.anchor_id] = path
         elif event.stage == GATEWAY_COMMAND_STAGE_ENUMERATION_COMPLETE:
             if event.command_status != 0 or event.reason != 0:
                 self._error("assignment collection-complete event is not successful")
@@ -528,7 +531,40 @@ class AssignmentQualification:
                 self._error("assignment collection-complete count is not exact")
             self.collection_complete = True
         elif event.stage == GATEWAY_COMMAND_STAGE_SCHEDULE_READY:
-            if (
+            if event.anchor_id != 0:
+                if (
+                    event.command_status != 0
+                    or event.reason != 0
+                    or event.hop_count == 0
+                    or event.hop_count > MESH_NETWORK_MAX_HOPS
+                    or event.discovery_slot >= DISCOVERY_SLOT_COUNT
+                    or event.progress_count < 1
+                    or event.progress_count > self.expected_anchors
+                    or event.total_count != self.expected_anchors
+                ):
+                    self._error("assignment table-confirmation event is invalid")
+                else:
+                    prior = self.confirmed_slots.get(event.anchor_id)
+                    if prior is not None and prior != event.discovery_slot:
+                        self._error(
+                            f"anchor 0x{event.anchor_id:016x} changed confirmed slot"
+                        )
+                    self.confirmed_slots[event.anchor_id] = event.discovery_slot
+                    # The TABLE confirmation is the newest operation-bound
+                    # route-depth proof.  CLAIM's depth is the anchor's route
+                    # estimate while previous_hop_id describes the packet's
+                    # physical ingress, so those two fields need not describe
+                    # the same path.  The reliable mapping batch was prepared
+                    # before TABLE responses and can legitimately carry the
+                    # earlier depth; do not let it overwrite this proof when
+                    # host delivery later drains that batch.
+                    prior_path = self.hop_paths.get(event.anchor_id)
+                    self.hop_paths[event.anchor_id] = (
+                        event.hop_count,
+                        0 if prior_path is None else prior_path[1],
+                    )
+                    self.hop_evidence_ranks[event.anchor_id] = 3
+            elif (
                 event.command_status != 0
                 or event.reason != 0
                 or event.progress_count != self.expected_anchors
@@ -563,8 +599,26 @@ class AssignmentQualification:
                 f"expected {self.expected_anchors} published slot mappings, "
                 f"got {len(self.assigned_slots)}"
             )
-        if set(self.assigned_slots.values()) != set(range(self.expected_anchors)):
-            self._error("published discovery slots are not unique and contiguous")
+        assigned_slot_values = tuple(self.assigned_slots.values())
+        if (
+            len(set(assigned_slot_values)) != len(assigned_slot_values)
+            or any(
+                slot < 0 or slot >= DISCOVERY_SLOT_COUNT
+                for slot in assigned_slot_values
+            )
+        ):
+            self._error("published discovery slots are not unique and valid")
+        for anchor_id, confirmed_slot in self.confirmed_slots.items():
+            assigned_slot = self.assigned_slots.get(anchor_id)
+            if assigned_slot is None:
+                self._error(
+                    f"confirmed anchor 0x{anchor_id:016x} is absent from publication"
+                )
+            elif assigned_slot != confirmed_slot:
+                self._error(
+                    f"anchor 0x{anchor_id:016x} confirmed slot {confirmed_slot}, "
+                    f"published slot {assigned_slot}"
+                )
         if not self.collection_complete:
             self._error("assignment collection-complete event was not received")
         if not self.table_attempts:
@@ -857,18 +911,41 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     decoder = GatewayReceiveBuffer()
     delivery_dedup = GatewayPacketDeduplicator()
     write_lock = asyncio.Lock()
+    reconnect_lock = asyncio.Lock()
     receipt_tasks: set[asyncio.Task[None]] = set()
     receipt_in_flight: set[object] = set()
+    receipt_outstanding: set[object] = set()
+    receipt_state_changed = asyncio.Event()
     survey_custody_activity = asyncio.Event()
     assignment_replay_barrier = GatewayAssignmentReplayBarrier()
     assignment_replay_changed = asyncio.Event()
     command_budget_ms = getattr(args, "command_budget_ms", None)
+    assignment_command_budget_ms = command_budget_ms
+    if (
+        assignment_command_budget_ms is None
+        and args.command in ("assign-slots", "qualify-reachability")
+    ):
+        assignment_command_budget_ms = assignment_required_budget_ms(
+            ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+            args.expected_anchors,
+            deepest_hop=getattr(args, "deepest_hop", 0),
+        )
     received = 0
     decode_errors: list[str] = []
     disconnect_errors: list[str] = []
     qualification: Qualification | None = None
     qualification_done = asyncio.Event()
     transport_failed = asyncio.Event()
+    link_disconnected = asyncio.Event()
+    connection_generation = 0
+    disconnect_generation = 0
+    command_write_active = False
+    session_complete = False
+    notifications_enabled = False
+    defer_notifications = args.notification_hold_s > 0.0
+    gateway_id = 0
+    characteristic: object | None = None
+    chunk_size = 20
 
     async def send_gateway_frame(
         client: BleakClient,
@@ -876,14 +953,27 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         frame: bytes,
         *,
         chunk_size: int,
+        expected_generation: int,
     ) -> None:
         """Keep every serial frame contiguous across asynchronous BLE writers."""
         async with write_lock:
             for offset in range(0, len(frame), chunk_size):
+                if (
+                    expected_generation != connection_generation
+                    or link_disconnected.is_set()
+                    or not bool(getattr(client, "is_connected", True))
+                ):
+                    raise ConnectionError(
+                        "gateway connection changed while writing BLE frame"
+                    )
                 await client.write_gatt_char(
                     characteristic,
                     frame[offset : offset + chunk_size],
-                    response=False,
+                    # These frames carry command or receipt custody.  A
+                    # write command only proves that BlueZ queued the bytes;
+                    # an ATT write request proves the gateway admitted this
+                    # chunk and reports its bounded RX-queue backpressure.
+                    response=True,
                 )
 
     def schedule_host_receipt(
@@ -895,6 +985,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         characteristic: object,
         gateway_id: int,
         chunk_size: int,
+        connection_generation: int,
     ) -> bool:
         """Release firmware custody only after this tool accepted an exact record."""
         if (
@@ -917,6 +1008,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         if receipt.identity in receipt_in_flight:
             return True
         receipt_in_flight.add(receipt.identity)
+        receipt_outstanding.add(receipt.identity)
 
         async def write_receipt() -> None:
             try:
@@ -925,6 +1017,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     characteristic,
                     receipt.frame,
                     chunk_size=chunk_size,
+                    expected_generation=connection_generation,
                 )
                 print(
                     "BLE_HOST_RECEIPT "
@@ -938,15 +1031,25 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     assignment_replay_barrier.receipt_written(
                         assignment_replay
                     )
+                receipt_outstanding.discard(receipt.identity)
             except Exception as exc:
-                disconnect_errors.append(
-                    "gateway host receipt write failed: "
-                    f"{type(exc).__name__}: {exc}"
+                # A receipt is idempotent and remains in gateway custody until
+                # accepted. Reconnect and wait for the gateway's exact replay;
+                # never manufacture or resend the active command to recover it.
+                print(
+                    "BLE_HOST_RECEIPT_RETRY "
+                    f"type=0x{receipt.identity.original_msg_type:02x} "
+                    f"src=0x{receipt.identity.src_id:016x} "
+                    f"session={receipt.identity.session_id} "
+                    f"seq={receipt.identity.seq} "
+                    f"error={type(exc).__name__}: {exc}",
+                    flush=True,
                 )
-                qualification_done.set()
-                transport_failed.set()
+                link_disconnected.set()
+                survey_custody_activity.set()
             finally:
                 receipt_in_flight.discard(receipt.identity)
+                receipt_state_changed.set()
                 assignment_replay_changed.set()
 
         task = asyncio.create_task(write_receipt())
@@ -1038,15 +1141,39 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 characteristic=characteristic,
                 gateway_id=gateway_id,
                 chunk_size=chunk_size,
+                connection_generation=connection_generation,
             ):
                 if survey_custody_record:
                     survey_custody_activity.set()
 
     def on_disconnect(_client: object) -> None:
-        disconnect_errors.append("gateway disconnected during active command or monitoring")
-        qualification_done.set()
-        transport_failed.set()
+        nonlocal disconnect_generation, notifications_enabled
+
+        if session_complete:
+            return
+        disconnect_generation += 1
+        notifications_enabled = False
+        link_disconnected.set()
+        survey_custody_activity.set()
         assignment_replay_changed.set()
+        receipt_state_changed.set()
+        if command_write_active:
+            disconnect_errors.append(
+                "gateway disconnected while writing the command; delivery is "
+                "ambiguous and the command will not be resent"
+            )
+            qualification_done.set()
+            transport_failed.set()
+
+    def notification_callback(generation: int):
+        """Ignore callbacks left behind by a previous BLE connection."""
+
+        def callback(sender: object, data: bytearray) -> None:
+            if generation != connection_generation:
+                return
+            on_notify(sender, data)
+
+        return callback
 
     def raise_transport_errors(label: str) -> None:
         if decode_errors:
@@ -1056,33 +1183,285 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         if disconnect_errors:
             raise RuntimeError(f"{label} failed: " + "; ".join(disconnect_errors))
 
-    async def await_transport_duration(timeout_s: float, label: str) -> None:
-        try:
-            await asyncio.wait_for(transport_failed.wait(), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            return
+    async def reconnect_before(deadline: float, label: str) -> bool:
+        """Restore one dropped link without changing the active command identity."""
+        nonlocal characteristic, chunk_size, connection_generation, decoder
+        nonlocal defer_notifications, notifications_enabled
+
         raise_transport_errors(label)
+        if (
+            not link_disconnected.is_set()
+            and bool(getattr(client, "is_connected", True))
+        ):
+            return True
+        async with reconnect_lock:
+            raise_transport_errors(label)
+            if (
+                not link_disconnected.is_set()
+                and bool(getattr(client, "is_connected", True))
+            ):
+                return True
+            attempts = int(
+                getattr(
+                    args,
+                    "reconnect_attempts",
+                    BLE_RECONNECT_ATTEMPTS_DEFAULT,
+                )
+            )
+            delay_s = float(
+                getattr(
+                    args,
+                    "reconnect_delay_s",
+                    BLE_RECONNECT_DELAY_DEFAULT_S,
+                )
+            )
+            if attempts <= 0:
+                disconnect_errors.append(
+                    "gateway disconnected and BLE reconnect attempts are disabled"
+                )
+                transport_failed.set()
+                raise_transport_errors(label)
+
+            last_error = "gateway remained disconnected"
+            for attempt in range(1, attempts + 1):
+                remaining_s = deadline - asyncio.get_running_loop().time()
+                if remaining_s <= 0.0:
+                    return False
+                if delay_s > 0.0:
+                    if delay_s >= remaining_s:
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.sleep(delay_s),
+                                timeout=remaining_s,
+                            )
+                        except asyncio.TimeoutError:
+                            return False
+                    else:
+                        await asyncio.sleep(delay_s)
+
+                async def reconnect_once() -> None:
+                    nonlocal characteristic, chunk_size
+                    nonlocal connection_generation, decoder
+                    nonlocal defer_notifications, notifications_enabled
+
+                    if bool(getattr(client, "is_connected", False)):
+                        await client.disconnect()
+                    # Bleak can expose ``is_connected == False`` one loop turn
+                    # before delivering the old link's disconnect callback.
+                    # Drain that callback before snapshotting the generation so
+                    # it cannot be mistaken for a failure of the new link.
+                    await asyncio.sleep(0)
+                    attempt_disconnect_generation = disconnect_generation
+                    await client.connect()
+                    candidate_gateway_id = decode_gateway_identity(
+                        bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
+                    )
+                    if candidate_gateway_id != gateway_id:
+                        raise RuntimeError(
+                            "reconnected gateway identity mismatch: expected "
+                            f"0x{gateway_id:016x}, got "
+                            f"0x{candidate_gateway_id:016x}"
+                        )
+                    next_characteristic = client.services.get_characteristic(
+                        PACKET_RX_UUID
+                    )
+                    if next_characteristic is None:
+                        raise RuntimeError(
+                            "gateway packet RX characteristic is unavailable after reconnect"
+                        )
+                    characteristic = next_characteristic
+                    chunk_size = max(
+                        1,
+                        min(
+                            int(
+                                characteristic.max_write_without_response_size
+                                or 20
+                            ),
+                            244,
+                        ),
+                    )
+                    connection_generation += 1
+                    decoder = GatewayReceiveBuffer()
+                    await client.start_notify(
+                        PACKET_TX_UUID,
+                        notification_callback(connection_generation),
+                    )
+                    if (
+                        disconnect_generation != attempt_disconnect_generation
+                        or not bool(getattr(client, "is_connected", True))
+                    ):
+                        raise ConnectionError(
+                            "gateway disconnected while restoring notifications"
+                        )
+                    notifications_enabled = True
+                    defer_notifications = False
+                    link_disconnected.clear()
+
+                remaining_s = deadline - asyncio.get_running_loop().time()
+                if remaining_s <= 0.0:
+                    return False
+                try:
+                    await asyncio.wait_for(reconnect_once(), timeout=remaining_s)
+                except asyncio.TimeoutError:
+                    return False
+                except Exception as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    if "gateway identity mismatch" in str(exc):
+                        disconnect_errors.append(str(exc))
+                        transport_failed.set()
+                        raise_transport_errors(label)
+                    print(
+                        "BLE_RECONNECT_RETRY "
+                        f"attempt={attempt}/{attempts} error={last_error}",
+                        flush=True,
+                    )
+                    link_disconnected.set()
+                    continue
+                print(
+                    "BLE_RECONNECTED "
+                    f"gateway_id=0x{gateway_id:016x} "
+                    f"attempt={attempt}/{attempts}",
+                    flush=True,
+                )
+                return True
+
+            disconnect_errors.append(
+                f"gateway BLE reconnect exhausted {attempts} attempts: {last_error}"
+            )
+            transport_failed.set()
+            raise_transport_errors(label)
+        return False
+
+    async def wait_for_event_before(
+        event: asyncio.Event,
+        deadline: float,
+        label: str,
+    ) -> bool:
+        """Wait through reconnects while retaining one absolute deadline."""
+        while True:
+            raise_transport_errors(label)
+            if (
+                link_disconnected.is_set()
+                or not bool(getattr(client, "is_connected", True))
+            ):
+                link_disconnected.set()
+                if not await reconnect_before(deadline, label):
+                    return False
+                continue
+            if event.is_set():
+                return True
+            remaining_s = deadline - asyncio.get_running_loop().time()
+            if remaining_s <= 0.0:
+                return False
+            event_wait = asyncio.create_task(event.wait())
+            disconnect_wait = asyncio.create_task(link_disconnected.wait())
+            failure_wait = asyncio.create_task(transport_failed.wait())
+            waiters = (event_wait, disconnect_wait, failure_wait)
+            try:
+                done, _pending = await asyncio.wait(
+                    waiters,
+                    timeout=remaining_s,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                for waiter in waiters:
+                    if not waiter.done():
+                        waiter.cancel()
+                await asyncio.gather(*waiters, return_exceptions=True)
+            if not done:
+                return False
+
+    async def await_receipt_custody(deadline: float, label: str) -> None:
+        """Require failed receipts to be replayed and accepted before exit."""
+        while receipt_tasks or receipt_outstanding:
+            receipt_tasks.difference_update(
+                task for task in tuple(receipt_tasks) if task.done()
+            )
+            raise_transport_errors(label)
+            if (
+                link_disconnected.is_set()
+                or not bool(getattr(client, "is_connected", True))
+            ):
+                link_disconnected.set()
+                if not await reconnect_before(deadline, label):
+                    break
+                continue
+            remaining_s = deadline - asyncio.get_running_loop().time()
+            if remaining_s <= 0.0:
+                break
+            if receipt_tasks:
+                tasks = tuple(receipt_tasks)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=remaining_s,
+                    )
+                except asyncio.TimeoutError:
+                    break
+                receipt_tasks.difference_update(tasks)
+                continue
+            receipt_state_changed.clear()
+            if not receipt_outstanding:
+                break
+            if not await wait_for_event_before(
+                receipt_state_changed,
+                deadline,
+                label,
+            ):
+                break
+        if receipt_outstanding:
+            raise RuntimeError(
+                f"{label} failed: {len(receipt_outstanding)} retained gateway "
+                "record receipt(s) were not replayed before the original deadline"
+            )
+
+    async def await_transport_duration(
+        timeout_s: float,
+        label: str,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        if deadline is None:
+            deadline = asyncio.get_running_loop().time() + timeout_s
+        await wait_for_event_before(transport_failed, deadline, label)
+        raise_transport_errors(label)
+        if link_disconnected.is_set():
+            raise RuntimeError(
+                f"{label} failed: gateway remained disconnected at the "
+                "original monitoring deadline"
+            )
+        await await_receipt_custody(deadline, label)
 
     async def await_qualification(
         current: Qualification,
         timeout_s: float,
         label: str,
+        *,
+        deadline: float | None = None,
     ) -> None:
-        try:
-            await asyncio.wait_for(qualification_done.wait(), timeout=timeout_s)
-        except asyncio.TimeoutError as exc:
+        loop = asyncio.get_running_loop()
+        if deadline is None:
+            deadline = loop.time() + timeout_s
+        if not await wait_for_event_before(
+            qualification_done,
+            deadline,
+            f"{label} qualification",
+        ):
             raise RuntimeError(
                 f"{label} qualification timed out after {timeout_s:.1f}s"
-            ) from exc
+            )
         raise_transport_errors(f"{label} qualification")
         if isinstance(current, SurveyQualification):
+            drain_deadline = deadline
             quiet_s = max(
                 float(getattr(args, "survey_terminal_drain_quiet_s", 0.0)),
                 float(args.notification_hold_s),
             )
             if quiet_s > 0.0:
-                loop = asyncio.get_running_loop()
-                deadline = loop.time() + SURVEY_TERMINAL_DRAIN_MAX_S
+                drain_deadline = min(
+                    deadline,
+                    loop.time() + SURVEY_TERMINAL_DRAIN_MAX_S,
+                )
 
                 # Legacy firmware can publish its terminal event before the
                 # last reliable cleanup result reaches the BLE head. Keep the
@@ -1091,7 +1470,14 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 # noisy peer cannot keep this command attached forever.
                 survey_custody_activity.clear()
                 while True:
-                    remaining_s = deadline - loop.time()
+                    if link_disconnected.is_set():
+                        if not await reconnect_before(
+                            drain_deadline,
+                            f"{label} terminal drain",
+                        ):
+                            break
+                        survey_custody_activity.clear()
+                    remaining_s = drain_deadline - loop.time()
                     if remaining_s <= 0.0:
                         break
                     try:
@@ -1102,9 +1488,16 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     except asyncio.TimeoutError:
                         break
                     survey_custody_activity.clear()
-                while receipt_tasks:
-                    await asyncio.gather(*tuple(receipt_tasks))
-                raise_transport_errors(f"{label} terminal drain")
+            await await_receipt_custody(
+                drain_deadline,
+                f"{label} terminal drain",
+            )
+            raise_transport_errors(f"{label} terminal drain")
+        else:
+            await await_receipt_custody(
+                deadline,
+                f"{label} qualification receipt drain",
+            )
         current.validate()
 
     async def await_assignment_replay_clear(timeout_s: float) -> None:
@@ -1121,6 +1514,16 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             if not assignment_replay_barrier.active:
                 break
             raise_transport_errors("assignment replay drain")
+            if link_disconnected.is_set():
+                if not await reconnect_before(
+                    deadline,
+                    "assignment replay drain",
+                ):
+                    raise RuntimeError(
+                        "assignment replay terminal receipt timed out before "
+                        "successor command"
+                    )
+                continue
             remaining_s = deadline - loop.time()
             if remaining_s <= 0.0:
                 raise RuntimeError(
@@ -1153,6 +1556,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             bytes(await client.read_gatt_char(GATEWAY_IDENTITY_UUID))
         )
         delivery_dedup.set_gateway_id(gateway_id)
+        connection_generation = 1
         characteristic = client.services.get_characteristic(PACKET_RX_UUID)
         if characteristic is None:
             raise RuntimeError("gateway packet RX characteristic is unavailable")
@@ -1160,13 +1564,14 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             1,
             min(int(characteristic.max_write_without_response_size or 20), 244),
         )
-        defer_notifications = args.notification_hold_s > 0.0
-        notifications_enabled = False
         if not defer_notifications:
-            await client.start_notify(PACKET_TX_UUID, on_notify)
+            await client.start_notify(
+                PACKET_TX_UUID,
+                notification_callback(connection_generation),
+            )
             notifications_enabled = True
 
-        async def enable_notifications() -> None:
+        async def enable_notifications(deadline: float | None = None) -> None:
             nonlocal defer_notifications, notifications_enabled
             if notifications_enabled:
                 return
@@ -1176,26 +1581,115 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 flush=True,
             )
             if args.notification_hold_s > 0.0:
-                await asyncio.sleep(args.notification_hold_s)
-            await client.start_notify(PACKET_TX_UUID, on_notify)
+                if deadline is None:
+                    await asyncio.sleep(args.notification_hold_s)
+                else:
+                    remaining_s = deadline - asyncio.get_running_loop().time()
+                    if remaining_s <= 0.0:
+                        raise RuntimeError(
+                            "BLE notification hold exhausted the original "
+                            "operation deadline"
+                        )
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.sleep(args.notification_hold_s),
+                            timeout=remaining_s,
+                        )
+                    except asyncio.TimeoutError as exc:
+                        raise RuntimeError(
+                            "BLE notification hold exhausted the original "
+                            "operation deadline"
+                        ) from exc
+            reconnect_deadline = deadline
+            if reconnect_deadline is None:
+                reconnect_deadline = (
+                    asyncio.get_running_loop().time() + args.connect_timeout
+                )
+            if (
+                link_disconnected.is_set()
+                or not bool(getattr(client, "is_connected", True))
+            ):
+                link_disconnected.set()
+                if not await reconnect_before(
+                    reconnect_deadline,
+                    "BLE notification start",
+                ):
+                    raise RuntimeError(
+                        "BLE notification reconnect exceeded its deadline"
+                    )
+                print("BLE_NOTIFICATIONS_ENABLED", flush=True)
+                return
+            await client.start_notify(
+                PACKET_TX_UUID,
+                notification_callback(connection_generation),
+            )
             notifications_enabled = True
             defer_notifications = False
+            if link_disconnected.is_set():
+                if not await reconnect_before(
+                    reconnect_deadline,
+                    "BLE notification start",
+                ):
+                    raise RuntimeError(
+                        "BLE notification reconnect exceeded its deadline"
+                    )
             raise_transport_errors("BLE notification start")
             print("BLE_NOTIFICATIONS_ENABLED", flush=True)
 
-        async def send_command(command_name: str, identity: int, command: object) -> None:
+        async def send_command(
+            command_name: str,
+            identity: int,
+            command: object,
+            *,
+            timeout_s: float | None = None,
+        ) -> float | None:
+            nonlocal command_write_active
+
+            if (
+                link_disconnected.is_set()
+                or not bool(getattr(client, "is_connected", True))
+            ):
+                link_disconnected.set()
+                reconnect_deadline = (
+                    asyncio.get_running_loop().time() + args.connect_timeout
+                )
+                if not await reconnect_before(reconnect_deadline, command_name):
+                    raise RuntimeError(
+                        f"{command_name} could not reconnect before command write"
+                    )
+            if characteristic is None:
+                raise RuntimeError("gateway packet RX characteristic is unavailable")
             print(
                 f"BLE_CONNECTED gateway_id=0x{gateway_id:016x} command={command_name} "
                 f"session={identity} frame={command.frame.hex()}",
                 flush=True,
             )
-            await send_gateway_frame(
-                client,
-                characteristic,
-                command.frame,
-                chunk_size=chunk_size,
-            )
+            command_generation = connection_generation
+            command_write_active = True
+            try:
+                await send_gateway_frame(
+                    client,
+                    characteristic,
+                    command.frame,
+                    chunk_size=chunk_size,
+                    expected_generation=command_generation,
+                )
+            except Exception as exc:
+                if not disconnect_errors:
+                    disconnect_errors.append(
+                        "gateway command write failed; delivery is ambiguous "
+                        "and the command will not be resent: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                transport_failed.set()
+            finally:
+                command_write_active = False
             raise_transport_errors(command_name)
+            if timeout_s is None:
+                return None
+            return asyncio.get_running_loop().time() + timeout_s
+
+        qualification_deadline: float | None = None
 
         if args.command == "monitor":
             print(
@@ -1206,7 +1700,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             route_identity = _next_identity()
             operation_policy = _assignment_operation_policy(
                 args.expected_anchors,
-                command_budget_ms,
+                assignment_command_budget_ms,
                 deepest_hop=getattr(args, "deepest_hop", 0),
             )
             route_args = {
@@ -1214,7 +1708,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 "gateway_id": gateway_id,
                 "session_id": route_identity,
                 "seq": route_identity & 0xFFFF,
-                "command_budget_ms": command_budget_ms,
+                "command_budget_ms": assignment_command_budget_ms,
                 "operation_policy": operation_policy,
             }
             qualification = RouteRefreshQualification(
@@ -1223,19 +1717,22 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 route_identity,
             )
             await enable_notifications()
-            await send_command(
+            route_timeout_s = _qualification_timeout_s(
+                args.route_refresh_timeout,
+                assignment_command_budget_ms
+                or ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
+            )
+            qualification_deadline = await send_command(
                 "here-i-am",
                 route_identity,
                 build_here_i_am_command(**route_args),
+                timeout_s=route_timeout_s,
             )
             await await_qualification(
                 qualification,
-                _qualification_timeout_s(
-                    args.route_refresh_timeout,
-                    command_budget_ms
-                    or ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
-                ),
+                route_timeout_s,
                 "Here-I-Am local flood",
+                deadline=qualification_deadline,
             )
             print(
                 "HERE_I_AM_LOCAL_FLOOD_OK "
@@ -1274,19 +1771,21 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 expected_multihop_anchors=args.expected_multihop_anchors,
                 expected_anchor_hops=args.expected_anchor_hops,
             )
-            await send_command(
+            assignment_timeout_s = _qualification_timeout_s(
+                args.assignment_timeout,
+                assignment_policy.assignment.operation_budget_ms,
+            )
+            qualification_deadline = await send_command(
                 "assign-slots",
                 assignment_identity,
                 build_assign_discovery_slots_command(**assignment_args),
+                timeout_s=assignment_timeout_s,
             )
             await await_qualification(
                 qualification,
-                _qualification_timeout_s(
-                    args.assignment_timeout,
-                    command_budget_ms
-                    or DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
-                ),
+                assignment_timeout_s,
                 "assignment reachability",
+                deadline=qualification_deadline,
             )
             print(
                 "HERE_I_AM_REACHABILITY_QUALIFICATION_OK "
@@ -1314,7 +1813,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 elif args.command == "assign-slots":
                     assignment_policy = _assignment_operation_policy(
                         args.expected_anchors,
-                        command_budget_ms,
+                        assignment_command_budget_ms,
                         deepest_hop=getattr(args, "deepest_hop", 0),
                     )
                     command_args["command_budget_ms"] = (
@@ -1350,12 +1849,9 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     survey_id = args.survey_id or identity
                     survey_policy = _survey_operation_policy(
                         expected_anchor_count=args.expected_anchors,
-                        command_budget_ms=command_budget_ms,
                         discovery_slot_count=args.discovery_slots,
                         report_grace_ms=args.survey_duration_ms,
-                    )
-                    command_args["command_budget_ms"] = (
-                        survey_policy.discovery.operation_budget_ms
+                        deepest_hop=getattr(args, "deepest_hop", 0),
                     )
                     command = build_anchor_discovery_command(
                         **command_args,
@@ -1363,11 +1859,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         duration_ms=args.survey_duration_ms,
                         discovery_slot_count=args.discovery_slots,
                         sample_count=args.samples,
-                        expected_anchor_count=(
-                            args.expected_anchors
-                            if args.require_survey_success
-                            else None
-                        ),
+                        expected_anchor_count=args.expected_anchors,
                         operation_policy=survey_policy,
                     )
                     if args.require_survey_success:
@@ -1390,9 +1882,29 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     await await_assignment_replay_clear(
                         args.assignment_timeout
                     )
-                await send_command(args.command, identity, command)
+                qualification_timeout_s = None
+                if isinstance(qualification, SurveyQualification):
+                    qualification_timeout_s = _qualification_timeout_s(
+                        args.duration,
+                        command_budget_ms
+                        or SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+                    )
+                elif isinstance(qualification, AssignmentQualification):
+                    qualification_timeout_s = _qualification_timeout_s(
+                        args.assignment_timeout,
+                        assignment_command_budget_ms
+                        or DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
+                    )
+                else:
+                    qualification_timeout_s = args.duration
+                qualification_deadline = await send_command(
+                    args.command,
+                    identity,
+                    command,
+                    timeout_s=qualification_timeout_s,
+                )
                 if defer_notifications:
-                    await enable_notifications()
+                    await enable_notifications(qualification_deadline)
                 if index + 1 < args.repeat:
                     await asyncio.sleep(args.interval)
                     raise_transport_errors(args.command)
@@ -1407,6 +1919,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     or SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
                 ),
                 "survey",
+                deadline=qualification_deadline,
             )
             print(
                 "SURVEY_QUALIFICATION_OK "
@@ -1426,10 +1939,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 qualification,
                 _qualification_timeout_s(
                     args.assignment_timeout,
-                    command_budget_ms
+                    assignment_command_budget_ms
                     or DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
                 ),
                 "assignment",
+                deadline=qualification_deadline,
             )
             print(
                 "ASSIGNMENT_QUALIFICATION_OK "
@@ -1440,11 +1954,18 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 flush=True,
             )
         elif args.command != "qualify-reachability":
-            await await_transport_duration(args.duration, args.command)
+            await await_transport_duration(
+                args.duration,
+                args.command,
+                deadline=qualification_deadline,
+            )
         while receipt_tasks:
-            await asyncio.gather(*tuple(receipt_tasks))
+            tasks = tuple(receipt_tasks)
+            await asyncio.gather(*tasks)
+            receipt_tasks.difference_update(tasks)
         raise_transport_errors("BLE session")
         print(f"BLE_COMPLETE packets={received}", flush=True)
+        session_complete = True
     return qualification
 
 
@@ -1466,6 +1987,21 @@ def main() -> None:
     parser.add_argument("--host-id", type=lambda value: int(value, 0), default=1)
     parser.add_argument("--duration", type=float, default=12.0)
     parser.add_argument("--connect-timeout", type=float, default=12.0)
+    parser.add_argument(
+        "--reconnect-attempts",
+        type=int,
+        default=BLE_RECONNECT_ATTEMPTS_DEFAULT,
+        help=(
+            "bounded reconnect attempts after a completed command write; "
+            "the command is never resent"
+        ),
+    )
+    parser.add_argument(
+        "--reconnect-delay-s",
+        type=float,
+        default=BLE_RECONNECT_DELAY_DEFAULT_S,
+        help="delay before each bounded reconnect attempt",
+    )
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--interval", type=float, default=0.05)
     parser.add_argument("--survey-id", type=lambda value: int(value, 0), default=0)
@@ -1530,6 +2066,10 @@ def main() -> None:
         args.expected_anchor_hops[node_id] = hop_count
     if args.notification_hold_s < 0.0:
         parser.error("--notification-hold-s must be non-negative")
+    if args.reconnect_attempts < 0:
+        parser.error("--reconnect-attempts must be non-negative")
+    if args.reconnect_delay_s < 0.0:
+        parser.error("--reconnect-delay-s must be non-negative")
     if args.survey_terminal_drain_quiet_s < 0.0:
         parser.error("--survey-terminal-drain-quiet-s must be non-negative")
     if args.require_survey_success and args.command != "survey":
@@ -1585,12 +2125,18 @@ def main() -> None:
                 f"{required_assignment_budget_ms}"
             )
     if args.command == "survey" and args.command_budget_ms is not None:
+        if args.command_budget_ms > SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS:
+            parser.error(
+                "survey --command-budget-ms must not exceed the 30-minute "
+                f"safety limit ({SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS})"
+            )
         required_survey_budget_ms = discovery_required_budget_ms(
-            DISCOVERY_DEFAULT_START_DELAY_MS,
+            discovery_required_start_delay_ms(args.deepest_hop),
             DISCOVERY_DEFAULT_SLOT_MS,
             args.discovery_slots,
             DISCOVERY_DEFAULT_ROUND_COUNT,
             args.survey_duration_ms,
+            args.deepest_hop,
         )
         if args.command_budget_ms < required_survey_budget_ms:
             parser.error(

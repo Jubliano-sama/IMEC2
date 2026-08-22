@@ -1738,8 +1738,26 @@ static int handle_route_request(struct mesh_relay *relay,
 
     if (reply_available) {
         uint32_t reply_epoch = fields.route_epoch;
+        uint32_t reply_earliest_tx_ms = route_reply_earliest_tx_ms(
+            now_ms,
+            fields.route_reply_rx_delay_ms,
+            random_value);
+        struct route_discovery_fields reply_fields = fields;
         const struct route_candidate *reply_route_ptr =
             gateway_reply_available ? &reply_route : NULL;
+
+        /*
+         * Compact event timing is encoded as a delay from the reference
+         * passed to append_route_discovery_tlvs().  A route reply is held for
+         * its responder slot before RF, so retaining the request-receive
+         * reference shifts the origin's reconstructed cadence by that whole
+         * hold.  Rebase only the wire representation to the scheduled reply
+         * transmission; the responder keeps the exact timing it already
+         * admitted above.
+         */
+        if (reply_fields.proposed_channel9_timing_valid) {
+            reply_fields.timing_reference_ms = reply_earliest_tx_ms;
+        }
 
         ret = route_epoch_select_newer(reply_epoch,
                                        relay->upstream.current_epoch,
@@ -1753,7 +1771,7 @@ static int handle_route_request(struct mesh_relay *relay,
             return ret;
         }
         ret = build_route_reply(relay,
-                                &fields,
+                                &reply_fields,
                                 reply_route_ptr,
                                 gateway_reply_available ? selected_path : NULL,
                                 previous_hop_id,
@@ -1764,10 +1782,7 @@ static int handle_route_request(struct mesh_relay *relay,
             rollback_reactive_route(relay, &route_rollback);
         }
         if (ret == PROTO_OK) {
-            result->route_reply.earliest_tx_ms = route_reply_earliest_tx_ms(
-                now_ms,
-                fields.route_reply_rx_delay_ms,
-                random_value);
+            result->route_reply.earliest_tx_ms = reply_earliest_tx_ms;
             result->route_reply.earliest_tx_valid = true;
             if (install_reply_timing) {
                 ret = mesh_relay_set_channel9_timing_guarded_direction(

@@ -314,6 +314,18 @@ int node_comm_lease_complete(struct node_comm *comm,
 int node_comm_lease_await_confirmation(struct node_comm *comm,
                                        const struct node_comm_lease *lease,
                                        uint64_t now_ms);
+/*
+ * After the transport has synchronously cancelled this exact reliable owner,
+ * stop waiting for an ACK that can no longer arrive and make the preserved
+ * delivery eligible for a later attempt.  The spent RF attempt and immutable
+ * delivery generation are retained; a stale cancellation completion cannot
+ * requeue a newer owner.
+ */
+int node_comm_requeue_awaiting_confirmation(
+    struct node_comm *comm,
+    uint32_t handle,
+    uint32_t delivery_generation,
+    uint64_t now_ms);
 int node_comm_confirm_delivery(struct node_comm *comm,
                                uint32_t handle,
                                uint64_t now_ms);

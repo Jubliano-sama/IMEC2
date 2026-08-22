@@ -519,7 +519,8 @@ static bool gateway_survey_round_note_control_result(
     const struct proto_packet *command,
     enum command_id command_id,
     enum command_status status,
-    uint8_t reason)
+    uint8_t reason,
+    bool ack_confirm_already_received)
 {
     struct app_gateway_survey_round_control control;
     const uint32_t operation_session_id =
@@ -554,10 +555,42 @@ static bool gateway_survey_round_note_control_result(
         return true;
     }
 
+    if (control.stage == APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER &&
+        status == COMMAND_OK && !ack_confirm_already_received) {
+        /*
+         * START responder and START initiator share one immutable execution
+         * barrier.  Once the responder's accepted result has reached host
+         * custody, waiting for its multihop ACK_CONFIRM before dispatching
+         * the initiator only consumes that barrier.  The generic semantic
+         * ACK path still owns and completes the responder's exact result
+         * tail; round orchestration no longer depends on that tail.
+         *
+         * Keep every other control confirmation-gated.  In particular, a
+         * failed responder START must be confirmed before cleanup, and the
+         * initiator START remains confirmed before the lane may observe.
+         */
+        app_gateway_survey_round_clear_control_confirmation(
+            &gateway_survey_round);
+        ret = app_gateway_survey_round_note_control_success(
+            &gateway_survey_round,
+            command_id,
+            command->dst_id,
+            operation_session_id);
+        if (ret != PROTO_OK) {
+            gateway_survey_finish_status(
+                COMMAND_INTERNAL_ERROR,
+                GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+            return true;
+        }
+        (void)gateway_survey_work_schedule(
+            SURVEY_GATEWAY_DUE_BOUNDARY_POLL, 0u);
+    }
+
     /*
      * The request-delivery handle is now retired, but the round retains the
-     * full semantic result identity. The ACK_CONFIRM callback must match that
-     * exact identity before this control may advance or begin cleanup.
+     * full semantic result identity. Except for an accepted responder START
+     * above, the ACK_CONFIRM callback must match that exact identity before
+     * this control may advance or begin cleanup.
      */
     return true;
 }
@@ -718,11 +751,14 @@ static void gateway_survey_round_note_cleanup_peer(uint8_t peer_mask)
     }
 }
 
-static bool gateway_survey_round_drive(void)
+static bool gateway_survey_round_drive(bool *deferred_due_owned)
 {
     struct app_gateway_survey_round_control control;
     int ret;
 
+    if (deferred_due_owned != NULL) {
+        *deferred_due_owned = false;
+    }
     if (!gateway_survey_round_retire_failed_control_lane()) {
         return true;
     }
@@ -783,6 +819,45 @@ static bool gateway_survey_round_drive(void)
                 COMMAND_INTERNAL_ERROR,
                 GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
             return true;
+        }
+        if (control.stage ==
+                APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR) {
+            uint32_t capacity_delay_ms = 0u;
+            uint32_t operation_delay_ms;
+
+            ret = app_mesh_report_gateway_ack_cleanup_pair_capacity(
+                k_uptime_get_32(), &capacity_delay_ms);
+            if (ret == -EAGAIN) {
+                operation_delay_ms = uptime_ms_until_deadline(
+                    k_uptime_get_32(),
+                    gateway_survey_operation_deadline_ms);
+                if (operation_delay_ms == 0u) {
+                    gateway_survey_finish_status(
+                        COMMAND_TIMEOUT,
+                        GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
+                    return true;
+                }
+                if (capacity_delay_ms == 0u) {
+                    capacity_delay_ms =
+                        GATEWAY_SURVEY_TRANSACTION_POLL_MS;
+                }
+                status_debug_printf(
+                    "DBG_SURVEY_DRIVE_DEFER reason=cleanup-capacity delay_ms=%u\n",
+                    MIN(capacity_delay_ms, operation_delay_ms));
+                (void)gateway_survey_work_schedule(
+                    SURVEY_GATEWAY_DUE_BOUNDARY_POLL,
+                    MIN(capacity_delay_ms, operation_delay_ms));
+                if (deferred_due_owned != NULL) {
+                    *deferred_due_owned = true;
+                }
+                return true;
+            }
+            if (ret < 0) {
+                gateway_survey_finish_status(
+                    COMMAND_INTERNAL_ERROR,
+                    GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
+                return true;
+            }
         }
         ret = gateway_survey_send_control(&control);
         if (ret < 0) {

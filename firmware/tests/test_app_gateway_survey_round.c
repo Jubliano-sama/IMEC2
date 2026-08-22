@@ -1004,14 +1004,16 @@ struct test_control_confirmation_fixture {
     struct app_gateway_survey_round_ack_confirm confirm;
 };
 
-static void control_confirmation_fixture_init(
+static void control_confirmation_fixture_capture_current(
     struct test_control_confirmation_fixture *fixture,
     uint32_t started_at_ms,
-    uint64_t deadline_ms)
+    uint64_t deadline_ms,
+    enum command_status status,
+    uint16_t transaction_id,
+    uint8_t result_tag)
 {
-    const uint64_t operation_generation = UINT64_C(0x0000000277112233);
-    const uint8_t request_payload[] = { 0x19u, 0x27u };
-    const uint8_t result_payload[] = { 0x31u, 0x41u };
+    const uint8_t request_payload[] = { 0x19u, (uint8_t)transaction_id };
+    const uint8_t result_payload[] = { 0x31u, result_tag };
     struct node_transaction_key result_key;
     struct node_comm_terminal_event terminal;
     uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
@@ -1019,19 +1021,15 @@ static void control_confirmation_fixture_init(
     enum survey_gateway_transaction_result transaction_result;
     enum node_transaction_action action;
 
-    memset(fixture, 0, sizeof(*fixture));
-    context_init(&fixture->context, 1u, 1u);
-    fixture->context.operation_generation = operation_generation;
-    assert(app_gateway_survey_round_begin(
-               &fixture->round, &fixture->context, 1u, 0u) == PROTO_OK);
     assert(app_gateway_survey_round_current_control(
                &fixture->round, &fixture->control) == PROTO_OK);
 
     result_key = (struct node_transaction_key) {
         .requester_id = UINT64_C(0xabcdef0123456789),
         .responder_id = fixture->control.target_id,
-        .session_id = survey_operation_session_id(operation_generation),
-        .transaction_id = 0x52u,
+        .session_id = survey_operation_session_id(
+            fixture->context.operation_generation),
+        .transaction_id = transaction_id,
         .operation_id = (uint16_t)fixture->control.command_id,
     };
     assert(node_transaction_digest_bytes(request_payload,
@@ -1057,12 +1055,14 @@ static void control_confirmation_fixture_init(
                request_digest,
                result_digest,
                result_key.transaction_id,
-               COMMAND_OK,
+               status,
                (uint64_t)started_at_ms + 1u,
                &transaction_result,
                &action) == PROTO_OK);
     assert(transaction_result ==
-           SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
+           (status == COMMAND_OK ?
+                SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK :
+                SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_FAILURE));
 
     terminal = (struct node_comm_terminal_event) {
         .handle = 0x55u,
@@ -1082,7 +1082,7 @@ static void control_confirmation_fixture_init(
                fixture->control.target_id,
                &fixture->transaction.active,
                started_at_ms,
-               COMMAND_OK) == PROTO_OK);
+               status) == PROTO_OK);
     assert(survey_gateway_transaction_phase_complete(
                &fixture->transaction) == PROTO_OK);
 
@@ -1096,6 +1096,22 @@ static void control_confirmation_fixture_init(
     memcpy(fixture->confirm.semantic_digest,
            result_digest,
            sizeof(fixture->confirm.semantic_digest));
+}
+
+static void control_confirmation_fixture_init(
+    struct test_control_confirmation_fixture *fixture,
+    uint32_t started_at_ms,
+    uint64_t deadline_ms)
+{
+    const uint64_t operation_generation = UINT64_C(0x0000000277112233);
+
+    memset(fixture, 0, sizeof(*fixture));
+    context_init(&fixture->context, 1u, 1u);
+    fixture->context.operation_generation = operation_generation;
+    assert(app_gateway_survey_round_begin(
+               &fixture->round, &fixture->context, 1u, 0u) == PROTO_OK);
+    control_confirmation_fixture_capture_current(
+        fixture, started_at_ms, deadline_ms, COMMAND_OK, 0x52u, 0x41u);
 }
 
 static void test_ack_confirm_deadline_controls_round_advance(void)
@@ -1382,6 +1398,162 @@ static void dispatch_until_stage(
     }
 }
 
+static void assert_control_confirmation_equal(
+    const struct app_gateway_survey_round_control_confirmation *left,
+    const struct app_gateway_survey_round_control_confirmation *right)
+{
+    assert(left->control.pair.operation_generation ==
+           right->control.pair.operation_generation);
+    assert(left->control.pair.survey_id == right->control.pair.survey_id);
+    assert(left->control.pair.initiator_id ==
+           right->control.pair.initiator_id);
+    assert(left->control.pair.responder_id ==
+           right->control.pair.responder_id);
+    assert(left->control.pair.sample_count ==
+           right->control.pair.sample_count);
+    assert(left->control.stage == right->control.stage);
+    assert(left->control.command_id == right->control.command_id);
+    assert(left->control.target_id == right->control.target_id);
+    assert(left->control.lane_index == right->control.lane_index);
+    assert(node_transaction_key_equal(&left->result_key,
+                                      &right->result_key));
+    assert(memcmp(left->semantic_digest,
+                  right->semantic_digest,
+                  sizeof(left->semantic_digest)) == 0);
+    assert(left->status == right->status);
+    assert(left->started_at_ms == right->started_at_ms);
+    assert(left->deadline_ms == right->deadline_ms);
+    assert(left->confirmed_at_ms == right->confirmed_at_ms);
+    assert(left->valid == right->valid);
+    assert(left->confirmed == right->confirmed);
+}
+
+static void test_successful_responder_start_result_releases_serial_dispatch(
+    void)
+{
+    static struct test_control_confirmation_fixture fixture;
+    struct app_gateway_survey_round_control responder_control;
+    struct app_gateway_survey_round_control initiator_control;
+    struct app_gateway_survey_round_ack_confirm responder_confirm;
+    struct app_gateway_survey_round_control_confirmation initiator_before;
+    const uint64_t operation_generation = UINT64_C(0x0000000277112233);
+
+    memset(&fixture, 0, sizeof(fixture));
+    context_init(&fixture.context, 1u, 1u);
+    fixture.context.operation_generation = operation_generation;
+    assert(app_gateway_survey_round_begin(
+               &fixture.round, &fixture.context, 1u, 0u) == PROTO_OK);
+    dispatch_until_stage(&fixture.round,
+                         APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER);
+    control_confirmation_fixture_capture_current(
+        &fixture, 100u, 15100u, COMMAND_OK, 0x62u, 0x62u);
+    responder_control = fixture.control;
+    responder_confirm = fixture.confirm;
+    assert(app_gateway_survey_round_control_confirmation_pending(
+        &fixture.round));
+
+    /* The responder is already armed once its successful result reaches
+     * gateway/host custody.  Waiting for its multi-hop ACK_CONFIRM here can
+     * consume the common execute barrier before the initiator is released. */
+    app_gateway_survey_round_clear_control_confirmation(&fixture.round);
+    assert(app_gateway_survey_round_note_control_success(
+               &fixture.round,
+               responder_control.command_id,
+               responder_control.target_id,
+               test_control_session_id(&responder_control.pair)) == PROTO_OK);
+    assert(app_gateway_survey_round_current_control(
+               &fixture.round, &initiator_control) == PROTO_OK);
+    assert(initiator_control.stage ==
+           APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR);
+
+    /* Glue retires only the bypassed responder barrier, then binds the next
+     * result to a distinct transaction identity. */
+    control_confirmation_fixture_capture_current(
+        &fixture, 200u, 15200u, COMMAND_OK, 0x63u, 0x63u);
+    assert(fixture.control.stage ==
+           APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR);
+    initiator_before = fixture.round.control_confirmation;
+
+    responder_confirm.first_received_at_ms = 250u;
+    assert(app_gateway_survey_round_note_control_ack_confirm(
+               &fixture.round, &responder_confirm) == PROTO_ERR_NOT_FOUND);
+    assert_control_confirmation_equal(
+        &fixture.round.control_confirmation, &initiator_before);
+    assert(app_gateway_survey_round_note_control_ack_confirm(
+               &fixture.round, &responder_confirm) == PROTO_ERR_NOT_FOUND);
+    assert_control_confirmation_equal(
+        &fixture.round.control_confirmation, &initiator_before);
+
+    fixture.confirm.first_received_at_ms = 251u;
+    assert(app_gateway_survey_round_note_control_ack_confirm(
+               &fixture.round, &fixture.confirm) == PROTO_OK);
+    assert(!app_gateway_survey_round_control_confirmation_pending(
+        &fixture.round));
+}
+
+static void test_ack_confirm_bypass_excludes_other_stages_and_failures(void)
+{
+    static const enum app_gateway_survey_control_stage gated_stages[] = {
+        APP_GATEWAY_SURVEY_CONTROL_PREPARE_INITIATOR,
+        APP_GATEWAY_SURVEY_CONTROL_PREPARE_RESPONDER,
+        APP_GATEWAY_SURVEY_CONTROL_START_INITIATOR,
+    };
+    static struct test_control_confirmation_fixture fixture;
+    const uint64_t operation_generation = UINT64_C(0x0000000277112233);
+
+    for (size_t i = 0u;
+         i < sizeof(gated_stages) / sizeof(gated_stages[0]);
+         i++) {
+        memset(&fixture, 0, sizeof(fixture));
+        context_init(&fixture.context, 1u, 1u);
+        fixture.context.operation_generation = operation_generation;
+        assert(app_gateway_survey_round_begin(
+                   &fixture.round,
+                   &fixture.context,
+                   1u,
+                   0u) == PROTO_OK);
+        dispatch_until_stage(&fixture.round, gated_stages[i]);
+        control_confirmation_fixture_capture_current(
+            &fixture,
+            300u + (uint32_t)i,
+            15300u + i,
+            COMMAND_OK,
+            (uint16_t)(0x70u + i),
+            0x70u + (uint8_t)i);
+        assert(app_gateway_survey_round_note_control_success(
+                   &fixture.round,
+                   fixture.control.command_id,
+                   fixture.control.target_id,
+                   test_control_session_id(&fixture.control.pair)) ==
+               PROTO_ERR_BUSY);
+        assert(app_gateway_survey_round_control_confirmation_pending(
+            &fixture.round));
+    }
+
+    memset(&fixture, 0, sizeof(fixture));
+    context_init(&fixture.context, 1u, 1u);
+    fixture.context.operation_generation = operation_generation;
+    assert(app_gateway_survey_round_begin(
+               &fixture.round, &fixture.context, 1u, 0u) == PROTO_OK);
+    dispatch_until_stage(&fixture.round,
+                         APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER);
+    control_confirmation_fixture_capture_current(
+        &fixture,
+        400u,
+        15400u,
+        COMMAND_RADIO_ERROR,
+        0x74u,
+        0x74u);
+    assert(app_gateway_survey_round_note_control_success(
+               &fixture.round,
+               fixture.control.command_id,
+               fixture.control.target_id,
+               test_control_session_id(&fixture.control.pair)) ==
+           PROTO_ERR_BUSY);
+    assert(app_gateway_survey_round_control_confirmation_pending(
+        &fixture.round));
+}
+
 static struct survey_sample make_lane_sample(
     const struct app_gateway_survey_round *round,
     size_t lane_index,
@@ -1618,6 +1790,66 @@ static void test_pair_result_admission_rejects_unready_lanes(void)
                NULL) == PROTO_ERR_STALE);
 }
 
+static void test_current_batch_result_is_recoverable_only_in_exact_cleanup_lane(void)
+{
+    static const enum survey_pair_round_lane_state live_states[] = {
+        SURVEY_PAIR_ROUND_LANE_ARMING,
+        SURVEY_PAIR_ROUND_LANE_ARMED,
+        SURVEY_PAIR_ROUND_LANE_OBSERVING,
+    };
+    struct survey_gateway_context context;
+    struct app_gateway_survey_round round;
+    struct app_gateway_survey_round before;
+    struct survey_sample sample;
+    struct survey_sample wrong_lane;
+    size_t lane_index = SIZE_MAX;
+    bool duplicate = true;
+
+    begin_single_pair_round(&context, &round);
+    dispatch_current_batch(&round);
+    sample = make_lane_sample(&round, 0u, 0u, 1500);
+    assert(app_gateway_survey_round_finalize_lane(
+               &round,
+               0u,
+               SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
+               SURVEY_PAIR_ROUND_CLEANUP_RETRY) == PROTO_OK);
+    assert(app_gateway_survey_round_lane(&round, 0u)->state ==
+           SURVEY_PAIR_ROUND_LANE_CLEANUP);
+
+    before = round;
+    assert(app_gateway_survey_round_preflight_sample(
+               &round,
+               SURVEY_PAIR_ROUND_LANE_CLEANUP,
+               sample.pair.responder_id,
+               &sample,
+               &lane_index,
+               &duplicate) == PROTO_OK);
+    assert(lane_index == 0u);
+    assert(!duplicate);
+    assert(memcmp(&round, &before, sizeof(round)) == 0);
+
+    for (size_t i = 0u; i < sizeof(live_states) / sizeof(live_states[0]); i++) {
+        assert(app_gateway_survey_round_preflight_sample(
+                   &round,
+                   live_states[i],
+                   sample.pair.responder_id,
+                   &sample,
+                   &lane_index,
+                   &duplicate) == PROTO_ERR_STALE);
+    }
+
+    wrong_lane = sample;
+    wrong_lane.pair.initiator_id += UINT64_C(0x100);
+    assert(app_gateway_survey_round_preflight_sample(
+               &round,
+               SURVEY_PAIR_ROUND_LANE_CLEANUP,
+               wrong_lane.pair.responder_id,
+               &wrong_lane,
+               &lane_index,
+               &duplicate) == PROTO_ERR_STALE);
+    assert(memcmp(&round, &before, sizeof(round)) == 0);
+}
+
 int main(void)
 {
     test_maximum_25_sparse_pairs_serialize_and_complete();
@@ -1634,12 +1866,15 @@ int main(void)
     test_control_result_requires_exact_ack_confirm_before_successor();
     test_ack_confirm_deadline_controls_round_advance();
     test_ack_confirm_physical_deadline_is_closed_open_across_wrap();
+    test_successful_responder_start_result_releases_serial_dispatch();
+    test_ack_confirm_bypass_excludes_other_stages_and_failures();
     test_outcome_event_identity_survives_retry_and_blocks_batch_advance();
     test_sample_conflict_is_rejected_without_round_mutation();
     test_f1dd_result_arrives_while_lane_is_arming();
     test_result_arrives_while_lane_is_armed();
     test_pair_result_admission_rejects_mismatched_identities();
     test_pair_result_admission_rejects_unready_lanes();
+    test_current_batch_result_is_recoverable_only_in_exact_cleanup_lane();
     puts("app gateway survey round tests passed");
     return 0;
 }

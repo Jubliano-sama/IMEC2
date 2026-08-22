@@ -40,7 +40,10 @@ class CaptureStackEvidenceTests(unittest.TestCase):
         with mock.patch.object(capture.subprocess, "run",
                                return_value=json_result) as run:
             capture._probe_is_visible("TEST-PROBE")
-        self.assertEqual(["pyocd", "list", "--json"], run.call_args.args[0])
+        self.assertEqual(
+            [str(capture.PYOCD_EXECUTABLE), "list", "--json"],
+            run.call_args.args[0],
+        )
 
         unsupported = mock.Mock(returncode=2, stdout="", stderr="unsupported")
         plain = mock.Mock(
@@ -51,7 +54,10 @@ class CaptureStackEvidenceTests(unittest.TestCase):
         with mock.patch.object(capture.subprocess, "run",
                                side_effect=[unsupported, plain]) as run:
             capture._probe_is_visible("TEST-PROBE")
-        self.assertEqual(["pyocd", "list"], run.call_args_list[1].args[0])
+        self.assertEqual(
+            [str(capture.PYOCD_EXECUTABLE), "list"],
+            run.call_args_list[1].args[0],
+        )
 
     def test_probe_enumeration_fallback_rejects_missing_probe(self) -> None:
         unsupported = mock.Mock(returncode=2, stdout="", stderr="unsupported")
@@ -76,7 +82,7 @@ class CaptureStackEvidenceTests(unittest.TestCase):
             command = run.call_args.args[0]
             self.assertEqual("script", command[0])
             self.assertIn(
-                "pyocd rtt -t nrf52833 -M pre-reset "
+                f"{capture.PYOCD_EXECUTABLE} rtt -t nrf52833 -M pre-reset "
                 "-a 0x20000410 -s 0x100 -u TEST-PROBE",
                 command[4],
             )
@@ -93,7 +99,7 @@ class CaptureStackEvidenceTests(unittest.TestCase):
             with mock.patch.object(capture.subprocess, "run", side_effect=fake_run) as run:
                 capture._read_target_flash("TEST-PROBE", destination)
             command = run.call_args.args[0]
-            self.assertEqual("pyocd", command[0])
+            self.assertEqual(str(capture.PYOCD_EXECUTABLE), command[0])
             self.assertIn("commander", command)
             self.assertIn("halt", command)
             self.assertTrue(any(

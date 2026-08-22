@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 VERIFIER_PATH = REPO_ROOT / "firmware" / "scripts" / "verify_stack_evidence.py"
 POLICY_PATH = REPO_ROOT / "firmware" / "include" / "stack_budget.h"
 GATEWAY_CONFIG_PATH = REPO_ROOT / "firmware" / "app" / "prj-gateway.conf"
+APP_CONFIG_PATH = REPO_ROOT / "firmware" / "app" / "src" / "app_config.h"
 SPEC = importlib.util.spec_from_file_location("verify_stack_evidence", VERIFIER_PATH)
 assert SPEC is not None and SPEC.loader is not None
 verifier = importlib.util.module_from_spec(SPEC)
@@ -1320,7 +1321,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         required = verifier._required_threads(build, policy)
 
-        self.assertEqual(required["anchor_uwb_scan"], 7232)
+        self.assertEqual(required["anchor_uwb_scan"], 8192)
         rows = {
             name: (size - verifier._required_free(size),
                    verifier._required_free(size), size)
@@ -1335,6 +1336,100 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         issues = verifier._check_sample_rows(rows, policy, build)
         self.assertTrue(any("anchor_uwb_scan differs" in issue for issue in issues),
                         issues)
+
+    def test_anchor_scan_capacity_covers_measured_ddd_runtime_watermark(self) -> None:
+        """Keep source, verifier, and the hardware margin gate synchronized."""
+        source = APP_CONFIG_PATH.read_text(encoding="utf-8")
+        match = re.search(
+            r"^#define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE (\d+)u$",
+            source,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(match)
+        configured = int(match.group(1))
+        observed_used = 6472
+
+        for preset in ("mesh_anchor", "mesh_anchor_forcedhop"):
+            with self.subTest(preset=preset):
+                policy = self.policies[preset]
+                build = verifier.BuildEvidence(
+                    self.root,
+                    preset=preset,
+                    config={
+                        "CONFIG_STACK_ALIGN_DOUBLE_WORD": True,
+                        "CONFIG_MPU_STACK_GUARD": True,
+                        "CONFIG_ARM_MPU_REGION_MIN_ALIGN_AND_SIZE": "32",
+                    },
+                )
+                owner_capacity = verifier._owner_capacity(
+                    policy, "anchor_uwb_scan"
+                )
+                runtime_size = verifier._required_threads(
+                    build, policy
+                )["anchor_uwb_scan"]
+                observed_free = runtime_size - observed_used
+
+                self.assertEqual(configured, owner_capacity)
+                self.assertEqual(configured, runtime_size)
+                self.assertGreaterEqual(
+                    observed_free,
+                    verifier._required_free(runtime_size),
+                    "the configured anchor scan queue does not retain the "
+                    "20 percent policy reserve above the 6472-byte DDD "
+                    "hardware watermark",
+                )
+
+                rows = {
+                    name: (
+                        size - verifier._required_free(size),
+                        verifier._required_free(size),
+                        size,
+                    )
+                    for name, size in verifier._required_threads(
+                        build, policy
+                    ).items()
+                }
+                rows["anchor_uwb_scan"] = (
+                    observed_used,
+                    observed_free,
+                    runtime_size,
+                )
+                self.assertEqual(
+                    [], verifier._check_sample_rows(rows, policy, build)
+                )
+
+    def test_old_anchor_scan_capacity_rejects_measured_ddd_watermark(self) -> None:
+        policy = self.policies["mesh_anchor"]
+        build = verifier.BuildEvidence(
+            self.root,
+            preset="mesh_anchor",
+            config={
+                "CONFIG_STACK_ALIGN_DOUBLE_WORD": True,
+                "CONFIG_MPU_STACK_GUARD": True,
+                "CONFIG_ARM_MPU_REGION_MIN_ALIGN_AND_SIZE": "32",
+            },
+        )
+        required = verifier._required_threads(build, policy)
+        rows = {
+            name: (
+                size - verifier._required_free(size),
+                verifier._required_free(size),
+                size,
+            )
+            for name, size in required.items()
+        }
+        rows["anchor_uwb_scan"] = (6472, 760, 7232)
+
+        issues = verifier._check_sample_rows(rows, policy, build)
+
+        self.assertTrue(any(
+            "anchor_uwb_scan differs from generated config" in issue
+            for issue in issues
+        ), issues)
+        self.assertTrue(any(
+            "free space below policy for anchor_uwb_scan" in issue
+            for issue in issues
+        ), issues)
 
     def test_gateway_runtime_model_uses_only_live_exact_workqueues(self) -> None:
         policy = self.policies["mesh_gateway"]

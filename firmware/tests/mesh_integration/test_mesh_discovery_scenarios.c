@@ -440,20 +440,19 @@ static int verify_response_order_is_hop_then_slot(void)
          spread_index < sizeof(spreads) / sizeof(spreads[0]);
          spread_index++) {
         uint16_t spread_ms = spreads[spread_index];
-        uint32_t slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
-            spread_ms, ANCHOR_COUNT);
+        uint32_t jitter_cap_ms =
+            DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(spread_ms);
 
         for (uint8_t hop = 1u; hop < DISCOVERY_ASSIGNMENT_MAX_HOPS; hop++) {
             uint32_t latest_ms = 0u;
             uint32_t next_earliest_ms = 0u;
-            uint64_t latest_deadline_ms;
             int ret = discovery_assignment_response_delay_ms(
                 ANCHOR_COUNT - 1u,
                 ANCHOR_COUNT,
                 hop,
                 spread_ms,
                 0u,
-                slot_width_ms - 1u,
+                jitter_cap_ms - 1u,
                 &latest_ms);
 
             REQUIRE(ret == PROTO_OK,
@@ -470,29 +469,27 @@ static int verify_response_order_is_hop_then_slot(void)
             REQUIRE(ret == PROTO_OK,
                     "next hop response hop=%u spread=%u ret=%d",
                     hop + 1u, spread_ms, ret);
-            latest_deadline_ms = discovery_assignment_response_deadline_ms(
-                0u, latest_ms, hop);
-            REQUIRE(latest_deadline_ms < next_earliest_ms,
-                    "hop custody overlap hop=%u spread=%u deadline=%" PRIu64
+            REQUIRE(latest_ms < next_earliest_ms,
+                    "first-contact cells overlap hop=%u spread=%u latest=%" PRIu32
                     " next=%" PRIu32,
-                    hop, spread_ms, latest_deadline_ms, next_earliest_ms);
+                    hop, spread_ms, latest_ms, next_earliest_ms);
         }
     }
 
     for (size_t index = 0u; index + 1u < 3u; index++) {
         uint8_t hop = (uint8_t)index + 1u;
-        uint32_t slot_width_ms = DISCOVERY_ASSIGNMENT_RESPONSE_SLOT_WIDTH_MS(
-            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 30u);
+        uint32_t jitter_cap_ms =
+            DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(
+                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS);
         uint32_t latest_ms = 0u;
         uint32_t next_earliest_ms = 0u;
-        uint64_t latest_deadline_ms;
         int ret = discovery_assignment_response_delay_ms(
             bench_slots[index],
             30u,
             hop,
             DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
             0u,
-            slot_width_ms - 1u,
+            jitter_cap_ms - 1u,
             &latest_ms);
 
         REQUIRE(ret == PROTO_OK,
@@ -509,13 +506,11 @@ static int verify_response_order_is_hop_then_slot(void)
         REQUIRE(ret == PROTO_OK,
                 "bench hop=%u slot=%u earliest rejected ret=%d",
                 hop + 1u, bench_slots[index + 1u], ret);
-        latest_deadline_ms = discovery_assignment_response_deadline_ms(
-            0u, latest_ms, hop);
-        REQUIRE(latest_deadline_ms < next_earliest_ms,
+        REQUIRE(latest_ms < next_earliest_ms,
                 "bench hop=%u slot=%u overlaps hop=%u slot=%u"
-                " deadline=%" PRIu64 " next=%" PRIu32,
+                " latest=%" PRIu32 " next=%" PRIu32,
                 hop, bench_slots[index], hop + 1u,
-                bench_slots[index + 1u], latest_deadline_ms,
+                bench_slots[index + 1u], latest_ms,
                 next_earliest_ms);
     }
     return 0;

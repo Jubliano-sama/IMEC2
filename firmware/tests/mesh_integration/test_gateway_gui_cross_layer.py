@@ -333,8 +333,8 @@ def main() -> None:
     assignment_budget_hex = profile.assignment.operation_budget_ms.to_bytes(
         4, "little"
     ).hex()
-    assert profile.assignment.operation_budget_ms == 1_591_204
-    assert assignment_budget_hex == "a4471800"
+    assert profile.assignment.operation_budget_ms == 1_800_000
+    assert assignment_budget_hex == "40771b00"
     policy_values = profile.encoded_values()
     full_policy_suffix = operation_policy_suffix(policy_values)
     assignment_policy_suffix = operation_policy_suffix(policy_values[:1])
@@ -383,7 +383,7 @@ def main() -> None:
     )
     expected_survey_payload = (
         "100200011504070000001a04fa0000000f0205004c0106"
-        "78020500ab04407e0500" + survey_policy_suffix
+        "78020500ab0440771b00" + survey_policy_suffix
     )
     policy_survey_parsed = firmware_parse(oracle, policy_survey.frame)
     assert "command_id=256" in policy_survey_parsed

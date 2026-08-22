@@ -27,8 +27,7 @@
 #define OLD_DISCOVERY_SLOT_US UINT64_C(1000)
 #define SURVEY_REPLY_OPPORTUNITY_COUNT 4u
 #define SURVEY_PAIR_GRAPH_SWEEP_SEEDS 512u
-#define SURVEY_GATEWAY_START_DELAY_MS \
-    OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS
+#define SURVEY_GATEWAY_BENCH_MAX_HOPS 1u
 #define SURVEY_GATEWAY_REPORT_SLOT_MS \
     (ROUTE_GATEWAY_ACK_TIMEOUT_MS + 20u + 250u)
 #define SURVEY_GATEWAY_BENCH_BUDGET_MS 100000u
@@ -65,10 +64,11 @@ static void test_survey_multihop_start_lead_covers_routed_redrives(void)
             SURVEY_PHY_PREP_MEASURED_MAX_MS +
             SURVEY_PHY_PREP_MARGIN_MS,
     };
-    const uint32_t routed_redrive_lead_ms =
+    const uint32_t routed_redrive_transport_ms =
         (SURVEY_DEFAULT_TTL + SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
-            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
-        SURVEY_PHY_PREP_BUDGET_MS;
+        SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS;
+    const uint32_t required_start_lead_ms =
+        routed_redrive_transport_ms + SURVEY_PHY_PREP_BUDGET_MS + 1u;
     struct survey_discovery_config config = {
         .survey_id = UINT32_C(0x53544152),
         .operation_generation = UINT64_C(0x53544152544c4541),
@@ -81,14 +81,15 @@ static void test_survey_multihop_start_lead_covers_routed_redrives(void)
 
     CHECK(SURVEY_PHY_PREP_BUDGET_MS == 1103u,
           "survey preparation no longer includes transport quiescence");
-    CHECK(routed_redrive_lead_ms == 17103u,
-          "routed survey-control horizon changed unexpectedly");
-    CHECK(config.start_delay_ms >= routed_redrive_lead_ms,
+    CHECK(routed_redrive_transport_ms == 24000u &&
+              required_start_lead_ms == 25104u,
+          "depth-eight survey-control horizon changed unexpectedly");
+    CHECK(config.start_delay_ms >= required_start_lead_ms,
           "survey START lead cannot cover routed control redrives");
     CHECK(survey_discovery_timing_from_age(
-              &config, routed_redrive_lead_ms, &timing) == PROTO_OK &&
+              &config, routed_redrive_transport_ms, &timing) == PROTO_OK &&
               timing.pending && !timing.active && !timing.expired &&
-              timing.wait_ms >= SURVEY_PHY_PREP_BUDGET_MS,
+              timing.wait_ms > SURVEY_PHY_PREP_BUDGET_MS,
           "last-hop survey reception lacks its PHY preparation window");
 
     /* The captured one-hop failure arrived at age 7518 ms.  Under the old
@@ -967,7 +968,8 @@ static void test_survey_gateway_collection_budget_sweep(void)
                  width_index++) {
                 struct survey_discovery_config config = {
                     .survey_id = UINT32_C(0x50665000) + anchor_count,
-                    .start_delay_ms = SURVEY_GATEWAY_START_DELAY_MS,
+                    .start_delay_ms = survey_discovery_required_start_delay_ms(
+                        SURVEY_GATEWAY_BENCH_MAX_HOPS),
                     .slot_ms = discovery_slot_widths_ms[width_index],
                     .slot_count = slot_count,
                     .round_count = 4u,
@@ -982,6 +984,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                       "survey deadline sweep produced an invalid discovery horizon");
                 CHECK(survey_discovery_report_delay_ms(
                           &config, (uint8_t)(slot_count - 1u),
+                          1u,
                           SURVEY_GATEWAY_REPORT_SLOT_MS,
                           &last_report_start_ms) == PROTO_OK,
                       "survey deadline sweep could not place the final report slot");
@@ -993,6 +996,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
 
                     CHECK(survey_discovery_report_delay_ms(
                               &config, report_slot,
+                              1u,
                               SURVEY_GATEWAY_REPORT_SLOT_MS,
                               &report_start_ms) == PROTO_OK,
                           "anchor report slot could not be scheduled");
@@ -1054,11 +1058,11 @@ static void test_survey_gateway_collection_budget_sweep(void)
                             SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
-                        CHECK(first_report_ms == 20960u,
+                        CHECK(first_report_ms == 12064u,
                               "six-slot survey first-report timing drifted");
-                        CHECK(last_report_start_ms == 32310u,
+                        CHECK(last_report_start_ms == 23414u,
                               "six-slot survey final-report timing drifted");
-                        CHECK(no_anchor_evidence_ms == 35580u,
+                        CHECK(no_anchor_evidence_ms == 26684u,
                               "six-slot survey evidence horizon drifted");
                         CHECK(current_wake_ms == no_anchor_evidence_ms &&
                                   current_wake_ms <
@@ -1074,7 +1078,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                         config.slot_ms == 40u &&
                         report_grace_windows_ms[grace_index] == 1000u) {
                         covered_50_slot_case = true;
-                        CHECK(first_report_ms == 28000u &&
+                        CHECK(first_report_ms == 19104u &&
                                   first_report_ms <
                                       SURVEY_GATEWAY_BENCH_BUDGET_MS,
                               "runtime rounds did not shorten 50-slot discovery");
@@ -1120,6 +1124,7 @@ static void test_survey_policy_slack_extends_collection_horizon(void)
         .report_delivery_tail_ms = 63060u,
         .terminal_scheduling_guard_ms =
             GATEWAY_TERMINAL_SCHEDULING_GUARD_MS,
+        .max_hop_count = 3u,
     };
     const uint32_t terminal_guard_ms =
         GATEWAY_TERMINAL_SCHEDULING_GUARD_MS +
@@ -1146,15 +1151,19 @@ static void test_survey_policy_slack_extends_collection_horizon(void)
               extended_collection_ms) == extended_collection_ms,
           "global command budget shortened the admitted discovery horizon");
     CHECK(survey_gateway_collection_decide(
-              true, false, 2u, 3u, true) ==
+              true, false, false, 2u, 3u, true) ==
               SURVEY_GATEWAY_COLLECTION_WAIT,
           "missing retained report closed collection before its safety deadline");
     CHECK(survey_gateway_collection_decide(
-              true, false, 3u, 3u, true) ==
+              true, false, false, 3u, 3u, true) ==
               SURVEY_GATEWAY_COLLECTION_CLOSE,
           "complete expected collection did not close early");
     CHECK(survey_gateway_collection_decide(
-              true, true, 2u, 3u, true) ==
+              false, false, true, 3u, 3u, true) ==
+              SURVEY_GATEWAY_COLLECTION_CLOSE,
+          "settled complete collection did not close before the horizon");
+    CHECK(survey_gateway_collection_decide(
+              true, true, false, 2u, 3u, true) ==
               SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH,
           "incomplete collection did not fail at the admitted safety deadline");
 }

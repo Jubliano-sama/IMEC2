@@ -128,7 +128,7 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
             gap_window[bounded_gap:],
         )
 
-    def test_gateway_control_handoff_uses_full_deeper_relay_window(self):
+    def test_gateway_control_handoff_keeps_full_window_but_yields_for_due_ch9_rx(self):
         handoff = function_body(REPORT, "mesh_anchor_handoff_route_wake_frame")
         listener = function_body(REPORT, "mesh_listen_for_route_reply")
 
@@ -159,12 +159,75 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         )
         finish = listener.index("mesh_transport_radio_finish(", receive)
         restart = listener.index("mesh_restart_role_scan()", finish)
+        reschedule = listener.index("mesh_schedule_uwb_rx(0u)", restart)
+        yield_return = listener.index(
+            "yielded_to_channel9_receive", reschedule
+        )
         self.assertLess(contact, stop)
         self.assertLess(stop, claim)
         self.assertLess(claim, receive)
         self.assertLess(receive, finish)
         self.assertLess(finish, restart)
-        self.assertNotIn("DBG_C5_CONTROL_LISTENER_YIELD_CH9", listener)
+        self.assertLess(restart, reschedule)
+        self.assertLess(reschedule, yield_return)
+
+        loop = listener.index(
+            "while (capture_count < MESH_ROUTE_TEST_REPLY_CAPTURE_MAX)"
+        )
+        purpose_gate = listener.index(
+            "if (contact_purpose ==\n"
+            "                    C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD)",
+            loop,
+        )
+        purpose_block = braced_block_after(
+            listener[purpose_gate:], "if (contact_purpose =="
+        )
+        due_gate = purpose_block.index(
+            "if (mesh_next_channel9_receive_prepare_delay_ms("
+        )
+        delay_bound = purpose_block.index(
+            "channel9_delay_ms <= MESH_ROUTE_REPLY_READY_POLL_MS",
+            due_gate,
+        )
+        yield_flag = purpose_block.index(
+            "yielded_to_channel9_receive = true", delay_bound
+        )
+        retry_result = purpose_block.index("last_ret = -EAGAIN", yield_flag)
+        marker = purpose_block.index(
+            "DBG_C5_CONTROL_LISTENER_YIELD_CH9", retry_result
+        )
+        leave_listener = purpose_block.index("break;", marker)
+        route_ready = listener.index(
+            "if (atomic_get(&mesh_route_ready_generation) !=",
+            purpose_gate,
+        )
+
+        self.assertLess(due_gate, delay_bound)
+        self.assertLess(delay_bound, yield_flag)
+        self.assertLess(yield_flag, retry_result)
+        self.assertLess(retry_result, marker)
+        self.assertLess(marker, leave_listener)
+        self.assertLess(purpose_gate, route_ready)
+        self.assertLess(route_ready, receive)
+        self.assertNotIn("mesh_transport_radio_finish(", purpose_block)
+        self.assertNotIn("mesh_schedule_uwb_rx(", purpose_block)
+        self.assertEqual(purpose_block.count("break;"), 1)
+        self.assertEqual(
+            listener.count("mesh_next_channel9_receive_prepare_delay_ms("),
+            1,
+        )
+
+        # Only a gateway-command follow-up can take the early-yield branch.
+        # If no receive prepare is due, the nested condition is false and the
+        # existing route-ready check plus bounded receive remain the fallthrough.
+        pre_receive = listener[purpose_gate:receive]
+        self.assertEqual(
+            pre_receive.count("C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD"),
+            1,
+        )
+        self.assertEqual(
+            pre_receive.count("DBG_C5_CONTROL_LISTENER_YIELD_CH9"), 1
+        )
 
     def test_downstream_control_echo_does_not_occupy_the_upstream_rx_slot(self):
         handoff = function_body(REPORT, "mesh_anchor_handoff_route_wake_frame")

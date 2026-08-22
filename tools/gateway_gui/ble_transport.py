@@ -214,8 +214,19 @@ class BleTransport:
             self._connecting_client = None
             self._connection_generation += 1
             await self._disconnect_client_quietly(client)
-            self._emit("connection_state", state="disconnected", target=target)
-            if getattr(self, "_auto_reconnect", False) and getattr(self, "_last_target", None) and getattr(getattr(self, "_thread", None), "is_alive", lambda: False)():
+            will_reconnect = bool(
+                getattr(self, "_auto_reconnect", False)
+                and getattr(self, "_last_target", None)
+                and getattr(
+                    getattr(self, "_thread", None), "is_alive", lambda: False
+                )()
+            )
+            self._emit(
+                "connection_state",
+                state="reconnecting" if will_reconnect else "disconnected",
+                target=target,
+            )
+            if will_reconnect:
                 self._schedule_reconnect(target)
             raise
     def _connection_is_current(self, client: Any, generation: int) -> bool:
@@ -368,7 +379,10 @@ class BleTransport:
                 await client.write_gatt_char(
                     characteristic,
                     frame[offset:offset + chunk_size],
-                    response=False,
+                    # Commands and exact host receipts are custody edges, so
+                    # require ATT admission instead of treating a locally
+                    # queued write command as delivery to the gateway.
+                    response=True,
                 )
                 chunks += 1
                 if offset + chunk_size < len(frame):

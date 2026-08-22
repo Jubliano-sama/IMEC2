@@ -16,7 +16,7 @@
 #define APP_MESH_GATEWAY_HOST_JOURNAL_NOTIFIED 4u
 #define APP_MESH_GATEWAY_HOST_JOURNAL_SOURCE_CONFIRMED UINT16_C(0x0001)
 
-#define APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION 8u
+#define APP_MESH_DISCOVERY_ASSIGNMENT_SNAPSHOT_VERSION 9u
 
 struct app_mesh_discovery_assignment_snapshot {
     uint64_t local_id;
@@ -43,6 +43,8 @@ struct app_mesh_discovery_assignment_snapshot {
     uint8_t ack_pending;
     uint8_t pending_slot;
     uint8_t pending_slot_count;
+    uint8_t pending_response_lane;
+    uint8_t pending_response_lane_count;
     uint8_t pending_valid;
     uint8_t ack_retry_round;
 };

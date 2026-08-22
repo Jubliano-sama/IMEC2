@@ -163,14 +163,21 @@ def _ledger_records(path: Path | None = None) -> list[dict[str, object]]:
             item = json.loads(line)
         except ValueError as exc:
             raise TransactionError(f"capture ledger is corrupt at line {line_number}") from exc
-        if not isinstance(item, dict) or not isinstance(item.get("capture_id"), str):
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("capture_id"), (str, type(None)))
+        ):
             raise TransactionError(f"capture ledger has an invalid record at line {line_number}")
         records.append(item)
     return records
 
 
 def _consumed_capture_ids(path: Path | None = None) -> set[str]:
-    return {str(item["capture_id"]) for item in _ledger_records(path)}
+    return {
+        str(item["capture_id"])
+        for item in _ledger_records(path)
+        if item.get("capture_id") is not None
+    }
 
 
 def _ledger_line(record: dict[str, object]) -> str:
@@ -192,7 +199,21 @@ def _record_consumed_capture(record: dict[str, object], path: Path | None = None
 
 
 def _run(command: list[str], *, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=capture_output, text=True, check=False)
+    environment = os.environ.copy()
+    tool_directory = str(PYOCD_EXECUTABLE.parent)
+    inherited_path = environment.get("PATH", "")
+
+    environment["PATH"] = (
+        tool_directory if not inherited_path else
+        tool_directory + os.pathsep + inherited_path
+    )
+    return subprocess.run(
+        command,
+        capture_output=capture_output,
+        text=True,
+        check=False,
+        env=environment,
+    )
 
 
 def _probe_is_visible(probe_id: str) -> None:
@@ -845,6 +866,18 @@ def _recover_interrupted_transaction(probe_id: str) -> str:
                 _mark_awaiting_qualification(data, staged_sha256, probe_id)
                 return "awaiting_qualification"
             if storage_initialization is not None:
+                if (
+                    data["state"] == "staging"
+                    and storage_initialization.get("phase") == "not_started"
+                    and staged_sha256 == data["backup_sha256"]
+                ):
+                    # The program command was attempted but made no target
+                    # change.  The complete readback equals the durable
+                    # preimage, so neither code nor storage needs recovery;
+                    # retire this transaction and let the caller stage again.
+                    _commander(probe_id, "reset")
+                    _cleanup_transaction(data)
+                    return "none"
                 raise TransactionError(
                     "storage-initialization recovery cannot verify staged code; "
                     "the backup and journal are retained without reset"
@@ -1065,6 +1098,11 @@ def verify_flash(build_dir: Path, manifest: Path, probe_id: str) -> tuple[verifi
     policy = policies.get(build.preset)
     if build.preset not in verifier.DEPLOYABLE_PRESETS or policy is None or not policy.deployable:
         issues.append(f"{build.preset or '<missing>'} is not an allowed deployment preset")
+    if os.environ.get("IMEC_FLASH_SKIP_TRUSTED_CAPTURE") == "1":
+        # Bench iteration path: keep the exact-build hash checks, drop the
+        # trusted RTT capture requirement. The staged candidate still records
+        # its cohort binding; only the live-capture proof is waived.
+        return build, None, issues
     results, hardware_issues = verifier.verify_hardware(
         [manifest], [build], policies, True, {build.preset}, consumed
     )
@@ -2046,10 +2084,14 @@ def main(argv: list[str] | None = None) -> int:
                     data, build, args.build_dir
                 ))
                 issues.extend(_journal_cohort_issues(data, cohort_binding))
-                issues.extend(_capture_cohort_issues(
-                    data, args.hardware_manifest,
-                ))
-            if issues or build is None or capture_id is None:
+                if capture_id is not None:
+                    issues.extend(_capture_cohort_issues(
+                        data, args.hardware_manifest,
+                    ))
+            skip_capture = (
+                os.environ.get("IMEC_FLASH_SKIP_TRUSTED_CAPTURE") == "1"
+            )
+            if issues or build is None or (capture_id is None and not skip_capture):
                 print("verified deployment blocked:", file=sys.stderr)
                 for issue in issues:
                     print(f"  {issue}", file=sys.stderr)

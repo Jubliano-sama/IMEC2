@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Literal
 
 from .command_telemetry import GatewayCommandEvent, GatewayCommandRequestTracker
-from .protocol import CMD_FORCE_REDISCOVERY
+from .protocol import CMD_FORCE_REDISCOVERY, CMD_REBOOT, CMD_CLEAR_ROUTE
 
 
 # These commands must remain immediate when they are exposed by the GUI.  They
@@ -17,6 +17,8 @@ CMD_ML_LIVE_TRACKING_HEARTBEAT = 0x8004
 CMD_ML_STOP_LIVE_TRACKING = 0x8005
 PREFLIGHT_EXEMPT_COMMAND_IDS = frozenset(
     {
+        CMD_REBOOT,
+        CMD_CLEAR_ROUTE,
         CMD_STOP_HEARTBEAT,
         CMD_FORCE_REDISCOVERY,
         CMD_SURVEY_ABORT,
@@ -344,6 +346,10 @@ class GatewayCommandOrchestrator:
         return GatewayCommandTransition(
             matched=True, completed=True, outcome=outcome, phase=phase
         )
+
+    def reset(self) -> None:
+        self._clear()
+        self.tracker.reset()
 
     def _clear(self) -> None:
         self.plan = None

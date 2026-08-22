@@ -1,0 +1,1168 @@
+Script started on 2026-08-20 21:17:44+02:00 [COMMAND="timeout --foreground --signal=INT --kill-after=10s 900s .venv/bin/pyocd rtt --no-config -t nrf52833 -M pre-reset -a 0x20000410 -s 0x100 -u E46070D247233537 --up-channel-id 0 --down-channel-id 0" <not executed on terminal>]
+[34m0000512[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000556[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000809[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000913[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000918[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000918[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000918[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000921[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000923[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000924[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000925[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000926[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000928[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000930[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000933[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000933[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000933[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000934[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000937[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000938[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000953[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000953[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000954[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:583fd6c02977eddbe124fe44f3dec52325570ea08a1cc9b16777988d841444c3 epoch=9212515665481015295 uptime=2
+mesh node identity: ficr=0x88add51b1bcbe854 node=0x9999888877776666 preset=mesh_gateway
+DBG_LED_SELFTEST_CH5_RX
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1007
+DBG_GATEWAY_BOOT stage=ble_begin uptime=1021
+DBG_GATEWAY_BLE stage=entry enabled=1 uptime=1021
+DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=1027
+DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=1029
+DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=1029
+DBG_GATEWAY_BOOT stage=ch9_begin uptime=1029
+DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=1029
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=1151
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=64264
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=64276 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=71212
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=71224 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=75472
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=75484 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_BLE event=connected err=0 uptime=79917
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=80796
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=1 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825810 seq=18 type=86 sequence=0 previous=0 uptime=80796
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=1 sample=1 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825810 seq=18 type=86 uptime=80796
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=1 sample=1
+DBG_STACK name=mesh_route tid=0x2000d508 used=2736 free=5456 size=8192 ret=0 run=1 sample=1
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=1 sample=1
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=1 sample=1
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=1 sample=1
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=1 sample=1
+DBG_STACK_SAMPLE_END run=1 sample=1
+DBG_STACK_RUN_END epoch=9212515665481015295 run=1 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825810 seq=18 type=86 samples=1 sequence=0 previous=0 uptime=80806
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=2 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825811 seq=19 type=86 sequence=0 previous=0 uptime=80820
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=2 sample=2 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825811 seq=19 type=86 uptime=80820
+DBG_STACK_ISR_CONFIG size=8192 run=2 sample=2
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=2 sample=2
+DBG_STACK name=mesh_route tid=0x2000d508 used=2736 free=5456 size=8192 ret=0 run=2 sample=2
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=2 sample=2
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=2 sample=2
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=2 sample=2
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=2 sample=2
+DBG_STACK_SAMPLE_END run=2 sample=2
+DBG_STACK_RUN_END epoch=9212515665481015295 run=2 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825811 seq=19 type=86 samples=1 sequence=0 previous=0 uptime=80844
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=184 msg=3c reason=bounded-c5-flood
+DBG_UWB_TX_CH5
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=3 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825813 seq=21 type=86 sequence=0 previous=0 uptime=83467
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=3 sample=3 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825813 seq=21 type=86 uptime=83467
+DBG_STACK_ISR_CONFIG size=8192 run=3 sample=3
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=3 sample=3
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=3 sample=3
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=3 sample=3
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=3 sample=3
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=3 sample=3
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=3 sample=3
+DBG_STACK_SAMPLE_END run=3 sample=3
+DBG_STACK_RUN_END epoch=9212515665481015295 run=3 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825813 seq=21 type=86 samples=1 sequence=0 previous=0 uptime=83489
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=4 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=3588844833 seq=27937 type=65 sequence=0 previous=0 uptime=83490
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=4 sample=4 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=3588844833 seq=27937 type=65 uptime=83490
+DBG_STACK_ISR_CONFIG size=8192 run=4 sample=4
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=4 sample=4
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=4 sample=4
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=4 sample=4
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=4 sample=4
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=4 sample=4
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=4 sample=4
+DBG_STACK_SAMPLE_END run=4 sample=4
+DBG_STACK_RUN_END epoch=9212515665481015295 run=4 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=3588844833 seq=27937 type=65 samples=1 sequence=0 previous=0 uptime=83512
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=5 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825814 seq=22 type=86 sequence=0 previous=0 uptime=83585
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=5 sample=5 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825814 seq=22 type=86 uptime=83586
+DBG_STACK_ISR_CONFIG size=8192 run=5 sample=5
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=5 sample=5
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=5 sample=5
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=5 sample=5
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=5 sample=5
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=5 sample=5
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=5 sample=5
+DBG_STACK_SAMPLE_END run=5 sample=5
+DBG_STACK_RUN_END epoch=9212515665481015295 run=5 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825814 seq=22 type=86 samples=1 sequence=0 previous=0 uptime=83601
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=83675
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=6 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825816 seq=24 type=86 sequence=0 previous=0 uptime=83675
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=6 sample=6 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825816 seq=24 type=86 uptime=83676
+DBG_STACK_ISR_CONFIG size=8192 run=6 sample=6
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=6 sample=6
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=6 sample=6
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=6 sample=6
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=6 sample=6
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=6 sample=6
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=6 sample=6
+DBG_STACK_SAMPLE_END run=6 sample=6
+DBG_STACK_RUN_END epoch=9212515665481015295 run=6 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825816 seq=24 type=86 samples=1 sequence=0 previous=0 uptime=83688
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=7 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825817 seq=25 type=86 sequence=0 previous=0 uptime=83688
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=7 sample=7 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825817 seq=25 type=86 uptime=83697
+DBG_STACK_ISR_CONFIG size=8192 run=7 sample=7
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=7 sample=7
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=7 sample=7
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=7 sample=7
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=7 sample=7
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=7 sample=7
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=7 sample=7
+DBG_STACK_SAMPLE_END run=7 sample=7
+DBG_STACK_RUN_END epoch=9212515665481015295 run=7 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825817 seq=25 type=86 samples=1 sequence=0 previous=0 uptime=83719
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=8 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825818 seq=26 type=86 sequence=0 previous=0 uptime=83720
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=8 sample=8 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825818 seq=26 type=86 uptime=83729
+DBG_STACK_ISR_CONFIG size=8192 run=8 sample=8
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=8 sample=8
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=8 sample=8
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=8 sample=8
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=8 sample=8
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=8 sample=8
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=8 sample=8
+DBG_STACK_SAMPLE_END run=8 sample=8
+DBG_STACK_RUN_END epoch=9212515665481015295 run=8 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825818 seq=26 type=86 samples=1 sequence=0 previous=0 uptime=83751
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=83801
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=83802 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=9 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825819 seq=27 type=86 sequence=0 previous=0 uptime=83803
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=9 sample=9 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825819 seq=27 type=86 uptime=83804
+DBG_STACK_ISR_CONFIG size=8192 run=9 sample=9
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=9 sample=9
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=9 sample=9
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=9 sample=9
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=9 sample=9
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=9 sample=9
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=9 sample=9
+DBG_STACK_SAMPLE_END run=9 sample=9
+DBG_STACK_RUN_END epoch=9212515665481015295 run=9 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825819 seq=27 type=86 samples=1 sequence=0 previous=0 uptime=83821
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=10 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825820 seq=28 type=86 sequence=0 previous=0 uptime=83822
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=10 sample=10 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825820 seq=28 type=86 uptime=83822
+DBG_STACK_ISR_CONFIG size=8192 run=10 sample=10
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=10 sample=10
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=10 sample=10
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=10 sample=10
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=10 sample=10
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=10 sample=10
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=10 sample=10
+DBG_STACK_SAMPLE_END run=10 sample=10
+DBG_STACK_RUN_END epoch=9212515665481015295 run=10 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825820 seq=28 type=86 samples=1 sequence=0 previous=0 uptime=83846
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=84028
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=84032 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=11 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825821 seq=29 type=86 sequence=0 previous=0 uptime=84033
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=11 sample=11 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825821 seq=29 type=86 uptime=84034
+DBG_STACK_ISR_CONFIG size=8192 run=11 sample=11
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=11 sample=11
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=11 sample=11
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=11 sample=11
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=11 sample=11
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=11 sample=11
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=11 sample=11
+DBG_STACK_SAMPLE_END run=11 sample=11
+DBG_STACK_RUN_END epoch=9212515665481015295 run=11 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825821 seq=29 type=86 samples=1 sequence=0 previous=0 uptime=84056
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=12 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825822 seq=30 type=86 sequence=0 previous=0 uptime=84057
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=12 sample=12 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825822 seq=30 type=86 uptime=84057
+DBG_STACK_ISR_CONFIG size=8192 run=12 sample=12
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=12 sample=12
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=12 sample=12
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=12 sample=12
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=12 sample=12
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=12 sample=12
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=12 sample=12
+DBG_STACK_SAMPLE_END run=12 sample=12
+DBG_STACK_RUN_END epoch=9212515665481015295 run=12 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825822 seq=30 type=86 samples=1 sequence=0 previous=0 uptime=84083
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=84768
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=84769 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=13 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825823 seq=31 type=86 sequence=0 previous=0 uptime=84771
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=13 sample=13 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825823 seq=31 type=86 uptime=84771
+DBG_STACK_ISR_CONFIG size=8192 run=13 sample=13
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=13 sample=13
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=13 sample=13
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=13 sample=13
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=13 sample=13
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=13 sample=13
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=13 sample=13
+DBG_STACK_SAMPLE_END run=13 sample=13
+DBG_STACK_RUN_END epoch=9212515665481015295 run=13 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825823 seq=31 type=86 samples=1 sequence=0 previous=0 uptime=84793
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=14 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825824 seq=32 type=86 sequence=0 previous=0 uptime=84794
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=14 sample=14 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825824 seq=32 type=86 uptime=84794
+DBG_STACK_ISR_CONFIG size=8192 run=14 sample=14
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=14 sample=14
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=14 sample=14
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=14 sample=14
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=14 sample=14
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=14 sample=14
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=14 sample=14
+DBG_STACK_SAMPLE_END run=14 sample=14
+DBG_STACK_RUN_END epoch=9212515665481015295 run=14 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825824 seq=32 type=86 samples=1 sequence=0 previous=0 uptime=84815
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=85740
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=85740 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=15 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825825 seq=33 type=86 sequence=0 previous=0 uptime=85742
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=15 sample=15 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825825 seq=33 type=86 uptime=85742
+DBG_STACK_ISR_CONFIG size=8192 run=15 sample=15
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=15 sample=15
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=15 sample=15
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=15 sample=15
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=15 sample=15
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=15 sample=15
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=15 sample=15
+DBG_STACK_SAMPLE_END run=15 sample=15
+DBG_STACK_RUN_END epoch=9212515665481015295 run=15 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825825 seq=33 type=86 samples=1 sequence=0 previous=0 uptime=85765
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=16 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825826 seq=34 type=86 sequence=0 previous=0 uptime=85765
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=16 sample=16 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825826 seq=34 type=86 uptime=85766
+DBG_STACK_ISR_CONFIG size=8192 run=16 sample=16
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=16 sample=16
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=16 sample=16
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=16 sample=16
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=16 sample=16
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=16 sample=16
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=16 sample=16
+DBG_STACK_SAMPLE_END run=16 sample=16
+DBG_STACK_RUN_END epoch=9212515665481015295 run=16 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825826 seq=34 type=86 samples=1 sequence=0 previous=0 uptime=85785
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=88592
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=88593 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=17 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825827 seq=35 type=86 sequence=0 previous=0 uptime=88594
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=17 sample=17 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825827 seq=35 type=86 uptime=88595
+DBG_STACK_ISR_CONFIG size=8192 run=17 sample=17
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=17 sample=17
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=17 sample=17
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=17 sample=17
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=17 sample=17
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=17 sample=17
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=17 sample=17
+DBG_STACK_SAMPLE_END run=17 sample=17
+DBG_STACK_RUN_END epoch=9212515665481015295 run=17 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825827 seq=35 type=86 samples=1 sequence=0 previous=0 uptime=88611
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=18 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825828 seq=36 type=86 sequence=0 previous=0 uptime=88612
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=18 sample=18 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825828 seq=36 type=86 uptime=88617
+DBG_STACK_ISR_CONFIG size=8192 run=18 sample=18
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=18 sample=18
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=18 sample=18
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=18 sample=18
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=18 sample=18
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=18 sample=18
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=18 sample=18
+DBG_STACK_SAMPLE_END run=18 sample=18
+DBG_STACK_RUN_END epoch=9212515665481015295 run=18 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825828 seq=36 type=86 samples=1 sequence=0 previous=0 uptime=88636
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=89930
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=89941 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=94883
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=94884 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=19 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825830 seq=38 type=86 sequence=0 previous=0 uptime=94885
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=19 sample=19 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825830 seq=38 type=86 uptime=94886
+DBG_STACK_ISR_CONFIG size=8192 run=19 sample=19
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=19 sample=19
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=19 sample=19
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=19 sample=19
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=19 sample=19
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=19 sample=19
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=19 sample=19
+DBG_STACK_SAMPLE_END run=19 sample=19
+DBG_STACK_RUN_END epoch=9212515665481015295 run=19 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825830 seq=38 type=86 samples=1 sequence=0 previous=0 uptime=94908
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=20 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825831 seq=39 type=86 sequence=0 previous=0 uptime=94908
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=20 sample=20 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825831 seq=39 type=86 uptime=94909
+DBG_STACK_ISR_CONFIG size=8192 run=20 sample=20
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=20 sample=20
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=20 sample=20
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=20 sample=20
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=20 sample=20
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=20 sample=20
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=20 sample=20
+DBG_STACK_SAMPLE_END run=20 sample=20
+DBG_STACK_RUN_END epoch=9212515665481015295 run=20 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825831 seq=39 type=86 samples=1 sequence=0 previous=0 uptime=94930
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=97230
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=97242 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=101573
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=101574 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=21 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825833 seq=41 type=86 sequence=0 previous=0 uptime=101575
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=21 sample=21 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825833 seq=41 type=86 uptime=101576
+DBG_STACK_ISR_CONFIG size=8192 run=21 sample=21
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=21 sample=21
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=21 sample=21
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=21 sample=21
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=21 sample=21
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=21 sample=21
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=21 sample=21
+DBG_STACK_SAMPLE_END run=21 sample=21
+DBG_STACK_RUN_END epoch=9212515665481015295 run=21 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825833 seq=41 type=86 samples=1 sequence=0 previous=0 uptime=101597
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=22 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825834 seq=42 type=86 sequence=0 previous=0 uptime=101598
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=22 sample=22 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825834 seq=42 type=86 uptime=101598
+DBG_STACK_ISR_CONFIG size=8192 run=22 sample=22
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=22 sample=22
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=22 sample=22
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=22 sample=22
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=22 sample=22
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=22 sample=22
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=22 sample=22
+DBG_STACK_SAMPLE_END run=22 sample=22
+DBG_STACK_RUN_END epoch=9212515665481015295 run=22 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825834 seq=42 type=86 samples=1 sequence=0 previous=0 uptime=101618
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=103808
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=103819 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=106699
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=106700 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=23 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825836 seq=44 type=86 sequence=0 previous=0 uptime=106701
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=23 sample=23 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825836 seq=44 type=86 uptime=106702
+DBG_STACK_ISR_CONFIG size=8192 run=23 sample=23
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=23 sample=23
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=23 sample=23
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=23 sample=23
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=23 sample=23
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=23 sample=23
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=23 sample=23
+DBG_STACK_SAMPLE_END run=23 sample=23
+DBG_STACK_RUN_END epoch=9212515665481015295 run=23 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825836 seq=44 type=86 samples=1 sequence=0 previous=0 uptime=106721
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=24 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=3588844834 seq=27938 type=65 sequence=0 previous=0 uptime=106721
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=24 sample=24 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=3588844834 seq=27938 type=65 uptime=106726
+DBG_STACK_ISR_CONFIG size=8192 run=24 sample=24
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=24 sample=24
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=24 sample=24
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=24 sample=24
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=24 sample=24
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=24 sample=24
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=24 sample=24
+DBG_STACK_SAMPLE_END run=24 sample=24
+DBG_STACK_RUN_END epoch=9212515665481015295 run=24 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=3588844834 seq=27938 type=65 samples=1 sequence=0 previous=0 uptime=106747
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=25 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825837 seq=45 type=86 sequence=0 previous=0 uptime=106806
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=25 sample=25 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825837 seq=45 type=86 uptime=106806
+DBG_STACK_ISR_CONFIG size=8192 run=25 sample=25
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=25 sample=25
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=25 sample=25
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=25 sample=25
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=25 sample=25
+DBG_STACK name=logging tid=0x200103a8 used=480 free=1568 size=2048 ret=0 run=25 sample=25
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=25 sample=25
+DBG_STACK_SAMPLE_END run=25 sample=25
+DBG_STACK_RUN_END epoch=9212515665481015295 run=25 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825837 seq=45 type=86 samples=1 sequence=0 previous=0 uptime=106820
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=108939
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=108950 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_BLE event=disconnected reason=19 uptime=109368
+DBG_GATEWAY_BLE event=recovery round=1 delay_ms=487 reason=disconnected uptime=109368
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=116446
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=116458 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=120706
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=120718 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=126084
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=126096 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=132806
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=132817 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=140758
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=140770 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=147146
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=147158 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=153309
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=153321 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=160367
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=160379 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=167090
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=167102 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=173814
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=173826 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=181096
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=181108 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=187819
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=187830 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=194206
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=194218 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=199361
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=199373 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=203956
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=203967 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=208102
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=208114 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=213929
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=213939 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=219756
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=219768 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=227260
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=227272 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=231968
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=231979 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=239140
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=239152 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=245300
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=245312 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=249558
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=249570 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=255273
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=255285 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=261441
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=261451 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=266483
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=266495 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=270518
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=270530 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=277690
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=277702 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=285533
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=285545 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=292704
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=292716 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=300546
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=300558 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=305701
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=305713 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=311082
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=311094 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=318813
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=318824 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=326767
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=326779 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_BLE event=connected err=0 uptime=331026
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=331252
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=331265 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=332657
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=26 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825875 seq=83 type=86 sequence=0 previous=0 uptime=332657
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=26 sample=26 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825875 seq=83 type=86 uptime=332657
+DBG_STACK_ISR_CONFIG size=8192 run=26 sample=26
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=26 sample=26
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=26 sample=26
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=26 sample=26
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=26 sample=26
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=26 sample=26
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=26 sample=26
+DBG_STACK_SAMPLE_END run=26 sample=26
+DBG_STACK_RUN_END epoch=9212515665481015295 run=26 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825875 seq=83 type=86 samples=1 sequence=0 previous=0 uptime=332667
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=27 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825876 seq=84 type=86 sequence=0 previous=0 uptime=332680
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=27 sample=27 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825876 seq=84 type=86 uptime=332681
+DBG_STACK_ISR_CONFIG size=8192 run=27 sample=27
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=27 sample=27
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=27 sample=27
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=27 sample=27
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=27 sample=27
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=27 sample=27
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=27 sample=27
+DBG_STACK_SAMPLE_END run=27 sample=27
+DBG_STACK_RUN_END epoch=9212515665481015295 run=27 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825876 seq=84 type=86 samples=1 sequence=0 previous=0 uptime=332703
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=28 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825877 seq=85 type=86 sequence=0 previous=0 uptime=332703
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=28 sample=28 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825877 seq=85 type=86 uptime=332708
+DBG_STACK_ISR_CONFIG size=8192 run=28 sample=28
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=28 sample=28
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=28 sample=28
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=28 sample=28
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=28 sample=28
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=28 sample=28
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=28 sample=28
+DBG_STACK_SAMPLE_END run=28 sample=28
+DBG_STACK_RUN_END epoch=9212515665481015295 run=28 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825877 seq=85 type=86 samples=1 sequence=0 previous=0 uptime=332728
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=332796
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=332797 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=29 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825878 seq=86 type=86 sequence=0 previous=0 uptime=332798
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=29 sample=29 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825878 seq=86 type=86 uptime=332798
+DBG_STACK_ISR_CONFIG size=8192 run=29 sample=29
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=29 sample=29
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=29 sample=29
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=29 sample=29
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=29 sample=29
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=29 sample=29
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=29 sample=29
+DBG_STACK_SAMPLE_END run=29 sample=29
+DBG_STACK_RUN_END epoch=9212515665481015295 run=29 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825878 seq=86 type=86 samples=1 sequence=0 previous=0 uptime=332821
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=30 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825879 seq=87 type=86 sequence=0 previous=0 uptime=332821
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=30 sample=30 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825879 seq=87 type=86 uptime=332822
+DBG_STACK_ISR_CONFIG size=8192 run=30 sample=30
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=30 sample=30
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=30 sample=30
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=30 sample=30
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=30 sample=30
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=30 sample=30
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=30 sample=30
+DBG_STACK_SAMPLE_END run=30 sample=30
+DBG_STACK_RUN_END epoch=9212515665481015295 run=30 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825879 seq=87 type=86 samples=1 sequence=0 previous=0 uptime=332842
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=333104
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=333105 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=31 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825880 seq=88 type=86 sequence=0 previous=0 uptime=333107
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=31 sample=31 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825880 seq=88 type=86 uptime=333107
+DBG_STACK_ISR_CONFIG size=8192 run=31 sample=31
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=31 sample=31
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=31 sample=31
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=31 sample=31
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=31 sample=31
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=31 sample=31
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=31 sample=31
+DBG_STACK_SAMPLE_END run=31 sample=31
+DBG_STACK_RUN_END epoch=9212515665481015295 run=31 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825880 seq=88 type=86 samples=1 sequence=0 previous=0 uptime=333125
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=32 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825881 seq=89 type=86 sequence=0 previous=0 uptime=333125
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=32 sample=32 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825881 seq=89 type=86 uptime=333130
+DBG_STACK_ISR_CONFIG size=8192 run=32 sample=32
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=32 sample=32
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=32 sample=32
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=32 sample=32
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=32 sample=32
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=32 sample=32
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=32 sample=32
+DBG_STACK_SAMPLE_END run=32 sample=32
+DBG_STACK_RUN_END epoch=9212515665481015295 run=32 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825881 seq=89 type=86 samples=1 sequence=0 previous=0 uptime=333149
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=333886
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=333895 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=33 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825882 seq=90 type=86 sequence=0 previous=0 uptime=333896
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=33 sample=33 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825882 seq=90 type=86 uptime=333896
+DBG_STACK_ISR_CONFIG size=8192 run=33 sample=33
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=33 sample=33
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=33 sample=33
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=33 sample=33
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=33 sample=33
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=33 sample=33
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=33 sample=33
+DBG_STACK_SAMPLE_END run=33 sample=33
+DBG_STACK_RUN_END epoch=9212515665481015295 run=33 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825882 seq=90 type=86 samples=1 sequence=0 previous=0 uptime=333916
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=34 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825883 seq=91 type=86 sequence=0 previous=0 uptime=333917
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=34 sample=34 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825883 seq=91 type=86 uptime=333917
+DBG_STACK_ISR_CONFIG size=8192 run=34 sample=34
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=34 sample=34
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=34 sample=34
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=34 sample=34
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=34 sample=34
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=34 sample=34
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=34 sample=34
+DBG_STACK_SAMPLE_END run=34 sample=34
+DBG_STACK_RUN_END epoch=9212515665481015295 run=34 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825883 seq=91 type=86 samples=1 sequence=0 previous=0 uptime=333939
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=335253
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=335254 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=35 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825884 seq=92 type=86 sequence=0 previous=0 uptime=335255
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=35 sample=35 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=17825884 seq=92 type=86 uptime=335256
+DBG_STACK_ISR_CONFIG size=8192 run=35 sample=35
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=35 sample=35
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=35 sample=35
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=35 sample=35
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=35 sample=35
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=35 sample=35
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=35 sample=35
+DBG_STACK_SAMPLE_END run=35 sample=35
+DBG_STACK_RUN_END epoch=9212515665481015295 run=35 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825884 seq=92 type=86 samples=1 sequence=0 previous=0 uptime=335278
+DBG_STACK_RUN_BEGIN epoch=9212515665481015295 run=36 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825885 seq=93 type=86 sequence=0 previous=0 uptime=335278
+DBG_STACK_SAMPLE_BEGIN epoch=9212515665481015295 run=36 sample=36 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=17825885 seq=93 type=86 uptime=335279
+DBG_STACK_ISR_CONFIG size=8192 run=36 sample=36
+DBG_STACK name=BT RX WQ tid=0x200108a0 used=760 free=776 size=1536 ret=0 run=36 sample=36
+DBG_STACK name=mesh_route tid=0x2000d508 used=4336 free=3856 size=8192 ret=0 run=36 sample=36
+DBG_STACK name=sysworkq tid=0x200117f8 used=2296 free=2184 size=4480 ret=0 run=36 sample=36
+DBG_STACK name=MPSL Work tid=0x200115b0 used=376 free=648 size=1024 ret=0 run=36 sample=36
+DBG_STACK name=logging tid=0x200103a8 used=512 free=1536 size=2048 ret=0 run=36 sample=36
+DBG_STACK name=idle tid=0x20011688 used=64 free=256 size=320 ret=0 run=36 sample=36
+DBG_STACK_SAMPLE_END run=36 sample=36
+DBG_STACK_RUN_END epoch=9212515665481015295 run=36 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=17825885 seq=93 type=86 samples=1 sequence=0 previous=0 uptime=335300
+DBG_GATEWAY_BLE event=disconnected reason=19 uptime=335355
+DBG_GATEWAY_BLE event=recovery round=1 delay_ms=274 reason=disconnected uptime=335355
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=338069
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=338070 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=338958
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=338969 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=341650
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=341662 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=343669
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=343681 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=345786
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=345787 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=350930
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=350941 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=352561
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=352562 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=357927
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=357938 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=365095
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=365107 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=370699
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=370711 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=375295
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=375307 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=380115
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=380127 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=385717
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=385729 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=393335
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=393347 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=398488
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=398500 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=403418
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=403430 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=410364
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=410376 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=415183
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=415195 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=419443
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=419455 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=425267
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=425279 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=430309
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=430321 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_ENUM_TABLE_TX epoch=17301515 count=3 round=1 ret=-22
+
+Script done on 2026-08-20 21:24:02+02:00 [COMMAND_EXIT_CODE="0"]

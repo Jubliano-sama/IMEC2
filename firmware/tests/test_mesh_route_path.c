@@ -140,7 +140,8 @@ static void test_route_control_wire_bounds(void)
 
 static void test_route_control_ttl_admission(void)
 {
-    static const uint8_t request_origin_ttls[] = {1u, 2u, 4u, 6u};
+    static const uint8_t request_origin_ttls[] = {1u, 2u, 4u, 6u, 8u};
+    static const uint8_t invalid_request_origin_ttls[] = {3u, 5u, 7u, 9u};
 
     for (size_t i = 0u;
          i < sizeof(request_origin_ttls) / sizeof(request_origin_ttls[0]);
@@ -156,8 +157,19 @@ static void test_route_control_ttl_admission(void)
     }
     assert(mesh_route_control_ttl_validate(MSG_ROUTE_REQ, 0u, 0u) ==
            PROTO_ERR_STALE);
-    assert(mesh_route_control_ttl_validate(MSG_ROUTE_REQ, 3u, 0u) ==
-           PROTO_ERR_MALFORMED);
+    for (size_t i = 0u;
+         i < sizeof(invalid_request_origin_ttls) /
+                 sizeof(invalid_request_origin_ttls[0]);
+         i++) {
+        const uint8_t origin_ttl = invalid_request_origin_ttls[i];
+
+        for (uint8_t hop_count = 0u; hop_count < origin_ttl; hop_count++) {
+            assert(mesh_route_control_ttl_validate(
+                       MSG_ROUTE_REQ,
+                       (uint8_t)(origin_ttl - hop_count),
+                       hop_count) == PROTO_ERR_MALFORMED);
+        }
+    }
     assert(mesh_route_control_ttl_validate(MSG_ROUTE_REQ, 6u, 1u) ==
            PROTO_ERR_MALFORMED);
 

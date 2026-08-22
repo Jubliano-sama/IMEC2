@@ -403,6 +403,8 @@ enum tlv_type {
      * ACCEPT replay without requiring synchronized node uptime clocks.
      */
     TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC,
+    /* epoch || TABLE sequence || SHA-256, binding survey START to assignment. */
+    TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xBD,
 };
 
 enum detection_source {

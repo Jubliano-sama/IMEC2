@@ -53,6 +53,36 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
         self.assertLess(branch_at, local_range_at)
         self.assertLess(local_range_at, local_node_comm_at)
 
+    def test_ack_confirm_complete_closes_idle_parent_only_when_fully_idle(
+        self,
+    ) -> None:
+        confirm = function_body(REPORT, "mesh_complete_gateway_ack_confirm")
+        complete_at = confirm.index("DBG_ACK_CONFIRM_TERMINAL stage=complete")
+        gate_at = confirm.index(
+            "if (app_node_comm_pending_delivery_count() == 0u &&", complete_at
+        )
+        close_at = confirm.index("mesh_close_channel9_connection(", gate_at)
+
+        # The single parent-cadence release is gated on all four idle
+        # conditions: no pending node-comm delivery, empty report tx queue,
+        # no route-waiting tx, and no channel-9 ack-table entry pending.
+        gate = confirm[gate_at:close_at]
+        self.assertIn("report_tx_queue_used() == 0u", gate)
+        self.assertIn("!mesh_route_waiting_tx_valid", gate)
+        self.assertIn(
+            "!app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)", gate
+        )
+
+        # Only a selected unicast non-gateway parent may be released.
+        parent_at = confirm.index("route_selected(&mesh_runtime.upstream)", gate_at)
+        release_guard = confirm[parent_at:close_at]
+        self.assertIn("mesh_id_is_unicast(parent_id)", release_guard)
+        self.assertIn("parent_id != GATEWAY_ID", release_guard)
+
+        # Exactly one close site exists and it lives inside the idle gate:
+        # a second delivery record or queued event must keep the cadence.
+        self.assertEqual(confirm.count("mesh_close_channel9_connection("), 1)
+
     def test_terminal_cleanup_retry_uses_bounded_cadence(self) -> None:
         schedule = function_body(REPORT, "mesh_schedule_tx_timeout")
         terminal_match = re.search(

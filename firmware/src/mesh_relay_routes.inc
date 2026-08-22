@@ -165,7 +165,12 @@ int mesh_relay_note_gateway_control_reverse_route(
     uint32_t now_ms)
 {
     struct route_candidate candidate;
+    struct route_candidate *stored_candidate = NULL;
+    uint32_t preserved_hold_down_until_ms = 0u;
     uint8_t gateway_hop_count;
+    uint8_t preserved_failure_count = 0u;
+    bool preserve_failure_state = false;
+    bool preserved_hold_down_valid = false;
     bool destination_valid;
     int ret;
 
@@ -211,8 +216,50 @@ int mesh_relay_note_gateway_control_reverse_route(
         .relay_capacity_state = RELAY_CAP_UNKNOWN,
         .valid = true,
     };
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct route_candidate *existing = &relay->upstream.candidates[i];
+
+        if (existing->valid &&
+            existing->route_epoch == relay->upstream.current_epoch &&
+            existing->next_hop_id == previous_hop_id &&
+            existing->gateway_id == relay->gateway_id) {
+            preserved_failure_count = existing->failure_count;
+            preserved_hold_down_until_ms = existing->hold_down_until_ms;
+            preserved_hold_down_valid = existing->hold_down_valid;
+            preserve_failure_state = true;
+            break;
+        }
+    }
     ret = route_upsert_candidate(&relay->upstream, &candidate);
     if (ret == PROTO_OK) {
+        if (preserve_failure_state) {
+            for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+                struct route_candidate *existing =
+                    &relay->upstream.candidates[i];
+
+                if (existing->valid &&
+                    existing->route_epoch == relay->upstream.current_epoch &&
+                    existing->next_hop_id == previous_hop_id &&
+                    existing->gateway_id == relay->gateway_id) {
+                    stored_candidate = existing;
+                    break;
+                }
+            }
+            if (stored_candidate == NULL) {
+                return PROTO_ERR_NOT_FOUND;
+            }
+            stored_candidate->failure_count = preserved_failure_count;
+            stored_candidate->hold_down_until_ms =
+                preserved_hold_down_until_ms;
+            stored_candidate->hold_down_valid = preserved_hold_down_valid;
+            ret = route_select_best_at(&relay->upstream, now_ms);
+            if (ret != PROTO_OK && preserved_hold_down_valid) {
+                /* A valid passive refresh may leave every known parent held.
+                 * Keep the route evidence and let discovery run; absence of a
+                 * currently selectable parent is not a malformed control. */
+                ret = PROTO_OK;
+            }
+        }
         if (previous_hop_id == relay->gateway_id) {
             const struct route_candidate *stored = find_upstream_candidate(
                 relay, previous_hop_id, relay->upstream.current_epoch);
@@ -229,6 +276,119 @@ int mesh_relay_note_gateway_control_reverse_route(
                 return ret;
             }
         }
+        mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
+    }
+    return ret;
+}
+
+int mesh_relay_note_flood_parent_candidate(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    uint64_t previous_hop_id,
+    uint8_t link_quality,
+    uint8_t origin_ttl,
+    uint32_t route_epoch,
+    uint32_t now_ms)
+{
+    struct route_candidate candidate;
+    struct route_candidate *stored_candidate = NULL;
+    uint32_t preserved_hold_down_until_ms = 0u;
+    uint8_t gateway_hop_count;
+    uint8_t preserved_failure_count = 0u;
+    bool preserve_failure_state = false;
+    bool preserved_hold_down_valid = false;
+    int ret;
+
+    if (relay == NULL || packet == NULL ||
+        relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        !id_is_unicast(relay->local_id) ||
+        !id_is_unicast(relay->gateway_id) ||
+        relay->local_id == relay->gateway_id ||
+        packet->src_id != relay->gateway_id ||
+        packet->msg_type != MSG_COMMAND ||
+        (packet->dst_id != MESH_BROADCAST_ID &&
+         packet->dst_id != relay->local_id) ||
+        !id_is_unicast(previous_hop_id) ||
+        previous_hop_id == relay->local_id ||
+        route_epoch == 0u ||
+        link_quality > 100u ||
+        origin_ttl == 0u || origin_ttl > MESH_NETWORK_MAX_HOPS ||
+        packet->ttl == 0u || packet->ttl > origin_ttl) {
+        return PROTO_ERR_ARG;
+    }
+
+    gateway_hop_count = origin_ttl - packet->ttl;
+
+    candidate = (struct route_candidate) {
+        .next_hop_id = previous_hop_id,
+        .gateway_id = relay->gateway_id,
+        .route_epoch = route_epoch,
+        .last_seen_ms = now_ms,
+        .hop_count = gateway_hop_count,
+        .link_quality = link_quality,
+        .relay_capacity_state = RELAY_CAP_UNKNOWN,
+        .valid = true,
+    };
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        struct route_candidate *existing = &relay->upstream.candidates[i];
+
+        if (existing->valid &&
+            existing->route_epoch == route_epoch &&
+            existing->next_hop_id == previous_hop_id &&
+            existing->gateway_id == relay->gateway_id) {
+            preserved_failure_count = existing->failure_count;
+            preserved_hold_down_until_ms = existing->hold_down_until_ms;
+            preserved_hold_down_valid = existing->hold_down_valid;
+            preserve_failure_state = true;
+            break;
+        }
+    }
+    ret = route_upsert_candidate(&relay->upstream, &candidate);
+    if (ret == PROTO_OK && preserve_failure_state) {
+        for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+            struct route_candidate *existing =
+                &relay->upstream.candidates[i];
+
+            if (existing->valid &&
+                existing->route_epoch == route_epoch &&
+                existing->next_hop_id == previous_hop_id &&
+                existing->gateway_id == relay->gateway_id) {
+                stored_candidate = existing;
+                break;
+            }
+        }
+        if (stored_candidate == NULL) {
+            return PROTO_ERR_NOT_FOUND;
+        }
+        stored_candidate->failure_count = preserved_failure_count;
+        stored_candidate->hold_down_until_ms =
+            preserved_hold_down_until_ms;
+        stored_candidate->hold_down_valid = preserved_hold_down_valid;
+        ret = route_select_best_at(&relay->upstream, now_ms);
+        if (ret != PROTO_OK && preserved_hold_down_valid) {
+            /* A valid passive refresh may leave every known parent held.
+             * Keep the route evidence and let discovery run; absence of a
+             * currently selectable parent is not a malformed control. */
+            ret = PROTO_OK;
+        }
+    }
+    if (ret == PROTO_OK && previous_hop_id == relay->gateway_id) {
+        const struct route_candidate *stored = find_upstream_candidate(
+            relay, previous_hop_id, relay->upstream.current_epoch);
+        const struct mesh_route_path direct_path = {
+            .node_ids = {relay->gateway_id, relay->local_id},
+            .count = 2u,
+        };
+
+        ret = store_upstream_candidate_ancestry(relay,
+                                                stored,
+                                                &direct_path,
+                                                NULL);
+        if (ret != PROTO_OK) {
+            return ret;
+        }
+    }
+    if (ret == PROTO_OK) {
         mesh_relay_note_route_discovery_ready(relay, relay->gateway_id);
     }
     return ret;
@@ -404,6 +564,39 @@ static void invalidate_failed_upstream_dependents(struct mesh_relay *relay,
         }
     }
     mesh_relay_reset_route_discovery(relay);
+}
+
+int mesh_relay_abandon_upstream_parent_at(
+    struct mesh_relay *relay,
+    uint64_t expected_parent_id,
+    uint32_t now_ms,
+    enum route_delivery_action *action_out)
+{
+    const struct route_candidate *failed;
+    enum route_delivery_action action;
+    uint32_t route_epoch;
+
+    if (relay == NULL || action_out == NULL ||
+        !id_is_unicast(expected_parent_id)) {
+        return PROTO_ERR_ARG;
+    }
+    route_epoch = relay->upstream.current_epoch;
+    failed = find_upstream_candidate(relay,
+                                     expected_parent_id,
+                                     route_epoch);
+    if (failed == NULL) {
+        return PROTO_ERR_STALE;
+    }
+    action = route_abandon_candidate_at(&relay->upstream,
+                                        expected_parent_id,
+                                        relay->gateway_id,
+                                        route_epoch,
+                                        now_ms);
+    invalidate_failed_upstream_dependents(relay,
+                                          expected_parent_id,
+                                          route_epoch);
+    *action_out = action;
+    return PROTO_OK;
 }
 
 void mesh_relay_invalidate_upstream_route(struct mesh_relay *relay)
@@ -1146,6 +1339,7 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
     const struct route_candidate *selected = NULL;
     const struct mesh_route_path *selected_path = NULL;
     struct mesh_route_path direct_selected_path = {0};
+    uint32_t reply_earliest_tx_ms;
     uint32_t reply_epoch;
     int ret;
 
@@ -1209,6 +1403,16 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
         return ret;
     }
 
+    reply_earliest_tx_ms = route_reply_earliest_tx_ms(
+        now_ms,
+        fields.route_reply_rx_delay_ms,
+        random_value);
+    if (fields.proposed_channel9_timing_valid) {
+        /* Keep the compact delay anchored to the scheduled RF reply, not to
+         * the earlier request decode that precedes responder-slot jitter. */
+        fields.timing_reference_ms = reply_earliest_tx_ms;
+    }
+
     ret = build_route_reply(relay,
                             &fields,
                             fields.target_id == relay->gateway_id ? selected : NULL,
@@ -1218,10 +1422,7 @@ int mesh_relay_build_route_reply_for_request(struct mesh_relay *relay,
                             reply_epoch,
                             out);
     if (ret == PROTO_OK) {
-        out->earliest_tx_ms = route_reply_earliest_tx_ms(
-            now_ms,
-            fields.route_reply_rx_delay_ms,
-            random_value);
+        out->earliest_tx_ms = reply_earliest_tx_ms;
         out->earliest_tx_valid = true;
     }
     return ret;

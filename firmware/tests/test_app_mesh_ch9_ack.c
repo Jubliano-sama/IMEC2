@@ -399,6 +399,21 @@ static void test_ack_complete_does_not_close_when_work_remains(void)
     assert(!app_mesh_ch9_ack_complete_should_close_timing(&state));
 }
 
+static void test_ack_complete_does_not_close_with_source_delivery_pending(void)
+{
+    const struct app_mesh_ch9_ack_complete_state state = {
+        .route_test_enabled = true,
+        .transmitter_role = false,
+        .cadence_parent = true,
+        .source_delivery_pending = true,
+        .report_tx_queue_used = 0u,
+        .route_waiting_tx_valid = false,
+        .ack_batch_valid = false,
+    };
+
+    assert(!app_mesh_ch9_ack_complete_should_close_timing(&state));
+}
+
 static void test_ack_complete_policy_is_disabled_outside_route_test(void)
 {
     const struct app_mesh_ch9_ack_complete_state state = {
@@ -814,6 +829,7 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
         .next_hop_id = SECOND_RELAY_ID,
         .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
     };
+    struct mesh_outbound event_accept = event_propose;
     struct app_mesh_ch9_ack_batch batch = {
         .template_ack = {
             .packet = {
@@ -840,6 +856,8 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
     struct app_mesh_c5_tx_authorization_token none = {0};
     size_t route_payload_len = 0u;
     size_t wrong_route_payload_len = 0u;
+
+    event_accept.packet.msg_type = MSG_MESH_EVENT_ACCEPT;
 
     assert(tlv_append_u64(route_request.payload,
                           sizeof(route_request.payload),
@@ -899,8 +917,10 @@ static void test_only_exact_forwarded_ack_route_repair_may_use_c5(void)
         APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR,
         &pending, true, &batch, SECOND_RELAY_ID));
     assert(event_authorization.retained_ack_valid);
-    assert(app_mesh_ch9_c5_repair_allowed(
+    assert(!app_mesh_ch9_c5_repair_allowed(
         &event_authorization, &pending, true, &batch, &event_propose));
+    assert(app_mesh_ch9_c5_repair_allowed(
+        &event_authorization, &pending, true, &batch, &event_accept));
     assert(!app_mesh_ch9_c5_repair_allowed(
         &event_authorization, &pending, true, &batch, &route_request));
     assert(!app_mesh_ch9_c5_repair_authorization_capture(
@@ -1712,6 +1732,7 @@ int main(void)
     test_ack_complete_closes_idle_cadence_parent();
     test_ack_complete_does_not_close_gateway_peer();
     test_ack_complete_does_not_close_when_work_remains();
+    test_ack_complete_does_not_close_with_source_delivery_pending();
     test_ack_complete_policy_is_disabled_outside_route_test();
     test_direct_gateway_ack_matches_transit_original_source();
     test_direct_gateway_ack_rejects_relay_address_for_transit();

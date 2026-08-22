@@ -107,6 +107,11 @@ int app_mesh_local_delivery_rebase_after_boot(
 int app_mesh_local_delivery_retire_elapsed_not_before(
     struct app_mesh_local_delivery *delivery,
     uint32_t now_ms);
+/* Before the first RF attempt, move a source not-before later. A shallower
+ * route or stale calculation can never pull the packet earlier. */
+int app_mesh_local_delivery_postpone_not_before(
+    struct app_mesh_local_delivery *delivery,
+    uint32_t not_before_ms);
 int app_mesh_local_delivery_recover(
     struct app_mesh_local_delivery *delivery,
     const struct app_mesh_local_delivery_snapshot *snapshot,

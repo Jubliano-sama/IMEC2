@@ -34,6 +34,9 @@ from .diagnostics_integration import GatewayDiagnosticsMixin
 from .operation_policy import (
     ASSIGNMENT_DEFAULT_BUDGET_MS,
     ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+    ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
+    ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
+    EXPECTED_ANCHOR_COUNT_MAX,
     DISCOVERY_DEFAULT_BUDGET_MS,
     DISCOVERY_DEFAULT_REPORT_GRACE_MS,
     DISCOVERY_DEFAULT_ROUND_COUNT,
@@ -49,6 +52,10 @@ from .operation_policy import (
     DiscoveryOperationPolicy,
     OperationPolicyProfile,
     PairOperationPolicy,
+    assignment_required_budget_ms,
+    discovery_required_budget_ms,
+    discovery_required_start_delay_ms,
+    survey_estimated_duration_ms,
 )
 from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
@@ -66,6 +73,7 @@ from .protocol import (
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
     SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
+    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS,
     SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     STREAM_CLASS_NAMES,
     TLV_ANCHOR_DIAG_BYTES,
@@ -123,6 +131,7 @@ from .protocol import (
     build_assign_discovery_slots_command,
     build_gateway_host_receipt,
     build_here_i_am_command,
+    build_reboot_command,
     click_samples,
     decode_cir_sample,
     format_device_id,
@@ -211,8 +220,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.sequence = 0
         self._last_command_session_id = 0
         self.connected = False
+        self.connection_state = "disconnected"
         self.scanning = False
         self.gateway_id: int | None = None
+        self._command_progress_text = ""
+        self._topology_gateway_id: int | None = None
+        self._topology_slot_span: int | None = None
+        self._topology_timing_summary = "Topology estimate pending enumeration."
+        self._active_survey_estimate_ms: int | None = None
         self._initialize_gateway_diagnostics()
 
         self.connection_text = tk.StringVar(value="Disconnected")
@@ -265,6 +280,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.discovery_budget_text = tk.StringVar(
             value=str(DISCOVERY_DEFAULT_BUDGET_MS)
         )
+        self.operation_estimate_text = tk.StringVar(value="")
         self.pair_max_reruns_text = tk.StringVar(
             value=str(PAIR_DEFAULT_MAX_RERUNS)
         )
@@ -272,6 +288,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.sample_count_text = tk.StringVar(
             value=str(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
         )
+        for variable in (
+            self.discovery_slot_ms_text,
+            self.discovery_slots_text,
+            self.discovery_round_count_text,
+            self.duration_text,
+        ):
+            variable.trace_add("write", self._on_assignment_parameters_changed)
+        self._on_assignment_parameters_changed()
         self.sample_warning_text = tk.StringVar(value="Select a click report to inspect aligned samples.")
         self.cir_state_text = tk.StringVar(value="Select a CIR diagnostic fragment to inspect its assembly.")
 
@@ -429,7 +453,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
 
         self.clear_memory_button = ttk.Button(
             operations,
-            text="Clear Gateway Memory",
+            text="Clear Host Memory / Reboot Gateway",
             style="Danger.TButton",
             command=self._clear_gateway_memory,
         )
@@ -438,7 +462,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         Tooltip(
             self.clear_memory_button,
-            "Resets host deduplication cache, geometry models, survey history, and command telemetry.",
+            "Clears host caches and models; when connected, it also sends a command that reboots the gateway board. Disabled while a command or reconnect is active.",
         )
 
         self.command_availability_text = tk.StringVar(value="Connect gateway to run a command.")
@@ -449,6 +473,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
             wraplength=295,
             justify="left",
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(
+            operations,
+            textvariable=self.operation_estimate_text,
+            style="Muted.TLabel",
+            wraplength=295,
+            justify="left",
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Advanced / Protocol Settings
         advanced = ttk.LabelFrame(parent, text="Protocol Parameters", padding=10)
@@ -463,10 +494,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
         auto_survey = ttk.Checkbutton(advanced, text="Auto-generate fresh Survey ID", variable=self.survey_id_auto)
         auto_survey.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 4))
 
-        self._labeled_spin(advanced, 3, "Discovery slot (ms)", self.discovery_slot_ms_text, 30, 1000)
-        self._labeled_spin(advanced, 4, "Discovery rounds", self.discovery_round_count_text, 1, 4)
+        self._labeled_spin(advanced, 3, "Discovery slot (ms)", self.discovery_slot_ms_text, 200, 200)
+        self._labeled_spin(advanced, 4, "Discovery rounds", self.discovery_round_count_text, 4, 4)
         self._labeled_spin(advanced, 5, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
-        self._labeled_spin(advanced, 6, "Pair reruns", self.pair_max_reruns_text, 0, 2)
+        self._labeled_spin(advanced, 6, "Known max hop", self.deepest_hop_text, 1, 8)
+        self._labeled_spin(advanced, 7, "Pair reruns", self.pair_max_reruns_text, 0, 2)
     def _labeled_spin(
         self,
         parent: ttk.LabelFrame,
@@ -794,9 +826,70 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 )
                 self.assignment_budget_text.set(str(budget))
             if 1 <= expected <= 50:
-                self.discovery_slots_text.set(str(expected))
+                slot_span = getattr(self, "_topology_slot_span", None)
+                slot_count_text = str(slot_span or expected)
+                if self.discovery_slots_text.get() != slot_count_text:
+                    self.discovery_slots_text.set(slot_count_text)
+            discovery_variables = (
+                getattr(self, "discovery_slot_ms_text", None),
+                getattr(self, "discovery_slots_text", None),
+                getattr(self, "discovery_round_count_text", None),
+                getattr(self, "duration_text", None),
+                getattr(self, "discovery_budget_text", None),
+            )
+            if all(variable is not None for variable in discovery_variables):
+                discovery_start_delay_ms = \
+                    discovery_required_start_delay_ms(deepest)
+                self.discovery_start_delay_text.set(
+                    str(discovery_start_delay_ms)
+                )
+                discovery_budget = discovery_required_budget_ms(
+                    discovery_start_delay_ms,
+                    int(self.discovery_slot_ms_text.get()),
+                    int(self.discovery_slots_text.get()),
+                    int(self.discovery_round_count_text.get()),
+                    int(self.duration_text.get()),
+                    deepest,
+                )
+                self.discovery_budget_text.set(str(discovery_budget))
+                estimate_var = getattr(self, "operation_estimate_text", None)
+                if estimate_var is not None:
+                    effective_deepest = deepest or min(expected or 8, 8)
+                    full_estimate = survey_estimated_duration_ms(
+                        expected,
+                        effective_deepest,
+                        int(self.discovery_slots_text.get()),
+                    )
+                    warning = ""
+                    if deepest and (
+                        deepest >= 3
+                        or full_estimate
+                        >= (SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS * 4) // 5
+                    ):
+                        warning = (
+                            " Increase route redundancy before starting if "
+                            "the placement allows it."
+                        )
+                    estimate_var.set(
+                        f"{self._topology_timing_summary} Enumeration up to "
+                        f"{self._format_duration_ms(budget)}; estimated full "
+                        f"survey {self._format_duration_ms(full_estimate)}; "
+                        f"safety limit "
+                        f"{self._format_duration_ms(SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS)}."
+                        f"{warning}"
+                    )
         except (ValueError, TypeError):
             pass
+
+    @staticmethod
+    def _format_duration_ms(duration_ms: int) -> str:
+        seconds = max(0, (duration_ms + 999) // 1000)
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return (
+            f"{hours:d}:{minutes:02d}:{seconds:02d}"
+            if hours else f"{minutes:d}:{seconds:02d}"
+        )
 
     def _operation_policy_profile(self) -> OperationPolicyProfile:
         expected_raw = self.assignment_expected_anchors_text.get().strip()
@@ -834,7 +927,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 deepest_hop=deepest_hop,
             ),
             discovery=DiscoveryOperationPolicy(
-                start_delay_ms=DISCOVERY_DEFAULT_START_DELAY_MS,
+                start_delay_ms=discovery_required_start_delay_ms(
+                    deepest_hop
+                ),
                 slot_ms=self._parse_int(
                     "Discovery slot duration", self.discovery_slot_ms_text.get()
                 ),
@@ -850,6 +945,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 operation_budget_ms=self._parse_int(
                     "Survey budget", self.discovery_budget_text.get()
                 ),
+                deepest_hop=deepest_hop,
             ),
             pair=PairOperationPolicy(
                 max_reruns=self._parse_int(
@@ -916,6 +1012,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _dispatch_gateway_command(self, dispatch: GatewayCommandDispatch) -> None:
         if dispatch.on_dispatch is not None:
             dispatch.on_dispatch()
+        if getattr(self.command_orchestrator, "phase", None) == "preflight":
+            self._command_progress_text = "Refreshing routes"
+        elif dispatch.command_kind == 1:
+            self._command_progress_text = "Collecting enumeration responses"
+        elif dispatch.command_kind == 2:
+            self._command_progress_text = "Starting anchor survey"
+        else:
+            self._command_progress_text = "Running gateway command"
         self.status_text.set(dispatch.status_text)
         self.transport.send_frame(dispatch.frame, dispatch.label)
 
@@ -937,7 +1041,149 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.status_text.set(
                 "Here I Am preflight failed; requested command was not sent"
             )
+        if transition.completed:
+            self._command_progress_text = ""
+            self._active_survey_estimate_ms = None
         self._update_command_state()
+
+    def _observe_operation_progress(self, event: Any) -> None:
+        pending = self.command_request_tracker.pending
+        if pending is None or (
+            event.command_kind,
+            event.host_session_id,
+            event.host_sequence,
+        ) != (
+            pending.command_kind,
+            pending.host_session_id,
+            pending.host_sequence,
+        ):
+            return
+        if event.command_kind == 1:
+            anchors = self.command_timeline_model.enumerated_anchors.get(
+                event.correlation_key, {}
+            )
+            if event.stage == 6:
+                expected_raw = self.assignment_expected_anchors_text.get().strip()
+                expected = int(expected_raw) if expected_raw else event.total_count
+                if event.discovery_slot == 255:
+                    suffix = f"/{expected}" if expected else ""
+                    self._command_progress_text = (
+                        f"Collecting responses {len(anchors)}{suffix}"
+                    )
+                else:
+                    total = event.total_count or len(anchors)
+                    self._command_progress_text = (
+                        f"Publishing slot map {event.progress_count}/{total}"
+                    )
+            elif event.stage == 7:
+                self._command_progress_text = "Publishing exact slot table"
+            elif event.stage == 8:
+                total = event.total_count or len(anchors)
+                self._command_progress_text = (
+                    f"Confirmations {event.progress_count}/{total}"
+                )
+            if event.terminal:
+                self._store_enumeration_timing(event, anchors)
+        elif event.command_kind == 2:
+            if event.stage <= 4:
+                self._command_progress_text = "Broadcasting survey schedule"
+            elif event.stage in (5, 6, 7):
+                total = event.total_count
+                suffix = f"/{total}" if total else ""
+                self._command_progress_text = (
+                    f"Collecting survey reports {event.progress_count}{suffix}"
+                )
+            elif event.stage == 8:
+                if event.total_count:
+                    try:
+                        expected_raw = (
+                            self.assignment_expected_anchors_text.get().strip()
+                        )
+                        anchor_count = (
+                            int(expected_raw)
+                            if expected_raw
+                            else int(self.discovery_slots_text.get())
+                        )
+                        deepest_raw = self.deepest_hop_text.get().strip()
+                        deepest = (
+                            int(deepest_raw)
+                            if deepest_raw else min(anchor_count, 8)
+                        )
+                        self._active_survey_estimate_ms = (
+                            survey_estimated_duration_ms(
+                                anchor_count,
+                                deepest,
+                                int(self.discovery_slots_text.get()),
+                                event.total_count,
+                            )
+                        )
+                    except (ValueError, TypeError):
+                        pass
+                self._command_progress_text = (
+                    f"Pair schedule ready ({event.total_count} pairs)"
+                )
+            elif event.stage in (9, 10, 11):
+                self._command_progress_text = (
+                    f"Ranging pairs {event.success_count + event.failure_count}/"
+                    f"{event.total_count}"
+                )
+        self._update_command_state()
+
+    def _store_enumeration_timing(
+        self, event: Any, anchors: dict[int, Any]
+    ) -> None:
+        gateway_id = getattr(self, "gateway_id", None)
+        if (
+            not isinstance(gateway_id, int)
+            or gateway_id == 0
+            or event.flags & 0x04
+            or event.command_status != 0
+            or event.reason != 0
+            or event.failure_count != 0
+            or event.total_count == 0
+            or len(anchors) != event.total_count
+        ):
+            return
+        details = tuple(anchors.values())
+        if any(
+            detail.discovery_slot == 255 or detail.hop_count == 0
+            for detail in details
+        ):
+            return
+        anchor_count = len(details)
+        deepest_hop = max(detail.hop_count for detail in details)
+        slot_span = max(detail.discovery_slot for detail in details) + 1
+        previous_raw = self.deepest_hop_text.get().strip()
+        previous_hop = int(previous_raw) if previous_raw else 0
+        if previous_hop and deepest_hop > previous_hop:
+            self._append_log(
+                "warning",
+                f"Enumeration increased known route depth from {previous_hop} "
+                f"to {deepest_hop}; the survey time allowance was enlarged.",
+            )
+        self._topology_gateway_id = gateway_id
+        self._topology_slot_span = slot_span
+        self.assignment_expected_anchors_text.set(str(anchor_count))
+        self.deepest_hop_text.set(str(deepest_hop))
+        self.discovery_slots_text.set(str(slot_span))
+        self._topology_timing_summary = (
+            f"Topology: {anchor_count} anchors, max hop {deepest_hop}, "
+            f"slot span {slot_span}."
+        )
+        self._on_assignment_parameters_changed()
+
+    def _reset_topology_timing(self) -> None:
+        self._topology_gateway_id = None
+        self._topology_slot_span = None
+        self._topology_timing_summary = "Topology estimate pending enumeration."
+        if hasattr(self, "deepest_hop_text"):
+            self.deepest_hop_text.set("")
+        if hasattr(self, "assignment_expected_anchors_text"):
+            self.assignment_expected_anchors_text.set(
+                DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
+            )
+        if hasattr(self, "discovery_slots_text"):
+            self.discovery_slots_text.set(str(DISCOVERY_DEFAULT_SLOT_COUNT))
 
     def _here_i_am_dispatch(
         self,
@@ -980,12 +1226,32 @@ class GatewayGui(GatewayDiagnosticsMixin):
             expected_anchor_count = (
                 operation_policy.assignment.expected_anchor_count or None
             )
-            # The host command limit owns the complete gateway orchestration,
-            # while the discovery policy bounds only discovery and retained
-            # report collection. Keeping these independent gives a normal
-            # survey a six-minute terminal ceiling and a four-minute missing-
-            # report ceiling; larger fleets can request more time explicitly.
+            # The host command limit owns only the terminal safety boundary;
+            # the topology estimate below is the user-facing service target.
+            # Discovery retains its own shorter, independently validated
+            # report-collection policy.
             command_budget_ms = self._command_budget_ms()
+            if (
+                command_budget_ms is not None
+                and command_budget_ms > SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS
+            ):
+                raise ValueError(
+                    "Survey command limit must be at most "
+                    f"{SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS} ms"
+                )
+            estimate_anchor_count = (
+                operation_policy.assignment.expected_anchor_count
+                or discovery_policy.slot_count
+            )
+            effective_deepest = (
+                operation_policy.assignment.deepest_hop
+                or min(estimate_anchor_count, 8)
+            )
+            estimated_survey_ms = survey_estimated_duration_ms(
+                estimate_anchor_count,
+                effective_deepest,
+                discovery_policy.slot_count,
+            )
             survey_id = self._survey_id_for_send()
             command = build_anchor_discovery_command(
                 host_id=host_id,
@@ -1000,6 +1266,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 command_budget_ms=command_budget_ms,
                 operation_policy=operation_policy,
             )
+            def begin_survey() -> None:
+                self._active_survey_estimate_ms = estimated_survey_ms
+                self._prepare_anchor_geometry_survey(survey_id, session_id, seq)
+
             target = GatewayCommandDispatch(
                 command_kind=2,
                 command_id=command.command_id,
@@ -1012,9 +1282,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
                 ),
                 status_text="Writing anchor-pair survey command over BLE...",
-                on_dispatch=lambda: self._prepare_anchor_geometry_survey(
-                    survey_id, session_id, seq
-                ),
+                on_dispatch=begin_survey,
             )
             preflight = self._here_i_am_dispatch(
                 host_id=host_id,
@@ -1122,6 +1390,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         # Each packet carries its immutable worker-side receive timestamp; only
         # expire against wall time after all already-received events are seen.
         self._expire_gateway_command()
+        self._update_command_state()
         if self.root.winfo_exists():
             self.root.after(50, self._drain_events)
 
@@ -1226,10 +1495,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     )
 
     def _set_connection_state(self, state: str) -> None:
+        self.connection_state = state
         self.connected = state == "connected"
         if (
             not self.connected
-            and state != "connecting"
+            and state not in ("connecting", "reconnecting")
             and hasattr(self, "command_orchestrator")
         ):
             self._apply_gateway_command_transition(
@@ -1278,6 +1548,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 f"Gateway identity contradiction: expected {format_device_id(previous)}, "
                 f"observed {format_device_id(value)}"
             )
+        topology_gateway_id = getattr(self, "_topology_gateway_id", None)
+        if topology_gateway_id is not None and topology_gateway_id != value:
+            self._reset_topology_timing()
         self.gateway_id = value
         delivery_dedup = getattr(self, "delivery_dedup", None)
         if delivery_dedup is not None:
@@ -1295,21 +1568,71 @@ class GatewayGui(GatewayDiagnosticsMixin):
 
     def _update_command_state(self) -> None:
         tracker = getattr(self, "command_request_tracker", None)
-        if not self.connected:
+        orchestrator = getattr(self, "command_orchestrator", None)
+        command_active = bool(
+            getattr(orchestrator, "active", False)
+            or (tracker is not None and tracker.pending is not None)
+        )
+        if command_active:
+            pending = tracker.pending if tracker is not None else None
+            now = time.monotonic()
+            remaining_s = 0.0
+            if pending is not None:
+                remaining_s = max(
+                    0.0,
+                    pending.started_at + pending.timeout_s - now,
+                )
+            if (
+                orchestrator is not None
+                and orchestrator.phase == "preflight"
+                and orchestrator.plan is not None
+            ):
+                remaining_s += orchestrator.plan.target.timeout_s
+            progress = self._command_progress_text or "Command running"
+            estimate_ms = getattr(self, "_active_survey_estimate_ms", None)
+            if (
+                pending is not None
+                and pending.command_kind == 2
+                and estimate_ms is not None
+            ):
+                elapsed_ms = max(0, int((now - pending.started_at) * 1000))
+                if elapsed_ms <= estimate_ms:
+                    estimate_text = (
+                        "Estimated countdown: "
+                        f"{self._format_duration_ms(estimate_ms - elapsed_ms)}"
+                    )
+                else:
+                    estimate_text = (
+                        "Over estimate by "
+                        f"{self._format_duration_ms(elapsed_ms - estimate_ms)} "
+                        "- retrying"
+                    )
+                reason = (
+                    f"{progress}. {estimate_text}; safety deadline: "
+                    f"{self._format_duration_ms(int(remaining_s * 1000))}."
+                )
+            else:
+                reason = (
+                    f"{progress}. Deadline countdown: "
+                    f"{self._format_duration_ms(int(remaining_s * 1000))}."
+                )
+        elif not self.connected:
             reason = "Connect gateway to run a command."
         elif self.gateway_id is None:
             reason = "Waiting for a valid gateway identity."
-        elif (
-            getattr(getattr(self, "command_orchestrator", None), "active", False)
-            or (tracker is not None and tracker.pending is not None)
-        ):
-            reason = "Command already running; waiting for its terminal result."
         else:
             reason = "Ready for a gateway command."
         command_state = "normal" if reason.startswith("Ready") else "disabled"
         self.discovery_button.configure(state=command_state)
         self.refresh_button.configure(state=command_state)
         self.assignment_button.configure(state=command_state)
+        if hasattr(self, "clear_memory_button"):
+            clear_blocked = command_active or getattr(
+                self, "connection_state", "disconnected"
+            ) in ("connecting", "reconnecting", "disconnecting")
+            self.clear_memory_button.configure(
+                state="disabled" if clear_blocked else "normal"
+            )
         if hasattr(self, "command_availability_text"):
             self.command_availability_text.set(reason)
 
@@ -2116,7 +2439,20 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self.cir_state_text.set("Select a CIR diagnostic fragment to inspect its assembly.")
 
     def _clear_gateway_memory(self) -> None:
-        """Clear external gateway host RAM: deduplication, geometry models, and packet buffers."""
+        """Clear external gateway host RAM (dedup, geometry, history, CIR) and reset connected board RAM."""
+        tracker = getattr(self, "command_request_tracker", None)
+        orchestrator = getattr(self, "command_orchestrator", None)
+        if (
+            getattr(orchestrator, "active", False)
+            or (tracker is not None and tracker.pending is not None)
+            or getattr(self, "connection_state", "disconnected")
+            in ("connecting", "reconnecting", "disconnecting")
+        ):
+            self._show_error(
+                "Wait for the active command or BLE reconnect to finish before "
+                "clearing host memory or rebooting the gateway."
+            )
+            return
         self._clear_packets()
         self.delivery_dedup.clear()
         getattr(self, "_assignment_replay_receipts", {}).clear()
@@ -2124,6 +2460,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.assignment_replay_barrier.reset()
         if hasattr(self, "command_request_tracker"):
             self.command_request_tracker.reset()
+        if hasattr(self, "command_orchestrator"):
+            self.command_orchestrator.reset()
         if hasattr(self, "geometry_model"):
             self.geometry_model.reset()
         if hasattr(self, "click_location_model"):
@@ -2132,12 +2470,45 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.wake_monitor.reset()
         if hasattr(self, "command_timeline_model"):
             self.command_timeline_model.reset()
+        if hasattr(self, "topology_model"):
+            self.topology_model.reset()
+        self._reset_topology_timing()
         if hasattr(self, "anchor_geometry_view"):
-            self.anchor_geometry_view.show(self.geometry_model.state)
+            self.anchor_geometry_view.show_model(self.geometry_model)
         if hasattr(self, "click_diagnostics_view"):
             self.click_diagnostics_view.show(self.click_location_model.state, {})
         if hasattr(self, "mesh_diagnostics_view"):
-            self.mesh_diagnostics_view.show(self.command_timeline_model.state)
+            self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
+            self.mesh_diagnostics_view.show_topology(None, {})
+
+        # If connected to physical gateway board, submit CMD_REBOOT to clear board RAM
+        if getattr(self, "connected", False) and getattr(self, "gateway_id", None) is not None:
+            try:
+                host_id = self._parse_int("Host ID", self.host_id_text.get())
+                session_id, seq = self._next_identity()
+                cmd = build_reboot_command(
+                    host_id=host_id,
+                    gateway_id=self.gateway_id,
+                    session_id=session_id,
+                    seq=seq,
+                )
+                target = GatewayCommandDispatch(
+                    command_kind=3,
+                    command_id=cmd.command_id,
+                    session_id=session_id,
+                    sequence=seq,
+                    frame=cmd.frame,
+                    label=cmd.label,
+                    timeout_s=5.0,
+                    status_text="Rebooting gateway board to clear board RAM...",
+                )
+                self._submit_gateway_command(GatewayCommandPlan.user_triggered(target))
+                self._append_log("info", "Sent reboot command to gateway board; board RAM cleared and reconnecting...")
+                self.status_text.set("Cleared host RAM and sent reboot command to gateway board.")
+                return
+            except Exception as exc:
+                self._append_log("error", f"Could not send reboot to gateway board: {exc}")
+
         self._append_log("info", "Cleared gateway external RAM: dedup state, geometry models, and packet history reset.")
         self.status_text.set("Gateway external RAM and deduplication state cleared.")
     @staticmethod

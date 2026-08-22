@@ -578,6 +578,303 @@ static void test_pair_start_skew_is_local_and_route_depth_independent(void)
                                  MESH_SIM_RX_FRAME_TIMEOUT);
 }
 
+static uint16_t model_survey_sample_alignment(
+    uint32_t initiator_spacing_ms,
+    uint32_t later_responder_window_ms,
+    uint32_t responder_deadline_shift_ms,
+    uint16_t poll_loss_mask,
+    uint16_t response_loss_mask,
+    uint16_t *wrong_sequence_mask)
+{
+    const uint64_t responder_started_ms = 100u;
+    const uint64_t initiator_started_ms =
+        responder_started_ms + SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    const uint64_t first_window_deadline_ms =
+        responder_started_ms + SURVEY_PAIR_RESPONDER_WINDOW_MS +
+        responder_deadline_shift_ms;
+    uint16_t expected_sample = 0u;
+    uint16_t usable_mask = 0u;
+    uint16_t consumed_mask = 0u;
+    uint64_t expected_window_deadline_ms = first_window_deadline_ms;
+
+    for (uint16_t emitted_sample = 0u;
+         emitted_sample < SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT;
+         emitted_sample++) {
+        const uint16_t emitted_bit = (uint16_t)(1u << emitted_sample);
+        const uint64_t poll_started_ms = initiator_started_ms +
+            (uint64_t)emitted_sample * initiator_spacing_ms;
+
+        while (expected_sample < SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT &&
+               poll_started_ms >= expected_window_deadline_ms) {
+            expected_sample++;
+            expected_window_deadline_ms = first_window_deadline_ms +
+                (uint64_t)expected_sample * later_responder_window_ms;
+        }
+        if ((poll_loss_mask & emitted_bit) != 0u) {
+            continue;
+        }
+        if (expected_sample != emitted_sample) {
+            consumed_mask |= emitted_bit;
+            continue;
+        }
+        if ((response_loss_mask & emitted_bit) != 0u) {
+            /* The responder remains on this sequence until its deadline. */
+            continue;
+        }
+
+        usable_mask |= emitted_bit;
+        expected_sample++;
+        expected_window_deadline_ms = first_window_deadline_ms +
+            (uint64_t)expected_sample * later_responder_window_ms;
+    }
+
+    if (wrong_sequence_mask != NULL) {
+        *wrong_sequence_mask = consumed_mask;
+    }
+    return usable_mask;
+}
+
+static void test_sample_cells_isolate_early_errors_and_lost_polls(void)
+{
+    const uint64_t responder_role_start_ms = 100u;
+    const uint64_t pair_execution_ms =
+        responder_role_start_ms + SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    const uint64_t first_cell_end_ms =
+        pair_execution_ms + SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
+    const uint64_t second_cell_start_ms =
+        pair_execution_ms + SURVEY_PAIR_SAMPLE_CELL_MS;
+    const uint16_t all_samples_mask =
+        (uint16_t)((1u << SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT) - 1u);
+    const uint16_t sample_1 = 1u << 0;
+    const uint16_t sample_3 = 1u << 2;
+    uint16_t wrong_sequence_mask = 0u;
+    uint16_t usable_mask;
+
+    CHECK(SURVEY_PAIR_SAMPLE_CELL_MS ==
+              SURVEY_PAIR_INITIATOR_TIMEOUT_MS +
+                  SURVEY_PAIR_SAMPLE_GAP_MS,
+          "survey sample cell drifted from timeout plus inter-sample gap");
+    CHECK(SURVEY_PAIR_BATCH_WINDOW_MS ==
+              SURVEY_PAIR_RESPONDER_WINDOW_MS +
+                  (SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT - 1u) *
+                      SURVEY_PAIR_SAMPLE_CELL_MS,
+          "survey pair batch window does not cover every fixed sample cell");
+    CHECK(SURVEY_PAIR_BATCH_WINDOW_MS <
+              survey_pair_control_timeout_ms(1u),
+          "one-hop pair control deadline cannot contain the RF batch");
+    CHECK(responder_role_start_ms + SURVEY_PAIR_RESPONDER_WINDOW_MS ==
+              first_cell_end_ms &&
+              second_cell_start_ms - first_cell_end_ms ==
+                  SURVEY_PAIR_SAMPLE_GAP_MS,
+          "immutable responder and initiator grids do not share cell boundaries");
+
+    for (uint16_t failed_sample = 0u;
+         failed_sample < SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT;
+         failed_sample++) {
+        const uint16_t failed_bit = (uint16_t)(1u << failed_sample);
+        const uint16_t expected_usable =
+            (uint16_t)(all_samples_mask & ~failed_bit);
+
+        usable_mask = model_survey_sample_alignment(
+            SURVEY_PAIR_SAMPLE_CELL_MS,
+            SURVEY_PAIR_SAMPLE_CELL_MS,
+            0u,
+            failed_bit,
+            0u,
+            &wrong_sequence_mask);
+        CHECK(usable_mask == expected_usable && wrong_sequence_mask == 0u,
+              "one lost poll cascaded outside its fixed sample cell");
+
+        usable_mask = model_survey_sample_alignment(
+            SURVEY_PAIR_SAMPLE_CELL_MS,
+            SURVEY_PAIR_SAMPLE_CELL_MS,
+            0u,
+            0u,
+            failed_bit,
+            &wrong_sequence_mask);
+        CHECK(usable_mask == expected_usable && wrong_sequence_mask == 0u,
+              "one lost response cascaded outside its fixed sample cell");
+    }
+
+    usable_mask = model_survey_sample_alignment(
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        0u,
+        sample_3,
+        sample_1,
+        &wrong_sequence_mask);
+    CHECK(usable_mask ==
+              (uint16_t)(all_samples_mask & ~(sample_1 | sample_3)) &&
+              wrong_sequence_mask == 0u,
+          "separate first-response and sample-3-poll losses cascaded");
+
+    /*
+     * A worker admitted after sample 1's RF cell closes must skip sequence 1,
+     * then wait for sequence 2's immutable start. Treating that skip as one
+     * lost poll proves it cannot be emitted into the responder's next window.
+     */
+    CHECK(first_cell_end_ms + 1u < second_cell_start_ms,
+          "sample gap leaves no bounded admission point for an expired cell");
+    usable_mask = model_survey_sample_alignment(
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        0u,
+        sample_1,
+        0u,
+        &wrong_sequence_mask);
+    CHECK(usable_mask == (uint16_t)(all_samples_mask & ~sample_1) &&
+              wrong_sequence_mask == 0u,
+          "skipping an expired first cell shifted later sequence ownership");
+
+    usable_mask = model_survey_sample_alignment(
+        SURVEY_PAIR_SAMPLE_GAP_MS,
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        0u,
+        0u,
+        sample_1,
+        &wrong_sequence_mask);
+    CHECK(usable_mask == 0u &&
+              wrong_sequence_mask == (uint16_t)(all_samples_mask & ~sample_1),
+          "gap-only initiator pacing no longer demonstrates the sequence cascade");
+
+    usable_mask = model_survey_sample_alignment(
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        SURVEY_PAIR_RESPONDER_WINDOW_MS,
+        0u,
+        sample_3,
+        sample_1,
+        &wrong_sequence_mask);
+    CHECK(usable_mask == (1u << 1) &&
+              (wrong_sequence_mask & ((1u << 3) | (1u << 4))) ==
+                  ((1u << 3) | (1u << 4)),
+          "full skew window on later samples no longer demonstrates tail consumption");
+
+    usable_mask = model_survey_sample_alignment(
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        SURVEY_PAIR_SAMPLE_CELL_MS,
+        100u,
+        0u,
+        sample_1,
+        &wrong_sequence_mask);
+    CHECK(usable_mask == 0u &&
+              wrong_sequence_mask == (uint16_t)(all_samples_mask & ~sample_1),
+          "local responder-entry jitter no longer demonstrates grid shift cascade");
+}
+
+static bool model_c5_interval_overlaps_pair_quiet_window(
+    uint64_t rf_start_ms,
+    uint64_t rf_end_ms,
+    uint64_t pair_release_ms,
+    uint16_t sample_count)
+{
+    const uint64_t preemption_lead_ms =
+        SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS +
+        SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    const uint64_t quiet_start_ms = pair_release_ms - preemption_lead_ms;
+    const uint64_t quiet_end_ms = pair_release_ms +
+        ((uint64_t)(sample_count - 1u) * SURVEY_PAIR_SAMPLE_CELL_MS) +
+        SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
+
+    /* Radio reservations are half-open: ending exactly at the quiet boundary
+     * is safe, while even one millisecond of complete wake/flood overlap is
+     * rejected. */
+    return rf_start_ms < quiet_end_ms && quiet_start_ms < rf_end_ms;
+}
+
+static uint64_t model_c5_start_after_pair_quiet_window(
+    uint64_t requested_start_ms,
+    uint64_t complete_airtime_ms,
+    uint64_t pair_release_ms,
+    uint16_t sample_count)
+{
+    const uint64_t quiet_end_ms = pair_release_ms +
+        ((uint64_t)(sample_count - 1u) * SURVEY_PAIR_SAMPLE_CELL_MS) +
+        SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
+
+    return model_c5_interval_overlaps_pair_quiet_window(
+               requested_start_ms,
+               requested_start_ms + complete_airtime_ms,
+               pair_release_ms,
+               sample_count) ?
+        quiet_end_ms : requested_start_ms;
+}
+
+static void test_gateway_c5_quiet_window_preserves_immutable_pair_release(void)
+{
+    const uint16_t sample_count = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT;
+    const uint64_t start_origin_ms = UINT64_C(5000);
+    const uint64_t pair_release_ms =
+        start_origin_ms + SURVEY_ROUND_START_EXECUTE_DELAY_MS;
+    const uint64_t preemption_lead_ms =
+        SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS +
+        SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    const uint64_t quiet_start_ms = pair_release_ms - preemption_lead_ms;
+    const uint64_t quiet_end_ms = pair_release_ms +
+        ((uint64_t)(sample_count - 1u) * SURVEY_PAIR_SAMPLE_CELL_MS) +
+        SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
+    const uint64_t complete_wake_flood_ms =
+        MESH_RADIO_WAKE_TRAIN_MS + MESH_RADIO_EVENT_RETUNE_GUARD_MS +
+        FLOOD_WAVE_MS;
+    uint64_t scheduled_start_ms;
+    uint64_t frozen_release_ms = pair_release_ms;
+
+    CHECK(preemption_lead_ms == UINT64_C(2000),
+          "pair Channel-5 cutoff drifted from derived endpoint preemption lead");
+    CHECK(quiet_end_ms - pair_release_ms == UINT64_C(790),
+          "pair Channel-5 quiet tail does not cover the final sample cell");
+    CHECK(complete_wake_flood_ms <= preemption_lead_ms,
+          "derived pair preemption lead cannot contain one complete wake/flood");
+
+    CHECK(!model_c5_interval_overlaps_pair_quiet_window(
+              quiet_start_ms - complete_wake_flood_ms,
+              quiet_start_ms,
+              pair_release_ms,
+              sample_count),
+          "complete Channel-5 RF ending at the cutoff was rejected");
+    CHECK(model_c5_interval_overlaps_pair_quiet_window(
+              quiet_start_ms - complete_wake_flood_ms + 1u,
+              quiet_start_ms + 1u,
+              pair_release_ms,
+              sample_count),
+          "wake/flood tail was allowed to enter the pair quiet interval");
+    CHECK(model_c5_interval_overlaps_pair_quiet_window(
+              pair_release_ms,
+              pair_release_ms + complete_wake_flood_ms,
+              pair_release_ms,
+              sample_count),
+          "Channel-5 RF was allowed during the fixed sample grid");
+    CHECK(!model_c5_interval_overlaps_pair_quiet_window(
+              quiet_end_ms,
+              quiet_end_ms + complete_wake_flood_ms,
+              pair_release_ms,
+              sample_count),
+          "Channel-5 RF after the final cell deadline was rejected");
+
+    /* Model the delayed responder-START redrive seen in the F1DD trace. The
+     * retry moves past the RF batch; its already-frozen execution release must
+     * not move with the retry. */
+    scheduled_start_ms = model_c5_start_after_pair_quiet_window(
+        quiet_start_ms,
+        complete_wake_flood_ms,
+        pair_release_ms,
+        sample_count);
+    CHECK(scheduled_start_ms == quiet_end_ms,
+          "delayed survey START redrive was not deferred past the RF batch");
+    CHECK(frozen_release_ms == pair_release_ms &&
+              pair_release_ms ==
+                  start_origin_ms + SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+          "deferring a START redrive moved the immutable pair release");
+
+    CHECK(SURVEY_ROUND_START_INITIATOR_SEND_CUTOFF_MS == UINT32_C(13000) &&
+              survey_round_start_initiator_send_allowed(
+                  (uint32_t)(quiet_start_ms - start_origin_ms - 1u)) &&
+              !survey_round_start_initiator_send_allowed(
+                  (uint32_t)(quiet_start_ms - start_origin_ms)) &&
+              !survey_round_start_initiator_send_allowed(
+                  (uint32_t)(quiet_start_ms - start_origin_ms + 1u)),
+          "initiator START admission cutoff is not strict at pair preemption");
+}
+
 static int build_pair_prepare_control(struct mesh_outbound *control,
                                       uint64_t target_id,
                                       uint64_t next_hop_id,
@@ -2991,6 +3288,8 @@ int main(void)
     run_survey_start_phy_case(false, 1u, false, true);
     run_survey_start_phy_case(true, 0u, false, true);
     test_pair_start_skew_is_local_and_route_depth_independent();
+    test_sample_cells_isolate_early_errors_and_lost_polls();
+    test_gateway_c5_quiet_window_preserves_immutable_pair_release();
     test_pair_prepare_phr_and_complete_airtime_sweep();
     test_forced_control_followup_covers_relay_gap();
     test_post_channel9_recovery_scan_captures_live_wake_train();

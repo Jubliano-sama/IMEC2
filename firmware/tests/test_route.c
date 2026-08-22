@@ -31,6 +31,19 @@ static uint8_t valid_candidate_count(const struct route_table *table)
     return count;
 }
 
+static const struct route_candidate *candidate_for_next_hop(
+    const struct route_table *table,
+    uint64_t next_hop_id)
+{
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        if (table->candidates[i].valid &&
+            table->candidates[i].next_hop_id == next_hop_id) {
+            return &table->candidates[i];
+        }
+    }
+    return NULL;
+}
+
 static void test_weighted_cost_prefers_useful_direct_route(void)
 {
     struct route_table table;
@@ -229,6 +242,84 @@ static void test_failures_try_alternate_then_discovery(void)
     assert(route_record_failure_at(&table, ROUTE_FAILURE_GATEWAY_ACK, 2700u) ==
            ROUTE_DELIVERY_DISCOVER);
     assert(route_selected(&table) == NULL);
+}
+
+static void test_bounded_contact_abandons_parent_before_discovery(void)
+{
+    struct route_table table;
+    struct route_candidate primary = candidate(0x02u, 1u, 1u, 90u, 1000u);
+    struct route_candidate alternate = candidate(0x03u, 1u, 2u, 60u, 1000u);
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 1u);
+    assert(route_upsert_candidate(&table, &primary) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &alternate) == PROTO_OK);
+
+    assert(route_abandon_selected_at(&table, 2000u) ==
+           ROUTE_DELIVERY_TRY_ALTERNATE);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == alternate.next_hop_id);
+    assert(table.candidates[0].hold_down_valid);
+    assert(table.candidates[0].hold_down_until_ms ==
+           2000u + ROUTE_PARENT_HOLDDOWN_MS);
+
+    assert(route_abandon_selected_at(&table, 2100u) ==
+           ROUTE_DELIVERY_DISCOVER);
+    assert(route_selected(&table) == NULL);
+}
+
+static void test_bounded_contact_abandons_failed_peer_after_selection_changes(void)
+{
+    struct route_table table;
+    struct route_candidate failed = candidate(0x02u, 7u, 1u, 90u, 1000u);
+    struct route_candidate alternate = candidate(0x03u, 7u, 2u, 60u, 1000u);
+    const struct route_candidate *failed_state;
+    const struct route_candidate *selected;
+
+    route_table_init(&table, 7u);
+    assert(route_upsert_candidate(&table, &failed) == PROTO_OK);
+    assert(route_upsert_candidate(&table, &alternate) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == failed.next_hop_id);
+
+    /* A concurrent route reply can change selection while the bounded contact
+     * attempt still belongs to the original peer. */
+    alternate.hop_count = 1u;
+    alternate.link_quality = 100u;
+    alternate.last_seen_ms = 1500u;
+    assert(route_upsert_candidate(&table, &alternate) == PROTO_OK);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == alternate.next_hop_id);
+
+    (void)route_abandon_candidate_at(&table,
+                                     failed.next_hop_id,
+                                     failed.gateway_id,
+                                     failed.route_epoch + 1u,
+                                     2000u);
+    failed_state = candidate_for_next_hop(&table, failed.next_hop_id);
+    assert(failed_state != NULL);
+    assert(!failed_state->hold_down_valid);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == alternate.next_hop_id);
+
+    assert(route_abandon_candidate_at(&table,
+                                      failed.next_hop_id,
+                                      failed.gateway_id,
+                                      failed.route_epoch,
+                                      2000u) ==
+           ROUTE_DELIVERY_TRY_ALTERNATE);
+    failed_state = candidate_for_next_hop(&table, failed.next_hop_id);
+    assert(failed_state != NULL);
+    assert(failed_state->hold_down_valid);
+    assert(failed_state->hold_down_until_ms ==
+           2000u + ROUTE_PARENT_HOLDDOWN_MS);
+    selected = route_selected(&table);
+    assert(selected != NULL);
+    assert(selected->next_hop_id == alternate.next_hop_id);
 }
 
 static void test_parent_candidate_count_replaces_worst_route(void)
@@ -508,32 +599,30 @@ static void test_capacity_hint_deadline_zero_is_valid_then_expires(void)
 
 static void test_parent_hold_down_deadline_zero_survives_uptime_wrap(void)
 {
-    const uint32_t fourth_failure_ms =
+    const uint32_t final_failure_ms =
         UINT32_MAX - ROUTE_PARENT_HOLDDOWN_MS + 1u;
     struct route_table table;
     struct route_candidate route =
-        candidate(0x02u, 1u, 1u, 90u, fourth_failure_ms - 3u);
+        candidate(0x02u, 1u, 1u, 90u,
+                  final_failure_ms - ROUTE_RETRIES_PER_CANDIDATE);
     const struct route_candidate *held;
     const struct route_candidate *selected;
 
     route_table_init(&table, 1u);
     assert(route_upsert_candidate(&table, &route) == PROTO_OK);
 
+    for (uint8_t retry = 0u;
+         retry < ROUTE_RETRIES_PER_CANDIDATE;
+         retry++) {
+        assert(route_record_failure_at(
+                   &table,
+                   ROUTE_FAILURE_GATEWAY_ACK,
+                   final_failure_ms - ROUTE_RETRIES_PER_CANDIDATE + retry) ==
+               ROUTE_DELIVERY_RETRY_CURRENT);
+    }
     assert(route_record_failure_at(&table,
                                    ROUTE_FAILURE_GATEWAY_ACK,
-                                   fourth_failure_ms - 3u) ==
-           ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure_at(&table,
-                                   ROUTE_FAILURE_GATEWAY_ACK,
-                                   fourth_failure_ms - 2u) ==
-           ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure_at(&table,
-                                   ROUTE_FAILURE_GATEWAY_ACK,
-                                   fourth_failure_ms - 1u) ==
-           ROUTE_DELIVERY_RETRY_CURRENT);
-    assert(route_record_failure_at(&table,
-                                   ROUTE_FAILURE_GATEWAY_ACK,
-                                   fourth_failure_ms) ==
+                                   final_failure_ms) ==
            ROUTE_DELIVERY_DISCOVER);
 
     held = &table.candidates[0];
@@ -571,6 +660,8 @@ int main(void)
     test_age_alone_keeps_all_routes_selectable();
     test_success_refreshes_selected_route_age();
     test_failures_try_alternate_then_discovery();
+    test_bounded_contact_abandons_parent_before_discovery();
+    test_bounded_contact_abandons_failed_peer_after_selection_changes();
     test_parent_candidate_count_replaces_worst_route();
     test_parent_hold_down_recovers_without_age_expiry();
     test_candidate_success_clears_hold_down();

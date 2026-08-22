@@ -106,6 +106,16 @@ bool app_mesh_event_retry_note_failure(
     uint32_t attempt_entropy,
     bool rf_started,
     uint32_t *delay_ms);
+/* Limit only RF-consuming failures. Pre-RF deferrals remain retryable until
+ * the deadline, while max_rf_retries=1 means one retry after the first frame. */
+bool app_mesh_event_retry_note_failure_limited(
+    struct app_mesh_event_retry_state *state,
+    enum app_mesh_rf_retry_policy policy,
+    uint32_t now_ms,
+    uint32_t attempt_entropy,
+    bool rf_started,
+    uint16_t max_rf_retries,
+    uint32_t *delay_ms);
 void app_mesh_event_retry_note_send_success(
     struct app_mesh_event_retry_state *state);
 bool app_mesh_event_retry_claim_timing_install(

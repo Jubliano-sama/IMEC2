@@ -1,0 +1,45 @@
+Script started on 2026-08-20 22:12:15+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway EF:BD:42:B8:83:0C --command qualify-reachability --expected-anchors 3 --expected-direct-anchors 2 --expected-multihop-anchors 1 --expected-anchor-hop 0x708bc0aab970300e=2 --expected-anchor-hop 0x191a9619c6c8cb07=1 --expected-anchor-hop 0x56da25fe4af6d141=1 --deepest-hop 2 --route-refresh-timeout 90 --assignment-timeout 240 --connect-timeout 10" <not executed on terminal>]
+Traceback (most recent call last):
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 2144, in <module>
+    main()
+    ~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 2140, in main
+    asyncio.run(run(args))
+    ~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 1506, in run
+    async with _ble_client_session(
+               ~~~~~~~~~~~~~~~~~~~^
+        gateway_target,
+        ^^^^^^^^^^^^^^^
+        timeout=args.connect_timeout,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        disconnected_callback=on_disconnect,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as client:
+    ^
+  File "/home/tommie/.local/share/uv/python/cpython-3.13.11-linux-x86_64-gnu/lib/python3.13/contextlib.py", line 214, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/firmware/scripts/provision_mesh_anchor.py", line 892, in _ble_client_session
+    async with BleakClient(*args, **kwargs) as client:
+               ~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/bleak/__init__.py", line 558, in __aenter__
+    await self.connect()
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/bleak/__init__.py", line 580, in connect
+    await self._backend.connect(self._pair_before_connect, **kwargs)
+  File "/home/tommie/Projects/IMEC2/.venv/lib/python3.13/site-packages/bleak/backends/bluezdbus/client.py", line 150, in connect
+    raise BleakDeviceNotFoundError(
+        self.address, f"Device with address {self.address} was not found."
+    )
+bleak.exc.BleakDeviceNotFoundError: Device with address EF:BD:42:B8:83:0C was not found.
+
+Script done on 2026-08-20 22:12:25+02:00 [COMMAND_EXIT_CODE="1"]

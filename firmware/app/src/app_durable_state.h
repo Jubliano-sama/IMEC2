@@ -121,6 +121,9 @@ struct app_durable_state_anchor_assignment {
     uint8_t ack_pending;
     uint8_t pending_slot;
     uint8_t pending_slot_count;
+    /* Compact TABLE timing lane; zero count decodes legacy pending records. */
+    uint8_t pending_response_lane;
+    uint8_t pending_response_lane_count;
     uint8_t pending_valid;
 };
 

@@ -316,6 +316,8 @@ static struct app_durable_state_anchor_assignment pending_assignment(void)
     assignment.ack_pending = 1u;
     assignment.pending_slot = 2u;
     assignment.pending_slot_count = 4u;
+    assignment.pending_response_lane = 1u;
+    assignment.pending_response_lane_count = 3u;
     assignment.pending_valid = 1u;
     return assignment;
 }
@@ -341,6 +343,8 @@ static struct app_durable_state_anchor_assignment promoted_assignment(void)
     assignment.ack_pending = 0u;
     assignment.pending_slot = 0u;
     assignment.pending_slot_count = 0u;
+    assignment.pending_response_lane = 0u;
+    assignment.pending_response_lane_count = 0u;
     assignment.pending_valid = 0u;
     return assignment;
 }
@@ -374,6 +378,9 @@ static bool assignment_equal(
            left->ack_pending == right->ack_pending &&
            left->pending_slot == right->pending_slot &&
            left->pending_slot_count == right->pending_slot_count &&
+           left->pending_response_lane == right->pending_response_lane &&
+           left->pending_response_lane_count ==
+               right->pending_response_lane_count &&
            left->pending_valid == right->pending_valid;
 }
 
@@ -421,9 +428,10 @@ static void test_missing_and_canonical_round_trip(void)
            APP_DURABLE_STATE_ANCHOR_ASSIGNMENT);
     assert(test_get_u16(&slot->data[TEST_PAYLOAD_SIZE_OFFSET]) == 168u);
     assert(test_get_u64(&slot->data[TEST_PAYLOAD_OFFSET]) == TEST_GATEWAY_A);
-    for (size_t index = slot->len - 3u; index < slot->len; index++) {
-        assert(slot->data[index] == 0u);
-    }
+    assert(slot->data[slot->len - 3u] == pending.pending_response_lane);
+    assert(slot->data[slot->len - 2u] ==
+           pending.pending_response_lane_count);
+    assert(slot->data[slot->len - 1u] == 0u);
 
     memset(&restored, 0xa5, sizeof(restored));
     assert(app_durable_state_restore_anchor_assignment(

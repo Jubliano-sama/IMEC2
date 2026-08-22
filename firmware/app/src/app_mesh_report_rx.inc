@@ -236,7 +236,8 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
     }
 
     if (failed->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-        failed->packet.msg_type == MSG_SURVEY_PAIR_RESULT) {
+        failed->packet.msg_type == MSG_SURVEY_PAIR_RESULT ||
+        failed->packet.msg_type == MSG_COMMAND_RESULT) {
         selected = route_selected(&mesh_runtime.upstream);
         failure_count = selected == NULL ? 1u : selected->failure_count;
         delay_ms = survey_identity_backoff_ms(DEVICE_ID, timed_out_next_hop_id, failure_count);
@@ -1692,14 +1693,38 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 }
                 if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
                         ret, rx_failure)) {
+                    static bool storm_reinit_attempted;
+
                     if (gateway_ch9_recoverable_rx_errors <= 3u ||
                         (gateway_ch9_recoverable_rx_errors % 64u) == 0u) {
-                        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=%d fail=%u rem=%u errors=%u frames=%u\n",
+                        struct dwm3000_rx_debug_snapshot dbg_snap;
+
+                        dwm3000_driver_last_rx_debug_get(&dbg_snap);
+                        status_debug_printf("DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=%d fail=%u rem=%u errors=%u frames=%u reinit=%u status=0x%08x phy=%u pac=%u sfd=%u phr=%u\n",
                                             ret,
                                             (unsigned int)rx_failure,
                                             remaining_ms,
                                             gateway_ch9_recoverable_rx_errors,
-                                            channel9_frames_seen);
+                                            channel9_frames_seen,
+                                            storm_reinit_attempted ? 1u : 0u,
+                                            dbg_snap.status,
+                                            dbg_snap.phy_mode,
+                                            dbg_snap.pac,
+                                            dbg_snap.sfd_type,
+                                            dbg_snap.phr_mode);
+                    }
+
+                    if (!storm_reinit_attempted && channel9_frames_seen == 0u &&
+                        recoverable_errors_in_slice >= 2u) {
+                        storm_reinit_attempted = true;
+                        /* A storm this early with zero decoded frames means
+                         * the receiver never locked; one full re-init either
+                         * clears stale radio state or proves the cause is not
+                         * driver state at all. */
+                        status_debug_printf("DBG_GATEWAY_CH9_RX_STORM_REINIT errors=%u\n",
+                                            gateway_ch9_recoverable_rx_errors);
+                        (void)dwm3000_driver_force_recovery();
+                        (void)dwm3000_driver_configure_mesh_payload_mode();
                     }
                     if (app_mesh_rx_policy_gateway_ch9_should_yield_recovery(
                             recoverable_errors_in_slice)) {
@@ -1744,6 +1769,16 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                     k_uptime_get_32(),
                                     valid_mesh_frame ? 1u : 0u,
                                     channel9_frames_seen);
+                /*
+                 * The frame completed before the abort boundary, so its
+                 * receive custody is older than the control which requested
+                 * that boundary.  Drain it while the radio is parked before
+                 * scheduling another control attempt.  In particular, a
+                 * command result must be able to cancel its own request;
+                 * leaving it queued makes the request repeatedly preempt the
+                 * only proof that can stop those retries.
+                 */
+                (void)mesh_process_queued_rx_at_gateway_rx_boundary();
                 {
                     int priority_ret =
                         app_node_comm_gateway_delivery_safe_boundary();
@@ -2728,6 +2763,9 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
     memset(&mesh_event_accept_retry, 0, sizeof(mesh_event_accept_retry));
     mesh_event_accept_rx_clear();
     mesh_event_owner_registry_reset(&mesh_event_owner_registry);
+#if DEVICE_ROLE != ROLE_GATEWAY
+    memset(mesh_ch9_close_intents, 0, sizeof(mesh_ch9_close_intents));
+#endif
     memset(&mesh_event_local_proposal_windows, 0,
            sizeof(mesh_event_local_proposal_windows));
     mesh_event_operation_session_next = 0u;

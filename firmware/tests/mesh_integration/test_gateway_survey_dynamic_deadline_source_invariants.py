@@ -90,7 +90,10 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         self.assertNotIn("if (budget_explicit)", route[validation:frozen_deadline])
 
-    def test_pair_control_separates_request_and_semantic_deadlines(self) -> None:
+    def test_pair_control_uses_route_specific_request_and_result_deadlines(self) -> None:
+        natural_timeout = function_body(
+            SURVEY, "gateway_survey_natural_request_timeout_ms"
+        )
         request_timeout = function_body(
             SURVEY, "gateway_survey_request_timeout_ms"
         )
@@ -112,7 +115,13 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             transaction_timeout,
         )
         self.assertIn(
+            "SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS", natural_timeout
+        )
+        self.assertNotIn(
             "SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS", transaction_timeout
+        )
+        self.assertIn(
+            "request_timeout_ms + request_timeout_ms", transaction_timeout
         )
 
         request_deadline = send.index("request_deadline_ms =")
@@ -139,41 +148,35 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertLess(transaction_semantic_deadline, result_wait)
         self.assertLess(result_wait, result_semantic_deadline)
 
-    def test_manual_pair_control_uses_command_specific_round_trip_budget(
+    def test_manual_pair_control_uses_route_specific_round_trip_budget(
         self,
     ) -> None:
         route = function_body(CONTROL, "gateway_route_survey_pair_control")
 
-        request = route.index(
-            "gateway_survey_natural_request_timeout_ms("
+        self.assertEqual(
+            route.count("gateway_survey_natural_request_timeout_ms("), 2
         )
-        abort_result = route.index(
-            "command_id == CMD_SURVEY_ABORT ?", request
+        self.assertEqual(
+            route.count("uint32_t result_timeout_ms = request_timeout_ms"), 2
         )
-        short_result = route.index(
-            "SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS", abort_result
+        self.assertEqual(
+            route.count("request_timeout_ms + result_timeout_ms"), 2
         )
-        full_result = route.index(
-            "SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS", short_result
-        )
-        total = route.index(
-            "request_timeout_ms + result_timeout_ms", full_result
-        )
-        waiter = route.index(
-            "gateway_begin_command_result_wait_for(", total
-        )
-        waiter_total = route.index("transaction_timeout_ms", waiter)
-        send = route.index("gateway_survey_send_pair_control(", waiter_total)
-        send_request = route.index("request_deadline_ms", send)
+        self.assertNotIn("command_id == CMD_SURVEY_ABORT ?", route)
+        self.assertNotIn("SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS", route)
+        self.assertNotIn("SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS", route)
 
-        self.assertLess(request, abort_result)
-        self.assertLess(abort_result, short_result)
-        self.assertLess(short_result, full_result)
-        self.assertLess(full_result, total)
-        self.assertLess(total, waiter)
-        self.assertLess(waiter, waiter_total)
-        self.assertLess(waiter_total, send)
-        self.assertLess(send, send_request)
+        request = route.index("gateway_survey_natural_request_timeout_ms(")
+        result = route.index(
+            "uint32_t result_timeout_ms = request_timeout_ms", request
+        )
+        total = route.index("request_timeout_ms + result_timeout_ms", result)
+        request_deadline = route.index("request_deadline_ms =", total)
+        transaction_deadline = route.index("transaction_deadline_ms =", request_deadline)
+        self.assertLess(request, result)
+        self.assertLess(result, total)
+        self.assertLess(total, request_deadline)
+        self.assertLess(request_deadline, transaction_deadline)
 
     def test_ordinary_targeted_command_reserves_request_plus_response(self) -> None:
         route = function_body(CONTROL, "gateway_route_mesh_host_packet")
@@ -254,7 +257,9 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertNotIn("ACK_BARRIER", wait)
         self.assertNotIn("gateway_survey_discovery_ack_confirm_mask", wait)
 
-    def test_accepted_control_waits_for_exact_ack_confirm_proof(self) -> None:
+    def test_only_successful_responder_start_skips_ack_confirm_barrier(
+        self,
+    ) -> None:
         result = function_body(
             ROUND, "gateway_survey_round_note_control_result"
         )
@@ -265,8 +270,20 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertIn(
             "app_gateway_survey_round_capture_control_result(", result
         )
-        self.assertNotIn(
-            "app_gateway_survey_round_note_control_success(", result
+        fast_path = result.index(
+            "control.stage == APP_GATEWAY_SURVEY_CONTROL_START_RESPONDER"
+        )
+        fast_end = result.index("return true", fast_path)
+        fast = result[fast_path:fast_end]
+        self.assertIn("status == COMMAND_OK", fast)
+        self.assertIn("!ack_confirm_already_received", fast)
+        self.assertIn(
+            "app_gateway_survey_round_clear_control_confirmation(", fast
+        )
+        self.assertIn("app_gateway_survey_round_note_control_success(", fast)
+        self.assertEqual(
+            result.count("app_gateway_survey_round_note_control_success("),
+            1,
         )
         self.assertIn(
             "app_gateway_survey_round_control_confirmation_ready(",
@@ -314,27 +331,33 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
     def test_assignment_claim_advances_but_table_commit_requires_confirm(
         self,
     ) -> None:
-        barrier = function_body(
+        confirm = function_body(
             CONTROL,
-            "gateway_discovery_assignment_ack_confirm_blocks_locked",
+            "gateway_discovery_assignment_note_ack_confirm",
         )
         publish = function_body(
             CONTROL, "gateway_discovery_assignment_publish_work_handler"
+        )
+        table = function_body(
+            CONTROL, "gateway_discovery_assignment_publish_table"
         )
         complete = function_body(
             CONTROL, "gateway_discovery_assignment_complete_success_locked"
         )
 
+        for exact_guard in (
+            "identity->msg_type != MSG_COMMAND_RESULT",
+            "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS",
+            "gateway_discovery_assignment_state.table_command_seq",
+            "gateway_discovery_assignment_state.claim_response_mask",
+            "gateway_discovery_assignment_state.ack_mask",
+        ):
+            self.assertIn(exact_guard, confirm)
         self.assertIn(
-            "app_mesh_report_gateway_operation_confirmation_pending(",
-            barrier,
+            "gateway_discovery_assignment_state.confirmation_mask |= bit",
+            confirm,
         )
-        self.assertIn("MSG_COMMAND_RESULT, session_id, k_uptime_get_32()", barrier)
-        self.assertIn(
-            "gateway_discovery_assignment_state.operation_deadline_ms",
-            barrier,
-        )
-        self.assertIn("gateway_discovery_assignment_reschedule(", barrier)
+        self.assertIn("gateway_discovery_assignment_wake_now(", confirm)
 
         table_publish = publish.index(
             "gateway_discovery_assignment_publish_table()"
@@ -345,15 +368,22 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             publish[:table_publish],
         )
 
-        table_barrier = complete.index(
-            "gateway_discovery_assignment_ack_confirm_blocks_locked("
+        durable_prepare = table.index(
+            "gateway_discovery_assignment_prepare_durable_table_locked()"
+        )
+        table_send = table.index(
+            "gateway_discovery_assignment_submit_control_flood_locked(",
+            durable_prepare,
+        )
+        self.assertLess(durable_prepare, table_send)
+        self.assertIn(
+            "gateway_discovery_assignment_missing_confirmation_count_locked() !=",
+            complete,
         )
         self.assertIn(
-            "gateway_discovery_assignment_state.table_command_seq",
-            complete[table_barrier:],
+            "app_gateway_assignment_publisher_commit_prepared_batch",
+            complete,
         )
-        roster = complete.index("committed_anchor_ids", table_barrier)
-        self.assertLess(table_barrier, roster)
 
     def test_assignment_table_round_owner_survives_ack_confirm_barrier(
         self,
@@ -382,7 +412,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             "the table-round owner must survive a pending ACK_CONFIRM barrier",
         )
         table_barrier = complete.index(
-            "gateway_discovery_assignment_ack_confirm_blocks_locked("
+            "gateway_discovery_assignment_missing_confirmation_count_locked()"
         )
         owner_release = complete.index(
             "gateway_discovery_assignment_state.round_open = false",
@@ -436,12 +466,9 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         fifo = callback.index("gateway_host_command_retry_pending")
         fifo_wake = callback.index("gateway_host_command_retry_work", fifo)
         assignment = callback.index(
-            "gateway_discovery_assignment_state.active", fifo_wake
+            "gateway_discovery_assignment_note_ack_confirm(", fifo_wake
         )
-        assignment_wake = callback.index(
-            "gateway_discovery_assignment_wake_now(", assignment
-        )
-        survey = callback.index("gateway_survey_active", assignment_wake)
+        survey = callback.index("gateway_survey_active", assignment)
         survey_wake = callback.index(
             "SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u", survey
         )
@@ -449,20 +476,22 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertIn("K_NO_WAIT", callback[fifo:fifo_wake + 100])
         self.assertLess(fifo, fifo_wake)
         self.assertLess(fifo_wake, assignment)
-        self.assertLess(assignment, assignment_wake)
-        self.assertLess(assignment_wake, survey)
+        self.assertLess(assignment, survey)
         self.assertLess(survey, survey_wake)
 
     def test_confirmation_callback_replaces_each_delayed_owner_deadline(self) -> None:
         callback = function_body(SURVEY, "gateway_note_survey_ack_confirm")
         fifo_start = callback.index("gateway_host_command_retry_pending")
         assignment_start = callback.index(
-            "gateway_discovery_assignment_state.active", fifo_start
+            "gateway_discovery_assignment_note_ack_confirm(", fifo_start
         )
         survey_start = callback.index("gateway_survey_active", assignment_start)
         fifo = callback[fifo_start:assignment_start]
         assignment = callback[assignment_start:survey_start]
         survey = callback[survey_start:]
+        assignment_confirm = function_body(
+            CONTROL, "gateway_discovery_assignment_note_ack_confirm"
+        )
         assignment_wake = function_body(
             CONTROL, "gateway_discovery_assignment_wake_now"
         )
@@ -472,11 +501,12 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             r"k_work_reschedule\s*\(\s*"
             r"&gateway_host_command_retry_work\s*,\s*K_NO_WAIT\s*\)",
         )
-        self.assertRegex(
+        self.assertIn(
+            "gateway_discovery_assignment_note_ack_confirm(confirm_packet,",
             assignment,
-            r"gateway_discovery_assignment_wake_now\s*\(\s*"
-            r"\"ack-confirm\"\s*\)",
         )
+        self.assertIn('gateway_discovery_assignment_wake_now(', assignment_confirm)
+        self.assertIn('"ack-confirm"', assignment_confirm)
         self.assertIn("k_work_cancel_delayable(", assignment_wake)
         self.assertRegex(
             assignment_wake,
@@ -485,20 +515,28 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         self.assertIn("gateway_survey_work_schedule(", survey)
         self.assertIn("SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u", survey)
-        for owner_slice in (fifo, assignment, assignment_wake, survey):
+        for owner_slice in (
+            fifo,
+            assignment,
+            assignment_confirm,
+            assignment_wake,
+            survey,
+        ):
             self.assertNotIn("mesh_gateway_command_priority_submit", owner_slice)
             self.assertNotIn("k_work_submit(", owner_slice)
             self.assertNotIn("k_work_submit_to_queue(", owner_slice)
 
     def test_confirmation_wakes_are_isolated_to_matching_owners(self) -> None:
         callback = function_body(SURVEY, "gateway_note_survey_ack_confirm")
+        assignment = function_body(
+            CONTROL, "gateway_discovery_assignment_note_ack_confirm"
+        )
         assignment_start = callback.index(
-            "gateway_discovery_assignment_state.active"
+            "gateway_discovery_assignment_note_ack_confirm("
         )
         assignment_end = callback.index(
             "if (!gateway_survey_active)", assignment_start
         )
-        assignment = callback[assignment_start:assignment_end]
         survey_start = callback.index("if (!gateway_survey_active)", assignment_end)
         proof_start = callback.index(
             "struct app_gateway_survey_round_ack_confirm confirm", survey_start
@@ -515,11 +553,18 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         proof = callback[proof_start:proof_note]
 
-        self.assertIn("identity->msg_type == MSG_COMMAND_RESULT", assignment)
-        self.assertIn("claim_command_seq", assignment)
+        self.assertIn("identity->msg_type != MSG_COMMAND_RESULT", assignment)
+        self.assertIn("identity->session_id !=", assignment)
         self.assertIn("table_command_seq", assignment)
-        self.assertNotIn("gateway_survey_work_schedule", assignment)
-        self.assertNotIn("gateway_host_command_retry_work", assignment)
+        self.assertIn("confirm_packet->src_id", assignment)
+        self.assertNotIn(
+            "gateway_survey_work_schedule",
+            callback[assignment_start:assignment_end],
+        )
+        self.assertNotIn(
+            "gateway_host_command_retry_work",
+            callback[assignment_start:assignment_end],
+        )
         for exact_field in (
             ".source_id = confirm_packet->src_id",
             ".destination_id = confirm_packet->dst_id",
@@ -586,12 +631,172 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertIn("mesh_relay_downlink_at(&mesh_runtime", body)
         self.assertIn("route->hop_count > max_hops", body)
 
+    def test_completed_enumeration_depth_requires_exact_current_proof(self) -> None:
+        proof = function_body(
+            SURVEY,
+            "gateway_survey_completed_enumeration_max_report_hops",
+        )
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+
+        for guard in (
+            "gateway_discovery_assignment_state.active",
+            "gateway_discovery_assignment_state.replay",
+            "gateway_discovery_assignment_state.claim_count != roster_count",
+            "gateway_discovery_assignment_state.epoch != assignment_epoch",
+            "gateway_discovery_assignment_state.table_command_seq !=",
+            "discovery_assignment_table_commitment_equal(",
+            "gateway_discovery_assignment_state.claim_response_mask !=",
+            "gateway_discovery_assignment_state.ack_mask & complete_mask",
+            "gateway_discovery_assignment_state.confirmation_mask &",
+            "hop_count == 0u",
+            "hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS",
+        ):
+            self.assertIn(guard, proof)
+        self.assertIn("roster_ids[roster_index]", proof)
+        self.assertIn("roster_slots[roster_index]", proof)
+
+        enum_lookup = route.index(
+            "gateway_survey_completed_enumeration_max_report_hops("
+        )
+        cache_lookup = route.index("gateway_survey_known_max_report_hops()")
+        fallback = route.index("if (max_report_hops == 0u)")
+        self.assertLess(enum_lookup, cache_lookup)
+        self.assertLess(cache_lookup, fallback)
+
+    def test_cold_roster_depth_is_inferred_from_the_admitted_policy(self) -> None:
+        infer = function_body(
+            SURVEY, "gateway_survey_policy_max_report_hops"
+        )
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+
+        for policy_field in (
+            ".start_delay_ms = config->start_delay_ms",
+            ".slot_ms = config->slot_ms",
+            ".slot_count = config->slot_count",
+            ".round_count = config->round_count",
+            ".report_grace_ms = report_grace_ms",
+            ".operation_budget_ms = operation_budget_ms",
+        ):
+            self.assertIn(policy_field, infer)
+        self.assertIn(
+            "candidate_limit = MIN(candidate_limit, "
+            "(uint8_t)SURVEY_DEFAULT_TTL)",
+            infer,
+        )
+        self.assertIn(
+            "for (uint8_t hop_count = 1u; "
+            "hop_count <= candidate_limit; hop_count++)",
+            infer,
+        )
+        custody = infer.index(
+            "survey_discovery_report_custody_ms(hop_count)"
+        )
+        candidate = infer.index("terms.max_hop_count = hop_count", custody)
+        required = infer.index(
+            "operation_policy_discovery_required_budget_ms(", candidate
+        )
+        covered = infer.index(
+            "required_budget_ms > operation_budget_ms", required
+        )
+        remember = infer.index("max_hops = hop_count", covered)
+        self.assertLess(custody, candidate)
+        self.assertLess(candidate, required)
+        self.assertLess(required, covered)
+        self.assertLess(covered, remember)
+
+        fallback = route.index("if (max_report_hops == 0u)")
+        infer_call = route.index(
+            "gateway_survey_policy_max_report_hops(", fallback
+        )
+        custody_use = route.index(
+            "survey_discovery_report_custody_ms(max_report_hops)", infer_call
+        )
+        report_timing = route.index(
+            "survey_discovery_report_delay_ms(&config", custody_use
+        )
+        call = route[infer_call:custody_use]
+        self.assertIn("&config", call)
+        self.assertIn("duration_ms", call)
+        self.assertIn(
+            "policy_candidate.resolved.discovery.operation_budget_ms", call
+        )
+        self.assertIn("assigned_roster_count", call)
+        self.assertIn("SURVEY_DEFAULT_TTL", call)
+        self.assertLess(fallback, infer_call)
+        self.assertLess(infer_call, custody_use)
+        self.assertLess(custody_use, report_timing)
+        self.assertIsNone(
+            re.search(
+                r"max_report_hops\s*=\s*\(uint8_t\)\s*MIN\s*\(\s*"
+                r"assigned_roster_count",
+                route,
+            ),
+            "a cold roster count is a candidate limit, never a hop-depth proof",
+        )
+
+    def test_start_delay_validation_receives_the_resolved_durable_depth(self) -> None:
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+
+        prepare = route.index("app_operation_policy_prepare_payload(")
+        prepare_end = route.index("&policy_candidate);", prepare)
+        policy_admission = route[prepare:prepare_end]
+        self.assertIn("APP_OPERATION_POLICY_DISCOVERY_MASK", policy_admission)
+        self.assertIn("APP_OPERATION_POLICY_PAIR_MASK", policy_admission)
+
+        durable_topology = route.index(
+            "gateway_survey_completed_enumeration_max_report_hops("
+        )
+        fallback = route.index("if (max_report_hops == 0u)", durable_topology)
+        custody = route.index(
+            "survey_discovery_report_custody_ms(max_report_hops)", fallback
+        )
+        report_timing = route.index(
+            "survey_discovery_report_delay_ms(&config", custody
+        )
+        admitted = route.index(
+            "admitted_discovery = (struct operation_policy_discovery)",
+            report_timing,
+        )
+        terms = route.index(
+            ".max_hop_count = max_report_hops", admitted
+        )
+        full_validation = route.index(
+            "operation_policy_discovery_required_budget_ms(", terms
+        )
+        validation_end = route.index(
+            "required_budget_ms < collection_delay_ms", full_validation
+        )
+        owner_claim = route.index(
+            "gateway_operation_owner_claim(", validation_end
+        )
+
+        self.assertLess(durable_topology, fallback)
+        self.assertLess(fallback, custody)
+        self.assertLess(fallback, report_timing)
+        self.assertLess(report_timing, admitted)
+        self.assertLess(admitted, terms)
+        self.assertLess(terms, full_validation)
+        self.assertLess(full_validation, validation_end)
+        self.assertLess(validation_end, owner_claim)
+        self.assertIn(
+            "&admitted_discovery, &budget_terms, &required_budget_ms",
+            route[full_validation:validation_end],
+        )
+        self.assertIn(
+            "gateway_reject_survey_request(",
+            route[validation_end:owner_claim],
+        )
+        self.assertIn(
+            "COMMAND_MALFORMED_PAYLOAD",
+            route[validation_end:owner_claim],
+        )
+
     def test_collection_uses_hop_scaled_custody(self) -> None:
         body = function_body(SURVEY, "gateway_route_survey_reachability")
         lookup = body.index("gateway_survey_known_max_report_hops()")
         scale = body.index("survey_discovery_report_custody_ms(")
         deadline = body.index("collection_delay_ms =", lookup)
-        self.assertLess(scale, lookup)
+        self.assertLess(lookup, scale)
         self.assertLess(lookup, deadline)
         self.assertIn("report_custody_ms +", body[deadline:])
         self.assertNotIn(
@@ -665,14 +870,34 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         wait = function_body(
             CONTROL, "gateway_survey_wait_for_discovery_collection"
         )
+        prior_delivery = re.search(
+            r"prior_delivery_completed\s*=\s*"
+            r"gateway_survey_discovery_redrive_count\s*>\s*0u\s*;",
+            wait,
+        )
         survival = re.search(
             r"survey_gateway_discovery_collection_survives_terminal\s*\("
-            r"\s*event\.reason\s*==\s*NODE_COMM_TERMINAL_DELIVERED\s*,"
+            r"\s*event\.reason\s*==\s*NODE_COMM_TERMINAL_DELIVERED\s*"
+            r"\|\|\s*prior_delivery_completed\s*,"
             r"\s*event\.attempts_started\s*\)",
             wait,
         )
 
+        self.assertIsNotNone(prior_delivery)
         self.assertIsNotNone(survival)
+        take_event = wait.index("app_node_comm_take_delivery_event_for(")
+        first_clear = wait.index(
+            "gateway_survey_discovery_delivery_handle = 0u;",
+            prior_delivery.end(),
+        )
+        redrive_clear = wait.index(
+            "gateway_survey_discovery_redrive_count = 0u;",
+            prior_delivery.end(),
+        )
+        self.assertLess(take_event, prior_delivery.start())
+        self.assertLess(prior_delivery.end(), first_clear)
+        self.assertLess(prior_delivery.end(), redrive_clear)
+        self.assertLess(redrive_clear, survival.start())
         self.assertLess(
             survival.start(),
             wait.index("gateway_survey_finish_status(", survival.start()),
@@ -692,7 +917,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         terminal = worker.index("gateway_survey_finish_status(", budget)
         telemetry = worker.index("gateway_survey_emit_collection_telemetry()")
-        round_drive = worker.index("gateway_survey_round_drive()", telemetry)
+        round_drive = worker.index("gateway_survey_round_drive(", telemetry)
 
         self.assertLess(plan, remaining)
         self.assertLess(remaining, budget)
@@ -713,9 +938,38 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertIn("SURVEY_GATEWAY_DUE_BOUNDARY_POLL", drive)
         consume = handler.index("gateway_survey_work_consume_due()")
         schedule_drive = handler.index("gateway_survey_schedule_drive()")
-        rearm = handler.index("gateway_survey_work_rearm_due()")
+        rearm = handler.index(
+            "gateway_survey_work_rearm_due()", schedule_drive
+        )
         self.assertLess(consume, schedule_drive)
         self.assertLess(schedule_drive, rearm)
+
+    def test_stale_shared_callback_is_rearmed_without_cancel_or_watchdog_fault(self) -> None:
+        cancel = function_body(SURVEY, "gateway_survey_work_cancel_owner")
+        reset = function_body(SURVEY, "gateway_survey_work_reset_schedule")
+        consume = function_body(SURVEY, "gateway_survey_work_consume_due")
+        handler = function_body(CONTROL, "gateway_survey_work_handler")
+
+        for registry_only_mutation in (cancel, reset):
+            self.assertNotIn(
+                "k_work_cancel_delayable(&gateway_survey_work)",
+                registry_only_mutation,
+            )
+            self.assertNotIn("app_watchdog_stop_feeding()", registry_only_mutation)
+
+        self.assertIn("survey_gateway_due_registry_consume_due(", consume)
+        self.assertRegex(consume, r"return\s+[A-Za-z_]\w*\s*;")
+        stale_callback = re.search(
+            r"if\s*\(\s*!gateway_survey_work_consume_due\(\)\s*\)\s*\{"
+            r"(?P<body>.*?)\}",
+            handler,
+            re.S,
+        )
+        self.assertIsNotNone(stale_callback)
+        stale_body = stale_callback.group("body")
+        self.assertIn("gateway_survey_work_rearm_due()", stale_body)
+        self.assertIn("return;", stale_body)
+        self.assertNotIn("app_watchdog_stop_feeding()", stale_body)
 
 
 if __name__ == "__main__":

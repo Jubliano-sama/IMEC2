@@ -2,15 +2,26 @@ cmake_minimum_required(VERSION 3.20.0)
 
 list(APPEND DTS_ROOT "${CMAKE_CURRENT_LIST_DIR}")
 
-if(DEFINED SYSBUILD_CACHE AND EXISTS "${SYSBUILD_CACHE}" AND
-   (NOT DEFINED IMEC_BUILD_PRESET OR IMEC_BUILD_PRESET STREQUAL ""))
-    file(STRINGS "${SYSBUILD_CACHE}" imec_sysbuild_preset_line
-         REGEX "^IMEC_BUILD_PRESET:")
-    if(imec_sysbuild_preset_line)
-        string(REGEX REPLACE "^[^=]*=" "" IMEC_BUILD_PRESET
-               "${imec_sysbuild_preset_line}")
-        set(IMEC_BUILD_PRESET "${IMEC_BUILD_PRESET}" CACHE STRING
-            "Build preset name, for example mesh_anchor" FORCE)
+if(DEFINED SYSBUILD_CACHE AND EXISTS "${SYSBUILD_CACHE}")
+    if(NOT DEFINED IMEC_BUILD_PRESET OR IMEC_BUILD_PRESET STREQUAL "")
+        file(STRINGS "${SYSBUILD_CACHE}" imec_sysbuild_preset_line
+             REGEX "^(IMEC_BUILD_PRESET|FIRMWARE_PRESET):")
+        if(imec_sysbuild_preset_line)
+            string(REGEX REPLACE "^[^=]*=" "" IMEC_BUILD_PRESET
+                   "${imec_sysbuild_preset_line}")
+            set(IMEC_BUILD_PRESET "${IMEC_BUILD_PRESET}" CACHE STRING
+                "Build preset name, for example mesh_anchor" FORCE)
+        endif()
+    endif()
+    if(NOT DEFINED IMEC_FORCED_GATEWAY_RELAY_HOPS OR IMEC_FORCED_GATEWAY_RELAY_HOPS STREQUAL "")
+        file(STRINGS "${SYSBUILD_CACHE}" imec_sysbuild_hops_line
+             REGEX "^IMEC_FORCED_GATEWAY_RELAY_HOPS:")
+        if(imec_sysbuild_hops_line)
+            string(REGEX REPLACE "^[^=]*=" "" IMEC_FORCED_GATEWAY_RELAY_HOPS
+                   "${imec_sysbuild_hops_line}")
+            set(IMEC_FORCED_GATEWAY_RELAY_HOPS "${IMEC_FORCED_GATEWAY_RELAY_HOPS}" CACHE STRING
+                "Exact gateway relay depth for mesh_anchor_forcedhop (1-8)" FORCE)
+        endif()
     endif()
 endif()
 
@@ -214,7 +225,11 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
                 "CONFIG_BT_GATT_READ_MULTIPLE=n\n"
                 "CONFIG_BT_GATT_READ_MULT_VAR_LEN=n\n"
                 "CONFIG_BT_GATT_SERVICE_CHANGED=y\n"
-                "CONFIG_BT_CTLR_CRYPTO=y\n")
+                "CONFIG_BT_CTLR_CRYPTO=y\n"
+                # Keep fatal assertions, but omit source paths from their
+                # messages in the flash-constrained gateway image. Typed RTT
+                # evidence identifies the active protocol owner at runtime.
+                "CONFIG_ASSERT_NO_FILE_INFO=y\n")
             set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 4480)
         endif()
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
@@ -239,7 +254,8 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             # Typed stack/protocol evidence has its own RTT channel. Keep the
             # ordinary deferred warning/error ring bounded so the five-result
-            # survey journal leaves the required 10 KiB static RAM reserve.
+            # survey journal and measured scan stack leave the required 9 KiB
+            # static RAM reserve.
             "CONFIG_LOG_BUFFER_SIZE=1920\n")
         if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor" OR
            IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")

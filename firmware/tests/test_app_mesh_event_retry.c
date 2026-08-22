@@ -919,6 +919,61 @@ static void test_extend_deadline_keeps_same_parent_waiting(void)
     assert(!app_mesh_event_retry_expired(&state, 186999u));
 }
 
+static void test_limited_retry_allows_deferrals_and_one_rf_retry(void)
+{
+    const uint8_t payload[] = {0x71u};
+    struct app_mesh_event_request_identity request = request_identity(
+        LOCAL_ID, 0x71u, 11u, payload, sizeof(payload));
+    struct app_mesh_rf_retry_key key = retry_key(
+        request.session_id, request.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state state = {0};
+    uint32_t delay_ms = 0u;
+
+    assert(app_mesh_event_retry_begin(&state,
+                                      PEER_ID,
+                                      &request,
+                                      &key,
+                                      1000u,
+                                      100000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+    assert(app_mesh_event_retry_note_failure_limited(
+        &state,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        1000u,
+        0x101u,
+        false,
+        1u,
+        &delay_ms));
+    assert(state.pre_rf_deferrals == 1u);
+    assert(state.rf_attempts == 0u);
+
+    assert(app_mesh_event_retry_note_failure_limited(
+        &state,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        state.retry_due_ms,
+        0x202u,
+        true,
+        1u,
+        &delay_ms));
+    assert(delay_ms > 0u);
+    assert(state.rf_attempts == 1u);
+
+    delay_ms = 123u;
+    assert(!app_mesh_event_retry_note_failure_limited(
+        &state,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        state.retry_due_ms,
+        0x303u,
+        true,
+        1u,
+        &delay_ms));
+    assert(delay_ms == 0u);
+    assert(state.rf_attempts == 2u);
+    assert(!state.retry_due_armed);
+}
+
 int main(void)
 {
     test_counterphase_shift_preserves_frozen_proposal_shape();
@@ -936,6 +991,7 @@ int main(void)
     test_completed_accept_does_not_block_another_peer();
     test_accept_rx_cache_is_scoped_to_one_live_session();
     test_extend_deadline_keeps_same_parent_waiting();
+    test_limited_retry_allows_deferrals_and_one_rf_retry();
     puts("app mesh event retry tests passed");
     return 0;
 }

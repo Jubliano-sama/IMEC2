@@ -132,7 +132,12 @@ BUILD_ASSERT((DT_REG_SIZE(DT_NODELABEL(storage_partition)) %
     (ASSIGNMENT_PENDING_SLOT_OFFSET + 1u)
 #define ASSIGNMENT_PENDING_VALID_OFFSET \
     (ASSIGNMENT_PENDING_SLOT_COUNT_OFFSET + 1u)
-#define ASSIGNMENT_RESERVED_OFFSET (ASSIGNMENT_PENDING_VALID_OFFSET + 1u)
+#define ASSIGNMENT_PENDING_RESPONSE_LANE_OFFSET \
+    (ASSIGNMENT_PENDING_VALID_OFFSET + 1u)
+#define ASSIGNMENT_PENDING_RESPONSE_LANE_COUNT_OFFSET \
+    (ASSIGNMENT_PENDING_RESPONSE_LANE_OFFSET + 1u)
+#define ASSIGNMENT_RESERVED_OFFSET \
+    (ASSIGNMENT_PENDING_RESPONSE_LANE_COUNT_OFFSET + 1u)
 
 #define GATEWAY_ASSIGNMENT_GATEWAY_ID_OFFSET \
     APP_DURABLE_STATE_RECORD_HEADER_SIZE
@@ -154,7 +159,7 @@ BUILD_ASSERT((DT_REG_SIZE(DT_NODELABEL(storage_partition)) %
     (GATEWAY_ASSIGNMENT_SNAPSHOT_OFFSET + \
      GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE)
 
-_Static_assert(ASSIGNMENT_RESERVED_OFFSET + 3u ==
+_Static_assert(ASSIGNMENT_RESERVED_OFFSET + 1u ==
                    APP_DURABLE_STATE_ANCHOR_ASSIGNMENT_RECORD_SIZE,
                "anchor assignment canonical record size changed");
 _Static_assert(GATEWAY_ASSIGNMENT_SNAPSHOT_OFFSET +
@@ -820,6 +825,11 @@ static int durable_validate_anchor_assignment(
                 &assignment->pending_table_commitment) ||
             assignment->pending_slot_count == 0u ||
             assignment->pending_slot_count > UWB_DISCOVERY_SLOT_COUNT ||
+            assignment->pending_response_lane_count >
+                UWB_DISCOVERY_SLOT_COUNT ||
+            (assignment->pending_response_lane_count != 0u &&
+             assignment->pending_response_lane >=
+                 assignment->pending_response_lane_count) ||
             (finalized_identity_present &&
              !discovery_assignment_epoch_strictly_newer(
                  assignment->pending_epoch, assignment->epoch))) {
@@ -829,7 +839,9 @@ static int durable_validate_anchor_assignment(
                !durable_assignment_commitment_is_zero(
                    &assignment->pending_table_commitment) ||
                assignment->pending_slot != 0u ||
-               assignment->pending_slot_count != 0u) {
+               assignment->pending_slot_count != 0u ||
+               assignment->pending_response_lane != 0u ||
+               assignment->pending_response_lane_count != 0u) {
         return -EINVAL;
     }
 
@@ -881,6 +893,9 @@ static bool durable_anchor_assignments_equal(
            left->ack_pending == right->ack_pending &&
            left->pending_slot == right->pending_slot &&
            left->pending_slot_count == right->pending_slot_count &&
+           left->pending_response_lane == right->pending_response_lane &&
+           left->pending_response_lane_count ==
+               right->pending_response_lane_count &&
            left->pending_valid == right->pending_valid;
 }
 
@@ -942,6 +957,10 @@ static void durable_encode_anchor_assignment(
     record[ASSIGNMENT_PENDING_SLOT_COUNT_OFFSET] =
         assignment->pending_slot_count;
     record[ASSIGNMENT_PENDING_VALID_OFFSET] = assignment->pending_valid;
+    record[ASSIGNMENT_PENDING_RESPONSE_LANE_OFFSET] =
+        assignment->pending_response_lane;
+    record[ASSIGNMENT_PENDING_RESPONSE_LANE_COUNT_OFFSET] =
+        assignment->pending_response_lane_count;
     durable_put_u16(
         &record[RECORD_CRC_OFFSET],
         durable_crc16(record,
@@ -978,9 +997,7 @@ static int durable_decode_anchor_assignment(
         durable_get_u16(&record[RECORD_PAYLOAD_SIZE_OFFSET]) !=
             APP_DURABLE_STATE_ANCHOR_ASSIGNMENT_PAYLOAD_SIZE ||
         durable_get_u32(&record[RECORD_RESERVED32_OFFSET]) != 0u ||
-        record[ASSIGNMENT_RESERVED_OFFSET] != 0u ||
-        record[ASSIGNMENT_RESERVED_OFFSET + 1u] != 0u ||
-        record[ASSIGNMENT_RESERVED_OFFSET + 2u] != 0u) {
+        record[ASSIGNMENT_RESERVED_OFFSET] != 0u) {
         return -EPROTO;
     }
     if (record[RECORD_ROLE_OFFSET] != APP_DURABLE_STATE_ROLE_ANCHOR ||
@@ -1036,6 +1053,10 @@ static int durable_decode_anchor_assignment(
     assignment->pending_slot_count =
         record[ASSIGNMENT_PENDING_SLOT_COUNT_OFFSET];
     assignment->pending_valid = record[ASSIGNMENT_PENDING_VALID_OFFSET];
+    assignment->pending_response_lane =
+        record[ASSIGNMENT_PENDING_RESPONSE_LANE_OFFSET];
+    assignment->pending_response_lane_count =
+        record[ASSIGNMENT_PENDING_RESPONSE_LANE_COUNT_OFFSET];
     ret = durable_validate_anchor_assignment(assignment);
     if (ret < 0) {
         memset(assignment, 0, sizeof(*assignment));

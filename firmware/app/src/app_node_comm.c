@@ -5,6 +5,7 @@
 #include "app_node_comm_gateway_route_refresh.h"
 #include "app_node_comm_sync.h"
 #include "app_state.h"
+
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "node_comm.h"
@@ -58,6 +59,10 @@ struct app_node_comm_delivery_record {
     uint8_t backend_release_failures;
     uint8_t backend_release_contention_retries;
     uint32_t backend_release_request_token;
+#if !APP_NODE_COMM_GATEWAY_ROLE
+    /* Nonzero while exact transport cancellation is yielding a live owner. */
+    uint32_t backend_preempt_delivery_generation;
+#endif
     bool backend_attempt_outstanding;
     bool backend_attempt_completion_pending;
     bool backend_attempt_completion_rf_started;
@@ -942,12 +947,58 @@ static void app_node_comm_backend_release_completed_locked(
     int cancel_ret,
     uint64_t now_ms)
 {
+#if !APP_NODE_COMM_GATEWAY_ROLE
+    struct node_comm_terminal_event terminal;
+    int requeue_ret;
+#endif
+
     if (record == NULL) {
         return;
     }
     record->backend_release_request_outstanding = false;
     record->backend_release_request_token = 0u;
     if (cancel_ret == 0 || cancel_ret == -ENOENT) {
+#if !APP_NODE_COMM_GATEWAY_ROLE
+        if (record->backend_preempt_delivery_generation != 0u &&
+            !node_comm_peek_terminal_event_for(
+                &node_comm_policy, record->handle, &terminal)) {
+            requeue_ret = node_comm_requeue_awaiting_confirmation(
+                &node_comm_policy,
+                record->handle,
+                record->backend_preempt_delivery_generation,
+                now_ms);
+            if (requeue_ret == 0) {
+                status_debug_printf(
+                    "DBG_NODE_COMM_RELIABLE_PREEMPTED handle=%u generation=%u custody=retained\n",
+                    record->handle,
+                    record->backend_preempt_delivery_generation);
+                record->backend_preempt_delivery_generation = 0u;
+                record->backend_release_pending = false;
+                record->backend_release_exhausted = false;
+                record->backend_release_failures = 0u;
+                record->backend_release_contention_retries = 0u;
+                record->backend_attempt_completion_retry_at_ms = 0u;
+                record->backend_released = false;
+                app_node_comm_release_reliable_owner_locked(record->handle);
+                return;
+            }
+            if (requeue_ret != -EALREADY ||
+                !node_comm_peek_terminal_event_for(
+                    &node_comm_policy, record->handle, &terminal)) {
+                status_debug_printf(
+                    "DBG_NODE_COMM_RELIABLE_PREEMPT_FAIL handle=%u generation=%u ret=%d\n",
+                    record->handle,
+                    record->backend_preempt_delivery_generation,
+                    requeue_ret);
+                record->backend_release_pending = true;
+                record->backend_release_exhausted = true;
+                record->backend_attempt_completion_retry_at_ms = 0u;
+                app_watchdog_stop_feeding();
+                return;
+            }
+        }
+        record->backend_preempt_delivery_generation = 0u;
+#endif
         record->backend_released = true;
         record->backend_release_pending = false;
         record->backend_release_exhausted = false;
@@ -1001,6 +1052,151 @@ static int app_node_comm_poll_backend_release_locked(
     app_node_comm_backend_release_failed_locked(record, now_ms);
     return ret;
 }
+
+#if !APP_NODE_COMM_GATEWAY_ROLE
+/* Caller holds the communication-service lock. */
+static int app_node_comm_start_backend_release_locked(
+    struct app_node_comm_delivery_record *record,
+    uint32_t delivery_generation,
+    uint64_t now_ms,
+    bool *completion_observed)
+{
+    const uint8_t *payload;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    int ret;
+
+    if (record == NULL || delivery_generation == 0u ||
+        completion_observed == NULL ||
+        record->backend_release_request_outstanding) {
+        return -EINVAL;
+    }
+    *completion_observed = false;
+    payload = app_node_comm_frozen_payload(record);
+    if (payload == NULL ||
+        !mesh_packet_semantic_digest(&record->packet,
+                                     payload,
+                                     record->payload_len,
+                                     semantic_digest)) {
+        app_node_comm_backend_release_failed_locked(record, now_ms);
+        *completion_observed = true;
+        return -EINVAL;
+    }
+    record->backend_release_request_token =
+        app_node_comm_next_backend_release_token_locked();
+    if (record->backend_release_request_token == 0u) {
+        app_node_comm_backend_release_failed_locked(record, now_ms);
+        *completion_observed = true;
+        return -ENOSPC;
+    }
+    record->backend_release_pending = true;
+    record->backend_release_request_outstanding = true;
+    ret = mesh_request_reliable_uplink_cancel(
+        &record->packet,
+        semantic_digest,
+        record->handle,
+        delivery_generation,
+        record->backend_release_request_token);
+    if (ret < 0) {
+        if (ret == -EBUSY) {
+            app_node_comm_backend_release_contention_locked(record, now_ms);
+        } else {
+            app_node_comm_backend_release_failed_locked(record, now_ms);
+        }
+        *completion_observed = true;
+        return ret;
+    }
+    return app_node_comm_poll_backend_release_locked(
+        record, now_ms, completion_observed);
+}
+
+/* Caller holds the communication-service lock. */
+static void app_node_comm_reconcile_live_backend_preemptions_locked(
+    uint64_t now_ms)
+{
+    for (size_t i = 0u; i < APP_NODE_COMM_MAX_DELIVERIES; i++) {
+        struct app_node_comm_delivery_record *record =
+            &node_comm_delivery_records[i];
+        struct node_comm_terminal_event terminal;
+        bool completion_observed = false;
+        bool request_started = false;
+        int ret;
+
+        if (!record->occupied ||
+            record->backend_preempt_delivery_generation == 0u ||
+            record->backend_release_exhausted ||
+            node_comm_delivery_backend_active_handle == record->handle ||
+            record->backend_attempt_outstanding ||
+            node_comm_peek_terminal_event_for(
+                &node_comm_policy, record->handle, &terminal) ||
+            (!record->backend_release_request_outstanding &&
+             record->backend_release_pending &&
+             record->backend_attempt_completion_retry_at_ms != 0u &&
+             now_ms < record->backend_attempt_completion_retry_at_ms)) {
+            continue;
+        }
+        if (record->backend_release_request_outstanding) {
+            ret = app_node_comm_poll_backend_release_locked(
+                record, now_ms, &completion_observed);
+        } else {
+            request_started = true;
+            ret = app_node_comm_start_backend_release_locked(
+                record,
+                record->backend_preempt_delivery_generation,
+                now_ms,
+                &completion_observed);
+        }
+        if (request_started || completion_observed) {
+            status_debug_printf(
+                "DBG_NODE_COMM_RELIABLE_PREEMPT_RELEASE handle=%u generation=%u ret=%d pending=%u outstanding=%u complete=%u\n",
+                record->handle,
+                record->backend_preempt_delivery_generation,
+                ret,
+                record->backend_release_pending ? 1u : 0u,
+                record->backend_release_request_outstanding ? 1u : 0u,
+                completion_observed ? 1u : 0u);
+        }
+    }
+}
+
+/* Caller holds the communication-service lock. */
+static int app_node_comm_preempt_reliable_owner_locked(uint32_t owner_handle,
+                                                       uint64_t now_ms)
+{
+    struct app_node_comm_delivery_record *owner =
+        app_node_comm_delivery_record_for_handle(owner_handle);
+    struct node_comm_terminal_event terminal;
+    uint32_t generation = 0u;
+    bool completion_observed = false;
+    int ret;
+
+    if (owner == NULL ||
+        (owner->profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
+         owner->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK)) {
+        return -EACCES;
+    }
+    if (owner->backend_preempt_delivery_generation != 0u ||
+        owner->backend_release_request_outstanding ||
+        node_comm_peek_terminal_event_for(
+            &node_comm_policy, owner_handle, &terminal)) {
+        return 0;
+    }
+    ret = node_comm_delivery_generation(
+        &node_comm_policy, owner_handle, &generation);
+    if (ret < 0) {
+        return ret;
+    }
+    owner->backend_preempt_delivery_generation = generation;
+    ret = app_node_comm_start_backend_release_locked(
+        owner, generation, now_ms, &completion_observed);
+    status_debug_printf(
+        "DBG_NODE_COMM_RELIABLE_PREEMPT_REQUEST handle=%u generation=%u ret=%d complete=%u\n",
+        owner_handle,
+        generation,
+        ret,
+        completion_observed ? 1u : 0u);
+    return ret < 0 && ret != -EBUSY ? ret : 0;
+}
+#endif
 
 static void app_node_comm_guard_external_backend_attempts_locked(
     uint64_t now_ms)
@@ -1180,6 +1376,9 @@ static size_t app_node_comm_service_policy_locked(uint64_t now_ms)
     app_node_comm_guard_external_backend_attempts_locked(now_ms);
     terminalized = node_comm_service(&node_comm_policy, now_ms);
 
+#if !APP_NODE_COMM_GATEWAY_ROLE
+    app_node_comm_reconcile_live_backend_preemptions_locked(now_ms);
+#endif
     app_node_comm_reconcile_terminal_backends_locked();
     app_node_comm_guard_caller_terminal_owners_locked(now_ms);
     return terminalized;
@@ -1221,6 +1420,9 @@ static void app_node_comm_reap_auto_terminal_events_locked(void)
             event.attempts_started);
         app_node_comm_release_reliable_owner_locked(event.handle);
         app_node_comm_clear_delivery_record(event.handle);
+#if 0 /* bisect: reap hook disabled */
+        app_mesh_report_close_channel9_idle_parent("node-comm-terminal-reaped");
+#endif
     }
 }
 
@@ -2946,11 +3148,15 @@ int app_node_comm_service_deliveries(void)
     bool durable_attempt_started = false;
     uint8_t durable_attempt_token = 0u;
     uint32_t scheduled_retry_delay_ms = 0u;
+    uint32_t reliable_owner_handle = 0u;
     uint64_t attempt_begin_ms;
     uint64_t backend_guard_begin_ms;
     uint64_t backend_guard_expires_at_ms;
     uint64_t now_ms;
     int state_ret = 0;
+#if !APP_NODE_COMM_GATEWAY_ROLE
+    int preempt_ret = 0;
+#endif
     int durable_complete_ret = 0;
     int ret;
 
@@ -2981,6 +3187,10 @@ int app_node_comm_service_deliveries(void)
         app_node_comm_sync_unlock();
         return ret;
     }
+#if !APP_NODE_COMM_GATEWAY_ROLE
+    app_node_comm_reconcile_live_backend_preemptions_locked(
+        app_node_comm_now_ms());
+#endif
     app_node_comm_reap_auto_terminal_events_locked();
     attempt_begin_ms = app_node_comm_now_ms();
     ret = node_comm_acquire(&node_comm_policy, attempt_begin_ms, &lease);
@@ -3015,17 +3225,35 @@ int app_node_comm_service_deliveries(void)
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) &&
         node_comm_reliable_uplink_inflight_handle != 0u &&
         node_comm_reliable_uplink_inflight_handle != lease.handle) {
+        reliable_owner_handle = node_comm_reliable_uplink_inflight_handle;
         state_ret = node_comm_lease_wait_resource(&node_comm_policy,
                                                    &lease,
                                                    attempt_begin_ms);
+#if !APP_NODE_COMM_GATEWAY_ROLE
+        if (state_ret == 0 &&
+            attempt_record.profile ==
+                NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) {
+            preempt_ret = app_node_comm_preempt_reliable_owner_locked(
+                reliable_owner_handle, attempt_begin_ms);
+        }
+#endif
         app_node_comm_retain_delivery_schedule_locked(
             attempt_begin_ms, "reliable-resource-wait");
         app_node_comm_sync_unlock();
+#if !APP_NODE_COMM_GATEWAY_ROLE
+        status_debug_printf(
+            "DBG_NODE_COMM_SINGLE_FLIGHT_WAIT handle=%u owner=%u state=%d preempt=%d\n",
+            lease.handle,
+            reliable_owner_handle,
+            state_ret,
+            preempt_ret);
+#else
         status_debug_printf(
             "DBG_NODE_COMM_SINGLE_FLIGHT_WAIT handle=%u owner=%u state=%d\n",
             lease.handle,
-            node_comm_reliable_uplink_inflight_handle,
+            reliable_owner_handle,
             state_ret);
+#endif
         return state_ret < 0 ? state_ret : -EAGAIN;
     }
     attempt_view = (struct app_mesh_outbound_view) {
@@ -3098,6 +3326,13 @@ int app_node_comm_service_deliveries(void)
         backend_guard_begin_ms, "backend-publication-guard");
     app_node_comm_sync_unlock();
 
+    status_debug_printf(
+        "DBG_NODE_COMM_TX_BEGIN handle=%u profile=%u msg=%u dst=0x%llx seq=%u\n",
+        lease.handle,
+        (unsigned int)attempt_record.profile,
+        attempt_record.packet.msg_type,
+        (unsigned long long)attempt_record.packet.dst_id,
+        attempt_record.packet.seq);
     if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) {
         /*
          * One logical bounded flood owns one wake train followed by four real
@@ -3113,7 +3348,8 @@ int app_node_comm_service_deliveries(void)
             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
             "node-comm-bounded-control-flood",
             lease.attempt_number == 1u,
-            &observation);
+            &observation,
+            &scheduled_retry_delay_ms);
     } else if (attempt_record.profile == NODE_COMM_PROFILE_CONTROL_RESPONSE) {
         ret = mesh_try_send_control_response_view(
             &attempt_view,

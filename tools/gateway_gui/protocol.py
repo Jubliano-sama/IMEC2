@@ -15,11 +15,12 @@ from .operation_policy import (
     ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
     DISCOVERY_DEFAULT_ROUND_COUNT,
     DISCOVERY_DEFAULT_SLOT_MS,
-    DISCOVERY_DEFAULT_START_DELAY_MS,
+    SURVEY_OPERATION_SAFETY_LIMIT_MS,
     OperationPolicyProfile,
     assignment_required_budget_ms,
     decode_operation_policy_value,
     discovery_required_budget_ms,
+    discovery_required_start_delay_ms,
 )
 from .command_telemetry import (
     CommandTelemetryDecodeError,
@@ -54,9 +55,11 @@ MESH_NETWORK_MAX_HOPS = 8
 DEFAULT_HOST_ID = 0xA1C1BEEFC0DE0001
 GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
 GATEWAY_COMMAND_BUDGET_MAX_MS = 3_600_000
-DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 1_591_204
+DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 1_800_000
 ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
-SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = 360_000
+SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS = SURVEY_OPERATION_SAFETY_LIMIT_MS
+SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = \
+    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS
 SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 5
 
 MSG_CLICK_REPORT = 0x20
@@ -127,12 +130,13 @@ def click_report_session_id(clicker_id: int, event_seq: int) -> int:
         value = (value * _CLICK_REPORT_IDENTITY_FNV_PRIME) & 0xFFFFFFFF
     return value or 1
 
+CMD_REBOOT = 0x0004
+CMD_CLEAR_ROUTE = 0x0007
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_SURVEY_REACHABILITY = 0x0100
 CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_SURVEY_GO_RETIRED_ID = 0x0105
-
 TLV_EVENT_SEQ = 0x06
 TLV_BATTERY_MV = 0x02
 TLV_ERROR_CODE = 0x04
@@ -194,6 +198,7 @@ TLV_SURVEY_ROUND_COMMITMENT = 0xB7
 TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8
 TLV_GATEWAY_HOST_RECEIPT_IDENTITY = 0xBB
 TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC
+TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xBD
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -599,6 +604,9 @@ TLV_SPECS: dict[int, TlvSpec] = {
     ),
     TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT: TlvSpec(
         "DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT", _exact_bytes(32)
+    ),
+    TLV_SURVEY_ASSIGNMENT_IDENTITY: TlvSpec(
+        "SURVEY_ASSIGNMENT_IDENTITY", _exact_bytes(40)
     ),
     TLV_SURVEY_OPERATION_GENERATION: TlvSpec(
         "SURVEY_OPERATION_GENERATION", _scalar(8)
@@ -2174,19 +2182,31 @@ def build_anchor_discovery_command(
     if command_budget_ms is not None and not (
         GATEWAY_COMMAND_BUDGET_MIN_MS
         <= command_budget_ms
-        <= GATEWAY_COMMAND_BUDGET_MAX_MS
+        <= SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS
     ):
         raise ValueError(
             f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
-            f"{GATEWAY_COMMAND_BUDGET_MAX_MS} ms"
+            f"{SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS} ms for a survey"
         )
     if command_budget_ms is not None:
+        deepest_hop = (
+            operation_policy.assignment.deepest_hop
+            if operation_policy is not None
+            else min(expected_anchor_count or MESH_NETWORK_MAX_HOPS,
+                     MESH_NETWORK_MAX_HOPS)
+        )
+        start_delay_ms = (
+            operation_policy.discovery.start_delay_ms
+            if operation_policy is not None
+            else discovery_required_start_delay_ms(deepest_hop)
+        )
         required_budget_ms = discovery_required_budget_ms(
-            DISCOVERY_DEFAULT_START_DELAY_MS,
+            start_delay_ms,
             DISCOVERY_DEFAULT_SLOT_MS,
             discovery_slot_count,
             DISCOVERY_DEFAULT_ROUND_COUNT,
             duration_ms,
+            deepest_hop=deepest_hop,
         )
         if command_budget_ms < required_budget_ms:
             raise ValueError(
@@ -2297,6 +2317,31 @@ def build_here_i_am_command(
     return _build_command_frame(
         label="Here I Am route refresh",
         command_id=CMD_FORCE_REDISCOVERY,
+        host_id=host_id,
+        dst_id=gateway_id,
+        session_id=session_id,
+        seq=seq,
+        payload=bytes(payload),
+    )
+
+def build_reboot_command(
+    *,
+    host_id: int,
+    gateway_id: int,
+    session_id: int,
+    seq: int,
+) -> CommandFrame:
+    if host_id == 0:
+        raise ValueError("host ID must be non-zero")
+    if gateway_id == 0:
+        raise ValueError("gateway ID must be non-zero")
+    if gateway_id == host_id:
+        raise ValueError("gateway ID must differ from host ID")
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_REBOOT.to_bytes(2, "little"))
+    return _build_command_frame(
+        label="Reboot gateway board",
+        command_id=CMD_REBOOT,
         host_id=host_id,
         dst_id=gateway_id,
         session_id=session_id,

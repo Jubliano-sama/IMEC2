@@ -42,6 +42,21 @@ uint8_t survey_gateway_hop_count_from_report_ttl(uint8_t remaining_ttl)
     return (uint8_t)(SURVEY_DEFAULT_TTL - remaining_ttl + 1u);
 }
 
+uint32_t survey_discovery_required_start_delay_ms(uint8_t max_hop_count)
+{
+    uint8_t effective_hop_count =
+        max_hop_count == 0u || max_hop_count > SURVEY_DEFAULT_TTL ?
+            SURVEY_DEFAULT_TTL : max_hop_count;
+    uint32_t control_delivery_ms =
+        ((uint32_t)effective_hop_count +
+         SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
+            SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
+        SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS + 1u;
+
+    return control_delivery_ms < SURVEY_DISCOVERY_START_DELAY_FLOOR_MS ?
+        SURVEY_DISCOVERY_START_DELAY_FLOOR_MS : control_delivery_ms;
+}
+
 uint32_t survey_pair_control_timeout_ms(uint8_t gateway_hop_count)
 {
     if (gateway_hop_count == 0u ||
@@ -60,9 +75,9 @@ uint32_t survey_pair_control_round_trip_timeout_ms(
         survey_pair_control_timeout_ms(gateway_hop_count);
 
     return request_timeout_ms >
-               UINT32_MAX - SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS ?
+               UINT32_MAX - request_timeout_ms ?
            UINT32_MAX :
-           request_timeout_ms + SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS;
+           request_timeout_ms + request_timeout_ms;
 }
 
 uint32_t survey_discovery_report_custody_ms(uint8_t gateway_hop_count)
@@ -571,11 +586,33 @@ int survey_reachability_entry_retain(
     return PROTO_OK;
 }
 
+static bool survey_assignment_commitment_is_zero(
+    const struct discovery_assignment_table_commitment *commitment)
+{
+    static const struct discovery_assignment_table_commitment zero = {0};
+
+    return commitment == NULL ||
+           memcmp(commitment, &zero, sizeof(zero)) == 0;
+}
+
 int survey_discovery_config_validate(const struct survey_discovery_config *config)
 {
+    bool assignment_identity_absent;
+    bool assignment_identity_present;
+
     if (config == NULL) {
         return PROTO_ERR_ARG;
     }
+    assignment_identity_absent =
+        config->assignment_epoch == 0u &&
+        config->assignment_table_seq == 0u &&
+        survey_assignment_commitment_is_zero(
+            &config->assignment_table_commitment);
+    assignment_identity_present =
+        config->assignment_epoch != 0u &&
+        config->assignment_table_seq != 0u &&
+        !survey_assignment_commitment_is_zero(
+            &config->assignment_table_commitment);
     if (config->survey_id == 0u ||
         (config->operation_generation != 0u &&
          survey_operation_session_id(config->operation_generation) == 0u) ||
@@ -587,7 +624,8 @@ int survey_discovery_config_validate(const struct survey_discovery_config *confi
         config->slot_count == 0u ||
         config->slot_count > SURVEY_DISCOVERY_MAX_SLOT_COUNT ||
         config->round_count == 0u ||
-        config->round_count > SURVEY_DISCOVERY_MAX_ROUND_COUNT) {
+        config->round_count > SURVEY_DISCOVERY_MAX_ROUND_COUNT ||
+        (!assignment_identity_absent && !assignment_identity_present)) {
         return PROTO_ERR_MALFORMED;
     }
     return PROTO_OK;
@@ -940,6 +978,7 @@ int survey_discovery_start_at_ms(const struct survey_discovery_timing *timing,
 
 int survey_discovery_report_delay_ms(const struct survey_discovery_config *config,
                                      uint8_t anchor_slot,
+                                     uint8_t gateway_hop_count,
                                      uint32_t report_slot_ms,
                                      uint32_t *delay_ms)
 {
@@ -951,13 +990,16 @@ int survey_discovery_report_delay_ms(const struct survey_discovery_config *confi
     }
     if (survey_discovery_config_validate(config) != PROTO_OK ||
         report_slot_ms == 0u ||
+        gateway_hop_count == 0u ||
+        gateway_hop_count > SURVEY_DEFAULT_TTL ||
         anchor_slot >= config->slot_count) {
         return PROTO_ERR_MALFORMED;
     }
 
     discovery_duration_ms = survey_discovery_duration_ms(config);
     delay = (uint64_t)discovery_duration_ms +
-            ((uint64_t)anchor_slot * report_slot_ms);
+            ((((uint64_t)(gateway_hop_count - 1u) * config->slot_count) +
+              anchor_slot) * report_slot_ms);
     if (delay > UINT32_MAX) {
         return PROTO_ERR_NO_SPACE;
     }
@@ -1843,7 +1885,9 @@ int survey_extract_discovery_start_tlvs(const uint8_t *payload,
     struct survey_discovery_config decoded = {0};
     struct operation_policy_set policies;
     const uint8_t *slot_count_value = NULL;
+    const uint8_t *assignment_identity = NULL;
     uint8_t slot_count_len = 0u;
+    uint8_t assignment_identity_len = 0u;
     uint32_t duration_ms = 0u;
     int ret;
 
@@ -1889,6 +1933,27 @@ int survey_extract_discovery_start_tlvs(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
     decoded.slot_count = slot_count_value[0];
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_SURVEY_ASSIGNMENT_IDENTITY,
+                          &assignment_identity,
+                          &assignment_identity_len);
+    if (ret == PROTO_OK) {
+        if (assignment_identity_len !=
+            2u * sizeof(uint32_t) +
+                sizeof(decoded.assignment_table_commitment.bytes)) {
+            return PROTO_ERR_MALFORMED;
+        }
+        decoded.assignment_epoch =
+            proto_get_u32_le(&assignment_identity[0]);
+        decoded.assignment_table_seq =
+            proto_get_u32_le(&assignment_identity[sizeof(uint32_t)]);
+        memcpy(decoded.assignment_table_commitment.bytes,
+               &assignment_identity[2u * sizeof(uint32_t)],
+               sizeof(decoded.assignment_table_commitment.bytes));
+    } else if (ret != PROTO_ERR_NOT_FOUND) {
+        return ret;
+    }
     decoded.round_count = SURVEY_DISCOVERY_MAX_ROUND_COUNT;
     ret = operation_policy_set_from_tlvs(payload, payload_len, &policies);
     if (ret != PROTO_OK) {
@@ -2158,6 +2223,26 @@ int survey_append_discovery_start_tlvs(uint8_t *payload,
                         config->slot_count);
     if (ret != PROTO_OK) {
         return ret;
+    }
+    if (config->assignment_epoch != 0u) {
+        uint8_t identity[2u * sizeof(uint32_t) +
+                         SEMANTIC_DIGEST_SHA256_LEN];
+
+        proto_put_u32_le(&identity[0], config->assignment_epoch);
+        proto_put_u32_le(&identity[sizeof(uint32_t)],
+                         config->assignment_table_seq);
+        memcpy(&identity[2u * sizeof(uint32_t)],
+               config->assignment_table_commitment.bytes,
+               sizeof(config->assignment_table_commitment.bytes));
+        ret = tlv_append_bytes(payload,
+                               payload_cap,
+                               offset,
+                               TLV_SURVEY_ASSIGNMENT_IDENTITY,
+                               identity,
+                               sizeof(identity));
+        if (ret != PROTO_OK) {
+            return ret;
+        }
     }
     return tlv_append_u32(payload, payload_cap, offset, TLV_DURATION_MS, duration_ms);
 }

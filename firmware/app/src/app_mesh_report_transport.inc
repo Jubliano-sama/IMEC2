@@ -122,6 +122,58 @@ static bool mesh_next_channel9_activity_delay_ms(uint32_t now_ms,
     return found;
 }
 
+/*
+ * A long channel-5 control listener may span several connection turns.  It
+ * must still release the radio before the next downstream child transmit
+ * turn, even when there is no local packet or ACK waiting.  An upstream RX
+ * turn must not cut short the same parent's command-followup listener before
+ * the relayed control payload arrives.  Keep this RX-only helper separate from
+ * mesh_next_channel9_activity_delay_ms(), which also treats ordinary local
+ * reliable traffic as required activity.
+ */
+static bool mesh_next_channel9_receive_prepare_delay_ms(uint32_t now_ms,
+                                                        uint32_t *delay_ms)
+{
+    bool found = false;
+    uint32_t selected_delay_ms = 0u;
+
+    (void)mesh_advance_all_channel9_timings_past(now_ms, "c5-listener-rx");
+    (void)mesh_expire_channel9_timings(now_ms, "c5-listener-rx");
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        const struct mesh_relay_event_timing_entry *entry =
+            &mesh_runtime.event_timings[i];
+        struct mesh_event_timing timing;
+        uint32_t prepare_ms;
+        uint32_t candidate_delay_ms;
+
+        if (!entry->valid ||
+            entry->direction != MESH_RELAY_CHANNEL9_DIRECTION_DOWNSTREAM) {
+            continue;
+        }
+        timing = entry->timing;
+        if (!mesh_event_timing_local_rx_slot(&timing)) {
+            timing.next_event_time_ms += timing.event_interval_ms;
+            timing.event_counter++;
+        }
+        if (!mesh_event_timing_local_rx_slot(&timing) ||
+            !mesh_event_timing_usable(&timing, now_ms)) {
+            continue;
+        }
+
+        prepare_ms = mesh_channel9_prepare_start_ms(&timing);
+        candidate_delay_ms = uptime_deadline_reached(now_ms, prepare_ms) ?
+            0u : uptime_ms_until_deadline(now_ms, prepare_ms);
+        if (!found || candidate_delay_ms < selected_delay_ms) {
+            selected_delay_ms = candidate_delay_ms;
+            found = true;
+        }
+    }
+    if (found && delay_ms != NULL) {
+        *delay_ms = selected_delay_ms;
+    }
+    return found;
+}
+
 static bool mesh_select_channel9_rx_event(uint32_t now_ms,
                                           struct mesh_event_plan *selected_plan,
                                           uint64_t *selected_peer,
@@ -273,6 +325,24 @@ static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                             APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR;
                     int repair_ret;
 
+                    if (mesh_local_delivery_blocks_background_event_repair()) {
+                        uint32_t retry_delay_ms = 0u;
+
+                        (void)app_mesh_ch9_ack_table_note_send_failure(
+                            &mesh_ch9_ack_table,
+                            peer_id,
+                            now_ms,
+                            sys_rand32_get(),
+                            &retry_delay_ms);
+                        status_debug_printf(
+                            "DBG_FORWARD_GATEWAY_ACK_EVENT_DEFER peer=0x%llx delay=%u owner=local\n",
+                            (unsigned long long)peer_id,
+                            retry_delay_ms);
+                        report_tx_schedule(retry_delay_ms == 0u ? 1u :
+                                           retry_delay_ms);
+                        continue;
+                    }
+
                     if (!app_mesh_ch9_c5_repair_authorization_capture(
                             &authorization,
                             authorization_kind,
@@ -290,7 +360,8 @@ static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                             mesh_propose_event_after_channel5_contact_authorized(
                                 peer_id,
                                 "forwarded-gateway-ack-event-repair",
-                                &authorization);
+                                &authorization,
+                                false);
                     }
 
                     status_debug_printf(
@@ -2399,10 +2470,14 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                                 uint8_t purpose,
                                 const char *reason,
                                 bool send_wake_train,
-                                struct app_mesh_tx_observation *observation)
+                                struct app_mesh_tx_observation *observation,
+                                uint32_t *scheduled_retry_delay_ms)
 {
     struct mesh_outbound out_storage;
     struct mesh_outbound *out = &out_storage;
+    uint32_t tx_span_ms = MESH_CONTROL_RX_HANDOFF_TIMEOUT_MS +
+                          MESH_RADIO_EVENT_RETUNE_GUARD_MS +
+                          C5_POLITE_SNIFF_MS + UWB_CONTROL_TX_TIMEOUT_MS;
     bool control_handoff_started = false;
     bool abort_scan = false;
     int ret;
@@ -2410,11 +2485,24 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     if (observation != NULL) {
         memset(observation, 0, sizeof(*observation));
     }
+    if (scheduled_retry_delay_ms != NULL) {
+        *scheduled_retry_delay_ms = 0u;
+    }
     if (view == NULL || view->packet == NULL ||
         (view->payload_len != 0u && view->payload == NULL) ||
         view->payload_len > sizeof(out->payload) ||
-        view->packet->payload_len != view->payload_len) {
+        view->packet->payload_len != view->payload_len ||
+        scheduled_retry_delay_ms == NULL) {
         return -EINVAL;
+    }
+    if (send_wake_train) {
+        tx_span_ms += WAKE_ADV_MS + MESH_CONTROL_FOLLOWUP_TURNAROUND_MS;
+    }
+    *scheduled_retry_delay_ms =
+        app_anchor_gateway_survey_c5_quiet_delay_ms(k_uptime_get_32(),
+                                                     tx_span_ms);
+    if (*scheduled_retry_delay_ms != 0u) {
+        return -EAGAIN;
     }
     ret = k_mutex_lock(&mesh_c5_control_scratch_lock, K_NO_WAIT);
     if (ret < 0) {
@@ -2613,6 +2701,12 @@ int mesh_try_send_reliable_uplink_view(
     struct app_mesh_async_route_transfer_identity route_transfer;
     bool policy_deferred = false;
     bool rf_started = false;
+#if DEVICE_ROLE == ROLE_ANCHOR
+    bool protocol_response_handoff_started = false;
+    bool abort_scan = false;
+    enum radio_guard_uwb_client protocol_response_radio_owner =
+        RADIO_GUARD_UWB_CLIENT_NONE;
+#endif
     int ret;
 
     if (observation != NULL) {
@@ -2635,6 +2729,61 @@ int mesh_try_send_reliable_uplink_view(
     if (ret < 0) {
         return -EBUSY;
     }
+#if DEVICE_ROLE == ROLE_ANCHOR
+    /*
+     * A command result is the causal reply to a frame the anchor has already
+     * accepted.  Repeated Channel-5 command copies can otherwise keep the
+     * role scan continuously armed, so the result never reaches the event
+     * proposal that establishes its return Channel-9 cadence.  Claim one
+     * exact RX-to-control boundary for this response.  Queued mesh work and
+     * the coordinator's click/survey/ACK priorities still apply after the
+     * handoff; this only prevents a redundant receive rearm from winning
+     * forever.
+     */
+    if (view->packet->msg_type == MSG_COMMAND_RESULT) {
+        protocol_response_handoff_started =
+            mesh_rx_handoff_begin_control(&abort_scan);
+        if (!protocol_response_handoff_started) {
+            ret = -EBUSY;
+            goto out_unlock;
+        }
+        mesh_stop_role_scan();
+        protocol_response_radio_owner = radio_guard_uwb_owner_client();
+        if (!abort_scan && radio_guard_uwb_busy() &&
+            protocol_response_radio_owner ==
+                RADIO_GUARD_UWB_CLIENT_MESH_RX &&
+            !anchor_uwb_window_active() &&
+            !anchor_click_window_active()) {
+            /*
+             * Gateway-command delivery can own a separate bounded C5
+             * follow-up listener rather than the ordinary role scan.  That
+             * receive lease is deliberately abortable, but it is outside
+             * mesh_rx_handoff.scan_radio_active.  A locally accepted command
+             * result must end that obsolete listener before it can establish
+             * its return cadence; never preempt click or survey ranging.
+             */
+            abort_scan = true;
+        }
+        if (abort_scan) {
+            dwm3000_driver_request_receive_abort(
+                DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+        }
+        ret = mesh_rx_handoff_wait_for_control();
+        if (ret < 0) {
+            status_debug_printf(
+                "DBG_PROTOCOL_RESPONSE_RX_HANDOFF_TIMEOUT abort=%u busy=%u owner=%u\n",
+                abort_scan ? 1u : 0u,
+                radio_guard_uwb_busy() ? 1u : 0u,
+                (unsigned int)protocol_response_radio_owner);
+            goto out_unlock;
+        }
+        status_debug_printf(
+            "DBG_PROTOCOL_RESPONSE_RX_HANDOFF_READY abort=%u owner=%u seq=%u\n",
+            abort_scan ? 1u : 0u,
+            (unsigned int)protocol_response_radio_owner,
+            view->packet->seq);
+    }
+#endif
     memset(out, 0, sizeof(*out));
     out->packet = *view->packet;
     if (view->payload_len != 0u) {
@@ -2669,6 +2818,14 @@ int mesh_try_send_reliable_uplink_view(
         false,
         view->absolute_deadline_ms,
         observation);
+
+#if DEVICE_ROLE == ROLE_ANCHOR
+out_unlock:
+    if (protocol_response_handoff_started) {
+        mesh_rx_handoff_end_control();
+        mesh_restart_role_scan();
+    }
+#endif
     k_mutex_unlock(&mesh_route_wait_scratch_lock);
     if (policy_deferred) {
         /* Channel-5 contention remains a randomized exponential retry. */

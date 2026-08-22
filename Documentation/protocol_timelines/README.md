@@ -1,6 +1,8 @@
 # Protocol timelines
 
 - `four_board_qualification_status`: current end-to-end qualification map.
+- `enumeration_slot_contract`: implemented depth/slot-ordered CLAIM responses and exact TABLE ACK_CONFIRM quorum, shown in parallel for D-F1-F2.
+- `survey_enumeration_slot_proposal`: implemented enumeration-aware survey model with exact 200 ms Channel-5 probe slots, child-owned depth/slot-ordered first contact, one randomized same-parent retry before route fallback, and a topology-scaled GUI countdown.
 - `survey_depth3_upstream_retransmit_early`: exact four-probe reconstruction of B receiving C's report, then transmitting it toward A at the preparation boundary before A arms RX; the fixed retry waits for the negotiated send offset.
 - `survey_three_pair_budget`: measured discovery plus the serialized pair-control schedule, showing why a 244 s failure-derived release cannot fit and how separate 5 s redrives and a 45 s shared execution barrier fit the same six-minute operation.
 - `survey_depth3_uplink_route_wait_collision`: superseded first interpretation of the depth-3 uplink failure, retained as historical diagnosis evidence.

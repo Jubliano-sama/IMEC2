@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -78,6 +79,7 @@ class FakeBleakClient:
     async def write_gatt_char(
         self, _characteristic: Any, data: bytes, *, response: bool
     ) -> None:
+        assert response is True
         self.writes.append((bytes(data), response))
 
 
@@ -91,6 +93,20 @@ class BlockingBleakClient(FakeBleakClient):
         self.is_connected = True
 
 
+class FailOnceThenBlockBleakClient(FakeBleakClient):
+    connect_attempts = 0
+    second_connect_started: asyncio.Event
+    second_connect_release: asyncio.Event
+
+    async def connect(self) -> None:
+        self.__class__.connect_attempts += 1
+        if self.__class__.connect_attempts == 1:
+            raise RuntimeError("simulated reconnect failure")
+        self.second_connect_started.set()
+        await self.second_connect_release.wait()
+        self.is_connected = True
+
+
 class YieldingBleakClient(FakeBleakClient):
     async def write_gatt_char(
         self, characteristic: Any, data: bytes, *, response: bool
@@ -99,6 +115,25 @@ class YieldingBleakClient(FakeBleakClient):
             characteristic, data, response=response
         )
         await asyncio.sleep(0)
+
+
+class DropFinalChunkForNoResponseBleakClient(FakeBleakClient):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.attempted_writes: list[tuple[bytes, bool]] = []
+
+    async def write_gatt_char(
+        self, characteristic: Any, data: bytes, *, response: bool
+    ) -> None:
+        chunk = bytes(data)
+        self.attempted_writes.append((chunk, response))
+        if not response and chunk.endswith(b"\x00"):
+            # A local write-command completion cannot prove that the gateway
+            # admitted the delimiter which makes the serial frame actionable.
+            return
+        await super().write_gatt_char(
+            characteristic, chunk, response=response
+        )
 
 
 class ImmediateNotifyBleakClient(FakeBleakClient):
@@ -128,6 +163,7 @@ class BleTransportIdentityTests(unittest.TestCase):
         FakeBleakClient.instances.clear()
         FakeBleakClient.identity = 0xAABBCCDDEEFF0011.to_bytes(8, "little")
         ImmediateNotifyBleakClient.notification_payload = b""
+        FailOnceThenBlockBleakClient.connect_attempts = 0
 
     def test_connect_reads_identity_before_subscribing_and_reporting_connected(self) -> None:
         events: list[dict[str, Any]] = []
@@ -193,6 +229,66 @@ class BleTransportIdentityTests(unittest.TestCase):
 
         self.assertIs(transport._client, current_client)
         self.assertEqual(events, [])
+
+    def test_failed_auto_reconnect_stays_nonterminal_and_schedules_next_retry(
+        self,
+    ) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+        target = "AA:BB:CC:DD:EE:FF"
+        connected_client = object()
+        transport._client = connected_client
+        transport._connection_generation = 3
+        transport._auto_reconnect = True
+        transport._last_target = target
+        transport._thread = SimpleNamespace(is_alive=lambda: True)
+        real_sleep = asyncio.sleep
+
+        async def yield_without_delay(_delay_s: float) -> None:
+            await real_sleep(0)
+
+        async def exercise() -> None:
+            FailOnceThenBlockBleakClient.second_connect_started = (
+                asyncio.Event()
+            )
+            FailOnceThenBlockBleakClient.second_connect_release = (
+                asyncio.Event()
+            )
+            transport._loop = asyncio.get_running_loop()
+
+            transport._on_disconnected(connected_client, 3)
+            first_retry = transport._reconnect_task
+            self.assertIsNotNone(first_retry)
+
+            await FailOnceThenBlockBleakClient.second_connect_started.wait()
+            next_retry = transport._reconnect_task
+            self.assertIsNotNone(next_retry)
+            self.assertIsNot(next_retry, first_retry)
+            self.assertFalse(next_retry.done())
+            self.assertEqual(
+                FailOnceThenBlockBleakClient.connect_attempts, 2
+            )
+
+            FailOnceThenBlockBleakClient.second_connect_release.set()
+            await next_retry
+
+        with (
+            patch.object(ble_transport, "BLEAK_IMPORT_ERROR", None),
+            patch.object(
+                ble_transport, "BleakClient", FailOnceThenBlockBleakClient
+            ),
+            patch.object(ble_transport.asyncio, "sleep", yield_without_delay),
+        ):
+            asyncio.run(exercise())
+
+        states = [
+            event["state"]
+            for event in events
+            if event["kind"] == "connection_state"
+        ]
+        self.assertGreaterEqual(states.count("reconnecting"), 2)
+        self.assertNotIn("disconnected", states)
+        self.assertEqual(states[-1], "connected")
 
     def test_concurrent_connect_is_rejected_before_second_client_starts(self) -> None:
         events: list[dict[str, Any]] = []
@@ -276,9 +372,9 @@ class BleTransportIdentityTests(unittest.TestCase):
         self.assertEqual(
             client.writes,
             [
-                (b"\x02rec", False),
-                (b"eipt", False),
-                (b"\x00", False),
+                (b"\x02rec", True),
+                (b"eipt", True),
+                (b"\x00", True),
             ],
         )
         self.assertEqual(
@@ -288,6 +384,29 @@ class BleTransportIdentityTests(unittest.TestCase):
         self.assertEqual(events[0]["label"], "gateway host receipt")
         self.assertEqual(events[0]["raw"], frame)
         self.assertEqual(events[0]["byte_count"], len(frame))
+
+    def test_no_response_write_cannot_drop_final_delimiter_silently(self) -> None:
+        events: list[dict[str, Any]] = []
+        transport = transport_model(events)
+        client = DropFinalChunkForNoResponseBleakClient(
+            "AA:BB:CC:DD:EE:FF",
+            timeout=12.0,
+            disconnected_callback=lambda _client: None,
+        )
+        client.is_connected = True
+        transport._client = client
+        frame = b"AAAABBBB\x00"
+
+        asyncio.run(transport._send_frame(frame, "custody frame"))
+
+        expected = [
+            (b"AAAA", True),
+            (b"BBBB", True),
+            (b"\x00", True),
+        ]
+        self.assertEqual(expected, client.attempted_writes)
+        self.assertEqual(expected, client.writes)
+        self.assertEqual(frame, b"".join(chunk for chunk, _ in client.writes))
 
     def test_concurrent_frames_keep_all_att_chunks_contiguous(self) -> None:
         events: list[dict[str, Any]] = []
@@ -314,6 +433,7 @@ class BleTransportIdentityTests(unittest.TestCase):
             [chunk for chunk, _response in client.writes],
             [b"AAAA", b"BBBB", b"CCCC", b"1111", b"2222", b"3333"],
         )
+        self.assertTrue(all(response for _chunk, response in client.writes))
         self.assertEqual(
             [event["label"] for event in events if event["kind"] == "tx_written"],
             ["first", "second"],

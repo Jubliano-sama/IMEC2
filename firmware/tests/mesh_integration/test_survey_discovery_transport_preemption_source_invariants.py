@@ -32,6 +32,7 @@ TRANSPORT = (ROOT / "app/src/app_mesh_report_transport.inc").read_text(
     encoding="utf-8"
 )
 CONFIG = (ROOT / "app/src/app_config.h").read_text(encoding="utf-8")
+SURVEY_HEADER = (ROOT / "include/survey.h").read_text(encoding="utf-8")
 
 
 def function_body(source: str, name: str) -> str:
@@ -395,19 +396,19 @@ class SurveyDiscoveryTransportPreemptionSourceInvariantTests(unittest.TestCase):
 
     def test_prep_budget_includes_bounded_transport_quiescence(self):
         self.assertRegex(
-            CONFIG,
+            SURVEY_HEADER,
             r"#define\s+SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS\s+1000u\b",
         )
         self.assertRegex(
-            CONFIG,
+            SURVEY_HEADER,
             r"#define\s+SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS\s+63u\b",
         )
         self.assertRegex(
-            CONFIG,
+            SURVEY_HEADER,
             r"#define\s+SURVEY_DISCOVERY_PHY_PREP_MARGIN_MS\s+40u\b",
         )
         self.assertRegex(
-            CONFIG,
+            SURVEY_HEADER,
             r"#define\s+SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS\s+\\\s*"
             r"\(SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS\s*\+\s*\\\s*"
             r"SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS\s*\+\s*\\\s*"

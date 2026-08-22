@@ -1,0 +1,1641 @@
+[34m0000383[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000443[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000694[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000797[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000802[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000802[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000802[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000805[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000807[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000808[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000809[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000810[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000812[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000813[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000816[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000816[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000816[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000817[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000820[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000821[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0000837[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0000837[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0000838[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:04aa6160d7bf89aa0abf06d40e20c6b19cd439847e8a03eab1905effc33433d4 epoch=1661414431310266833 uptime=2
+mesh node identity: ficr=0x88add51b1bcbe854 node=0x9999888877776666 preset=mesh_gateway
+DBG_LED_SELFTEST_CH5_RX
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1012
+DBG_GATEWAY_BOOT stage=ble_begin uptime=1020
+DBG_GATEWAY_BLE stage=entry enabled=1 uptime=1020
+DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=1026
+DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=1028
+DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=1028
+DBG_GATEWAY_BOOT stage=ch9_begin uptime=1028
+DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=1028
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=5 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=5 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=4 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02ca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=4 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02ca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=6 errors=2 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=60 errors=2 frames=0 status=0x02020302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=78 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=56 errors=3 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=14 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=29 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=5 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=59 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=25 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=58 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=57 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=72 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=4 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=2 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=59 errors=2 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=57 errors=2 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=56 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=13 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=56 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=4 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=4 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=13 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=61 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=70 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=30 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=3 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=13 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=3 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=61 errors=2 frames=0 status=0x02ca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=4 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=3 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=21 errors=3 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=1 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=58 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=68 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=3 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=25 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=29 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=13 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=26 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=37 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=25 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02ca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=27 errors=2 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=61 errors=2 frames=0 status=0x02ca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=56 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=17 errors=2 frames=0 status=0x02ca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=56 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=70 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=30 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=3 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=8 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=38 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=60 errors=2 frames=0 status=0x02ca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=5 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0xdeca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=18 errors=2 frames=0 status=0x02ca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=55 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=60 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=55 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=78 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=56 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_BLE event=connected err=0 uptime=38663
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=7 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=26 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02ca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=3 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=79 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=57 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=40366
+DBG_STACK_RUN_BEGIN epoch=1661414431310266833 run=1 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777217 seq=1 type=86 sequence=0 previous=0 uptime=40366
+DBG_STACK_SAMPLE_BEGIN epoch=1661414431310266833 run=1 sample=1 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777217 seq=1 type=86 uptime=40367
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+DBG_STACK name=BT RX WQ tid=0x200108f8 used=760 free=776 size=1536 ret=0 run=1 sample=1
+DBG_STACK name=mesh_route tid=0x2000d560 used=2024 free=6168 size=8192 ret=0 run=1 sample=1
+DBG_STACK name=sysworkq tid=0x20011850 used=2296 free=2184 size=4480 ret=0 run=1 sample=1
+DBG_STACK name=MPSL Work tid=0x20011608 used=440 free=584 size=1024 ret=0 run=1 sample=1
+DBG_STACK name=logging tid=0x20010400 used=544 free=1504 size=2048 ret=0 run=1 sample=1
+DBG_STACK name=idle tid=0x200116e0 used=64 free=256 size=320 ret=0 run=1 sample=1
+DBG_STACK_SAMPLE_END run=1 sample=1
+DBG_STACK_RUN_END epoch=1661414431310266833 run=1 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=16777217 seq=1 type=86 samples=1 sequence=0 previous=0 uptime=40387
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=40394 rem=13 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=2
+DBG_STACK_RUN_BEGIN epoch=1661414431310266833 run=2 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=16777218 seq=2 type=86 sequence=0 previous=0 uptime=40396
+DBG_STACK_SAMPLE_BEGIN epoch=1661414431310266833 run=2 sample=2 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=16777218 seq=2 type=86 uptime=40396
+DBG_STACK_ISR_CONFIG size=8192 run=2 sample=2
+DBG_STACK name=BT RX WQ tid=0x200108f8 used=760 free=776 size=1536 ret=0 run=2 sample=2
+DBG_STACK name=mesh_route tid=0x2000d560 used=2696 free=5496 size=8192 ret=0 run=2 sample=2
+DBG_STACK name=sysworkq tid=0x20011850 used=2296 free=2184 size=4480 ret=0 run=2 sample=2
+DBG_STACK name=MPSL Work tid=0x20011608 used=440 free=584 size=1024 ret=0 run=2 sample=2
+DBG_STACK name=logging tid=0x20010400 used=544 free=1504 size=2048 ret=0 run=2 sample=2
+DBG_STACK name=idle tid=0x200116e0 used=64 free=256 size=320 ret=0 run=2 sample=2
+DBG_STACK_SAMPLE_END run=2 sample=2
+DBG_STACK_RUN_END epoch=1661414431310266833 run=2 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=16777218 seq=2 type=86 samples=1 sequence=0 previous=0 uptime=40416
+DBG_STACK_RUN_BEGIN epoch=1661414431310266833 run=3 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=16777220 seq=4 type=86 sequence=0 previous=0 uptime=40417
+DBG_STACK_SAMPLE_BEGIN epoch=1661414431310266833 run=3 sample=3 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=16777220 seq=4 type=86 uptime=40424
+DBG_STACK_ISR_CONFIG size=8192 run=3 sample=3
+DBG_STACK name=BT RX WQ tid=0x200108f8 used=760 free=776 size=1536 ret=0 run=3 sample=3
+DBG_STACK name=mesh_route tid=0x2000d560 used=3356 free=4836 size=8192 ret=0 run=3 sample=3
+DBG_STACK name=sysworkq tid=0x20011850 used=2296 free=2184 size=4480 ret=0 run=3 sample=3
+DBG_STACK name=MPSL Work tid=0x20011608 used=440 free=584 size=1024 ret=0 run=3 sample=3
+DBG_STACK name=logging tid=0x20010400 used=544 free=1504 size=2048 ret=0 run=3 sample=3
+DBG_STACK name=idle tid=0x200116e0 used=64 free=256 size=320 ret=0 run=3 sample=3
+DBG_STACK_SAMPLE_END run=3 sample=3
+DBG_STACK_RUN_END epoch=1661414431310266833 run=3 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777220 seq=4 type=86 samples=1 sequence=0 previous=0 uptime=40442
+DBG_STACK_RUN_BEGIN epoch=1661414431310266833 run=4 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777222 seq=6 type=86 sequence=0 previous=0 uptime=40458
+DBG_STACK_SAMPLE_BEGIN epoch=1661414431310266833 run=4 sample=4 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777222 seq=6 type=86 uptime=40458
+DBG_STACK_ISR_CONFIG size=8192 run=4 sample=4
+DBG_STACK name=BT RX WQ tid=0x200108f8 used=760 free=776 size=1536 ret=0 run=4 sample=4
+DBG_STACK name=mesh_route tid=0x2000d560 used=3680 free=4512 size=8192 ret=0 run=4 sample=4
+DBG_STACK name=sysworkq tid=0x20011850 used=2296 free=2184 size=4480 ret=0 run=4 sample=4
+DBG_STACK name=MPSL Work tid=0x20011608 used=440 free=584 size=1024 ret=0 run=4 sample=4
+DBG_STACK name=logging tid=0x20010400 used=544 free=1504 size=2048 ret=0 run=4 sample=4
+DBG_STACK name=idle tid=0x200116e0 used=64 free=256 size=320 ret=0 run=4 sample=4
+DBG_STACK_SAMPLE_END run=4 sample=4
+DBG_STACK_RUN_END epoch=1661414431310266833 run=4 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=16777222 seq=6 type=86 samples=1 sequence=0 previous=0 uptime=40480
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=40501 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x00ca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=40587 rem=36 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=1
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003f s=00000005 q=0004>0004 r=00000000 f=00000000 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-5 rf=0 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_DWM_WAKE_IDLE_RC_TIMEOUT phy=3 ret=-116 sys=0x02000000
+DBG_DWM_WAKE_REINIT phy=3 ret=-116
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=47 errors=2 frames=0 status=0x02ca0000 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=7 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=41148 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003f s=00000005 q=0004>0004 r=00000000 f=00000000 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-5 rf=0 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=74 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=52 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003f s=00000005 q=0004>0004 r=00000000 f=00000000 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-5 rf=0 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=42582 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=79 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=38 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=59 errors=2 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=2 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=60 errors=2 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=78 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=57 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=60 errors=2 frames=0 status=0x02ca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_START_HANDOFF ret=0
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003f s=00000005 q=0004>0004 r=00000000 f=00000000 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-5 rf=0 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=44280 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=79 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=26 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0208c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_FAIL ret=-5 fail=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=0 recover=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=55 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=46166 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003f s=00000005 q=0004>0004 r=00000000 f=00000000 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-5 rf=0 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=11 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=15 errors=2 frames=0 status=0xdeca0302 phy=3 pac=0 sfd=3 phr=1
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=78 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=37 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=8 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=14 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=19 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0200c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=61 errors=2 frames=0 status=0x02020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=3 rem=100 errors=1 frames=0 status=0x02ca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=48075 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003f s=00000005 q=0004>0004 r=00000000 f=00000000 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-5 rf=0 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=56 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=16 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=50218 rem=100 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_WAKE_TRAIN_GUARD_OK
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_C5_CONTROL_FOLLOWUP_TURNAROUND delay=60 msg=40 reason=node-comm-bounded-control-flood
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=133 msg=40 reason=bounded-c5-flood
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000004 s=00000005 q=0004>0009 r=00000000 f=00000027 t=00000001 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=-116 rf=0 scheduled=0 state=-133
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_ENUM_FLOOD_DONE kind=1 reason=1 tries=0
+DBG_STACK_RUN_BEGIN epoch=1661414431310266833 run=5 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=2608470938 seq=7066 type=65 sequence=0 previous=0 uptime=50826
+DBG_STACK_SAMPLE_BEGIN epoch=1661414431310266833 run=5 sample=5 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=2608470938 seq=7066 type=65 uptime=50827
+DBG_STACK_ISR_CONFIG size=8192 run=5 sample=5
+DBG_STACK name=BT RX WQ tid=0x200108f8 used=760 free=776 size=1536 ret=0 run=5 sample=5
+DBG_STACK name=mesh_route tid=0x2000d560 used=5856 free=2336 size=8192 ret=0 run=5 sample=5
+DBG_STACK name=sysworkq tid=0x20011850 used=2296 free=2184 size=4480 ret=0 run=5 sample=5
+DBG_STACK name=MPSL Work tid=0x20011608 used=440 free=584 size=1024 ret=0 run=5 sample=5
+DBG_STACK name=logging tid=0x20010400 used=544 free=1504 size=2048 ret=0 run=5 sample=5
+DBG_STACK name=idle tid=0x200116e0 used=64 free=256 size=320 ret=0 run=5 sample=5
+DBG_STACK_SAMPLE_END run=5 sample=5
+DBG_STACK_RUN_END epoch=1661414431310266833 run=5 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=2608470938 seq=7066 type=65 samples=1 sequence=0 previous=0 uptime=50847
+DBG_STACK_RUN_BEGIN epoch=1661414431310266833 run=6 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777223 seq=7 type=86 sequence=0 previous=0 uptime=50896
+DBG_STACK_SAMPLE_BEGIN epoch=1661414431310266833 run=6 sample=6 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=16777223 seq=7 type=86 uptime=50896
+DBG_STACK_ISR_CONFIG size=8192 run=6 sample=6
+DBG_STACK name=BT RX WQ tid=0x200108f8 used=760 free=776 size=1536 ret=0 run=6 sample=6
+DBG_STACK name=mesh_route tid=0x2000d560 used=5856 free=2336 size=8192 ret=0 run=6 sample=6
+DBG_STACK name=sysworkq tid=0x20011850 used=2296 free=2184 size=4480 ret=0 run=6 sample=6
+DBG_STACK name=MPSL Work tid=0x20011608 used=440 free=584 size=1024 ret=0 run=6 sample=6
+DBG_STACK name=logging tid=0x20010400 used=544 free=1504 size=2048 ret=0 run=6 sample=6
+DBG_STACK name=idle tid=0x200116e0 used=64 free=256 size=320 ret=0 run=6 sample=6
+DBG_STACK_SAMPLE_END run=6 sample=6
+DBG_STACK_RUN_END epoch=1661414431310266833 run=6 kind=ble_backpressure owner=system_workqueue outcome=ack queue=0 custody=0 credit=1 retry=0 drain=0 src=11068027678940948070 dst=11068027678940948070 session=16777223 seq=7 type=86 samples=1 sequence=0 previous=0 uptime=50911
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=28 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x0e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=70 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=29 errors=3 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x1e0a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=4 rem=100 errors=1 frames=0 status=0x0008c800 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=4 recover=1
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_BLE event=disconnected reason=19 uptime=53234
+DBG_GATEWAY_BLE event=recovery round=1 delay_ms=287 reason=disconnected uptime=53234
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=58 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=60 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=21 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=17 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0xdeca0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=26 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=59 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=20 errors=3 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVERY_YIELD errors=3 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=3
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=18 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=61 errors=2 frames=0 status=0x06020302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x5e4a0302 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=27 errors=2 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-5 len=0 fail=2 recover=2
+DBG_GATEWAY_CH9_RX_CONT_RECOVER ret=-5 fail=2 rem=100 errors=1 frames=0 status=0x06020300 phy=0 pac=2 sfd=2 phr=0

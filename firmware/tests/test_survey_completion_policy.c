@@ -14,6 +14,22 @@ static enum survey_gateway_collection_decision collection_decide(
 {
     return survey_gateway_collection_decide(emission_horizon_elapsed,
                                             safety_deadline_elapsed,
+                                            false,
+                                            report_count,
+                                            expected_count,
+                                            expected_present);
+}
+
+static enum survey_gateway_collection_decision collection_decide_settled(
+    bool emission_horizon_elapsed,
+    bool safety_deadline_elapsed,
+    size_t report_count,
+    uint16_t expected_count,
+    bool expected_present)
+{
+    return survey_gateway_collection_decide(emission_horizon_elapsed,
+                                            safety_deadline_elapsed,
+                                            true,
                                             report_count,
                                             expected_count,
                                             expected_present);
@@ -30,6 +46,35 @@ static void test_expected_count_closes_only_after_full_emission_horizon(void)
                SURVEY_GATEWAY_COLLECTION_WAIT);
         assert(collection_decide(true, false, expected, expected, true) ==
                SURVEY_GATEWAY_COLLECTION_CLOSE);
+    }
+}
+
+static void test_expected_count_closes_early_after_settle_without_horizon(void)
+{
+    for (uint16_t expected = 1u;
+         expected <= SURVEY_DISCOVERY_MAX_SLOT_COUNT;
+         expected++) {
+        /* Settle not yet elapsed: still wait, horizon or not. */
+        assert(collection_decide(false, false, expected, expected, true) ==
+               SURVEY_GATEWAY_COLLECTION_WAIT);
+        assert(collection_decide(false, true, expected, expected, true) ==
+               SURVEY_GATEWAY_COLLECTION_WAIT);
+        /* Settle elapsed with the full expected set: close without waiting
+         * out the emission horizon. */
+        assert(collection_decide_settled(false, false, expected, expected, true) ==
+               SURVEY_GATEWAY_COLLECTION_CLOSE);
+        assert(collection_decide_settled(false, true, expected, expected, true) ==
+               SURVEY_GATEWAY_COLLECTION_CLOSE);
+        /* Shortfall never closes early, settle or not. */
+        assert(collection_decide_settled(false, false, expected - 1u, expected, true) ==
+               SURVEY_GATEWAY_COLLECTION_WAIT);
+        assert(collection_decide_settled(false, true, expected - 1u, expected, true) ==
+               SURVEY_GATEWAY_COLLECTION_WAIT);
+        /* No expected count: legacy safety-deadline behavior unchanged. */
+        assert(collection_decide_settled(false, false, expected, 0u, false) ==
+               SURVEY_GATEWAY_COLLECTION_WAIT);
+        assert(collection_decide_settled(false, true, expected, 0u, false) ==
+               SURVEY_GATEWAY_COLLECTION_WAIT);
     }
 }
 
@@ -96,9 +141,9 @@ static void test_exact_minimum_budget_leaves_terminal_scheduling_guard(void)
 {
     const struct operation_policy_discovery policy = {
         .start_delay_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 6u,
-        .round_count = 4u,
+        .round_count = OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT,
         .report_grace_ms = 250u,
         .operation_budget_ms = 600000u,
     };
@@ -107,6 +152,7 @@ static void test_exact_minimum_budget_leaves_terminal_scheduling_guard(void)
         .report_custody_ms = 17000u,
         .report_delivery_tail_ms = 63060u,
         .terminal_scheduling_guard_ms = 102u,
+        .max_hop_count = 1u,
     };
     const uint32_t collection_horizon_ms =
         policy.start_delay_ms +
@@ -150,7 +196,7 @@ static void test_exact_minimum_budget_leaves_terminal_scheduling_guard(void)
 int main(void)
 {
     test_expected_count_closes_only_after_full_emission_horizon();
-    test_expected_count_shortfall_keeps_full_safety_deadline();
+    test_expected_count_closes_early_after_settle_without_horizon();
     test_expected_count_overflow_fails_without_truncating();
     test_absent_expected_count_preserves_legacy_safety_deadline();
     test_exact_minimum_budget_leaves_terminal_scheduling_guard();

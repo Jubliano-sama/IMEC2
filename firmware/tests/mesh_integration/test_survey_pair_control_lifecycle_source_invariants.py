@@ -186,30 +186,41 @@ accepted_result = function_body(
     ANCHOR, "gateway_survey_note_command_result"
 )
 assert "gateway_survey_owns_pending_control(command, command_id)" in accepted_result
-close_call = accepted_result.index("gateway_survey_complete_accepted_delivery()")
-eagain = accepted_result.index("if (ret == -EAGAIN)", close_call)
-eagain_return = accepted_result.index("return;", eagain)
-assert "memset(&gateway_survey_result_preflight" not in accepted_result[
-    close_call:eagain_return
-], "the accepted latch must survive an active backend cancel/take race"
+cancel = accepted_result.index("app_node_comm_cancel_delivery(")
+schedule = accepted_result.index("gateway_survey_work_schedule(", cancel)
+assert "gateway_survey_cancel_take_active_delivery" not in accepted_result
+assert "gateway_survey_complete_accepted_delivery" not in accepted_result
+assert "gateway_survey_round_note_control_result" not in accepted_result
+assert "memset(&gateway_survey_result_preflight" not in accepted_result
+assert cancel < schedule, (
+    "mesh-route result ingress may stop request retries, but only the survey "
+    "worker may consume the terminal and advance the round"
+)
 
 # Once the exact request terminal exists, install the round confirmation,
 # promote the retained proof, and only then retire the preflight latch.  This
 # ordering prevents the normal delivery poll from redriving a START whose
 # ACK_CONFIRM already reached the gateway.
-round_capture = accepted_result.index(
-    "gateway_survey_round_note_control_result(", eagain_return
+commit_result = function_body(
+    ANCHOR, "gateway_survey_commit_accepted_result"
 )
-promote_early = accepted_result.index(
+terminal_gate = commit_result.index("request_delivery_terminal")
+close_call = commit_result.index(
+    "gateway_survey_complete_accepted_delivery()", terminal_gate
+)
+round_capture = commit_result.index(
+    "gateway_survey_round_note_control_result(", close_call
+)
+promote_early = commit_result.index(
     "app_gateway_survey_round_note_control_ack_confirm(", round_capture
 )
-assert "&gateway_survey_result_preflight.early_ack_confirm" in accepted_result[
+assert "&gateway_survey_result_preflight.early_ack_confirm" in commit_result[
     promote_early:
 ]
-clear_preflight = accepted_result.index(
+clear_preflight = commit_result.index(
     "memset(&gateway_survey_result_preflight", promote_early
 )
-assert close_call < eagain_return < round_capture < promote_early < clear_preflight
+assert terminal_gate < close_call < round_capture < promote_early < clear_preflight
 
 ack_confirm_ingress = function_body(ANCHOR, "gateway_note_survey_ack_confirm")
 round_attempt = ack_confirm_ingress.index(
@@ -433,6 +444,13 @@ assert peek < failure < validation < blocked < take < terminal_commit, (
     "a failed PREPARE/START delivery terminal must remain unconsumed until "
     "pre-deadline result validation finishes"
 )
+worker_commit = delivery_service.index(
+    "gateway_survey_commit_accepted_result()", terminal_commit
+)
+assert terminal_commit < worker_commit, (
+    "only the survey worker may apply an accepted result after it owns the "
+    "exact request terminal"
+)
 assert "gateway_survey_transaction.active_started_at_ms" in delivery_service[
     validation:blocked
 ]
@@ -639,7 +657,7 @@ request_timeout = prepare_cleanup.index(
     "survey_pair_control_timeout_ms(hop_count)", route
 )
 result_timeout = prepare_cleanup.index(
-    "SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS", request_timeout
+    "request_timeout_ms + request_timeout_ms", request_timeout
 )
 request_deadline = prepare_cleanup.index(
     "cleanup->request_deadline_ms =", result_timeout
@@ -653,8 +671,9 @@ assert (
     request_deadline < semantic_deadline < prepared
 ), (
     "cleanup must retain its exact identity across route retries, then derive "
-    "separate route-aware request T and semantic T+R deadlines before submit"
+    "a route-aware request T and matching semantic 2T deadline before submit"
 )
+assert "SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS" not in prepare_cleanup
 
 cleanup_service = function_body(ANCHOR, "gateway_survey_service_cleanup")
 inactive_slot = cleanup_service.index("if (!cleanup->active)")

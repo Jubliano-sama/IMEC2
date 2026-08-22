@@ -512,6 +512,65 @@ enum route_delivery_action route_record_failure_at(struct route_table *table,
     return ROUTE_DELIVERY_DISCOVER;
 }
 
+enum route_delivery_action route_abandon_selected_at(
+    struct route_table *table,
+    uint32_t now_ms)
+{
+    const struct route_candidate *candidate;
+    uint64_t next_hop_id;
+    uint64_t gateway_id;
+    uint32_t route_epoch;
+
+    if (table == NULL || table->selected_index == ROUTE_NO_SELECTION ||
+        table->selected_index >= ROUTE_MAX_CANDIDATES) {
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+    candidate = &table->candidates[table->selected_index];
+    if (!candidate_valid_for_epoch(candidate, table->current_epoch)) {
+        table->selected_index = ROUTE_NO_SELECTION;
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+
+    next_hop_id = candidate->next_hop_id;
+    gateway_id = candidate->gateway_id;
+    route_epoch = candidate->route_epoch;
+    return route_abandon_candidate_at(table,
+                                      next_hop_id,
+                                      gateway_id,
+                                      route_epoch,
+                                      now_ms);
+}
+
+enum route_delivery_action route_abandon_candidate_at(
+    struct route_table *table,
+    uint64_t next_hop_id,
+    uint64_t gateway_id,
+    uint32_t route_epoch,
+    uint32_t now_ms)
+{
+    struct route_candidate *candidate;
+    int index;
+
+    if (table == NULL || next_hop_id == 0u || gateway_id == 0u ||
+        route_epoch != table->current_epoch) {
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+    index = find_candidate_index(table, next_hop_id, gateway_id);
+    if (index < 0) {
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+    candidate = &table->candidates[index];
+    if (!candidate_valid_for_epoch(candidate, route_epoch)) {
+        return ROUTE_DELIVERY_DISCOVER;
+    }
+
+    candidate->failure_count = 0u;
+    candidate->hold_down_until_ms = now_ms + ROUTE_PARENT_HOLDDOWN_MS;
+    candidate->hold_down_valid = true;
+    return route_select_best_at(table, now_ms) == PROTO_OK ?
+           ROUTE_DELIVERY_TRY_ALTERNATE : ROUTE_DELIVERY_DISCOVER;
+}
+
 uint32_t route_retry_backoff_ms(uint8_t failure_count)
 {
     if (failure_count <= 1u) {

@@ -87,11 +87,20 @@ LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
 #define MESH_ROUTE_REPLY_READY_POLL_MS 25u
 #define MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX 64u
 #define MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS 6000u
+#define MESH_TOPOLOGY_PARENT_CONTACT_RETRIES 1u
+#define MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS 25000u
 #define MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS
 #define MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS 1000u
 #define MESH_EVENT_NEGOTIATION_DEADLINE_MS \
     (MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS + \
      MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS)
+_Static_assert(MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS >=
+                   ((MESH_TOPOLOGY_PARENT_CONTACT_RETRIES + 1u) *
+                    MESH_EVENT_NEGOTIATION_DEADLINE_MS),
+               "topology contact deadline must cover every bounded attempt");
+_Static_assert(MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS <
+                   DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS,
+               "topology contact deadline must fit direct response custody");
 #define MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS \
     MESH_EVENT_NEGOTIATION_DEADLINE_MS
 #define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
@@ -570,6 +579,23 @@ static struct k_work_delayable mesh_route_request_action_work;
 static struct k_work_delayable mesh_c5_flood_work;
 static struct k_work_delayable mesh_route_discovery_work;
 static struct k_work_delayable mesh_event_negotiation_retry_work;
+#if DEVICE_ROLE != ROLE_GATEWAY
+#define MESH_CH9_CLOSE_INTENT_MAX 2u
+struct mesh_ch9_close_intent {
+    uint64_t peer_id;
+    const char *reason;
+    uint32_t retry_due_ms;
+    uint32_t owner_session_id;
+    uint32_t owner_generation;
+    bool upstream;
+    bool requires_live_timing;
+    bool valid;
+};
+static struct mesh_ch9_close_intent
+    mesh_ch9_close_intents[MESH_CH9_CLOSE_INTENT_MAX];
+BUILD_ASSERT(sizeof(mesh_ch9_close_intents) <= 64u,
+             "one-upstream/one-downstream close intents must stay compact");
+#endif
 static K_MUTEX_DEFINE(mesh_uwb_rx_rearm_lock);
 static uint32_t mesh_uwb_rx_rearm_delay_ms;
 static bool mesh_uwb_rx_rearm_pending;
@@ -676,7 +702,7 @@ BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
 static struct mesh_gateway_ack_store mesh_gateway_ack_store;
 static bool mesh_gateway_ack_store_initialized;
 static bool mesh_gateway_ack_store_attached;
-BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 9456u,
+BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 9544u,
              "gateway ACK store RAM contract changed");
 #endif
 
@@ -718,6 +744,74 @@ int app_mesh_report_attach_gateway_ack_store(void)
     mesh_gateway_ack_store_attached = true;
     return 0;
 #else
+    return -ENOTSUP;
+#endif
+}
+
+int app_mesh_report_reserve_gateway_ack_cleanup_result(
+    const struct proto_packet *expected_result,
+    uint32_t now_ms)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    int ret;
+
+    if (k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT) != 0) {
+        return -EAGAIN;
+    }
+    ret = mesh_relay_reserve_gateway_ack_cleanup_result(
+        &mesh_runtime, expected_result, now_ms);
+    k_mutex_unlock(&mesh_rx_handler_lock);
+    return mesh_errno_from_proto(ret);
+#else
+    ARG_UNUSED(expected_result);
+    ARG_UNUSED(now_ms);
+    return -ENOTSUP;
+#endif
+}
+
+int app_mesh_report_release_gateway_ack_cleanup_result(
+    const struct proto_packet *expected_result)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    int ret;
+
+    if (k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT) != 0) {
+        return -EAGAIN;
+    }
+    ret = mesh_relay_release_gateway_ack_cleanup_result(
+        &mesh_runtime, expected_result);
+    k_mutex_unlock(&mesh_rx_handler_lock);
+    return mesh_errno_from_proto(ret);
+#else
+    ARG_UNUSED(expected_result);
+    return -ENOTSUP;
+#endif
+}
+
+int app_mesh_report_gateway_ack_cleanup_pair_capacity(
+    uint32_t now_ms,
+    uint32_t *retry_delay_ms)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    int ret;
+
+    if (retry_delay_ms == NULL) {
+        return -EINVAL;
+    }
+    *retry_delay_ms = 0u;
+    if (k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT) != 0) {
+        return -EAGAIN;
+    }
+    ret = mesh_relay_gateway_ack_cleanup_pair_capacity(
+        &mesh_runtime, now_ms, retry_delay_ms);
+    k_mutex_unlock(&mesh_rx_handler_lock);
+    if (ret == PROTO_ERR_BUSY) {
+        return -EAGAIN;
+    }
+    return mesh_errno_from_proto(ret);
+#else
+    ARG_UNUSED(now_ms);
+    ARG_UNUSED(retry_delay_ms);
     return -ENOTSUP;
 #endif
 }
@@ -896,6 +990,7 @@ static void mesh_route_ready_event_owner_clear(void)
 }
 static struct mesh_event_control_record mesh_event_propose_record;
 static struct app_mesh_event_retry_state mesh_event_propose_retry;
+static bool mesh_event_propose_topology_operation;
 static struct app_mesh_c5_tx_authorization_token
     mesh_forwarded_ack_event_repair_authorization;
 static struct app_mesh_c5_tx_authorization_token
@@ -988,6 +1083,10 @@ static int mesh_schedule_tx_timeout(void);
 static void mesh_route_discovery_work_handler(struct k_work *work);
 static void mesh_event_negotiation_retry_work_handler(struct k_work *work);
 static int mesh_event_negotiation_schedule_next(void);
+static bool mesh_channel9_close_intent_next_delay(uint32_t now_ms,
+                                                  uint32_t *delay_ms_out);
+static bool mesh_channel9_close_intent_blocks_upstream(uint64_t peer_id);
+static void mesh_channel9_close_intent_service_due(uint32_t now_ms);
 #if DEVICE_ROLE == ROLE_ANCHOR
 static int mesh_event_propose_prepare_immediate_send(
     const struct mesh_outbound *outbound);
@@ -1136,13 +1235,6 @@ static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason);
 static void mesh_event_owner_abandon_peer(uint64_t peer_id);
 static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id);
-static bool survey_peer_frame_in_flight(uint64_t peer_id);
-static bool survey_release_ch9_if_current(
-    struct mesh_relay *relay,
-    struct mesh_event_owner *owner,
-    uint64_t peer_id,
-    uint32_t session_id,
-    uint32_t owner_generation);
 static uint32_t survey_identity_backoff_ms(uint64_t node_id,
                                            uint64_t parent_id,
                                            uint8_t deferral_count);
@@ -1193,7 +1285,8 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id,
 static int mesh_propose_event_after_channel5_contact_authorized(
     uint64_t peer_id,
     const char *reason,
-    const struct app_mesh_c5_tx_authorization_token *authorization);
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    bool topology_operation);
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
 static void mesh_node_comm_cancel_work_handler(struct k_work *work);
 static bool mesh_queue_from_frame_at(const uint8_t *frame,

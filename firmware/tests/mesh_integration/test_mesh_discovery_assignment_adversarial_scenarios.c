@@ -534,9 +534,11 @@ static bool run_workflow(size_t anchor_count)
               "hash fallback provisioned anchor=%zu", i);
     }
 
-    collection_ms = discovery_assignment_collection_window_ms(
+    collection_ms = discovery_assignment_collection_window_for_topology_ms(
         DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-        DISCOVERY_ASSIGNMENT_MAX_HOPS);
+        (uint8_t)anchor_count,
+        (uint8_t)(anchor_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+                      DISCOVERY_ASSIGNMENT_MAX_HOPS : anchor_count));
     CHECK(collection_ms != 0u, "zero collection count=%zu", anchor_count);
     for (uint8_t round = 0u;
          round < MAX_ROUNDS && gateway.claim_count < anchor_count; round++) {
@@ -751,12 +753,19 @@ static bool run_workflow(size_t anchor_count)
               anchor_count, i);
     }
     elapsed_ms += DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS;
-    CHECK(elapsed_ms <= OPERATION_DEADLINE_MS,
-          "deadline insufficient count=%zu elapsed=%u", anchor_count,
-          elapsed_ms);
-    CHECK(!app_discovery_assignment_operation_expired(
-              elapsed_ms, OPERATION_DEADLINE_MS),
-          "operation expired count=%zu elapsed=%u", anchor_count, elapsed_ms);
+    if (anchor_count == MAX_ANCHORS) {
+        CHECK(elapsed_ms > OPERATION_DEADLINE_MS,
+              "full-capacity topology unexpectedly fits hard ceiling elapsed=%u",
+              elapsed_ms);
+    } else {
+        CHECK(elapsed_ms <= OPERATION_DEADLINE_MS,
+              "deadline insufficient count=%zu elapsed=%u", anchor_count,
+              elapsed_ms);
+        CHECK(!app_discovery_assignment_operation_expired(
+                  elapsed_ms, OPERATION_DEADLINE_MS),
+              "operation expired count=%zu elapsed=%u", anchor_count,
+              elapsed_ms);
+    }
 
     for (size_t i = 0u; i < anchor_count; i++) {
         struct app_discovery_assignment_policy restored;

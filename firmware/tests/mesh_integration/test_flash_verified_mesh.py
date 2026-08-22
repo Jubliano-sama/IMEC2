@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -190,6 +191,8 @@ class MockTarget:
         if command[0] == str(self.west):
             if callable(self.before_west):
                 self.before_west()
+            if self._fails("west_no_write"):
+                return self._result(command, 1, stderr="stage launcher failed")
             if self._fails("west_corrupt"):
                 self.target = b"\x00" * flash.TARGET_FLASH_SIZE
                 return self._result(command)
@@ -246,6 +249,20 @@ class VerifiedFlashTests(unittest.TestCase):
         for patcher in reversed(self.patchers):
             patcher.stop()
         self.case.tearDown()
+
+    def test_subprocess_path_prefers_verified_pyocd_directory(self) -> None:
+        with mock.patch.object(
+            flash.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["probe"], 0, "", ""),
+        ) as run:
+            flash._run(["probe"])
+
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(
+            str(self.pyocd.parent),
+            environment["PATH"].split(os.pathsep)[0],
+        )
 
     def _args(self, build: Path, manifest: Path | None = None) -> list[str]:
         manifest = manifest or self.target.manifest
@@ -959,6 +976,34 @@ class VerifiedFlashTests(unittest.TestCase):
             or call[:2] == [str(self.pyocd), "commander"]
             for call in self.target.calls
         ))
+
+    def test_initialize_storage_launcher_failure_retries_after_exact_preimage_readback(self) -> None:
+        build, _ = self._valid()
+        self.target.fail_once("west_no_write")
+
+        self.assertEqual(1, self._stage_with_storage_initialization(build))
+        journal = json.loads(self.journal.read_text(encoding="utf-8"))
+        self.assertEqual("staging", journal["state"])
+        self.assertEqual(
+            "not_started", journal["storage_initialization"]["phase"]
+        )
+        self.assertEqual(self.target.original, self.target.target)
+        self.assertEqual(0, self.target.reset_count)
+
+        self.target.calls.clear()
+        self.assertEqual(0, self._stage_with_storage_initialization(build))
+        journal = json.loads(self.journal.read_text(encoding="utf-8"))
+        self.assertEqual("awaiting_qualification", journal["state"])
+        self.assertEqual("complete", journal["storage_initialization"]["phase"])
+        self.assertEqual(2, self.target.reset_count)
+        self.assertTrue(any(
+            any("recovery-readback.bin" in item for item in call)
+            for call in self.target.calls
+        ))
+        self.assertEqual(
+            1,
+            sum(call[0] == str(self.west) for call in self.target.calls if call),
+        )
 
     def test_initialize_storage_interruption_verifies_existing_erase_before_reset(self) -> None:
         build, _ = self._valid()

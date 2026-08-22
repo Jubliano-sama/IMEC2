@@ -254,6 +254,13 @@ int gateway_get_registered_membership_roster_with_slots(
     size_t node_cap,
     size_t *node_count,
     uint16_t *membership_epoch);
+int gateway_get_registered_membership_assignment_identity(
+    uint16_t membership_epoch,
+    size_t node_count,
+    uint32_t *assignment_epoch,
+    uint32_t *assignment_table_seq,
+    struct discovery_assignment_table_commitment *table_commitment,
+    uint8_t *slot_span);
 /* Return 1 only when the current durable roster proves this exact historical
  * assignment response and 0 when it does not. The caller must supply the
  * already-validated nonzero assignment identity used by semantic admission.

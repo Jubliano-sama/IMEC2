@@ -145,7 +145,9 @@ int app_click_event_sequence_next(uint32_t *event_seq)
         click_event_active_block = click_event_standby_block;
         click_event_standby_block =
             (struct click_event_sequence_block){0};
+#if APP_CLICK_EVENT_SEQUENCE_USES_DURABLE_STATE
         click_event_sequence_reset_prefetch_retry_locked();
+#endif
     }
     if (click_event_active_block.remaining == 0u) {
 #if APP_CLICK_EVENT_SEQUENCE_USES_DURABLE_STATE

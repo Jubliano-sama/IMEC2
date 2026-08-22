@@ -1,0 +1,11 @@
+key,value
+title,"ENUMERATION: DEPTH-FIRST RESPONSES AND EXACT TABLE CONFIRMATION"
+caption,"Three-anchor D-F1-F2 example after the CLAIM flood. Each 2270 ms first-contact cell belongs to one estimated RF depth and temporary or stable slot. The TABLE flood is shown as a separate control interval; its real bounded custody window is topology-derived. Dashed recovery can continue inside the operation cap, but never pulls a deeper anchor into an earlier cell."
+key_point,"Anchors initiate contact. Direct responses go first, then F1, then F2. A failed parent gets one randomized retry before a known alternate is tried. The gateway succeeds only after all three current CLAIM responders confirm the exact durable TABLE; retained anchors that did not answer this run are not in that quorum."
+start,0
+end,48000
+width,5200
+unit,ms
+axis_caption_width,190
+row_label_width,350
+max_inline_lines,4

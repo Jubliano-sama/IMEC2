@@ -1,4 +1,11 @@
 #line 5154 __BASE_FILE__
+/*
+ * Defined (non-static) by app_anchor_radio.inc in the anchor image.  Seam
+ * builds that link app_mesh_report.c without the full anchor radio owner
+ * fall back to this __weak default: never assume a sender-side boost there.
+ */
+extern bool anchor_relay_control_followup_boost_active(void);
+
 static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
                                        uint8_t purpose,
                                        const char *reason,
@@ -7,6 +14,8 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     struct app_mesh_flood_result result = {0};
     enum fw_c5_tx_intent c5_tx_intent =
         mesh_c5_forwarded_control_intent(out);
+    bool send_wake_train =
+        !mesh_report_anchor_survey_operation_generation_active(0u);
     int store_ret;
     int ret;
 
@@ -14,7 +23,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
         *forward_admission_retained = false;
     }
     ret = mesh_send_c5_flood_now_intent(
-        out, purpose, reason, true, true, false, NULL, &result, NULL,
+        out, purpose, reason, send_wake_train, true, false, NULL, &result, NULL,
         c5_tx_intent);
     if (result.sent_count > 0u) {
         if (forward_admission_retained != NULL) {
@@ -1161,19 +1170,9 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
             }
             (void)app_mesh_ch9_ack_table_clear_peer(&mesh_ch9_ack_table,
                                                      peer_id);
-#if DEVICE_ROLE == ROLE_ANCHOR
-            {
-                struct mesh_event_owner *owner = mesh_event_owner_for_peer(peer_id);
-                if (owner != NULL && owner->active && owner->peer_id == peer_id) {
-                    (void)survey_release_ch9_if_current(
-                        &mesh_runtime,
-                        owner,
-                        peer_id,
-                        owner->session_id,
-                        owner->generation);
-                }
-            }
-#endif
+            /* The child owns connection teardown. It may have another
+             * queued result ready for the next reciprocal turn; only its
+             * EVENT_END (or supervision expiry) closes the parent half. */
         }
 	    } else {
 	        uint32_t retry_delay_ms = 0u;
@@ -1739,11 +1738,17 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     mesh_ch9_tx_pending_clear();
     mesh_schedule_tx_timeout();
     report_tx_schedule(0u);
+    const struct route_candidate *selected =
+        route_selected(&mesh_runtime.upstream);
+    uint64_t parent_id =
+        selected != NULL ? selected->next_hop_id : ack_peer_id;
     const struct app_mesh_ch9_ack_complete_state complete_state = {
         .route_test_enabled = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST),
         .transmitter_role = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER),
-        .cadence_parent = mesh_id_is_unicast(ack_peer_id) &&
-                          ack_peer_id != GATEWAY_ID,
+        .cadence_parent = mesh_id_is_unicast(parent_id) &&
+                          parent_id != GATEWAY_ID,
+        .source_delivery_pending =
+            app_node_comm_pending_delivery_count() != 0u,
         .report_tx_queue_used = report_tx_queue_used(),
         .route_waiting_tx_valid = mesh_route_waiting_tx_valid,
         .ack_batch_valid =
@@ -1751,7 +1756,7 @@ static bool mesh_ch9_tx_pending_handle_ack(const struct proto_packet *packet,
     };
 
     if (app_mesh_ch9_ack_complete_should_close_timing(&complete_state)) {
-        mesh_close_channel9_connection(ack_peer_id, "ch9-idle-ack-complete");
+        mesh_close_channel9_connection(parent_id, "ch9-idle-ack-complete");
     }
     return true;
 }
@@ -1945,7 +1950,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
 {
     struct uwb_clicker_session *session = &mesh_route_wake_session_scratch;
     struct uwb_clicker_config *config = &mesh_route_wake_config_scratch;
-    const struct app_clicker_wake_train_config wake_train_config = {
+    struct app_clicker_wake_train_config wake_train_config = {
         .wake_adv_ms = WAKE_ADV_MS,
         .post_wake_claimed_duration_ms = UWB_POST_WAKE_CLAIMED_DURATION_MS,
         .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
@@ -1964,6 +1969,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     uint8_t polite_retry = 0u;
     uint8_t click_quality = 0u;
     bool c5_activity = false;
+    bool boost_single_shot = false;
     bool click_captured = false;
     bool local_can_range_clicks =
         DEVICE_ROLE == ROLE_ANCHOR &&
@@ -2022,7 +2028,18 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     config->wake_channel = UWB_CHANNEL_WAKE_CONTACT;
     config->ranging_channel = UWB_CHANNEL_WAKE_CONTACT;
     config->flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
-    if (purpose != C5_CONTACT_PURPOSE_ROUTE_SOLICIT) {
+    /*
+     * A timing repair may be initiated by a child that lost its upstream
+     * half while the parent still owns the reciprocal downstream timing.
+     * Marking that wake as a generic control follow-up makes the parent
+     * intentionally ignore it as a downstream gateway-command relay, so the
+     * asymmetric link can never heal.  Event negotiation is already an
+     * addressed Channel-5 exchange and the ordinary route listener decodes
+     * its PROPOSE/ACCEPT frames; reserve CONTROL_FOLLOWUP for actual command
+     * and other control-flood wakes.
+     */
+    if (purpose != C5_CONTACT_PURPOSE_ROUTE_SOLICIT &&
+        purpose != C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION) {
         config->flags |= FLAG_CONTROL_FOLLOWUP;
     }
 
@@ -2084,7 +2101,24 @@ wake_train_attempt:
     embedded_count = 0u;
     c5_activity = false;
     activity_phase = NULL;
-
+    /*
+     * When the sender's own operation decode latched the high-duty boost,
+     * the route responder decoded the same flood and sits in ~100%
+     * Channel-5 RX: one WAKE_CLAIM is enough to hand over timing, so
+     * collapse the wake_adv window instead of cycling opportunities.
+     * Re-evaluated every polite retry round; an expired boost or a gone
+     * responder falls back to the full train with no new fallback state.
+     */
+    boost_single_shot = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+                        anchor_relay_control_followup_boost_active();
+    wake_train_config.wake_adv_ms = boost_single_shot ?
+                                    MESH_ROUTE_WAKE_ADV_BOOST_ACTIVE_MS :
+                                    WAKE_ADV_MS;
+    if (boost_single_shot) {
+        status_debug_printf("DBG_WAKE_TRAIN_BOOST_SINGLE target=0x%016llx adv=%u\n",
+                            (unsigned long long)target_id,
+                            wake_train_config.wake_adv_ms);
+    }
     mesh_stop_role_scan();
     LOG_INF("mesh route channel-5 wake train start: target=0x%016llx event_seq=%u embed=%u retry=%u reason=%s",
             (unsigned long long)target_id,
@@ -2146,7 +2180,21 @@ wake_train_attempt:
         struct uwb_wake_claim_frame claim;
         size_t frame_len = 0u;
         int64_t remaining_ms = close_ms - k_uptime_get();
+
+        if (remaining_ms <= 0) {
+            /*
+             * The tick can roll past close_ms between the loop condition and
+             * this read. Expiry here is the normal end of the train, not a
+             * build failure; a zero-length claim would only fabricate one.
+             */
+            break;
+        }
         uint16_t remaining_u16 = delay_ms_to_u16(remaining_ms);
+
+        if (boost_single_shot && sent_count > 0u) {
+            /* One claim opportunity is the whole boosted train. */
+            break;
+        }
 
         /*
          * A lifecycle pause preserves the route owner, but an already-running
@@ -2230,7 +2278,8 @@ wake_train_attempt:
             uwb_clicker_note_wake_claim_tx(session, 1u);
         }
 
-        if (k_uptime_get() >= close_ms) {
+        if (k_uptime_get() >= close_ms ||
+            (boost_single_shot && embedded_count > 0u)) {
             continue;
         }
 
@@ -2536,6 +2585,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     bool click_captured = false;
     bool gateway_control_relay_shortfall = false;
     bool gateway_control_followup_wake_seen = false;
+    bool yielded_to_channel9_receive = false;
+    bool yielded_to_gateway_priority_control = false;
     struct uwb_wake_claim_frame click_claim = {0};
     uint8_t click_quality = 0u;
     uint32_t click_observed_ms = 0u;
@@ -2549,6 +2600,16 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     int parking_ret;
     int release_ret;
     int ret;
+#if DEVICE_ROLE == ROLE_ANCHOR
+#define parsed mesh_route_reply_ack_parsed
+#define MESH_ROUTE_LISTENER_RETURN(value) do { \
+        k_mutex_unlock(&mesh_route_reply_ack_scratch_lock); \
+        return (value); \
+    } while (0)
+#else
+    struct mesh_frame_parse_context parsed = {0};
+#define MESH_ROUTE_LISTENER_RETURN(value) return (value)
+#endif
 
     if (route_reply_captured != NULL) {
         *route_reply_captured = false;
@@ -2568,6 +2629,12 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     if (!mesh_coordinator_mesh_work_allowed(reason == NULL ? "route-reply-listen" : reason)) {
         return -EBUSY;
     }
+#if DEVICE_ROLE == ROLE_ANCHOR
+    ret = k_mutex_lock(&mesh_route_reply_ack_scratch_lock, K_NO_WAIT);
+    if (ret < 0) {
+        return -EBUSY;
+    }
+#endif
 
     contact_purpose = mesh_c5_listener_purpose(reason);
     mesh_c5_contact_exchange(target_id,
@@ -2582,7 +2649,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     if (ret < 0) {
         mesh_c5_contact_clear("reply-listen-guard-fail");
         mesh_restart_role_scan();
-        return ret;
+        MESH_ROUTE_LISTENER_RETURN(ret);
     }
 
     status_debug_note("DBG_ROUTE_REPLY_LISTEN_START\n");
@@ -2599,7 +2666,6 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     if (ret == 0) {
         deadline_ms = k_uptime_get_32() + window_ms;
         while (capture_count < MESH_ROUTE_TEST_REPLY_CAPTURE_MAX) {
-            struct mesh_frame_parse_context parsed = {0};
             enum dwm3000_rx_failure rx_failure = DWM3000_RX_FAILURE_NONE;
             uint32_t captured_flood_epoch_id = 0u;
             uint16_t captured_reply_nonce = 0u;
@@ -2615,6 +2681,22 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 break;
             }
             remaining_ms = uptime_ms_until_deadline(now_ms, deadline_ms);
+
+            if (contact_purpose ==
+                    C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
+                uint32_t channel9_delay_ms = 0u;
+
+                if (mesh_next_channel9_receive_prepare_delay_ms(
+                        now_ms, &channel9_delay_ms) &&
+                    channel9_delay_ms <= MESH_ROUTE_REPLY_READY_POLL_MS) {
+                    yielded_to_channel9_receive = true;
+                    last_ret = -EAGAIN;
+                    status_debug_printf(
+                        "DBG_C5_CONTROL_LISTENER_YIELD_CH9 delay=%u\n",
+                        channel9_delay_ms);
+                    break;
+                }
+            }
 
             if (atomic_get(&mesh_route_ready_generation) !=
                 route_ready_generation) {
@@ -2813,6 +2895,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     continue;
                 }
             }
+            memset(&parsed, 0, sizeof(parsed));
             ret = uwb_mesh_frame_decode(frame,
                                         frame_len,
                                         NETWORK_ID,
@@ -3232,6 +3315,8 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 break;
             }
             if (gateway_priority_control) {
+                yielded_to_gateway_priority_control = true;
+                last_ret = -EAGAIN;
                 break;
             }
         }
@@ -3256,7 +3341,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
         if (route_reply_captured != NULL) {
             *route_reply_captured = false;
         }
-        return release_ret;
+        MESH_ROUTE_LISTENER_RETURN(release_ret);
     }
     if (click_captured) {
         bool handled;
@@ -3271,9 +3356,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 (void)mesh_submit_owned_work(&mesh_rx_work,
                                              "route-listener-rx");
             }
-            return -EIO;
+            MESH_ROUTE_LISTENER_RETURN(-EIO);
         }
-        return -EAGAIN;
+        MESH_ROUTE_LISTENER_RETURN(-EAGAIN);
     }
 
     mesh_restart_role_scan();
@@ -3281,6 +3366,9 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     if (mesh_rx_pending_count() > 0u) {
         (void)mesh_submit_owned_work(&mesh_rx_work,
                                      "route-listener-click-rx");
+    }
+    if (yielded_to_channel9_receive) {
+        (void)mesh_schedule_uwb_rx(0u);
     }
 
     status_debug_printf("DBG_ROUTE_REPLY_LISTEN_DONE captured=%u ret=%d\n",
@@ -3296,11 +3384,20 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                           "DBG_ROUTE_REPLY_CONTACT_KEEP_ACK\n" :
                           "DBG_EVENT_CTRL_CONTACT_KEEP_RESPONSE\n");
     } else {
-        mesh_c5_contact_clear(capture_count > 0u ? "reply-listen-done" :
+        mesh_c5_contact_clear(yielded_to_channel9_receive ?
+                              "channel9-rx-turn" :
+                              capture_count > 0u ? "reply-listen-done" :
                               "reply-listen-timeout");
     }
-    if (yielded_to_competing_route_request) {
-        return -EAGAIN;
+    if (yielded_to_competing_route_request ||
+        yielded_to_channel9_receive ||
+        yielded_to_gateway_priority_control) {
+        MESH_ROUTE_LISTENER_RETURN(-EAGAIN);
     }
-    return capture_count > 0u ? 0 : last_ret;
+    ret = capture_count > 0u ? 0 : last_ret;
+    MESH_ROUTE_LISTENER_RETURN(ret);
+#if DEVICE_ROLE == ROLE_ANCHOR
+#undef parsed
+#endif
+#undef MESH_ROUTE_LISTENER_RETURN
 }

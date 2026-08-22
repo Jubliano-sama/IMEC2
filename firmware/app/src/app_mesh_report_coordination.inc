@@ -539,6 +539,41 @@ static bool mesh_c5_causal_response_candidate_valid(
     }
 }
 
+#if DEVICE_ROLE == ROLE_ANCHOR
+static bool mesh_c5_ack_rx_timing_response_candidate_valid(
+    const struct mesh_outbound *candidate)
+{
+    const struct mesh_pending_tx *pending = &mesh_runtime.pending;
+    const struct mesh_event_control_record *response =
+        &mesh_event_accept_retry.response;
+
+    /*
+     * This exception belongs only to the exact EVENT_ACCEPT created from the
+     * parent's retained proposal, and only while that same parent owns the
+     * outstanding gateway-ACK receive path. This lets the source establish
+     * the cadence required to receive its ACK without granting a generic C5
+     * bypass to other event-control traffic.
+     */
+    return candidate != NULL &&
+           mesh_event_accept_retry.retry.active && response->valid &&
+           app_mesh_ch9_core_ack_wait_active(
+               pending, mesh_relay_tx_active(&mesh_runtime)) &&
+           pending->next_hop_id == candidate->next_hop_id &&
+           candidate->next_hop_id == response->peer_id &&
+           candidate->packet.msg_type == MSG_MESH_EVENT_ACCEPT &&
+           candidate->packet.msg_type == response->packet.msg_type &&
+           candidate->packet.src_id == response->packet.src_id &&
+           candidate->packet.dst_id == response->packet.dst_id &&
+           candidate->packet.session_id == response->packet.session_id &&
+           candidate->packet.seq == response->packet.seq &&
+           candidate->payload_len == response->payload_len &&
+           (candidate->payload_len == 0u ||
+            memcmp(candidate->payload,
+                   response->payload,
+                   candidate->payload_len) == 0);
+}
+#endif
+
 static bool mesh_c5_gateway_survey_control_candidate_valid(
     const struct mesh_outbound *candidate)
 {
@@ -614,6 +649,7 @@ static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
     struct fw_radio_activity_decision decision;
     struct fw_radio_activity_capture capture;
     const struct app_mesh_ch9_ack_batch *batch = NULL;
+    enum fw_c5_tx_intent effective_intent = intent;
     bool exact_ack_rx_repair_state;
 
     if (intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE &&
@@ -624,9 +660,31 @@ static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
         !mesh_c5_gateway_survey_control_candidate_valid(candidate)) {
         return false;
     }
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE &&
+        mesh_c5_ack_rx_timing_response_candidate_valid(candidate)) {
+        effective_intent = FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE;
+    }
+#endif
     mesh_coordinator_decide_for_c5_intent(
-        owner, intent, &decision, &capture);
+        owner, effective_intent, &decision, &capture);
+#if DEVICE_ROLE == ROLE_ANCHOR
+    if (effective_intent == FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE &&
+        !mesh_c5_ack_rx_timing_response_candidate_valid(candidate)) {
+        return false;
+    }
+#endif
     if (decision.c5_tx_allowed) {
+#if DEVICE_ROLE == ROLE_ANCHOR
+        if (effective_intent == FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE &&
+            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf(
+                "DBG_COORD_C5_TX_ACK_RX_TIMING owner=%s peer=0x%llx msg=%02x\n",
+                owner == NULL ? "ack-rx-timing" : owner,
+                (unsigned long long)candidate->next_hop_id,
+                candidate->packet.msg_type);
+        }
+#endif
         return true;
     }
     if (mesh_gateway_collection_recovery_receipt_c5_allowed(candidate)) {
@@ -942,10 +1000,11 @@ static void mesh_restore_anchor_low_duty_if_no_ch9(const char *reason)
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         DEVICE_ROLE != ROLE_ANCHOR ||
-        mesh_channel9_connection_count() != 0u) {
+        mesh_channel9_connection_count() != 0u ||
+        mesh_report_anchor_survey_radio_active() ||
+        mesh_report_anchor_survey_operation_generation_active(0u)) {
         return;
     }
-
     if (anchor_uwb_scan_interval_ms != CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS) {
         anchor_uwb_scan_interval_ms = CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS;
         status_debug_note("DBG_CH9_IDLE_CH5_LOW_DUTY\n");
@@ -1147,6 +1206,22 @@ static bool mesh_ch9_ack_batch_preserves_terminal_forward(uint64_t peer_id)
            mesh_ch9_ack_batch_is_late_terminal_forward(peer_id);
 }
 
+static bool mesh_local_delivery_blocks_background_event_repair(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    /*
+     * node_comm owns enumeration and survey responses; click priority covers
+     * the independent report path. A stale child-ACK connection repair is
+     * background work and must not occupy the single radio while either is
+     * waiting to send.
+     */
+    return app_node_comm_delivery_backlog_active() ||
+           mesh_click_priority_active();
+#else
+    return false;
+#endif
+}
+
 static bool mesh_ch9_ack_batch_discard_if_safe(uint64_t peer_id,
                                                const char *reason)
 {
@@ -1318,12 +1393,13 @@ static void mesh_report_note_anchor_uwb_awake_since(int64_t start_ms,
 
 static int mesh_report_anchor_handle_local_command(const struct proto_packet *packet,
                                                    const uint8_t *payload,
-                                                   size_t payload_len)
+                                                   size_t payload_len,
+                                                   uint64_t ingress_hop_id)
 {
     if (mesh_report_callbacks != NULL &&
         mesh_report_callbacks->anchor_handle_local_command != NULL) {
         return mesh_report_callbacks->anchor_handle_local_command(
-            packet, payload, payload_len);
+            packet, payload, payload_len, ingress_hop_id);
     }
     return 0;
 }
@@ -1650,10 +1726,11 @@ static int mesh_gateway_preflight_semantic_delivery(
             pending->link_quality);
     case MSG_SURVEY_PAIR_RESULT:
         /*
-         * A stale pair result still belongs to the sender's bounded result
-         * delivery owner. Do not project it as recovered host data or commit a
-         * gateway ACK: the live round must remain untouched and the sender
-         * retires this obsolete custody only at its existing deadline.
+         * Pair-result preflight rejects malformed, unrelated, and current-lane
+         * stale traffic. A validated older batch from the same live automatic
+         * survey may instead enter raw GUI custody and receive the normal ACK,
+         * without mutating the successor round, so orphan relay custody cannot
+         * block the remaining pairs indefinitely.
          */
         return gateway_survey_preflight_semantic_delivery(
             &pending->packet,

@@ -1,6 +1,7 @@
 #ifndef REPORT_H
 #define REPORT_H
 
+#include "mesh.h"
 #include "protocol.h"
 
 #include <stddef.h>
@@ -10,7 +11,7 @@
 extern "C" {
 #endif
 
-#define REPORT_DEFAULT_TTL 4u
+#define REPORT_DEFAULT_TTL MESH_DEFAULT_TTL
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES 96u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 13u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 13u

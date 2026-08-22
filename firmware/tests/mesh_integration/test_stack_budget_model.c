@@ -277,6 +277,36 @@ static void test_anchor_survey_restore_hardware_watermark(void)
     CHECK_U32(result.required_free_bytes, 2458u);
 }
 
+static void test_anchor_scan_ddd_runtime_watermark(void)
+{
+    struct stack_budget_result result;
+
+    /*
+     * The fresh three-direct-anchor survey consumed 6472 bytes of the scan
+     * owner. The former aligned 7232-byte runtime stack leaves only 760 bytes,
+     * while the 8192-byte queue retains the common 20 percent policy reserve.
+     */
+    CHECK_INT(stack_budget_evaluate(7232u,
+                                    6472u,
+                                    0u,
+                                    STACK_BUDGET_OWNER_DEDICATED_APP,
+                                    &result),
+              PROTO_OK);
+    CHECK_TRUE(!result.passes);
+    CHECK_U32(result.remaining_bytes, 760u);
+    CHECK_U32(result.required_free_bytes, 1447u);
+
+    CHECK_INT(stack_budget_evaluate(8192u,
+                                    6472u,
+                                    0u,
+                                    STACK_BUDGET_OWNER_DEDICATED_APP,
+                                    &result),
+              PROTO_OK);
+    CHECK_TRUE(result.passes);
+    CHECK_U32(result.remaining_bytes, 1720u);
+    CHECK_U32(result.required_free_bytes, 1639u);
+}
+
 static void test_anchor_route_hardware_watermark_rebalances_existing_ram(void)
 {
     struct stack_budget_role_config anchor;
@@ -377,6 +407,7 @@ int main(void)
     test_large_local_guard();
     test_assignment_publish_large_local_budget();
     test_anchor_survey_restore_hardware_watermark();
+    test_anchor_scan_ddd_runtime_watermark();
     test_anchor_route_hardware_watermark_rebalances_existing_ram();
     test_worst_combined_scenario();
 

@@ -615,10 +615,12 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
 {
     const uint64_t gateway_id = 0x9999888877776666ull;
     const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    const uint8_t one_relay_ttl = SURVEY_DEFAULT_TTL - 1u;
+    const uint8_t two_relay_ttl = SURVEY_DEFAULT_TTL - 2u;
 
     assert(!app_mesh_c5_gateway_control_rx_allowed(
         MSG_SURVEY_DISCOVERY_START,
-        4u,
+        SURVEY_DEFAULT_TTL,
         NULL,
         0u,
         gateway_id,
@@ -628,7 +630,7 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
         2u));
     assert(!app_mesh_c5_gateway_control_rx_allowed(
         MSG_SURVEY_DISCOVERY_START,
-        3u,
+        one_relay_ttl,
         NULL,
         0u,
         gateway_id,
@@ -638,7 +640,7 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
         2u));
     assert(app_mesh_c5_gateway_control_rx_allowed(
         MSG_SURVEY_DISCOVERY_START,
-        2u,
+        two_relay_ttl,
         NULL,
         0u,
         gateway_id,
@@ -648,7 +650,7 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
         2u));
     assert(app_mesh_c5_gateway_control_rx_allowed(
         MSG_SURVEY_DISCOVERY_START,
-        3u,
+        one_relay_ttl,
         NULL,
         0u,
         gateway_id,
@@ -658,7 +660,7 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
         1u));
     assert(!app_mesh_c5_gateway_control_rx_allowed(
         MSG_SURVEY_DISCOVERY_START,
-        2u,
+        two_relay_ttl,
         NULL,
         0u,
         gateway_id,
@@ -668,7 +670,7 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
         1u));
     assert(app_mesh_c5_gateway_control_rx_allowed(
         MSG_SURVEY_PAIR_PREPARE,
-        2u,
+        two_relay_ttl,
         NULL,
         0u,
         gateway_id,

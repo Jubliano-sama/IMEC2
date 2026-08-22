@@ -6,13 +6,16 @@
 
 _Static_assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS < INT32_MAX,
                "survey START release must fit wrap-safe time arithmetic");
+_Static_assert(SURVEY_ROUND_GATEWAY_C5_QUIET_LEAD_MS <
+                   SURVEY_ROUND_START_EXECUTE_DELAY_MS,
+               "survey gateway quiet lead must precede START release");
 _Static_assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
                    SURVEY_PAIR_PREPARED_LEASE_MS,
                "survey START release must fit the prepared lease");
 
 bool survey_round_start_initiator_send_allowed(uint32_t message_age_ms)
 {
-    return message_age_ms < SURVEY_ROUND_START_EXECUTE_DELAY_MS;
+    return message_age_ms < SURVEY_ROUND_START_INITIATOR_SEND_CUTOFF_MS;
 }
 
 static int required_u16_tlv(const uint8_t *payload,

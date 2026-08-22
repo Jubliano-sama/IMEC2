@@ -86,6 +86,11 @@ int fw_radio_activity_decide(
                capture->ch9_ack_wait_active) {
         bool live_ack_owner = capture->ch9_ack_send_pending ||
                               capture->ch9_ack_wait_active;
+        bool ack_rx_timing_response =
+            capture->ch9_ack_wait_active &&
+            !capture->ch9_ack_send_pending &&
+            capture->c5_tx_intent ==
+                FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE;
         bool survey_control_preemption =
             capture->rx_queue_used == 0u &&
             capture->c5_tx_intent ==
@@ -94,16 +99,21 @@ int fw_radio_activity_decide(
         decision->state = FW_RADIO_ACTIVITY_MESH_RX;
         /* The handler may owe an immediate response to the exact packet it
          * just dequeued while unrelated RX records remain queued behind it.
-         * Queue depth alone cannot suppress that causal response, but a live
-         * ACK deadline/send owner still outranks every Channel-5 exchange. */
+         * Queue depth alone cannot suppress that causal response. An exact
+         * upstream timing response may interrupt its own ACK wait because it
+         * creates the cadence needed to receive that ACK; an ACK send remains
+         * higher priority. */
         decision->c5_tx_allowed =
             survey_control_preemption ||
+            ack_rx_timing_response ||
             (!live_ack_owner && capture->rx_queue_used > 0u &&
              capture->c5_tx_intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE);
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
         decision->reason = survey_control_preemption ?
                            "gateway-survey-control" :
+                           ack_rx_timing_response ?
+                           "ack-rx-timing-response" :
                            decision->c5_tx_allowed ?
                            "mesh-rx-causal-response" :
                            capture->rx_queue_used > 0u ? "mesh-rx" :

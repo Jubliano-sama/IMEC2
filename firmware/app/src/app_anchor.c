@@ -162,7 +162,7 @@ BUILD_ASSERT(DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES > 0u &&
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
 BUILD_ASSERT(UWB_RANGE_SCHEDULE_MAX_LEN <= UWB_MESH_MAX_FRAME_LEN,
              "post-wake route RX buffer must still fit normal ranging schedules");
-BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 7200u,
+BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >= 8192u,
              "mesh-route anchor scan must retain its measured safety margin");
 BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_PRIORITY < ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
              "mesh route work must preempt low-duty anchor scan handoff");
@@ -192,12 +192,17 @@ struct anchor_discovery_claim_pending {
     struct discovery_assignment_table_commitment table_commitment;
     uint32_t delivery_handle;
     uint32_t generation;
+    uint64_t first_contact_origin_ms;
     uint64_t absolute_deadline_ms;
     uint64_t next_attempt_not_before_ms;
+    uint32_t first_contact_random;
     uint16_t response_spread_ms;
     enum discovery_assignment_phase phase;
+    /* Durable slot identifies the anchor; response_lane only schedules RF. */
     uint8_t slot;
     uint8_t slot_count;
+    uint8_t response_lane;
+    uint8_t response_lane_count;
     uint8_t hop_count;
     uint8_t attempt;
     uint8_t terminal_retry_count;
@@ -225,6 +230,7 @@ struct gateway_discovery_assignment_state {
     uint8_t anchor_hop_counts[UWB_DISCOVERY_SLOT_COUNT];
     uint64_t ack_mask;
     uint64_t claim_response_mask;
+    uint64_t confirmation_mask;
     uint32_t epoch;
     uint32_t claim_command_seq;
     struct discovery_assignment_table_commitment table_commitment;
@@ -259,6 +265,7 @@ struct gateway_discovery_assignment_state {
     bool response_window_deadline_valid;
     bool late_table_redrive_pending;
     bool table_delivery_is_redrive;
+    bool replay;
     bool active;
 };
 #endif
@@ -499,6 +506,40 @@ static uint32_t gateway_survey_round_observation_deadline_ms;
 static size_t gateway_survey_round_cleanup_lane_index;
 static bool gateway_survey_round_cleanup_lane_valid;
 #endif
+
+uint32_t app_anchor_gateway_survey_c5_quiet_delay_ms(uint32_t now_ms,
+                                                     uint32_t tx_span_ms)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    uint32_t quiet_end_ms;
+    uint32_t quiet_start_ms;
+    uint32_t release_ms;
+    int32_t until_start_ms;
+
+    if (!gateway_survey_start_release.valid) {
+        return 0u;
+    }
+    release_ms = gateway_survey_start_release.started_at_ms +
+                 SURVEY_ROUND_START_EXECUTE_DELAY_MS;
+    quiet_start_ms = release_ms - SURVEY_ROUND_GATEWAY_C5_QUIET_LEAD_MS;
+    quiet_end_ms = release_ms + SURVEY_PAIR_BATCH_WINDOW_MS -
+                   SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    until_start_ms = (int32_t)(quiet_start_ms - now_ms);
+    if (until_start_ms > 0) {
+        if ((uint32_t)until_start_ms > tx_span_ms) {
+            return 0u;
+        }
+    } else if ((int32_t)(now_ms - quiet_end_ms) >= 0) {
+        return 0u;
+    }
+    return quiet_end_ms - now_ms;
+#else
+    ARG_UNUSED(now_ms);
+    ARG_UNUSED(tx_span_ms);
+    return 0u;
+#endif
+}
+
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
 struct gateway_host_abort_item {
     struct proto_packet packet;
@@ -600,6 +641,7 @@ static uint32_t anchor_run_clicker_pair_survey(
 #endif
 static void anchor_set_uwb_busy(bool busy);
 static void anchor_note_uwb_awake_since(int64_t start_ms, uint32_t already_counted_us);
+static void anchor_operation_high_duty_boost_begin(uint32_t duration_ms);
 static int anchor_start_uwb_scan(void);
 static void anchor_uwb_scan_work_handler(struct k_work *work);
 static bool anchor_handle_mesh_click_wake_claim(
@@ -612,7 +654,7 @@ static bool anchor_run_mesh_click_wake_claim(
     int64_t received_at_ms,
     struct radio_guard_uwb_lease *radio_lease);
 static void anchor_click_handoff_work_handler(struct k_work *work);
-static int anchor_uwb_scan_schedule_ms(uint32_t delay_ms);
+int anchor_uwb_scan_schedule_ms(uint32_t delay_ms);
 static void anchor_reboot_work_handler(struct k_work *work);
 static void anchor_collection_result_work_handler(struct k_work *work);
 static void anchor_command_execute_work_handler(struct k_work *work);
@@ -646,7 +688,7 @@ static void gateway_note_anchor_boot_observation(
     uint64_t first_received_at_ms);
 static bool gateway_survey_consume_incarnation_event(void);
 static bool gateway_survey_control_inflight(void);
-static bool gateway_survey_round_drive(void);
+static bool gateway_survey_round_drive(bool *deferred_due_owned);
 static int gateway_survey_round_note_sample(uint64_t reporter_id,
                                             const struct survey_sample *sample,
                                             uint64_t received_at_ms);
@@ -654,7 +696,8 @@ static bool gateway_survey_round_note_control_result(
     const struct proto_packet *command,
     enum command_id command_id,
     enum command_status status,
-    uint8_t reason);
+    uint8_t reason,
+    bool ack_confirm_already_received);
 static int gateway_survey_round_commitment(
     uint8_t commitment[SEMANTIC_DIGEST_SHA256_LEN]);
 static void gateway_survey_round_fail_current_control(
@@ -667,6 +710,9 @@ static void gateway_manual_survey_pair_reset(void);
 static int gateway_discovery_assignment_reschedule(k_timeout_t delay,
                                                     const char *source);
 static int gateway_discovery_assignment_wake_now(const char *source);
+static bool gateway_discovery_assignment_note_ack_confirm(
+    const struct proto_packet *confirm_packet,
+    const struct mesh_gateway_ack_confirm_identity *identity);
 #endif
 static void anchor_heartbeat_work_handler(struct k_work *work);
 

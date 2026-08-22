@@ -11,6 +11,7 @@ ANCHOR = (ROOT / "app/src/app_anchor.c").read_text()
 CONTROL = (ROOT / "app/src/app_anchor_gateway_control.inc").read_text()
 SURVEY = (ROOT / "app/src/app_anchor_gateway_survey.inc").read_text()
 ROUND = (ROOT / "app/src/app_anchor_gateway_survey_round.inc").read_text()
+STACK_BUDGET = (ROOT / "include/stack_budget.h").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -46,7 +47,7 @@ class GatewaySurveyPhaseOwnerOrderTests(unittest.TestCase):
             "gateway_survey_flush_boundary_event()"
         )
         cls.round_drive = cls.worker.index(
-            "gateway_survey_round_drive()", cls.boundary
+            "gateway_survey_round_drive(", cls.boundary
         )
 
     def test_missing_pair_result_confirm_cannot_mask_observation_deadline(
@@ -117,6 +118,19 @@ class GatewaySurveyPhaseOwnerOrderTests(unittest.TestCase):
         self.assertIn(
             "SURVEY_GATEWAY_DUE_ROUND_OBSERVATION, 0u", note_sample
         )
+        accepted = note_sample.index("app_gateway_survey_round_note_sample(")
+        lane = note_sample.index(
+            "app_gateway_survey_round_lane(", accepted
+        )
+        complete = note_sample.index(
+            "survey_pair_round_lane_preferred_results_complete(lane)", lane
+        )
+        immediate = note_sample.index(
+            "gateway_survey_work_schedule(", complete
+        )
+        self.assertLess(accepted, lane)
+        self.assertLess(lane, complete)
+        self.assertLess(complete, immediate)
         self.assertIn(
             "if (!deadline && !all_missing_samples_unusable)", finalize
         )
@@ -131,6 +145,20 @@ class GatewaySurveyPhaseOwnerOrderTests(unittest.TestCase):
         self.assertIn(
             "gateway_survey_max_pair_reruns",
             finalize[decision:retry],
+        )
+
+    def test_immediate_survey_due_is_not_queued_behind_blocking_mesh_rx(
+        self,
+    ) -> None:
+        arm = function_body(SURVEY, "gateway_survey_work_arm")
+
+        self.assertIn("k_work_reschedule(&gateway_survey_work", arm)
+        self.assertIn("K_MSEC(delay_ms)", arm)
+        self.assertNotIn("mesh_route_owner_work_reschedule", arm)
+        self.assertRegex(
+            STACK_BUDGET,
+            r'X\("app_anchor\.c",\s*"gateway_survey_work_handler",\s*'
+            r'"system_workqueue"\)',
         )
 
     def test_round_drive_gates_successor_on_exact_terminal_proof(self) -> None:

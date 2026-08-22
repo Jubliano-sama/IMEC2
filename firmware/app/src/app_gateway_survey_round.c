@@ -660,7 +660,8 @@ int app_gateway_survey_round_preflight_sample(
     }
     if ((admissible_lane_state != SURVEY_PAIR_ROUND_LANE_ARMING &&
          admissible_lane_state != SURVEY_PAIR_ROUND_LANE_ARMED &&
-         admissible_lane_state != SURVEY_PAIR_ROUND_LANE_OBSERVING) ||
+         admissible_lane_state != SURVEY_PAIR_ROUND_LANE_OBSERVING &&
+         admissible_lane_state != SURVEY_PAIR_ROUND_LANE_CLEANUP) ||
         !round->runtime.active ||
         sample->round_id != round->runtime.batch_sequence) {
         return PROTO_ERR_STALE;
@@ -1066,6 +1067,13 @@ int app_gateway_survey_round_advance_batch(
     }
 
     ret = survey_pair_round_runtime_load_next_batch(&round->runtime);
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        round->phase = APP_GATEWAY_SURVEY_ROUND_COMPLETE;
+        if (complete != NULL) {
+            *complete = true;
+        }
+        return PROTO_OK;
+    }
     if (ret != PROTO_OK) {
         return ret;
     }

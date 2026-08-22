@@ -24,6 +24,12 @@ extern "C" {
  * redrives, response settlement, and both endpoint skew margins.
  */
 #define SURVEY_ROUND_START_EXECUTE_DELAY_MS 15000u
+#define SURVEY_ROUND_GATEWAY_C5_QUIET_LEAD_MS                         \
+    (SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS +                  \
+     SURVEY_PAIR_START_SKEW_MARGIN_MS)
+#define SURVEY_ROUND_START_INITIATOR_SEND_CUTOFF_MS                   \
+    (SURVEY_ROUND_START_EXECUTE_DELAY_MS -                           \
+     SURVEY_ROUND_GATEWAY_C5_QUIET_LEAD_MS)
 
 bool survey_round_start_initiator_send_allowed(uint32_t message_age_ms);
 

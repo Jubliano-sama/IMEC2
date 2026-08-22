@@ -13,7 +13,7 @@ int dwm3000_driver_probe(uint32_t *dev_id)
      * configured/sleep-retention claim across an identity probe; success
      * proves only that the reset device answered at slow SPI.
      */
-    invalidate_radio_state();
+    invalidate_radio_state_tagged(__func__);
     ret = dwm3000_port_init();
     if (ret < 0) {
         return ret;
@@ -39,7 +39,7 @@ int dwm3000_driver_probe(uint32_t *dev_id)
     }
 
     *dev_id = read_id;
-    mark_radio_awake_unconfigured();
+    mark_radio_awake_unconfigured_tagged(__func__);
     return 0;
 }
 
@@ -176,7 +176,7 @@ int dwm3000_driver_standby(void)
     }
     ret = dwm3000_port_set_slow_spi();
     if (ret < 0) {
-        invalidate_radio_state();
+        invalidate_radio_state_tagged(__func__);
         return ret;
     }
     dwt_configuresleep(DWM3000_SLEEP_MODE, DWM3000_SLEEP_WAKE_FLAGS);
@@ -203,7 +203,7 @@ int dwm3000_driver_force_recovery(void)
         DWM3000_PHY_RANGE : active_phy_mode;
     int ret;
 
-    invalidate_radio_state();
+    invalidate_radio_state_tagged(__func__);
     dwm3000_port_clear_error();
     driver_stats.radio_recoveries++;
     ret = configure_radio_from_reset(recover_phy);

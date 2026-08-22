@@ -775,15 +775,15 @@ bool app_anchor_survey_runtime_abort_requested(void)
 bool app_anchor_survey_runtime_operation_generation_active(
     uint64_t operation_generation)
 {
-    bool active = false;
+    k_spinlock_key_t key;
+    bool active;
 
-    if (operation_generation == 0u || k_is_in_isr() ||
-        k_mutex_lock(&survey_generation_admission_mutex, K_FOREVER) < 0) {
-        return false;
-    }
-    active = survey_generation_restored &&
-             survey_generation_active == operation_generation;
-    k_mutex_unlock(&survey_generation_admission_mutex);
+    key = k_spin_lock(&survey_lock);
+    active = discovery_generation_active &&
+             (operation_generation == 0u ?
+              discovery_config.operation_generation != 0u :
+              discovery_config.operation_generation == operation_generation);
+    k_spin_unlock(&survey_lock, key);
     return active;
 }
 
@@ -1134,6 +1134,8 @@ void app_anchor_survey_runtime_handle_pair_prepare(
             .command_seq = packet->seq,
         };
         prepare_now_ms = k_uptime_get_32();
+        anchor_uwb_scan_interval_ms = 0u;
+        (void)anchor_uwb_scan_schedule_ms(0u);
         ret = k_mutex_lock(&survey_generation_admission_mutex, K_FOREVER);
         if (ret < 0) {
             status = COMMAND_INTERNAL_ERROR;
@@ -1293,7 +1295,33 @@ static bool survey_range_outcome_is_functional(
            status == RANGE_TIMING_INVALID;
 }
 
+static uint32_t survey_pair_sample_start_ms(uint32_t pair_execution_ms,
+                                            uint16_t sample_index)
+{
+    return pair_execution_ms +
+           ((uint32_t)sample_index * SURVEY_PAIR_SAMPLE_CELL_MS);
+}
+
+static uint32_t survey_pair_sample_deadline_ms(uint32_t pair_execution_ms,
+                                               uint16_t sample_index)
+{
+    return survey_pair_sample_start_ms(pair_execution_ms, sample_index) +
+           SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
+}
+
+static uint32_t survey_pair_responder_sample_deadline_ms(
+    uint32_t pair_execution_ms,
+    uint16_t sample_index)
+{
+    uint32_t responder_batch_origin_ms =
+        pair_execution_ms - SURVEY_PAIR_START_SKEW_MARGIN_MS;
+
+    return responder_batch_origin_ms + SURVEY_PAIR_RESPONDER_WINDOW_MS +
+           ((uint32_t)sample_index * SURVEY_PAIR_SAMPLE_CELL_MS);
+}
+
 static int run_pair_initiator(const struct survey_pair *pair,
+                              uint32_t pair_execution_ms,
                               bool *functional_radio_outcome)
 {
     const uint32_t operation_session_id =
@@ -1310,6 +1338,12 @@ static int run_pair_initiator(const struct survey_pair *pair,
          sample_index++) {
         struct dwm3000_range_request request = {0};
         struct dwm3000_range_result result = {0};
+        uint32_t sample_deadline_ms =
+            survey_pair_sample_deadline_ms(pair_execution_ms, sample_index);
+        uint32_t sample_start_ms =
+            survey_pair_sample_start_ms(pair_execution_ms, sample_index);
+        uint32_t now_ms;
+        uint32_t remaining_ms;
         int ret = -ETIMEDOUT;
 
         request.initiator_id = pair->initiator_id;
@@ -1321,7 +1355,6 @@ static int run_pair_initiator(const struct survey_pair *pair,
         request.session_id = operation_session_id;
         request.seq = survey_sample_seq(sample_index);
         request.flags = FLAG_DIAGNOSTIC;
-        request.timeout_ms = SURVEY_PAIR_INITIATOR_TIMEOUT_MS;
         /*
          * The responder report carries the link RSL. Reading optional RX
          * diagnostics here would run between RESP reception and the delayed
@@ -1330,12 +1363,34 @@ static int run_pair_initiator(const struct survey_pair *pair,
         request.capture_rsl = false;
         result.status = RANGE_RX_TIMEOUT;
 
-        LOG_INF("survey DS-TWR initiator sample start: survey=%u responder=0x%016llx sample=%u/%u seq=%u",
+        now_ms = k_uptime_get_32();
+        if (!uptime_deadline_reached(now_ms, sample_start_ms)) {
+            k_msleep(uptime_ms_until_deadline(now_ms, sample_start_ms));
+        }
+        if (app_anchor_survey_runtime_abort_requested()) {
+            break;
+        }
+        now_ms = k_uptime_get_32();
+        if (uptime_deadline_reached(now_ms, sample_deadline_ms)) {
+            last_ret = -ETIMEDOUT;
+            status_debug_printf(
+                "DBG_SURVEY_PAIR_SAMPLE_EXPIRED role=initiator survey=%u sample=%u now=%u deadline=%u\n",
+                pair->survey_id,
+                (unsigned int)sample_index,
+                now_ms,
+                sample_deadline_ms);
+            continue;
+        }
+        remaining_ms = uptime_ms_until_deadline(now_ms,
+                                                sample_deadline_ms);
+        request.timeout_ms = remaining_ms;
+        LOG_INF("survey DS-TWR initiator sample start: survey=%u responder=0x%016llx sample=%u/%u seq=%u budget_ms=%u",
                 pair->survey_id,
                 (unsigned long long)pair->responder_id,
                 (unsigned int)(sample_index + 1u),
                 pair->sample_count,
-                request.seq);
+                request.seq,
+                request.timeout_ms);
         ret = dwm3000_driver_range_initiator(&request, &result);
         if (functional_radio_outcome != NULL &&
             survey_range_outcome_is_functional(ret, result.status)) {
@@ -1380,15 +1435,13 @@ static int run_pair_initiator(const struct survey_pair *pair,
                     result.status);
         }
 
-        if (sample_index + 1u < pair->sample_count) {
-            k_msleep(SURVEY_PAIR_SAMPLE_GAP_MS);
-        }
     }
 
     return last_ret;
 }
 
 static int run_pair_responder(const struct survey_pair *pair,
+                              uint32_t pair_execution_ms,
                               uint16_t round_id,
                               const uint8_t round_commitment[
                                   SEMANTIC_DIGEST_SHA256_LEN],
@@ -1413,7 +1466,9 @@ static int run_pair_responder(const struct survey_pair *pair,
          sample_index++) {
         struct dwm3000_range_request expected = {0};
         struct dwm3000_range_result result = {0};
-        int64_t deadline_ms;
+        uint32_t deadline_ms =
+            survey_pair_responder_sample_deadline_ms(pair_execution_ms,
+                                                     sample_index);
         int ret = -ETIMEDOUT;
 
         expected.initiator_id = pair->initiator_id;
@@ -1427,17 +1482,16 @@ static int run_pair_responder(const struct survey_pair *pair,
         expected.capture_rsl = sample_index == 0u;
         result.status = RANGE_RX_TIMEOUT;
 
-        deadline_ms = k_uptime_get() + SURVEY_PAIR_RESPONDER_WINDOW_MS;
         LOG_INF("survey DS-TWR responder listen: survey=%u initiator=0x%016llx sample=%u/%u seq=%u",
                 pair->survey_id,
                 (unsigned long long)pair->initiator_id,
                 (unsigned int)(sample_index + 1u),
                 pair->sample_count,
                 expected.seq);
-        while (k_uptime_get() < deadline_ms &&
+        while (!uptime_deadline_reached(k_uptime_get_32(), deadline_ms) &&
                !app_anchor_survey_runtime_abort_requested()) {
-            uint32_t remaining_ms =
-                (uint32_t)MAX(1, deadline_ms - k_uptime_get());
+            uint32_t remaining_ms = uptime_ms_until_deadline(
+                k_uptime_get_32(), deadline_ms);
 
             ret = dwm3000_driver_responder_poll_expected(DEVICE_ID,
                                                          &expected,
@@ -1721,6 +1775,7 @@ static void survey_work_handler(struct k_work *work)
     struct survey_discovery_config pending_discovery = {0};
     uint32_t pending_discovery_start_ms = 0u;
     uint32_t pair_deadline_ms = 0u;
+    uint32_t pair_execution_ms = 0u;
     uint32_t expired_pair_delivery_handle = 0u;
     uint16_t pair_round_id = SURVEY_LEGACY_ROUND_ID;
     struct app_node_comm_reservation_lease delivery_reservation_leases[
@@ -2245,6 +2300,7 @@ static void survey_work_handler(struct k_work *work)
         pair_start_pending = false;
         pair_start_delivery_handle = 0u;
     }
+    pair_execution_ms = pair_lease.start_execution_deadline_ms;
     if (!pair_start_pending ||
         !survey_pair_lease_mark_running_for_role_at(&pair_lease,
                                                     k_uptime_get_32(),
@@ -2355,13 +2411,16 @@ static void survey_work_handler(struct k_work *work)
     uwb_window_start_ms = k_uptime_get();
     if (as_responder) {
         ret = run_pair_responder(&pair,
+                                 pair_execution_ms,
                                  pair_round_id,
                                  pair_lease.round_commitment,
                                  delivery_reservation_leases,
                                  ARRAY_SIZE(delivery_reservation_leases),
                                  &functional_radio_outcome);
     } else {
-        ret = run_pair_initiator(&pair, &functional_radio_outcome);
+        ret = run_pair_initiator(&pair,
+                                 pair_execution_ms,
+                                 &functional_radio_outcome);
     }
     {
         int cancel_ret =
@@ -2437,6 +2496,7 @@ int app_anchor_survey_runtime_start_pair_from_command(
     bool commitment_match;
     bool pair_match;
     bool transition_accepted;
+    size_t occupied_result_count;
     uint32_t superseded_delivery_handle = 0u;
     uint32_t active_commitment_tag = 0u;
     uint32_t received_commitment_tag = 0u;
@@ -2504,6 +2564,29 @@ int app_anchor_survey_runtime_start_pair_from_command(
         *status = COMMAND_DENIED;
         *reason = 4u;
         return -EINVAL;
+    }
+    as_responder = pair.responder_id == DEVICE_ID;
+    occupied_result_count =
+        app_anchor_survey_result_delivery_occupied_count();
+    if (as_responder && occupied_result_count > 0u) {
+        /*
+         * A responder needs the complete five-record result pool before it
+         * accepts the immutable START barrier.  Accepting while an older
+         * result still owns a slot lets the pre-release transport pause stop
+         * that result's ACK tail, then leaves the responder unable to range
+         * and the gateway with no sample outcome to close the attempt.
+         *
+         * Keep the prepared lease unchanged and transport available.  The
+         * BUSY result drives the gateway's existing cleanup/rerun path while
+         * the retained result owner continues toward its exact ACK.
+         */
+        status_debug_printf(
+            "DBG_SURVEY_PAIR_START_BUSY stage=result-custody occupied=%u\n",
+            (unsigned int)occupied_result_count);
+        (void)app_anchor_survey_result_delivery_service();
+        *status = COMMAND_BUSY;
+        *reason = 6u;
+        return -EBUSY;
     }
     if (anchor_uwb_window_active()) {
         *status = COMMAND_BUSY;
@@ -2595,7 +2678,6 @@ int app_anchor_survey_runtime_start_pair_from_command(
         return -EINVAL;
     }
 
-    as_responder = pair.responder_id == DEVICE_ID;
     if (cancel_start_kick) {
         (void)k_work_cancel_delayable(&pair_start_kick_work);
     }
@@ -2871,6 +2953,8 @@ void app_anchor_survey_runtime_abort_pair(void)
         delivery_handle, "abort-pair");
     LOG_INF("survey pair state abort requested: active=%u",
             pair_active ? 1u : 0u);
+    anchor_uwb_scan_interval_ms = ANCHOR_UWB_SCAN_INTERVAL_MS;
+    (void)anchor_uwb_scan_schedule_ms(anchor_uwb_scan_interval_ms);
 }
 
 bool app_anchor_survey_runtime_abort_pair_matching(

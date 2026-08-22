@@ -483,6 +483,7 @@ static int gateway_membership_adopt_pending_commit(void)
     struct gateway_membership_roster restored = {0};
     struct app_durable_receipt adopted_receipt;
     uint16_t acknowledged_count;
+    bool confirmation_pending;
     int ret;
 
     if (!gateway_membership_adoption_pending) {
@@ -491,6 +492,9 @@ static int gateway_membership_adopt_pending_commit(void)
     if (gateway_membership_snapshot_state.publication_table_round == 0u) {
         return -EPROTO;
     }
+    confirmation_pending =
+        (gateway_membership_snapshot_state.publication_table_round &
+         GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING) != 0u;
 
     /* save() first rereads/adopts an exact committed candidate. If the first
      * write did not land, this is the same semantic commit retry, never a
@@ -511,22 +515,23 @@ static int gateway_membership_adopt_pending_commit(void)
     if (ret != PROTO_OK) {
         return -EPROTO;
     }
-    acknowledged_count = (uint16_t)__builtin_popcountll(
-        gateway_membership_snapshot_state.publication_acknowledged_mask);
-    ret = app_anchor_gateway_assignment_adopted_result_commit(
-        &gateway_membership_assignment_identity, acknowledged_count);
-    if (ret < 0) {
-        /* The same RAM reservation stays with the inactive assignment owner
-         * until its exact local result has queue custody.  Do not activate
-         * the publisher or emit a durable-success terminal before then. */
-        return ret;
+    if (!confirmation_pending) {
+        acknowledged_count = (uint16_t)__builtin_popcountll(
+            gateway_membership_snapshot_state.publication_acknowledged_mask);
+        ret = app_anchor_gateway_assignment_adopted_result_commit(
+            &gateway_membership_assignment_identity, acknowledged_count);
+        if (ret < 0) {
+            /* The same RAM reservation stays with the inactive assignment
+             * owner until its exact local result has queue custody. */
+            return ret;
+        }
     }
 
     gateway_membership_roster_state = restored;
     gateway_membership_durable_receipt = adopted_receipt;
     gateway_membership_durable_receipt_valid = true;
     gateway_membership_adoption_pending = false;
-    gateway_membership_publisher_activation_pending = true;
+    gateway_membership_publisher_activation_pending = !confirmation_pending;
     /* The original assignment deliberately retained its prepared publisher
      * and lease. It is not a reboot replay, so terminal host receipt still
      * has to release that live lease. */
@@ -2412,6 +2417,43 @@ int gateway_get_registered_membership_roster_with_slots(
     return ret == PROTO_OK ? 0 : mesh_errno_from_proto(ret);
 }
 
+int gateway_get_registered_membership_assignment_identity(
+    uint16_t membership_epoch,
+    size_t node_count,
+    uint32_t *assignment_epoch,
+    uint32_t *assignment_table_seq,
+    struct discovery_assignment_table_commitment *table_commitment,
+    uint8_t *slot_span)
+{
+    if (assignment_epoch == NULL || assignment_table_seq == NULL ||
+        table_commitment == NULL || slot_span == NULL) {
+        return -EINVAL;
+    }
+    if (gateway_assignment_publication_pending()) {
+        return -EAGAIN;
+    }
+    if (!gateway_membership_durable_receipt_valid ||
+        gateway_membership_snapshot_state.valid == 0u ||
+        gateway_membership_snapshot_state.assignment_proof_valid == 0u) {
+        return -ENOENT;
+    }
+    if (membership_epoch !=
+            gateway_membership_snapshot_state.membership_epoch ||
+        node_count != gateway_membership_snapshot_state.node_count ||
+        gateway_membership_snapshot_state.assignment_epoch == 0u ||
+        gateway_membership_snapshot_state.assignment_table_seq == 0u ||
+        gateway_membership_snapshot_state.slot_span == 0u) {
+        return -EPROTO;
+    }
+    *assignment_epoch = gateway_membership_snapshot_state.assignment_epoch;
+    *assignment_table_seq =
+        gateway_membership_snapshot_state.assignment_table_seq;
+    *table_commitment =
+        gateway_membership_snapshot_state.assignment_table_commitment;
+    *slot_span = gateway_membership_snapshot_state.slot_span;
+    return 0;
+}
+
 int gateway_registered_membership_proves_assignment_ack(
     uint32_t assignment_epoch,
     uint32_t table_seq,
@@ -2559,6 +2601,7 @@ int gateway_replay_pending_assignment_publication(void)
     };
     struct gateway_command_event table_event;
     struct gateway_command_event terminal_event;
+    struct gateway_membership_publication publication;
     uint64_t claimed_ids[GATEWAY_MEMBERSHIP_MAX_NODES];
     uint8_t claimed_slots[GATEWAY_MEMBERSHIP_MAX_NODES];
     uint16_t acknowledged_count;
@@ -2585,6 +2628,16 @@ int gateway_replay_pending_assignment_publication(void)
     ret = gateway_membership_receipt_validate();
     if (ret < 0) {
         return ret;
+    }
+    if ((gateway_membership_snapshot_state.publication_table_round &
+         GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING) != 0u) {
+        ret = gateway_membership_snapshot_get_publication(
+            &gateway_membership_snapshot_state, &publication);
+        if (ret != PROTO_OK) {
+            return -EPROTO;
+        }
+        return app_anchor_gateway_assignment_resume_pending_table(
+            &gateway_membership_snapshot_state, &publication);
     }
     if (gateway_membership_snapshot_state.publication_table_round == 0u ||
         gateway_membership_snapshot_state.publication_acknowledged_mask ==
@@ -3773,6 +3826,23 @@ int gateway_get_registered_membership_roster_with_slots(
     if (membership_epoch != NULL) {
         *membership_epoch = 0u;
     }
+    return -ENOTSUP;
+}
+
+int gateway_get_registered_membership_assignment_identity(
+    uint16_t membership_epoch,
+    size_t node_count,
+    uint32_t *assignment_epoch,
+    uint32_t *assignment_table_seq,
+    struct discovery_assignment_table_commitment *table_commitment,
+    uint8_t *slot_span)
+{
+    ARG_UNUSED(membership_epoch);
+    ARG_UNUSED(node_count);
+    ARG_UNUSED(assignment_epoch);
+    ARG_UNUSED(assignment_table_seq);
+    ARG_UNUSED(table_commitment);
+    ARG_UNUSED(slot_span);
     return -ENOTSUP;
 }
 

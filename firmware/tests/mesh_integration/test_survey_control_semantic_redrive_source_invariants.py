@@ -12,6 +12,7 @@ APP_NODE_COMM = (ROOT / "app/src/app_node_comm.c").read_text()
 CONTROL = (ROOT / "app/src/app_anchor_gateway_control.inc").read_text()
 SURVEY = (ROOT / "app/src/app_anchor_gateway_survey.inc").read_text()
 SURVEY_HEADER = (ROOT / "include/survey.h").read_text()
+MESH_HEADER = (ROOT / "include/mesh.h").read_text()
 NODE_COMM_HEADER = (ROOT / "include/node_comm.h").read_text()
 DISCOVERY_ASSIGNMENT_HEADER = (ROOT / "include/discovery_assignment.h").read_text()
 APP_CONFIG = (ROOT / "app/src/app_config.h").read_text()
@@ -176,10 +177,19 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertLess(transaction, take)
         self.assertNotIn("gateway_survey_natural_request_timeout_ms(", service)
 
-        result_winner = function_body(
-            SURVEY, "gateway_survey_complete_accepted_delivery"
+        result_ingress = function_body(
+            SURVEY, "gateway_survey_note_command_result"
         )
-        self.assertIn("gateway_survey_cancel_take_active_delivery(&action)", result_winner)
+        result_commit = function_body(
+            SURVEY, "gateway_survey_commit_accepted_result"
+        )
+        self.assertIn("app_node_comm_cancel_delivery(", result_ingress)
+        self.assertNotIn(
+            "gateway_survey_cancel_take_active_delivery", result_ingress
+        )
+        self.assertIn(
+            "gateway_survey_complete_accepted_delivery()", result_commit
+        )
 
     def test_manual_pair_control_retains_one_exact_transport_owner(self) -> None:
         route = function_body(CONTROL, "gateway_route_survey_pair_control")
@@ -296,12 +306,32 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         for name, value in (
             ("SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS", "30000u"),
             ("SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS", "15000u"),
-            ("SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS", "90000u"),
         ):
             self.assertRegex(
                 SURVEY_HEADER,
                 rf"#define\s+{name}\s+{value}\b",
             )
+        self.assertRegex(
+            MESH_HEADER,
+            r"#define\s+MESH_NETWORK_MAX_HOPS\s+8u\b",
+        )
+        self.assertRegex(
+            SURVEY_HEADER,
+            r"#define\s+SURVEY_DEFAULT_TTL\s+MESH_NETWORK_MAX_HOPS\b",
+        )
+        self.assertRegex(
+            SURVEY_HEADER,
+            r"#define\s+SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS\s+\\\s*"
+            r"\(SURVEY_PAIR_CONTROL_BASE_TIMEOUT_MS\s*\+\s*\\\s*"
+            r"\(\(SURVEY_DEFAULT_TTL\s*-\s*1u\)\s*\*\s*\\\s*"
+            r"SURVEY_PAIR_CONTROL_PER_HOP_TIMEOUT_MS\)\)",
+        )
+        self.assertRegex(
+            SURVEY_HEADER,
+            r"#define\s+SURVEY_PAIR_CONTROL_RESULT_TIMEOUT_MS\s+\\\s*"
+            r"SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS\b",
+        )
+        self.assertEqual(30_000 + (8 - 1) * 15_000, 135_000)
 
     def test_assignment_publication_rejects_survey_before_any_state_claim(
         self,
@@ -372,11 +402,17 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
 
         hop_budget_ms = 2_000
         origin_redrive_count = 4
-        start_delay_ms = 20_000
+        max_hop_count = 8
         transport_preempt_ms = 1_000
         phy_setup_and_margin_ms = 63 + 40
         phy_prep_ms = transport_preempt_ms + phy_setup_and_margin_ms
+        start_delay_ms = (
+            (max_hop_count + origin_redrive_count) * hop_budget_ms
+            + phy_prep_ms
+            + 1
+        )
         self.assertEqual(phy_prep_ms, 1_103)
+        self.assertEqual(start_delay_ms, 25_104)
         due_offsets_ms = [
             (count + 1) * hop_budget_ms
             for count in range(origin_redrive_count)
@@ -384,7 +420,7 @@ class SurveyControlSemanticRedriveTests(unittest.TestCase):
         self.assertEqual(due_offsets_ms, [2_000, 4_000, 6_000, 8_000])
         self.assertLess(
             due_offsets_ms[-1]
-            + 4 * hop_budget_ms
+            + max_hop_count * hop_budget_ms
             + phy_prep_ms,
             start_delay_ms,
         )

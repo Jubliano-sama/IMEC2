@@ -333,15 +333,29 @@ static void test_causal_c5_response_only_overrides_queued_rx_work(void)
     assert(!decision.c5_tx_allowed);
     assert(strcmp(decision.reason, "mesh-rx") == 0);
 
-    /* A typed response overrides queue occupancy only. Every real owner and
-     * higher-priority lane still wins when it is present in the same capture. */
+    /* A generic typed response overrides queue occupancy only. */
     capture.c5_tx_intent = FW_C5_TX_INTENT_CAUSAL_RESPONSE;
     capture.ch9_ack_wait_active = true;
     assert(fw_radio_activity_decide(&capture, &runtime,
                                     &decision, &changed) == 0);
     assert(!decision.c5_tx_allowed);
+
+    /* The application promotes only the exact response to the current
+     * upstream ACK owner. It may establish that receive cadence, while a
+     * pending ACK send still wins. */
+    capture.c5_tx_intent = FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(decision.c5_tx_allowed);
+    assert(strcmp(decision.reason, "ack-rx-timing-response") == 0);
+    capture.ch9_ack_send_pending = true;
+    assert(fw_radio_activity_decide(&capture, &runtime,
+                                    &decision, &changed) == 0);
+    assert(!decision.c5_tx_allowed);
+    capture.ch9_ack_send_pending = false;
     capture.ch9_ack_wait_active = false;
 
+    capture.c5_tx_intent = FW_C5_TX_INTENT_CAUSAL_RESPONSE;
     capture.ch9_ack_send_pending = true;
     assert(fw_radio_activity_decide(&capture, &runtime,
                                     &decision, &changed) == 0);

@@ -300,7 +300,7 @@ class MeshDiagnosticsView(ttk.Frame):
             detail = anchors_dict.get(anchor_id)
             self.topology.insert("", "end", values=(
                 anchor_label(anchor_id),
-                detail.hop_count if detail is not None and detail.hop_count != 0 else ("1" if detail is not None else "-"),
+                detail.hop_count if detail is not None and detail.hop_count != 0 else "-",
                 detail.discovery_slot if detail is not None and detail.discovery_slot != 255 else "Pending",
                 "Assigned" if detail is not None and detail.discovery_slot != 255 else "Replied" if anchor_id in actual else "No reply",
                 f"Event {detail.event_sequence}" if detail is not None else "Current run",

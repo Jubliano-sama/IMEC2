@@ -25,6 +25,16 @@ import verify_stack_evidence as verifier
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COHORT_DIRECTORY = REPO_ROOT / "logs" / "stack-evidence" / "cohorts"
+PYOCD_EXECUTABLE = Path(sys.executable).absolute().with_name("pyocd")
+
+
+def _pyocd_command() -> str:
+    if not PYOCD_EXECUTABLE.is_file():
+        raise verifier.EvidenceError(
+            "the pyOCD executable beside the selected Python interpreter is "
+            f"missing: {PYOCD_EXECUTABLE}"
+        )
+    return str(PYOCD_EXECUTABLE)
 
 
 def _utc_now() -> datetime:
@@ -36,7 +46,8 @@ def _utc_text(value: datetime) -> str:
 
 
 def _probe_is_visible(probe_id: str) -> None:
-    result = subprocess.run(["pyocd", "list", "--json"], capture_output=True, text=True, check=False)
+    pyocd = _pyocd_command()
+    result = subprocess.run([pyocd, "list", "--json"], capture_output=True, text=True, check=False)
     if result.returncode == 0:
         try:
             devices = json.loads(result.stdout)
@@ -53,7 +64,7 @@ def _probe_is_visible(probe_id: str) -> None:
             for device in devices
         )
     else:
-        plain = subprocess.run(["pyocd", "list"], capture_output=True,
+        plain = subprocess.run([pyocd, "list"], capture_output=True,
                                text=True, check=False)
         if plain.returncode:
             raise verifier.EvidenceError(
@@ -67,7 +78,7 @@ def _probe_is_visible(probe_id: str) -> None:
 
 def _run_rtt(probe_id: str, transcript: Path, duration_seconds: int) -> tuple[datetime, datetime]:
     rtt_command = [
-        "pyocd", "rtt", "-t", "nrf52833", "-M", "pre-reset",
+        _pyocd_command(), "rtt", "-t", "nrf52833", "-M", "pre-reset",
         "-a", "0x20000410", "-s", "0x100",
         "-u", probe_id, "--up-channel-id", "0",
     ]
@@ -89,7 +100,7 @@ def _run_rtt(probe_id: str, transcript: Path, duration_seconds: int) -> tuple[da
 def _read_target_flash(probe_id: str, destination: Path) -> None:
     destination.unlink(missing_ok=True)
     command = [
-        "pyocd", "commander", "--no-config", "-t", "nrf52833",
+        _pyocd_command(), "commander", "--no-config", "-t", "nrf52833",
         "-u", probe_id, "-f", "4000000", "-M", "halt",
         "-c", f"savemem 0x0 0x{cohort.FLASH_SIZE:x} {shlex.quote(str(destination))}",
         "-c", "reset",

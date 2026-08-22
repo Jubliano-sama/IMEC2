@@ -47,7 +47,7 @@ BUILD_ASSERT(SURVEY_PAIR_RESULT_MAX_PAYLOAD_LEN <=
                  APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN,
              "maximum survey pair result must fit durable communication");
 
-static int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
+int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR && \
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
@@ -2120,8 +2120,27 @@ static void anchor_relay_control_followup_boost_begin(uint32_t duration_ms)
     }
     anchor_relay_control_followup_boost_active_state = true;
 }
+static void anchor_operation_high_duty_boost_begin(uint32_t duration_ms)
+{
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t candidate_deadline_ms = now_ms + duration_ms;
 
-static bool anchor_relay_control_followup_boost_active(void)
+    if (!anchor_relay_control_followup_boost_active_state ||
+        uptime_deadline_reached(now_ms,
+                                anchor_relay_control_followup_boost_deadline_ms) ||
+        (int32_t)(candidate_deadline_ms -
+                  anchor_relay_control_followup_boost_deadline_ms) > 0) {
+        anchor_relay_control_followup_boost_deadline_ms = candidate_deadline_ms;
+    }
+    anchor_relay_control_followup_boost_active_state = true;
+}
+
+/*
+ * Not static: the mesh route wake-train owner (app_mesh_report.c) queries
+ * this to collapse its wake_adv window while the sender's own operation
+ * decode keeps the widened Channel-5 scan latched.
+ */
+bool anchor_relay_control_followup_boost_active(void)
 {
     if (!anchor_relay_control_followup_boost_active_state) {
         return false;
@@ -2137,6 +2156,42 @@ static bool anchor_relay_control_followup_boost_active(void)
 static void anchor_relay_control_followup_boost_cancel(void)
 {
     anchor_relay_control_followup_boost_active_state = false;
+}
+
+static bool anchor_relay_retry_blocks_scan(uint32_t now_ms,
+                                           uint32_t scan_rx_ms,
+                                           uint32_t *retry_ms)
+{
+    uint32_t remaining_ms;
+    uint32_t scan_occupancy_ms;
+
+    if (retry_ms == NULL ||
+        !mesh_relay_tx_active(&mesh_runtime) ||
+        mesh_runtime.pending.state != MESH_RELAY_TX_WAIT_RETRY_BACKOFF) {
+        return false;
+    }
+
+    if (uptime_deadline_reached(now_ms,
+                                mesh_runtime.pending.retry_after_ms)) {
+        *retry_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
+        return true;
+    }
+
+    remaining_ms = uptime_ms_until_deadline(
+        now_ms, mesh_runtime.pending.retry_after_ms);
+    scan_occupancy_ms = scan_rx_ms +
+                        ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS +
+                        MESH_RADIO_EVENT_RETUNE_GUARD_MS;
+    if (remaining_ms > scan_occupancy_ms) {
+        return false;
+    }
+
+    /*
+     * Wake at the exact higher-priority retry boundary. The mesh route queue
+     * then claims the radio before this lower-priority scan queue can run.
+     */
+    *retry_ms = remaining_ms;
+    return true;
 }
 
 static void anchor_uwb_scan_work_handler(struct k_work *work)
@@ -2159,6 +2214,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     uint8_t route_wake_quality = 0u;
     bool route_waiting_active = false;
     bool relay_tx_active = false;
+    bool relay_tx_retry_blocks_scan = false;
     bool mesh_rx_active = false;
     bool ch9_ack_wait_active = false;
     bool ch9_rx_conflict = false;
@@ -2166,6 +2222,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool control_followup_boost_active = false;
     bool post_ch9_recovery_scan = false;
     uint32_t ch9_retry_ms = 0u;
+    uint32_t relay_tx_retry_ms = 0u;
     uint32_t scan_rx_ms = ANCHOR_UWB_SCAN_RX_MS;
     uint32_t mesh_rx_queue_depth = 0u;
     bool mesh_rx_response_busy = false;
@@ -2207,6 +2264,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
     relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
+    relay_tx_retry_blocks_scan = anchor_relay_retry_blocks_scan(
+        k_uptime_get_32(), scan_rx_ms, &relay_tx_retry_ms);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         mesh_rx_queue_depth = mesh_rx_pending_count();
         mesh_rx_response_busy = mesh_rx_response_active();
@@ -2223,25 +2282,28 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     }
     /*
      * Relay, route-wait, and gateway-ACK records are passive custody between
-     * physical attempts. They must not suppress the Channel-5 contact scan:
-     * the synchronous direct-ACK window has already ended, and an unscheduled
-     * ACK owner is not listening on Channel 9. Actual RX/TX ownership remains
-     * fenced by the mesh response, Channel-9 horizon, and radio guard states.
+     * physical attempts. They must not suppress the Channel-5 contact scan.
+     * Once a retained retry is actually due, however, it owns one bounded
+     * radio turn; otherwise a zero-gap contact scan can starve the exact
+     * packet until its semantic-custody deadline.
      */
     if (anchor_uwb_window_active() ||
         app_anchor_survey_runtime_radio_active() ||
+        relay_tx_retry_blocks_scan ||
         mesh_rx_active ||
         ch9_rx_conflict ||
         uwb_radio_busy) {
-        uint32_t retry_ms = mesh_rx_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
+        uint32_t retry_ms = relay_tx_retry_blocks_scan ? relay_tx_retry_ms :
+                            mesh_rx_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
                             uwb_radio_busy ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS :
                             ch9_rx_conflict ? ch9_retry_ms : blocked_retry_ms;
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ANCHOR_CH5_SCAN_BLOCKED win=%u survey=%u tx=%u wait=%u rx=%u rxq=%u rxr=%u ack=%u ch9=%u rf=%u retry=%u interval=%u\n",
+            status_debug_printf("DBG_ANCHOR_CH5_SCAN_BLOCKED win=%u survey=%u tx=%u retry_gap=%u wait=%u rx=%u rxq=%u rxr=%u ack=%u ch9=%u rf=%u retry=%u interval=%u\n",
                                 anchor_uwb_window_active() ? 1u : 0u,
                                 app_anchor_survey_runtime_radio_active() ? 1u : 0u,
                                 relay_tx_active ? 1u : 0u,
+                                relay_tx_retry_blocks_scan ? 1u : 0u,
                                 route_waiting_active ? 1u : 0u,
                                 mesh_rx_active ? 1u : 0u,
                                 mesh_rx_queue_depth,
@@ -2564,9 +2626,13 @@ scan_complete:
         next_scan_delay_ms = ANCHOR_UWB_SCAN_POST_SEQUENCE_IDLE_MS;
     }
     anchor_scan_recovery_gap_requested = false;
-    if (anchor_relay_control_followup_boost_active() &&
+    if (deferred_mesh_rx_queued &&
         next_scan_delay_ms > ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS) {
+        /* A queued mesh RX handoff must never wait out a long idle gap. */
         next_scan_delay_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS;
+    }
+    if (anchor_relay_control_followup_boost_active()) {
+        next_scan_delay_ms = 0u;
     }
     LOG_DBG("anchor UWB diagnostics: last_ret=%d last_rx_failure=%s last_preamble=%u scans=%u preambles=%u sfd_timeouts=%u frame_timeouts=%u crc_failures=%u claims=%u collisions=%u wins=%u losses=%u replies=%u schedules=%u ds_ok=%u ds_fail=%u timing_rejections=%u mesh_packets=%u sample_order=%u scan_startup_us=%u scan_pll_us=%u scan_rx_us=%u awake_us=%u false_cooldowns=%u",
                 ret,
@@ -2648,6 +2714,14 @@ static int anchor_survey_delivery_gateway_confirmed(
     return -ENOENT;
 }
 
+static int anchor_delivery_gateway_accepted(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    return anchor_discovery_assignment_gateway_accepted(packet,
+                                                        semantic_digest);
+}
+
 static int anchor_survey_delivery_transport_released(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
@@ -2680,6 +2754,8 @@ static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
         app_anchor_survey_discovery_handle_start,
     .anchor_handle_survey_pair_prepare =
         app_anchor_survey_runtime_handle_pair_prepare,
+    .anchor_delivery_gateway_accepted =
+        anchor_delivery_gateway_accepted,
     .anchor_survey_delivery_gateway_confirmed =
         anchor_survey_delivery_gateway_confirmed,
     .anchor_survey_delivery_transport_released =

@@ -35,6 +35,19 @@ static bool survey_report_stage_retry_valid;
 static uint64_t survey_delivery_generation_floor;
 static bool survey_delivery_retirement_in_progress;
 
+struct survey_report_first_contact_schedule {
+    uint32_t boot_incarnation;
+    uint32_t phase_origin_ms;
+    uint16_t sequence;
+    uint8_t slot;
+    uint8_t slot_count;
+    uint8_t hop_count;
+    bool valid;
+};
+
+static struct survey_report_first_contact_schedule
+    survey_report_first_contact_schedule;
+
 #define SURVEY_DELIVERY_EVENT_POLL_MS 100u
 #define SURVEY_DISCOVERY_REPORT_SOURCE_DEADLINE_MS UINT64_MAX
 #define SURVEY_DISCOVERY_RADIO_PROGRESS_SLICE_MS \
@@ -85,6 +98,77 @@ static int schedule_work_ms(uint32_t delay_ms)
         return ret < 0 ? ret : 0;
     }
     return -ENODEV;
+}
+
+static bool survey_assignment_matches_config(
+    const struct survey_discovery_config *config,
+    uint8_t *anchor_slot)
+{
+    struct discovery_assignment_table_commitment commitment = {0};
+    uint32_t epoch = 0u;
+    uint32_t table_seq = 0u;
+    uint8_t slot = 0u;
+    uint8_t slot_count = 0u;
+
+    if (config == NULL || config->assignment_epoch == 0u ||
+        config->assignment_table_seq == 0u ||
+        !local_anchor_discovery_assignment_identity_get(
+            &epoch, &table_seq, &commitment, &slot, &slot_count) ||
+        epoch != config->assignment_epoch ||
+        table_seq != config->assignment_table_seq ||
+        !discovery_assignment_table_commitment_equal(
+            &commitment, &config->assignment_table_commitment) ||
+        /* The TABLE's slot_count is the assignment capacity, while the
+         * survey carries the occupied stable-slot span.  A sparse retained
+         * roster may therefore use any smaller span that still contains this
+         * anchor's exact committed slot. */
+        config->slot_count > slot_count || slot >= config->slot_count) {
+        return false;
+    }
+    if (anchor_slot != NULL) {
+        *anchor_slot = slot;
+    }
+    return true;
+}
+
+static uint8_t survey_report_gateway_hop_count(void)
+{
+    uint8_t hop_count = app_mesh_report_selected_gateway_hop_count();
+
+    return hop_count == 0u || hop_count > SURVEY_DEFAULT_TTL ?
+        SURVEY_DEFAULT_TTL : hop_count;
+}
+
+/* Caller holds survey_delivery_lock. */
+static void survey_report_first_contact_remember(
+    const struct mesh_outbound *outbound,
+    uint32_t phase_origin_ms,
+    uint8_t slot,
+    uint8_t slot_count,
+    uint8_t hop_count)
+{
+    survey_report_first_contact_schedule =
+        (struct survey_report_first_contact_schedule) {
+            .boot_incarnation = outbound->packet.session_id,
+            .phase_origin_ms = phase_origin_ms,
+            .sequence = outbound->packet.seq,
+            .slot = slot,
+            .slot_count = slot_count,
+            .hop_count = hop_count,
+            .valid = true,
+        };
+}
+
+/* Caller holds survey_delivery_lock. */
+static bool survey_report_first_contact_matches(
+    const struct mesh_outbound *outbound)
+{
+    return outbound != NULL &&
+           survey_report_first_contact_schedule.valid &&
+           outbound->packet.session_id ==
+               survey_report_first_contact_schedule.boot_incarnation &&
+           outbound->packet.seq ==
+               survey_report_first_contact_schedule.sequence;
 }
 
 /* Caller holds survey_delivery_lock when the anchor role is active. */
@@ -272,6 +356,8 @@ int app_anchor_survey_discovery_init(
         survey_report_stage_retry_valid = false;
         survey_delivery_generation_floor = 0u;
         survey_delivery_retirement_in_progress = false;
+        memset(&survey_report_first_contact_schedule, 0,
+               sizeof(survey_report_first_contact_schedule));
         SURVEY_DELIVERY_UNLOCK();
         {
             const struct app_node_comm_durable_attempt_ops attempt_ops = {
@@ -434,6 +520,10 @@ static int prepare_discovery_report(
     const struct survey_reachability_entry *entries,
     size_t entry_count,
     uint32_t earliest_tx_ms,
+    uint32_t report_phase_origin_ms,
+    uint8_t report_slot,
+    uint8_t report_slot_count,
+    uint8_t gateway_hop_count,
     enum command_status status)
 {
     struct app_mesh_local_delivery *delivery = survey_delivery_instance();
@@ -441,6 +531,7 @@ static int prepare_discovery_report(
     uint32_t boot_incarnation = 0u;
     uint16_t sequence;
     size_t report_payload_len = 0u;
+    bool retained_for_stage_retry = false;
     int ret;
 
     const uint32_t operation_session_id =
@@ -448,6 +539,9 @@ static int prepare_discovery_report(
 
     if (operation_session_id == 0u || survey_id == 0u ||
         (entries == NULL && entry_count != 0u) ||
+        report_slot_count == 0u || report_slot >= report_slot_count ||
+        gateway_hop_count == 0u ||
+        gateway_hop_count > SURVEY_DEFAULT_TTL ||
         delivery == NULL || discovery_ops.next_sequence == NULL) {
         return -EINVAL;
     }
@@ -528,7 +622,13 @@ static int prepare_discovery_report(
             survey_report_stage_retry_outbound = outbound;
             survey_report_stage_retry_generation = operation_session_id;
             survey_report_stage_retry_valid = true;
+            retained_for_stage_retry = true;
         }
+    }
+    if (ret == 0 || retained_for_stage_retry) {
+        survey_report_first_contact_remember(
+            &outbound, report_phase_origin_ms, report_slot,
+            report_slot_count, gateway_hop_count);
     }
     if (ret == 0) {
         survey_delivery_retry_round = 0u;
@@ -550,6 +650,7 @@ int app_anchor_survey_discovery_stage_empty_report(
     uint32_t start_ms)
 {
     uint32_t report_delay_ms = 0u;
+    uint8_t gateway_hop_count;
     uint8_t report_slot;
     int ret;
 
@@ -557,8 +658,12 @@ int app_anchor_survey_discovery_stage_empty_report(
         survey_discovery_config_validate(config) != PROTO_OK) {
         return -EINVAL;
     }
-    report_slot = local_survey_discovery_slot(config->slot_count);
+    if (!survey_assignment_matches_config(config, &report_slot)) {
+        return -ESTALE;
+    }
+    gateway_hop_count = survey_report_gateway_hop_count();
     ret = survey_discovery_report_delay_ms(config, report_slot,
+                                           gateway_hop_count,
                                            SURVEY_RESULT_MESH_SLOT_MS,
                                            &report_delay_ms);
     if (ret != PROTO_OK) {
@@ -567,6 +672,11 @@ int app_anchor_survey_discovery_stage_empty_report(
     ret = prepare_discovery_report(config->operation_generation,
                                    config->survey_id, NULL, 0u,
                                    start_ms + report_delay_ms,
+                                   start_ms +
+                                       survey_discovery_duration_ms(config),
+                                   report_slot,
+                                   config->slot_count,
+                                   gateway_hop_count,
                                    COMMAND_RADIO_ERROR);
     if (ret == 0) {
         status_debug_printf(
@@ -939,6 +1049,7 @@ int app_anchor_survey_discovery_retry_report(void)
     uint32_t delivery_handle = 0u;
     uint32_t stale_handle = 0u;
     uint32_t retry_delay_ms = 0u;
+    uint8_t gateway_hop_count;
     uint64_t absolute_deadline_ms =
         SURVEY_DISCOVERY_REPORT_SOURCE_DEADLINE_MS;
     bool submission_owned;
@@ -960,6 +1071,7 @@ int app_anchor_survey_discovery_retry_report(void)
     if (ret != -ENOENT) {
         return ret;
     }
+    gateway_hop_count = survey_report_gateway_hop_count();
     SURVEY_DELIVERY_LOCK();
     if (app_mesh_local_delivery_ack_committed(delivery)) {
         ret = app_mesh_local_delivery_cleanup_ack(delivery);
@@ -1007,6 +1119,32 @@ int app_anchor_survey_discovery_retry_report(void)
     if (app_mesh_local_delivery_outbound(delivery) == NULL) {
         SURVEY_DELIVERY_UNLOCK();
         return -EINVAL;
+    }
+    if (survey_report_first_contact_matches(
+            app_mesh_local_delivery_outbound(delivery)) &&
+        app_mesh_local_delivery_outbound(delivery)->earliest_tx_valid &&
+        gateway_hop_count > survey_report_first_contact_schedule.hop_count) {
+        uint32_t response_cell =
+            ((uint32_t)(gateway_hop_count - 1u) *
+             survey_report_first_contact_schedule.slot_count) +
+            survey_report_first_contact_schedule.slot;
+        uint32_t not_before_ms =
+            survey_report_first_contact_schedule.phase_origin_ms +
+            response_cell * SURVEY_RESULT_MESH_SLOT_MS;
+
+        ret = app_mesh_local_delivery_postpone_not_before(
+            delivery, not_before_ms);
+        if (ret < 0 && ret != -EALREADY) {
+            SURVEY_DELIVERY_UNLOCK();
+            LOG_ERR("survey report route-depth postponement failed: hop=%u ret=%d",
+                    gateway_hop_count, ret);
+            (void)schedule_work_ms(REPORT_TX_RETRY_DELAY_MS);
+            return -EAGAIN;
+        }
+        if (ret >= 0) {
+            survey_report_first_contact_schedule.hop_count =
+                gateway_hop_count;
+        }
     }
     outbound = *app_mesh_local_delivery_outbound(delivery);
     if (outbound.earliest_tx_valid) {
@@ -1345,6 +1483,7 @@ void app_anchor_survey_discovery_handle_start(
     const uint8_t *payload,
     size_t payload_len)
 {
+    struct operation_policy_set policies = {0};
     struct survey_discovery_config config = {0};
     struct survey_discovery_timing timing = {0};
     uint32_t received_at_ms;
@@ -1368,6 +1507,19 @@ void app_anchor_survey_discovery_handle_start(
             survey_operation_session_id(config.operation_generation)) {
         LOG_WRN("survey discovery start rejected: ret=%d session=%u survey=%u",
                 ret, packet->session_id, config.survey_id);
+        return;
+    }
+    ret = operation_policy_set_from_tlvs(payload, payload_len, &policies);
+    if (ret != PROTO_OK || policies.assignment_present ||
+        !policies.discovery_present || !policies.pair_present) {
+        LOG_WRN("survey discovery start rejected: incomplete policy ret=%d",
+                ret);
+        return;
+    }
+    if (!survey_assignment_matches_config(&config, NULL)) {
+        LOG_WRN("survey discovery start rejected: assignment proof mismatch epoch=%u table_seq=%u slots=%u",
+                config.assignment_epoch, config.assignment_table_seq,
+                config.slot_count);
         return;
     }
     ret = survey_discovery_timing_from_age(&config, packet->message_age_ms, &timing);
@@ -1397,6 +1549,8 @@ void app_anchor_survey_discovery_handle_start(
     }
 
     discovery_ops.abort_pair();
+    anchor_uwb_scan_interval_ms = 0u;
+    (void)anchor_uwb_scan_schedule_ms(0u);
     now_ms = k_uptime_get_32();
     if (uptime_deadline_reached(now_ms, start_at_ms) ||
         uptime_ms_until_deadline(now_ms, start_at_ms) <=
@@ -1552,7 +1706,7 @@ static int receive_survey_probes_until(
 
 static int send_local_survey_probe(
     const struct survey_discovery_config *config,
-    uint8_t opportunity,
+    uint8_t anchor_slot,
     uint64_t absolute_tx_deadline_ms,
     uint8_t *slot_out,
     bool *rf_started)
@@ -1569,20 +1723,11 @@ static int send_local_survey_probe(
     size_t frame_len = 0u;
     int ret;
 
-    uint32_t epoch = 0u;
-    uint8_t assigned_slot = 0u;
-    uint8_t assigned_slot_count = 0u;
-
-    if (config->slot_count != 0u &&
-        local_anchor_discovery_assignment_get(&epoch,
-                                              &assigned_slot,
-                                              &assigned_slot_count) &&
-        epoch != 0u && assigned_slot_count != 0u) {
-        probe.anchor_slot = (uint8_t)((assigned_slot + opportunity) % config->slot_count);
-    } else {
-        probe.anchor_slot = survey_discovery_opportunity_slot(
-            DEVICE_ID, config->survey_id, opportunity, config->slot_count);
+    if (anchor_slot >= config->slot_count ||
+        !survey_assignment_matches_config(config, NULL)) {
+        return -ESTALE;
     }
+    probe.anchor_slot = anchor_slot;
     if (slot_out != NULL) {
         *slot_out = probe.anchor_slot;
     }
@@ -1628,6 +1773,7 @@ int app_anchor_survey_discovery_run(
     size_t entry_count = 0u;
     uint32_t report_delay_ms = 0u;
     uint8_t report_slot;
+    uint8_t gateway_hop_count;
     int ret;
 
     if (!discovery_initialized ||
@@ -1650,7 +1796,9 @@ int app_anchor_survey_discovery_run(
         sleep_until_ms(start_ms);
     }
 
-    report_slot = local_survey_discovery_slot(config->slot_count);
+    if (!survey_assignment_matches_config(config, &report_slot)) {
+        return -ESTALE;
+    }
     {
         uint32_t discovery_duration_ms =
             survey_discovery_duration_ms(config);
@@ -1675,26 +1823,11 @@ int app_anchor_survey_discovery_run(
             uint8_t probe_slot = 0u;
             bool rf_started = false;
 
-            uint32_t epoch = 0u;
-            uint8_t assigned_slot = 0u;
-            uint8_t assigned_slot_count = 0u;
-            bool has_assigned_slot = (config->slot_count != 0u &&
-                                      local_anchor_discovery_assignment_get(&epoch,
-                                                                            &assigned_slot,
-                                                                            &assigned_slot_count) &&
-                                      epoch != 0u && assigned_slot_count != 0u);
-
-            if (has_assigned_slot) {
-                probe_slot = (uint8_t)((assigned_slot + opportunity) % config->slot_count);
-                ret = survey_discovery_schedule_slot_attempt(config,
-                                                             probe_slot,
-                                                             opportunity, 0u,
-                                                             &nominal);
-            } else {
-                ret = survey_discovery_schedule_attempt(config, DEVICE_ID,
-                                                        opportunity, 0u,
-                                                        &nominal);
-            }
+            probe_slot = report_slot;
+            ret = survey_discovery_schedule_slot_attempt(config,
+                                                         probe_slot,
+                                                         opportunity, 0u,
+                                                         &nominal);
             if (ret != PROTO_OK) {
                 return mesh_errno_from_proto(ret);
             }
@@ -1722,7 +1855,7 @@ int app_anchor_survey_discovery_run(
                     start_ms + nominal.latest_tx_start_ms + 1u;
                 ret = send_local_survey_probe(
                     config,
-                    opportunity,
+                    report_slot,
                     survey_expand_future_uptime32(
                         latest_tx_deadline_ms),
                     &probe_slot,
@@ -1767,7 +1900,9 @@ int app_anchor_survey_discovery_run(
         }
     }
 
+    gateway_hop_count = survey_report_gateway_hop_count();
     ret = survey_discovery_report_delay_ms(config, report_slot,
+                                           gateway_hop_count,
                                            SURVEY_RESULT_MESH_SLOT_MS,
                                            &report_delay_ms);
     if (ret != PROTO_OK) {
@@ -1776,13 +1911,19 @@ int app_anchor_survey_discovery_run(
     ret = prepare_discovery_report(config->operation_generation,
                                    config->survey_id, entries, entry_count,
                                    start_ms + report_delay_ms,
+                                   start_ms +
+                                       survey_discovery_duration_ms(config),
+                                   report_slot,
+                                   config->slot_count,
+                                   gateway_hop_count,
                                    COMMAND_OK);
     if (ret < 0) {
         return ret;
     }
 
-    LOG_INF("survey discovery complete: survey=%u report_slot=%u peers=%u report_delay_ms=%u rounds=%u",
-            config->survey_id, report_slot, (unsigned int)entry_count,
-            report_delay_ms, config->round_count);
+    LOG_INF("survey discovery complete: survey=%u report_slot=%u hops=%u peers=%u report_delay_ms=%u rounds=%u",
+            config->survey_id, report_slot, gateway_hop_count,
+            (unsigned int)entry_count, report_delay_ms,
+            config->round_count);
     return 0;
 }

@@ -1,0 +1,28 @@
+Script started on 2026-08-21 08:33:45+02:00 [COMMAND=".venv/bin/python firmware/scripts/provision_mesh_anchor.py --gateway EF:BD:42:B8:83:0C --command qualify-reachability --expected-anchors 3 --deepest-hop 2 --expected-direct-anchors 2 --expected-multihop-anchors 1 --require-assignment-confirmations --require-terminal-success --assignment-attempts 3 --assignment-retry-delay-ms 1000 --qualification-timeout-s 180 --survey-terminal-drain-quiet-s 0" <not executed on terminal>]
+usage: provision_mesh_anchor.py [-h] --gateway GATEWAY
+                                --command {here-i-am,assign-slots,qualify-reachability,survey,abort-survey,monitor}
+                                [--host-id HOST_ID] [--duration DURATION]
+                                [--connect-timeout CONNECT_TIMEOUT]
+                                [--reconnect-attempts RECONNECT_ATTEMPTS]
+                                [--reconnect-delay-s RECONNECT_DELAY_S]
+                                [--repeat REPEAT] [--interval INTERVAL]
+                                [--survey-id SURVEY_ID]
+                                [--survey-duration-ms SURVEY_DURATION_MS]
+                                [--discovery-slots DISCOVERY_SLOTS]
+                                [--samples SAMPLES]
+                                [--notification-hold-s NOTIFICATION_HOLD_S]
+                                [--survey-terminal-drain-quiet-s SURVEY_TERMINAL_DRAIN_QUIET_S]
+                                [--require-survey-success]
+                                [--require-assignment-success]
+                                [--expected-anchors EXPECTED_ANCHORS]
+                                [--expected-pairs EXPECTED_PAIRS]
+                                [--expected-direct-anchors EXPECTED_DIRECT_ANCHORS]
+                                [--expected-multihop-anchors EXPECTED_MULTIHOP_ANCHORS]
+                                [--expected-anchor-hop NODE_ID=HOPS]
+                                [--deepest-hop DEEPEST_HOP]
+                                [--route-refresh-timeout ROUTE_REFRESH_TIMEOUT]
+                                [--assignment-timeout ASSIGNMENT_TIMEOUT]
+                                [--command-budget-ms COMMAND_BUDGET_MS]
+provision_mesh_anchor.py: error: unrecognized arguments: --require-assignment-confirmations --require-terminal-success --assignment-attempts 3 --assignment-retry-delay-ms 1000 --qualification-timeout-s 180
+
+Script done on 2026-08-21 08:33:45+02:00 [COMMAND_EXIT_CODE="2"]

@@ -407,6 +407,38 @@ static void test_elapsed_not_before_is_retired_before_long_resource_wait(void)
     assert(!delivery.snapshot.outbound.earliest_tx_valid);
 }
 
+static void test_not_before_can_only_move_later_before_first_attempt(void)
+{
+    struct journal_store store = {0};
+    struct app_mesh_local_delivery delivery = make_delivery(&store);
+    struct mesh_outbound outbound = make_report(217u, 23u);
+    uint8_t attempt_token = 0u;
+    unsigned int saves_before;
+
+    outbound.earliest_tx_ms = 1000u;
+    outbound.earliest_tx_valid = true;
+    assert(app_mesh_local_delivery_stage(&delivery, &outbound, 217u) == 0);
+    saves_before = store.save_count;
+    assert(app_mesh_local_delivery_postpone_not_before(
+               &delivery, 999u) == 0);
+    assert(app_mesh_local_delivery_postpone_not_before(
+               &delivery, 1000u) == 0);
+    assert(store.save_count == saves_before);
+    assert(delivery.snapshot.outbound.earliest_tx_ms == 1000u);
+
+    assert(app_mesh_local_delivery_postpone_not_before(
+               &delivery, 1500u) == 1);
+    assert(store.save_count == saves_before + 1u);
+    assert(delivery.snapshot.outbound.earliest_tx_ms == 1500u);
+    assert(store.persisted.outbound.earliest_tx_ms == 1500u);
+
+    assert(app_mesh_local_delivery_begin_attempt(
+               &delivery, &attempt_token) == 0);
+    assert(app_mesh_local_delivery_postpone_not_before(
+               &delivery, 2000u) == -EALREADY);
+    assert(delivery.snapshot.outbound.earliest_tx_ms == 1500u);
+}
+
 static void test_pair_result_is_a_supported_exact_delivery_owner(void)
 {
     struct journal_store store = {0};
@@ -1212,6 +1244,7 @@ int main(void)
     test_reboot_and_exact_ack_identity();
     test_reboot_clears_pretransport_delivery_times();
     test_elapsed_not_before_is_retired_before_long_resource_wait();
+    test_not_before_can_only_move_later_before_first_attempt();
     test_pair_result_is_a_supported_exact_delivery_owner();
     test_pair_result_accepts_exact_producer_extension_schema();
     test_pair_result_extension_schema_fails_closed();

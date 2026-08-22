@@ -9,6 +9,8 @@
 
 struct app_mesh_report_callbacks;
 struct app_durable_state_gateway_assignment_identity;
+struct gateway_membership_snapshot;
+struct gateway_membership_publication;
 
 const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void);
 int app_anchor_init(void);
@@ -22,6 +24,9 @@ void app_anchor_note_channel9_window_released(void);
  * when retry is required.
  */
 int gateway_resume_pending_assignment_publication(void);
+int app_anchor_gateway_assignment_resume_pending_table(
+    const struct gateway_membership_snapshot *snapshot,
+    const struct gateway_membership_publication *publication);
 /* Release the exact assignment lease only after publisher state is terminal. */
 int app_anchor_gateway_assignment_publication_complete(void);
 /* Same-boot ambiguous durable-save adoption retains this RAM-only token.  It
@@ -70,6 +75,10 @@ void gateway_survey_discard_preflight_result(void);
 bool gateway_survey_owns_pending_control(
     const struct proto_packet *command,
     enum command_id command_id);
+/* Return zero when gateway Channel-5 RF may start now, otherwise the exact
+ * delay until the active pair's immutable ranging window has ended. */
+uint32_t app_anchor_gateway_survey_c5_quiet_delay_ms(uint32_t now_ms,
+                                                     uint32_t tx_span_ms);
 #if defined(CONFIG_IMEC_GATEWAY_BLE)
 bool gateway_handle_ble_frame(const uint8_t *frame,
                               size_t frame_len,

@@ -1078,14 +1078,23 @@ bool app_mesh_ch9_c5_repair_allowed(
                target_len == sizeof(uint64_t) &&
                proto_get_u64_le(target_value) == authorization->peer_id;
     }
-    return (authorization->kind ==
-                APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR ||
-            authorization->kind ==
-                APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR) &&
-           (candidate->packet.msg_type == MSG_MESH_EVENT_PROPOSE ||
-            candidate->packet.msg_type == MSG_MESH_EVENT_ACCEPT) &&
-           candidate->packet.dst_id == authorization->peer_id &&
-           candidate->next_hop_id == authorization->peer_id;
+    if (authorization->kind ==
+        APP_MESH_C5_TX_AUTH_FORWARDED_ACK_EVENT_REPAIR) {
+        /* The child owns cadence establishment for a live transit packet.
+         * The retained ACK may authorize our ACCEPT, never a competing
+         * relay-originated proposal. */
+        return candidate->packet.msg_type == MSG_MESH_EVENT_ACCEPT &&
+               candidate->packet.dst_id == authorization->peer_id &&
+               candidate->next_hop_id == authorization->peer_id;
+    }
+    if (authorization->kind ==
+        APP_MESH_C5_TX_AUTH_LATE_GATEWAY_ACK_EVENT_REPAIR) {
+        return (candidate->packet.msg_type == MSG_MESH_EVENT_PROPOSE ||
+                candidate->packet.msg_type == MSG_MESH_EVENT_ACCEPT) &&
+               candidate->packet.dst_id == authorization->peer_id &&
+               candidate->next_hop_id == authorization->peer_id;
+    }
+    return false;
 }
 
 uint8_t app_mesh_ch9_tx_max_in_flight(const struct proto_packet *packet,
@@ -1239,7 +1248,8 @@ bool app_mesh_ch9_ack_complete_should_close_timing(
      * burst is ACK-complete and nothing remains to send or confirm, close
      * so a sibling or deeper child can attach serially.
      */
-    return state->report_tx_queue_used == 0u &&
+    return !state->source_delivery_pending &&
+           state->report_tx_queue_used == 0u &&
            !state->route_waiting_tx_valid &&
            !state->ack_batch_valid;
 }

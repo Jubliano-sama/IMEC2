@@ -63,18 +63,19 @@ propose = function_body(
     event_tx, "mesh_propose_event_after_channel5_contact_authorized"
 )
 accept_guard = propose.index("mesh_event_accept_retry.retry.active")
-remote_owner_guard = propose.index("current_owner->proposal_from_peer")
 active_timing_guard = propose.index(
-    "mesh_find_active_channel9_timing(", remote_owner_guard
+    "if (mesh_find_active_channel9_timing(", accept_guard
 )
+active_timing_return = propose.index("return 0;", active_timing_guard)
 proposal_prepare = propose.index("mesh_prepare_event_control_record(")
 proposal_send = propose.index("mesh_send_event_control_record(")
 owner_begin = propose.index("mesh_event_owner_begin_peer(")
 window_arm = propose.index("mesh_event_local_proposal_window_arm(", owner_begin)
+assert "current_owner" not in propose[accept_guard:proposal_prepare]
 assert (
     accept_guard
-    < remote_owner_guard
     < active_timing_guard
+    < active_timing_return
     < proposal_prepare
     < proposal_send
     < owner_begin
@@ -289,6 +290,39 @@ assert (
     < successful_finish
 )
 
+# Relative event timing must be reanchored at the physical event-control TX,
+# not after the synchronous Channel-5 owner finishes contact teardown. The
+# latter can be much later and makes the peer's RX window miss our TX window.
+send_record = function_body(event_tx, "mesh_send_event_control_record")
+record_anchor = send_record.index("observation.tx_completed ?")
+record_timestamp = send_record.index(
+    "(uint32_t)observation.tx_completed_at_ms", record_anchor
+)
+record_reanchor = send_record.index(
+    "mesh_event_timing_reanchor_after_control_tx(", record_timestamp
+)
+assert record_anchor < record_timestamp < record_reanchor
+
+# A source waiting for the gateway ACK may accept only the exact timing
+# proposal from its current upstream ACK owner. The coordinator promotes that
+# validated record to the narrow state-machine intent on both pre-send checks.
+ack_rx_validator = function_body(
+    coordination, "mesh_c5_ack_rx_timing_response_candidate_valid"
+)
+assert "mesh_event_accept_retry.retry.active" in ack_rx_validator
+assert "app_mesh_ch9_core_ack_wait_active(" in ack_rx_validator
+assert "pending->next_hop_id == candidate->next_hop_id" in ack_rx_validator
+assert "candidate->next_hop_id == response->peer_id" in ack_rx_validator
+assert "candidate->packet.msg_type == MSG_MESH_EVENT_ACCEPT" in ack_rx_validator
+assert "memcmp(candidate->payload" in ack_rx_validator
+coordinator = function_body(
+    coordination, "mesh_coordinator_c5_tx_allowed_authorized_intent"
+)
+assert "FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE" in coordinator
+assert coordinator.count(
+    "mesh_c5_ack_rx_timing_response_candidate_valid(candidate)"
+) == 2
+
 # Ordinary and completed-response ACCEPTs start from a cleared singleton and
 # cannot inherit the retained-ACK capability.  Only the reciprocal arbitration
 # block above performs a token transfer.
@@ -429,7 +463,7 @@ timeout_discard = propose.index(
     "mesh_ch9_ack_batch_discard_if_safe(", accept_timeout
 )
 timing_clear = propose.index("mesh_relay_clear_channel9_timing(", timeout_discard)
-retry = propose.index("mesh_event_retry_after_failure(", timing_clear)
+retry = propose.index("mesh_event_propose_retry_after_failure(", timing_clear)
 assert accept_timeout < timeout_discard < timing_clear < retry
 assert '"event-accept-timeout"' in propose[timeout_discard:timing_clear]
 
@@ -445,8 +479,19 @@ event_end_timing_clear = event_handler.index(
 assert event_end_rx < event_end_commit < event_end_discard < event_end_timing_clear
 assert '"event-end-rx"' in event_handler[event_end_discard:event_end_timing_clear]
 
-event_end_tx = function_body(event_tx, "mesh_close_channel9_connection")
-assert "mesh_ch9_ack_batch_discard_if_safe(" in event_end_tx
+event_end_arm = function_body(event_tx, "mesh_close_channel9_connection")
+assert "mesh_ch9_ack_batch_discard_if_safe(" not in event_end_arm
+assert "mesh_relay_clear_channel9_timing(" not in event_end_arm
+assert "mesh_ch9_close_intent" in event_end_arm
+event_end_tx = function_body(event_tx, "mesh_try_close_channel9_connection")
+send_end = event_end_tx.index("mesh_send_event_control(")
+discard_after_send = event_end_tx.index(
+    "mesh_ch9_ack_batch_discard_if_safe(", send_end
+)
+clear_after_send = event_end_tx.index(
+    "mesh_relay_clear_channel9_timing(", discard_after_send
+)
+assert send_end < discard_after_send < clear_after_send
 assert "mesh_ch9_ack_batch_clear_for_peer(" not in event_end_tx
 
 commit_forward = function_body(
@@ -472,13 +517,22 @@ assert "batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE" in send_batch[
     :physical_send
 ]
 
-# Passive relay/backoff and route-wait records must not suppress the low-duty
-# Channel-5 contact scan that stale forwarded ACK repair depends on.  The scan
-# still defers for every owner that represents actual RF use or an imminent
-# Channel-9 reservation.
+# Passive relay custody, a far-future retry, and route-wait records must not
+# suppress the low-duty Channel-5 contact scan. A retry that is due, or would
+# become due before the scan and retune finish, gets the next radio turn.
 scan = function_body(anchor_radio, "anchor_uwb_scan_work_handler")
 assert "relay_tx_active = mesh_relay_tx_active(&mesh_runtime);" in scan
 assert "mesh_route_waiting_tx_active()" in scan
+retry_gate = function_body(anchor_radio, "anchor_relay_retry_blocks_scan")
+assert "mesh_relay_tx_active(&mesh_runtime)" in retry_gate
+assert "MESH_RELAY_TX_WAIT_RETRY_BACKOFF" in retry_gate
+assert "uptime_deadline_reached(" in retry_gate
+assert "uptime_ms_until_deadline(" in retry_gate
+assert "mesh_runtime.pending.retry_after_ms" in retry_gate
+assert "scan_rx_ms" in retry_gate
+assert "ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS" in retry_gate
+assert "MESH_RADIO_EVENT_RETUNE_GUARD_MS" in retry_gate
+assert "ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS" in retry_gate
 block_start = scan.index("if (anchor_uwb_window_active()")
 block_end = scan.index("uwb_radio_busy) {", block_start) + len("uwb_radio_busy) {")
 block_condition = scan[block_start:block_end]
@@ -488,6 +542,7 @@ assert "app_anchor_survey_runtime_discovery_is_pending()" not in block_condition
 assert "mesh_rx_active" in block_condition
 assert "ch9_rx_conflict" in block_condition
 assert "uwb_radio_busy" in block_condition
+assert "relay_tx_retry_blocks_scan" in block_condition
 assert "relay_tx_active" not in block_condition
 assert "route_waiting_active" not in block_condition
 guard_acquire = scan.index(
@@ -495,3 +550,60 @@ guard_acquire = scan.index(
     block_end,
 )
 assert block_end < guard_acquire
+
+# Operation responses remain source-owned until their end-to-end ACK.  A
+# relay may release only the exact retained topology ACK after the bounded
+# child-contact repair exhausts, while queued local deliveries suppress any
+# new background repair before RF.
+release = function_body(
+    event_tx, "mesh_release_exhausted_operation_ack_forward"
+)
+assert "mesh_pending_is_retry_owned_operation_uplink" in release
+assert "app_mesh_ch9_c5_repair_owner_matches" in release
+assert "mesh_relay_release_topology_gateway_ack_forward" in release
+assert "mesh_ch9_ack_batch_clear_for_peer" in release
+
+terminal = function_body(event_tx, "mesh_event_propose_terminal_failure")
+release_at = terminal.index("mesh_release_exhausted_operation_ack_forward")
+clear_at = terminal.index("mesh_event_propose_clear()")
+assert release_at < clear_at
+
+ack_select = function_body(transport, "mesh_select_channel9_ack_tx_event")
+local_gate = ack_select.index(
+    "mesh_local_delivery_blocks_background_event_repair()"
+)
+repair_start = ack_select.index(
+    "mesh_propose_event_after_channel5_contact_authorized(", local_gate
+)
+assert local_gate < repair_start
+assert "app_mesh_ch9_ack_table_note_send_failure" in ack_select[
+    local_gate:repair_start
+]
+
+retry_handler = function_body(
+    event_tx, "mesh_event_negotiation_retry_work_handler"
+)
+assert "mesh_local_delivery_blocks_background_event_repair()" in retry_handler
+assert "mesh_event_propose_retry.retry_due_ms = now_ms + 25u" in retry_handler
+
+# Topology proposal exhaustion during a survey or discovery assignment is
+# cadence contention on the shared parent's single downstream slot: the
+# selected parent stays valid and the same parent gets one jittered retry.
+# The exhausted branch must never abandon, hold down, or rediscover.
+propose_terminal = function_body(event_tx, "mesh_event_propose_terminal_failure")
+topology_gate_at = propose_terminal.index(
+    "if (!topology_operation || !mesh_id_is_unicast(peer_id))"
+)
+cadence_at = propose_terminal.index('"topology-cadence-wait"', topology_gate_at)
+cadence_end_at = (
+    propose_terminal.index("% 100u)", cadence_at) + len("% 100u)")
+)
+wait_block = propose_terminal[topology_gate_at:cadence_end_at]
+assert "mesh_schedule_route_waiting_retry_after(" in wait_block
+assert "50u + (sys_rand32_get() % 100u)" in wait_block
+for forbidden_route_collapse in (
+    "mesh_relay_abandon_upstream_parent_at(",
+    "mesh_event_retry_after_failure(",
+    "hold_down",
+):
+    assert forbidden_route_collapse not in propose_terminal

@@ -865,6 +865,18 @@ class TopologyBaselineModel:
             tuple[int, int, int, int], int
         ] = {}
         self._first_loss_by_key: dict[tuple[int, int, int, int], int] = {}
+    def reset(self) -> None:
+        self.current_key = None
+        self.current_ids.clear()
+        self.latest = None
+        self._latest_key = None
+        self._newest_event_sequence = None
+        self._anchors_by_key.clear()
+        self._terminals.clear()
+        self._live_keys.clear()
+        self._first_sequence_by_key.clear()
+        self._first_loss_by_key.clear()
+
 
     def observe(self, event: GatewayCommandEvent) -> TopologyComparison | None:
         if event.command_kind != 1:

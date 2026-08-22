@@ -52,13 +52,14 @@ static struct operation_policy_set complete_route_operation_policy(void)
     policy.pair_present = true;
     policy.assignment.expected_anchor_count = 50u;
     policy.assignment.operation_budget_ms =
-        DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(750u);
+        OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS;
     policy.assignment.response_spread_ms = 750u;
     policy.discovery.start_delay_ms =
         OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS;
-    policy.discovery.slot_ms = 75u;
+    policy.discovery.slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS;
     policy.discovery.slot_count = 10u;
-    policy.discovery.round_count = 2u;
+    policy.discovery.round_count =
+        OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT;
     policy.discovery.report_grace_ms = 1200u;
     policy.discovery.operation_budget_ms = 300000u;
     policy.pair.max_reruns = 1u;
@@ -665,7 +666,7 @@ static void test_gateway_control_reverse_route_contract(void)
         .operation_generation = UINT64_C(0x0000000112345678),
         .survey_id = PAIR_SURVEY_ID,
         .start_delay_ms = 2000u,
-        .slot_ms = 40u,
+        .slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS,
         .slot_count = 6u,
         .round_count = 4u,
     };

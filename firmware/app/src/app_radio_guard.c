@@ -178,6 +178,7 @@ int radio_guard_uwb_release_finish(struct radio_guard_uwb_lease *lease,
     k_spin_unlock(&uwb_rf_lock, key);
 
     if (poisoned) {
+        status_debug_printf("DBG_RF_POISON client=%u ret=%d\n", (unsigned int)lease->client, ret);
         RADIO_GUARD_LOG_ERR(
             "UWB parking failed; retaining poisoned lease: generation=%u client=%u ret=%d",
             lease->generation,

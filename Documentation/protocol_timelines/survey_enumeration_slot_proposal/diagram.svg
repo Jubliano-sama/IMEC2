@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="5000" height="1256" viewBox="0 0 5000 1256" role="img">
+<style>
+svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #111111; }
+.title { font-size: 13px; font-weight: 700; }
+.row-label { font-size: 13px; font-weight: 700; text-anchor: middle; }
+.small { font-size: 10px; }
+.tiny { font-size: 9px; }
+.axis-time { font-size: 8px; text-anchor: middle; }
+.caption { font-size: 11px; font-weight: 700; }
+.center { text-anchor: middle; }
+.event-text { dominant-baseline: central; }
+.major-line, .axis-line { stroke: #111111; stroke-width: 1; }
+.hairline, .tick { stroke: #111111; stroke-width: 0.8; }
+.box.shaded { fill: #f8f8f8; stroke: #111111; stroke-width: 1; }
+.callout { fill: #ffffff; stroke: #111111; stroke-width: 0.7; }
+.diamond { fill: #ffffff; stroke: #111111; stroke-width: 0.9; }
+</style>
+<text x="44.0" y="36" class="title">ENUMERATION-AWARE SURVEY: 200 ms PROBES, DEPTH-FIRST CONTACT</text>
+<line x1="44.0" y1="60.0" x2="44.0" y2="1119.0" class="major-line"/>
+<line x1="44.0" y1="60.0" x2="4958.0" y2="60.0" class="major-line"/>
+<text x="209.0" y="96.0" class="row-label">ONE RADIO OWNER</text>
+<rect x="374.0" y="74.0" width="440.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="594.0" y="91.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="594.0" dy="0.0">Exclusive Channel 5 probes</tspan><tspan x="594.0" dy="12.0">4 rounds x 3 occupied slots x 200 ms</tspan></text>
+<rect x="814.1" y="74.0" width="3746.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2687.1" y="97.0" class="small center event-text" text-anchor="middle"><tspan x="2687.1" dy="0.0">Ordered first-contact opportunities; actual Channel 9 delivery remains custody driven</tspan></text>
+<rect x="4560.1" y="74.0" width="397.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="4759.1" y="91.0" class="small center event-text" text-anchor="middle"><tspan x="4759.1" dy="0.0">Collection and pair ranging continue until data-complete or the 30 min safety</tspan><tspan x="4759.1" dy="12.0">ceiling</tspan></text>
+<line x1="44.0" y1="124.0" x2="4958.0" y2="124.0" class="major-line"/>
+<text x="209.0" y="176.0" class="row-label">CHANNEL 5: 4 x 200 ms SLOT MAP</text>
+<polygon points="392.3,165.0 397.3,170.0 392.3,175.0 387.3,170.0" class="diamond"/>
+<polygon points="429.0,165.0 434.0,170.0 429.0,175.0 424.0,170.0" class="diamond"/>
+<polygon points="465.7,165.0 470.7,170.0 465.7,175.0 460.7,170.0" class="diamond"/>
+<rect x="374.0" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="410.7" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="447.3" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="484.0" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="520.7" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="557.4" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="594.0" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="630.7" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="667.4" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="704.0" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="740.7" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="777.4" y="174.0" width="36.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<line x1="392.3" y1="138.0" x2="392.3" y2="170.0" class="hairline"/>
+<text x="378.0" y="137.0" class="tiny">slot 0</text>
+<line x1="429.0" y1="158.0" x2="429.0" y2="170.0" class="hairline"/>
+<text x="408.0" y="157.0" class="tiny">slot 1</text>
+<line x1="465.7" y1="138.0" x2="465.7" y2="170.0" class="hairline"/>
+<text x="444.7" y="137.0" class="tiny">slot 2</text>
+<line x1="44.0" y1="220.0" x2="4958.0" y2="220.0" class="major-line"/>
+<text x="209.0" y="306.0" class="row-label">D - DIRECT / SLOT 0</text>
+<polygon points="814.1,241.0 819.1,246.0 814.1,251.0 809.1,246.0" class="diamond"/>
+<rect x="374.0" y="250.0" width="440.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="594.0" y="273.0" class="small center event-text" text-anchor="middle"><tspan x="594.0" dy="0.0">Listen except exact slot 0 in every round</tspan></text>
+<rect x="375.5" y="294.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="485.5" y="294.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="595.5" y="294.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="705.5" y="294.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<rect x="814.1" y="338.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1022.2" y="355.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1022.2" dy="0.0">First contact opportunity</tspan><tspan x="1022.2" dy="12.0">depth 0, stable slot 0</tspan></text>
+<rect x="1230.3" y="338.0" width="3727.7" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3094.1" y="361.0" class="small center event-text" text-anchor="middle"><tspan x="3094.1" dy="0.0">Success, RAM custody, or randomized recovery; never transmit early</tspan></text>
+<line x1="814.1" y1="234.0" x2="814.1" y2="246.0" class="hairline"/>
+<text x="793.1" y="233.0" class="tiny">D opens</text>
+<line x1="44.0" y1="384.0" x2="4958.0" y2="384.0" class="major-line"/>
+<text x="209.0" y="470.0" class="row-label">F1 - ONE RELAY / SLOT 1</text>
+<polygon points="2479.0,405.0 2484.0,410.0 2479.0,415.0 2474.0,410.0" class="diamond"/>
+<rect x="374.0" y="414.0" width="440.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="594.0" y="437.0" class="small center event-text" text-anchor="middle"><tspan x="594.0" dy="0.0">Listen except exact slot 1 in every round</tspan></text>
+<rect x="412.1" y="458.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="522.2" y="458.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="632.2" y="458.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="742.2" y="458.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="814.1" y="502.0" width="1664.9" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="1646.5" y="525.0" class="small center event-text" text-anchor="middle"><tspan x="1646.5" dy="0.0">Pre-RF wait; no retry is consumed</tspan></text>
+<rect x="2479.0" y="502.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2687.1" y="519.0" class="small center event-text" text-anchor="middle"><tspan x="2687.1" dy="0.0">First contact opportunity</tspan><tspan x="2687.1" dy="12.0">depth 1, stable slot 1</tspan></text>
+<rect x="2895.2" y="502.0" width="2062.8" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="3926.6" y="525.0" class="small center event-text" text-anchor="middle"><tspan x="3926.6" dy="0.0">Success, RAM custody, or randomized recovery</tspan></text>
+<line x1="2479.0" y1="398.0" x2="2479.0" y2="410.0" class="hairline"/>
+<text x="2458.0" y="397.0" class="tiny">F1 opens</text>
+<line x1="44.0" y1="548.0" x2="4958.0" y2="548.0" class="major-line"/>
+<text x="209.0" y="634.0" class="row-label">F2 - TWO RELAYS / SLOT 2</text>
+<polygon points="4143.9,569.0 4148.9,574.0 4143.9,579.0 4138.9,574.0" class="diamond"/>
+<rect x="374.0" y="578.0" width="440.1" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="594.0" y="601.0" class="small center event-text" text-anchor="middle"><tspan x="594.0" dy="0.0">Listen except exact slot 2 in every round</tspan></text>
+<rect x="448.8" y="622.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="558.8" y="622.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="668.8" y="622.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="778.9" y="622.0" width="4.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<rect x="814.1" y="666.0" width="3329.8" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="2479.0" y="689.0" class="small center event-text" text-anchor="middle"><tspan x="2479.0" dy="0.0">Pre-RF wait; no retry is consumed</tspan></text>
+<rect x="4143.9" y="666.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4352.0" y="683.0" class="small center event-text" text-anchor="middle"><tspan x="4352.0" dy="0.0">First contact opportunity</tspan><tspan x="4352.0" dy="12.0">depth 2, stable slot 2</tspan></text>
+<rect x="4560.1" y="666.0" width="397.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="4759.1" y="689.0" class="small center event-text" text-anchor="middle"><tspan x="4759.1" dy="0.0">Success, RAM custody, or randomized recovery</tspan></text>
+<line x1="4143.9" y1="562.0" x2="4143.9" y2="574.0" class="hairline"/>
+<text x="4122.9" y="561.0" class="tiny">F2 opens</text>
+<line x1="44.0" y1="712.0" x2="4958.0" y2="712.0" class="major-line"/>
+<text x="209.0" y="754.0" class="row-label">DDD BENCH-FIRST CASE</text>
+<polygon points="814.1,733.0 819.1,738.0 814.1,743.0 809.1,738.0" class="diamond"/>
+<polygon points="1230.3,733.0 1235.3,738.0 1230.3,743.0 1225.3,738.0" class="diamond"/>
+<polygon points="1646.5,733.0 1651.5,738.0 1646.5,743.0 1641.5,738.0" class="diamond"/>
+<rect x="814.1" y="742.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1022.2" y="765.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1022.2" dy="0.0">direct slot 0</tspan></text>
+<rect x="1230.3" y="742.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1438.4" y="765.0" class="small center event-text" text-anchor="middle"><tspan x="1438.4" dy="0.0">direct slot 1</tspan></text>
+<rect x="1646.5" y="742.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1854.6" y="765.0" class="small center event-text" text-anchor="middle"><tspan x="1854.6" dy="0.0">direct slot 2</tspan></text>
+<rect x="2062.7" y="742.0" width="2895.3" height="36.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
+<text x="3510.4" y="765.0" class="small center event-text" text-anchor="middle"><tspan x="3510.4" dy="0.0">All three direct anchors have had an uncontended first opportunity</tspan></text>
+<line x1="814.1" y1="726.0" x2="814.1" y2="738.0" class="hairline"/>
+<text x="793.1" y="725.0" class="tiny">slot 0</text>
+<line x1="1230.3" y1="726.0" x2="1230.3" y2="738.0" class="hairline"/>
+<text x="1209.3" y="725.0" class="tiny">slot 1</text>
+<line x1="1646.5" y1="726.0" x2="1646.5" y2="738.0" class="hairline"/>
+<text x="1625.5" y="725.0" class="tiny">slot 2</text>
+<line x1="44.0" y1="788.0" x2="4958.0" y2="788.0" class="major-line"/>
+<text x="209.0" y="824.0" class="row-label">CHANNEL 9 FIRST-CONTACT ORDER</text>
+<rect x="814.1" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="1022.2" y="825.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="1022.2" dy="0.0">h0 / s0</tspan></text>
+<rect x="1230.3" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1438.4" y="825.0" class="small center event-text" text-anchor="middle"><tspan x="1438.4" dy="0.0">h0 / s1</tspan></text>
+<rect x="1646.5" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="1854.6" y="825.0" class="small center event-text" text-anchor="middle"><tspan x="1854.6" dy="0.0">h0 / s2</tspan></text>
+<rect x="2062.7" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="2270.9" y="825.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="2270.9" dy="0.0">h1 / s0</tspan></text>
+<rect x="2479.0" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2687.1" y="825.0" class="small center event-text" text-anchor="middle"><tspan x="2687.1" dy="0.0">h1 / s1</tspan></text>
+<rect x="2895.2" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3103.3" y="825.0" class="small center event-text" text-anchor="middle"><tspan x="3103.3" dy="0.0">h1 / s2</tspan></text>
+<rect x="3311.4" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="3519.5" y="825.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="3519.5" dy="0.0">h2 / s0</tspan></text>
+<rect x="3727.7" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="3935.8" y="825.0" class="small center event-text" text-anchor="middle"><tspan x="3935.8" dy="0.0">h2 / s1</tspan></text>
+<rect x="4143.9" y="802.0" width="416.2" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="4352.0" y="825.0" class="small center event-text" text-anchor="middle"><tspan x="4352.0" dy="0.0">h2 / s2</tspan></text>
+<line x1="44.0" y1="852.0" x2="4958.0" y2="852.0" class="major-line"/>
+<text x="209.0" y="888.0" class="row-label">AFTER FIRST RF ATTEMPT</text>
+<rect x="814.1" y="866.0" width="4143.9" height="36.0" fill="#f5f5f5" stroke="#111111" stroke-width="1"/>
+<text x="2886.0" y="889.0" class="small center event-text" text-anchor="middle"><tspan x="2886.0" dy="0.0">No ACCEPT: one randomized retry at the same parent, then each alternate route. Only after known routes are exhausted: route discovery plus a longer randomized backoff. Relays stay silent when unavailable.</tspan></text>
+<line x1="44.0" y1="916.0" x2="4958.0" y2="916.0" class="major-line"/>
+<text x="209.0" y="952.0" class="row-label">GUI ESTIMATE AND PROGRESS</text>
+<rect x="374.0" y="930.0" width="440.1" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1.6"/>
+<text x="594.0" y="953.0" class="small center event-text" text-anchor="middle" font-weight="700"><tspan x="594.0" dy="0.0">Probing 1/4 ... 4/4</tspan></text>
+<rect x="814.1" y="930.0" width="3746.0" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
+<text x="2687.1" y="953.0" class="small center event-text" text-anchor="middle"><tspan x="2687.1" dy="0.0">Collecting reports x/N; countdown uses slot span S, anchor count N, and maximum depth D</tspan></text>
+<rect x="4560.1" y="930.0" width="397.9" height="36.0" fill="#ffffff" stroke="#111111" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="4759.1" y="947.0" class="small center event-text" text-anchor="middle"><tspan x="4759.1" dy="0.0">Pair plan tightens the estimate; an overrun shows &#x27;Over estimate by ... -</tspan><tspan x="4759.1" dy="12.0">retrying&#x27; and does not abort</tspan></text>
+<line x1="44.0" y1="980.0" x2="4958.0" y2="980.0" class="major-line"/>
+<text x="209.0" y="1023.5" class="row-label">KEY POINT</text>
+<rect x="2406.0" y="992.0" width="520.0" height="55.0" class="box shaded"/>
+<text x="2666.0" y="1006.5" class="small center" text-anchor="middle"><tspan x="2666.0" dy="0.0">Hard rule: a probe stays inside its exact stable enumeration slot. Soft rule: a child delays only</tspan><tspan x="2666.0" dy="12.0">its first connection attempt, ordered by hop depth and then stable slot. The relay keeps no</tspan><tspan x="2666.0" dy="12.0">child roster and sends no BUSY reply. Existing one-upstream plus one-downstream ownership, RAM</tspan><tspan x="2666.0" dy="12.0">custody, retries, route fallback, and gateway proof remain responsible for delivery.</tspan></text>
+<line x1="44.0" y1="1059.0" x2="4958.0" y2="1059.0" class="major-line"/>
+<line x1="44.0" y1="1085.0" x2="44.0" y2="1123.0" class="major-line"/>
+<line x1="44.0" y1="1085.0" x2="4958.0" y2="1085.0" class="axis-line"/>
+<line x1="374.0" y1="1084.0" x2="374.0" y2="1096.0" class="tick"/>
+<line x1="484.0" y1="1084.0" x2="484.0" y2="1096.0" class="tick"/>
+<line x1="594.0" y1="1084.0" x2="594.0" y2="1096.0" class="tick"/>
+<line x1="704.0" y1="1084.0" x2="704.0" y2="1096.0" class="tick"/>
+<line x1="814.1" y1="1084.0" x2="814.1" y2="1096.0" class="tick"/>
+<line x1="1230.3" y1="1084.0" x2="1230.3" y2="1096.0" class="tick"/>
+<line x1="1646.5" y1="1084.0" x2="1646.5" y2="1096.0" class="tick"/>
+<line x1="2479.0" y1="1084.0" x2="2479.0" y2="1096.0" class="tick"/>
+<line x1="4143.9" y1="1084.0" x2="4143.9" y2="1096.0" class="tick"/>
+<line x1="4560.1" y1="1084.0" x2="4560.1" y2="1096.0" class="tick"/>
+<text x="374.0" y="1108.0" class="axis-time">shared start</text>
+<text x="484.0" y="1108.0" class="axis-time">round 2</text>
+<text x="594.0" y="1108.0" class="axis-time">round 3</text>
+<text x="704.0" y="1108.0" class="axis-time">round 4</text>
+<text x="814.1" y="1108.0" class="axis-time">probes done / D gate</text>
+<text x="1230.3" y="1108.0" class="axis-time">DDD slot 1</text>
+<text x="1646.5" y="1108.0" class="axis-time">DDD slot 2</text>
+<text x="2479.0" y="1108.0" class="axis-time">F1 gate</text>
+<text x="4143.9" y="1108.0" class="axis-time">F2 gate</text>
+<text x="4560.1" y="1108.0" class="axis-time">priority grid done</text>
+<text x="374.0" y="1132.0" class="tiny center" text-anchor="middle"><tspan x="374.0" dy="0.0">all matching anchors enter the same Ch5</tspan><tspan x="374.0" dy="11.0">schedule</tspan></text>
+<text x="484.0" y="1167.5" class="tiny center" text-anchor="middle"><tspan x="484.0" dy="0.0">same collision-free 200 ms slot map</tspan></text>
+<text x="594.0" y="1137.5" class="tiny center" text-anchor="middle"><tspan x="594.0" dy="0.0">same collision-free 200 ms slot map</tspan></text>
+<text x="704.0" y="1167.5" class="tiny center" text-anchor="middle"><tspan x="704.0" dy="0.0">same collision-free 200 ms slot map</tspan></text>
+<text x="814.1" y="1132.0" class="tiny center" text-anchor="middle"><tspan x="814.1" dy="0.0">all radios leave the exclusive probe</tspan><tspan x="814.1" dy="11.0">phase</tspan></text>
+<text x="1230.3" y="1132.0" class="tiny center" text-anchor="middle"><tspan x="1230.3" dy="0.0">second direct anchor gets its first</tspan><tspan x="1230.3" dy="11.0">opportunity</tspan></text>
+<text x="1646.5" y="1132.0" class="tiny center" text-anchor="middle"><tspan x="1646.5" dy="0.0">third direct anchor gets its first</tspan><tspan x="1646.5" dy="11.0">opportunity</tspan></text>
+<text x="2479.0" y="1132.0" class="tiny center" text-anchor="middle"><tspan x="2479.0" dy="0.0">one-relay child gets its first</tspan><tspan x="2479.0" dy="11.0">opportunity</tspan></text>
+<text x="4143.9" y="1132.0" class="tiny center" text-anchor="middle"><tspan x="4143.9" dy="0.0">two-relay child gets its first</tspan><tspan x="4143.9" dy="11.0">opportunity</tspan></text>
+<text x="4560.1" y="1137.5" class="tiny center" text-anchor="middle"><tspan x="4560.1" dy="0.0">this is not a survey timeout</tspan></text>
+<text x="2500.0" y="1222.0" class="caption center" text-anchor="middle"><tspan x="2500.0" dy="0.0">Three-anchor D-F1-F2 example, relative to the shared probe start. The START delivery and preparation barrier happens before t=0. Four rounds of exact 200 ms Channel-5 slots finish at 2.4 s. Later Channel-9 cells use the implemented 2270 ms report-service allowance. Retries, alternate routes, and pair work may continue past the right edge.</tspan></text>
+</svg>

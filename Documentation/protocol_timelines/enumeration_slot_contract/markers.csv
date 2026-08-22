@@ -1,0 +1,10 @@
+time,label,caption,kind,row
+0,"response origin","CLAIM custody is complete; depth/slot cells begin",axis,
+2270,"D cell closes","next direct temporary slot would follow",axis,
+9080,"F1 slot 1 opens","all RF-hop-1 cells are earlier",axis,
+18160,"F2 slot 2 opens","all RF-hop-1 and RF-hop-2 cells are earlier",axis,
+20430,"responses close","freeze current responders",axis,
+25430,"TABLE responses open","same ordering, now with stable slots",axis,
+27700,"D confirmed","exact TABLE gateway ACK observed",axis,
+36780,"F1 confirmed","parent path remains available first",axis,
+45860,"F2 confirmed","current responder quorum reaches 3/3",axis,

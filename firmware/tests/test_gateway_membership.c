@@ -628,6 +628,42 @@ static void test_invalid_pending_publication_rejected_at_export(void)
            PROTO_ERR_ARG);
 }
 
+static void test_confirmation_pending_table_roundtrips_and_retires(void)
+{
+    struct gateway_membership_roster roster = sparse_roster(17u);
+    struct gateway_membership_publication publication =
+        pending_publication();
+    struct gateway_membership_publication restored_publication = {0};
+    struct gateway_membership_snapshot snapshot;
+    struct gateway_membership_snapshot decoded;
+    struct gateway_membership_snapshot retired;
+    uint8_t wire[GATEWAY_MEMBERSHIP_SNAPSHOT_WIRE_SIZE];
+
+    publication.table_round =
+        GATEWAY_MEMBERSHIP_TABLE_CONFIRM_PENDING | 1u;
+    assert(gateway_membership_export_assignment_snapshot(
+               &roster,
+               UINT32_C(0x12345678),
+               UINT32_C(0x92345678),
+               &assignment_commitment,
+               &publication,
+               &snapshot) == PROTO_OK);
+    assert(gateway_membership_snapshot_encode(
+               &snapshot, wire, sizeof(wire)) == PROTO_OK);
+    assert(gateway_membership_snapshot_decode(
+               wire, sizeof(wire), &decoded) == PROTO_OK);
+    assert(gateway_membership_snapshot_get_publication(
+               &decoded, &restored_publication) == PROTO_OK);
+    assert(restored_publication.table_round == publication.table_round);
+    assert(restored_publication.acknowledged_mask ==
+           publication.acknowledged_mask);
+    assert(gateway_membership_snapshot_retire_publication(
+               &decoded, &retired) == PROTO_OK);
+    assert(retired.assignment_proof_valid == 1u);
+    assert(gateway_membership_snapshot_get_publication(
+               &retired, &restored_publication) == PROTO_ERR_NOT_FOUND);
+}
+
 int main(void)
 {
     test_live_roster_ram_budget_and_dense_compatibility();
@@ -641,5 +677,6 @@ int main(void)
     test_pending_publication_corruption_rejected();
     test_exact_identity_fields_are_checksum_bound();
     test_invalid_pending_publication_rejected_at_export();
+    test_confirmation_pending_table_roundtrips_and_retires();
     return 0;
 }

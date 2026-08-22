@@ -24,7 +24,7 @@
 /* Production keeps at least this TTL-1 origin reply window open. */
 #define ORIGIN_REPLY_BUDGET_MS UINT32_C(1000)
 #define RESPONDER_GROUP_MAX 8u
-#define TTL_LADDER_ATTEMPT_COUNT 3u
+#define TTL_LADDER_ATTEMPT_COUNT 5u
 #define TTL_LADDER_RELAY_COUNT (MESH_DEFAULT_TTL - 1u)
 #define TTL_LADDER_HOP_COUNT (TTL_LADDER_RELAY_COUNT + 1u)
 #define TTL_LADDER_DATA_PHASE_STEP_MS 100u
@@ -1355,7 +1355,7 @@ static int run_exact_hop_multi_responder_case(void)
 static int run_ttl_ladder_data_case(void)
 {
     static const uint8_t expected_attempt_ttls[TTL_LADDER_ATTEMPT_COUNT] = {
-        1u, 2u, MESH_DEFAULT_TTL,
+        1u, 2u, 4u, 6u, MESH_DEFAULT_TTL,
     };
     static struct mesh_sim_world world;
     struct discovery_identity attempt_identity;

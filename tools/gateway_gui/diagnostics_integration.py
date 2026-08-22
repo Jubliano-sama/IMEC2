@@ -103,6 +103,9 @@ class GatewayDiagnosticsMixin:
                 self._show_error(f"Malformed gateway command telemetry: {exc}")
                 return
             self.command_timeline_model.observe(event)
+            observe_progress = getattr(self, "_observe_operation_progress", None)
+            if callable(observe_progress):
+                observe_progress(event)
             self._apply_gateway_command_transition(
                 self.command_orchestrator.observe_event(
                     event,

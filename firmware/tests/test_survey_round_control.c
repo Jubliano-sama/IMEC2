@@ -216,8 +216,10 @@ static void test_start_release_is_separate_from_failure_horizons(void)
                2u * SURVEY_PAIR_START_SKEW_MARGIN_MS);
     assert(SURVEY_ROUND_START_EXECUTE_DELAY_MS <
            SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS);
-    assert(SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS == 174000u);
-    assert(SURVEY_PAIR_PREPARED_LEASE_MS == 534000u);
+    assert(SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS == 135000u);
+    assert(SURVEY_PAIR_ABORT_RESULT_TIMEOUT_MS == 135000u);
+    assert(SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS == 540000u);
+    assert(SURVEY_PAIR_PREPARED_LEASE_MS == 2340000u);
     assert(SURVEY_PAIR_PREPARED_LEASE_MS ==
            SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS +
                SURVEY_PAIR_CONTROL_CLEANUP_MARGIN_MS);
@@ -228,9 +230,11 @@ static void test_start_release_is_separate_from_failure_horizons(void)
 static void test_initiator_start_uses_shared_execute_age_only(void)
 {
     assert(survey_round_start_initiator_send_allowed(0u));
-    assert(survey_round_start_initiator_send_allowed(14999u));
+    assert(SURVEY_ROUND_START_INITIATOR_SEND_CUTOFF_MS == 13000u);
+    assert(survey_round_start_initiator_send_allowed(
+        SURVEY_ROUND_START_INITIATOR_SEND_CUTOFF_MS - 1u));
     assert(!survey_round_start_initiator_send_allowed(
-        SURVEY_ROUND_START_EXECUTE_DELAY_MS));
+        SURVEY_ROUND_START_INITIATOR_SEND_CUTOFF_MS));
     assert(!survey_round_start_initiator_send_allowed(27500u));
 }
 

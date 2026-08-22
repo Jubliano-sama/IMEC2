@@ -119,10 +119,12 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
             "ASSIGNMENT_RESPONSE_SPREAD_MS_OFFSET",
             "ASSIGNMENT_SLOT_OFFSET",
             "ASSIGNMENT_PENDING_VALID_OFFSET",
+            "ASSIGNMENT_PENDING_RESPONSE_LANE_OFFSET",
+            "ASSIGNMENT_PENDING_RESPONSE_LANE_COUNT_OFFSET",
             "ASSIGNMENT_RESERVED_OFFSET",
         ):
             self.assertIn(offset, encode + decode)
-        self.assertEqual(decode.count("ASSIGNMENT_RESERVED_OFFSET"), 3)
+        self.assertEqual(decode.count("ASSIGNMENT_RESERVED_OFFSET"), 1)
         self.assertIn("durable_crc16(", encode)
         self.assertIn("durable_crc16(", decode)
         self.assertIn("durable_validate_anchor_assignment(assignment)", decode)
@@ -377,6 +379,34 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         self.assertNotIn("app_durable_state_delete_anchor_assignment", replay)
         self.assertIn("anchor_save_discovery_assignment_retry_ram", retry)
         self.assertIn("anchor_save_discovery_assignment_retry_ram", replay)
+
+    def test_sparse_identity_slot_has_a_durable_compact_timing_lane(self) -> None:
+        to_durable = function_body(
+            ANCHOR_COMMANDS, "anchor_assignment_snapshot_to_durable"
+        )
+        from_durable = function_body(
+            ANCHOR_COMMANDS, "anchor_assignment_durable_to_snapshot"
+        )
+        delay = function_body(
+            ANCHOR_COMMANDS, "anchor_discovery_response_delay_ms"
+        )
+        apply = function_body(
+            ANCHOR_COMMANDS, "anchor_apply_discovery_assignment_command"
+        )
+        resume = function_body(
+            ANCHOR_COMMANDS,
+            "anchor_resume_pending_discovery_assignment_ack",
+        )
+
+        self.assertIn("pending_response_lane", to_durable)
+        self.assertIn("pending_response_lane_count", to_durable)
+        self.assertIn("pending_response_lane", from_durable)
+        self.assertIn("pending_response_lane_count", from_durable)
+        self.assertIn("pending->response_lane", delay)
+        self.assertIn("pending->response_lane_count", delay)
+        self.assertIn("discovery_assignment_response_lane(", apply)
+        self.assertIn("snapshot.pending_response_lane = response_lane", apply)
+        self.assertIn("snapshot.pending_response_lane_count == 0u", resume)
 
     def test_ambiguous_promotion_retains_exact_owner(self) -> None:
         promotion = function_body(

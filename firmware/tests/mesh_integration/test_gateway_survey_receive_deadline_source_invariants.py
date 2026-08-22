@@ -267,7 +267,7 @@ worker_boundary = survey_work.index(
     "gateway_survey_flush_boundary_event()", worker_collection
 )
 worker_round = survey_work.index(
-    "gateway_survey_round_drive()", worker_boundary
+    "gateway_survey_round_drive(", worker_boundary
 )
 assert (
     worker_delivery < worker_active < worker_deadline < worker_cleanup <
