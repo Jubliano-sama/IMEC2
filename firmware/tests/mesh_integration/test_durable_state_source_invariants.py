@@ -51,6 +51,71 @@ def function_body(source: str, name: str) -> str:
 
 
 class DurableStateSourceInvariants(unittest.TestCase):
+    def test_clean_slate_assignment_identity_restores_unprovisioned(self) -> None:
+        clear = function_body(
+            ANCHOR_COMMANDS,
+            "anchor_clear_committed_assignment_for_new_claim",
+        )
+        restore = function_body(
+            APP_STATE, "local_anchor_restore_discovery_assignment"
+        )
+        validation = restore[:restore.index("k_spin_lock(")]
+
+        # A newer clean-slate CLAIM intentionally keeps the finalized table
+        # identity as its stale-packet barrier while removing the usable slot.
+        # That exact historical, unprovisioned state must remain restorable.
+        self.assertIn("snapshot.slot = 0u", clear)
+        self.assertIn("snapshot.slot_count = 0u", clear)
+        self.assertIn("snapshot.provisioned = 0u", clear)
+        for retained_identity in (
+            "snapshot.epoch",
+            "snapshot.table_command_seq",
+            "snapshot.table_commitment",
+        ):
+            self.assertNotRegex(clear, rf"{re.escape(retained_identity)}\s*=")
+
+        # Slot bounds describe a usable assignment, so they apply only when
+        # provisioned. Finalized identity validity remains independently
+        # required for either a provisioned or historical snapshot.
+        self.assertNotRegex(
+            validation,
+            r"finalized_valid\s*&&\s*\(\s*slot_count\s*==\s*0u",
+        )
+        self.assertRegex(
+            validation,
+            r"provisioned\s*&&\s*\(\s*!finalized_valid\s*\|\|\s*"
+            r"slot_count\s*==\s*0u\s*\|\|\s*"
+            r"slot_count\s*>\s*UWB_DISCOVERY_SLOT_COUNT\s*\|\|\s*"
+            r"anchor_slot\s*>=\s*slot_count\s*\)",
+        )
+
+        def rejected(*, finalized: bool, provisioned: bool,
+                     slot: int, slot_count: int) -> bool:
+            return (
+                not finalized
+                or (
+                    provisioned
+                    and (
+                        slot_count == 0
+                        or slot_count > 50
+                        or slot >= slot_count
+                    )
+                )
+            )
+
+        self.assertFalse(
+            rejected(finalized=True, provisioned=False, slot=0, slot_count=0)
+        )
+        self.assertTrue(
+            rejected(finalized=True, provisioned=True, slot=0, slot_count=0)
+        )
+        self.assertTrue(
+            rejected(finalized=True, provisioned=True, slot=0, slot_count=51)
+        )
+        self.assertTrue(
+            rejected(finalized=True, provisioned=True, slot=50, slot_count=50)
+        )
+
     def test_one_module_owns_nvs(self) -> None:
         offenders: list[str] = []
         nvs_use = re.compile(r"\bnvs_(?:mount|read|write|delete|clear)\s*\(")

@@ -9,6 +9,10 @@ from typing import Any, ClassVar
 
 OPERATION_POLICY_VERSION = 1
 OPERATION_POLICY_FLAGS_NONE = 0
+OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION = 1 << 0
+OPERATION_POLICY_ASSIGNMENT_FLAGS_MASK = (
+    OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION
+)
 OPERATION_POLICY_FAMILY_ASSIGNMENT = 1
 OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY = 2
 OPERATION_POLICY_FAMILY_SURVEY_PAIR = 3
@@ -18,7 +22,7 @@ COMMAND_BUDGET_MAX_MS = 1_800_000
 EXPECTED_ANCHOR_COUNT_MAX = 50
 ASSIGNMENT_RESPONSE_SPREAD_MIN_MS = 20
 ASSIGNMENT_RESPONSE_SPREAD_MAX_MS = 10_000
-DISCOVERY_START_DELAY_MIN_MS = 2_000
+DISCOVERY_START_DELAY_MIN_MS = 20_000
 DISCOVERY_START_DELAY_MAX_MS = 25_104
 DISCOVERY_SLOT_MIN_MS = 200
 DISCOVERY_SLOT_MAX_MS = 200
@@ -29,7 +33,7 @@ DISCOVERY_ROUND_COUNT_MAX = 4
 DISCOVERY_REPORT_GRACE_MIN_MS = 1
 DISCOVERY_REPORT_GRACE_MAX_MS = 60_000
 PAIR_MAX_RERUNS = 2
-PAIR_MAX_PARALLEL_PAIRS = 25
+PAIR_MAX_PARALLEL_PAIRS = 1
 
 ASSIGNMENT_CONTROL_PHASE_COUNT = 2
 ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS = 10_000
@@ -69,9 +73,9 @@ DISCOVERY_DEFAULT_ROUND_COUNT = 4
 DISCOVERY_DEFAULT_REPORT_GRACE_MS = 250
 DISCOVERY_DEFAULT_BUDGET_MS = 260_277
 PAIR_DEFAULT_MAX_RERUNS = 2
-# The GUI's "auto" mode exposes every safe pair lane and lets the firmware's
-# neighborhood conflict classifier decide how many can actually run together.
-PAIR_AUTO_MAX_PARALLEL_PAIRS = PAIR_MAX_PARALLEL_PAIRS
+PAIR_DEFAULT_MAX_PARALLEL_PAIRS = 1
+# Backward-compatible import name for callers that do not expose the setting.
+PAIR_AUTO_MAX_PARALLEL_PAIRS = PAIR_DEFAULT_MAX_PARALLEL_PAIRS
 
 # The full-survey estimate is deliberately softer than the command deadline.
 # It models the ordinary rectangular/chain topology promised by the product
@@ -240,6 +244,7 @@ class AssignmentOperationPolicy:
     operation_budget_ms: int = ASSIGNMENT_DEFAULT_BUDGET_MS
     response_spread_ms: int = ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS
     deepest_hop: int = 0
+    ram_only_iteration: bool = False
 
     family: ClassVar[int] = OPERATION_POLICY_FAMILY_ASSIGNMENT
 
@@ -264,6 +269,8 @@ class AssignmentOperationPolicy:
         )
         if self.deepest_hop != 0:
             _bounded("deepest hop", self.deepest_hop, 1, 8)
+        if not isinstance(self.ram_only_iteration, bool):
+            raise ValueError("RAM-only iteration must be a boolean")
         required_budget_ms = assignment_required_budget_ms(
             self.response_spread_ms,
             self.expected_anchor_count,
@@ -280,7 +287,11 @@ class AssignmentOperationPolicy:
             "<BBBHIH",
             OPERATION_POLICY_VERSION,
             self.family,
-            OPERATION_POLICY_FLAGS_NONE,
+            (
+                OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION
+                if self.ram_only_iteration
+                else OPERATION_POLICY_FLAGS_NONE
+            ),
             self.expected_anchor_count,
             self.operation_budget_ms,
             self.response_spread_ms,
@@ -417,21 +428,30 @@ def decode_operation_policy_value(raw: bytes) -> dict[str, Any]:
     version, family, flags = raw[:3]
     if version != OPERATION_POLICY_VERSION:
         raise ValueError(f"unsupported operation policy version {version}")
-    if flags != OPERATION_POLICY_FLAGS_NONE:
-        raise ValueError(f"unsupported operation policy flags 0x{flags:02x}")
-
     if family == OPERATION_POLICY_FAMILY_ASSIGNMENT:
         if len(raw) != 11:
             raise ValueError("assignment operation policy must be 11 bytes")
+        if flags & ~OPERATION_POLICY_ASSIGNMENT_FLAGS_MASK:
+            raise ValueError(f"unsupported assignment policy flags 0x{flags:02x}")
         expected, budget, spread = struct.unpack_from("<HIH", raw, 3)
-        assignment_policy = AssignmentOperationPolicy(expected, budget, spread)
+        assignment_policy = AssignmentOperationPolicy(
+            expected,
+            budget,
+            spread,
+            ram_only_iteration=bool(
+                flags & OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION
+            ),
+        )
         fields = {
             "expected_anchor_count": assignment_policy.expected_anchor_count,
             "operation_budget_ms": assignment_policy.operation_budget_ms,
             "response_spread_ms": assignment_policy.response_spread_ms,
+            "ram_only_iteration": assignment_policy.ram_only_iteration,
         }
         family_name = "assignment"
     elif family == OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY:
+        if flags != OPERATION_POLICY_FLAGS_NONE:
+            raise ValueError(f"unsupported discovery policy flags 0x{flags:02x}")
         if len(raw) != 19:
             raise ValueError("discovery operation policy must be 19 bytes")
         values = struct.unpack_from("<IHBBII", raw, 3)
@@ -449,6 +469,8 @@ def decode_operation_policy_value(raw: bytes) -> dict[str, Any]:
         }
         family_name = "survey_discovery"
     elif family == OPERATION_POLICY_FAMILY_SURVEY_PAIR:
+        if flags != OPERATION_POLICY_FLAGS_NONE:
+            raise ValueError(f"unsupported pair policy flags 0x{flags:02x}")
         if len(raw) != 5:
             raise ValueError("pair operation policy must be 5 bytes")
         pair_policy = PairOperationPolicy(raw[3], raw[4])

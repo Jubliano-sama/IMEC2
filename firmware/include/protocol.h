@@ -336,7 +336,6 @@ enum tlv_type {
     TLV_FLOOD_RANDOM_BACKOFF_MAX_MS = 0x9E,
     TLV_FLOOD_RANDOM_BACKOFF_SLOT_MS = 0x9F,
     TLV_FLOOD_RETRY_COUNT = 0xA0,
-    TLV_FLOOD_PACKET_AGE_MS = 0xA1,
     TLV_MESH_CH9_BATCH_ID = 0xA2,
     TLV_MESH_CH9_BATCH_FLAGS = 0xA3,
     TLV_DISCOVERY_ASSIGNMENT_PHASE = 0xA4,
@@ -405,6 +404,9 @@ enum tlv_type {
     TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC,
     /* epoch || TABLE sequence || SHA-256, binding survey START to assignment. */
     TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xBD,
+    /* epoch || TABLE command sequence || SHA-256, binding enumeration END. */
+    TLV_DISCOVERY_ASSIGNMENT_END_IDENTITY = 0xBE,
+    TLV_DISCOVERY_ASSIGNMENT_ABORT_IDENTITY = 0xBF,
 };
 
 enum detection_source {

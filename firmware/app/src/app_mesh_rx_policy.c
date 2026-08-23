@@ -59,6 +59,16 @@ bool app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
     }
 }
 
+bool app_mesh_rx_policy_dwm_attempt_made_progress(
+    int ret,
+    enum dwm3000_rx_failure failure)
+{
+    (void)failure;
+
+    return ret == 0 || ret == -ETIMEDOUT || ret == -ECANCELED ||
+           ret == -EMSGSIZE;
+}
+
 uint32_t app_mesh_rx_policy_gateway_ch9_window_ms(
     uint32_t continuous_window_ms,
     bool control_pending,

@@ -2980,7 +2980,10 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
                                    struct mesh_outbound *out)
 {
     struct flood_control_fields flood_control;
+    enum discovery_assignment_phase assignment_phase;
+    uint32_t assignment_epoch;
     uint32_t slot_seed;
+    bool enumeration_control = false;
     int ret;
 
     if (!broadcast_packet_needs_forward(relay, packet, payload, payload_len)) {
@@ -2993,6 +2996,12 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
         if (ret != PROTO_OK) {
             return ret;
         }
+        enumeration_control =
+            discovery_assignment_extract_control_tlvs(
+                payload,
+                payload_len,
+                &assignment_phase,
+                &assignment_epoch) == PROTO_OK;
     }
 
     out->packet = *packet;
@@ -3014,20 +3023,21 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->flood_retry_count = packet->msg_type == MSG_SURVEY_DISCOVERY_START ?
                                  0u : flood_control.retry_count;
     if (packet->msg_type == MSG_COMMAND) {
-        ret = ensure_flood_control_tlvs(out,
-                                        &flood_control,
-                                        packet->message_age_ms);
+        ret = ensure_flood_control_tlvs(out, &flood_control);
         if (ret != PROTO_OK) {
             return ret;
         }
     }
     slot_seed = flood_identity_seed(packet, relay->local_id);
-    out->earliest_tx_ms = now_ms + flood_forward_total_delay_ms(
-        relay->local_id,
-        slot_seed,
-        packet->ttl,
-        packet->msg_type == MSG_COMMAND ? &flood_control : NULL,
-        random_value);
+    out->earliest_tx_ms = now_ms +
+        (enumeration_control ?
+             mesh_enumeration_relay_delay_ms(relay->local_id, packet) :
+             flood_forward_total_delay_ms(
+                 relay->local_id,
+                 slot_seed,
+                 packet->ttl,
+                 packet->msg_type == MSG_COMMAND ? &flood_control : NULL,
+                 random_value));
     out->earliest_tx_valid = true;
     return PROTO_OK;
 }

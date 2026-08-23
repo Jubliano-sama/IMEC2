@@ -288,11 +288,25 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         )
         release_failure = handler.index("if (release_ret < 0)", release)
         feed = handler.index(progress, release)
+        continuous_timeout = handler.index(
+            "if (ret == -ETIMEDOUT && anchor_enumeration_rx_active())",
+            receive,
+        )
+        continuous_timeout_feed = handler.index(progress, continuous_timeout)
+        continuous_timeout_rearm = handler.index(
+            "goto enumeration_rx_window", continuous_timeout_feed
+        )
+        deferred_click = handler.index("DBG_ENUM_RX_CLICK_DEFER", receive)
+        deferred_click_feed = handler.index(progress, deferred_click)
+        deferred_click_rearm = handler.index(
+            "goto enumeration_rx_window", deferred_click_feed
+        )
 
         self.assertEqual(
             handler.count(progress),
-            1,
-            "anchor scan must expose only one functional-progress feed",
+            3,
+            "anchor scan must expose the terminal feed plus the two "
+            "same-lease continuous-RX progress feeds",
         )
         self.assertNotIn(
             progress,
@@ -314,17 +328,25 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
             receive,
             "the RX-attempt marker must describe the bounded receive call",
         )
+        self.assertLess(receive, continuous_timeout)
+        self.assertLess(continuous_timeout, continuous_timeout_feed)
+        self.assertLess(continuous_timeout_feed, continuous_timeout_rearm)
+        self.assertLess(receive, deferred_click)
+        self.assertLess(deferred_click, deferred_click_feed)
+        self.assertLess(deferred_click_feed, deferred_click_rearm)
+        self.assertLess(deferred_click_rearm, low_power)
         self.assertLess(low_power, release)
         self.assertLess(release_failure, feed)
         self.assertLess(release, feed)
         self.assertRegex(
             handler[release:],
             r"if\s*\(\s*low_power_ret\s*==\s*0\s*&&\s*rx_attempted\s*&&\s*"
-            r"\(\s*ret\s*==\s*0\s*\|\|\s*ret\s*==\s*-ETIMEDOUT\s*\|\|\s*"
-            r"app_anchor_rx_failure_detected_preamble\s*\(\s*rx_failure\s*\)"
-            r"\s*\)\s*\)\s*\{\s*app_watchdog_note_radio_progress\s*\(\s*\)"
+            r"app_mesh_rx_policy_dwm_attempt_made_progress\s*"
+            r"\(\s*ret\s*,\s*rx_failure\s*\)\s*\)\s*\{\s*"
+            r"app_watchdog_note_radio_progress\s*\(\s*\)"
             r"\s*;\s*\}",
-            "only a completed frame, quiet timeout, or typed RF decode outcome "
+            "only a completed frame, quiet timeout, cancellation, or bounded "
+            "malformed frame "
             "after successful radio release may renew anchor progress",
         )
 
@@ -333,11 +355,7 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         progress = "app_watchdog_note_radio_progress();"
         typed_outcome = (
             r"functional_rx_outcome\s*=\s*"
-            r"(?:functional_rx_outcome\s*\|\|\s*)?"
-            r"rx_ret\s*==\s*0\s*\|\|\s*"
-            r"rx_ret\s*==\s*-ETIMEDOUT\s*\|\|\s*"
-            r"rx_ret\s*==\s*-ECANCELED\s*\|\|\s*"
-            r"app_mesh_rx_policy_gateway_ch9_rx_error_recoverable\s*"
+            r"app_mesh_rx_policy_dwm_attempt_made_progress\s*"
             r"\(\s*rx_ret\s*,\s*rx_failure\s*\)\s*;"
         )
 
@@ -434,10 +452,17 @@ class WatchdogAdoptionSourceTests(unittest.TestCase):
         self.assertRegex(
             scheduled,
             r"(?s)int\s+rx_ret\s*=\s*dwm3000_driver_receive_frame\s*\(.*?"
-            r"functional_rx_outcome\s*=\s*rx_ret\s*==\s*0\s*\|\|\s*"
-            r"rx_ret\s*==\s*-ETIMEDOUT\s*;",
+            r"functional_rx_outcome\s*=\s*"
+            r"app_mesh_rx_policy_dwm_attempt_made_progress\s*"
+            r"\(\s*rx_ret\s*,\s*DWM3000_RX_FAILURE_NONE\s*\)\s*;",
             "the bounded receive path without typed failure output must keep "
             "ordinary no-frame timeout eligible",
+        )
+        self.assertNotRegex(
+            scheduled,
+            r"functional_rx_outcome\s*=\s*functional_rx_outcome\s*\|\|",
+            "the final DWM attempt must replace earlier eligibility so a "
+            "later hard failure cannot renew watchdog progress",
         )
         self.assertRegex(
             handler[scheduled_stop:],

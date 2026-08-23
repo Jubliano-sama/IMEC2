@@ -7,7 +7,9 @@
 #include "app_state.h"
 
 #include "app_watchdog.h"
+#include "discovery_assignment.h"
 #include "dwm3000_driver.h"
+#include "gateway_command.h"
 #include "node_comm.h"
 
 #include <zephyr/kernel.h>
@@ -107,6 +109,32 @@ static uint32_t node_comm_next_reservation_token;
 static uint32_t node_comm_next_backend_release_request_token;
 static bool node_comm_terminal_owner_watchdog_reported;
 static uint64_t node_comm_full_log_not_before_ms;
+
+static bool app_node_comm_single_origin_requires_wake_train(
+    const struct app_node_comm_delivery_record *record)
+{
+#if APP_NODE_COMM_GATEWAY_ROLE
+    enum command_id command_id;
+    enum discovery_assignment_phase phase;
+    uint32_t epoch;
+
+    return record != NULL &&
+           record->profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN &&
+           record->packet.msg_type == MSG_COMMAND &&
+           gateway_command_extract_id(record->payload,
+                                      record->payload_len,
+                                      &command_id) == PROTO_OK &&
+           command_id == CMD_ASSIGN_DISCOVERY_SLOTS &&
+           discovery_assignment_extract_control_tlvs(record->payload,
+                                                     record->payload_len,
+                                                     &phase,
+                                                     &epoch) == PROTO_OK &&
+           phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM && epoch != 0u;
+#else
+    ARG_UNUSED(record);
+    return false;
+#endif
+}
 
 #define NODE_COMM_LIFECYCLE_RECOVERY_POLL_MS 10u
 #define NODE_COMM_LIFECYCLE_RECOVERY_TIMEOUT_MS 1000u
@@ -748,7 +776,8 @@ static bool app_node_comm_payload_size_supported(
         return true;
     }
 #if APP_NODE_COMM_GATEWAY_ROLE
-    return profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD &&
+    return (profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ||
+            profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN) &&
            payload_len <= APP_NODE_COMM_LARGE_CONTROL_PAYLOAD_MAX_LEN;
 #else
     ARG_UNUSED(profile);
@@ -1420,7 +1449,7 @@ static void app_node_comm_reap_auto_terminal_events_locked(void)
             event.attempts_started);
         app_node_comm_release_reliable_owner_locked(event.handle);
         app_node_comm_clear_delivery_record(event.handle);
-#if 0 /* bisect: reap hook disabled */
+#if !APP_NODE_COMM_GATEWAY_ROLE
         app_mesh_report_close_channel9_idle_parent("node-comm-terminal-reaped");
 #endif
     }
@@ -2377,6 +2406,7 @@ int app_node_comm_submit_delivery(
         return -EINVAL;
     }
     if (profile != NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD &&
+        profile != NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN &&
         profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
         profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
         profile != NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE &&
@@ -2389,7 +2419,8 @@ int app_node_comm_submit_delivery(
     if (envelope->packet.payload_len != envelope->payload_len) {
         return -EINVAL;
     }
-    if (profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD &&
+    if ((profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ||
+         profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN) &&
         envelope->flood_retry_count != 0u) {
         /* One scheduler attempt must correspond to one bounded flood. */
         return -EINVAL;
@@ -3333,7 +3364,8 @@ int app_node_comm_service_deliveries(void)
         attempt_record.packet.msg_type,
         (unsigned long long)attempt_record.packet.dst_id,
         attempt_record.packet.seq);
-    if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) {
+    if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ||
+        attempt_record.profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN) {
         /*
          * One logical bounded flood owns one wake train followed by four real
          * RF opportunities.  Re-waking before every opportunity stretches the
@@ -3343,11 +3375,17 @@ int app_node_comm_service_deliveries(void)
          * A pre-RF deferral does not increment attempt_number, so the first
          * actual copy still keeps retrying with its required wake train.
          */
+        bool send_wake_train =
+            attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ?
+                lease.attempt_number == 1u :
+                app_node_comm_single_origin_requires_wake_train(
+                    &attempt_record);
+
         ret = mesh_try_send_c5_flood_view(
             &attempt_view,
             C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
             "node-comm-bounded-control-flood",
-            lease.attempt_number == 1u,
+            send_wake_train,
             &observation,
             &scheduled_retry_delay_ms);
     } else if (attempt_record.profile == NODE_COMM_PROFILE_CONTROL_RESPONSE) {

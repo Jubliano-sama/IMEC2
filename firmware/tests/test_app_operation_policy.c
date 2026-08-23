@@ -10,7 +10,7 @@ static size_t pair_policy_payload(uint8_t *payload, size_t payload_cap)
         .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
         .value.pair = {
             .max_reruns = 1u,
-            .max_parallel_pairs = 4u,
+            .max_parallel_pairs = 1u,
         },
     };
     size_t payload_len = 0u;
@@ -31,6 +31,7 @@ static size_t append_assignment_policy(uint8_t *payload,
     };
 
     operation_policy_assignment_defaults(&policy.value.assignment);
+    policy.value.assignment.ram_only_iteration = true;
     assert(operation_policy_append_tlv(payload,
                                        payload_cap,
                                        &payload_len,
@@ -55,15 +56,15 @@ static void test_parse_and_resolve_do_not_mutate_active_policy(void)
                APP_OPERATION_POLICY_PAIR_MASK,
                &candidate) == 0);
     assert(candidate.updates.pair_present);
-    assert(candidate.updates.pair.max_parallel_pairs == 4u);
-    assert(candidate.resolved.pair.max_parallel_pairs == 4u);
+    assert(candidate.updates.pair.max_parallel_pairs == 1u);
+    assert(candidate.resolved.pair.max_parallel_pairs == 1u);
 
     app_operation_policy_snapshot(&after);
     assert(memcmp(&before, &after, sizeof(before)) == 0);
 
     app_operation_policy_commit_prepared(&candidate);
     app_operation_policy_snapshot(&after);
-    assert(after.pair.max_parallel_pairs == 4u);
+    assert(after.pair.max_parallel_pairs == 1u);
     assert(after.assignment.operation_budget_ms ==
            before.assignment.operation_budget_ms);
 }
@@ -128,6 +129,8 @@ static void test_scoped_prepare_rejects_cross_operation_policy(void)
                    APP_OPERATION_POLICY_ASSIGNMENT_MASK,
                &candidate) == 0);
     assert(candidate.updates.assignment_present);
+    assert(candidate.updates.assignment.ram_only_iteration);
+    assert(candidate.resolved.assignment.ram_only_iteration);
     assert(candidate.updates.pair_present);
     assert(app_operation_policy_prepare_payload(
                payload,
@@ -176,7 +179,7 @@ static void test_survey_prepare_requires_both_policies_and_accepts_floor_start(v
                &candidate) == 0);
     assert(candidate.updates.discovery_present);
     assert(candidate.updates.pair_present);
-    assert(candidate.updates.discovery.start_delay_ms == 2000u);
+    assert(candidate.updates.discovery.start_delay_ms == 20000u);
 
     assert(app_operation_policy_prepare_payload(
                payload, discovery_len, survey_mask, survey_mask,

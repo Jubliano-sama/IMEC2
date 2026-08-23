@@ -1,4 +1,5 @@
 #include "app_radio_guard.h"
+#include "app_board.h"
 #include "app_watchdog.h"
 
 #if defined(CONFIG_IMEC_GATEWAY_BLE)

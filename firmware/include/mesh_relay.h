@@ -960,8 +960,6 @@ bool mesh_route_request_reply_rx_delay_ms(const struct mesh_outbound *out,
                                           uint16_t *delay_ms);
 int mesh_route_request_set_reply_rx_delay_ms(struct mesh_outbound *out,
                                              uint16_t delay_ms);
-int mesh_outbound_set_flood_packet_age_ms(struct mesh_outbound *out,
-                                          uint32_t age_ms);
 int mesh_relay_append_status_tlvs(const struct mesh_relay *relay,
                                   uint8_t *payload,
                                   size_t payload_cap,

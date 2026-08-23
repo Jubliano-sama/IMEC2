@@ -45,16 +45,9 @@ static int flood_prepare_attempt(const struct mesh_outbound *base,
                                  struct mesh_outbound *attempt)
 {
     uint32_t elapsed_ms = now_ms - age_origin_ms;
-    int ret;
-
     *attempt = *base;
     attempt->packet.message_age_ms = flood_age_add(
         base->packet.message_age_ms, elapsed_ms);
-    ret = mesh_outbound_set_flood_packet_age_ms(
-        attempt, attempt->packet.message_age_ms);
-    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
-        return -EBADMSG;
-    }
     /* The lower radio sender may account for a final bounded handoff delay. */
     attempt->queued_at_ms = now_ms;
     attempt->queued_at_valid = true;

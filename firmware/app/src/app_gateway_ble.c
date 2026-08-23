@@ -51,6 +51,31 @@ LOG_MODULE_REGISTER(app_gateway_ble, LOG_LEVEL_DBG);
 
 #define GATEWAY_BLE_VERBOSE_LOG(...) LOG_INF(__VA_ARGS__)
 
+#if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
+/* BlueZ normally opens the link with a four-second supervision timeout, while
+ * Zephyr's generic peripheral preference later narrows it to 420 ms.  A busy
+ * UWB protocol turn can legitimately defer BLE longer than that, so retain
+ * the existing 30-50 ms interval but request a supervision horizon that
+ * survives bounded radio ownership. */
+#define GATEWAY_BLE_CONN_INTERVAL_MIN 24u
+#define GATEWAY_BLE_CONN_INTERVAL_MAX 40u
+#define GATEWAY_BLE_CONN_LATENCY 0u
+#define GATEWAY_BLE_CONN_SUPERVISION_TIMEOUT 1200u
+
+BUILD_ASSERT(GATEWAY_BLE_CONN_SUPERVISION_TIMEOUT <= 3200u,
+             "BLE supervision timeout must fit the HCI 32-second bound");
+BUILD_ASSERT(4u * GATEWAY_BLE_CONN_SUPERVISION_TIMEOUT >
+                 (1u + GATEWAY_BLE_CONN_LATENCY) *
+                     GATEWAY_BLE_CONN_INTERVAL_MAX,
+             "BLE supervision timeout must exceed the interval/latency floor");
+
+static const struct bt_le_conn_param gateway_ble_conn_params =
+    BT_LE_CONN_PARAM_INIT(GATEWAY_BLE_CONN_INTERVAL_MIN,
+                          GATEWAY_BLE_CONN_INTERVAL_MAX,
+                          GATEWAY_BLE_CONN_LATENCY,
+                          GATEWAY_BLE_CONN_SUPERVISION_TIMEOUT);
+#endif
+
 #if DEVICE_ROLE == ROLE_GATEWAY
 void gateway_command_result_side_effects(const struct proto_packet *command,
                                          enum command_id command_id,
@@ -252,6 +277,8 @@ static int gateway_observability_enqueue_prepared(
     struct proto_packet packet = {0};
     uint8_t payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
     size_t payload_len = 0u;
+    k_spinlock_key_t key;
+    bool ready;
     int ret;
 
     if (event == NULL) {
@@ -265,19 +292,31 @@ static int gateway_observability_enqueue_prepared(
         return ret;
     }
     packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
-    /* Generic progress remains observable but never owns host receipt
-     * custody. The durable assignment publisher has its own explicit wrapper
-     * below, so a pre-commit claim cannot advance that publisher by accident. */
-    packet.flags = 0u;
+    /* Every command event is BLE-only retained telemetry.  ACK_REQUIRED gives
+     * it an exact GUI-receipt boundary; assignment publication still owns its
+     * separate semantic cursor and is the only path allowed to advance that
+     * publisher below. */
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED;
     packet.src_id = DEVICE_ID;
     packet.dst_id = DEVICE_ID;
     packet.session_id = event->event_seq;
     packet.seq = (uint16_t)event->event_seq;
     packet.payload_len = (uint16_t)payload_len;
-    ret = gateway_ble_stream_packet(&packet,
-                                    payload,
-                                    payload_len,
-                                    k_uptime_get_32());
+    ready = gateway_ble_stream_ready();
+    key = k_spin_lock(&gateway_ble_stream_lock);
+    ret = gateway_ble_stream_enqueue_retained_packet(
+        &gateway_ble_stream_state,
+        &packet,
+        payload,
+        payload_len,
+        k_uptime_get_32(),
+        k_uptime_get_32(),
+        ready);
+    k_spin_unlock(&gateway_ble_stream_lock, key);
+    if (ret > 0) {
+        gateway_ble_schedule_stream_drain();
+        ret = 0;
+    }
     gateway_observability_note_enqueue_state(event->event_seq, ret);
     return ret;
 }
@@ -958,7 +997,8 @@ int gateway_command_event_finish_host_receipt(
     const uint8_t *payload;
     uint8_t record_digest[SEMANTIC_DIGEST_SHA256_LEN];
     k_spinlock_key_t key;
-    int publisher_ret;
+    bool publisher_owned;
+    int publisher_ret = 0;
     int ret = 0;
 
     key = k_spin_lock(&gateway_ble_stream_lock);
@@ -993,8 +1033,7 @@ int gateway_command_event_finish_host_receipt(
                                      &event) < 0 ||
         event.event_seq == 0u ||
         event.event_seq != head->packet.session_id ||
-        head->packet.seq != (uint16_t)event.event_seq ||
-        !app_gateway_assignment_publisher_event_is_reliable(&event)) {
+        head->packet.seq != (uint16_t)event.event_seq) {
         ret = -EBADMSG;
         goto unlock;
     }
@@ -1012,12 +1051,19 @@ unlock:
         return ret;
     }
 
-    /* The publisher is the semantic owner of assignment mapping progress.
-     * It must accept the exact event before the host-only stream head can be
-     * retired, otherwise a stream/publisher drift would strand publication. */
-    publisher_ret = app_gateway_assignment_publisher_note_host_receipt(&event);
-    if (publisher_ret <= 0) {
-        return publisher_ret < 0 ? publisher_ret : -ESTALE;
+    publisher_owned = false;
+    if (app_gateway_assignment_publisher_event_is_reliable(&event)) {
+        /* The publisher is the semantic owner of assignment mapping progress.
+         * It must accept the exact event before the host-only stream head can
+         * retire, otherwise a stream/publisher drift would strand publication.
+         * A shape-valid event with no live publisher owner is ordinary bounded
+         * observability, such as a no-anchor terminal before TABLE commit. */
+        publisher_ret = app_gateway_assignment_publisher_note_host_receipt(
+            &event);
+        if (publisher_ret < 0) {
+            return publisher_ret;
+        }
+        publisher_owned = publisher_ret > 0;
     }
 
     key = k_spin_lock(&gateway_ble_stream_lock);
@@ -1050,12 +1096,20 @@ unlock:
      * radio custody.  Keep one prompt route-owned fallback for terminal
      * durability or queue pressure, but do not compound its backoff across a
      * burst whose exact receipts are making forward progress. */
-    if (publisher_ret > 0) {
-        app_gateway_assignment_publisher_pump();
+    if (publisher_owned && publisher_ret > 0) {
         gateway_persistence_retry_round = 0u;
         gateway_schedule_persistence_retry(
             "assignment-publication-host-receipt");
     }
+    /*
+     * Every accepted host receipt frees one retained BLE stream slot.  The
+     * assignment publisher can be waiting for that capacity even when this
+     * particular event came from live operation progress rather than from
+     * the publisher itself.  Make the capacity edge level-triggered here;
+     * UWB-quiet exit provides the matching retry when radio ownership wins
+     * the opposite ordering.
+     */
+    app_gateway_assignment_publisher_pump();
     gateway_observability_flush(false);
     gateway_ble_schedule_stream_drain();
     return 0;
@@ -1133,7 +1187,7 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
 
     if (completed_source == GATEWAY_BLE_TX_STREAM) {
         struct proto_packet completed_packet;
-        bool generic_command_event_sent = false;
+        bool unretained_command_event = false;
         bool host_custody_pending = false;
         bool host_custody_supported = false;
         bool host_notification_transitioned = false;
@@ -1164,23 +1218,23 @@ static void gateway_ble_tx_complete(struct bt_conn *conn, void *user_data)
                                             host_notification_ret);
             }
         }
-        generic_command_event_sent =
+        unretained_command_event =
             packet_ret == 0 &&
             completed_packet.msg_type == MSG_GATEWAY_COMMAND_EVENT &&
             !host_custody_supported;
-        if (!host_custody_supported) {
+        if (!host_custody_supported && !unretained_command_event) {
             gateway_ble_stream_mark_sent(&gateway_ble_stream_state,
                                          k_uptime_get_32());
         }
         uint16_t queue_depth = gateway_ble_stream_depth(&gateway_ble_stream_state);
         k_spin_unlock(&gateway_ble_stream_lock, key);
         if (packet_ret == 0) {
-            if (generic_command_event_sent) {
-                /* Best-effort observability has no host receipt boundary.
-                 * Its RAM snapshot retires only once ATT completed the exact
-                 * record, so a failed notification remains reconnectable. */
-                gateway_observability_mark_sent_state(
-                    completed_packet.session_id);
+            if (unretained_command_event) {
+                /* Every command event must retain an exact host-receipt owner.
+                 * Reaching ATT completion without one is an impossible custody
+                 * shape, so keep the stream head and fail closed. */
+                gateway_ble_schedule_failed(
+                    "unretained-command-observability", -EPROTO);
             }
 #if DEVICE_ROLE == ROLE_GATEWAY
             if (host_custody_supported) {
@@ -1518,6 +1572,7 @@ static void gateway_ble_stream_work_handler(struct k_work *work)
 static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
 {
     k_spinlock_key_t key;
+    int param_ret;
 
     if (!gateway_ble_transport_enabled()) {
         return;
@@ -1551,7 +1606,45 @@ static void gateway_ble_connected(struct bt_conn *conn, uint8_t err)
     gateway_ble_rx_overflow = false;
     gateway_ble_recovery_round = 0u;
     (void)k_work_cancel_delayable(&gateway_ble_recovery_work);
+    /* As a peripheral Zephyr retains this request until the standards-defined
+     * update delay expires.  It replaces the generic 420 ms preferred
+     * supervision timeout before that value can be installed. */
+    param_ret = bt_conn_le_param_update(conn, &gateway_ble_conn_params);
+    if (param_ret < 0) {
+        LOG_WRN("gateway BLE connection-parameter request failed: ret=%d",
+                param_ret);
+    }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf(
+        "DBG_GATEWAY_BLE event=param-request ret=%d interval=%u-%u latency=%u timeout_ms=%u uptime=%u\n",
+        param_ret,
+        GATEWAY_BLE_CONN_INTERVAL_MIN,
+        GATEWAY_BLE_CONN_INTERVAL_MAX,
+        GATEWAY_BLE_CONN_LATENCY,
+        GATEWAY_BLE_CONN_SUPERVISION_TIMEOUT * 10u,
+        k_uptime_get_32());
+#endif
     GATEWAY_BLE_VERBOSE_LOG("gateway BLE PC link connected");
+}
+
+static void gateway_ble_le_param_updated(struct bt_conn *conn,
+                                         uint16_t interval,
+                                         uint16_t latency,
+                                         uint16_t timeout)
+{
+    ARG_UNUSED(conn);
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+    status_debug_printf(
+        "DBG_GATEWAY_BLE event=param-updated interval=%u latency=%u timeout_ms=%u uptime=%u\n",
+        interval,
+        latency,
+        timeout * 10u,
+        k_uptime_get_32());
+#else
+    ARG_UNUSED(interval);
+    ARG_UNUSED(latency);
+    ARG_UNUSED(timeout);
+#endif
 }
 
 static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
@@ -1604,6 +1697,7 @@ static void gateway_ble_disconnected(struct bt_conn *conn, uint8_t reason)
 BT_CONN_CB_DEFINE(gateway_ble_conn_callbacks) = {
     .connected = gateway_ble_connected,
     .disconnected = gateway_ble_disconnected,
+    .le_param_updated = gateway_ble_le_param_updated,
 };
 
 static int gateway_ble_start_advertising(void)
@@ -2005,11 +2099,6 @@ int gateway_observe_command_event_if_available(
     void *ctx)
 {
 #if defined(CONFIG_BT) && defined(CONFIG_IMEC_GATEWAY_BLE)
-    struct proto_packet packet = {0};
-    uint8_t payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
-    size_t payload_len = 0u;
-    k_spinlock_key_t tx_key;
-    k_spinlock_key_t stream_key;
     int ret;
 
     ARG_UNUSED(ctx);
@@ -2017,80 +2106,15 @@ int gateway_observe_command_event_if_available(
         return -EINVAL;
     }
 
-    /*
-     * Avoid consuming an identity for ordinary disconnected/full-queue
-     * backpressure. The state is rechecked after reservation because a link
-     * callback may run while the durable allocator is outside all spinlocks.
-     */
-    tx_key = k_spin_lock(&gateway_ble_tx_lock);
-    if (!gateway_ble_stream_ready()) {
-        k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-        return -EAGAIN;
-    }
-    stream_key = k_spin_lock(&gateway_ble_stream_lock);
-    if (gateway_ble_stream_state.count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
-        gateway_ble_stream_state.pool_used +
-            GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
-            GATEWAY_COMMAND_EVENT_WIRE_LEN >
-            sizeof(gateway_ble_stream_state.record_pool)) {
-        k_spin_unlock(&gateway_ble_stream_lock, stream_key);
-        k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-        return -EAGAIN;
-    }
-    k_spin_unlock(&gateway_ble_stream_lock, stream_key);
-    k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-
-    ret = gateway_observability_reserve_identity(event);
+    ret = gateway_observability_prepare_state(event, terminal);
     if (ret < 0) {
         return ret;
     }
-
-    tx_key = k_spin_lock(&gateway_ble_tx_lock);
-    if (!gateway_ble_stream_ready()) {
-        k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-        return -EAGAIN;
-    }
-    stream_key = k_spin_lock(&gateway_ble_stream_lock);
-    if (gateway_ble_stream_state.count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH ||
-        gateway_ble_stream_state.pool_used +
-            GATEWAY_BLE_STREAM_RECORD_HEADER_LEN +
-            GATEWAY_COMMAND_EVENT_WIRE_LEN >
-            sizeof(gateway_ble_stream_state.record_pool)) {
-        k_spin_unlock(&gateway_ble_stream_lock, stream_key);
-        k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-        return -EAGAIN;
-    }
-    ret = gateway_observability_prepare_reserved_state(event, terminal);
-    if (ret == 0) {
-        ret = gateway_command_event_encode(event, payload, sizeof(payload),
-                                           &payload_len);
-    }
-    if (ret == 0) {
-        packet.msg_type = MSG_GATEWAY_COMMAND_EVENT;
-        /* Generic observability is deliberately best effort.  Only the
-         * assignment publisher wrapper below sets ACK_REQUIRED and obtains
-         * host-receipt custody. */
-        packet.flags = 0u;
-        packet.src_id = DEVICE_ID;
-        packet.dst_id = DEVICE_ID;
-        packet.session_id = event->event_seq;
-        packet.seq = (uint16_t)event->event_seq;
-        packet.payload_len = (uint16_t)payload_len;
-        ret = gateway_ble_stream_enqueue_packet(
-            &gateway_ble_stream_state, &packet, payload, payload_len,
-            k_uptime_get_32(), k_uptime_get_32(), true);
-        if (ret > 0) {
-            gateway_observability_note_enqueue_state(
-                event->event_seq, ret);
-            ret = 0;
-        }
-    }
-    k_spin_unlock(&gateway_ble_stream_lock, stream_key);
-    k_spin_unlock(&gateway_ble_tx_lock, tx_key);
-    if (ret == 0) {
-        gateway_ble_schedule_stream_drain();
-    }
-    return ret;
+    /* RAM custody is the acceptance boundary.  BLE disconnection or queue
+     * pressure leaves the exact terminal or latest per-kind snapshot pending
+     * for reconnect replay and must never stall or abort accepted RF work. */
+    (void)gateway_observability_enqueue_prepared(event);
+    return 0;
 #else
     ARG_UNUSED(event);
     ARG_UNUSED(terminal);

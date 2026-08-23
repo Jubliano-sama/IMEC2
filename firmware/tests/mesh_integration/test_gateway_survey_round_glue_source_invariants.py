@@ -89,7 +89,7 @@ def assert_ordered(source: str, *needles: str) -> None:
 # decide equality. The wrapper retains all 25 disjoint runtime lanes.
 assert "survey_sample_semantic_fingerprint" not in SURVEY_CORE
 assert "struct survey_sample_observation_identity sample_identities" in ROUND_HEADER
-assert "SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 25u" in ROUND
+assert "SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 1u" in ROUND
 preflight = function_body(ROUND, "app_gateway_survey_round_preflight_sample")
 assert_ordered(
     preflight,
@@ -528,8 +528,9 @@ assert (
 assert default_start_delay_ms == 25_104
 assert full_ttl_lead_ms > default_start_delay_ms
 assert "#define SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT 4u" in SURVEY_HEADER
-assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 2000u" in OPERATION_POLICY
+assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 20000u" in OPERATION_POLICY
 assert "OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 25104u" in OPERATION_POLICY
+assert "OPERATION_POLICY_PAIR_MAX_PARALLEL_PAIRS 1u" in OPERATION_POLICY
 assert (
     "OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS 25104u"
     in OPERATION_POLICY
@@ -547,8 +548,9 @@ assert re.search(
     r"OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS",
     APP_CONFIG,
 )
-assert "DISCOVERY_START_DELAY_MIN_MS = 2_000" in GUI_OPERATION_POLICY
+assert "DISCOVERY_START_DELAY_MIN_MS = 20_000" in GUI_OPERATION_POLICY
 assert "DISCOVERY_START_DELAY_MAX_MS = 25_104" in GUI_OPERATION_POLICY
+assert "PAIR_MAX_PARALLEL_PAIRS = 1" in GUI_OPERATION_POLICY
 assert (
     "DISCOVERY_DEFAULT_START_DELAY_MS = DISCOVERY_START_DELAY_MAX_MS"
     in GUI_OPERATION_POLICY

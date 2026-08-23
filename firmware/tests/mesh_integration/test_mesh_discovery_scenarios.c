@@ -19,8 +19,7 @@
 enum {
     ANCHOR_COUNT = UWB_DISCOVERY_SLOT_COUNT,
     CLAIM_MAX_ROUNDS = 4u,
-    TABLE_MAX_ROUNDS = 4u,
-    INITIAL_TABLE_MISS_DIVISOR = 11u,
+    TABLE_MAX_ROUNDS = 1u,
     RADIO_GUARD_US = 500u,
     PHASE_GUARD_US = 1000u,
     DISCOVERY_COMMAND_EXPIRY_S = 20u,
@@ -945,11 +944,6 @@ static int validate_table_reception(
     return 0;
 }
 
-static bool initially_missed_table(const struct anchor_state *anchor)
-{
-    return anchor->assignment_slot % INITIAL_TABLE_MISS_DIVISOR == 0u;
-}
-
 static int publish_table_and_collect_acks(
     struct mesh_sim_world *world,
     struct anchor_state *anchors,
@@ -963,15 +957,6 @@ static int publish_table_and_collect_acks(
             DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
             DISCOVERY_ASSIGNMENT_MAX_HOPS);
     size_t first_round_acked = 0u;
-    size_t expected_initial_misses = 0u;
-
-    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
-        if (initially_missed_table(&anchors[i])) {
-            expected_initial_misses++;
-        }
-    }
-    REQUIRE(expected_initial_misses > 0u,
-            "deterministic table-miss subset is empty");
 
     for (uint8_t round = 0u; round < TABLE_MAX_ROUNDS; round++) {
         bool table_decoded_this_round[ANCHOR_COUNT] = { false };
@@ -1005,17 +990,10 @@ static int publish_table_and_collect_acks(
                 &world->transmissions[table_transmission];
             uint64_t propagation_us =
                 world->propagation_us[gateway_index][anchors[i].node_index];
-            uint64_t arrival_start_us = table_start_us + propagation_us;
             uint64_t rx_start_us = table_start_us - RADIO_GUARD_US;
             uint64_t rx_end_us;
 
-            if (round == 0u && initially_missed_table(&anchors[i])) {
-                uint64_t airtime_us = transmission->end_us - transmission->start_us;
-
-                rx_end_us = arrival_start_us + airtime_us / 2u;
-            } else {
-                rx_end_us = transmission->end_us + propagation_us + RADIO_GUARD_US;
-            }
+            rx_end_us = transmission->end_us + propagation_us + RADIO_GUARD_US;
             ret = mesh_sim_schedule_rx(world,
                                        anchors[i].node_index,
                                        rx_start_us,
@@ -1049,15 +1027,9 @@ static int publish_table_and_collect_acks(
             REQUIRE(reception != NULL && matches == 1u,
                     "table reception round=%u index=%zu matches=%zu",
                     round, i, matches);
-            if (reception->outcome != MESH_SIM_RX_DECODED) {
-                REQUIRE(round == 0u && initially_missed_table(&anchors[i]) &&
-                        world->rx_windows[table_rx_windows[i]].end_rctu <
-                            reception->end_rctu,
-                        "unexpected table miss round=%u slot=%u outcome=%u",
-                        round, anchors[i].assignment_slot, reception->outcome);
-                summary->initial_table_misses++;
-                continue;
-            }
+            REQUIRE(reception->outcome == MESH_SIM_RX_DECODED,
+                    "single-origin table missed round=%u slot=%u outcome=%u",
+                    round, anchors[i].assignment_slot, reception->outcome);
             REQUIRE(world->rx_windows[table_rx_windows[i]].start_rctu <=
                         reception->start_rctu &&
                     world->rx_windows[table_rx_windows[i]].end_rctu >=
@@ -1223,9 +1195,9 @@ static int publish_table_and_collect_acks(
         }
     }
 
-    REQUIRE(summary->initial_table_misses == expected_initial_misses,
-            "initial table misses=%zu expected=%zu",
-            summary->initial_table_misses, expected_initial_misses);
+    REQUIRE(summary->initial_table_misses == 0u,
+            "continuous-RX anchors missed single table origin count=%zu",
+            summary->initial_table_misses);
     for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
         REQUIRE(anchors[i].table_received && anchors[i].acked,
                 "table/ACK incomplete slot=%u table=%u ack=%u first_round=%u",
@@ -1233,20 +1205,17 @@ static int publish_table_and_collect_acks(
                 anchors[i].table_received ? 1u : 0u,
                 anchors[i].acked ? 1u : 0u,
                 anchors[i].table_first_round);
-        if (initially_missed_table(&anchors[i])) {
-            REQUIRE(anchors[i].table_first_round == 1u,
-                    "missed table slot=%u recovered_round=%u expected=1",
-                    anchors[i].assignment_slot,
-                    anchors[i].table_first_round);
-        }
+        REQUIRE(anchors[i].table_first_round == 0u,
+                "table slot=%u first_round=%u expected=0",
+                anchors[i].assignment_slot,
+                anchors[i].table_first_round);
     }
-    REQUIRE(first_round_acked > 0u && first_round_acked < ANCHOR_COUNT,
-            "cumulative ACK retry not exercised first_round=%zu",
+    REQUIRE(first_round_acked == ANCHOR_COUNT,
+            "single TABLE origin did not collect every ACK first_round=%zu",
             first_round_acked);
-    REQUIRE(summary->table_rounds >= 2u &&
-            summary->table_rounds <= TABLE_MAX_ROUNDS &&
+    REQUIRE(summary->table_rounds == TABLE_MAX_ROUNDS &&
             summary->ack_collisions == 0u,
-            "table retry/order evidence rounds=%u ACK collisions=%zu",
+            "single-origin table evidence rounds=%u ACK collisions=%zu",
             summary->table_rounds, summary->ack_collisions);
     REQUIRE(decoded_state_count(anchors, DISCOVERY_ASSIGNMENT_PHASE_TABLE) ==
                 ANCHOR_COUNT &&

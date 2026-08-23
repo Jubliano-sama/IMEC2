@@ -829,6 +829,29 @@ static void test_bounded_control_flood_runs_four_successful_rf_opportunities(voi
     assert(event.attempts_started == 4u);
 }
 
+static void test_single_control_origin_runs_exactly_one_rf_opportunity(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        146u, NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN, 1000u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t handle;
+
+    init_running(&comm, 0u);
+    handle = submit_request(&comm, &request, 0u);
+    assert(node_comm_acquire(&comm, 0u, &lease) == 0);
+    assert(lease.handle == handle);
+    assert(lease.attempt_number == 1u);
+    assert(node_comm_lease_note_rf_started(&comm, &lease, 0u) == 0);
+    assert(node_comm_lease_complete(&comm, &lease,
+                                    NODE_COMM_DELIVERY_SUCCEEDED, 0u) == 0);
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+    assert(node_comm_acquire(&comm, 1u, &lease) == -EAGAIN);
+}
+
 static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wave(void)
 {
     struct node_comm comm;
@@ -1330,10 +1353,12 @@ static void test_all_delivery_profiles_use_priority_then_fifo_order(void)
         NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
     };
     const enum node_comm_delivery_profile expected[] = {
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
+        NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
         NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
         NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
@@ -2135,6 +2160,7 @@ int main(void)
     test_next_service_due_tracks_ready_retry_and_deadline();
     test_inflight_attempt_can_finish_while_quiescing();
     test_bounded_control_flood_runs_four_successful_rf_opportunities();
+    test_single_control_origin_runs_exactly_one_rf_opportunity();
     test_delivered_control_redrive_retains_identity_and_starts_fresh_wave();
     test_delivered_control_redrive_rejects_other_profiles();
     test_twenty_independent_nodes_diversify_destructive_collisions();

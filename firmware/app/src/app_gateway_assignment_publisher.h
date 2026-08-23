@@ -69,6 +69,11 @@ int app_gateway_assignment_publisher_commit_prepared_batch(
     const struct gateway_command_event *base_event);
 bool app_gateway_assignment_publisher_abort_prepared_batch(
     const struct gateway_command_event *base_event);
+/* Explicitly abandon any active batch with this exact assignment identity.
+ * This is reserved for a user-requested clean-slate RAM-only assignment,
+ * where stale publication telemetry must not block the replacement run. */
+bool app_gateway_assignment_publisher_discard_batch(
+    const struct gateway_command_event *base_event);
 void app_gateway_assignment_publisher_stage_table_ready(
     const struct gateway_command_event *event);
 bool app_gateway_assignment_publisher_capture_terminal(

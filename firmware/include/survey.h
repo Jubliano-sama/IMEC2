@@ -660,6 +660,7 @@ enum survey_gateway_collection_decision {
 enum survey_gateway_collection_decision survey_gateway_collection_decide(
     bool emission_horizon_elapsed,
     bool safety_deadline_elapsed,
+    bool reports_settled,
     size_t report_count,
     uint16_t expected_count,
     bool expected_present);

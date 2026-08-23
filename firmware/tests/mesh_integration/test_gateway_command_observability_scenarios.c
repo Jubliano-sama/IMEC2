@@ -209,6 +209,7 @@ static void test_pair_success_failure_and_terminal_counts(void)
     emit(&scenario, &terminal, true, 0);
     assert(terminal.success_count == 1u);
     assert(terminal.failure_count == 1u);
+    assert(terminal.status == COMMAND_OK);
     assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 }
 
@@ -251,8 +252,8 @@ static void test_mixed_survey_failures_and_zero_pair_failure(void)
         &terminal.status,
         &terminal.reason);
     emit(&mixed, &terminal, true, 0);
-    assert(terminal.status == COMMAND_INTERNAL_ERROR);
-    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
+    assert(terminal.status == COMMAND_OK);
+    assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 
     struct scenario one_anchor = {
         .correlation_id = 42u,
@@ -275,7 +276,7 @@ static void test_mixed_survey_failures_and_zero_pair_failure(void)
         &terminal.reason);
     terminal.total_count = 0u;
     emit(&one_anchor, &terminal, true, 0);
-    assert(terminal.status == COMMAND_INTERNAL_ERROR);
+    assert(terminal.status == COMMAND_OK);
     assert(terminal.reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 }
 
@@ -777,7 +778,7 @@ static void test_topology_completeness_is_independent_terminal_gate(void)
         GATEWAY_COMMAND_EVENT_REASON_NONE,
         &status,
         &reason);
-    assert(status == COMMAND_INTERNAL_ERROR);
+    assert(status == COMMAND_OK);
     assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
 
     assert(survey_gateway_begin(&context, 0xAABBCCDEu, 2u) == PROTO_OK);

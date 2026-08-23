@@ -161,11 +161,14 @@ int survey_extract_expected_node_count_tlv(const uint8_t *payload,
 enum survey_gateway_collection_decision survey_gateway_collection_decide(
     bool emission_horizon_elapsed,
     bool safety_deadline_elapsed,
+    bool reports_settled,
     size_t report_count,
     uint16_t expected_count,
     bool expected_present)
 {
-    if (!emission_horizon_elapsed) {
+    if (!emission_horizon_elapsed &&
+        !(reports_settled && expected_present &&
+          report_count == expected_count)) {
         return SURVEY_GATEWAY_COLLECTION_WAIT;
     }
     if (!expected_present) {
@@ -983,13 +986,14 @@ int survey_discovery_report_delay_ms(const struct survey_discovery_config *confi
                                      uint32_t *delay_ms)
 {
     uint32_t discovery_duration_ms;
+    uint32_t response_offset_ms;
     uint64_t delay;
 
     if (delay_ms == NULL) {
         return PROTO_ERR_ARG;
     }
     if (survey_discovery_config_validate(config) != PROTO_OK ||
-        report_slot_ms == 0u ||
+        report_slot_ms != OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS ||
         gateway_hop_count == 0u ||
         gateway_hop_count > SURVEY_DEFAULT_TTL ||
         anchor_slot >= config->slot_count) {
@@ -997,9 +1001,14 @@ int survey_discovery_report_delay_ms(const struct survey_discovery_config *confi
     }
 
     discovery_duration_ms = survey_discovery_duration_ms(config);
-    delay = (uint64_t)discovery_duration_ms +
-            ((((uint64_t)(gateway_hop_count - 1u) * config->slot_count) +
-              anchor_slot) * report_slot_ms);
+    if (operation_policy_first_contact_offset_ms(anchor_slot,
+                                                 config->slot_count,
+                                                 gateway_hop_count,
+                                                 &response_offset_ms) !=
+        PROTO_OK) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    delay = (uint64_t)discovery_duration_ms + response_offset_ms;
     if (delay > UINT32_MAX) {
         return PROTO_ERR_NO_SPACE;
     }

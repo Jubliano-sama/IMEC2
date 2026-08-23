@@ -241,10 +241,13 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertIn("gateway_survey_work_schedule(", note)
         self.assertIn("SURVEY_GATEWAY_DUE_BOUNDARY_POLL, 0u", note)
 
-    def test_discovery_confirmation_is_telemetry_not_collection_permission(
+    def test_discovery_confirmation_only_proves_reports_settled(
         self,
     ) -> None:
         note = function_body(SURVEY, "gateway_note_survey_ack_confirm")
+        admission = function_body(
+            SURVEY, "gateway_handle_survey_discovery_report"
+        )
         wait = function_body(
             CONTROL, "gateway_survey_wait_for_discovery_collection"
         )
@@ -255,7 +258,24 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         self.assertNotIn("ack_confirms_complete", wait)
         self.assertNotIn("ACK_BARRIER", wait)
-        self.assertNotIn("gateway_survey_discovery_ack_confirm_mask", wait)
+        self.assertNotIn(
+            "gateway_survey_discovery_ack_confirm_mask", admission
+        )
+
+        decision = wait.index("survey_gateway_collection_decide(")
+        decision_end = wait.index(");", decision)
+        decision_call = wait[decision:decision_end]
+        self.assertIn(
+            "gateway_survey_discovery_ack_confirm_mask", decision_call
+        )
+        self.assertIn("gateway_survey_context.report_count", decision_call)
+        self.assertNotIn(
+            "gateway_survey_discovery_ack_confirm_mask", wait[:decision]
+        )
+        self.assertNotIn(
+            "gateway_survey_discovery_ack_confirm_mask",
+            wait[decision_end:],
+        )
 
     def test_only_successful_responder_start_skips_ack_confirm_barrier(
         self,
@@ -304,29 +324,31 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         wait_branch = wait.index(
             "if (decision == SURVEY_GATEWAY_COLLECTION_WAIT)", decision
         )
-        emission_choice = wait.index(
-            "emission_horizon_elapsed ?", wait_branch
-        )
-        safety_choice = wait.index(
-            "gateway_survey_collection_deadline_ms", emission_choice
+        adaptive_choice = wait.index(
+            "now_ms, receive_deadline_ms", wait_branch
         )
         wait_schedule = wait.index(
-            "SURVEY_GATEWAY_DUE_BOUNDARY_POLL, wait_ms", safety_choice
+            "SURVEY_GATEWAY_DUE_BOUNDARY_POLL, wait_ms", adaptive_choice
         )
         collection_clear = wait.index(
             "gateway_survey_collection_pending = false", wait_schedule
         )
 
         self.assertIn(
-            "gateway_survey_collection_emission_deadline_ms",
-            wait[emission_choice:wait_schedule],
-        )
-        self.assertIn(
-            "gateway_survey_collection_deadline_ms",
-            wait[emission_choice:wait_schedule],
+            "receive_deadline_ms",
+            wait[adaptive_choice:wait_schedule],
         )
         self.assertLess(wait_schedule, collection_clear)
-        self.assertNotIn("ack_confirm", wait)
+        decision_call = wait[decision:wait.index(");", decision)]
+        self.assertIn(
+            "gateway_survey_discovery_ack_confirm_mask", decision_call
+        )
+        self.assertNotIn(
+            "gateway_survey_discovery_ack_confirm_mask",
+            wait[wait_branch:],
+            "ACK confirmation may settle complete reports but must not grant "
+            "the ordinary emission or safety horizon",
+        )
 
     def test_assignment_claim_advances_but_table_commit_requires_confirm(
         self,
@@ -385,6 +407,36 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             complete,
         )
 
+    def test_table_dispatch_cannot_publish_a_precommit_completion_head(
+        self,
+    ) -> None:
+        table = function_body(
+            CONTROL, "gateway_discovery_assignment_publish_table"
+        )
+        complete = function_body(
+            CONTROL, "gateway_discovery_assignment_complete_success_locked"
+        )
+
+        self.assertNotIn(
+            "GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE",
+            table,
+            "a generic ACK-required completion event can be host-accepted "
+            "while the durable publisher is only prepared, leaving the BLE "
+            "head unretirable and stranding every post-END record behind it",
+        )
+        self.assertNotIn("gateway_observe_command_event", table)
+        mapping_commit = complete.index(
+            "app_gateway_assignment_publisher_commit_prepared_batch"
+        )
+        table_ready = complete.index(
+            "app_gateway_assignment_publisher_stage_table_ready"
+        )
+        terminal_capture = complete.index(
+            "gateway_observe_command_event(&event, true)"
+        )
+        self.assertLess(mapping_commit, table_ready)
+        self.assertLess(table_ready, terminal_capture)
+
     def test_assignment_table_round_owner_survives_ack_confirm_barrier(
         self,
     ) -> None:
@@ -403,13 +455,20 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         fast_complete = finalize[quorum:expiry]
         completion_call = fast_complete.index(
-            "gateway_discovery_assignment_complete_success_locked()"
+            "gateway_discovery_assignment_publish_end()"
         )
 
         self.assertNotIn(
             "gateway_discovery_assignment_state.round_open = false",
-            fast_complete[:completion_call],
+            fast_complete[:fast_complete.index(
+                "gateway_discovery_assignment_state.response_ack_settle_armed = false"
+            )],
             "the table-round owner must survive a pending ACK_CONFIRM barrier",
+        )
+        self.assertIn(
+            "gateway_discovery_assignment_state.round_open = false",
+            fast_complete[:completion_call],
+            "the exact END must take ownership after the ACK_CONFIRM barrier",
         )
         table_barrier = complete.index(
             "gateway_discovery_assignment_missing_confirmation_count_locked()"
@@ -821,8 +880,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
 
         decision = wait.index("survey_gateway_collection_decide(")
         for policy_input in (
-            "gateway_survey_collection_emission_deadline_ms",
-            "gateway_survey_collection_deadline_ms",
+            "receive_deadline_ms",
             "gateway_survey_context.report_count",
             "gateway_survey_expected_node_count",
             "gateway_survey_expected_node_count_present",
@@ -832,9 +890,65 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             "SURVEY_GATEWAY_COLLECTION_COUNT_MISMATCH", decision
         )
         self.assertIn("gateway_survey_finish_status(", wait[mismatch:])
+        self.assertIn("DBG_SURVEY_COLLECTION_PARTIAL", wait[mismatch:])
+        self.assertIn("return false;", wait[mismatch:])
         self.assertIsNone(
             re.search(r"gateway_survey_context\.report_count\s*=(?!=)", wait),
-            "an expected-count mismatch must fail explicitly, never truncate",
+            "partial continuation must never fabricate or truncate reports",
+        )
+
+    def test_collection_deadline_advances_one_observed_depth_at_a_time(self) -> None:
+        route = function_body(SURVEY, "gateway_route_survey_reachability")
+        refresh = function_body(
+            SURVEY, "gateway_survey_refresh_adaptive_collection_deadline"
+        )
+        report = function_body(
+            SURVEY, "gateway_handle_survey_discovery_report"
+        )
+        wait = function_body(
+            CONTROL, "gateway_survey_wait_for_discovery_collection"
+        )
+
+        self.assertIn(
+            "gateway_survey_adaptive_depth_wait_ms(1u)", route
+        )
+        self.assertIn(
+            "gateway_survey_adaptive_observed_hop_count + 1u", refresh
+        )
+        self.assertIn(
+            "gateway_survey_adaptive_max_hop_count", refresh
+        )
+        self.assertIn(
+            "gateway_survey_collection_deadline_ms", refresh
+        )
+        self.assertIn(
+            "gateway_survey_refresh_adaptive_collection_deadline(", report
+        )
+        self.assertIn(
+            "receive_deadline_ms = gateway_survey_collection_receive_deadline_ms()",
+            wait,
+        )
+
+    def test_late_valid_discovery_report_retires_transport_without_mutation(self) -> None:
+        preflight = function_body(
+            SURVEY, "gateway_survey_preflight_discovery_report"
+        )
+        report = function_body(
+            SURVEY, "gateway_handle_survey_discovery_report"
+        )
+        closed = preflight.index("if (!gateway_survey_collection_pending)")
+        deadline = preflight.index(
+            "gateway_survey_collection_receive_deadline_ms()"
+        )
+
+        self.assertLess(closed, deadline)
+        self.assertIn(
+            "return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;",
+            preflight[closed:deadline],
+        )
+        self.assertIn(
+            "if (ret == APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE)",
+            report,
         )
 
     def test_collection_safety_deadline_is_frozen_at_command_origin(self) -> None:

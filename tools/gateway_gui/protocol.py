@@ -1523,10 +1523,9 @@ def parse_stream_record(record: bytes) -> Packet:
 def is_gateway_assignment_publisher_event(event: GatewayCommandEvent) -> bool:
     """Return whether an event is one durable assignment-publication item.
 
-    Only this narrow producer domain carries an outer ACK-required envelope,
-    therefore only it can cross the GUI's receipt/durable-replay boundary.
-    Live command progress deliberately remains ordinary telemetry even when
-    it shares an enumeration stage number with a published mapping.
+    Only this narrow producer domain advances the assignment publication
+    barrier. Other retained command events still require an exact host receipt,
+    but their stream identity does not represent assignment publication.
     """
 
     if (
@@ -1578,10 +1577,10 @@ def is_gateway_assignment_publisher_event(event: GatewayCommandEvent) -> bool:
 def validate_gateway_command_event_packet(packet: Packet) -> GatewayCommandEvent:
     """Validate one command event before it reaches GUI state.
 
-    All command observability is self-addressed and event-sequence bound, but
-    only publisher items carry the ACK-required outer marker. Generic queued,
-    progress, and early-terminal telemetry is valid with zero route/assignment
-    fields and remains best effort, so it cannot block a host custody head.
+    All command observability is self-addressed and event-sequence bound.
+    Retained generic events and assignment publisher items both carry the
+    ACK-required outer marker; publisher classification is a separate concern
+    used only by the assignment replay barrier.
     """
 
     if packet.msg_type != MSG_GATEWAY_COMMAND_EVENT:
@@ -1592,7 +1591,7 @@ def validate_gateway_command_event_packet(packet: Packet) -> GatewayCommandEvent
         raise DecodeError("gateway command events require gateway stream transport")
     if packet.flags not in (0, FLAG_GATEWAY_ACK_REQUIRED) or packet.stream_flags != 0:
         raise DecodeError(
-            "gateway command event requires zero or publisher ACK-required envelope flags"
+            "gateway command event requires zero or ACK-required envelope flags"
         )
     if (
         packet.src_id == 0
@@ -1620,10 +1619,6 @@ def validate_gateway_command_event_packet(packet: Packet) -> GatewayCommandEvent
         != (event.stage == GATEWAY_COMMAND_EVENT_STAGE_COMPLETE)
     ):
         raise DecodeError("gateway command event identity/stage binding is invalid")
-    if packet.flags == FLAG_GATEWAY_ACK_REQUIRED and not is_gateway_assignment_publisher_event(event):
-        raise DecodeError(
-            "ACK-required gateway command event is not a durable assignment publisher item"
-        )
     return event
 
 

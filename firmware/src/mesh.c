@@ -19,6 +19,51 @@ _Static_assert(MESH_GATEWAY_ACK_CONFIRM_IDENTITY_VALUE_LEN <= UINT8_MAX &&
                MESH_GATEWAY_ACK_CONFIRM_PAYLOAD_LEN <= UINT8_MAX,
                "gateway ACK confirmation must fit one compact TLV");
 
+uint32_t mesh_flood_copy_diversification_ms(
+    uint64_t local_id,
+    const struct proto_packet *packet,
+    uint8_t copy_index)
+{
+    uint64_t mixed;
+
+    if (local_id == 0u || packet == NULL || copy_index == 0u) {
+        return 0u;
+    }
+    mixed = local_id ^ packet->src_id ^
+            ((uint64_t)packet->session_id << 32) ^
+            ((uint64_t)packet->seq << 16) ^
+            ((uint64_t)copy_index * UINT64_C(0x9e3779b97f4a7c15));
+    mixed ^= mixed >> 30;
+    mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+    mixed ^= mixed >> 27;
+    mixed *= UINT64_C(0x94d049bb133111eb);
+    mixed ^= mixed >> 31;
+    return (uint32_t)(mixed %
+        (MESH_FLOOD_COPY_DIVERSIFICATION_WINDOW_MS + 1u));
+}
+
+uint32_t mesh_enumeration_relay_delay_ms(
+    uint64_t local_id,
+    const struct proto_packet *packet)
+{
+    uint64_t mixed;
+
+    if (local_id == 0u || packet == NULL) {
+        return 0u;
+    }
+    mixed = local_id ^ packet->src_id ^
+            ((uint64_t)packet->session_id << 32) ^
+            ((uint64_t)packet->seq << 16) ^
+            UINT64_C(0xd1b54a32d192ed03);
+    mixed ^= mixed >> 30;
+    mixed *= UINT64_C(0xbf58476d1ce4e5b9);
+    mixed ^= mixed >> 27;
+    mixed *= UINT64_C(0x94d049bb133111eb);
+    mixed ^= mixed >> 31;
+    return (uint32_t)(mixed % MESH_ENUMERATION_RELAY_SLOT_COUNT) *
+           MESH_ENUMERATION_RELAY_SLOT_MS;
+}
+
 bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
                                     uint8_t radio_channel,
                                     bool synthetic_mesh_data_enabled)

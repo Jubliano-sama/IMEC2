@@ -49,6 +49,32 @@ static struct operation_policy pair_policy(void)
     return policy;
 }
 
+static void test_first_contact_cells_follow_direct_ack_and_relay_cadence(void)
+{
+    uint32_t offset_ms = 0u;
+
+    assert(OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS == 450u);
+    assert(operation_policy_first_contact_cell_ms(1u) == 450u);
+    assert(operation_policy_first_contact_cell_ms(2u) == 1090u);
+    assert(operation_policy_first_contact_cell_ms(3u) == 1730u);
+    assert(operation_policy_first_contact_cell_ms(0u) == 4930u);
+
+    assert(operation_policy_first_contact_offset_ms(
+               0u, 3u, 1u, &offset_ms) == PROTO_OK);
+    assert(offset_ms == 0u);
+    assert(operation_policy_first_contact_offset_ms(
+               2u, 3u, 1u, &offset_ms) == PROTO_OK);
+    assert(offset_ms == 900u);
+    assert(operation_policy_first_contact_offset_ms(
+               0u, 3u, 2u, &offset_ms) == PROTO_OK);
+    assert(offset_ms == 1350u);
+    assert(operation_policy_first_contact_offset_ms(
+               2u, 3u, 2u, &offset_ms) == PROTO_OK);
+    assert(offset_ms == 3530u);
+    assert(operation_policy_first_contact_offset_ms(
+               3u, 3u, 1u, &offset_ms) == PROTO_ERR_ARG);
+}
+
 static void test_defaults_are_valid_and_preserve_robust_baseline(void)
 {
     struct operation_policy_set set;
@@ -62,6 +88,7 @@ static void test_defaults_are_valid_and_preserve_robust_baseline(void)
     assert(assignment.value.assignment.expected_anchor_count == 0u);
     assert(assignment.value.assignment.operation_budget_ms == 1800000u);
     assert(assignment.value.assignment.response_spread_ms == 1000u);
+    assert(!assignment.value.assignment.ram_only_iteration);
     assert(discovery.value.discovery.start_delay_ms == 25104u);
     assert(discovery.value.discovery.slot_ms == 200u);
     assert(discovery.value.discovery.slot_count == 6u);
@@ -69,7 +96,7 @@ static void test_defaults_are_valid_and_preserve_robust_baseline(void)
     assert(discovery.value.discovery.report_grace_ms == 250u);
     assert(discovery.value.discovery.operation_budget_ms == 260277u);
     assert(pair.value.pair.max_reruns == 2u);
-    assert(pair.value.pair.max_parallel_pairs == 25u);
+    assert(pair.value.pair.max_parallel_pairs == 1u);
 
     memset(&set, 0xa5, sizeof(set));
     assert(operation_policy_set_from_tlvs(NULL, 0u, &set) == PROTO_OK);
@@ -78,7 +105,8 @@ static void test_defaults_are_valid_and_preserve_robust_baseline(void)
     assert(!set.pair_present);
     assert(set.assignment.response_spread_ms == 1000u);
     assert(set.discovery.round_count == 4u);
-    assert(set.pair.max_parallel_pairs == 25u);
+    assert(!set.assignment.ram_only_iteration);
+    assert(set.pair.max_parallel_pairs == 1u);
 }
 
 static void test_generic_discovery_validation_enforces_only_the_physical_floor(void)
@@ -90,14 +118,14 @@ static void test_generic_discovery_validation_enforces_only_the_physical_floor(v
 
     policy.value.discovery.start_delay_ms =
         OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS;
-    assert(policy.value.discovery.start_delay_ms == 2000u);
+    assert(policy.value.discovery.start_delay_ms == 20000u);
     assert(operation_policy_validate(&policy) == PROTO_OK);
     assert(operation_policy_append_tlv(payload, sizeof(payload),
                                        &payload_len, &policy) == PROTO_OK);
     assert(operation_policy_set_from_tlvs(payload, payload_len, &decoded) ==
            PROTO_OK);
     assert(decoded.discovery_present);
-    assert(decoded.discovery.start_delay_ms == 2000u);
+    assert(decoded.discovery.start_delay_ms == 20000u);
 
     policy.value.discovery.start_delay_ms =
         OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS - 1u;
@@ -125,7 +153,7 @@ static void test_all_families_round_trip_in_one_payload(void)
     discovery.value.discovery.report_grace_ms = 1200u;
     discovery.value.discovery.operation_budget_ms = 300000u;
     pair.value.pair.max_reruns = 1u;
-    pair.value.pair.max_parallel_pairs = 8u;
+    pair.value.pair.max_parallel_pairs = 1u;
 
     assert(tlv_append_u16(payload, sizeof(payload), &payload_len,
                           TLV_COMMAND_ID,
@@ -156,7 +184,7 @@ static void test_all_families_round_trip_in_one_payload(void)
     assert(decoded.discovery.report_grace_ms == 1200u);
     assert(decoded.discovery.operation_budget_ms == 300000u);
     assert(decoded.pair.max_reruns == 1u);
-    assert(decoded.pair.max_parallel_pairs == 8u);
+    assert(decoded.pair.max_parallel_pairs == 1u);
 }
 
 static void test_assignment_is_equal_response_policy_without_hop_field(void)
@@ -171,6 +199,7 @@ static void test_assignment_is_equal_response_policy_without_hop_field(void)
     original.value.assignment.expected_anchor_count = 12u;
     original.value.assignment.operation_budget_ms = 1600000u;
     original.value.assignment.response_spread_ms = 750u;
+    original.value.assignment.ram_only_iteration = true;
     assert(operation_policy_append_tlv(payload, sizeof(payload), &payload_len,
                                        &original) == PROTO_OK);
     assert(payload_len == OPERATION_POLICY_ASSIGNMENT_TLV_LEN);
@@ -179,13 +208,15 @@ static void test_assignment_is_equal_response_policy_without_hop_field(void)
     assert(value_len == OPERATION_POLICY_ASSIGNMENT_VALUE_LEN);
     assert(value[0] == OPERATION_POLICY_VERSION);
     assert(value[1] == OPERATION_POLICY_FAMILY_ASSIGNMENT);
-    assert(value[2] == OPERATION_POLICY_FLAGS_NONE);
+    assert(value[2] ==
+           OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION);
     assert(proto_get_u16_le(&value[3]) == 12u);
     assert(proto_get_u32_le(&value[5]) == 1600000u);
     assert(proto_get_u16_le(&value[9]) == 750u);
     assert(operation_policy_decode_value(value, value_len, &decoded) ==
            PROTO_OK);
     assert(decoded.value.assignment.response_spread_ms == 750u);
+    assert(decoded.value.assignment.ram_only_iteration);
 }
 
 static void test_duplicate_family_is_rejected_but_distinct_families_repeat_type(void)
@@ -247,7 +278,7 @@ static void test_decode_rejects_noncanonical_headers_and_lengths(void)
     assert(operation_policy_decode_value(value, raw_len, &decoded) ==
            PROTO_ERR_MALFORMED);
     memcpy(value, raw, raw_len);
-    value[2] = 1u;
+    value[2] = 2u;
     assert(operation_policy_decode_value(value, raw_len, &decoded) ==
            PROTO_ERR_MALFORMED);
     assert(operation_policy_decode_value(
@@ -301,7 +332,7 @@ static void test_assignment_bounds(void)
     policy.value.assignment.expected_anchor_count = 3u;
     assert(operation_policy_assignment_required_budget_ms(
                &policy.value.assignment, &required_budget_ms) == PROTO_OK);
-    assert(required_budget_ms == 418524u);
+    assert(required_budget_ms == 391444u);
     policy.value.assignment.operation_budget_ms = required_budget_ms;
     assert(operation_policy_validate(&policy) == PROTO_OK);
     policy.value.assignment.operation_budget_ms = required_budget_ms - 1u;
@@ -320,7 +351,7 @@ static void test_discovery_bounds_include_configurable_rounds(void)
 {
     struct operation_policy policy = discovery_policy();
     struct operation_policy_discovery_budget_terms terms = {
-        .report_slot_ms = 2270u,
+        .report_slot_ms = OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS,
         .report_custody_ms = 17000u,
         .report_delivery_tail_ms = 63060u,
         .terminal_scheduling_guard_ms = 102u,
@@ -356,7 +387,7 @@ static void test_discovery_bounds_include_configurable_rounds(void)
     assert(operation_policy_discovery_required_budget_ms(
                &policy.value.discovery, &terms, &required_budget_ms) ==
            PROTO_OK);
-    assert(required_budget_ms == 123937u);
+    assert(required_budget_ms == 113017u);
     policy.value.discovery.operation_budget_ms = required_budget_ms;
     assert(operation_policy_validate(&policy) == PROTO_OK);
     policy.value.discovery.operation_budget_ms = required_budget_ms - 1u;
@@ -375,7 +406,7 @@ static void test_discovery_bounds_include_configurable_rounds(void)
     assert(operation_policy_discovery_required_budget_ms(
                &policy.value.discovery, &terms, &required_budget_ms) ==
            PROTO_OK);
-    assert(required_budget_ms == 318767u);
+    assert(required_budget_ms == 227767u);
     policy.value.discovery.operation_budget_ms = required_budget_ms;
     assert(operation_policy_validate(&policy) == PROTO_OK);
 
@@ -480,6 +511,7 @@ static void test_malformed_container_and_no_space_fail_closed(void)
 
 int main(void)
 {
+    test_first_contact_cells_follow_direct_ack_and_relay_cadence();
     test_defaults_are_valid_and_preserve_robust_baseline();
     test_generic_discovery_validation_enforces_only_the_physical_floor();
     test_all_families_round_trip_in_one_payload();

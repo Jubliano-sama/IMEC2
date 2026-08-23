@@ -49,6 +49,7 @@
 #include "mesh_preemption.h"
 #include "mesh_relay.h"
 #include "protocol.h"
+#include "protocol_rx_lifecycle.h"
 #include "report.h"
 #include "route.h"
 #include "semantic_digest.h"
@@ -67,6 +68,10 @@
 #include <string.h>
 
 LOG_MODULE_REGISTER(app_mesh_report, LOG_LEVEL_DBG);
+
+/* RAM-only, per-anchor flood activation for the current enumeration epoch. */
+static struct protocol_rx_downstream_activation
+    mesh_enumeration_downstream_activation;
 
 #define MESH_ROUTE_TEST_ROUTE_REPLY_DELAY_MS 50u
 #define MESH_ROUTE_TEST_ROUTE_REPLY_REPEAT_COUNT 2u
@@ -101,6 +106,9 @@ _Static_assert(MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS >=
 _Static_assert(MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS <
                    DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS,
                "topology contact deadline must fit direct response custody");
+_Static_assert(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS <=
+                   UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
+               "enumeration activation wake train must fit the wake wire");
 #define MESH_EVENT_ORIGIN_REPLAY_LIFETIME_MS \
     MESH_EVENT_NEGOTIATION_DEADLINE_MS
 #define MESH_ROUTE_TEST_EMBEDDED_REPLY_GUARD_MS 5u
@@ -598,6 +606,7 @@ BUILD_ASSERT(sizeof(mesh_ch9_close_intents) <= 64u,
 #endif
 static K_MUTEX_DEFINE(mesh_uwb_rx_rearm_lock);
 static uint32_t mesh_uwb_rx_rearm_delay_ms;
+static uint32_t mesh_uwb_rx_rearm_generation;
 static bool mesh_uwb_rx_rearm_pending;
 static struct app_mesh_rf_retry_state mesh_route_request_wake_rf_retry;
 static struct app_mesh_rf_retry_state mesh_route_request_control_rf_retry;
@@ -1142,6 +1151,18 @@ static int mesh_send_route_wake_train(uint64_t target_id,
                                       enum fw_c5_tx_intent c5_tx_intent,
                                       bool *rf_started_out,
                                       uint64_t *rf_started_at_ms_out);
+static int mesh_send_route_wake_train_with_duration(
+    uint64_t target_id,
+    const struct mesh_outbound *embedded_route_req,
+    bool *embedded_sent,
+    uint8_t purpose,
+    const char *reason,
+    const struct mesh_outbound *authorization_candidate,
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    enum fw_c5_tx_intent c5_tx_intent,
+    uint32_t wake_train_ms,
+    bool *rf_started_out,
+    uint64_t *rf_started_at_ms_out);
 static bool mesh_frame_requires_anchor_click_handoff(
     const uint8_t *frame,
     size_t frame_len,

@@ -1081,7 +1081,6 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     fields.random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
     fields.random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
     fields.flood_retry_count = FLOOD_DEFAULT_RETRY_COUNT;
-    fields.flood_packet_age_ms = 0u;
 
     ret = append_gateway_route_adv_tlvs(out->payload,
                                         sizeof(out->payload),

@@ -114,8 +114,8 @@ static void test_route_control_wire_bounds(void)
     assert(MESH_ROUTE_DISCOVERY_MIN_PAYLOAD_LEN == 72u);
     assert(MESH_ROUTE_REQUEST_MAX_PAYLOAD_LEN == 139u);
     assert(MESH_ROUTE_REPLY_MAX_PAYLOAD_LEN == 198u);
-    assert(MESH_GATEWAY_ROUTE_ADV_LEGACY_MAX_PAYLOAD_LEN == 138u);
-    assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN == 179u);
+    assert(MESH_GATEWAY_ROUTE_ADV_LEGACY_MAX_PAYLOAD_LEN == 132u);
+    assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN == 173u);
     assert(MESH_ROUTE_REPLY_ACK_MAX_PAYLOAD_LEN == 34u);
 
     assert(mesh_route_control_payload_len_valid(

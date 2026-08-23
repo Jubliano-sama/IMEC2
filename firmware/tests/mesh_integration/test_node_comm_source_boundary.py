@@ -55,6 +55,90 @@ LEGACY_TRANSPORT_CLIENTS = {
 
 
 class NodeCommSourceBoundaryTests(unittest.TestCase):
+    def test_gateway_ack_is_frozen_before_guard_sleep_or_rf_handoff(self):
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+        handler_start = report.index("static void mesh_handle_result_actions(")
+        handler_end = report.index(
+            "\nstatic ", handler_start + len("static void ")
+        )
+        handler = report[handler_start:handler_end]
+
+        action = handler.index(
+            "if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK)"
+        )
+        snapshot = handler.index(
+            "struct mesh_outbound gateway_ack_snapshot = result->gateway_ack",
+            action,
+        )
+        immutable_view = handler.index(
+            "struct mesh_outbound *gateway_ack = &gateway_ack_snapshot",
+            snapshot,
+        )
+        handoff = handler.index(
+            "mesh_send_causal_channel9_response(", immutable_view
+        )
+        ack_action_end = handler.index("after_gateway_ack:", handoff)
+
+        self.assertLess(action, snapshot)
+        self.assertLess(snapshot, immutable_view)
+        self.assertLess(immutable_view, handoff)
+        self.assertNotIn(
+            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)",
+            handler[immutable_view:handoff],
+        )
+        self.assertEqual(
+            handler[action:ack_action_end].count("result->gateway_ack"), 1
+        )
+        self.assertNotIn("result->gateway_ack", handler[immutable_view:handoff])
+
+    def test_gateway_causal_ack_owns_rx_handoff_before_retune_guard(self):
+        report = read_composed_source(APP_SRC / "app_mesh_report.c")
+        causal_start = report.index(
+            "static int mesh_send_causal_channel9_response("
+        )
+        causal_end = report.index("\nstatic int ", causal_start + 1)
+        causal = report[causal_start:causal_end]
+
+        begin = causal.index("mesh_rx_handoff_begin_control(&abort_scan)")
+        stop = causal.index("mesh_stop_role_scan()", begin)
+        wait = causal.index("mesh_rx_handoff_wait_for_control()", stop)
+        guard = causal.index(
+            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", wait
+        )
+        tx = causal.index("mesh_send_outbound_keep_channel9_awake(", guard)
+        self.assertLess(begin, stop)
+        self.assertLess(stop, wait)
+        self.assertLess(wait, guard)
+        self.assertIn(
+            "out->packet.msg_type == MSG_GATEWAY_ACK", causal[wait:guard]
+        )
+        self.assertLess(guard, tx)
+
+        handler_start = report.index("static void mesh_handle_result_actions(")
+        handler_end = report.index(
+            "\nstatic ", handler_start + len("static void ")
+        )
+        handler = report[handler_start:handler_end]
+        ack_action = handler.index(
+            "if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK)"
+        )
+        ack_action_end = handler.index("after_gateway_ack:", ack_action)
+        ack_callers = handler[ack_action:ack_action_end]
+        self.assertGreaterEqual(
+            ack_callers.count("mesh_send_causal_channel9_response("), 2
+        )
+        self.assertNotIn(
+            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", ack_callers
+        )
+
+        batch_start = report.index("static int mesh_send_current_ch9_ack_batch(")
+        batch_end = report.index("\nstatic ", batch_start + 1)
+        batch = report[batch_start:batch_end]
+        self.assertIn("mesh_send_causal_channel9_response(", batch)
+        self.assertNotIn(
+            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", batch
+        )
+
     def test_facade_async_handoff_has_exact_pre_rf_cancel_and_rf_observation(self):
         report = read_composed_source(APP_SRC / "app_mesh_report.c")
 

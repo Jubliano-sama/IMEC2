@@ -63,7 +63,7 @@ static struct operation_policy_set complete_route_operation_policy(void)
     policy.discovery.report_grace_ms = 1200u;
     policy.discovery.operation_budget_ms = 300000u;
     policy.pair.max_reruns = 1u;
-    policy.pair.max_parallel_pairs = 8u;
+    policy.pair.max_parallel_pairs = 1u;
     return policy;
 }
 

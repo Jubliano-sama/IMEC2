@@ -469,6 +469,12 @@ void dwm3000_driver_last_rx_debug_get(struct dwm3000_rx_debug_snapshot *snapshot
     }
 }
 
+static int finish_abortible_continuous_receive(int ret)
+{
+    atomic_set(&receive_abort_enabled, 0);
+    return ret;
+}
+
 static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_ms,
                                                        uint32_t completion_timeout_ms,
                                                        uint8_t *frame,
@@ -525,21 +531,26 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                             (unsigned int)frame_cap);
     }
 
+    atomic_set(&receive_abort_enabled, 1);
     ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
                                acquire_timeout_ms,
                                &status,
                                true,
                                &observed_at_ms);
     last_status = status;
+    if (ret == -ECANCELED) {
+        dwt_forcetrxoff();
+        return finish_abortible_continuous_receive(-ECANCELED);
+    }
     if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
         driver_stats.rx_failures++;
-        return ret;
+        return finish_abortible_continuous_receive(ret);
     }
     if (ret < 0 && !rx_status_has_activity(status)) {
         dwt_forcetrxoff();
         if (ret != -ETIMEDOUT) {
             driver_stats.rx_failures++;
-            return ret;
+            return finish_abortible_continuous_receive(ret);
         }
         driver_stats.rx_timeouts++;
         if (failure != NULL) {
@@ -551,7 +562,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                 status,
                                 acquire_timeout_ms);
         }
-        return -ETIMEDOUT;
+        return finish_abortible_continuous_receive(-ETIMEDOUT);
     }
 
     if (ret < 0 || (status & RX_ACTIVITY_STATUS_MASK) != 0u ||
@@ -585,7 +596,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                          NULL,
                                          NULL)) {
                     dwt_forcetrxoff();
-                    return -EIO;
+                    return finish_abortible_continuous_receive(-EIO);
                 }
             }
             if (quality != NULL) {
@@ -594,7 +605,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             ret = read_rx_frame(rx_buffer, sizeof(rx_buffer), &raw_len);
             if (ret < 0 && ret != -EMSGSIZE) {
                 driver_stats.rx_failures++;
-                return ret;
+                return finish_abortible_continuous_receive(ret);
             }
             {
                 int clear_ret = clear_status_checked(
@@ -603,7 +614,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
 
                 if (clear_ret < 0) {
                     dwt_forcetrxoff();
-                    return clear_ret;
+                    return finish_abortible_continuous_receive(clear_ret);
                 }
             }
             if (ret < 0) {
@@ -617,7 +628,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                         status,
                                         rearm_count);
                 }
-                return ret;
+                return finish_abortible_continuous_receive(ret);
             }
 
             payload_len = payload_len_without_fcs(raw_len);
@@ -632,7 +643,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                         (unsigned int)payload_len,
                                         (unsigned int)frame_cap);
                 }
-                return -EMSGSIZE;
+                return finish_abortible_continuous_receive(-EMSGSIZE);
             }
 
             memcpy(frame, rx_buffer, payload_len);
@@ -652,7 +663,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                     rearm_count,
                                     completion_active ? 1u : 0u);
             }
-            return 0;
+            return finish_abortible_continuous_receive(0);
         }
 
         if (!completion_active || !activity_seen) {
@@ -672,7 +683,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                 if (failure != NULL) {
                     *failure = last_failure;
                 }
-                return ret;
+                return finish_abortible_continuous_receive(ret);
             }
             remaining_ms = remaining_timeout_ms(completion_deadline_ms);
             if (remaining_ms == 0u) {
@@ -693,7 +704,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                 if (failure != NULL) {
                     *failure = last_failure;
                 }
-                return ret;
+                return finish_abortible_continuous_receive(ret);
             }
             status = 0u;
             ret = wait_status_internal(RX_TERMINAL_STATUS_MASK | RX_ACTIVITY_STATUS_MASK,
@@ -702,9 +713,13 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                        true,
                                        &observed_at_ms);
             last_status = status;
+            if (ret == -ECANCELED) {
+                dwt_forcetrxoff();
+                return finish_abortible_continuous_receive(-ECANCELED);
+            }
             if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
                 driver_stats.rx_failures++;
-                return ret;
+                return finish_abortible_continuous_receive(ret);
             }
             if (ret < 0 && !rx_status_has_activity(status)) {
                 break;
@@ -732,9 +747,13 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                                        true,
                                        &observed_at_ms);
             last_status = status;
+            if (ret == -ECANCELED) {
+                dwt_forcetrxoff();
+                return finish_abortible_continuous_receive(-ECANCELED);
+            }
             if (ret < 0 && ret != -ETIMEDOUT && ret != -ECANCELED) {
                 driver_stats.rx_failures++;
-                return ret;
+                return finish_abortible_continuous_receive(ret);
             }
             if (ret < 0) {
                 last_failure = rx_status_has_activity(status) ?
@@ -766,7 +785,8 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
                             activity_seen ? 1u : 0u,
                             rearm_count);
     }
-    return activity_seen ? -EIO : -ETIMEDOUT;
+    return finish_abortible_continuous_receive(
+        activity_seen ? -EIO : -ETIMEDOUT);
 }
 
 int dwm3000_driver_receive_frame_detailed(uint32_t timeout_ms,

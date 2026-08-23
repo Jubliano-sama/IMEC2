@@ -881,7 +881,6 @@ static void test_prepare_outbound_accepts_all_registered_command_flood_with_rost
            FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
     assert(require_tlv_u8(out.payload, out.payload_len, TLV_FLOOD_RETRY_COUNT) ==
            FLOOD_DEFAULT_RETRY_COUNT);
-    assert(require_tlv_u32(out.payload, out.payload_len, TLV_FLOOD_PACKET_AGE_MS) == 0u);
 }
 
 static void test_extract_options_accepts_all_registered_collection_without_roster(void)

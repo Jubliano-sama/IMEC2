@@ -2007,66 +2007,72 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(core, pending)
         self.assertLess(pending, relay)
 
-        blocks = function_body(
-            ANCHOR_RADIO, "anchor_relay_retry_blocks_scan"
+        planner = function_body(
+            ANCHOR_RADIO, "anchor_relay_retry_plan_scan"
         )
-        active = blocks.index("mesh_relay_tx_active(&mesh_runtime)")
-        backoff = blocks.index(
+        active = planner.index("mesh_relay_tx_active(&mesh_runtime)")
+        backoff = planner.index(
             "MESH_RELAY_TX_WAIT_RETRY_BACKOFF", active
         )
-        reached = blocks.index("uptime_deadline_reached(", backoff)
-        due_rearm = blocks.index(
+        reached = planner.index("uptime_deadline_reached(", backoff)
+        due_rearm = planner.index(
             "ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS", reached
         )
-        remaining = blocks.index("uptime_ms_until_deadline(", due_rearm)
-        scan_window = blocks.index("scan_rx_ms", remaining)
-        completion = blocks.index(
-            "ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS", scan_window
+        remaining = planner.index("uptime_ms_until_deadline(", due_rearm)
+        scan_guard = planner.index("scan_guard_ms =", remaining)
+        completion = planner.index(
+            "ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS", scan_guard
         )
-        retune = blocks.index(
+        retune = planner.index(
             "MESH_RADIO_EVENT_RETUNE_GUARD_MS", completion
         )
-        far_future = blocks.index(">", retune)
-        publish = blocks.index("*retry_ms", far_future)
-        success = blocks.index("return true", publish)
+        imminent = planner.index(
+            "if (remaining_ms <= scan_guard_ms)", retune
+        )
+        publish_retry = planner.index("*retry_ms =", imminent)
+        yield_scan = planner.index("return true", publish_retry)
+        cap_gate = planner.index(
+            "if (*scan_rx_ms >= remaining_ms - scan_guard_ms)", yield_scan
+        )
+        cap_window = planner.index(
+            "*scan_rx_ms = remaining_ms - scan_guard_ms", cap_gate
+        )
+        scan_allowed = planner.index("return false", cap_window)
 
         self.assertLess(active, backoff)
         self.assertLess(backoff, reached)
         self.assertLess(reached, due_rearm)
         self.assertLess(due_rearm, remaining)
-        self.assertLess(remaining, scan_window)
-        self.assertLess(scan_window, completion)
+        self.assertLess(remaining, scan_guard)
+        self.assertLess(scan_guard, completion)
         self.assertLess(completion, retune)
-        self.assertLess(retune, far_future)
-        self.assertLess(far_future, publish)
-        self.assertLess(publish, success)
-        self.assertIn("return false", blocks[:reached])
-        self.assertIn("return false", blocks[far_future:publish])
+        self.assertLess(retune, imminent)
+        self.assertLess(imminent, publish_retry)
+        self.assertLess(publish_retry, yield_scan)
+        self.assertLess(yield_scan, cap_gate)
+        self.assertLess(cap_gate, cap_window)
+        self.assertLess(cap_window, scan_allowed)
+        self.assertIn("return false", planner[:reached])
         self.assertIn(
             "*retry_ms = ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS",
-            blocks[reached:remaining],
+            planner[reached:remaining],
         )
-        self.assertIn("return true", blocks[reached:remaining])
-        self.assertIn("*retry_ms = remaining_ms", blocks[publish:success])
+        self.assertIn("return true", planner[reached:remaining])
+        self.assertIn("*retry_ms = remaining_ms", planner[publish_retry:yield_scan])
         self.assertRegex(
-            blocks[remaining:far_future],
-            r"scan_occupancy_ms\s*=\s*scan_rx_ms\s*\+\s*"
+            planner[scan_guard:imminent],
+            r"scan_guard_ms\s*=\s*"
             r"ANCHOR_UWB_SCAN_ACTIVITY_COMPLETION_MS\s*\+\s*"
-            r"MESH_RADIO_EVENT_RETUNE_GUARD_MS;",
+            r"MESH_RADIO_EVENT_RETUNE_GUARD_MS\s*\+\s*1u;",
         )
-        self.assertRegex(
-            blocks[retune:publish],
-            r"if\s*\(remaining_ms\s*>\s*scan_occupancy_ms\)\s*\{\s*"
-            r"return false;\s*\}",
-        )
-        self.assertNotIn("packet.msg_type", blocks)
+        self.assertNotIn("packet.msg_type", planner)
 
         scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
         relay_snapshot = scan.index(
             "relay_tx_active = mesh_relay_tx_active(&mesh_runtime)"
         )
         block_snapshot = scan.index(
-            "anchor_relay_retry_blocks_scan(",
+            "anchor_relay_retry_plan_scan(",
             relay_snapshot,
         )
         block_call_end = scan.index(");", block_snapshot)
@@ -2085,10 +2091,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         arm = scan.index("DBG_ANCHOR_CH5_SCAN_ARM", claim)
         configure = scan.index("dwm3000_driver_configure_wake_mode()", arm)
 
-        # Passive custody and a far-future backoff remain scan-eligible. A due
-        # retry, or one that would become due during the complete scan and
-        # retune interval, yields before the radio claim. The blocked scan is
-        # rearmed at the published retry boundary instead of overshooting it.
+        # Passive custody remains scan-eligible. A due or imminent retry yields
+        # before the claim; a later retry caps one continuous receive window
+        # just before its completion/retune guard instead of forcing slices.
         self.assertLess(relay_snapshot, block_snapshot)
         self.assertLess(block_snapshot, blocked)
         self.assertNotIn("ch9_ack_wait_active ||", blocked_path[:schedule])
@@ -2113,6 +2118,102 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             REPORT_EVENT_TX, "mesh_outbound_is_topology_ack_confirm"
         )
         self.assertIn("MSG_GATEWAY_ACK_CONFIRM", topology_ack)
+
+    def test_anchor_scan_caps_gateway_ack_wait_before_ack_deadline(self):
+        planner = function_body(
+            ANCHOR_RADIO, "anchor_relay_retry_plan_scan"
+        )
+        active = planner.index("mesh_relay_tx_active(&mesh_runtime)")
+        backoff = planner.index(
+            "MESH_RELAY_TX_WAIT_RETRY_BACKOFF", active
+        )
+        ack_wait = planner.index("MESH_RELAY_TX_WAIT_GATEWAY_ACK", backoff)
+        ack_deadline = planner.index(
+            "mesh_runtime.pending.gateway_ack_deadline_ms", ack_wait
+        )
+        boundary = planner.index(
+            "response_boundary_ms =", ack_deadline
+        )
+        reached = planner.index("uptime_deadline_reached(", ack_deadline)
+        due_retry = planner.index("*retry_ms =", reached)
+        remaining = planner.index("uptime_ms_until_deadline(", due_retry)
+        scan_guard = planner.index("scan_guard_ms =", remaining)
+        cap = planner.index(
+            "*scan_rx_ms = remaining_ms - scan_guard_ms", scan_guard
+        )
+
+        # A locally originated TABLE confirmation waits for its gateway ACK
+        # in this state. Its retry deadline must drive the same yield/cap
+        # planner as backoff custody, otherwise a long protocol RX window can
+        # cross the ACK timeout and suppress the confirmation retry.
+        self.assertLess(active, backoff)
+        self.assertLess(backoff, ack_wait)
+        self.assertLess(ack_wait, ack_deadline)
+        self.assertLess(ack_deadline, boundary)
+        self.assertLess(ack_deadline, reached)
+        self.assertLess(reached, remaining)
+        self.assertLess(remaining, cap)
+        self.assertIn(
+            "local_protocol_response_active", planner[backoff:ack_deadline]
+        )
+        self.assertIn(
+            "response_boundary_ms", planner[reached:due_retry]
+        )
+        self.assertIn(
+            "response_boundary_ms", planner[remaining:scan_guard]
+        )
+        self.assertNotIn(
+            "mesh_runtime.pending.retry_after_ms",
+            planner[reached:scan_guard],
+        )
+
+    def test_enumeration_listener_uses_deadline_capped_continuous_response_window(self):
+        classifier = function_body(
+            REPORT_DELIVERY, "mesh_report_local_protocol_response_active"
+        )
+        self.assertIn("mesh_relay_tx_active(&mesh_runtime)", classifier)
+        self.assertIn("pending->packet.src_id != DEVICE_ID", classifier)
+        self.assertIn("pending->packet.dst_id != GATEWAY_ID", classifier)
+        self.assertIn("FLAG_GATEWAY_ACK_REQUIRED", classifier)
+        self.assertIn("MSG_COMMAND_RESULT", classifier)
+        self.assertIn("MSG_SURVEY_DISCOVERY_REPORT", classifier)
+        self.assertIn("MSG_SURVEY_PAIR_RESULT", classifier)
+
+        scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
+        snapshot = scan.index(
+            "mesh_report_local_protocol_response_active()"
+        )
+        response_branch = scan.index(
+            "if (enumeration_continuous_rx && "
+            "local_protocol_response_active)",
+            snapshot,
+        )
+        response_window = scan.index(
+            "scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS",
+            response_branch,
+        )
+        long_branch = scan.index(
+            "else if (enumeration_continuous_rx)", response_window
+        )
+        long_slice = scan.index(
+            "scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS",
+            long_branch,
+        )
+        retry_gate = scan.index(
+            "anchor_relay_retry_plan_scan(", long_slice
+        )
+
+        self.assertLess(snapshot, response_branch)
+        self.assertLess(response_branch, response_window)
+        self.assertLess(response_window, long_branch)
+        self.assertLess(long_branch, long_slice)
+        self.assertLess(long_slice, retry_gate)
+        self.assertNotIn(
+            "MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS",
+            scan[response_branch:long_branch],
+        )
+        retry_call_end = scan.index(");", retry_gate)
+        self.assertIn("&scan_rx_ms", scan[retry_gate:retry_call_end])
 
     def test_pending_reliable_response_protects_next_local_tx_slot(self):
         required_source = REPORT_TRANSPORT[

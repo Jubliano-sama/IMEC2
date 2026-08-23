@@ -2481,9 +2481,6 @@ static void test_command_flood_broadcast_deduplicates_logical_sequence(void)
                           result.forward.payload_len,
                           TLV_FLOOD_RETRY_COUNT) ==
            FLOOD_DEFAULT_RETRY_COUNT);
-    assert(require_tlv_u32(result.forward.payload,
-                           result.forward.payload_len,
-                           TLV_FLOOD_PACKET_AGE_MS) == 0u);
     admission = result;
 
     /*
@@ -2684,10 +2681,11 @@ static void test_command_flood_broadcast_deduplicates_logical_sequence(void)
     assert(relay.command_replay.newest_command_seq == 1u);
 }
 
-static void test_assignment_redrive_refloods_across_two_relays(void)
+static void test_single_assignment_table_relays_three_copies_across_two_hops(void)
 {
     struct mesh_relay relay_a;
     struct mesh_relay relay_b;
+    struct mesh_relay direct_relays[3];
     struct mesh_relay_result result;
     struct mesh_outbound hop;
     struct proto_packet packet = {
@@ -2699,9 +2697,6 @@ static void test_assignment_redrive_refloods_across_two_relays(void)
         .ttl = FLOOD_EPOCH_GLOBAL_TTL,
     };
     uint8_t payload[96];
-    uint8_t redrive_payload[96];
-    const uint8_t *flood_value = NULL;
-    uint8_t flood_len = 0u;
     size_t payload_len = 0u;
 
     assert(mesh_append_command_id(payload,
@@ -2735,6 +2730,50 @@ static void test_assignment_redrive_refloods_across_two_relays(void)
                DISCOVERY_ASSIGNMENT_PHASE_TABLE,
                9001u) == PROTO_OK);
     packet.payload_len = (uint16_t)payload_len;
+
+    /* DDD: the one physical gateway TABLE gives each direct anchor one
+     * independent three-copy relay owner. */
+    mesh_relay_init(&direct_relays[0],
+                    MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    mesh_relay_init(&direct_relays[1],
+                    MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 13u);
+    mesh_relay_init(&direct_relays[2],
+                    MESH_RELAY_ROLE_ANCHOR, ANCHOR_C, GATEWAY, 13u);
+    for (size_t i = 0u; i < 3u; i++) {
+        assert(mesh_relay_handle_rx_with_random(&direct_relays[i],
+                                                &packet,
+                                                payload,
+                                                payload_len,
+                                                GATEWAY,
+                                                80u,
+                                                4000u,
+                                                (uint32_t)(i + 1u),
+                                                &result) == PROTO_OK);
+        assert(result.status == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        assert(1u + result.forward.flood_retry_count == 3u);
+        assert(result.forward.earliest_tx_valid);
+        assert(result.forward.earliest_tx_ms ==
+               4000u + mesh_enumeration_relay_delay_ms(
+                           direct_relays[i].local_id, &packet));
+        assert(result.forward.earliest_tx_ms - 4000u <=
+               MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS);
+        {
+            enum discovery_assignment_phase forwarded_phase;
+            uint32_t forwarded_epoch = 0u;
+
+            assert(discovery_assignment_extract_control_tlvs(
+                       result.forward.payload,
+                       result.forward.payload_len,
+                       &forwarded_phase,
+                       &forwarded_epoch) == PROTO_OK);
+            assert(forwarded_phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE);
+            assert(forwarded_epoch == 9001u);
+        }
+    }
+
+    /* Forced hop: the exact same TABLE identity advances across two relays,
+     * with each relay owning three physical copies. */
     mesh_relay_init(&relay_a, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
     mesh_relay_init(&relay_b, MESH_RELAY_ROLE_ANCHOR, ANCHOR_B, GATEWAY, 13u);
 
@@ -2750,6 +2789,11 @@ static void test_assignment_redrive_refloods_across_two_relays(void)
     assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
     hop = result.forward;
+    assert(hop.flood_retry_count == FLOOD_DEFAULT_RETRY_COUNT);
+    assert(1u + hop.flood_retry_count == 3u);
+    assert(hop.earliest_tx_valid);
+    assert(hop.earliest_tx_ms - 4000u <=
+           MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS);
     assert(mesh_relay_handle_rx_with_random(&relay_b,
                                             &hop.packet,
                                             hop.payload,
@@ -2761,60 +2805,75 @@ static void test_assignment_redrive_refloods_across_two_relays(void)
                                             &result) == PROTO_OK);
     assert(result.status == PROTO_OK);
     assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(result.forward.flood_retry_count == FLOOD_DEFAULT_RETRY_COUNT);
+    assert(1u + result.forward.flood_retry_count == 3u);
+    assert(result.forward.earliest_tx_valid);
+    assert(result.forward.earliest_tx_ms - 4010u <=
+           MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS);
 
-    /*
-     * The assignment generation remains immutable, but a later bounded flood
-     * attempt has a fresh transport identity. Both intermediaries must reflood
-     * it even though each remembers the original TABLE.
-     */
-    memcpy(redrive_payload, payload, payload_len);
-    assert(tlv_find_unique(redrive_payload,
-                           payload_len,
-                           TLV_FLOOD_EPOCH_ID,
-                           &flood_value,
-                           &flood_len) == PROTO_OK);
-    assert(flood_len == sizeof(uint32_t));
-    proto_put_u32_le(
-        &redrive_payload[flood_value - redrive_payload], 8002u);
-    assert(require_tlv_u32(redrive_payload,
-                           payload_len,
-                           TLV_COMMAND_SEQ) == packet.session_id);
-
-    assert(mesh_relay_handle_rx_with_random(&relay_a,
-                                            &packet,
-                                            redrive_payload,
-                                            payload_len,
-                                            GATEWAY,
-                                            80u,
-                                            4020u,
-                                            3u,
-                                            &result) == PROTO_OK);
-    assert(result.status == PROTO_OK);
-    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
-    hop = result.forward;
-    assert(mesh_relay_handle_rx_with_random(&relay_b,
-                                            &hop.packet,
-                                            hop.payload,
-                                            hop.payload_len,
-                                            ANCHOR_A,
-                                            70u,
-                                            4030u,
-                                            4u,
-                                            &result) == PROTO_OK);
-    assert(result.status == PROTO_OK);
-    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
-
+    /* An exact duplicate of the one gateway origin is local-idempotent and
+     * cannot create a second relay owner. */
     assert(mesh_relay_handle_rx(&relay_a,
                                 &packet,
-                                redrive_payload,
+                                payload,
                                 payload_len,
                                 GATEWAY,
                                 80u,
-                                4040u,
+                                4020u,
                                 &result) == PROTO_OK);
     assert(result.status == PROTO_ERR_STALE);
     assert(has_action(&result, MESH_RELAY_ACTION_DELIVER_LOCAL));
     assert(!has_action(&result, MESH_RELAY_ACTION_FORWARD));
+
+    /* The separate CLAIM-bound ABORT has a fresh outer identity, but keeps
+     * the same one-origin/three-copy relay contract. */
+    payload_len = 0u;
+    packet.session_id = 7002u;
+    packet.seq = 18u;
+    packet.ttl = FLOOD_EPOCH_GLOBAL_TTL;
+    assert(mesh_append_command_id(payload,
+                                  sizeof(payload),
+                                  &payload_len,
+                                  CMD_ASSIGN_DISCOVERY_SLOTS) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COMMAND_SCOPE,
+                         CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+    assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                         TLV_COMMAND_RESPONSE_MODE,
+                         CMD_RESPONSE_NONE) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_COMMAND_SEQ, packet.session_id) == PROTO_OK);
+    assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                          TLV_FLOOD_EPOCH_ID, 8002u) == PROTO_OK);
+    assert(discovery_assignment_append_control_tlvs(
+               payload, sizeof(payload), &payload_len,
+               DISCOVERY_ASSIGNMENT_PHASE_ABORT, 9001u) == PROTO_OK);
+    {
+        const struct discovery_assignment_abort_identity abort_identity = {
+            .epoch = 9001u,
+            .claim_session_id = 7001u,
+            .claim_command_seq = 7001u,
+        };
+
+        assert(discovery_assignment_append_abort_identity(
+                   payload, sizeof(payload), &payload_len,
+                   &abort_identity) == PROTO_OK);
+    }
+    packet.payload_len = (uint16_t)payload_len;
+    mesh_relay_init(&relay_a, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 13u);
+    assert(mesh_relay_handle_rx_with_random(&relay_a,
+                                            &packet,
+                                            payload,
+                                            payload_len,
+                                            GATEWAY,
+                                            80u,
+                                            5000u,
+                                            4u,
+                                            &result) == PROTO_OK);
+    assert(result.status == PROTO_OK);
+    assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+    assert(1u + result.forward.flood_retry_count == 3u);
+    assert(result.forward.earliest_tx_valid);
 }
 
 static void test_collection_eack_broadcast_deduplicates_exact_round_only(void)
@@ -10128,7 +10187,6 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
            FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS);
     assert(require_tlv_u8(adv.payload, adv.payload_len, TLV_FLOOD_RETRY_COUNT) ==
            FLOOD_DEFAULT_RETRY_COUNT);
-    assert(require_tlv_u32(adv.payload, adv.payload_len, TLV_FLOOD_PACKET_AGE_MS) == 0u);
 
     assert(mesh_relay_handle_rx(&anchor_a,
                                 &adv.packet,
@@ -10174,15 +10232,7 @@ static void test_gateway_route_advertisement_seeds_and_floods_parent_candidates(
                           result_a.gateway_route_adv.payload_len,
                           TLV_FLOOD_RETRY_COUNT) ==
            FLOOD_DEFAULT_RETRY_COUNT);
-    assert(require_tlv_u32(result_a.gateway_route_adv.payload,
-                           result_a.gateway_route_adv.payload_len,
-                           TLV_FLOOD_PACKET_AGE_MS) == 0u);
-    assert(mesh_outbound_set_flood_packet_age_ms(&result_a.gateway_route_adv,
-                                                 1234u) == PROTO_OK);
     result_a.gateway_route_adv.packet.message_age_ms = 1234u;
-    assert(require_tlv_u32(result_a.gateway_route_adv.payload,
-                           result_a.gateway_route_adv.payload_len,
-                           TLV_FLOOD_PACKET_AGE_MS) == 1234u);
     assert(require_tlv_u8(result_a.gateway_route_adv.payload,
                           result_a.gateway_route_adv.payload_len,
                           TLV_HOP_COUNT) == 1u);
@@ -23367,7 +23417,7 @@ int main(void)
     test_group_scope_broadcast_fails_closed_before_local_delivery();
     test_targeted_gateway_command_commits_only_after_local_admission();
     test_command_flood_broadcast_deduplicates_logical_sequence();
-    test_assignment_redrive_refloods_across_two_relays();
+    test_single_assignment_table_relays_three_copies_across_two_hops();
     test_collection_eack_broadcast_deduplicates_exact_round_only();
     test_collection_eack_received_list_confirms_pending_result();
     test_recovery_eack_releases_only_exact_packet_and_bundle();

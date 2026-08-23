@@ -10,6 +10,9 @@ from tools.gateway_gui.delivery_dedup import (
 from tools.gateway_gui.protocol import (
     FLAG_DIAGNOSTIC,
     FLAG_GATEWAY_ACK_REQUIRED,
+    GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE,
+    GATEWAY_COMMAND_EVENT_FLAG_REPLAY,
+    GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT,
     MSG_ANCHOR_HEARTBEAT,
     MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
@@ -123,6 +126,7 @@ def command_event_packet(
     discovery_slot: int = 4,
     attempt: int = 0,
     replay: bool = False,
+    event_flags: int | None = None,
     previous_hop_id: int = 0,
     lost_event_count: int = 0,
     hop_count: int = 0,
@@ -146,7 +150,11 @@ def command_event_packet(
             failure_count=failure_count,
         )
     )
-    payload[4] = 0x04 if replay else 0
+    payload[4] = (
+        event_flags
+        if event_flags is not None
+        else (GATEWAY_COMMAND_EVENT_FLAG_REPLAY if replay else 0)
+    )
     payload[5] = attempt
     payload[6] = status
     payload[56:64] = previous_hop_id.to_bytes(8, "little")
@@ -400,6 +408,54 @@ class GatewayPacketDeduplicatorTests(unittest.TestCase):
 
         self.assertEqual(cache.observe(original).disposition, PacketDisposition.NEW)
         self.assertEqual(cache.observe(replay).disposition, PacketDisposition.DUPLICATE)
+        self.assertEqual(cache.size, 1)
+
+    def test_retained_generic_command_event_uses_exact_stream_identity(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=4)
+        queued = command_event_packet(
+            event_sequence=0x10203040,
+            stage=1,
+            anchor_id=0,
+            discovery_slot=0xFF,
+            progress_count=0,
+            total_count=0,
+            success_count=0,
+            failure_count=0,
+        )
+
+        self.assertEqual(cache.observe(queued).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(queued).disposition, PacketDisposition.DUPLICATE)
+        self.assertEqual(cache.size, 1)
+
+    def test_retained_generic_delivery_flags_are_transport_only(self) -> None:
+        cache = GatewayPacketDeduplicator(gateway_id=0x9999AAAABBBBCCCC, max_entries=4)
+        common = dict(
+            event_sequence=0x10203040,
+            stage=1,
+            anchor_id=0,
+            discovery_slot=0xFF,
+            progress_count=0,
+            total_count=0,
+            success_count=0,
+            failure_count=0,
+        )
+        original = command_event_packet(**common)
+        replay = command_event_packet(
+            **common,
+            event_flags=(
+                GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT
+                | GATEWAY_COMMAND_EVENT_FLAG_REPLAY
+                | GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE
+            ),
+        )
+        semantic_mutation = command_event_packet(**common, status=1)
+
+        self.assertEqual(cache.observe(original).disposition, PacketDisposition.NEW)
+        self.assertEqual(cache.observe(replay).disposition, PacketDisposition.DUPLICATE)
+        self.assertEqual(
+            cache.observe(semantic_mutation).disposition,
+            PacketDisposition.CONFLICT,
+        )
         self.assertEqual(cache.size, 1)
 
     def test_full_assignment_publisher_replay_batch_is_semantically_idempotent(

@@ -490,6 +490,43 @@ static void test_gateway_control_origin_ttl_matches_command_profile(void)
         MSG_COMMAND, CMD_VENDOR_BASE, NULL));
 }
 
+static void test_gateway_operations_outrank_only_unaccepted_clicks(void)
+{
+    static const enum command_id operation_commands[] = {
+        CMD_ASSIGN_DISCOVERY_SLOTS,
+        CMD_SURVEY_REACHABILITY,
+        CMD_SURVEY_PREPARE_PAIR,
+        CMD_SURVEY_START_PAIR,
+        CMD_SURVEY_ABORT,
+    };
+    uint8_t payload[] = {TLV_COMMAND_ID, sizeof(uint16_t), 0u, 0u};
+
+    assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+        MSG_GATEWAY_ROUTE_ADV, NULL, 0u));
+    assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+        MSG_SURVEY_PAIR_PREPARE, NULL, 0u));
+    assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+        MSG_SURVEY_DISCOVERY_START, NULL, 0u));
+
+    for (size_t i = 0u;
+         i < sizeof(operation_commands) / sizeof(operation_commands[0]);
+         i++) {
+        payload[2] = (uint8_t)operation_commands[i];
+        payload[3] = (uint8_t)((uint16_t)operation_commands[i] >> 8u);
+        assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+            MSG_COMMAND, payload, sizeof(payload)));
+    }
+
+    payload[2] = (uint8_t)CMD_GET_STATUS;
+    payload[3] = 0u;
+    assert(!app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+        MSG_COMMAND, payload, sizeof(payload)));
+    assert(!app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+        MSG_COMMAND, payload, sizeof(payload) - 1u));
+    assert(!app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+        MSG_ROUTE_REQ, NULL, 0u));
+}
+
 static void test_gateway_control_followup_tx_rx_phr_symmetry(void)
 {
     static const uint8_t control_types[] = {
@@ -959,6 +996,7 @@ int main(void)
     test_event_accept_reservation_expands_guard();
     test_channel5_control_phr_policy();
     test_gateway_control_origin_ttl_matches_command_profile();
+    test_gateway_operations_outrank_only_unaccepted_clicks();
     test_gateway_control_followup_tx_rx_phr_symmetry();
     test_command_followup_holds_same_train_wakes();
     test_wake_claim_click_priority_policy();

@@ -136,6 +136,7 @@ from .protocol import (
     decode_cir_sample,
     format_device_id,
     hex_dump,
+    is_gateway_assignment_publisher_event,
 )
 
 
@@ -1674,6 +1675,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 valid_statuses=set(COMMAND_STATUS_NAMES),
             )
         except CommandTelemetryDecodeError:
+            return None
+        if not is_gateway_assignment_publisher_event(event):
             return None
         barrier = getattr(self, "assignment_replay_barrier", None)
         if not isinstance(barrier, GatewayAssignmentReplayBarrier):

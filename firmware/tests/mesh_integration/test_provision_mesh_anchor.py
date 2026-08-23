@@ -753,8 +753,8 @@ class CommandBudgetContractTests(unittest.TestCase):
         self,
     ) -> None:
         expected_start_by_depth = {
-            1: 11_104,
-            5: 19_104,
+            1: 20_000,
+            5: 20_000,
             6: 21_104,
             7: 23_104,
             8: 25_104,
@@ -986,6 +986,41 @@ class RouteRefreshQualificationTests(unittest.TestCase):
 
 
 class AssignmentQualificationTests(unittest.TestCase):
+    def test_negative_command_result_fails_matching_qualification_early(self) -> None:
+        qualification = provision.AssignmentQualification(
+            0x11223344,
+            0x3344,
+            0x11223344,
+            3,
+        )
+        packet = gateway_stream_packet(
+            0x3344,
+            msg_type=MSG_COMMAND_RESULT,
+            flags=FLAG_GATEWAY_ACK_REQUIRED | host_protocol.FLAG_ERROR,
+            src_id=GATEWAY_ID,
+            dst_id=GATEWAY_ID,
+            session_id=0x11223344,
+            payload=bytes((
+                provision.TLV_COMMAND_ID, 2, 0x04, 0x01,
+                host_protocol.TLV_COMMAND_STATUS, 2, 5, 0,
+                host_protocol.TLV_REASON, 1, 9,
+            )),
+        )
+
+        self.assertEqual(
+            "gateway command failed before lifecycle terminal "
+            "(command=260 status=5 reason=9)",
+            provision._failed_qualification_command_result(
+                packet, qualification
+            ),
+        )
+        self.assertIsNone(
+            provision._failed_qualification_command_result(
+                dataclasses.replace(packet, session_id=0x11223345),
+                qualification,
+            )
+        )
+
     def test_table_ack_depth_wins_over_stale_claim_route_sidecar(self) -> None:
         direct_d = 0x1000
         direct_c = 0x1001
@@ -2263,7 +2298,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             writes,
         )
 
-    async def test_only_ack_required_assignment_publisher_event_is_receipted(
+    async def test_retained_generic_event_is_receipted_without_publisher_barrier(
         self,
     ) -> None:
         publisher_event = dataclasses.replace(
@@ -2286,12 +2321,15 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         )
         generic = gateway_stream_command_event_packet(
             generic_event,
-            flags=0,
+            flags=FLAG_GATEWAY_ACK_REQUIRED,
         )
 
         writes = await self._run_monitor_with_packets([publisher, generic])
 
-        self.assertEqual([self._expected_receipt(publisher)], writes)
+        self.assertEqual(
+            [self._expected_receipt(publisher), self._expected_receipt(generic)],
+            writes,
+        )
 
     async def test_abort_result_is_receipted_during_unrelated_command(self) -> None:
         abort = gateway_stream_packet(
@@ -3222,6 +3260,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             host_operation_policy.ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             policy.assignment.response_spread_ms,
         )
+        self.assertTrue(policy.assignment.ram_only_iteration)
         self.assertEqual(budget_ms, route_args["command_budget_ms"])
         self.assertEqual(policy, route_args["operation_policy"])
         required_budget.assert_not_called()
@@ -3338,6 +3377,21 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
             policy.assignment.operation_budget_ms,
         )
         self.assertEqual(deepest_hop, policy.assignment.deepest_hop)
+        self.assertTrue(policy.assignment.ram_only_iteration)
+        assignment_policy_tlvs = [
+            tlv
+            for tlv in command.packet.tlvs
+            if tlv.type_id == host_protocol.TLV_OPERATION_POLICY
+            and tlv.decoded["family"] == "assignment"
+        ]
+        self.assertEqual(1, len(assignment_policy_tlvs))
+        self.assertEqual(
+            policy.assignment.encode_value(),
+            assignment_policy_tlvs[0].raw,
+        )
+        self.assertTrue(
+            assignment_policy_tlvs[0].decoded["ram_only_iteration"]
+        )
         self.assertEqual(expected_budget_ms, command_args["command_budget_ms"])
         self.assertEqual(
             expected_budget_ms,
@@ -3473,6 +3527,7 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
                 command.packet.value(host_protocol.TLV_COMMAND_BUDGET_MS),
             )
         self.assertEqual(policies[0], policies[1])
+        self.assertTrue(policies[0].assignment.ram_only_iteration)
         self.assertEqual(
             expected_budget_ms,
             policies[0].assignment.operation_budget_ms,
@@ -3655,6 +3710,69 @@ class ProvisionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0x12345, qualification.correlation_id)
         self.assertEqual(0x12345, qualification.host_session_id)
         self.assertEqual(0x2345, qualification.host_sequence)
+
+    async def test_reconnect_ignores_stale_link_cleanup_error(self) -> None:
+        events = successful_assignment_events(
+            3,
+            session_id=0x12345,
+            direct_count=1,
+        )
+
+        class CleanupErrorClient(FakeBleakClient):
+            notify_starts = 0
+            disconnect_calls = 0
+
+            async def start_notify(
+                self, uuid: object, callback: object
+            ) -> None:
+                type(self).notify_starts += 1
+                await super().start_notify(uuid, callback)
+                if type(self).notify_starts == 1:
+                    assert self.disconnected_callback is not None
+                    self.disconnected_callback(self)
+
+            async def disconnect(self) -> None:
+                type(self).disconnect_calls += 1
+                if type(self).disconnect_calls == 1:
+                    raise EOFError("stale BlueZ link already closed")
+                await super().disconnect()
+
+        FakeDecoder.events = events
+        FakeBleakClient.write_notification_counts = [len(events)]
+
+        def fake_decode(payload: bytes, **_kwargs: object) -> object:
+            return events[payload[0]]
+
+        with (
+            mock.patch.object(provision, "BleakClient", CleanupErrorClient),
+            mock.patch.object(provision, "GatewayReceiveBuffer", FakeDecoder),
+            mock.patch.object(
+                provision, "decode_gateway_command_event", fake_decode
+            ),
+            mock.patch.object(provision, "_new_identity", return_value=0x12345),
+            mock.patch("builtins.print"),
+        ):
+            qualification = await provision.run(
+                args(
+                    command="assign-slots",
+                    require_survey_success=False,
+                    require_assignment_success=True,
+                    notification_hold_s=0.0,
+                    expected_direct_anchors=1,
+                    expected_multihop_anchors=2,
+                    reconnect_attempts=1,
+                    reconnect_delay_s=0.0,
+                )
+            )
+
+        self.assertIsInstance(qualification, provision.AssignmentQualification)
+        self.assertEqual(
+            2,
+            sum(
+                name == "connect"
+                for name, _value in FakeBleakClient.operations
+            ),
+        )
 
     async def test_reconnect_rejects_a_different_gateway_without_resend(
         self,

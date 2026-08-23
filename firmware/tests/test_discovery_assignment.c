@@ -308,6 +308,76 @@ static void test_control_and_claim_hash_round_trip(void)
     assert(epoch == 78u);
 }
 
+static void test_end_identity_round_trip_and_exact_binding(void)
+{
+    const struct discovery_assignment_end_identity expected = {
+        .epoch = UINT32_C(0x10203040),
+        .table_command_seq = UINT32_C(0x50607080),
+        .table_commitment = {.bytes = {0x11u, 0x22u, 0x33u, 0x44u}},
+    };
+    struct discovery_assignment_end_identity parsed = {0};
+    enum discovery_assignment_phase phase = 0;
+    uint32_t epoch = 0u;
+    uint8_t payload[96];
+    size_t payload_len = 0u;
+
+    assert(discovery_assignment_append_control_tlvs(
+               payload, sizeof(payload), &payload_len,
+               DISCOVERY_ASSIGNMENT_PHASE_END, expected.epoch) == PROTO_OK);
+    assert(discovery_assignment_append_end_identity(
+               payload, sizeof(payload), &payload_len, &expected) == PROTO_OK);
+    assert(discovery_assignment_extract_control_tlvs(
+               payload, payload_len, &phase, &epoch) == PROTO_OK);
+    assert(phase == DISCOVERY_ASSIGNMENT_PHASE_END);
+    assert(epoch == expected.epoch);
+    assert(discovery_assignment_extract_end_identity(
+               payload, payload_len, &parsed) == PROTO_OK);
+    assert(parsed.epoch == expected.epoch);
+    assert(parsed.table_command_seq == expected.table_command_seq);
+    assert(discovery_assignment_table_commitment_equal(
+        &parsed.table_commitment, &expected.table_commitment));
+
+    assert(discovery_assignment_append_end_identity(
+               payload, sizeof(payload), &payload_len, &expected) == PROTO_OK);
+    memset(&parsed, 0xa5, sizeof(parsed));
+    assert(discovery_assignment_extract_end_identity(
+               payload, payload_len, &parsed) == PROTO_ERR_MALFORMED);
+}
+
+static void test_abort_identity_round_trip_and_exact_claim_binding(void)
+{
+    const struct discovery_assignment_abort_identity expected = {
+        .epoch = UINT32_C(0x10203040),
+        .claim_session_id = UINT32_C(0x50607080),
+        .claim_command_seq = UINT32_C(0x90a0b0c0),
+    };
+    struct discovery_assignment_abort_identity parsed = {0};
+    enum discovery_assignment_phase phase = 0;
+    uint32_t epoch = 0u;
+    uint8_t payload[64];
+    size_t payload_len = 0u;
+
+    assert(discovery_assignment_append_control_tlvs(
+               payload, sizeof(payload), &payload_len,
+               DISCOVERY_ASSIGNMENT_PHASE_ABORT, expected.epoch) == PROTO_OK);
+    assert(discovery_assignment_append_abort_identity(
+               payload, sizeof(payload), &payload_len, &expected) == PROTO_OK);
+    assert(discovery_assignment_extract_control_tlvs(
+               payload, payload_len, &phase, &epoch) == PROTO_OK);
+    assert(phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT);
+    assert(epoch == expected.epoch);
+    assert(discovery_assignment_extract_abort_identity(
+               payload, payload_len, &parsed) == PROTO_OK);
+    assert(parsed.epoch == expected.epoch);
+    assert(parsed.claim_session_id == expected.claim_session_id);
+    assert(parsed.claim_command_seq == expected.claim_command_seq);
+
+    assert(discovery_assignment_append_abort_identity(
+               payload, sizeof(payload), &payload_len, &expected) == PROTO_OK);
+    assert(discovery_assignment_extract_abort_identity(
+               payload, payload_len, &parsed) == PROTO_ERR_MALFORMED);
+}
+
 static void test_control_rejects_legacy_or_wrong_scheme(void)
 {
     uint8_t payload[32];
@@ -495,9 +565,11 @@ static uint32_t expected_first_contact_start_ms(uint8_t hop_count,
                                                 uint8_t slot,
                                                 uint8_t slot_count)
 {
-    return DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-           ((((uint32_t)hop_count - 1u) * slot_count) + slot) *
-               OPERATION_POLICY_FIRST_CONTACT_SLOT_MS;
+    uint32_t offset_ms = 0u;
+
+    assert(operation_policy_first_contact_offset_ms(
+               slot, slot_count, hop_count, &offset_ms) == PROTO_OK);
+    return DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + offset_ms;
 }
 
 static void test_response_delay_orders_first_contact_and_bounded_backoff(void)
@@ -601,6 +673,38 @@ static void test_response_delay_orders_first_contact_and_bounded_backoff(void)
            2u * DISCOVERY_ASSIGNMENT_RETRY_MAX_MS);
 }
 
+static void test_adaptive_next_depth_wait_uses_the_same_worst_case_cells(void)
+{
+    const uint32_t direct_three_slot_bare_bound_ms =
+        365u + (3u * 1090u) + 100u + 449u;
+    const uint32_t retry_rx_completed_ms =
+        direct_three_slot_bare_bound_ms + 250u;
+    uint32_t wait_ms = UINT32_MAX;
+
+    assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS == 365u);
+    assert(DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS == 500u);
+    assert(discovery_assignment_adaptive_next_depth_wait_ms(
+               1000u, 3u, 1u, 3u, &wait_ms) == PROTO_OK);
+    assert(wait_ms == direct_three_slot_bare_bound_ms +
+                          DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS);
+    assert(retry_rx_completed_ms > direct_three_slot_bare_bound_ms);
+    assert(retry_rx_completed_ms < wait_ms);
+    assert(discovery_assignment_adaptive_next_depth_wait_ms(
+               20u, 3u, 2u, 3u, &wait_ms) == PROTO_OK);
+    assert(wait_ms == 365u + (3u * 1730u) + 100u + 19u +
+                          DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS);
+    assert(discovery_assignment_adaptive_next_depth_wait_ms(
+               1000u, 3u, 3u, 3u, &wait_ms) == PROTO_OK);
+    assert(wait_ms == 365u + (3u * 1730u) + 100u + 449u +
+                          DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS);
+    assert(discovery_assignment_adaptive_next_depth_wait_ms(
+               1000u, 0u, 1u, 3u, &wait_ms) == PROTO_ERR_ARG);
+    assert(discovery_assignment_adaptive_next_depth_wait_ms(
+               1000u, 3u, 0u, 3u, &wait_ms) == PROTO_ERR_ARG);
+    assert(discovery_assignment_adaptive_next_depth_wait_ms(
+               1000u, 3u, 3u, 2u, &wait_ms) == PROTO_ERR_ARG);
+}
+
 static void test_collection_window_covers_spread_and_hops(void)
 {
     uint32_t direct = discovery_assignment_collection_window_ms(
@@ -618,41 +722,60 @@ static void test_collection_window_covers_spread_and_hops(void)
     assert(discovery_assignment_response_custody_ms(4u) == 60000u);
     assert(discovery_assignment_response_custody_ms(0u) ==
            DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS);
+    {
+        uint32_t unknown_depth_delay_ms = 0u;
+        uint32_t maximum_depth_delay_ms = 0u;
+
+        assert(discovery_assignment_response_delay_ms(
+                   7u, 12u, 0u,
+                   DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 2u,
+                   UINT32_C(0x12345678),
+                   &unknown_depth_delay_ms) == PROTO_OK);
+        assert(discovery_assignment_response_delay_ms(
+                   7u, 12u, DISCOVERY_ASSIGNMENT_MAX_HOPS,
+                   DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 2u,
+                   UINT32_C(0x12345678),
+                   &maximum_depth_delay_ms) == PROTO_OK);
+        assert(unknown_depth_delay_ms == maximum_depth_delay_ms);
+        assert(discovery_assignment_response_custody_ms(0u) ==
+               discovery_assignment_response_custody_ms(
+                   DISCOVERY_ASSIGNMENT_MAX_HOPS));
+    }
     assert(discovery_assignment_response_delay_ms(
                49u, 50u, 1u,
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 0u,
                (DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS / 50u) - 1u,
                &delay_ms) == PROTO_OK);
-    assert(delay_ms == 111349u);
+    assert(delay_ms == 22169u);
     assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 1u) ==
-           142349u);
+           53169u);
     assert(discovery_assignment_response_delay_ms(
                49u, 50u, 8u,
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS, 0u,
                (DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS / 50u) - 1u,
                &delay_ms) == PROTO_OK);
-    assert(delay_ms == 905849u);
+    assert(delay_ms == 1071189u);
     assert(discovery_assignment_response_deadline_ms(1000u, delay_ms, 8u) ==
-           1006849u);
+           1172189u);
     assert(discovery_assignment_response_deadline_ms(
                UINT64_MAX - 100u, delay_ms, 8u) == UINT64_MAX);
     assert(discovery_assignment_membership_epoch(UINT32_C(0x12345678)) ==
            UINT16_C(0x444c));
     assert(discovery_assignment_membership_epoch(UINT32_C(0x00010001)) == 1u);
-    assert(direct == 142329u);
-    assert(forced_hop == 512829u);
+    assert(direct == 52599u);
+    assert(forced_hop == 340179u);
     assert(unknown ==
            DISCOVERY_ASSIGNMENT_RESPONSE_CUSTODY_MAX_MS +
                DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS(
                    DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS));
-    assert(unknown == 1006829u);
+    assert(unknown == 1171619u);
     assert(direct >= 31000u);
     assert(forced_hop >= 61000u);
     assert(unknown >= 101000u);
     assert(discovery_assignment_collection_window_ms(0u, 1u) == 0u);
-    assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 1008099u);
+    assert(DISCOVERY_ASSIGNMENT_RESPONSE_MAX_ROUTE_WINDOW_MS == 1171619u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS == 10000u);
-    assert(DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS == 3000u);
+    assert(DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS == 450u);
     assert(DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS == 5u);
     assert(DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT == 2u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS ==
@@ -680,16 +803,16 @@ static void test_collection_window_covers_spread_and_hops(void)
         uint64_t duplicate_deadline =
             discovery_assignment_response_ack_settle_deadline_ms(3000u);
 
-        assert(first_deadline == 4000u);
+        assert(first_deadline == 1450u);
         assert(discovery_assignment_response_ack_settle_pending(
-                   3999u, first_deadline));
+                   1449u, first_deadline));
         assert(!discovery_assignment_response_ack_settle_pending(
-                   4000u, first_deadline));
-        assert(duplicate_deadline == 6000u);
+                   1450u, first_deadline));
+        assert(duplicate_deadline == 3450u);
         assert(discovery_assignment_response_ack_settle_pending(
-                   4000u, duplicate_deadline));
+                   1450u, duplicate_deadline));
         assert(!discovery_assignment_response_ack_settle_pending(
-                   6000u, duplicate_deadline));
+                   3450u, duplicate_deadline));
     }
 }
 
@@ -715,11 +838,11 @@ static void test_table_window_covers_every_fast_ack_handle(void)
            natural_window +
                DISCOVERY_ASSIGNMENT_ACK_FAST_HANDLE_RETRIES * custody +
                DISCOVERY_ASSIGNMENT_ACK_FAST_RETRY_BACKOFF_MAX_MS);
-    assert(natural_window == 265829u);
-    assert(table_window == 387226u);
+    assert(natural_window == 116459u);
+    assert(table_window == 237856u);
     assert(discovery_assignment_table_collection_window_ms(
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
-               DISCOVERY_ASSIGNMENT_MAX_HOPS) == 1308226u);
+               DISCOVERY_ASSIGNMENT_MAX_HOPS) == 1473016u);
 
     assert(DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS == 1800000u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS == 1800000u);
@@ -741,12 +864,12 @@ static void test_claim_window_covers_two_fresh_handles(void)
     assert(DISCOVERY_ASSIGNMENT_CLAIM_FAST_RETRY_BACKOFF_MAX_MS ==
            (DISCOVERY_ASSIGNMENT_RETRY_BASE_MS * 2u - 1u) +
                (DISCOVERY_ASSIGNMENT_RETRY_BASE_MS * 4u - 1u));
-    assert(natural_window == 1006829u);
-    assert(bounded_claim_window == 1207427u);
+    assert(natural_window == 1171619u);
+    assert(bounded_claim_window == 1372217u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
-               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS) == 2548664u);
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS) == 2870624u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
-               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) == 2551204u);
+               DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) == 2870624u);
     assert(DISCOVERY_ASSIGNMENT_OPERATION_REQUIRED_BUDGET_MS(
                DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) >
            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS);
@@ -1351,11 +1474,14 @@ int main(void)
     test_compact_anchor_id_path_matches_entry_wire_format();
     test_roster_extension_preserves_prior_slots();
     test_control_and_claim_hash_round_trip();
+    test_end_identity_round_trip_and_exact_binding();
+    test_abort_identity_round_trip_and_exact_claim_binding();
     test_control_rejects_legacy_or_wrong_scheme();
     test_ordered_epoch_helpers_wrap_and_reject_ambiguity();
     test_response_custody_matches_logical_epoch_and_phase();
     test_response_custody_allows_only_valid_supersession_boundaries();
     test_response_delay_orders_first_contact_and_bounded_backoff();
+    test_adaptive_next_depth_wait_uses_the_same_worst_case_cells();
     test_collection_window_covers_spread_and_hops();
     test_table_window_covers_every_fast_ack_handle();
     test_claim_window_covers_two_fresh_handles();

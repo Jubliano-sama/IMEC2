@@ -2,6 +2,7 @@
 #define DISCOVERY_ASSIGNMENT_H
 
 #include "protocol.h"
+#include "mesh.h"
 #include "node_comm.h"
 #include "operation_policy.h"
 #include "semantic_digest.h"
@@ -42,8 +43,14 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_SCHEME_VERSION 2u
 #define DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS \
     NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS
-#define DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 3000u
-#define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS 1000u
+#define DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 450u
+/*
+ * The analytical next-depth bound ends at the nominal response-ready edge.
+ * Leave one gateway RX work slice for radio completion and workqueue jitter
+ * so a response retry is not rejected at that exact boundary.
+ */
+#define DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS 500u
+#define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS 640u
 #define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS \
     (DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS + \
      ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
@@ -54,15 +61,29 @@ extern "C" {
     (DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS + \
      ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
       DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
+#define DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS \
+    (MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS + \
+     (3u * OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
+     MESH_ENUMERATION_RELAY_THREE_COPY_TAIL_MS)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms) \
     ((response_spread_ms) < OPERATION_POLICY_FIRST_CONTACT_SLOT_MS ? \
          (response_spread_ms) : OPERATION_POLICY_FIRST_CONTACT_SLOT_MS)
+#define DISCOVERY_ASSIGNMENT_FIRST_CONTACT_MAX_OFFSET_MS(slot_count) \
+    (((uint32_t)(slot_count) * \
+      (((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+        OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS) + \
+       ((OPERATION_POLICY_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS * \
+         (DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+         (DISCOVERY_ASSIGNMENT_MAX_HOPS - 2u)) / 2u))) + \
+     (((uint32_t)(slot_count) - 1u) * \
+      (OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS + \
+       ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
+        OPERATION_POLICY_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS))))
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
     response_spread_ms) \
     (DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + \
-     ((((uint32_t)DISCOVERY_ASSIGNMENT_MAX_HOPS * \
-        UWB_DISCOVERY_SLOT_COUNT) - 1u) * \
-      OPERATION_POLICY_FIRST_CONTACT_SLOT_MS) + \
+     DISCOVERY_ASSIGNMENT_FIRST_CONTACT_MAX_OFFSET_MS( \
+         UWB_DISCOVERY_SLOT_COUNT) + \
      DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms) - 1u)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_MS \
     DISCOVERY_ASSIGNMENT_RESPONSE_MAX_INITIAL_DELAY_FOR_SPREAD_MS( \
@@ -114,6 +135,8 @@ enum discovery_assignment_phase {
     DISCOVERY_ASSIGNMENT_PHASE_CLAIM = 1,
     DISCOVERY_ASSIGNMENT_PHASE_TABLE = 2,
     DISCOVERY_ASSIGNMENT_PHASE_ACK = 3,
+    DISCOVERY_ASSIGNMENT_PHASE_END = 4,
+    DISCOVERY_ASSIGNMENT_PHASE_ABORT = 5,
 };
 
 struct discovery_assignment_claim {
@@ -129,6 +152,25 @@ struct discovery_assignment_entry {
 
 struct discovery_assignment_table_commitment {
     uint8_t bytes[SEMANTIC_DIGEST_SHA256_LEN];
+};
+
+#define DISCOVERY_ASSIGNMENT_END_IDENTITY_WIRE_LEN \
+    (sizeof(uint32_t) + sizeof(uint32_t) + \
+     sizeof(struct discovery_assignment_table_commitment))
+
+struct discovery_assignment_end_identity {
+    uint32_t epoch;
+    uint32_t table_command_seq;
+    struct discovery_assignment_table_commitment table_commitment;
+};
+
+#define DISCOVERY_ASSIGNMENT_ABORT_IDENTITY_WIRE_LEN \
+    (3u * sizeof(uint32_t))
+
+struct discovery_assignment_abort_identity {
+    uint32_t epoch;
+    uint32_t claim_session_id;
+    uint32_t claim_command_seq;
 };
 
 _Static_assert(sizeof(struct discovery_assignment_table_commitment) ==
@@ -285,6 +327,24 @@ int discovery_assignment_append_table_commitment(
     size_t payload_cap,
     size_t *offset,
     const struct discovery_assignment_table_commitment *commitment);
+int discovery_assignment_append_end_identity(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct discovery_assignment_end_identity *identity);
+int discovery_assignment_extract_end_identity(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct discovery_assignment_end_identity *identity);
+int discovery_assignment_append_abort_identity(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct discovery_assignment_abort_identity *identity);
+int discovery_assignment_extract_abort_identity(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct discovery_assignment_abort_identity *identity);
 int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint8_t slot_count,
                                            uint8_t hop_count,
@@ -295,6 +355,12 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
 uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
                                                uint32_t random_value);
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count);
+int discovery_assignment_adaptive_next_depth_wait_ms(
+    uint16_t response_spread_ms,
+    uint8_t slot_count,
+    uint8_t observed_hop_count,
+    uint8_t max_hop_count,
+    uint32_t *wait_ms);
 uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
                                                    uint32_t response_delay_ms,
                                                    uint8_t hop_count);

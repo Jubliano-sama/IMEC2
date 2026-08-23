@@ -18,9 +18,9 @@ _Static_assert(MESH_ROUTE_REQUEST_MAX_PAYLOAD_LEN == 139u,
                "route-request payload bound changed");
 _Static_assert(MESH_ROUTE_REPLY_MAX_PAYLOAD_LEN == 198u,
                "route-reply payload bound changed");
-_Static_assert(MESH_GATEWAY_ROUTE_ADV_LEGACY_MAX_PAYLOAD_LEN == 138u,
+_Static_assert(MESH_GATEWAY_ROUTE_ADV_LEGACY_MAX_PAYLOAD_LEN == 132u,
                "legacy gateway-route advertisement payload bound changed");
-_Static_assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN == 179u,
+_Static_assert(MESH_GATEWAY_ROUTE_ADV_MAX_PAYLOAD_LEN == 173u,
                "policy gateway-route advertisement payload bound changed");
 _Static_assert(MESH_ROUTE_REPLY_ACK_MAX_PAYLOAD_LEN == 34u,
                "route-reply ACK payload bound changed");

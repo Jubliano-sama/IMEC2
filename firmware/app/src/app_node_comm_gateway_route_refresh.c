@@ -38,6 +38,7 @@ struct route_refresh_state {
     uint8_t resume_pending : 1;
     uint8_t absolute_deadline_valid : 1;
     uint8_t response_due_valid : 1;
+    uint8_t relay_settle_pending : 1;
 };
 
 struct route_refresh_operation {
@@ -237,6 +238,7 @@ static void refresh_reset_outer_attempt(void)
     route_refresh.outer_sent_count = 0u;
     route_refresh.burst_index = 0u;
     route_refresh.burst_count = 0u;
+    route_refresh.relay_settle_pending = false;
 }
 
 static void refresh_complete(int result)
@@ -422,8 +424,13 @@ static int refresh_prepare_outer(struct route_refresh_operation *operation,
         return ret < 0 ? ret : -EIO;
     }
     if (first_build) {
-        operation->burst_count = (uint8_t)(1u +
-            outbound->flood_retry_count);
+        /*
+         * The gateway originates one Here-I-Am wave. Its four physical
+         * copies cover independent CRC outcomes, while each accepting anchor
+         * owns the advertised retry count for downstream propagation. A
+         * second gateway wake train would only repeat the same root wave.
+         */
+        operation->burst_count = 1u;
     } else if (outbound->packet.session_id != operation->sequence ||
                outbound->packet.seq != operation->snapshot.packet_seq ||
                outbound->queued_at_ms != operation->snapshot.queued_at_ms) {
@@ -531,6 +538,11 @@ static void refresh_work_handler(struct k_work *work)
         route_refresh.active = false;
         route_refresh.response_due_ms = 0u;
         route_refresh.response_due_valid = false;
+        app_node_comm_sync_unlock();
+        return;
+    }
+    if (route_refresh.relay_settle_pending) {
+        refresh_complete(0);
         app_node_comm_sync_unlock();
         return;
     }
@@ -723,7 +735,13 @@ finish:
             app_node_comm_sync_unlock();
             return;
         }
-        refresh_complete(0);
+        route_refresh.relay_settle_pending = true;
+        ret = refresh_schedule(
+            APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
+        if (ret < 0) {
+            route_refresh.relay_settle_pending = false;
+            refresh_complete(ret);
+        }
         app_node_comm_sync_unlock();
         return;
     }

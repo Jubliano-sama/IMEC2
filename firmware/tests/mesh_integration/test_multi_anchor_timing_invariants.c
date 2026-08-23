@@ -18,6 +18,17 @@
 #define NETWORK_ID UINT32_C(0x494d4543)
 #define CLICKER_ID UINT64_C(0x1111111111111111)
 #define SCAN_PERIOD_US ((uint64_t)MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS * 1000u)
+#define ENUMERATION_SCAN_STARTUP_US UINT64_C(2500)
+#define ENUMERATION_SCAN_PLL_US UINT64_C(170)
+#define ENUMERATION_SCAN_SCHEDULER_OWNER_MARGIN_US UINT64_C(100000)
+#define ENUMERATION_SCAN_START_TO_START_US \
+    (SCAN_PERIOD_US + ENUMERATION_SCAN_STARTUP_US + \
+     ENUMERATION_SCAN_PLL_US + MESH_RADIO_ANCHOR_SCAN_RX_US + \
+     ENUMERATION_SCAN_SCHEDULER_OWNER_MARGIN_US)
+#define ENUMERATION_CONTROL_TURNAROUND_US \
+    ((uint64_t)MESH_RADIO_EVENT_RETUNE_GUARD_MS * 1000u)
+#define ENUMERATION_CONTROL_OWNER_MARGIN_US UINT64_C(25000)
+#define ENUMERATION_CONTROL_LISTENER_US UINT64_C(2000000)
 #define SURVEY_FOLLOWUP_US UINT64_C(1250000)
 #define OLD_SURVEY_FOLLOWUP_US UINT64_C(400000)
 #define WORKQUEUE_CONTENTION_US UINT64_C(25000)
@@ -216,6 +227,69 @@ static bool wake_train_has_contained_claim(uint64_t phase_us,
             }
         }
         tx_us += airtime_us + jitter_us;
+    }
+    return false;
+}
+
+static bool enumeration_activation_contains_claim_and_followup(
+    uint64_t phase_us)
+{
+    const uint64_t claim_airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_WAKE, UWB_WAKE_CLAIM_LEN);
+    const uint64_t claim_preamble_us = dwm3000_timing_rctu_to_us_ceil(
+        dwm3000_timing_preamble_rctu(DWM3000_TIMING_PHY_CH5_WAKE));
+    const uint64_t control_airtime_us = dwm3000_timing_airtime_us_ceil(
+        DWM3000_TIMING_PHY_CH5_MESH_CONTROL, UWB_MESH_MAX_FRAME_LEN);
+    const uint64_t control_prepare_us = runtime_prepare_rx_us(
+        DWM3000_TIMING_PHY_CH5_MESH_CONTROL);
+    const uint64_t claim_spacing_us = claim_airtime_us +
+        UWB_CLICKER_WAKE_CLAIM_JITTER_MAX_US;
+    const uint64_t train_end_us =
+        (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS * 1000u;
+    const struct interval control = {
+        .start_us = train_end_us + ENUMERATION_CONTROL_TURNAROUND_US +
+                    ENUMERATION_CONTROL_OWNER_MARGIN_US,
+        .end_us = train_end_us + ENUMERATION_CONTROL_TURNAROUND_US +
+                  ENUMERATION_CONTROL_OWNER_MARGIN_US + control_airtime_us,
+    };
+
+    for (uint8_t scan = 0u; scan < 3u; scan++) {
+        const struct interval rx = {
+            .start_us = phase_us +
+                        (uint64_t)scan *
+                            ENUMERATION_SCAN_START_TO_START_US,
+            .end_us = phase_us +
+                      (uint64_t)scan *
+                          ENUMERATION_SCAN_START_TO_START_US +
+                      MESH_RADIO_ANCHOR_SCAN_RX_US,
+        };
+        const uint64_t nearest_claim = rx.start_us / claim_spacing_us;
+        const uint64_t first_candidate = nearest_claim > 0u ?
+            nearest_claim - 1u : 0u;
+
+        /* Only claims adjacent to the RX start can overlap this short slice. */
+        for (uint64_t candidate = first_candidate;
+             candidate <= nearest_claim + 1u;
+             candidate++) {
+            const uint64_t claim_start_us = candidate * claim_spacing_us;
+            const struct interval preamble = {
+                .start_us = claim_start_us,
+                .end_us = claim_start_us + claim_preamble_us,
+            };
+
+            if (claim_start_us < train_end_us &&
+                preamble.start_us < rx.end_us &&
+                preamble.end_us > rx.start_us) {
+                const struct interval listener = {
+                    .start_us = claim_start_us + claim_airtime_us +
+                                control_prepare_us,
+                    .end_us = claim_start_us + claim_airtime_us +
+                              ENUMERATION_CONTROL_LISTENER_US,
+                };
+
+                return fully_contained(control, listener);
+            }
+        }
     }
     return false;
 }
@@ -1058,11 +1132,11 @@ static void test_survey_gateway_collection_budget_sweep(void)
                             SURVEY_GATEWAY_BENCH_BUDGET_MS / 3u;
 
                         covered_bench_50_anchor_case = true;
-                        CHECK(first_report_ms == 12064u,
+                        CHECK(first_report_ms == 20960u,
                               "six-slot survey first-report timing drifted");
-                        CHECK(last_report_start_ms == 23414u,
+                        CHECK(last_report_start_ms == 32310u,
                               "six-slot survey final-report timing drifted");
-                        CHECK(no_anchor_evidence_ms == 26684u,
+                        CHECK(no_anchor_evidence_ms == 35580u,
                               "six-slot survey evidence horizon drifted");
                         CHECK(current_wake_ms == no_anchor_evidence_ms &&
                                   current_wake_ms <
@@ -1078,7 +1152,7 @@ static void test_survey_gateway_collection_budget_sweep(void)
                         config.slot_ms == 40u &&
                         report_grace_windows_ms[grace_index] == 1000u) {
                         covered_50_slot_case = true;
-                        CHECK(first_report_ms == 19104u &&
+                        CHECK(first_report_ms == 28000u &&
                                   first_report_ms <
                                       SURVEY_GATEWAY_BENCH_BUDGET_MS,
                               "runtime rounds did not shorten 50-slot discovery");
@@ -1546,6 +1620,23 @@ static void test_claim_phase_sweep(void)
     }
 }
 
+static void test_enumeration_activation_phase_sweep(void)
+{
+    CHECK(2u * ENUMERATION_SCAN_START_TO_START_US <
+              (uint64_t)MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS *
+                  1000u,
+          "enumeration activation train no longer covers two delayed scans");
+    CHECK(MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS == 1000u,
+          "enumeration activation no longer uses the protocol maximum");
+
+    for (uint64_t phase_us = 0u;
+         phase_us < ENUMERATION_SCAN_START_TO_START_US;
+         phase_us += PHASE_STEP_US) {
+        CHECK(enumeration_activation_contains_claim_and_followup(phase_us),
+              "enumeration activation missed wake or extended CLAIM containment");
+    }
+}
+
 static void test_maintained_normal_click_phy_and_capacity_contract(void)
 {
     const struct dwm3000_phy_timing *wake =
@@ -1585,7 +1676,7 @@ int main(void)
 {
     CHECK(SCAN_PERIOD_US == UINT64_C(380000),
           "test is not using the production low-duty scan period");
-    CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 3000u,
+    CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 3500u,
           "test is not using the production scan window");
     CHECK(dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,
                                          UWB_WAKE_CLAIM_LEN) > 0u,
@@ -1595,6 +1686,7 @@ int main(void)
     test_survey_multihop_start_lead_covers_routed_redrives();
     test_survey_phase_sweep_and_old_defect_sensitivity();
     test_claim_phase_sweep();
+    test_enumeration_activation_phase_sweep();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
     test_survey_round_randomization_breaks_fixed_collisions();
     test_survey_continuous_round_window_invariants();

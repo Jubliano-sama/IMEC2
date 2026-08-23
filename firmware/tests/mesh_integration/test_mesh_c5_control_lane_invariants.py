@@ -66,6 +66,11 @@ def main() -> None:
         "static int mesh_send_route_wake_train(",
         "static uint8_t mesh_c5_listener_purpose(",
     )
+    route_listener = implementation_body(
+        source,
+        "static int mesh_listen_for_route_reply(",
+        "static int mesh_request_route_owned_with_rx_handoff(",
+    )
     select_ack = body(
         source,
         "static bool mesh_select_channel9_ack_tx_event(",
@@ -364,6 +369,39 @@ def main() -> None:
     )
     wake = c5_send.index("mesh_send_route_wake_train(", wake_branch)
     assert active < wake_branch < wake
+
+    # A click observed inside a gateway-operation listener is still owned by
+    # the clicker. The anchor keeps only a bounded local observation until it
+    # has classified and queued assignment, survey, or Here-I-Am control. Once
+    # that queue admission succeeds, the operation wins and no click handoff
+    # can establish competing anchor/radio custody.
+    retain_click = route_listener.index("DBG_C5_CONTROL_CLICK_RETAIN")
+    classify_operation = route_listener.index(
+        "app_mesh_c5_gateway_operation_outranks_unaccepted_click(",
+        retain_click,
+    )
+    queue_control = route_listener.index(
+        "mesh_queue_from_frame_at_internal(", classify_operation
+    )
+    retain_operation = route_listener.index(
+        "gateway_operation_retained = true", queue_control
+    )
+    operation_wins = route_listener.index(
+        "if (click_captured && gateway_operation_retained)",
+        retain_operation,
+    )
+    click_handoff = route_listener.index(
+        "mesh_handoff_anchor_click_claim(", operation_wins
+    )
+    assert (retain_click < classify_operation < queue_control <
+            retain_operation < operation_wins < click_handoff)
+    winning_branch = route_listener[operation_wins:click_handoff]
+    assert "gateway-operation-before-click" in winning_branch
+    assert "mesh_submit_owned_work(" in winning_branch
+    assert winning_branch.index("mesh_submit_owned_work(") < \
+        winning_branch.index("mesh_restart_role_scan();")
+    assert "MESH_ROUTE_LISTENER_RETURN(-EAGAIN)" in winning_branch
+    assert "mesh_handoff_anchor_click_claim(" not in winning_branch
 
 
 if __name__ == "__main__":

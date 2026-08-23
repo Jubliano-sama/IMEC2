@@ -112,6 +112,7 @@ target_sources(app PRIVATE
     ../../../../src/node_transaction.c
     ../../../../src/operation_policy.c
     ../../../../src/protocol.c
+    ../../../../src/protocol_rx_lifecycle.c
     ../../../../src/report.c
     ../../../../src/route.c
     ../../../../src/serial_frame.c

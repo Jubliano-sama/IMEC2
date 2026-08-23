@@ -947,6 +947,7 @@ uint32_t mesh_rx_pending_count(void)
 bool mesh_rx_response_active(void)
 {
     return atomic_get(&mesh_rx_response_active_state) != 0 ||
+           mesh_rx_handoff_control_active() ||
            (mesh_event_accept_retry.retry.active &&
             !mesh_event_accept_retry.retry.response_sent);
 }
@@ -1612,6 +1613,16 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             }
             if (ret == 0) {
                 int rx_ret;
+                uint32_t rx_started_ms = k_uptime_get_32();
+
+                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    status_debug_printf(
+                        "DBG_GATEWAY_CH9_RX_CONT_ARM now=%u rem=%u frames=%u errors=%u\n",
+                        rx_started_ms,
+                        remaining_ms,
+                        channel9_frames_seen,
+                        gateway_ch9_recoverable_rx_errors);
+                }
 
                 rx_ret = dwm3000_driver_receive_frame_continuous(
                     remaining_ms,
@@ -1621,10 +1632,22 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     &quality,
                     NULL,
                     &rx_failure);
+                if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+                    struct dwm3000_rx_debug_snapshot dbg_snap;
+
+                    dwm3000_driver_last_rx_debug_get(&dbg_snap);
+                    status_debug_printf(
+                        "DBG_GATEWAY_CH9_RX_CONT_RESULT start=%u end=%u ret=%d fail=%u status=0x%08x len=%u frames=%u\n",
+                        rx_started_ms,
+                        k_uptime_get_32(),
+                        rx_ret,
+                        (unsigned int)rx_failure,
+                        dbg_snap.status,
+                        (unsigned int)frame_len,
+                        channel9_frames_seen);
+                }
                 functional_rx_outcome =
-                    rx_ret == 0 || rx_ret == -ETIMEDOUT ||
-                    rx_ret == -ECANCELED ||
-                    app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                    app_mesh_rx_policy_dwm_attempt_made_progress(
                         rx_ret, rx_failure);
                 ret = rx_ret;
             }
@@ -1648,6 +1671,15 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                                     k_uptime_get_32(),
                                     remaining_ms,
                                     channel9_frames_seen);
+            } else if (ret == -ETIMEDOUT) {
+                /*
+                 * An empty bounded slice is normal receiver housekeeping,
+                 * not a reason to put the DWM3000 to sleep.  Keep the PHY
+                 * configured and awake so the next cooperative slice only
+                 * pays the short idle-to-RX transition.
+                 */
+                parking_ret = mesh_radio_idle_with_bounded_recovery(
+                    "gateway-ch9-empty-slice");
             } else if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
                            ret, rx_failure)) {
                 if (gateway_ch9_recoverable_rx_errors < UINT16_MAX) {
@@ -2040,9 +2072,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     &rx_failure,
                     &rx_timing);
                 functional_rx_outcome =
-                    functional_rx_outcome || rx_ret == 0 ||
-                    rx_ret == -ETIMEDOUT || rx_ret == -ECANCELED ||
-                    app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                    app_mesh_rx_policy_dwm_attempt_made_progress(
                         rx_ret, rx_failure);
                 ret = rx_ret;
             }
@@ -2113,7 +2143,8 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 NULL);
 
             functional_rx_outcome =
-                rx_ret == 0 || rx_ret == -ETIMEDOUT;
+                app_mesh_rx_policy_dwm_attempt_made_progress(
+                    rx_ret, DWM3000_RX_FAILURE_NONE);
             ret = rx_ret;
         }
         if (ret == 0) {
@@ -2152,9 +2183,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     NULL,
                     &rx_failure);
                 functional_rx_outcome =
-                    functional_rx_outcome || rx_ret == 0 ||
-                    rx_ret == -ETIMEDOUT || rx_ret == -ECANCELED ||
-                    app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                    app_mesh_rx_policy_dwm_attempt_made_progress(
                         rx_ret, rx_failure);
                 ret = rx_ret;
             }
@@ -2269,9 +2298,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 NULL,
                 &rx_failure);
             functional_rx_outcome =
-                rx_ret == 0 || rx_ret == -ETIMEDOUT ||
-                rx_ret == -ECANCELED ||
-                app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+                app_mesh_rx_policy_dwm_attempt_made_progress(
                     rx_ret, rx_failure);
             ret = rx_ret;
         }
@@ -2681,9 +2708,11 @@ int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks)
             .schedule = mesh_route_refresh_schedule,
             .next_sequence = mesh_route_refresh_next_sequence,
             .observe = mesh_route_refresh_observe,
-        };
+    };
 
     mesh_report_callbacks = callbacks;
+    protocol_rx_downstream_activation_init(
+        &mesh_enumeration_downstream_activation);
 #if DEVICE_ROLE == ROLE_CLICKER
     /*
      * Clickers normally originate ranging rather than mesh traffic, but

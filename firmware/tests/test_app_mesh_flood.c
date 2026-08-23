@@ -17,7 +17,6 @@ struct flood_test_ctx {
     uint32_t now_ms;
     uint16_t delays[32];
     uint32_t message_ages_ms[32];
-    uint32_t flood_tlv_ages_ms[32];
     uint32_t queued_at_ms[32];
     uint8_t send_count;
     uint8_t quiet_count;
@@ -74,9 +73,6 @@ static uint32_t test_random_u32(void *ctx)
 static int test_send(const struct mesh_outbound *out, void *ctx)
 {
     struct flood_test_ctx *test = ctx;
-    const uint8_t *age_value = NULL;
-    uint8_t age_len = 0u;
-
     if (test->send_busy_remaining > 0u) {
         test->send_busy_remaining--;
         return -EBUSY;
@@ -86,14 +82,6 @@ static int test_send(const struct mesh_outbound *out, void *ctx)
            out->packet.msg_type == MSG_GATEWAY_ROUTE_ADV);
     test->delays[test->send_count] = (uint16_t)test->now_ms;
     test->message_ages_ms[test->send_count] = out->packet.message_age_ms;
-    if (out->packet.msg_type == MSG_SURVEY_DISCOVERY_START) {
-        assert(tlv_find(out->payload, out->payload_len,
-                        TLV_FLOOD_PACKET_AGE_MS,
-                        &age_value, &age_len) == PROTO_OK);
-        assert(age_len == sizeof(uint32_t));
-        test->flood_tlv_ages_ms[test->send_count] =
-            proto_get_u32_le(age_value);
-    }
     test->queued_at_ms[test->send_count] = out->queued_at_ms;
     test->send_count++;
     return 0;
@@ -133,8 +121,6 @@ static void test_survey_start_repeats_age_from_one_origin(void)
     assert(survey_append_discovery_start_tlvs(
                gateway_adv.payload, sizeof(gateway_adv.payload),
                &payload_len, &config) == PROTO_OK);
-    assert(tlv_append_u32(gateway_adv.payload, sizeof(gateway_adv.payload),
-                          &payload_len, TLV_FLOOD_PACKET_AGE_MS, 0u) == PROTO_OK);
     assert(survey_init_discovery_start_packet(
                &gateway_adv.packet, TEST_GATEWAY, &config, 1u,
                (uint8_t)payload_len) == PROTO_OK);
@@ -156,7 +142,6 @@ static void test_survey_start_repeats_age_from_one_origin(void)
     for (uint8_t i = 0u; i < repeat_limit; i++) {
         assert(ctx.message_ages_ms[i] ==
                (uint32_t)i * FLOOD_RELAY_REPEAT_MS);
-        assert(ctx.flood_tlv_ages_ms[i] == ctx.message_ages_ms[i]);
         assert(ctx.queued_at_ms[i] == ctx.delays[i]);
         if (i > 0u) {
             assert(ctx.message_ages_ms[i] > ctx.message_ages_ms[i - 1u]);
@@ -169,39 +154,6 @@ static void test_survey_start_repeats_age_from_one_origin(void)
     assert(app_mesh_flood_backoff_ms(1u, 39u) == 79u);
     assert(app_mesh_flood_backoff_ms(2u, 79u) == 159u);
     assert(app_mesh_flood_backoff_ms(UINT8_MAX, 0u) == C5_POLITE_BACKOFF_MAX_MS);
-}
-
-static void test_malformed_flood_age_fails_closed(void)
-{
-    struct mesh_outbound malformed = {
-        .packet = {
-            .msg_type = MSG_SURVEY_DISCOVERY_START,
-            .src_id = TEST_GATEWAY,
-            .dst_id = MESH_BROADCAST_ID,
-            .payload_len = 3u,
-        },
-        .payload = {TLV_FLOOD_PACKET_AGE_MS, 1u, 0u},
-        .payload_len = 3u,
-        .next_hop_id = MESH_BROADCAST_ID,
-        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
-        .earliest_tx_ms = 1000u,
-        .earliest_tx_valid = true,
-    };
-    struct app_mesh_flood_result result;
-    struct flood_test_ctx ctx = {.now_ms = 900u};
-    const struct app_mesh_flood_ops ops = {
-        .now_ms = test_now_ms,
-        .sleep_until_ms = test_sleep_until_ms,
-        .defer_active = test_defer_active,
-        .c5_quiet = test_c5_quiet,
-        .random_u32 = test_random_u32,
-        .send = test_send,
-        .ctx = &ctx,
-    };
-
-    assert(app_mesh_flood_send_bounded(&malformed, &ops, &result) == -EBADMSG);
-    assert(result.sent_count == 0u);
-    assert(ctx.send_count == 0u);
 }
 
 static void test_resumable_deferral_saturates_and_rollover_rebases(void)
@@ -606,7 +558,6 @@ static void test_valid_zero_queue_origin_accumulates_age(void)
 int main(void)
 {
     test_survey_start_repeats_age_from_one_origin();
-    test_malformed_flood_age_fails_closed();
     test_resumable_deferral_saturates_and_rollover_rebases();
     test_pause_after_quiet_check_prevents_send();
     test_pre_rf_blocks_preserve_four_real_opportunities();

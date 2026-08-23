@@ -546,6 +546,10 @@ static int mesh_defer_uwb_rx_rearm(uint32_t delay_ms)
     int ret;
 
     k_mutex_lock(&mesh_uwb_rx_rearm_lock, K_FOREVER);
+    mesh_uwb_rx_rearm_generation++;
+    if (mesh_uwb_rx_rearm_generation == 0u) {
+        mesh_uwb_rx_rearm_generation = 1u;
+    }
     mesh_uwb_rx_rearm_delay_ms = delay_ms;
     mesh_uwb_rx_rearm_pending = true;
     k_mutex_unlock(&mesh_uwb_rx_rearm_lock);
@@ -561,7 +565,8 @@ static int mesh_defer_uwb_rx_rearm(uint32_t delay_ms)
     return ret;
 }
 
-static bool mesh_take_deferred_uwb_rx_rearm(uint32_t *delay_ms)
+static bool mesh_take_deferred_uwb_rx_rearm(uint32_t *delay_ms,
+                                            uint32_t *generation)
 {
     bool pending;
 
@@ -570,6 +575,9 @@ static bool mesh_take_deferred_uwb_rx_rearm(uint32_t *delay_ms)
     if (pending) {
         if (delay_ms != NULL) {
             *delay_ms = mesh_uwb_rx_rearm_delay_ms;
+        }
+        if (generation != NULL) {
+            *generation = mesh_uwb_rx_rearm_generation;
         }
         mesh_uwb_rx_rearm_pending = false;
     }
@@ -580,6 +588,10 @@ static bool mesh_take_deferred_uwb_rx_rearm(uint32_t *delay_ms)
 static void mesh_clear_deferred_uwb_rx_rearm(void)
 {
     k_mutex_lock(&mesh_uwb_rx_rearm_lock, K_FOREVER);
+    mesh_uwb_rx_rearm_generation++;
+    if (mesh_uwb_rx_rearm_generation == 0u) {
+        mesh_uwb_rx_rearm_generation = 1u;
+    }
     mesh_uwb_rx_rearm_pending = false;
     k_mutex_unlock(&mesh_uwb_rx_rearm_lock);
     (void)k_work_cancel(&mesh_uwb_rx_rearm_work);
@@ -588,6 +600,9 @@ static void mesh_clear_deferred_uwb_rx_rearm(void)
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work)
 {
     uint32_t delay_ms = 0u;
+    uint32_t generation = 0u;
+    uint32_t current_generation = 0u;
+    bool stale = false;
     int ret;
 
     ARG_UNUSED(work);
@@ -597,17 +612,40 @@ static void mesh_uwb_rx_rearm_work_handler(struct k_work *work)
         return;
     }
 
-    if (!mesh_take_deferred_uwb_rx_rearm(&delay_ms)) {
-        return;
-    }
-    if (!mesh_uwb_rx_active || !mesh_role_uses_uwb_rx()) {
+    if (!mesh_take_deferred_uwb_rx_rearm(&delay_ms, &generation)) {
         return;
     }
 
-    ret = mesh_reschedule_owned_work_with_busy_handoff(
-        &mesh_uwb_rx_work,
-        delay_ms,
-        "role-scan-rearm");
+    /*
+     * Immediate causal ACK ownership clears the deferred rearm and then
+     * cancels the role scan.  Serialize the final generation check with the
+     * actual reschedule so a rearm worker that was already running cannot
+     * publish RX after that clear/cancel boundary.
+     */
+    k_mutex_lock(&mesh_uwb_rx_rearm_lock, K_FOREVER);
+    stale = generation != mesh_uwb_rx_rearm_generation ||
+            mesh_transport_paused() ||
+            !mesh_rx_handoff_scan_rearm_allowed() ||
+            !mesh_uwb_rx_active || !mesh_role_uses_uwb_rx();
+    current_generation = mesh_uwb_rx_rearm_generation;
+    if (stale) {
+        ret = -ECANCELED;
+    } else {
+        ret = mesh_reschedule_owned_work_with_busy_handoff(
+            &mesh_uwb_rx_work,
+            delay_ms,
+            "role-scan-rearm");
+    }
+    k_mutex_unlock(&mesh_uwb_rx_rearm_lock);
+    if (stale) {
+        if (mesh_gateway_route_test_role()) {
+            status_debug_printf(
+                "DBG_GATEWAY_RX_REARM_STALE generation=%u current=%u\n",
+                generation,
+                current_generation);
+        }
+        return;
+    }
     if (ret == -EBUSY) {
         (void)mesh_defer_uwb_rx_rearm(delay_ms);
         return;
@@ -1110,16 +1148,6 @@ static int mesh_encode_outbound_tx_snapshot(
         return ret;
     }
 
-    ret = uwb_mesh_frame_sync_flood_packet_age(frame, *frame_len);
-    if (ret == PROTO_ERR_NOT_FOUND) {
-        return PROTO_OK;
-    }
-    if (ret != PROTO_OK) {
-        LOG_WRN("mesh flood age TLV update failed: msg=0x%02x ret=%d",
-                tx_packet->msg_type,
-                ret);
-        return PROTO_OK;
-    }
     return PROTO_OK;
 }
 
@@ -1622,6 +1650,17 @@ static int mesh_send_causal_channel9_response(
         if (ret < 0) {
             goto out;
         }
+        if (out->packet.msg_type == MSG_GATEWAY_ACK) {
+            /*
+             * Hold the RX-to-control handoff across the peer retune guard.
+             * Sleeping before this reservation lets a later receive turn
+             * overtake the causal ACK that owns the current response.
+             */
+            status_debug_printf("DBG_GATEWAY_ACK_GUARD ms=%u seq=%u owner=control\n",
+                                MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
+                                out->packet.seq);
+            k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
+        }
     }
 
     ret = mesh_send_outbound_keep_channel9_awake(out, reason,
@@ -2073,6 +2112,33 @@ static uint32_t mesh_c5_flood_deferred_retry_ms(
         "c5-flood-deferred");
 }
 
+bool mesh_c5_flood_work_pending(void)
+{
+    bool pending;
+
+    k_mutex_lock(&mesh_c5_flood_deferred_lock, K_FOREVER);
+    pending = mesh_c5_flood_deferred.valid ||
+              mesh_route_adv_deferred.valid;
+    k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+    return pending;
+}
+
+bool mesh_c5_protocol_flood_work_pending(void)
+{
+    bool pending;
+
+    k_mutex_lock(&mesh_c5_flood_deferred_lock, K_FOREVER);
+    pending =
+        (mesh_c5_flood_deferred.valid &&
+         mesh_c5_flood_deferred.outbound.packet.msg_type !=
+             MSG_GATEWAY_ROUTE_ADV) ||
+        (mesh_route_adv_deferred.valid &&
+         mesh_route_adv_deferred.outbound.packet.msg_type !=
+             MSG_GATEWAY_ROUTE_ADV);
+    k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+    return pending;
+}
+
 static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
                                         uint8_t purpose,
                                         const char *reason,
@@ -2183,6 +2249,73 @@ static bool mesh_c5_flood_destination_valid(const struct mesh_outbound *out)
     return broadcast || targeted_command;
 }
 
+static bool mesh_c5_flood_enumeration_identity(
+    const struct mesh_outbound *out,
+    enum discovery_assignment_phase *phase_out,
+    uint32_t *epoch_out,
+    uint32_t *operation_budget_ms_out)
+{
+    enum command_id command_id;
+    enum discovery_assignment_phase phase;
+    struct operation_policy_set operation_policy;
+    uint32_t epoch;
+    uint32_t operation_budget_ms;
+
+    if (out == NULL || phase_out == NULL || epoch_out == NULL ||
+        operation_budget_ms_out == NULL ||
+        DEVICE_ROLE != ROLE_ANCHOR || out->packet.msg_type != MSG_COMMAND ||
+        gateway_command_extract_id(out->payload,
+                                   out->payload_len,
+                                   &command_id) != PROTO_OK ||
+        command_id != CMD_ASSIGN_DISCOVERY_SLOTS ||
+        discovery_assignment_extract_control_tlvs(out->payload,
+                                                  out->payload_len,
+                                                  &phase,
+                                                  &epoch) != PROTO_OK ||
+        (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
+         phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE &&
+         phase != DISCOVERY_ASSIGNMENT_PHASE_END &&
+         phase != DISCOVERY_ASSIGNMENT_PHASE_ABORT)) {
+        return false;
+    }
+    operation_policy_set_defaults(&operation_policy);
+    if (operation_policy_set_from_tlvs(out->payload,
+                                       out->payload_len,
+                                       &operation_policy) != PROTO_OK) {
+        return false;
+    }
+    operation_budget_ms = operation_policy.assignment.operation_budget_ms;
+    *phase_out = phase;
+    *epoch_out = epoch;
+    *operation_budget_ms_out = operation_budget_ms;
+    return true;
+}
+
+static bool mesh_c5_gateway_enumeration_claim(
+    const struct mesh_outbound *out)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    enum command_id command_id;
+    enum discovery_assignment_phase phase;
+    uint32_t epoch;
+
+    return out != NULL &&
+           out->packet.msg_type == MSG_COMMAND &&
+           gateway_command_extract_id(out->payload,
+                                      out->payload_len,
+                                      &command_id) == PROTO_OK &&
+           command_id == CMD_ASSIGN_DISCOVERY_SLOTS &&
+           discovery_assignment_extract_control_tlvs(out->payload,
+                                                     out->payload_len,
+                                                     &phase,
+                                                     &epoch) == PROTO_OK &&
+           phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM && epoch != 0u;
+#else
+    ARG_UNUSED(out);
+    return false;
+#endif
+}
+
 static int mesh_send_c5_flood_now_until(
     const struct mesh_outbound *out,
     uint8_t purpose,
@@ -2216,6 +2349,14 @@ static int mesh_send_c5_flood_now_until(
         .ctx = &flood_ctx,
     };
     const char *log_reason = reason == NULL ? "c5-flood" : reason;
+    enum discovery_assignment_phase enumeration_phase =
+        (enum discovery_assignment_phase)0;
+    uint32_t enumeration_epoch = 0u;
+    uint32_t enumeration_operation_budget_ms = 0u;
+    uint32_t enumeration_now_ms = 0u;
+    bool enumeration_control;
+    bool enumeration_needs_wake = false;
+    bool gateway_enumeration_claim;
     uint16_t attempt_count;
     int ret;
 
@@ -2236,6 +2377,43 @@ static int mesh_send_c5_flood_now_until(
     tx.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     flood_ctx.candidate = &tx;
     attempt_count = 1u + tx.flood_retry_count;
+    enumeration_control = mesh_c5_flood_enumeration_identity(
+        &tx,
+        &enumeration_phase,
+        &enumeration_epoch,
+        &enumeration_operation_budget_ms);
+    if (enumeration_control) {
+        enumeration_now_ms = k_uptime_get_32();
+        (void)protocol_rx_downstream_activation_expire(
+            &mesh_enumeration_downstream_activation,
+            enumeration_now_ms);
+        if (mesh_enumeration_downstream_activation.activated &&
+            mesh_enumeration_downstream_activation.generation !=
+                enumeration_epoch) {
+            if (!discovery_assignment_epoch_strictly_newer(
+                    enumeration_epoch,
+                    (uint32_t)mesh_enumeration_downstream_activation
+                        .generation)) {
+                return -ESTALE;
+            }
+            (void)protocol_rx_downstream_activation_clear(
+                &mesh_enumeration_downstream_activation,
+                PROTOCOL_RX_OPERATION_ENUMERATION,
+                mesh_enumeration_downstream_activation.generation);
+        }
+        enumeration_needs_wake = protocol_rx_downstream_activation_needs_wake(
+            &mesh_enumeration_downstream_activation,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            enumeration_epoch,
+            enumeration_now_ms);
+        /* The gateway's activation train already placed direct and forced-hop
+         * anchors in the gateway-control listener. Relays send only their
+         * bounded control copies; another wake train would add latency and
+         * violate the single activation-owner contract. */
+        send_wake_train = false;
+    }
+    gateway_enumeration_claim =
+        mesh_c5_gateway_enumeration_claim(&tx);
 
     if (mesh_c5_flood_defer_active_cb(&flood_ctx)) {
         return -EAGAIN;
@@ -2243,10 +2421,15 @@ static int mesh_send_c5_flood_now_until(
 
     for (uint16_t attempt = 0u; attempt < attempt_count; attempt++) {
         struct app_mesh_flood_result attempt_result = {0};
+        uint32_t wake_train_ms = send_wake_train ?
+            gateway_enumeration_claim ?
+                (attempt == 0u ?
+                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS : 0u) :
+                WAKE_ADV_MS : 0u;
         uint32_t first_tx_ms = tx.earliest_tx_valid ? tx.earliest_tx_ms :
                                k_uptime_get_32();
-        uint32_t wake_start_ms = send_wake_train ?
-            first_tx_ms - WAKE_ADV_MS : first_tx_ms;
+        uint32_t wake_start_ms = wake_train_ms != 0u ?
+            first_tx_ms - wake_train_ms : first_tx_ms;
         if (!uptime_deadline_reached(k_uptime_get_32(), wake_start_ms)) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_C5_FLOOD_WAIT now=%u wake=%u first=%u msg=%02x attempt=%u/%u reason=%s\n",
@@ -2265,12 +2448,12 @@ static int mesh_send_c5_flood_now_until(
             break;
         }
 
-        if (send_wake_train) {
-            ret = mesh_send_route_wake_train(MESH_BROADCAST_ID, NULL, NULL,
-                                             purpose, reason, &tx, NULL,
-                                             c5_tx_intent,
-                                             NULL,
-                                             NULL);
+        if (wake_train_ms != 0u) {
+            ret = mesh_send_route_wake_train_with_duration(
+                MESH_BROADCAST_ID, NULL, NULL,
+                purpose, reason, &tx, NULL,
+                c5_tx_intent, wake_train_ms,
+                NULL, NULL);
             if (ret < 0) {
                 mesh_restart_role_scan();
                 LOG_WRN("mesh C5 flood wake train failed: msg=0x%02x ret=%d reason=%s",
@@ -2310,13 +2493,36 @@ static int mesh_send_c5_flood_now_until(
             break;
         }
         if (attempt + 1u < attempt_count) {
-            tx.earliest_tx_ms = k_uptime_get_32() + FLOOD_POST_ROOT_GUARD_MS;
+            tx.earliest_tx_ms = k_uptime_get_32() +
+                (enumeration_control ?
+                     MESH_ENUMERATION_RELAY_COPY_GUARD_MS :
+                     FLOOD_POST_ROOT_GUARD_MS) +
+                mesh_flood_copy_diversification_ms(
+                    DEVICE_ID, &tx.packet, (uint8_t)(attempt + 1u));
             tx.earliest_tx_valid = true;
         }
     }
 
     if (result != NULL) {
         *result = aggregate_result;
+    }
+    if (enumeration_control && enumeration_needs_wake &&
+        aggregate_result.sent_count > 0u) {
+        (void)protocol_rx_downstream_activation_mark(
+            &mesh_enumeration_downstream_activation,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            enumeration_epoch,
+            enumeration_now_ms,
+            enumeration_now_ms + enumeration_operation_budget_ms);
+    }
+    if (enumeration_control &&
+        (enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END ||
+         enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT) && ret == 0 &&
+        aggregate_result.sent_count == attempt_count) {
+        (void)protocol_rx_downstream_activation_clear(
+            &mesh_enumeration_downstream_activation,
+            PROTOCOL_RX_OPERATION_ENUMERATION,
+            enumeration_epoch);
     }
     if (ret == 0) {
         LOG_DBG("mesh bounded C5 flood sent: msg=0x%02x sent=%u busy_skip=%u defer=%u retry=%u reason=%s",
@@ -2480,6 +2686,7 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
                           C5_POLITE_SNIFF_MS + UWB_CONTROL_TX_TIMEOUT_MS;
     bool control_handoff_started = false;
     bool abort_scan = false;
+    uint32_t wake_train_ms = WAKE_ADV_MS;
     int ret;
 
     if (observation != NULL) {
@@ -2495,8 +2702,25 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
         scheduled_retry_delay_ms == NULL) {
         return -EINVAL;
     }
+    memset(out, 0, sizeof(*out));
+    out->packet = *view->packet;
+    if (view->payload_len != 0u) {
+        memcpy(out->payload, view->payload, view->payload_len);
+    }
+    out->payload_len = view->payload_len;
+    out->radio_channel = view->radio_channel;
+    out->next_hop_id = view->next_hop_id;
+    out->queued_at_ms = view->queued_at_ms;
+    out->earliest_tx_ms = view->earliest_tx_ms;
+    out->flood_retry_count = view->flood_retry_count;
+    out->queued_at_valid = view->queued_at_valid;
+    out->earliest_tx_valid = view->earliest_tx_valid;
+    if (send_wake_train && mesh_c5_gateway_enumeration_claim(out)) {
+        wake_train_ms =
+            MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS;
+    }
     if (send_wake_train) {
-        tx_span_ms += WAKE_ADV_MS + MESH_CONTROL_FOLLOWUP_TURNAROUND_MS;
+        tx_span_ms += wake_train_ms + MESH_CONTROL_FOLLOWUP_TURNAROUND_MS;
     }
     *scheduled_retry_delay_ms =
         app_anchor_gateway_survey_c5_quiet_delay_ms(k_uptime_get_32(),
@@ -2529,19 +2753,6 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
         status_debug_printf("DBG_CONTROL_RX_HANDOFF_READY abort=%u\n",
                             abort_scan ? 1u : 0u);
     }
-    memset(out, 0, sizeof(*out));
-    out->packet = *view->packet;
-    if (view->payload_len != 0u) {
-        memcpy(out->payload, view->payload, view->payload_len);
-    }
-    out->payload_len = view->payload_len;
-    out->radio_channel = view->radio_channel;
-    out->next_hop_id = view->next_hop_id;
-    out->queued_at_ms = view->queued_at_ms;
-    out->earliest_tx_ms = view->earliest_tx_ms;
-    out->flood_retry_count = view->flood_retry_count;
-    out->queued_at_valid = view->queued_at_valid;
-    out->earliest_tx_valid = view->earliest_tx_valid;
     ret = mesh_send_c5_flood_now_until(
         out,
         purpose,
@@ -2750,10 +2961,13 @@ int mesh_try_send_reliable_uplink_view(
         mesh_stop_role_scan();
         protocol_response_radio_owner = radio_guard_uwb_owner_client();
         if (!abort_scan && radio_guard_uwb_busy() &&
-            protocol_response_radio_owner ==
-                RADIO_GUARD_UWB_CLIENT_MESH_RX &&
-            !anchor_uwb_window_active() &&
-            !anchor_click_window_active()) {
+            ((protocol_response_radio_owner ==
+                  RADIO_GUARD_UWB_CLIENT_MESH_RX &&
+              !anchor_uwb_window_active()) ||
+             protocol_response_radio_owner ==
+                 RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN) &&
+            !anchor_click_window_active() &&
+            !mesh_report_anchor_survey_radio_active()) {
             /*
              * Gateway-command delivery can own a separate bounded C5
              * follow-up listener rather than the ordinary role scan.  That

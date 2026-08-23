@@ -533,6 +533,29 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(precommit.errors, ())
         self.assertEqual(len(precommit.packets), 1)
+
+        retained_precommit = GatewayReceiveBuffer().feed(
+            stream_record(
+                precommit_payload,
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=0x11223344,
+                packet_seq=0x3344,
+            )
+        )
+        self.assertEqual(retained_precommit.errors, ())
+        self.assertEqual(len(retained_precommit.packets), 1)
+        retained_receipt = build_gateway_host_receipt(
+            retained_precommit.packets[0],
+            host_id=0xA1C1BEEFC0DE0001,
+            gateway_id=gateway_id,
+        )
+        self.assertEqual(
+            retained_receipt.identity.original_flags,
+            FLAG_GATEWAY_ACK_REQUIRED,
+        )
         with self.assertRaises(ValueError):
             build_gateway_host_receipt(
                 precommit.packets[0],
@@ -567,18 +590,6 @@ class ProtocolTests(unittest.TestCase):
                 packet_dst_id=gateway_id,
                 packet_session_id=event_sequence + 1,
                 packet_seq=event_sequence & 0xFFFF,
-            ),
-            stream_record(
-                gateway_assignment_event_payload(
-                    event_sequence=0x11223344,
-                    discovery_slot=0xFF,
-                ),
-                msg_type=MSG_GATEWAY_COMMAND_EVENT,
-                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
-                packet_src_id=gateway_id,
-                packet_dst_id=gateway_id,
-                packet_session_id=0x11223344,
-                packet_seq=0x3344,
             ),
             stream_record(
                 payload[:-1],
@@ -1607,7 +1618,7 @@ class ProtocolTests(unittest.TestCase):
             discovery=DiscoveryOperationPolicy(
                 25_104, 200, 12, 4, 1_500, 500_000
             ),
-            pair=PairOperationPolicy(1, 8),
+            pair=PairOperationPolicy(1, 1),
         )
         common: dict[str, Any] = {
             "host_id": DEFAULT_HOST_ID,

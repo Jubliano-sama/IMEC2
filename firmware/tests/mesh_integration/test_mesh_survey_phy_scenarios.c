@@ -37,7 +37,7 @@
 #define MODELED_FORCED_CONTROL_CLAIM_MS 400u
 #define MODELED_DEEP_RELAY_LISTEN_MS 2000u
 #define MODELED_LOW_DUTY_RESCHEDULE_MS 380u
-#define MODELED_LOW_DUTY_RX_US UINT64_C(3000)
+#define MODELED_LOW_DUTY_RX_US UINT64_C(3500)
 #define MODELED_FOLLOWUP_SCAN_MS 20u
 #define MODELED_CONNECTED_GAP_RETUNE_MS 60u
 #define MODELED_LEGACY_EVENT_INTERVAL_MS 520u
@@ -75,7 +75,7 @@ _Static_assert(MODELED_FOLLOWUP_SCAN_MS ==
                "forced follow-up scenario must use the boosted scan slice");
 _Static_assert(MODELED_WAKE_AFTER_RECOVERY_SCAN_START_MS * 1000u >
                    MODELED_LOW_DUTY_RX_US,
-               "observed 3 ms scan must finish before the modeled wake copy");
+               "ordinary scan must finish before the modeled wake copy");
 _Static_assert(MODELED_WAKE_AFTER_RECOVERY_SCAN_START_MS <
                    MODELED_FOLLOWUP_SCAN_MS,
                "post-Channel-9 recovery slice must still contain the wake copy");

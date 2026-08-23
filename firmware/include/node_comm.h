@@ -52,6 +52,9 @@ enum node_comm_delivery_profile {
     NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
     NODE_COMM_PROFILE_CONTROL_RESPONSE,
     NODE_COMM_PROFILE_BEST_EFFORT,
+    /* One gateway-origin RF opportunity; downstream relays still own their
+     * bounded flood repetitions encoded in the immutable command payload. */
+    NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
     NODE_COMM_PROFILE_COUNT,
 };
 

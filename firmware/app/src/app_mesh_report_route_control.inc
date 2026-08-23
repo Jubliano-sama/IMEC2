@@ -15,6 +15,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     enum fw_c5_tx_intent c5_tx_intent =
         mesh_c5_forwarded_control_intent(out);
     bool send_wake_train =
+        out != NULL && out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV &&
         !mesh_report_anchor_survey_operation_generation_active(0u);
     int store_ret;
     int ret;
@@ -1224,7 +1225,6 @@ static int mesh_send_current_ch9_ack_batch(uint64_t peer_id,
                             (unsigned long long)peer_id,
                             reason == NULL ? "batch-ack" : reason);
     }
-    k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
     ret = mesh_send_causal_channel9_response(
         &ack,
         reason == NULL ? "gateway-batch-ack-current-channel9" : reason,
@@ -1800,7 +1800,9 @@ static uint16_t mesh_route_wake_claimed_duration_ms(
 
     claimed_ms = (uint32_t)wake_train_ends_in_ms +
                  config->post_wake_claimed_duration_ms;
-    return claimed_ms > UINT16_MAX ? UINT16_MAX : (uint16_t)claimed_ms;
+    return claimed_ms > UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS ?
+           UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS :
+           (uint16_t)claimed_ms;
 }
 
 static int mesh_route_wake_sniff_activity(const char *phase,
@@ -1948,10 +1950,37 @@ static int mesh_send_route_wake_train(uint64_t target_id,
                                       bool *rf_started_out,
                                       uint64_t *rf_started_at_ms_out)
 {
+    return mesh_send_route_wake_train_with_duration(
+        target_id,
+        embedded_route_req,
+        embedded_sent,
+        purpose,
+        reason,
+        authorization_candidate,
+        authorization,
+        c5_tx_intent,
+        WAKE_ADV_MS,
+        rf_started_out,
+        rf_started_at_ms_out);
+}
+
+static int mesh_send_route_wake_train_with_duration(
+    uint64_t target_id,
+    const struct mesh_outbound *embedded_route_req,
+    bool *embedded_sent,
+    uint8_t purpose,
+    const char *reason,
+    const struct mesh_outbound *authorization_candidate,
+    const struct app_mesh_c5_tx_authorization_token *authorization,
+    enum fw_c5_tx_intent c5_tx_intent,
+    uint32_t wake_train_ms,
+    bool *rf_started_out,
+    uint64_t *rf_started_at_ms_out)
+{
     struct uwb_clicker_session *session = &mesh_route_wake_session_scratch;
     struct uwb_clicker_config *config = &mesh_route_wake_config_scratch;
     struct app_clicker_wake_train_config wake_train_config = {
-        .wake_adv_ms = WAKE_ADV_MS,
+        .wake_adv_ms = wake_train_ms,
         .post_wake_claimed_duration_ms = UWB_POST_WAKE_CLAIMED_DURATION_MS,
         .control_tx_timeout_ms = UWB_CONTROL_TX_TIMEOUT_MS,
     };
@@ -1963,6 +1992,7 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     uint32_t event_seq;
     uint32_t next_click_rx_ms = 0u;
     uint32_t click_observed_ms = 0u;
+    uint32_t train_started_ms = 0u;
     int64_t close_ms;
     uint16_t sent_count = 0u;
     uint16_t embedded_count = 0u;
@@ -1990,8 +2020,10 @@ static int mesh_send_route_wake_train(uint64_t target_id,
     if (rf_started_at_ms_out != NULL) {
         *rf_started_at_ms_out = 0u;
     }
-    if (target_id != MESH_BROADCAST_ID &&
-        (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID)) {
+    if (wake_train_ms == 0u ||
+        wake_train_ms > UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS ||
+        (target_id != MESH_BROADCAST_ID &&
+         (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID))) {
         return -EINVAL;
     }
     if (!mesh_coordinator_c5_tx_allowed_authorized_intent(
@@ -2111,10 +2143,9 @@ wake_train_attempt:
      */
     boost_single_shot = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                         anchor_relay_control_followup_boost_active();
-    wake_train_config.wake_adv_ms = boost_single_shot ?
-                                    MESH_ROUTE_WAKE_ADV_BOOST_ACTIVE_MS :
-                                    WAKE_ADV_MS;
+    wake_train_config.wake_adv_ms = wake_train_ms;
     if (boost_single_shot) {
+        wake_train_config.wake_adv_ms = MESH_ROUTE_WAKE_ADV_BOOST_ACTIVE_MS;
         status_debug_printf("DBG_WAKE_TRAIN_BOOST_SINGLE target=0x%016llx adv=%u\n",
                             (unsigned long long)target_id,
                             wake_train_config.wake_adv_ms);
@@ -2174,6 +2205,7 @@ wake_train_attempt:
     }
     status_debug_note("DBG_WAKE_TRAIN_CONFIG_OK\n");
 
+    train_started_ms = k_uptime_get_32();
     close_ms = k_uptime_get() + wake_train_config.wake_adv_ms;
     next_click_rx_ms = k_uptime_get_32() + MESH_ROUTE_WAKE_CLICK_RX_PERIOD_MS;
     while (k_uptime_get() < close_ms) {
@@ -2365,9 +2397,17 @@ wake_train_attempt:
         }
 
         if (k_uptime_get() < close_ms) {
-            uint32_t jitter_us = uwb_clicker_wake_claim_jitter_us(sys_rand32_get());
+            uint32_t random_value = sys_rand32_get();
+            uint32_t jitter_us =
+                uwb_clicker_wake_claim_jitter_us(random_value);
             int64_t remaining_after_tx_ms = close_ms - k_uptime_get();
 
+            if (DEVICE_ROLE == ROLE_GATEWAY &&
+                wake_train_config.wake_adv_ms ==
+                    MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS) {
+                jitter_us = random_value %
+                    (MESH_RADIO_ENUMERATION_WAKE_GAP_JITTER_MAX_US + 1u);
+            }
             if (jitter_us > 0u && remaining_after_tx_ms > 0) {
                 k_busy_wait(jitter_us);
             }
@@ -2444,9 +2484,12 @@ out:
     } else {
         mesh_c5_contact_clear("wake-train-timeout");
     }
-    LOG_INF("mesh route channel-5 wake train complete: target=0x%016llx ret=%d wake_claims=%u embedded=%u reason=%s",
+    LOG_INF("mesh route channel-5 wake train complete: target=0x%016llx ret=%d requested_ms=%u active_ms=%u elapsed_ms=%u wake_claims=%u embedded=%u reason=%s",
             (unsigned long long)target_id,
             sent_count == 0u ? -ETIMEDOUT : 0,
+            wake_train_ms,
+            wake_train_config.wake_adv_ms,
+            k_uptime_get_32() - train_started_ms,
             sent_count,
             embedded_count,
             reason == NULL ? "route" : reason);
@@ -2587,6 +2630,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
     bool gateway_control_followup_wake_seen = false;
     bool yielded_to_channel9_receive = false;
     bool yielded_to_gateway_priority_control = false;
+    bool gateway_operation_retained = false;
     struct uwb_wake_claim_frame click_claim = {0};
     uint8_t click_quality = 0u;
     uint32_t click_observed_ms = 0u;
@@ -2770,8 +2814,17 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                             click_captured = true;
                             last_ret = -EAGAIN;
                             status_debug_note(
-                                "DBG_ROUTE_REPLY_CLICK_PREEMPT_PROBE\n");
-                            break;
+                                "DBG_C5_CONTROL_CLICK_RETAIN_PROBE\n");
+                            probe_ret =
+                                dwm3000_driver_configure_wake_mesh_control_mode();
+                            if (probe_ret < 0) {
+                                last_ret = probe_ret;
+                                status_debug_printf(
+                                    "DBG_C5_CONTROL_CLICK_RESTORE_FAIL ret=%d\n",
+                                    probe_ret);
+                                break;
+                            }
+                            continue;
                         }
                         if (probe_ret ==
                             MESH_STANDARD_WAKE_PROBE_RELAYED_GATEWAY_CONTROL) {
@@ -2857,6 +2910,18 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                     click_quality = quality;
                     click_observed_ms = k_uptime_get_32();
                     last_ret = -EAGAIN;
+                    if (contact_purpose ==
+                        C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD) {
+                        /*
+                         * This click has not been accepted by the anchor yet.
+                         * Keep one RAM observation while the listener finds
+                         * and queues the gateway operation that opened this
+                         * control window. The clicker remains its retry owner.
+                         */
+                        status_debug_note(
+                            "DBG_C5_CONTROL_CLICK_RETAIN\n");
+                        continue;
+                    }
                     status_debug_note("DBG_ROUTE_REPLY_CLICK_CAPTURE\n");
                     break;
                 }
@@ -3007,6 +3072,13 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 (parsed.packet.msg_type == MSG_COMMAND ||
                  parsed.packet.msg_type == MSG_SURVEY_PAIR_PREPARE ||
                  parsed.packet.msg_type == MSG_SURVEY_DISCOVERY_START);
+            bool gateway_operation_priority =
+                DEVICE_ROLE == ROLE_ANCHOR &&
+                parsed.packet.src_id == GATEWAY_ID &&
+                app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+                    parsed.packet.msg_type,
+                    parsed.payload,
+                    parsed.payload_len);
             bool targeted_control_relay = false;
 
             if (gateway_priority_control &&
@@ -3269,6 +3341,14 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                 continue;
             }
             capture_count++;
+            if (gateway_operation_priority) {
+                gateway_operation_retained = true;
+                status_debug_printf(
+                    "DBG_C5_GATEWAY_OPERATION_RETAINED msg=0x%02x seq=%u click_waiting=%u\n",
+                    parsed.packet.msg_type,
+                    parsed.packet.seq,
+                    click_captured ? 1u : 0u);
+            }
             if (app_mesh_c5_route_capture_yields_to_competing_request(
                     parsed.packet.msg_type)) {
                 yielded_to_competing_route_request = true;
@@ -3342,6 +3422,19 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             *route_reply_captured = false;
         }
         MESH_ROUTE_LISTENER_RETURN(release_ret);
+    }
+    if (click_captured && gateway_operation_retained) {
+        /* The queued operation owns the next action. This claim was only an
+         * observation, so dropping it creates no anchor custody debt; the
+         * clicker's independent bounded retry can offer it again later. */
+        mesh_c5_contact_clear("gateway-operation-over-click");
+        if (mesh_rx_pending_count() > 0u) {
+            (void)mesh_submit_owned_work(&mesh_rx_work,
+                                         "gateway-operation-before-click");
+        }
+        mesh_restart_role_scan();
+        status_debug_note("DBG_C5_GATEWAY_OPERATION_WINS_CLICK\n");
+        MESH_ROUTE_LISTENER_RETURN(-EAGAIN);
     }
     if (click_captured) {
         bool handled;

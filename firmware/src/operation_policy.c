@@ -32,6 +32,7 @@ void operation_policy_assignment_defaults(
             OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS,
         .response_spread_ms =
             OPERATION_POLICY_ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
+        .ram_only_iteration = false,
     };
 }
 
@@ -75,6 +76,44 @@ void operation_policy_set_defaults(struct operation_policy_set *set)
     operation_policy_pair_defaults(&set->pair);
 }
 
+uint32_t operation_policy_first_contact_cell_ms(uint8_t hop_count)
+{
+    uint8_t effective_hop_count =
+        hop_count == 0u || hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+            DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
+
+    return OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS +
+           ((uint32_t)(effective_hop_count - 1u) *
+            OPERATION_POLICY_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS);
+}
+
+int operation_policy_first_contact_offset_ms(uint8_t slot,
+                                             uint8_t slot_count,
+                                             uint8_t hop_count,
+                                             uint32_t *offset_ms)
+{
+    uint8_t effective_hop_count;
+    uint64_t offset = 0u;
+
+    if (offset_ms == NULL || slot_count == 0u || slot >= slot_count) {
+        return PROTO_ERR_ARG;
+    }
+    effective_hop_count =
+        hop_count == 0u || hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+            DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
+    for (uint8_t depth = 1u; depth < effective_hop_count; depth++) {
+        offset += (uint64_t)slot_count *
+                  operation_policy_first_contact_cell_ms(depth);
+    }
+    offset += (uint64_t)slot *
+              operation_policy_first_contact_cell_ms(effective_hop_count);
+    if (offset > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *offset_ms = (uint32_t)offset;
+    return PROTO_OK;
+}
+
 static int operation_policy_assignment_validate(
     const struct operation_policy_assignment *policy)
 {
@@ -101,7 +140,10 @@ static int operation_policy_assignment_validate(
 static int operation_policy_discovery_validate(
     const struct operation_policy_discovery *policy)
 {
-    const struct operation_policy_discovery_budget_terms base_terms = {0};
+    /* Generic wire validation knows only the physical one-hop floor. */
+    const struct operation_policy_discovery_budget_terms base_terms = {
+        .max_hop_count = 1u,
+    };
     uint32_t required_budget_ms;
 
     if (policy->start_delay_ms <
@@ -172,13 +214,18 @@ int operation_policy_decode_value(const uint8_t *value,
         return PROTO_ERR_ARG;
     }
     if (value_len < OPERATION_POLICY_COMMON_VALUE_LEN ||
-        value[0] != OPERATION_POLICY_VERSION ||
-        value[2] != OPERATION_POLICY_FLAGS_NONE) {
+        value[0] != OPERATION_POLICY_VERSION) {
         return PROTO_ERR_MALFORMED;
     }
     family = (enum operation_policy_family)value[1];
     expected_len = operation_policy_value_len(family);
     if (expected_len == 0u || value_len != expected_len) {
+        return PROTO_ERR_MALFORMED;
+    }
+    if ((family == OPERATION_POLICY_FAMILY_ASSIGNMENT &&
+         (value[2] & ~OPERATION_POLICY_ASSIGNMENT_FLAGS_MASK) != 0u) ||
+        (family != OPERATION_POLICY_FAMILY_ASSIGNMENT &&
+         value[2] != OPERATION_POLICY_FLAGS_NONE)) {
         return PROTO_ERR_MALFORMED;
     }
 
@@ -191,6 +238,9 @@ int operation_policy_decode_value(const uint8_t *value,
             proto_get_u32_le(&value[5]);
         decoded.value.assignment.response_spread_ms =
             proto_get_u16_le(&value[9]);
+        decoded.value.assignment.ram_only_iteration =
+            (value[2] &
+             OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION) != 0u;
         break;
     case OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY:
         decoded.value.discovery.start_delay_ms =
@@ -225,7 +275,10 @@ static void operation_policy_encode_value(const struct operation_policy *policy,
     memset(value, 0, value_len);
     value[0] = OPERATION_POLICY_VERSION;
     value[1] = (uint8_t)policy->family;
-    value[2] = OPERATION_POLICY_FLAGS_NONE;
+    value[2] = policy->family == OPERATION_POLICY_FAMILY_ASSIGNMENT &&
+                       policy->value.assignment.ram_only_iteration ?
+                   OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION :
+                   OPERATION_POLICY_FLAGS_NONE;
 
     switch (policy->family) {
     case OPERATION_POLICY_FAMILY_ASSIGNMENT:
@@ -361,6 +414,7 @@ int operation_policy_assignment_required_budget_ms(
     uint32_t *required_budget_ms)
 {
     uint8_t effective_hop_count;
+    uint8_t slot_count;
     uint32_t response_custody_ms;
     uint32_t claim_ack_settle_ms;
     uint64_t collection_ms;
@@ -388,15 +442,19 @@ int operation_policy_assignment_required_budget_ms(
         policy->expected_anchor_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
             DISCOVERY_ASSIGNMENT_MAX_HOPS :
             (uint8_t)policy->expected_anchor_count;
+    slot_count = policy->expected_anchor_count == 0u ?
+        OPERATION_POLICY_EXPECTED_ANCHOR_COUNT_MAX :
+        (uint8_t)policy->expected_anchor_count;
     response_custody_ms = discovery_assignment_response_custody_ms(
         effective_hop_count);
     claim_ack_settle_ms = DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
         ((uint32_t)(effective_hop_count - 1u) *
          DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS);
-    collection_ms = discovery_assignment_collection_window_ms(
-        policy->response_spread_ms, effective_hop_count);
-    table_collection_ms = discovery_assignment_table_collection_window_ms(
-        policy->response_spread_ms, effective_hop_count);
+    collection_ms = discovery_assignment_collection_window_for_topology_ms(
+        policy->response_spread_ms, slot_count, effective_hop_count);
+    table_collection_ms =
+        discovery_assignment_table_collection_window_for_topology_ms(
+            policy->response_spread_ms, slot_count, effective_hop_count);
     total_ms =
         (uint64_t)DISCOVERY_ASSIGNMENT_CONTROL_PHASE_COUNT *
             DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS +
@@ -408,10 +466,14 @@ int operation_policy_assignment_required_budget_ms(
         DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS +
         DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_SCHEDULING_GUARD_MS +
         DISCOVERY_ASSIGNMENT_OPERATION_TERMINAL_GUARD_MS;
-    if (total_ms > UINT32_MAX) {
-        return PROTO_ERR_NO_SPACE;
-    }
-    *required_budget_ms = (uint32_t)total_ms;
+    /*
+     * The explicit command ceiling is also the terminal safety boundary.
+     * Saturate pessimistic unknown-roster arithmetic there so the safest
+     * selectable policy remains valid while normal completion stays driven by
+     * the observed CLAIM/TABLE state.
+     */
+    *required_budget_ms = total_ms > OPERATION_POLICY_COMMAND_BUDGET_MAX_MS ?
+        OPERATION_POLICY_COMMAND_BUDGET_MAX_MS : (uint32_t)total_ms;
     return PROTO_OK;
 }
 
@@ -438,7 +500,10 @@ int operation_policy_discovery_required_budget_ms(
         policy->report_grace_ms <
             OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MIN_MS ||
         policy->report_grace_ms >
-            OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MAX_MS) {
+            OPERATION_POLICY_DISCOVERY_REPORT_GRACE_MAX_MS ||
+        terms->max_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ||
+        policy->start_delay_ms < survey_discovery_required_start_delay_ms(
+            terms->max_hop_count)) {
         return PROTO_ERR_ARG;
     }
 

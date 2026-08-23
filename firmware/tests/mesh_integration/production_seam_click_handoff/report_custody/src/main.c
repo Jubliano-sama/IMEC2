@@ -4707,6 +4707,76 @@ ZTEST(production_seam_report_custody,
 }
 
 ZTEST(production_seam_report_custody,
+      test_route_advertisement_age_is_header_only_across_queue_and_forward)
+{
+    struct mesh_relay gateway;
+    struct mesh_relay anchor;
+    struct mesh_outbound advertisement = {0};
+    struct mesh_relay_result forwarded = {0};
+    struct mesh_rx_pending queued = {
+        .received_at_ms = 100u,
+        .received_at_valid = true,
+    };
+    uint8_t payload_before[UWB_MESH_MAX_PAYLOAD_LEN] = {0};
+    const uint8_t *flood_age = NULL;
+    const uint8_t retired_flood_packet_age_tlv = 0xa1u;
+    uint8_t flood_age_len = 0u;
+
+    mesh_relay_init(&gateway,
+                    MESH_RELAY_ROLE_GATEWAY,
+                    GATEWAY_ID,
+                    GATEWAY_ID,
+                    7u);
+    mesh_relay_init(&anchor,
+                    MESH_RELAY_ROLE_ANCHOR,
+                    DEVICE_ID,
+                    GATEWAY_ID,
+                    7u);
+    zassert_ok(mesh_relay_build_gateway_route_adv(
+        &gateway, 81u, 100u, &advertisement));
+    zassert_equal(tlv_find_unique(advertisement.payload,
+                                  advertisement.payload_len,
+                                  retired_flood_packet_age_tlv,
+                                  &flood_age,
+                                  &flood_age_len),
+                  PROTO_ERR_NOT_FOUND,
+                  "gateway route advertisement still encoded duplicate age");
+
+    queued.packet = advertisement.packet;
+    queued.payload_len = advertisement.payload_len;
+    memcpy(queued.payload, advertisement.payload, advertisement.payload_len);
+    memcpy(payload_before, queued.payload, queued.payload_len);
+    mesh_rx_pending_refresh_age(&queued, 250u);
+    zassert_equal(queued.packet.message_age_ms, 150u,
+                  "queue residence did not advance authoritative header age");
+    zassert_mem_equal(queued.payload,
+                      payload_before,
+                      queued.payload_len,
+                      "header-only age refresh mutated route payload");
+
+    zassert_ok(mesh_relay_handle_rx(&anchor,
+                                    &queued.packet,
+                                    queued.payload,
+                                    queued.payload_len,
+                                    GATEWAY_ID,
+                                    95u,
+                                    250u,
+                                    &forwarded));
+    zassert_true((forwarded.actions &
+                  MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV) != 0u);
+    zassert_equal(forwarded.gateway_route_adv.packet.message_age_ms,
+                  queued.packet.message_age_ms,
+                  "forwarded flood lost authoritative header age");
+    zassert_equal(tlv_find_unique(forwarded.gateway_route_adv.payload,
+                                  forwarded.gateway_route_adv.payload_len,
+                                  retired_flood_packet_age_tlv,
+                                  &flood_age,
+                                  &flood_age_len),
+                  PROTO_ERR_NOT_FOUND,
+                  "forwarded route advertisement recreated duplicate age");
+}
+
+ZTEST(production_seam_report_custody,
       test_gateway_batch_queue_commit_repairs_reverse_route_before_control)
 {
     const uint64_t ingress_parent_id = UINT64_C(0x2000000000000b41);

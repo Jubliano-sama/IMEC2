@@ -17,6 +17,9 @@ from .protocol import (
     DecodeError,
     FLAG_DIAGNOSTIC,
     FLAG_GATEWAY_ACK_REQUIRED,
+    GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE,
+    GATEWAY_COMMAND_EVENT_FLAG_REPLAY,
+    GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT,
     MSG_ANCHOR_HEARTBEAT,
     MSG_CLICK_REPORT,
     MSG_COMMAND_RESULT,
@@ -38,9 +41,9 @@ DEFAULT_MAX_ENTRIES = 1024
 DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024
 
 # These are the packet classes that the gateway treats as reliable host
-# output. Gateway-local assignment publication is the only command-event
-# class with ACK-required host custody; generic command telemetry remains
-# best effort and intentionally consumes no durable-delivery cache entry.
+# output. Command events are handled separately because retained generic events
+# use exact stream identity while assignment publication also has a semantic
+# cross-reconnect identity.
 GATEWAY_ACK_REQUIRED_MESSAGE_TYPES = frozenset(
     {
         MSG_CLICK_REPORT,
@@ -138,8 +141,8 @@ def is_host_delivery_packet(packet: Packet) -> bool:
     Mesh records enter this cache only when the protocol explicitly marks them
     as gateway-ACK-required.  Diagnostic mesh data must carry both the ACK and
     diagnostic flags. Assignment-publication command events must carry the
-    explicit ACK-required marker; generic status telemetry remains visible on
-    every arrival and consumes no cache budget.
+    explicit ACK-required marker; legacy best-effort status telemetry remains
+    visible on every arrival and consumes no cache budget.
     """
 
     if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
@@ -261,7 +264,20 @@ class GatewayPacketDeduplicator:
                 _CachedPacket(packet.flags, bytes(normalized)),
             )
         if not is_gateway_assignment_publisher_event(event):
-            return None
+            # Generic retained progress is not assignment publication. Keep
+            # exact stream identity and semantic bytes so reconnect replay is
+            # idempotent without acquiring the assignment replay barrier.
+            # These three event bits describe host delivery, not the command.
+            normalized = bytearray(packet.payload)
+            normalized[4] &= ~(
+                GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT
+                | GATEWAY_COMMAND_EVENT_FLAG_REPLAY
+                | GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE
+            )
+            return (
+                self._identity(packet, self._gateway_id),
+                _CachedPacket(packet.flags, bytes(normalized)),
+            )
 
         identity = CommandEventIdentity(
             gateway_id=self._gateway_id,

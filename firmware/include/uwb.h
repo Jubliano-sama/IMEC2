@@ -546,7 +546,6 @@ int uwb_mesh_frame_encode(uint32_t network_id,
                           uint8_t *out,
                           size_t out_cap,
                           size_t *written);
-int uwb_mesh_frame_sync_flood_packet_age(uint8_t *frame, size_t frame_len);
 int uwb_mesh_frame_decode(const uint8_t *data,
                           size_t len,
                           uint32_t expected_network_id,

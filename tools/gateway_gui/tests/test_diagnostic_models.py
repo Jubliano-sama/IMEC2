@@ -1,5 +1,6 @@
 import math
 from dataclasses import replace
+from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -78,7 +79,10 @@ def event(*, kind=1, stage=6, flags=0, status=0, reason=0, event_seq=1, anchor=0
 def survey_pair_event(stage, a, b, survey, event_seq, *, host_session=1, host_sequence=2):
     return replace(
         event(
-            kind=2, stage=stage, gateway_sequence=survey,
+            kind=2, stage=stage,
+            status=5 if stage == 11 else 0,
+            reason=10 if stage == 11 else 0,
+            gateway_sequence=survey,
             event_seq=event_seq,
         ),
         command_id=0x0102,
@@ -97,8 +101,114 @@ class SurveyAndClickTests(unittest.TestCase):
         self.assertEqual(len(model.pairs), 1)
         self.assertEqual(model.missing_pairs, frozenset())
         model.observe_command_event(event(kind=2, stage=8, total=2, gateway_sequence=10))
-        model.observe_command_event(event(kind=2, stage=12, flags=1, total=2, event_seq=2, gateway_sequence=10))
+        model.observe_command_event(survey_pair_event(
+            10, 1, 2, 10, 2, host_session=7, host_sequence=8,
+        ))
+        model.observe_command_event(survey_pair_event(
+            11, 1, 3, 10, 3, host_session=7, host_sequence=8,
+        ))
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=12, flags=1, total=2,
+                event_seq=4, gateway_sequence=10,
+            ),
+            success_count=1, failure_count=1,
+        ))
         self.assertEqual(len(model.missing_pairs), 1)
+
+    def test_degraded_terminal_can_solve_with_one_redundant_missing_pair(self):
+        model = SurveyGeometryModel()
+        survey_id = 90
+        model.begin_survey(survey_id, host_session_id=1, host_sequence=2)
+        planned = tuple(combinations(range(1, 6), 2))
+        missing = planned[-1]
+        successful = planned[:-1]
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=8, total=len(planned),
+                gateway_sequence=survey_id,
+            ),
+            host_session_id=1, host_sequence=2,
+        ))
+        for sequence, edge in enumerate(planned, 1):
+            model.observe_command_event(survey_pair_event(
+                9, *edge, survey_id, 100 + sequence,
+            ))
+            if edge == missing:
+                model.observe_command_event(survey_pair_event(
+                    11, *edge, survey_id, 200 + sequence,
+                ))
+                continue
+            model.observe_pair_packet(pair_result(
+                *edge, 1000 + sequence, 0, sequence, survey=survey_id,
+            ))
+            model.observe_command_event(survey_pair_event(
+                10, *edge, survey_id, 200 + sequence,
+            ))
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=12, flags=1, total=len(planned),
+                gateway_sequence=survey_id, event_seq=300,
+            ),
+            host_session_id=1, host_sequence=2,
+            command_status=0, reason=10,
+            success_count=len(successful), failure_count=1,
+        ))
+
+        ready, reason = model.solve_readiness()
+        self.assertTrue(ready, reason)
+        self.assertEqual(
+            model.missing_pairs,
+            {("0x0000000000000004", "0x0000000000000005")},
+        )
+
+    def test_degraded_terminal_keeps_disconnected_partial_graph_diagnostic(self):
+        model = SurveyGeometryModel()
+        survey_id = 91
+        model.begin_survey(survey_id, host_session_id=1, host_sequence=2)
+        planned = ((1, 2), (1, 3), (2, 3), (1, 4))
+        successful = planned[:-1]
+        model.observe_command_event(replace(
+            event(kind=2, stage=8, total=4, gateway_sequence=survey_id),
+            host_session_id=1, host_sequence=2,
+        ))
+        for sequence, edge in enumerate(planned, 1):
+            model.observe_command_event(survey_pair_event(
+                9, *edge, survey_id, 10 + sequence,
+            ))
+            if edge in successful:
+                model.observe_pair_packet(pair_result(
+                    *edge, 1000 + sequence, 0, sequence, survey=survey_id,
+                ))
+                model.observe_command_event(survey_pair_event(
+                    10, *edge, survey_id, 20 + sequence,
+                ))
+            else:
+                model.observe_command_event(survey_pair_event(
+                    11, *edge, survey_id, 20 + sequence,
+                ))
+        model.observe_command_event(replace(
+            event(
+                kind=2, stage=12, flags=1, total=4,
+                gateway_sequence=survey_id, event_seq=40,
+            ),
+            host_session_id=1, host_sequence=2,
+            command_status=0, reason=10, success_count=3, failure_count=1,
+        ))
+        ready, reason = model.solve_readiness()
+        self.assertFalse(ready)
+        self.assertIn("disconnected", reason)
+        self.assertEqual(len(model.pairs), 3)
+
+    def test_conflicting_pair_sample_is_retained_but_never_solved(self):
+        model = SurveyGeometryModel()
+        model.begin_survey(92, host_session_id=1, host_sequence=2)
+        model.observe_pair_packet(pair_result(1, 2, 1000, 0, 1, survey=92))
+        model.observe_pair_packet(pair_result(1, 2, 2000, 0, 2, survey=92))
+        ready, reason = model.solve_readiness()
+        self.assertFalse(ready)
+        self.assertIn("conflicting outcomes", reason)
+        self.assertEqual(next(iter(model.pairs.values())).distance_m, 1.0)
 
     def test_live_pair_payloads_parse_and_provisional_event_cannot_erase_them(self):
         model = SurveyGeometryModel()
@@ -911,6 +1021,17 @@ class WakeAndTopologyTests(unittest.TestCase):
             value = event(stage=stage, flags=1 if stage == 12 else 0, total=1 if stage == 12 else 0)
             self.assertIn(phrase.lower(), command_step_sentence(value).lower())
         self.assertEqual(command_run_status((event(stage=12, flags=1, total=0),))[0], "Incomplete")
+        degraded = replace(
+            event(kind=2, stage=12, flags=1, total=3),
+            command_status=0, reason=10, success_count=2, failure_count=1,
+        )
+        self.assertEqual(
+            command_run_status((degraded,)),
+            (
+                "Incomplete",
+                "Survey retained partial data: 2 pair(s) succeeded and 1 failed or were missing.",
+            ),
+        )
         self.assertEqual(command_run_status((event(stage=1, lost=2), event(stage=12, flags=1, event_seq=2, total=1, lost=3)))[0], "Succeeded with warnings")
         for reason, expected in ((2, "Rejected"), (6, "Timed out"), (9, "Timed out"), (1, "Failed")):
             terminal = event(stage=12, flags=1, status=2, reason=reason)

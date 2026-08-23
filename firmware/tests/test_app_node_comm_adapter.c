@@ -1815,6 +1815,86 @@ static void test_delivery_copies_envelope_and_wakes_once_per_flood(void)
     assert(app_node_comm_pending_delivery_count() == 0u);
 }
 
+static struct mesh_outbound assignment_control_envelope(
+    uint16_t seq,
+    enum discovery_assignment_phase phase)
+{
+    struct mesh_outbound envelope = delivery_envelope(seq);
+    size_t offset = 0u;
+
+    assert(mesh_append_command_id(envelope.payload,
+                                  sizeof(envelope.payload),
+                                  &offset,
+                                  CMD_ASSIGN_DISCOVERY_SLOTS) == PROTO_OK);
+    assert(discovery_assignment_append_control_tlvs(
+               envelope.payload,
+               sizeof(envelope.payload),
+               &offset,
+               phase,
+               1u) == PROTO_OK);
+    envelope.packet.payload_len = (uint16_t)offset;
+    envelope.payload_len = (uint16_t)offset;
+    return envelope;
+}
+
+static void test_single_control_origin_sends_one_frame_with_only_claim_wake(void)
+{
+    struct mesh_outbound envelope = delivery_envelope(11u);
+    struct node_comm_terminal_event event;
+    uint32_t handle;
+
+    reset_fixture();
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
+        1000u,
+        78u,
+        &handle) == 0);
+
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_flood_calls == 1u);
+    assert(!try_flood_wake_train[0]);
+    assert(memcmp(&try_flood_envelopes[0],
+                  &envelope,
+                  sizeof(envelope)) == 0);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
+    assert(event.attempts_started == 1u);
+    assert(app_node_comm_pending_delivery_count() == 0u);
+
+#if APP_NODE_COMM_GATEWAY_ROLE
+    reset_fixture();
+    envelope = assignment_control_envelope(
+        12u, DISCOVERY_ASSIGNMENT_PHASE_CLAIM);
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
+        1000u,
+        79u,
+        &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_flood_calls == 1u);
+    assert(try_flood_wake_train[0]);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.attempts_started == 1u);
+
+    reset_fixture();
+    envelope = assignment_control_envelope(
+        13u, DISCOVERY_ASSIGNMENT_PHASE_TABLE);
+    assert(app_node_comm_submit_delivery(
+        &envelope,
+        NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
+        1000u,
+        80u,
+        &handle) == 0);
+    assert(app_node_comm_service_deliveries() == 0);
+    assert(try_flood_calls == 1u);
+    assert(!try_flood_wake_train[0]);
+    assert(app_node_comm_take_delivery_event_for(handle, &event));
+    assert(event.attempts_started == 1u);
+#endif
+}
+
 static void test_assignment_sized_control_payload_admission(void)
 {
     struct mesh_outbound inline_assignment =
@@ -2619,6 +2699,7 @@ static void test_auto_reap_closes_channel9_idle_parent_with_reaped_reason(void)
     uint32_t handle;
 
     reset_fixture();
+    close_calls_before = close_channel9_idle_parent_calls;
     try_flood_results[0] = -EBUSY;
     try_flood_sent[0] = false;
     assert(app_node_comm_submit_delivery(
@@ -2645,7 +2726,7 @@ static void test_auto_reap_closes_channel9_idle_parent_with_reaped_reason(void)
 
     /* The exhausted record was auto-reaped: the parent cadence closer must
      * have run exactly once with the facade's reap reason. */
-    assert(close_channel9_idle_parent_calls >= 1u);
+    assert(close_channel9_idle_parent_calls == close_calls_before + 1u);
     assert(last_close_channel9_idle_parent_reason != NULL);
     assert(strcmp(last_close_channel9_idle_parent_reason,
                   "node-comm-terminal-reaped") == 0);
@@ -5735,6 +5816,7 @@ int main(void)
     test_pause_expiry_preserves_full_64_bit_uptime();
     test_send_stays_closed_until_backend_resume_is_ready();
     test_delivery_copies_envelope_and_wakes_once_per_flood();
+    test_single_control_origin_sends_one_frame_with_only_claim_wake();
     test_assignment_sized_control_payload_admission();
     if (DEVICE_ROLE == ROLE_GATEWAY) {
         test_gateway_large_control_retries_exact_fifty_anchor_payload();

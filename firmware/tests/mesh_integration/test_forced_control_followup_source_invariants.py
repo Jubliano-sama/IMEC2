@@ -419,11 +419,22 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         pending_read = scan.index(
             "atomic_get(&anchor_ch5_post_ch9_recovery_scan_pending) != 0"
         )
-        widened = scan.index(
-            "control_followup_boost_active || post_ch9_recovery_scan",
-            pending_read,
+        enumeration_branch = scan.index(
+            "if (enumeration_continuous_rx)", pending_read
         )
-        conflict = scan.index("ch9_rx_conflict =", widened)
+        enumeration_window = scan.index(
+            "scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS",
+            enumeration_branch,
+        )
+        followup_branch = scan.index(
+            "else if (control_followup_boost_active || post_ch9_recovery_scan)",
+            enumeration_window,
+        )
+        followup_window = scan.index(
+            "scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS",
+            followup_branch,
+        )
+        conflict = scan.index("ch9_rx_conflict =", followup_window)
         retain = scan.index(
             "atomic_set(&anchor_ch5_post_ch9_recovery_scan_pending, 1)",
             conflict,
@@ -443,8 +454,11 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
             consume_gate,
         )
 
-        self.assertLess(pending_read, widened)
-        self.assertLess(widened, conflict)
+        self.assertLess(pending_read, enumeration_branch)
+        self.assertLess(enumeration_branch, enumeration_window)
+        self.assertLess(enumeration_window, followup_branch)
+        self.assertLess(followup_branch, followup_window)
+        self.assertLess(followup_window, conflict)
         self.assertLess(conflict, retain)
         self.assertLess(retain, blocked)
         self.assertLess(blocked, claim)
@@ -455,7 +469,7 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         self.assertLess(consume_gate, consume)
         self.assertIn(
             "scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS",
-            scan[widened:conflict],
+            scan[followup_branch:conflict],
         )
         self.assertNotIn(
             "atomic_clear(&anchor_ch5_post_ch9_recovery_scan_pending)",

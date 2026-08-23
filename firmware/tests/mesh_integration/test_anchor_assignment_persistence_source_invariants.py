@@ -432,57 +432,18 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         )
         self.assertIn("if (ret == 0)", promotion)
 
-    def test_semantic_changes_have_a_bounded_boot_admission_contract(self) -> None:
-        admission = function_body(
-            ANCHOR_COMMANDS,
-            "anchor_admit_discovery_assignment_semantic_change",
-        )
+    def test_semantic_changes_have_no_frequency_admission_gate(self) -> None:
         apply = function_body(
             ANCHOR_COMMANDS, "anchor_apply_discovery_assignment_command"
         )
 
-        self.assertRegex(
-            ANCHOR_COMMANDS,
-            r"ANCHOR_ASSIGNMENT_COMMISSIONING_BURST\s+4u",
+        self.assertNotIn("ANCHOR_ASSIGNMENT_COMMISSIONING_BURST", ANCHOR_COMMANDS)
+        self.assertNotIn("ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS", ANCHOR_COMMANDS)
+        self.assertNotIn(
+            "anchor_admit_discovery_assignment_semantic_change", ANCHOR_COMMANDS
         )
-        self.assertRegex(
-            ANCHOR_COMMANDS,
-            r"ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS\s+"
-            r"UINT64_C\(86400000\)",
-        )
-        exact_replay = admission.index(
-            "anchor_assignment_last_admitted_epoch == epoch"
-        )
-        first_boot = admission.index(
-            "anchor_assignment_next_reassign_uptime_day == 0u",
-            exact_replay,
-        )
-        consume_burst = admission.index(
-            "anchor_assignment_commissioning_remaining--", first_boot
-        )
-        daily_gate = admission.index(
-            "now_day >=", consume_burst
-        )
-        fail_closed = admission.index("return -EAGAIN", daily_gate)
-        self.assertLess(exact_replay, first_boot)
-        self.assertLess(first_boot, consume_burst)
-        self.assertLess(consume_burst, daily_gate)
-        self.assertLess(daily_gate, fail_closed)
-        self.assertIn("grants a fresh", ANCHOR_COMMANDS)
-        self.assertIn("commissioning burst", ANCHOR_COMMANDS)
-        self.assertIn("power-cycle-independent NVS endurance", ANCHOR_COMMANDS)
-
-        pending_match = apply.index("table_matches_persisted_pending =")
-        admission_call = apply.index(
-            "anchor_admit_discovery_assignment_semantic_change(",
-            pending_match,
-        )
-        first_semantic_save = apply.index(
-            "anchor_save_discovery_assignment_semantic(&snapshot)",
-            admission_call,
-        )
-        self.assertLess(pending_match, admission_call)
-        self.assertLess(admission_call, first_semantic_save)
+        self.assertNotIn("assignment change admission rate-limited", ANCHOR_COMMANDS)
+        self.assertIn("anchor_save_discovery_assignment_semantic(&snapshot)", apply)
 
     def test_native_and_source_guards_are_registered(self) -> None:
         self.assertIn("test_app_durable_anchor_assignment", CMAKE)

@@ -452,6 +452,7 @@ target_sources(app PRIVATE
     ../src/debug_log.c
     ../src/device_identity.c
     ../src/protocol.c
+    ../src/protocol_rx_lifecycle.c
     ../src/gateway_command.c
     ../src/gateway_ble_transport.c
     ../src/discovery_assignment.c

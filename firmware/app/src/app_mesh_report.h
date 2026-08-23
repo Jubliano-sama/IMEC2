@@ -117,6 +117,9 @@ struct app_mesh_report_callbacks {
     int (*anchor_delivery_gateway_accepted)(
         const struct proto_packet *packet,
         const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
+    int (*anchor_delivery_gateway_confirmed)(
+        const struct proto_packet *packet,
+        const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
     int (*anchor_survey_delivery_gateway_confirmed)(
         const struct proto_packet *packet,
         const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
@@ -211,6 +214,8 @@ int mesh_transport_pause_preserving_queued(void);
 bool mesh_transport_pause_active(void);
 bool mesh_transport_quiesced(void);
 void mesh_transport_resume(void);
+bool mesh_c5_flood_work_pending(void);
+bool mesh_c5_protocol_flood_work_pending(void);
 int mesh_send_outbound(const struct mesh_outbound *out, const char *reason);
 int mesh_send_c5_control(const struct mesh_outbound *out,
                          uint8_t purpose,
@@ -291,6 +296,7 @@ void report_tx_schedule(uint32_t delay_ms);
 uint32_t report_tx_queue_used(void);
 bool mesh_report_tx_backlog_active(void);
 bool mesh_report_ch9_ack_wait_active(void);
+bool mesh_report_local_protocol_response_active(void);
 int mesh_range_report_batch_reserve(uint64_t clicker_id,
                                     uint32_t event_seq,
                                     uint8_t attempt_index);

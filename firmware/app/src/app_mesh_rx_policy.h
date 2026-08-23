@@ -6,8 +6,8 @@
 
 #include "dwm3000_driver.h"
 
-#define APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS 100u
-#define APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS 2u
+#define APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS 500u
+#define APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS 1u
 #define APP_MESH_RX_GATEWAY_CH9_MAX_RECOVERABLE_ERRORS_PER_SLICE 3u
 
 struct app_mesh_rx_handoff_state {
@@ -26,6 +26,9 @@ bool app_mesh_rx_policy_role_uses_uwb_rx(bool permanent_receiver_role,
                                          bool scheduled_receiver_enabled,
                                          bool channel9_schedule_installed);
 bool app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(
+    int ret,
+    enum dwm3000_rx_failure failure);
+bool app_mesh_rx_policy_dwm_attempt_made_progress(
     int ret,
     enum dwm3000_rx_failure failure);
 uint32_t app_mesh_rx_policy_gateway_ch9_window_ms(

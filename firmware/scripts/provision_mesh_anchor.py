@@ -46,6 +46,8 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     build_here_i_am_command,
     build_survey_abort_command,
     decode_gateway_identity,
+    is_gateway_assignment_publisher_event,
+    validate_gateway_local_command_result_packet,
     validate_survey_discovery_report,
 )
 from tools.gateway_gui.delivery_dedup import (  # noqa: E402
@@ -102,14 +104,16 @@ DISCOVERY_SLOT_COUNT = 50
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
 SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S = 5.0
 SURVEY_TERMINAL_DRAIN_MAX_S = 135.0
-BLE_RECONNECT_ATTEMPTS_DEFAULT = 3
-BLE_RECONNECT_DELAY_DEFAULT_S = 1.5
+BLE_RECONNECT_ATTEMPTS_DEFAULT = 6
+BLE_RECONNECT_DELAY_DEFAULT_S = 0.5
 
 
 def _assignment_operation_policy(
     expected_anchor_count: int,
     command_budget_ms: int | None,
     deepest_hop: int = 0,
+    *,
+    ram_only_iteration: bool = False,
 ) -> OperationPolicyProfile:
     """Mirror the desktop GUI's explicit assignment policy on the wire."""
     effective_budget_ms = (
@@ -127,6 +131,7 @@ def _assignment_operation_policy(
             operation_budget_ms=effective_budget_ms,
             response_spread_ms=ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
             deepest_hop=deepest_hop,
+            ram_only_iteration=ram_only_iteration,
         )
     )
 
@@ -252,6 +257,30 @@ def _survey_custody_record_retained(packet: Packet) -> bool:
         CMD_SURVEY_PREPARE_PAIR,
         CMD_SURVEY_START_PAIR,
         CMD_SURVEY_ABORT,
+    )
+
+
+def _failed_qualification_command_result(
+    packet: Packet,
+    qualification: object | None,
+) -> str | None:
+    """Return an exact active-command failure without waiting for telemetry."""
+    if (
+        packet.msg_type != MSG_COMMAND_RESULT
+        or qualification is None
+        or packet.session_id != getattr(qualification, "host_session_id", None)
+        or packet.seq != getattr(qualification, "host_sequence", None)
+    ):
+        return None
+    validate_gateway_local_command_result_packet(packet)
+    command_id = int.from_bytes(packet.payload[2:4], "little")
+    command_status = int.from_bytes(packet.payload[6:8], "little")
+    if command_status == 0:
+        return None
+    return (
+        "gateway command failed before lifecycle terminal "
+        f"(command={command_id} status={command_status} "
+        f"reason={packet.payload[10]})"
     )
 
 
@@ -1109,6 +1138,22 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 command_event = event
                 if qualification is not None and qualification.observe(event):
                     qualification_done.set()
+            elif packet.msg_type == MSG_COMMAND_RESULT:
+                try:
+                    message = _failed_qualification_command_result(
+                        packet, qualification
+                    )
+                except DecodeError as exc:
+                    message = str(exc)
+                    print(f"BLE_DECODE_ERROR {message}", flush=True)
+                    decode_errors.append(message)
+                    qualification_done.set()
+                    transport_failed.set()
+                    continue
+                if message is not None and qualification is not None:
+                    if message not in qualification.errors:
+                        qualification.errors.append(message)
+                    qualification_done.set()
             if isinstance(packet, Packet):
                 delivery = delivery_dedup.observe(packet, commit=False)
                 if delivery.disposition in (
@@ -1129,7 +1174,11 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         "no receipt sent",
                         flush=True,
                     )
-            if accepted_for_receipt and command_event is not None:
+            if (
+                accepted_for_receipt
+                and command_event is not None
+                and is_gateway_assignment_publisher_event(command_event)
+            ):
                 assignment_replay = assignment_replay_barrier.observe(
                     command_event
                 )
@@ -1245,7 +1294,19 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     nonlocal defer_notifications, notifications_enabled
 
                     if bool(getattr(client, "is_connected", False)):
-                        await client.disconnect()
+                        try:
+                            await client.disconnect()
+                        except Exception as exc:
+                            # BlueZ commonly reports ATT 0x0e or D-Bus EOF
+                            # while tearing down the same already-failed link.
+                            # That stale-link cleanup is not a reconnect
+                            # attempt; continue with a fresh connect and let
+                            # identity plus notification restoration prove it.
+                            print(
+                                "BLE_RECONNECT_CLEANUP "
+                                f"error={type(exc).__name__}: {exc}",
+                                flush=True,
+                            )
                     # Bleak can expose ``is_connected == False`` one loop turn
                     # before delivering the old link's disconnect callback.
                     # Drain that callback before snapshotting the generation so
@@ -1310,6 +1371,19 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         disconnect_errors.append(str(exc))
                         transport_failed.set()
                         raise_transport_errors(label)
+                    if bool(getattr(client, "is_connected", False)):
+                        try:
+                            await client.disconnect()
+                        except Exception as cleanup_exc:
+                            print(
+                                "BLE_RECONNECT_CLEANUP "
+                                f"error={type(cleanup_exc).__name__}: "
+                                f"{cleanup_exc}",
+                                flush=True,
+                            )
+                    # Drain the disconnect callback before another connection
+                    # attempt reuses this Bleak client and its service cache.
+                    await asyncio.sleep(0)
                     print(
                         "BLE_RECONNECT_RETRY "
                         f"attempt={attempt}/{attempts} error={last_error}",
@@ -1702,6 +1776,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 args.expected_anchors,
                 assignment_command_budget_ms,
                 deepest_hop=getattr(args, "deepest_hop", 0),
+                ram_only_iteration=True,
             )
             route_args = {
                 "host_id": args.host_id,
@@ -1815,6 +1890,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         args.expected_anchors,
                         assignment_command_budget_ms,
                         deepest_hop=getattr(args, "deepest_hop", 0),
+                        ram_only_iteration=True,
                     )
                     command_args["command_budget_ms"] = (
                         assignment_policy.assignment.operation_budget_ms

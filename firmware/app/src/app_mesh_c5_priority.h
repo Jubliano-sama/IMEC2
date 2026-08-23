@@ -112,6 +112,10 @@ bool app_mesh_c5_route_capture_receive_aborted(int receive_ret);
 bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
                                             uint16_t command_id,
                                             uint8_t *origin_ttl);
+bool app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+    uint8_t msg_type,
+    const uint8_t *payload,
+    size_t payload_len);
 bool app_mesh_c5_event_accept_reservation(
     const struct mesh_event_timing *accepted,
     uint16_t realign_slop_ms,

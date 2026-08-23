@@ -8,8 +8,8 @@
 
 _Static_assert(SURVEY_GATEWAY_MAX_PAIRS == 150u,
                "gateway round wrapper must retain the complete pair map");
-_Static_assert(SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 25u,
-               "gateway round wrapper must retain the runtime lane cap");
+_Static_assert(SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES == 1u,
+               "gateway round wrapper must enforce strict pair serialization");
 
 void app_gateway_survey_incarnation_tracker_init(
     struct app_gateway_survey_incarnation_tracker *tracker)

@@ -10,11 +10,23 @@ from source_text import read_composed_source
 ROOT = Path(__file__).resolve().parents[2]
 ANCHOR = read_composed_source(ROOT / "app/src/app_anchor.c")
 ANCHOR_HEADER = (ROOT / "app/src/app_anchor.h").read_text(encoding="utf-8")
+GATEWAY_CONTROL = (
+    ROOT / "app/src/app_anchor_gateway_control.inc"
+).read_text(encoding="utf-8")
 SURVEY_DISCOVERY = read_composed_source(
     ROOT / "app/src/app_anchor_survey_discovery.c"
 )
 GATEWAY = read_composed_source(ROOT / "app/src/app_gateway_ble.c")
 REPORT = read_composed_source(ROOT / "app/src/app_mesh_report.c")
+RX_POLICY = (ROOT / "app/src/app_mesh_rx_policy.c").read_text(
+    encoding="utf-8"
+)
+RX_POLICY_HEADER = (ROOT / "app/src/app_mesh_rx_policy.h").read_text(
+    encoding="utf-8"
+)
+ROUTE_REFRESH_HEADER = (
+    ROOT / "app/src/app_node_comm_gateway_route_refresh.h"
+).read_text(encoding="utf-8")
 RELAY = (ROOT / "src/mesh_relay.c").read_text(encoding="utf-8")
 DISCOVERY_ASSIGNMENT = (
     ROOT / "src/discovery_assignment.c"
@@ -409,30 +421,20 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             capacity_and_insert, "APP_GATEWAY_SEMANTIC_ACCEPT_NEW"
         ))
 
-    def test_retained_roster_table_acks_refresh_reliable_hop_projection(self):
+    def test_clean_slate_does_not_seed_prior_roster_or_hop_projection(self):
         start = function_body(ANCHOR, "gateway_start_discovery_assignment")
         reset = start.index(
             "memset(&gateway_discovery_assignment_state"
         )
-        retained = start.index("if (prior_anchor_count != 0u)", reset)
         activate = start.index(
-            "gateway_discovery_assignment_state.active = true", retained
+            "gateway_discovery_assignment_state.active = true", reset
         )
-        retained_roster = start[reset:activate]
+        live_start = start[reset:activate]
 
-        self.assertIn(
-            "memcpy(gateway_discovery_assignment_state.anchor_ids",
-            retained_roster,
-        )
-        self.assertIn(
-            "memcpy(gateway_discovery_assignment_state.anchor_slots",
-            retained_roster,
-        )
-        self.assertNotIn(
-            "memcpy(gateway_discovery_assignment_state.anchor_hop_counts",
-            retained_roster,
-            "a new assignment must not borrow stale route evidence",
-        )
+        self.assertNotIn("prior_anchor_count", start)
+        self.assertNotIn("memcpy(gateway_discovery_assignment_state.anchor_", live_start)
+        self.assertIn("gateway_clear_registered_membership_roster()", start)
+        self.assertIn("&mesh_runtime, NULL, 0u", start)
 
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
         decoded = claim.index(
@@ -530,13 +532,14 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             ANCHOR,
             "gateway_discovery_assignment_service_delivery",
         )
-        semantic_start = service.index(
-            "app_discovery_assignment_semantic_terminal_success("
-        )
-        semantic_end = service.index(");", semantic_start)
         self.assertIn(
-            "gateway_discovery_assignment_current_claim_count_locked()",
-            service[semantic_start:semantic_end],
+            "gateway_discovery_assignment_expected_claims_complete_locked()",
+            service,
+        )
+        self.assertNotIn(
+            "app_discovery_assignment_semantic_terminal_success(",
+            service,
+            "a failed bounded RF delivery must not be rewritten as success",
         )
 
         window = function_body(
@@ -573,7 +576,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "a newly admitted CLAIM did not count as a current response",
         )
 
-    def test_table_correlated_late_claim_redrives_without_releasing_custody(self):
+    def test_table_correlated_late_claim_fails_without_gateway_redrive(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
         publish = function_body(
             ANCHOR, "gateway_discovery_assignment_publish_work_handler"
@@ -607,15 +610,19 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "gateway_discovery_assignment_missing_confirmation_count_locked() =="
         )
         pending = publish.index("late_table_redrive_pending", missing)
-        table = publish.index(
-            "gateway_discovery_assignment_publish_table()", pending
+        fail = publish.index(
+            "gateway_discovery_assignment_fail_locked(COMMAND_TIMEOUT", pending
         )
         normal_limit = publish.index(
-            "gateway_discovery_assignment_state.table_round >=", table
+            "gateway_discovery_assignment_state.table_round >=", fail
         )
         self.assertLess(missing, pending)
-        self.assertLess(pending, table)
-        self.assertLess(table, normal_limit)
+        self.assertLess(pending, fail)
+        self.assertLess(fail, normal_limit)
+        self.assertNotIn(
+            "gateway_discovery_assignment_publish_table()",
+            publish[pending:normal_limit],
+        )
 
         finalize = function_body(
             ANCHOR, "gateway_discovery_assignment_finalize_work_handler"
@@ -653,10 +660,25 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             ANCHOR, "gateway_discovery_assignment_publish_table"
         )
         retry_branch = table_publish.index(
-            "gateway_discovery_assignment_state.late_table_redrive_pending ||"
+            "gateway_discovery_assignment_state.table_round <"
         )
         retry_schedule = table_publish.index("table-admission-retry", retry_branch)
         self.assertLess(retry_branch, retry_schedule)
+
+        submit = function_body(
+            ANCHOR, "gateway_discovery_assignment_submit_control_flood_locked"
+        )
+        self.assertIn(
+            "NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN", submit
+        )
+        self.assertIn(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM", submit
+        )
+        table_limit = function_body(
+            ANCHOR, "gateway_discovery_assignment_table_round_limit_locked"
+        )
+        self.assertIn("DISCOVERY_ASSIGNMENT_TABLE_MAX_ROUNDS", table_limit)
+        self.assertNotIn("+ 1u", table_limit)
 
         service = function_body(
             ANCHOR, "gateway_discovery_assignment_service_delivery"
@@ -1087,9 +1109,10 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             admission,
         )
         self.assertIn(
-            "gateway_discovery_assignment_state.prior_anchor_count",
+            "!gateway_discovery_assignment_state.active",
             admission,
         )
+        self.assertNotIn("prior_anchor_count", admission)
         self.assertLess(internal, admission_call)
         self.assertLess(admission_call, dispatch)
         self.assertIn("return -EAGAIN;", semantic[admission_call:dispatch])
@@ -1123,35 +1146,298 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertLess(internal, finalize)
         self.assertLess(finalize, relay_commit)
 
-    def test_append_only_roster_has_no_production_clear_caller(self):
+    def test_each_run_clears_the_active_roster_before_claim(self):
         start = function_body(ANCHOR, "gateway_start_discovery_assignment")
         prepare = function_body(
             ANCHOR,
             "gateway_discovery_assignment_prepare_durable_table_locked",
         )
-        self.assertIn(
-            "gateway_discovery_assignment_state.claim_count =\n"
-            "        prior_anchor_count",
-            start,
+        clear = start.index("gateway_clear_registered_membership_roster()")
+        verify = start.index(
+            "gateway_get_registered_membership_roster_with_slots(", clear
         )
+        claim = start.index(
+            "claim_command_seq = gateway_next_broadcast_command_seq()", verify
+        )
+        self.assertLess(clear, verify)
+        self.assertLess(verify, claim)
+        self.assertNotIn("prior_anchor_count", start)
         self.assertIn("published_slot_mask |=", prepare)
         self.assertNotIn("gateway_discovery_assignment_state.ack_mask", prepare)
         self.assertNotIn("!acknowledged", prepare)
 
-        for path in (ROOT / "app/src").glob("*"):
-            if path.suffix not in {".c", ".inc"}:
-                continue
-            source = path.read_text(encoding="utf-8")
-            for match in re.finditer(
-                r"\bgateway_clear_registered_membership_roster\s*\(",
-                source,
-            ):
-                prefix = source[max(0, match.start() - 32):match.start()]
-                self.assertRegex(
-                    prefix,
-                    r"\bvoid\s+$",
-                    f"production clear caller remains in {path.name}",
-                )
+    def test_table_adaptive_wait_covers_one_lost_response_retry(self):
+        control_prefix = ANCHOR[
+            ANCHOR.index(
+                "#define GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS"
+            ) : ANCHOR.index(
+                "/* Exact active delivery whose physical RF-start edge",
+            )
+        ]
+        adaptive = function_body(
+            ANCHOR, "gateway_discovery_assignment_adaptive_wait_ms_locked"
+        )
+
+        self.assertIn("ROUTE_GATEWAY_ACK_TIMEOUT_MS", control_prefix)
+        self.assertIn("ROUTE_RETRY_BACKOFF_FIRST_MS", control_prefix)
+        self.assertIn(
+            "(ROUTE_RETRY_BACKOFF_FIRST_MS / 2u)", control_prefix
+        )
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS", control_prefix
+        )
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS == 4700u",
+            control_prefix,
+        )
+
+        # The direct, three-slot CLAIM calculation is 4,684 ms, including the
+        # shared 500 ms practical RX/scheduling margin.
+        # TABLE needs 4,700 ms for one legal 2,000 + 1,500 + 750 + 450 ms
+        # missed-response recovery cycle, without lengthening CLAIM itself.
+        claim_adaptive_ms = 365 + (3 * 1090) + 100 + 449 + 500
+        table_recovery_ms = 2000 + 1500 + 750 + 450
+        self.assertEqual(claim_adaptive_ms, 4684)
+        self.assertEqual(table_recovery_ms, 4700)
+        self.assertLess(claim_adaptive_ms, table_recovery_ms)
+
+        base_adaptive = adaptive.index(
+            "discovery_assignment_adaptive_next_depth_wait_ms("
+        )
+        table_gate = adaptive.index(
+            "gateway_discovery_assignment_state.stage ==\n"
+            "            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS"
+        )
+        table_floor = adaptive.index(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS",
+            table_gate,
+        )
+        self.assertLess(base_adaptive, table_gate)
+        self.assertNotIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS",
+            adaptive[:table_gate],
+        )
+        self.assertIn("wait_ms = MAX(", adaptive[table_gate:table_floor])
+        self.assertNotIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS",
+            adaptive[table_gate:table_floor + 80],
+        )
+
+    def test_final_ack_confirm_rearms_tail_before_end(self):
+        confirm = function_body(
+            GATEWAY_CONTROL, "gateway_discovery_assignment_note_ack_confirm"
+        )
+        finalize = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_finalize_work_handler",
+        )
+
+        self.assertIn(
+            "#define GATEWAY_DISCOVERY_ASSIGNMENT_POST_CONFIRM_TAIL_MS \\\n"
+            "    (ROUTE_GATEWAY_ACK_TIMEOUT_MS + "
+            "ROUTE_RETRY_BACKOFF_FIRST_MS)",
+            GATEWAY_CONTROL,
+        )
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_POST_CONFIRM_TAIL_MS == 3500u",
+            GATEWAY_CONTROL,
+        )
+
+        newly_confirmed = confirm.index("if (newly_confirmed)")
+        quorum = confirm.index(
+            "gateway_discovery_assignment_missing_confirmation_count_locked() ==",
+            newly_confirmed,
+        )
+        deadline = confirm.index(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_POST_CONFIRM_TAIL_MS", quorum
+        )
+        rearm = confirm.index(
+            "response_ack_settle_armed =\n                        true", deadline
+        )
+        publish_deadline = confirm.index(
+            "response_ack_settle_deadline_ms =", rearm
+        )
+        trace = confirm.index("DBG_DISCOVERY_SLOT_CONFIRM_TAIL", publish_deadline)
+        wake = confirm.index('"ack-confirm"', trace)
+        self.assertLess(newly_confirmed, quorum)
+        self.assertLess(quorum, deadline)
+        self.assertLess(deadline, rearm)
+        self.assertLess(rearm, publish_deadline)
+        self.assertLess(publish_deadline, trace)
+        self.assertLess(trace, wake)
+
+        quorum_complete = finalize.index("missing_proof_count == 0u")
+        tail_pending = finalize.index(
+            "discovery_assignment_response_ack_settle_pending(",
+            quorum_complete,
+        )
+        tail_reschedule = finalize.index(
+            '"response-ack-settle"', tail_pending
+        )
+        publish_end = finalize.index(
+            "gateway_discovery_assignment_publish_end()", tail_reschedule
+        )
+        self.assertLess(quorum_complete, tail_pending)
+        self.assertLess(tail_pending, tail_reschedule)
+        self.assertLess(tail_reschedule, publish_end)
+
+    def test_gateway_ch9_continuous_rx_traces_each_physical_attempt(self):
+        arm = REPORT.index("DBG_GATEWAY_CH9_RX_CONT_ARM")
+        receive = REPORT.index(
+            "dwm3000_driver_receive_frame_continuous(", arm
+        )
+        result = REPORT.index("DBG_GATEWAY_CH9_RX_CONT_RESULT", receive)
+
+        self.assertLess(arm, receive)
+        self.assertLess(receive, result)
+        self.assertIn(
+            "IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)",
+            REPORT[arm - 200:arm],
+        )
+        self.assertIn(
+            "IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)",
+            REPORT[receive:result],
+        )
+
+    def test_gateway_ch9_rx_slice_and_rearm_gap_are_bounded(self):
+        self.assertIn(
+            "#define APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS 500u",
+            RX_POLICY_HEADER,
+        )
+        self.assertIn(
+            "#define APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS 1u",
+            RX_POLICY_HEADER,
+        )
+        self.assertIn(
+            "APP_MESH_RX_GATEWAY_CH9_WORK_SLICE_MS",
+            function_body(
+                RX_POLICY, "app_mesh_rx_policy_gateway_ch9_work_slice_ms"
+            ),
+        )
+        self.assertIn(
+            "return APP_MESH_RX_GATEWAY_CH9_COOPERATIVE_YIELD_MS;",
+            function_body(
+                RX_POLICY, "app_mesh_rx_policy_gateway_ch9_rearm_delay_ms"
+            ),
+        )
+
+    def test_gateway_ch9_rx_parks_by_receive_outcome(self):
+        handler = function_body(REPORT, "mesh_uwb_rx_work_handler")
+        gateway_start = handler.index("if (mesh_gateway_route_test_role())")
+        gateway_end = handler.index("gateway_route_preempt =", gateway_start)
+        gateway = handler[gateway_start:gateway_end]
+
+        receive = gateway.index("dwm3000_driver_receive_frame_continuous(")
+        command_preempt = gateway.index(
+            "} else if (ret == -ECANCELED)", receive
+        )
+        empty_slice = gateway.index(
+            "} else if (ret == -ETIMEDOUT)", command_preempt
+        )
+        recoverable = gateway.index(
+            "} else if (app_mesh_rx_policy_gateway_ch9_rx_error_recoverable(",
+            empty_slice,
+        )
+        hard_failure = gateway.index("} else {", recoverable)
+        release = gateway.index(
+            "mesh_rx_radio_finish(&radio_lease", hard_failure
+        )
+
+        self.assertIn(
+            'mesh_radio_idle_with_bounded_recovery(\n'
+            '                    "gateway-ch9-command-preempt")',
+            gateway[command_preempt:empty_slice],
+        )
+        self.assertIn(
+            'mesh_radio_idle_with_bounded_recovery(\n'
+            '                    "gateway-ch9-empty-slice")',
+            gateway[empty_slice:recoverable],
+        )
+        self.assertNotIn(
+            "mesh_radio_standby_with_bounded_recovery",
+            gateway[empty_slice:recoverable],
+        )
+        self.assertIn(
+            'mesh_radio_standby_with_bounded_recovery(\n'
+            '                    "gateway-ch9-hard-rx")',
+            gateway[hard_failure:release],
+        )
+        abort_handoff = gateway.index(
+            "app_node_comm_gateway_delivery_safe_boundary()", release
+        )
+        self.assertLess(command_preempt, release)
+        self.assertLess(release, abort_handoff)
+
+    def test_clearing_deferred_rx_rearm_invalidates_already_taken_work(self):
+        take = function_body(REPORT, "mesh_take_deferred_uwb_rx_rearm")
+        clear = function_body(REPORT, "mesh_clear_deferred_uwb_rx_rearm")
+        worker = function_body(REPORT, "mesh_uwb_rx_rearm_work_handler")
+
+        take_generation = take.index("*generation = mesh_uwb_rx_rearm_generation")
+        take_pending = take.index("mesh_uwb_rx_rearm_pending = false")
+        self.assertLess(take_generation, take_pending)
+
+        clear_lock = clear.index("k_mutex_lock(&mesh_uwb_rx_rearm_lock")
+        invalidate = clear.index("mesh_uwb_rx_rearm_generation++", clear_lock)
+        clear_pending = clear.index("mesh_uwb_rx_rearm_pending = false", invalidate)
+        clear_unlock = clear.index("k_mutex_unlock(&mesh_uwb_rx_rearm_lock")
+        cancel = clear.index("k_work_cancel(&mesh_uwb_rx_rearm_work)", clear_unlock)
+        self.assertLess(clear_lock, invalidate)
+        self.assertLess(invalidate, clear_pending)
+        self.assertLess(clear_pending, clear_unlock)
+        self.assertLess(clear_unlock, cancel)
+
+        take_work = worker.index("mesh_take_deferred_uwb_rx_rearm(")
+        final_lock = worker.index("k_mutex_lock(&mesh_uwb_rx_rearm_lock", take_work)
+        stale_check = worker.index(
+            "generation != mesh_uwb_rx_rearm_generation", final_lock
+        )
+        stale_branch = worker.index("if (stale)", stale_check)
+        schedule_else = worker.index("} else {", stale_branch)
+        schedule = worker.index(
+            "mesh_reschedule_owned_work_with_busy_handoff(", schedule_else
+        )
+        final_unlock = worker.index(
+            "k_mutex_unlock(&mesh_uwb_rx_rearm_lock", schedule
+        )
+        stale_return = worker.index("if (stale)", final_unlock)
+        stale_return_end = worker.index("return;", stale_return)
+        self.assertLess(take_work, final_lock)
+        self.assertLess(final_lock, stale_check)
+        self.assertIn(
+            "!mesh_rx_handoff_scan_rearm_allowed()",
+            worker[stale_check:stale_branch],
+        )
+        self.assertLess(stale_check, stale_branch)
+        self.assertLess(stale_branch, schedule_else)
+        self.assertLess(schedule_else, schedule)
+        self.assertLess(schedule, final_unlock)
+        self.assertLess(final_unlock, stale_return)
+        self.assertNotIn(
+            "mesh_reschedule_owned_work_with_busy_handoff(",
+            worker[stale_return:stale_return_end],
+        )
+
+    def test_immediate_channel9_response_owns_scan_until_tx_returns(self):
+        send = function_body(REPORT, "mesh_send_causal_channel9_response")
+
+        handoff = send.index("mesh_rx_handoff_begin_control(&abort_scan)")
+        stop = send.index("mesh_stop_role_scan()", handoff)
+        abort = send.index("dwm3000_driver_request_receive_abort(", stop)
+        wait = send.index("mesh_rx_handoff_wait_for_control()", abort)
+        tx = send.index("mesh_send_outbound_keep_channel9_awake(", wait)
+        tx_return = send.index("out:", tx)
+        handoff_end = send.index("mesh_rx_handoff_end_control()", tx_return)
+        restart = send.index("mesh_restart_role_scan()", handoff_end)
+
+        self.assertLess(handoff, stop)
+        self.assertLess(stop, abort)
+        self.assertLess(abort, wait)
+        self.assertLess(wait, tx)
+        self.assertLess(tx, tx_return)
+        self.assertLess(tx_return, handoff_end)
+        self.assertLess(handoff_end, restart)
+        self.assertNotIn("mesh_restart_role_scan()", send[stop:tx_return])
 
     def test_table_publication_waits_for_current_responder_confirmations(self):
         service = function_body(
@@ -1174,21 +1460,58 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             response_window,
         )
         self.assertIn(
-            "wait_ms = gateway_discovery_assignment_window_ms_locked()",
+            "gateway_discovery_assignment_adaptive_wait_ms_locked(1u, 1u)",
             service[table_wait:table_wait + 300],
         )
+
+        refresh = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_refresh_adaptive_deadline_locked",
+        )
+        self.assertIn(
+            "discovery_assignment_adaptive_next_depth_wait_ms(",
+            function_body(
+                ANCHOR,
+                "gateway_discovery_assignment_adaptive_wait_ms_locked",
+            ),
+        )
+        self.assertIn(
+            "gateway_discovery_assignment_set_response_deadline_locked(",
+            refresh,
+        )
+        self.assertIn("adaptive-response-deadline", refresh)
 
         fast_complete = finalize.index(
             "gateway_discovery_assignment_state.table_delivery_succeeded"
         )
         completion = finalize.index(
-            "gateway_discovery_assignment_complete_success_locked()",
+            "gateway_discovery_assignment_publish_end()",
             fast_complete,
         )
         self.assertIn(
             "missing_proof_count == 0u",
             finalize[fast_complete:completion],
         )
+        self.assertNotIn(
+            "gateway_discovery_assignment_complete_success_locked()",
+            finalize[fast_complete:completion],
+        )
+
+        publish_end = function_body(
+            ANCHOR, "gateway_discovery_assignment_publish_end"
+        )
+        self.assertIn(
+            "discovery_assignment_append_end_identity", publish_end
+        )
+        submit = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_submit_control_flood_locked",
+        )
+        self.assertIn(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END",
+            submit,
+        )
+        self.assertIn("NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN", submit)
 
         self.assertIn("published_slot_mask |=", prepare)
         self.assertIn(
@@ -1198,116 +1521,366 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         complete = function_body(
             ANCHOR, "gateway_discovery_assignment_complete_success_locked"
         )
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY", complete
+        )
+        self.assertNotIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS", complete
+        )
         self.assertIn("event.success_count = published_count", complete)
-        self.assertIn("event.failure_count = 0u", complete)
+        self.assertIn("event.failure_count = missing_count", complete)
+        self.assertIn("event.total_count =\n        expected_count", complete)
         self.assertNotIn("gateway_discovery_assignment_state.ack_mask", complete)
 
-    def test_duplicate_claim_restarts_settle_to_immutable_horizon(self):
-        self.assertIsNotNone(
-            re.search(
-                r"\buint64_t\s+claim_collection_deadline_ms\s*;",
-                ANCHOR,
-            ),
-            "assignment state is missing its immutable collection horizon",
+    def test_anchor_relay_activation_skips_repeated_wakes_until_end_terminal(self):
+        transport = (ROOT / "app" / "src" /
+                     "app_mesh_report_transport.inc").read_text()
+        send = function_body(transport, "mesh_send_c5_flood_now_until")
+
+        self.assertIn("mesh_c5_flood_enumeration_identity", send)
+        needs = send.index("protocol_rx_downstream_activation_needs_wake")
+        suppress = send.index("send_wake_train = false", needs)
+        mark = send.index("protocol_rx_downstream_activation_mark", suppress)
+        clear = send.index("protocol_rx_downstream_activation_clear", mark)
+        self.assertLess(needs, suppress)
+        self.assertLess(suppress, mark)
+        self.assertLess(mark, clear)
+        self.assertIn("aggregate_result.sent_count > 0u", send[suppress:mark])
+        self.assertIn(
+            "enumeration_phase == DISCOVERY_ASSIGNMENT_PHASE_END",
+            send[mark:clear],
         )
-        settle = function_body(
+        self.assertIn(
+            "aggregate_result.sent_count == attempt_count", send[mark:clear]
+        )
+        self.assertIn("protocol_rx_downstream_activation_expire", transport)
+        rollover = send.index("discovery_assignment_epoch_strictly_newer")
+        stale = send.index("return -ESTALE", rollover)
+        self.assertLess(rollover, stale)
+        self.assertLess(stale, needs)
+
+    def test_failure_after_claim_rf_sends_one_claim_bound_abort(self):
+        publish_abort = function_body(
+            ANCHOR, "gateway_discovery_assignment_publish_abort_locked"
+        )
+        fail = function_body(
+            ANCHOR, "gateway_discovery_assignment_fail_locked"
+        )
+        service = function_body(
+            ANCHOR, "gateway_discovery_assignment_service_delivery"
+        )
+        submit = function_body(
             ANCHOR,
-            "gateway_discovery_assignment_arm_claim_ack_settle_locked",
-        )
-        self.assertIn(
-            "discovery_assignment_claim_ack_settle_deadline_ms(",
-            settle,
-        )
-        self.assertIn("claim_collection_deadline_ms", settle)
-        self.assertIn("operation_deadline_ms", settle)
-        latest_deadline_sources = re.findall(
-            r"latest_deadline\s*=\s*([^;]+);",
-            settle,
-        )
-        self.assertGreaterEqual(len(latest_deadline_sources), 2)
-        for source in latest_deadline_sources:
-            with self.subTest(latest_deadline_source=source.strip()):
-                self.assertNotIn("response_window_deadline", source)
-        self.assertNotIn(
-            "candidate_deadline = response_deadline",
-            settle,
-        )
-        self.assertIn(
-            "response_window_deadline_ms =\n"
-            "                (uint32_t)candidate_deadline",
-            settle,
-            "extended settle does not keep semantic RX/finalization open",
+            "gateway_discovery_assignment_submit_control_flood_locked",
         )
 
+        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_ABORT", publish_abort)
+        self.assertIn(
+            "discovery_assignment_append_abort_identity", publish_abort
+        )
+        self.assertIn(
+            ".claim_session_id =\n"
+            "            gateway_discovery_assignment_state.claim_command_seq",
+            publish_abort,
+        )
+        self.assertIn(
+            ".claim_command_seq =\n"
+            "            gateway_discovery_assignment_state.claim_command_seq",
+            publish_abort,
+        )
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT", publish_abort
+        )
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_ABORT_DELIVERY", fail
+        )
+        self.assertIn("claim_rf_started", fail)
+        self.assertIn(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT", service
+        )
+        self.assertIn(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT", submit
+        )
+        self.assertIn("NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN", submit)
+
+    def test_expected_count_closes_new_claim_admission_immediately(self):
         claim = function_body(ANCHOR, "gateway_discovery_assignment_note_claim")
-        duplicate_start = claim.index("if (anchor_index != SIZE_MAX)")
+        closed = claim.index(
+            "gateway_discovery_assignment_expected_claims_complete_locked()"
+        )
+        rejection = claim.index("GATEWAY_ASSIGNMENT_RETURN(-ENOSPC)", closed)
+        reserve = claim.index("mesh_relay_reserve_gateway_ack_candidate(")
+        self.assertLess(closed, rejection)
+        self.assertLess(rejection, reserve)
+
+        duplicate_start = claim.index("if (anchor_index != SIZE_MAX)", reserve)
         insertion_start = claim.index(
             "gateway_discovery_assignment_state.anchor_ids[",
             duplicate_start,
         )
         duplicate = claim[duplicate_start:insertion_start]
-        self.assertIn(
-            "gateway_discovery_assignment_arm_claim_ack_settle_locked(",
-            duplicate,
-        )
-        self.assertIn("(uint32_t)received_at_ms", duplicate)
-        self.assertIn(
-            "gateway_discovery_assignment_reschedule(",
-            duplicate,
-        )
-        self.assertIn("K_MSEC(settle_ms)", duplicate)
-        self.assertIn('"duplicate-claim-settle"', duplicate)
-        self.assertNotIn("k_work_reschedule(", duplicate)
+        self.assertIn("APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE", duplicate)
 
+    def test_ram_only_assignment_uses_the_existing_policy_flag_end_to_end(self):
+        start = function_body(ANCHOR, "gateway_start_discovery_assignment")
+        prepare = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_prepare_durable_table_locked",
+        )
+        anchor_save = function_body(
+            ANCHOR, "anchor_save_discovery_assignment_semantic"
+        )
+
+        self.assertIn(
+            "policy_candidate.resolved.assignment.ram_only_iteration",
+            start,
+        )
+        self.assertIn(
+            "gateway_clear_registered_membership_roster_ram_only()",
+            start,
+        )
+        self.assertIn(
+            "gateway_set_registered_membership_roster_ram_only(",
+            prepare,
+        )
+        self.assertIn(
+            "anchor_discovery_assignment_ram_only_iteration", anchor_save
+        )
+        self.assertLess(
+            anchor_save.index(
+                "anchor_discovery_assignment_ram_only_iteration"
+            ),
+            anchor_save.index("app_durable_state_save_anchor_assignment("),
+        )
+
+    def test_failed_prepared_ram_only_publication_rolls_back_exact_owner(self):
+        finish = function_body(
+            ANCHOR, "gateway_discovery_assignment_finish_failure_locked"
+        )
+        rollback = function_body(
+            GATEWAY,
+            "gateway_abort_pending_assignment_publication_ram_only",
+        )
+
+        abort_then_rollback = re.search(
+            r"if\s*\(\s*"
+            r"app_gateway_assignment_publisher_abort_prepared_batch\s*"
+            r"\(\s*&event\s*\)\s*\)\s*\{[^}]*"
+            r"gateway_abort_pending_assignment_publication_ram_only\s*"
+            r"\(\s*&event\s*\)",
+            finish,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            abort_then_rollback,
+            "only a successfully aborted prepared publisher may roll back "
+            "its matching RAM-only membership publication",
+        )
+        self.assertEqual(
+            finish.count(
+                "gateway_abort_pending_assignment_publication_ram_only("
+            ),
+            1,
+        )
+
+        self.assertIn("gateway_membership_ram_only_assignment", rollback)
+        self.assertIn(
+            "gateway_membership_identity_matches_event(", rollback
+        )
+        self.assertIn(
+            "&gateway_membership_assignment_identity", rollback
+        )
+        self.assertIn("base_event", rollback)
+        self.assertIn(
+            "gateway_membership_publication_live_owner = false", rollback
+        )
+        self.assertIn(
+            "atomic_clear(&gateway_assignment_publication_pending_state)",
+            rollback,
+        )
+        self.assertNotIn("app_durable_state_", rollback)
+        self.assertNotIn(
+            "gateway_clear_registered_membership_roster()", rollback
+        )
+
+    def test_late_claim_uses_the_observed_table_size(self):
+        late_claim = function_body(
+            ANCHOR, "anchor_schedule_late_discovery_claim"
+        )
+
+        self.assertIn(
+            "&claim_command, epoch, table_entry_count, response_spread_ms",
+            late_claim,
+        )
+
+    def test_expected_count_uses_only_the_short_ack_settle(self):
         service = function_body(
             ANCHOR,
             "gateway_discovery_assignment_service_delivery",
         )
-        self.assertEqual(
-            service.count("claim_collection_deadline_ms ="),
-            1,
-            "claim collection horizon must be frozen once per delivered phase",
+        quorum = service.index(
+            "gateway_discovery_assignment_expected_claims_complete_locked()"
         )
+        arm = service.index(
+            "gateway_discovery_assignment_arm_claim_ack_settle_locked(",
+            quorum,
+        )
+        remaining = service.index(
+            "gateway_discovery_assignment_claim_ack_settle_remaining_locked(",
+            arm,
+        )
+        short_wait = service.index(
+            'K_MSEC(wait_ms), "expected-count-settle"', remaining
+        )
+        self.assertLess(quorum, arm)
+        self.assertLess(arm, remaining)
+        self.assertLess(remaining, short_wait)
 
-    def test_expected_claim_settle_preempts_the_long_response_window(self):
+        arm_body = function_body(
+            ANCHOR,
+            "gateway_discovery_assignment_arm_claim_ack_settle_locked",
+        )
+        self.assertNotIn("claim_collection_deadline_ms", arm_body)
+        self.assertIn("operation_deadline_ms", arm_body)
+
+    def test_late_expected_count_closes_the_frozen_window_before_priority_submit(self):
         finalize = function_body(
             ANCHOR,
             "gateway_discovery_assignment_finalize_work_handler",
         )
-        round_open = finalize.index(
-            "if (gateway_discovery_assignment_state.round_open)"
-        )
         quorum = finalize.index(
-            "gateway_discovery_assignment_expected_claims_complete_locked()",
-            round_open,
+            "gateway_discovery_assignment_expected_claims_complete_locked()"
         )
-        remaining = finalize.index(
+        stage = finalize.rindex(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS", 0, quorum
+        )
+        settle = finalize.index(
             "gateway_discovery_assignment_claim_ack_settle_remaining_locked(",
             quorum,
         )
-        settle_schedule = finalize.index('"expected-claim-settle"', remaining)
-        validation_boundary = finalize.index(
-            "gateway_discovery_assignment_boundary_ready_locked(",
-            settle_schedule,
+        reschedule = finalize.index(
+            'K_MSEC(settle_ms), "expected-claim-settle"', settle
         )
-        response_window = finalize.index(
-            ".response_window_deadline_valid", validation_boundary
+        close = finalize.index(
+            "gateway_discovery_assignment_state.round_open = false", quorum
+        )
+        invalidate = finalize.index(
+            "gateway_discovery_assignment_state.response_window_deadline_valid =",
+            close,
+        )
+        response_wait = finalize.index("response-window-deadline", invalidate)
+        request = finalize.index(
+            "app_discovery_assignment_work_guard_request(", invalidate
+        )
+        submit = finalize.index("mesh_gateway_command_priority_submit(", request)
+
+        fast_path_end = finalize.index(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_ABORT_DELIVERY", invalidate
+        )
+        self.assertIn("false", finalize[invalidate:response_wait])
+        self.assertLess(stage, quorum)
+        self.assertLess(quorum, settle)
+        self.assertLess(settle, reschedule)
+        self.assertLess(reschedule, close)
+        self.assertLess(quorum, close)
+        self.assertLess(close, invalidate)
+        self.assertLess(invalidate, response_wait)
+        self.assertLess(response_wait, request)
+        self.assertLess(request, submit)
+        self.assertIn(
+            "GATEWAY_ASSIGNMENT_FINALIZE_RETURN()",
+            finalize[settle:close],
+            "the expected-count path must wait only for the bounded ACK settle",
         )
 
-        self.assertLess(round_open, quorum)
-        self.assertLess(quorum, remaining)
-        self.assertLess(remaining, settle_schedule)
-        self.assertLess(settle_schedule, validation_boundary)
-        self.assertLess(validation_boundary, response_window)
-        self.assertIn(
-            ".claim_ack_settle_deadline_ms",
-            finalize[validation_boundary:response_window],
+    def test_assignment_rf_telemetry_starts_at_the_physical_boundary(self):
+        open_round = function_body(
+            ANCHOR, "gateway_discovery_assignment_open_claim_round_locked"
         )
-        self.assertIn(
-            "else if (gateway_discovery_assignment_state",
-            finalize[settle_schedule:response_window],
-            "the generic response window can still mask completed quorum",
+        observe = function_body(
+            ANCHOR, "gateway_discovery_assignment_observe_rf_start_locked"
         )
+        service = function_body(
+            ANCHOR, "gateway_discovery_assignment_service_delivery"
+        )
+
+        self.assertNotIn(
+            "GATEWAY_COMMAND_EVENT_STAGE_FLOOD_ATTEMPT", open_round
+        )
+        attempts = observe.index("app_node_comm_delivery_attempts_started(")
+        nonzero = observe.index("attempts_started == 0u", attempts)
+        publish = observe.index(
+            "GATEWAY_COMMAND_EVENT_STAGE_FLOOD_ATTEMPT", nonzero
+        )
+        self.assertLess(attempts, nonzero)
+        self.assertLess(nonzero, publish)
+        self.assertIn("DBG_ENUM_RF_BEGIN", observe[publish:])
+
+        poll = service.index(
+            "gateway_discovery_assignment_observe_rf_start_locked()"
+        )
+        terminal = service.index(
+            "app_node_comm_peek_delivery_event_for(handle, &event)", poll
+        )
+        self.assertLess(poll, terminal)
+
+    def test_failed_bounded_assignment_rf_is_terminal_radio(self):
+        service = function_body(
+            ANCHOR, "gateway_discovery_assignment_service_delivery"
+        )
+        result = service.index("DBG_ENUM_RF_RESULT")
+        delivered = service.index(
+            "effective_delivered = "
+            "event.reason == NODE_COMM_TERMINAL_DELIVERED",
+            result,
+        )
+        failure = service.index(
+            "gateway_discovery_assignment_fail_locked(COMMAND_RADIO_ERROR",
+            delivered,
+        )
+
+        self.assertLess(result, delivered)
+        self.assertLess(delivered, failure)
+        self.assertNotIn(
+            "gateway_discovery_assignment_fail_locked(COMMAND_TIMEOUT",
+            service,
+        )
+        self.assertNotIn("delivery-terminal-retry", service)
+
+    def test_assignment_terminal_distinguishes_pre_rf_from_no_anchors(self):
+        finish = function_body(
+            ANCHOR, "gateway_discovery_assignment_finish_failure_locked"
+        )
+
+        pre_rf = finish.index(
+            "!gateway_discovery_assignment_state.claim_rf_started"
+        )
+        radio_status = finish.index("status = COMMAND_RADIO_ERROR", pre_rf)
+        radio_reason = finish.index(
+            "event_reason = GATEWAY_COMMAND_EVENT_REASON_RADIO", radio_status
+        )
+        expired = finish.index(
+            "app_discovery_assignment_operation_expired(", radio_reason
+        )
+        no_anchors = finish.index(
+            "GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS", expired
+        )
+
+        self.assertLess(pre_rf, radio_status)
+        self.assertLess(radio_status, radio_reason)
+        self.assertLess(radio_reason, expired)
+        self.assertIn(
+            "gateway_discovery_assignment_state.claim_rf_started",
+            finish[expired:no_anchors],
+        )
+        terminal_attempt = finish.index(
+            "event.attempt = gateway_discovery_assignment_state.claim_round"
+        )
+        terminal_publish = finish.index(
+            "gateway_observe_command_event(&event, true)", terminal_attempt
+        )
+        self.assertLess(no_anchors, terminal_attempt)
+        self.assertLess(terminal_attempt, terminal_publish)
 
     def test_only_owned_acceptance_reaches_the_gateway_ack_gate(self):
         real_gateway = GATEWAY[

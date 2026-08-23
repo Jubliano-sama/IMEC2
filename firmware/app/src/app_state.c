@@ -195,8 +195,6 @@ void anchor_click_window_set_active(bool active)
 
 void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)
 {
-    int ret;
-
     if (out == NULL) {
         return;
     }
@@ -206,12 +204,6 @@ void mesh_outbound_refresh_age(struct mesh_outbound *out, uint32_t now_ms)
     }
     out->queued_at_ms = now_ms;
     out->queued_at_valid = true;
-    ret = mesh_outbound_set_flood_packet_age_ms(out, out->packet.message_age_ms);
-    if (ret != PROTO_OK && ret != PROTO_ERR_NOT_FOUND) {
-        LOG_WRN("mesh flood age TLV update failed: msg=0x%02x ret=%d",
-                out->packet.msg_type,
-                ret);
-    }
 }
 
 bool mesh_outbound_ready_for_tx(const struct mesh_outbound *out, uint32_t now_ms)
@@ -373,10 +365,10 @@ int local_anchor_restore_discovery_assignment(uint32_t epoch,
         epoch != 0u && table_seq != 0u && table_commitment != NULL;
 
     if ((!finalized_valid && !pending_valid) ||
-        (finalized_valid &&
-         (slot_count == 0u || slot_count > UWB_DISCOVERY_SLOT_COUNT)) ||
         (provisioned &&
-         (!finalized_valid || anchor_slot >= slot_count)) ||
+         (!finalized_valid || slot_count == 0u ||
+          slot_count > UWB_DISCOVERY_SLOT_COUNT ||
+          anchor_slot >= slot_count)) ||
         (pending_valid &&
          (pending_epoch == 0u || pending_table_seq == 0u ||
           pending_table_commitment == NULL))) {

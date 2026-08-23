@@ -145,16 +145,6 @@ int gateway_command_append_default_flood_controls(struct mesh_outbound *out)
     if (ret != PROTO_OK) {
         return ret;
     }
-    ret = ensure_tlv_u32(out->payload,
-                         sizeof(out->payload),
-                         original_len,
-                         &offset,
-                         TLV_FLOOD_PACKET_AGE_MS,
-                         0u);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-
     out->payload_len = (uint16_t)offset;
     out->packet.payload_len = (uint16_t)offset;
     return PROTO_OK;

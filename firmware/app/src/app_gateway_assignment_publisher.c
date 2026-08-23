@@ -470,6 +470,27 @@ bool app_gateway_assignment_publisher_abort_prepared_batch(
     return true;
 }
 
+bool app_gateway_assignment_publisher_discard_batch(
+    const struct gateway_command_event *base_event)
+{
+    struct app_gateway_assignment_publisher_ops ops;
+    PUBLISHER_LOCK_KEY key;
+
+    if (base_event == NULL) {
+        return false;
+    }
+    key = PUBLISHER_LOCK();
+    if (!publisher.active || !same_identity(base_event)) {
+        PUBLISHER_UNLOCK(key);
+        return false;
+    }
+    ops = publisher.ops;
+    memset(&publisher, 0, sizeof(publisher));
+    publisher.ops = ops;
+    PUBLISHER_UNLOCK(key);
+    return true;
+}
+
 void app_gateway_assignment_publisher_stage_table_ready(
     const struct gateway_command_event *event)
 {

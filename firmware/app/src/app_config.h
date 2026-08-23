@@ -290,6 +290,15 @@
 #endif
 #define REPORT_TX_RETRY_DELAY_MS 1000u
 #define UWB_MESH_TX_TIMEOUT_MS 20u
+BUILD_ASSERT(MESH_ENUMERATION_RELAY_SLOT_MS >=
+                 UWB_CONTROL_TX_TIMEOUT_MS + 5u,
+             "enumeration relay lane must fit one control TX plus margin");
+BUILD_ASSERT(MESH_ENUMERATION_RELAY_COPY_GUARD_MS >=
+                 UWB_CONTROL_TX_TIMEOUT_MS + 5u,
+             "enumeration relay copies must not overlap one control TX");
+BUILD_ASSERT(OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS ==
+                 UWB_CONTROL_TX_TIMEOUT_MS,
+             "response timing model must match the control TX timeout");
 #define ANCHOR_BATTERY_MV_UNKNOWN 0u
 #define SURVEY_REACH_MAX_ENTRIES 12u
 #define SURVEY_DISCOVERY_START_DELAY_MS \

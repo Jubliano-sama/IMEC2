@@ -155,6 +155,7 @@ extern "C" {
     X("app_gateway_control_sequence.c", "gateway_control_sequence_maintenance_handler", "system_workqueue") \
     X("app_gateway_ble.c", "gateway_ble_tx_complete", "bt_rx")                \
     X("app_gateway_ble.c", "gateway_ble_connected", "bt_rx")                  \
+    X("app_gateway_ble.c", "gateway_ble_le_param_updated", "bt_rx")           \
     X("app_gateway_ble.c", "gateway_ble_disconnected", "bt_rx")                \
     X("app_gateway_ble.c", "gateway_ble_packet_ccc_changed", "bt_rx")          \
     X("app_board.c", "status1_debug_pulse_restore_handler", "system_workqueue") \

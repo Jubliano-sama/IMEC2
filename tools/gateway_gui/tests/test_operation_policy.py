@@ -47,7 +47,7 @@ class OperationPolicyTests(unittest.TestCase):
             discovery.hex(),
             "01020010620000c8000604fa000000b5f80300",
         )
-        self.assertEqual(pair.hex(), "0103000219")
+        self.assertEqual(pair.hex(), "0103000201")
         self.assertEqual(
             tuple(len(value) for value in (assignment, discovery, pair)),
             (11, 19, 5),
@@ -59,7 +59,7 @@ class OperationPolicyTests(unittest.TestCase):
             discovery=DiscoveryOperationPolicy(
                 25_104, 200, 12, 4, 1_500, 500_000
             ),
-            pair=PairOperationPolicy(1, 8),
+            pair=PairOperationPolicy(1, 1),
         )
 
         assignment, discovery, pair = map(
@@ -68,6 +68,7 @@ class OperationPolicyTests(unittest.TestCase):
         self.assertEqual(assignment["family"], "assignment")
         self.assertEqual(assignment["expected_anchor_count"], 5)
         self.assertEqual(assignment["response_spread_ms"], 750)
+        self.assertFalse(assignment["ram_only_iteration"])
         self.assertEqual(discovery["family"], "survey_discovery")
         self.assertEqual(discovery["round_count"], 4)
         self.assertEqual(discovery["operation_budget_ms"], 500_000)
@@ -76,8 +77,24 @@ class OperationPolicyTests(unittest.TestCase):
             "family": "survey_pair",
             "flags": 0,
             "max_reruns": 1,
-            "max_parallel_pairs": 8,
+            "max_parallel_pairs": 1,
         })
+
+    def test_assignment_ram_only_iteration_reuses_v1_flags_byte(self) -> None:
+        durable = AssignmentOperationPolicy(expected_anchor_count=3)
+        bench = AssignmentOperationPolicy(
+            expected_anchor_count=3,
+            ram_only_iteration=True,
+        )
+
+        self.assertEqual(len(durable.encode_value()), len(bench.encode_value()))
+        self.assertEqual(0, durable.encode_value()[2])
+        self.assertEqual(1, bench.encode_value()[2])
+        self.assertTrue(
+            decode_operation_policy_value(bench.encode_value())[
+                "ram_only_iteration"
+            ]
+        )
 
     def test_invalid_bounds_versions_flags_and_lengths_fail_closed(self) -> None:
         invalid_constructors = (
@@ -90,7 +107,7 @@ class OperationPolicyTests(unittest.TestCase):
             lambda: DiscoveryOperationPolicy(20_000, 40, 6, 5, 250, 600_000),
             lambda: DiscoveryOperationPolicy(20_000, 40, 6, 4, 250, 139_992),
             lambda: PairOperationPolicy(3, 1),
-            lambda: PairOperationPolicy(2, 26),
+            lambda: PairOperationPolicy(2, 2),
         )
         for constructor in invalid_constructors:
             with self.subTest(constructor=constructor), self.assertRaises(ValueError):
@@ -130,11 +147,11 @@ class OperationPolicyTests(unittest.TestCase):
 
     def test_discovery_start_delay_tracks_known_depth_and_unknown_is_safe(self) -> None:
         expected_by_depth = {
-            1: 11_104,
-            2: 13_104,
-            3: 15_104,
-            4: 17_104,
-            5: 19_104,
+            1: 20_000,
+            2: 20_000,
+            3: 20_000,
+            4: 20_000,
+            5: 20_000,
             6: 21_104,
             7: 23_104,
             8: 25_104,
@@ -149,6 +166,21 @@ class OperationPolicyTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "deepest hop"):
             discovery_required_start_delay_ms(9)
+
+    def test_bench_topologies_generate_a_firmware_valid_start_delay(self) -> None:
+        for topology, deepest_hop in {
+            "DDD": 1,
+            "F1DD": 2,
+            "F1F1D": 2,
+            "F2F1D": 3,
+        }.items():
+            with self.subTest(topology=topology):
+                start_delay_ms = discovery_required_start_delay_ms(deepest_hop)
+                self.assertEqual(20_000, start_delay_ms)
+                DiscoveryOperationPolicy(
+                    start_delay_ms=start_delay_ms,
+                    deepest_hop=deepest_hop,
+                )
 
     def test_default_discovery_budget_covers_eight_hop_custody_exactly(self) -> None:
         self.assertEqual(25_104, DISCOVERY_DEFAULT_START_DELAY_MS)

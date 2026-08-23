@@ -244,6 +244,17 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
                                              uint32_t table_seq,
                                              const struct discovery_assignment_table_commitment *table_commitment,
                                              const struct gateway_membership_publication *publication);
+int gateway_set_registered_membership_roster_ram_only(
+    uint16_t membership_epoch,
+    const uint64_t *node_ids,
+    const uint8_t *slots,
+    size_t node_count,
+    uint32_t assignment_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    const struct gateway_membership_publication *publication);
+int gateway_abort_pending_assignment_publication_ram_only(
+    const struct gateway_command_event *base_event);
 /* The exact NVS commit may have landed before readback failed. This positive
  * result retains the prepared publication and original operation lease while
  * owner work adopts the same candidate; it is neither failure nor success. */
@@ -278,6 +289,7 @@ int gateway_complete_assignment_publication(
     const struct gateway_command_event *base_event,
     void *ctx);
 void gateway_clear_registered_membership_roster(void);
+int gateway_clear_registered_membership_roster_ram_only(void);
 int gateway_note_command_result(const struct proto_packet *packet,
                                 const uint8_t *payload,
                                 size_t payload_len,

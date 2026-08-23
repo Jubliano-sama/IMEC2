@@ -13,6 +13,9 @@ extern "C" {
 
 #define OPERATION_POLICY_VERSION 1u
 #define OPERATION_POLICY_FLAGS_NONE 0u
+#define OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION (1u << 0)
+#define OPERATION_POLICY_ASSIGNMENT_FLAGS_MASK \
+    OPERATION_POLICY_ASSIGNMENT_FLAG_RAM_ONLY_ITERATION
 
 /*
  * These are host-selectable mechanism bounds. Radio airtime, ACK/custody
@@ -30,12 +33,32 @@ extern "C" {
 #define OPERATION_POLICY_ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS 1000u
 
 /*
- * Firmware-owned allowance for one uncontended first Channel-9 contact.  It
- * includes wake/propose/accept and the first payload handoff.  The host may
- * select retry spread and an operation ceiling, but it cannot shrink this RF
- * safety cell.
+ * One direct response cell covers the complete first Channel-9 handoff:
+ * payload TX, gateway ACK turnaround/RX, radio setup and service guards, both
+ * retune edges, and five milliseconds of scheduler/clock slop.  A response
+ * that traverses another connected relay adds one complete 640 ms cadence.
+ * These cells serialize first attempts only; reliable transport custody and
+ * retries retain their independent, much longer deadlines.
  */
-#define OPERATION_POLICY_FIRST_CONTACT_SLOT_MS 2270u
+#define OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS 20u
+#define OPERATION_POLICY_RESPONSE_ACK_GUARD_MS 10u
+#define OPERATION_POLICY_RESPONSE_ACK_RX_MS 250u
+#define OPERATION_POLICY_RESPONSE_RADIO_CONFIG_GUARD_MS 25u
+#define OPERATION_POLICY_RESPONSE_SERVICE_GUARD_MS 20u
+#define OPERATION_POLICY_RESPONSE_RETUNE_EDGE_MS 60u
+#define OPERATION_POLICY_RESPONSE_SCHEDULER_SLOP_MS 5u
+#define OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS \
+    (OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS + \
+     OPERATION_POLICY_RESPONSE_ACK_GUARD_MS + \
+     OPERATION_POLICY_RESPONSE_ACK_RX_MS + \
+     OPERATION_POLICY_RESPONSE_RADIO_CONFIG_GUARD_MS + \
+     OPERATION_POLICY_RESPONSE_SERVICE_GUARD_MS + \
+     (2u * OPERATION_POLICY_RESPONSE_RETUNE_EDGE_MS) + \
+     OPERATION_POLICY_RESPONSE_SCHEDULER_SLOP_MS)
+#define OPERATION_POLICY_FIRST_CONTACT_PER_ADDITIONAL_HOP_MS 640u
+/* Compatibility name for callers that need the direct response cell. */
+#define OPERATION_POLICY_FIRST_CONTACT_SLOT_MS \
+    OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS
 
 #define OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS 20000u
 #define OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS 25104u
@@ -57,8 +80,8 @@ extern "C" {
 
 #define OPERATION_POLICY_PAIR_MAX_RERUNS 2u
 #define OPERATION_POLICY_PAIR_DEFAULT_MAX_RERUNS 2u
-#define OPERATION_POLICY_PAIR_MAX_PARALLEL_PAIRS 25u
-#define OPERATION_POLICY_PAIR_DEFAULT_MAX_PARALLEL_PAIRS 25u
+#define OPERATION_POLICY_PAIR_MAX_PARALLEL_PAIRS 1u
+#define OPERATION_POLICY_PAIR_DEFAULT_MAX_PARALLEL_PAIRS 1u
 
 enum operation_policy_family {
     OPERATION_POLICY_FAMILY_ASSIGNMENT = 1,
@@ -108,6 +131,8 @@ struct operation_policy_assignment {
     uint32_t operation_budget_ms;
     /* Randomized offset inside a firmware-owned hop/slot first-contact cell. */
     uint16_t response_spread_ms;
+    /* Explicit bench-only opt-out; production assignments remain durable. */
+    bool ram_only_iteration;
 };
 
 struct operation_policy_discovery {
@@ -156,6 +181,12 @@ void operation_policy_discovery_defaults(
     struct operation_policy_discovery *policy);
 void operation_policy_pair_defaults(struct operation_policy_pair *policy);
 void operation_policy_set_defaults(struct operation_policy_set *set);
+
+uint32_t operation_policy_first_contact_cell_ms(uint8_t hop_count);
+int operation_policy_first_contact_offset_ms(uint8_t slot,
+                                             uint8_t slot_count,
+                                             uint8_t hop_count,
+                                             uint32_t *offset_ms);
 
 int operation_policy_validate(const struct operation_policy *policy);
 int operation_policy_decode_value(const uint8_t *value,

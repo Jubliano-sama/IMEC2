@@ -27,6 +27,7 @@ static struct operation_policy_set complete_policy(void)
     policy.assignment.operation_budget_ms =
         OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS;
     policy.assignment.response_spread_ms = 750u;
+    policy.assignment.ram_only_iteration = true;
     policy.discovery.start_delay_ms =
         OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS;
     policy.discovery.slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS;
@@ -36,7 +37,7 @@ static struct operation_policy_set complete_policy(void)
     policy.discovery.report_grace_ms = 1200u;
     policy.discovery.operation_budget_ms = 300000u;
     policy.pair.max_reruns = 1u;
-    policy.pair.max_parallel_pairs = 8u;
+    policy.pair.max_parallel_pairs = 1u;
     return policy;
 }
 
@@ -52,6 +53,8 @@ static void assert_policy_equal(const struct operation_policy_set *actual,
            expected->assignment.operation_budget_ms);
     assert(actual->assignment.response_spread_ms ==
            expected->assignment.response_spread_ms);
+    assert(actual->assignment.ram_only_iteration ==
+           expected->assignment.ram_only_iteration);
     assert(actual->discovery.start_delay_ms ==
            expected->discovery.start_delay_ms);
     assert(actual->discovery.slot_ms == expected->discovery.slot_ms);
@@ -309,16 +312,6 @@ static void test_header_relevant_adv_must_pass_full_capture_admission(void)
     ((uint8_t *)value)[0] = UINT8_MAX;
     assert_route_adv_rejected_without_mutation(
         &malformed, TEST_ANCHOR_BASE + 4u);
-
-    malformed = valid;
-    malformed.packet.message_age_ms = 1u;
-    assert_route_adv_rejected_without_mutation(
-        &malformed, TEST_ANCHOR_BASE + 5u);
-
-    malformed = valid;
-    remove_unique_tlv(&malformed, TLV_FLOOD_PACKET_AGE_MS);
-    assert_route_adv_rejected_without_mutation(
-        &malformed, TEST_ANCHOR_BASE + 9u);
 
     malformed = valid;
     assert(tlv_find_unique(malformed.payload,
@@ -827,7 +820,7 @@ static void test_gateway_adv_sequence_freshness_is_commit_late_and_wrap_safe(voi
                &newer_policy,
                &valid_next) == PROTO_OK);
     malformed_next = valid_next;
-    malformed_next.packet.message_age_ms++;
+    malformed_next.packet.flags = FLAG_DIAGNOSTIC;
     assert(mesh_relay_handle_rx_with_random(
                &anchor,
                &malformed_next.packet,

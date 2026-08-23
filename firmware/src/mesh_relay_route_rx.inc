@@ -319,8 +319,7 @@ static int append_gateway_route_adv_tlvs(uint8_t *payload,
     ret = append_flood_control_tlvs(payload,
                                     payload_cap,
                                     offset,
-                                    &flood_control,
-                                    fields->flood_packet_age_ms);
+                                    &flood_control);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -410,15 +409,6 @@ static int parse_gateway_route_adv_tlvs(const uint8_t *payload,
         fields->flood_retry_count = flood_control.retry_count;
     }
 
-    ret = find_u32_tlv(payload,
-                       payload_len,
-                       TLV_FLOOD_PACKET_AGE_MS,
-                       &fields->flood_packet_age_ms);
-    if (ret == PROTO_ERR_NOT_FOUND) {
-        fields->flood_packet_age_ms = 0u;
-    } else if (ret != PROTO_OK) {
-        return ret;
-    }
     return mesh_relay_operation_policy_parse_exact(
         payload,
         payload_len,
@@ -451,11 +441,7 @@ static bool gateway_route_adv_required_tlvs_present(
            find_u8_tlv(payload,
                        payload_len,
                        TLV_FLOOD_RETRY_COUNT,
-                       &value_u8) == PROTO_OK &&
-           find_u32_tlv(payload,
-                        payload_len,
-                        TLV_FLOOD_PACKET_AGE_MS,
-                        &value_u32) == PROTO_OK;
+                       &value_u8) == PROTO_OK;
 }
 
 static int validate_route_reply_commitment(
@@ -1150,7 +1136,6 @@ static int validate_gateway_route_adv_packet(
             gateway_route_adv_slot_seed(fields->gateway_id,
                                         fields->gateway_route_seq,
                                         fields->gateway_epoch) ||
-        fields->flood_packet_age_ms != packet->message_age_ms ||
         fields->path.node_ids[fields->path.count - 1u] != previous_hop_id ||
         mesh_route_path_contains(&fields->path, relay->local_id)) {
         return PROTO_ERR_MALFORMED;
@@ -1233,7 +1218,6 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     }
     fields.hop_count++;
     fields.route_cost = gateway_route_cost(fields.hop_count, fields.path_quality_min);
-    fields.flood_packet_age_ms = packet->message_age_ms;
     ret = append_gateway_route_adv_tlvs(out->payload,
                                         sizeof(out->payload),
                                         &out_payload_len,

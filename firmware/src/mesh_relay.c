@@ -191,7 +191,6 @@ struct gateway_route_adv_fields {
     uint32_t flood_epoch_id;
     uint32_t slot_seed;
     uint32_t random_backoff_max_ms;
-    uint32_t flood_packet_age_ms;
     uint16_t gateway_epoch;
     uint16_t route_cost;
     uint16_t flood_profile_version;
@@ -1320,8 +1319,7 @@ static int parse_flood_control_tlvs(const uint8_t *payload,
 static int append_flood_control_tlvs(uint8_t *payload,
                                      size_t payload_cap,
                                      size_t *offset,
-                                     const struct flood_control_fields *control,
-                                     uint32_t packet_age_ms)
+                                     const struct flood_control_fields *control)
 {
     int ret;
 
@@ -1353,43 +1351,11 @@ static int append_flood_control_tlvs(uint8_t *payload,
     if (ret != PROTO_OK) {
         return ret;
     }
-    return tlv_append_u32(payload,
-                          payload_cap,
-                          offset,
-                          TLV_FLOOD_PACKET_AGE_MS,
-                          packet_age_ms);
-}
-
-int mesh_outbound_set_flood_packet_age_ms(struct mesh_outbound *out,
-                                          uint32_t age_ms)
-{
-    const uint8_t *tlv_value = NULL;
-    uint8_t tlv_len = 0u;
-    int ret;
-
-    if (out == NULL) {
-        return PROTO_ERR_ARG;
-    }
-
-    ret = tlv_find_unique(out->payload,
-                          out->payload_len,
-                          TLV_FLOOD_PACKET_AGE_MS,
-                          &tlv_value,
-                          &tlv_len);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    if (tlv_len != sizeof(uint32_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    proto_put_u32_le((uint8_t *)tlv_value, age_ms);
     return PROTO_OK;
 }
 
 static int ensure_flood_control_tlvs(struct mesh_outbound *out,
-                                     const struct flood_control_fields *control,
-                                     uint32_t packet_age_ms)
+                                     const struct flood_control_fields *control)
 {
     const uint8_t *tlv_value = NULL;
     uint8_t tlv_len = 0u;
@@ -1450,20 +1416,6 @@ static int ensure_flood_control_tlvs(struct mesh_outbound *out,
                             control->retry_count);
     } else if (ret == PROTO_OK && tlv_len != sizeof(uint8_t)) {
         ret = PROTO_ERR_MALFORMED;
-    }
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-
-    out->payload_len = (uint16_t)offset;
-    out->packet.payload_len = (uint16_t)offset;
-    ret = mesh_outbound_set_flood_packet_age_ms(out, packet_age_ms);
-    if (ret == PROTO_ERR_NOT_FOUND) {
-        ret = tlv_append_u32(out->payload,
-                             sizeof(out->payload),
-                             &offset,
-                             TLV_FLOOD_PACKET_AGE_MS,
-                             packet_age_ms);
     }
     if (ret != PROTO_OK) {
         return ret;

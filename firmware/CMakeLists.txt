@@ -23,6 +23,7 @@ add_library(core
     src/firmware_state_radio.c
     src/gateway_ble_transport.c
     src/protocol.c
+    src/protocol_rx_lifecycle.c
     src/gateway_membership.c
     src/gateway_command.c
     src/uwb.c
@@ -122,6 +123,19 @@ set_tests_properties(app_node_comm_delivery_state PROPERTIES
 add_executable(test_protocol tests/test_protocol.c)
 target_link_libraries(test_protocol PRIVATE core)
 add_test(NAME protocol COMMAND test_protocol)
+
+add_executable(test_protocol_rx_lifecycle
+    tests/test_protocol_rx_lifecycle.c)
+target_link_libraries(test_protocol_rx_lifecycle PRIVATE core)
+add_test(NAME protocol_rx_lifecycle COMMAND test_protocol_rx_lifecycle)
+set_tests_properties(protocol_rx_lifecycle PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol;state;radio")
+
+add_test(NAME enumeration_rx_lifecycle_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_enumeration_rx_lifecycle_source_invariants.py)
+set_tests_properties(enumeration_rx_lifecycle_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;assignment;state;radio;static_analysis")
 
 add_executable(test_mesh_event_owner tests/test_mesh_event_owner.c)
 target_link_libraries(test_mesh_event_owner PRIVATE core)
@@ -236,6 +250,7 @@ add_executable(test_app_radio_guard
     app/src/app_radio_guard.c)
 target_include_directories(test_app_radio_guard PRIVATE
     tests/mesh_integration/zephyr_shim
+    include
     app/src)
 add_test(NAME app_radio_guard COMMAND test_app_radio_guard)
 set_tests_properties(app_radio_guard
@@ -514,6 +529,23 @@ add_test(NAME gateway_gui_cross_layer
 set_tests_properties(gateway_gui_cross_layer
     PROPERTIES LABELS "mesh_integration;hardware_models;gateway_gui;deployment")
 
+add_executable(product_contract_oracle
+    tests/mesh_integration/product_contract_oracle.c
+    app/src/app_mesh_c5_priority.c
+    app/src/app_mesh_route_request_policy.c)
+target_include_directories(product_contract_oracle PRIVATE app/src)
+target_link_libraries(product_contract_oracle PRIVATE core)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(product_contract_oracle
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME product_contract_matrix
+    COMMAND ${GATEWAY_GUI_PYTHON}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_product_contract_matrix.py
+        $<TARGET_FILE:product_contract_oracle>)
+set_tests_properties(product_contract_matrix PROPERTIES
+    LABELS "mesh_integration;hardware_models;gateway_gui;assignment;survey;topology;policy")
+
 add_executable(test_gateway_command_lifecycle_invariants
     tests/mesh_integration/test_gateway_command_lifecycle_invariants.c
     app/src/app_gateway_command_ingress.c
@@ -752,6 +784,11 @@ add_test(NAME gateway_observability_source_invariants
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_observability_source_invariants.py)
 set_tests_properties(gateway_observability_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;ble;survey;static_analysis")
+add_test(NAME ddd_rf_observability_contract
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_ddd_rf_observability_contract.py)
+set_tests_properties(ddd_rf_observability_contract PROPERTIES
+    LABELS "mesh_integration;hardware_models;assignment;radio;watchdog;ble;static_analysis")
 
 add_executable(test_app_mesh_smoke_fast
     tests/test_app_mesh_smoke_fast.c

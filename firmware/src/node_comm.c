@@ -87,6 +87,14 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .retry_backoff_shift_cap = 0u,
         .priority = 20u,
     },
+    [NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN] = {
+        .retry_delay_ms = 0u,
+        .success_repeat_delay_ms = 0u,
+        .max_attempts = 1u,
+        .successful_attempts_required = 1u,
+        .retry_backoff_shift_cap = 0u,
+        .priority = 255u,
+    },
 };
 
 _Static_assert(sizeof(profile_policies) / sizeof(profile_policies[0]) ==

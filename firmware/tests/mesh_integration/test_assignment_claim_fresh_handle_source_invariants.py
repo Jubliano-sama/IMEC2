@@ -63,6 +63,82 @@ def macro_value(source: str, name: str) -> int:
 
 
 class AssignmentClaimFreshHandleSourceTests(unittest.TestCase):
+    def test_gateway_confirmed_response_replay_is_terminal_until_reset(self):
+        terminal_struct = ANCHOR[
+            ANCHOR.index("struct anchor_discovery_response_terminal {") :
+            ANCHOR.index("};", ANCHOR.index(
+                "struct anchor_discovery_response_terminal {"
+            )) + 2
+        ]
+        confirmed = function_body(
+            ANCHOR, "anchor_discovery_assignment_gateway_confirmed"
+        )
+        matches = function_body(
+            ANCHOR, "anchor_discovery_response_terminal_matches"
+        )
+        apply = function_body(
+            ANCHOR, "anchor_apply_discovery_assignment_command"
+        )
+
+        self.assertIn("bool valid;", terminal_struct)
+        self.assertRegex(
+            ANCHOR,
+            r"static struct anchor_discovery_response_terminal\s+"
+            r"anchor_discovery_response_terminal\s*;",
+        )
+        active_identity = confirmed.index(
+            "!anchor_discovery_claim_pending.active"
+        )
+        digest = confirmed.index("memcmp(expected_digest", active_identity)
+        terminal = confirmed.index(
+            "anchor_discovery_response_terminal.valid = true", digest
+        )
+        self.assertLess(active_identity, digest)
+        self.assertLess(digest, terminal)
+
+        self.assertIn("anchor_discovery_response_terminal.valid", matches)
+        self.assertIn(".epoch == epoch", matches)
+        self.assertIn(".phase == response_phase", matches)
+        self.assertIn(".command_session_id ==", matches)
+        self.assertIn(".command_packet_seq ==", matches)
+        self.assertIn(
+            "discovery_assignment_table_commitment_equal(", matches
+        )
+
+        claim_replay = apply.index(
+            "anchor_discovery_response_terminal_matches(\n"
+            "                epoch,\n"
+            "                DISCOVERY_ASSIGNMENT_PHASE_CLAIM"
+        )
+        claim_terminal = apply.index(
+            "DBG_DISCOVERY_SLOT_RESPONSE_TERMINAL_REPLAY", claim_replay
+        )
+        claim_schedule = apply.index(
+            "anchor_schedule_discovery_claim(", claim_terminal
+        )
+        table_replay = apply.index(
+            "anchor_discovery_response_terminal_matches(\n"
+            "            epoch,\n"
+            "            DISCOVERY_ASSIGNMENT_PHASE_ACK",
+            claim_schedule,
+        )
+        table_terminal = apply.index(
+            "DBG_DISCOVERY_SLOT_RESPONSE_TERMINAL_REPLAY", table_replay
+        )
+        table_schedule = apply.index(
+            "anchor_schedule_discovery_response(", table_terminal
+        )
+        self.assertIn("return 0;", apply[claim_terminal:claim_schedule])
+        self.assertIn("return 0;", apply[table_terminal:table_schedule])
+
+        # The sole terminal cache is an uninitialized static RAM object. A
+        # reset clears valid, so the same exact identity reaches scheduling
+        # again instead of being suppressed by durable assignment state.
+        self.assertEqual(
+            ANCHOR.count("anchor_discovery_response_terminal.valid = true"),
+            1,
+        )
+
     def test_claim_terminal_gets_two_fresh_handles_and_deadlines(self):
         self.assertEqual(
             2,

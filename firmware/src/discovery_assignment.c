@@ -9,7 +9,9 @@ static bool phase_valid(enum discovery_assignment_phase phase)
 {
     return phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
            phase == DISCOVERY_ASSIGNMENT_PHASE_TABLE ||
-           phase == DISCOVERY_ASSIGNMENT_PHASE_ACK;
+           phase == DISCOVERY_ASSIGNMENT_PHASE_ACK ||
+           phase == DISCOVERY_ASSIGNMENT_PHASE_END ||
+           phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT;
 }
 
 static uint32_t retry_base_ms(uint8_t retry_round)
@@ -1000,16 +1002,145 @@ int discovery_assignment_append_table_commitment(
                             sizeof(commitment->bytes));
 }
 
+int discovery_assignment_append_end_identity(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct discovery_assignment_end_identity *identity)
+{
+    uint8_t raw[DISCOVERY_ASSIGNMENT_END_IDENTITY_WIRE_LEN];
+
+    if (payload == NULL || offset == NULL || identity == NULL ||
+        identity->epoch == 0u || identity->table_command_seq == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    proto_put_u32_le(&raw[0], identity->epoch);
+    proto_put_u32_le(&raw[sizeof(uint32_t)], identity->table_command_seq);
+    memcpy(&raw[2u * sizeof(uint32_t)],
+           identity->table_commitment.bytes,
+           sizeof(identity->table_commitment.bytes));
+    return tlv_append_bytes(payload,
+                            payload_cap,
+                            offset,
+                            TLV_DISCOVERY_ASSIGNMENT_END_IDENTITY,
+                            raw,
+                            sizeof(raw));
+}
+
+int discovery_assignment_extract_end_identity(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct discovery_assignment_end_identity *identity)
+{
+    struct discovery_assignment_end_identity parsed = {0};
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (payload == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_DISCOVERY_ASSIGNMENT_END_IDENTITY,
+                          &raw,
+                          &raw_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (raw_len != DISCOVERY_ASSIGNMENT_END_IDENTITY_WIRE_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+    parsed.epoch = proto_get_u32_le(&raw[0]);
+    parsed.table_command_seq = proto_get_u32_le(&raw[sizeof(uint32_t)]);
+    memcpy(parsed.table_commitment.bytes,
+           &raw[2u * sizeof(uint32_t)],
+           sizeof(parsed.table_commitment.bytes));
+    if (parsed.epoch == 0u || parsed.table_command_seq == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *identity = parsed;
+    return PROTO_OK;
+}
+
+int discovery_assignment_append_abort_identity(
+    uint8_t *payload,
+    size_t payload_cap,
+    size_t *offset,
+    const struct discovery_assignment_abort_identity *identity)
+{
+    uint8_t raw[DISCOVERY_ASSIGNMENT_ABORT_IDENTITY_WIRE_LEN];
+
+    if (payload == NULL || offset == NULL || identity == NULL ||
+        identity->epoch == 0u || identity->claim_session_id == 0u ||
+        identity->claim_command_seq == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    proto_put_u32_le(&raw[0], identity->epoch);
+    proto_put_u32_le(&raw[sizeof(uint32_t)], identity->claim_session_id);
+    proto_put_u32_le(&raw[2u * sizeof(uint32_t)],
+                     identity->claim_command_seq);
+    return tlv_append_bytes(payload,
+                            payload_cap,
+                            offset,
+                            TLV_DISCOVERY_ASSIGNMENT_ABORT_IDENTITY,
+                            raw,
+                            sizeof(raw));
+}
+
+int discovery_assignment_extract_abort_identity(
+    const uint8_t *payload,
+    size_t payload_len,
+    struct discovery_assignment_abort_identity *identity)
+{
+    struct discovery_assignment_abort_identity parsed = {0};
+    const uint8_t *raw = NULL;
+    uint8_t raw_len = 0u;
+    int ret;
+
+    if (payload == NULL || identity == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_DISCOVERY_ASSIGNMENT_ABORT_IDENTITY,
+                          &raw,
+                          &raw_len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    if (raw_len != DISCOVERY_ASSIGNMENT_ABORT_IDENTITY_WIRE_LEN) {
+        return PROTO_ERR_MALFORMED;
+    }
+    parsed.epoch = proto_get_u32_le(&raw[0]);
+    parsed.claim_session_id = proto_get_u32_le(&raw[sizeof(uint32_t)]);
+    parsed.claim_command_seq = proto_get_u32_le(&raw[2u * sizeof(uint32_t)]);
+    if (parsed.epoch == 0u || parsed.claim_session_id == 0u ||
+        parsed.claim_command_seq == 0u) {
+        return PROTO_ERR_MALFORMED;
+    }
+    *identity = parsed;
+    return PROTO_OK;
+}
+
 static uint32_t response_max_initial_delay_ms(uint16_t response_spread_ms,
                                               uint8_t slot_count,
                                               uint32_t effective_hop_count)
 {
+    uint32_t last_offset_ms = 0u;
     uint32_t jitter_cap_ms =
         DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms);
-    uint32_t last_cell = effective_hop_count * slot_count - 1u;
+
+    if (operation_policy_first_contact_offset_ms(
+            slot_count - 1u,
+            slot_count,
+            (uint8_t)effective_hop_count,
+            &last_offset_ms) != PROTO_OK) {
+        return UINT32_MAX;
+    }
 
     return DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-           last_cell * OPERATION_POLICY_FIRST_CONTACT_SLOT_MS +
+           last_offset_ms +
            jitter_cap_ms - 1u;
 }
 
@@ -1022,7 +1153,7 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
                                            uint32_t *delay_ms)
 {
     uint32_t effective_hop_count;
-    uint32_t first_contact_cell;
+    uint32_t first_contact_offset_ms;
     uint32_t jitter_cap_ms;
     uint32_t retry_base;
     uint64_t delay;
@@ -1034,11 +1165,17 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
         return PROTO_ERR_ARG;
     }
 
-    effective_hop_count = hop_count == 0u ? 1u :
+    effective_hop_count = hop_count == 0u ?
+                          DISCOVERY_ASSIGNMENT_MAX_HOPS :
                           hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
                           DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
-    first_contact_cell =
-        ((effective_hop_count - 1u) * slot_count) + slot;
+    if (operation_policy_first_contact_offset_ms(
+            slot,
+            slot_count,
+            (uint8_t)effective_hop_count,
+            &first_contact_offset_ms) != PROTO_OK) {
+        return PROTO_ERR_NO_SPACE;
+    }
     jitter_cap_ms =
         DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms);
     retry_base = retry_base_ms(retry_round);
@@ -1049,8 +1186,7 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
      * transport, so a slow child never shifts everybody else's grid.
      */
     delay = DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
-            ((uint64_t)first_contact_cell *
-             OPERATION_POLICY_FIRST_CONTACT_SLOT_MS) +
+            first_contact_offset_ms +
             (retry_round == 0u ? 0u : retry_base) +
             (random_value % jitter_cap_ms);
     if (delay > UINT32_MAX) {
@@ -1072,13 +1208,49 @@ uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count)
 {
     uint8_t effective_hop_count =
-        hop_count == 0u ? 1u :
+        hop_count == 0u ? DISCOVERY_ASSIGNMENT_MAX_HOPS :
         hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
             DISCOVERY_ASSIGNMENT_MAX_HOPS : hop_count;
 
     return DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS +
            ((uint32_t)(effective_hop_count - 1u) *
             DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS);
+}
+
+int discovery_assignment_adaptive_next_depth_wait_ms(
+    uint16_t response_spread_ms,
+    uint8_t slot_count,
+    uint8_t observed_hop_count,
+    uint8_t max_hop_count,
+    uint32_t *wait_ms)
+{
+    uint32_t jitter_cap_ms;
+    uint32_t next_cell_ms;
+    uint64_t wait;
+
+    if (wait_ms == NULL || slot_count == 0u ||
+        slot_count > UWB_DISCOVERY_SLOT_COUNT ||
+        observed_hop_count == 0u || max_hop_count == 0u ||
+        observed_hop_count > max_hop_count ||
+        max_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ||
+        response_spread_ms < DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MIN_MS ||
+        response_spread_ms > DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_MAX_MS) {
+        return PROTO_ERR_ARG;
+    }
+    jitter_cap_ms =
+        DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms);
+    next_cell_ms = operation_policy_first_contact_cell_ms(
+        observed_hop_count < max_hop_count ?
+            (uint8_t)(observed_hop_count + 1u) : max_hop_count);
+    wait = DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS +
+           ((uint64_t)slot_count * next_cell_ms) +
+           DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + jitter_cap_ms - 1u +
+           DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS;
+    if (wait > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *wait_ms = (uint32_t)wait;
+    return PROTO_OK;
 }
 
 uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,

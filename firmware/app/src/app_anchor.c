@@ -40,6 +40,7 @@
 #include "mesh.h"
 #include "mesh_relay.h"
 #include "protocol.h"
+#include "protocol_rx_lifecycle.h"
 #include "report.h"
 #include "route.h"
 #include "serial_frame.h"
@@ -74,6 +75,7 @@ LOG_MODULE_REGISTER(app_anchor, LOG_LEVEL_DBG);
 #define GATEWAY_HOST_COMMAND_MAX_SEND_ATTEMPTS 8u
 #define GATEWAY_HOST_COMMAND_ACK_CONFIRM_POLL_MS 1000u
 #define GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS DISCOVERY_ASSIGNMENT_DELIVERY_TERMINAL_POLL_MS
+#define GATEWAY_DISCOVERY_ASSIGNMENT_ABORT_DELIVERY_BUDGET_MS 10000u
 #define GATEWAY_SURVEY_DISCOVERY_DELIVERY_POLL_MS \
     SURVEY_DISCOVERY_DELIVERY_TERMINAL_POLL_MS
 #define GATEWAY_SURVEY_OPERATION_TERMINAL_SCHEDULING_GUARD_MS \
@@ -210,16 +212,34 @@ struct anchor_discovery_claim_pending {
     bool active;
 };
 
+/*
+ * RAM-only proof that this exact response completed the full gateway
+ * ACK-confirm handshake.  It deliberately does not survive reset: after a
+ * reboot an exact command replay must be allowed to reconstruct custody.
+ */
+struct anchor_discovery_response_terminal {
+    struct discovery_assignment_table_commitment table_commitment;
+    uint32_t epoch;
+    uint32_t command_session_id;
+    uint16_t command_packet_seq;
+    enum discovery_assignment_phase phase;
+    bool valid;
+};
+
 #if DEVICE_ROLE == ROLE_GATEWAY
 enum gateway_discovery_assignment_stage {
     GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS = 0,
     GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS = 1,
+    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY = 2,
+    GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_ABORT_DELIVERY = 3,
 };
 
 enum gateway_discovery_assignment_delivery_kind {
     GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_NONE = 0,
     GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM = 1,
     GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE = 2,
+    GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END = 3,
+    GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT = 4,
 };
 
 struct gateway_discovery_assignment_state {
@@ -236,6 +256,10 @@ struct gateway_discovery_assignment_state {
     struct discovery_assignment_table_commitment table_commitment;
     uint32_t table_command_seq;
     uint16_t table_packet_seq;
+    uint32_t end_command_seq;
+    uint16_t end_packet_seq;
+    uint32_t abort_command_seq;
+    uint16_t abort_packet_seq;
     uint64_t operation_deadline_ms;
     uint64_t claim_collection_deadline_ms;
     uint64_t claim_ack_settle_deadline_ms;
@@ -252,25 +276,32 @@ struct gateway_discovery_assignment_state {
     uint8_t table_round;
     uint8_t claim_admission_retry_round;
     uint8_t table_admission_retry_round;
+    uint8_t abort_admission_retry_count;
     uint8_t max_hop_count;
     uint8_t prior_anchor_count;
     uint16_t expected_claim_count;
     uint16_t duplicate_count;
+    enum command_status pending_failure_status;
+    uint8_t pending_failure_reason;
     bool round_open;
     bool budget_explicit;
     bool claim_delivery_succeeded;
+    bool claim_rf_started;
     bool table_delivery_succeeded;
     bool claim_ack_settle_armed;
     bool response_ack_settle_armed;
     bool response_window_deadline_valid;
     bool late_table_redrive_pending;
     bool table_delivery_is_redrive;
+    bool ram_only_iteration;
     bool replay;
     bool active;
 };
 #endif
 
 static struct anchor_discovery_claim_pending anchor_discovery_claim_pending;
+static struct anchor_discovery_response_terminal
+    anchor_discovery_response_terminal;
 static uint32_t anchor_discovery_claim_failed_abandon_handle;
 K_MUTEX_DEFINE(anchor_discovery_claim_mutex);
 K_MUTEX_DEFINE(anchor_discovery_assignment_transaction_mutex);
@@ -642,6 +673,32 @@ static uint32_t anchor_run_clicker_pair_survey(
 static void anchor_set_uwb_busy(bool busy);
 static void anchor_note_uwb_awake_since(int64_t start_ms, uint32_t already_counted_us);
 static void anchor_operation_high_duty_boost_begin(uint32_t duration_ms);
+static int anchor_enumeration_rx_begin(uint32_t epoch,
+                                       uint32_t operation_budget_ms,
+                                       bool allow_supersede);
+static int anchor_enumeration_rx_begin_table(
+    uint32_t epoch,
+    uint32_t operation_budget_ms,
+    uint32_t table_command_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    bool allow_supersede);
+static bool anchor_enumeration_rx_bind_claim(uint32_t epoch,
+                                             uint32_t claim_session_id,
+                                             uint32_t claim_command_seq);
+static bool anchor_enumeration_rx_active(void);
+static enum protocol_rx_recovery_result anchor_enumeration_rx_note_recovery(
+    bool recovered,
+    const char *reason);
+static bool anchor_enumeration_rx_terminate_claim(
+    uint32_t epoch,
+    uint32_t claim_session_id,
+    uint32_t claim_command_seq,
+    const char *reason);
+static bool anchor_enumeration_rx_terminate_table(
+    uint32_t epoch,
+    uint32_t table_command_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    const char *reason);
 static int anchor_start_uwb_scan(void);
 static void anchor_uwb_scan_work_handler(struct k_work *work);
 static bool anchor_handle_mesh_click_wake_claim(

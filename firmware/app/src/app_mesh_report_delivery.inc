@@ -1657,6 +1657,26 @@ bool mesh_report_ch9_ack_wait_active(void)
                                              relay_tx_active);
 }
 
+bool mesh_report_local_protocol_response_active(void)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    const struct mesh_pending_tx *pending = &mesh_runtime.pending;
+
+    if (!mesh_relay_tx_active(&mesh_runtime) ||
+        pending->packet.src_id != DEVICE_ID ||
+        pending->packet.dst_id != GATEWAY_ID ||
+        (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) == 0u) {
+        return false;
+    }
+
+    return pending->packet.msg_type == MSG_COMMAND_RESULT ||
+           pending->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
+           pending->packet.msg_type == MSG_SURVEY_PAIR_RESULT;
+#else
+    return false;
+#endif
+}
+
 static int mesh_queue_anchor_cir_fragment(struct mesh_outbound *outbound,
                                           uint32_t *queue_depth)
 {
@@ -3030,6 +3050,22 @@ static int mesh_complete_gateway_ack_confirm(
         app_watchdog_stop_feeding();
         return ret;
     }
+    if (mesh_report_callbacks != NULL &&
+        mesh_report_callbacks->anchor_delivery_gateway_confirmed != NULL) {
+        ret = mesh_report_callbacks->anchor_delivery_gateway_confirmed(
+            &original_packet, original_digest);
+        if (!mesh_terminal_cleanup_idempotent_status(ret)) {
+            status_debug_printf(
+                "DBG_ACK_CONFIRM_TERMINAL stage=producer ret=%d original=%u seq=%u\n",
+                ret,
+                original_packet.msg_type,
+                original_packet.seq);
+            LOG_ERR("gateway ACK-confirm producer cleanup failed after exact relay and node communication commit: ret=%d",
+                    ret);
+            app_watchdog_stop_feeding();
+            return ret;
+        }
+    }
     status_debug_printf(
         "DBG_ACK_CONFIRM_TERMINAL stage=complete ret=0 original=%u seq=%u\n",
         original_packet.msg_type,
@@ -3391,7 +3427,13 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
     }
 
     if (result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) {
-        struct mesh_outbound *gateway_ack = &result->gateway_ack;
+        /*
+         * mesh_work_result is shared scratch.  Freeze the ACK before the
+         * guard sleep or RF handoff so unrelated work cannot replace the
+         * packet while this receive turn still owns it.
+         */
+        struct mesh_outbound gateway_ack_snapshot = result->gateway_ack;
+        struct mesh_outbound *gateway_ack = &gateway_ack_snapshot;
         struct mesh_channel5_requirements requirements;
         struct mesh_event_plan plan = {0};
         struct app_mesh_gateway_ack_state ack_state = {
@@ -3485,10 +3527,6 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
                         APP_MESH_RF_RETRY_OPERATION_DEFERRED_GATEWAY_ACK);
 
                 gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
-                status_debug_printf("DBG_GATEWAY_ACK_GUARD ms=%u seq=%u\n",
-                                    MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
-                                    gateway_ack->packet.seq);
-                k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
                 ret = mesh_send_causal_channel9_response(
                     gateway_ack, ack_decision.reason, NULL);
                 status_debug_printf("DBG_GATEWAY_ACK_SEND ret=%d seq=%u dst=0x%llx next=0x%llx\n",
@@ -3564,14 +3602,6 @@ static void mesh_handle_result_actions(struct mesh_relay_result *result,
 
         if (ack_decision.action == APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9) {
             gateway_ack->radio_channel = MESH_EVENT_CHANNEL;
-            if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-                DEVICE_ROLE == ROLE_GATEWAY &&
-                received_radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
-                status_debug_printf("DBG_GATEWAY_ACK_GUARD ms=%u seq=%u\n",
-                                    MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS,
-                                    gateway_ack->packet.seq);
-                k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS);
-            }
             ret = mesh_send_causal_channel9_response(
                 gateway_ack, ack_decision.reason, NULL);
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&

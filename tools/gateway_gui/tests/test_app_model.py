@@ -777,6 +777,37 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(builder.call_count, 2)
         self.assertEqual(gui.transport.send_frame.call_count, 2)
 
+    def test_retained_generic_command_event_does_not_advance_assignment_barrier(
+        self,
+    ) -> None:
+        gateway_id = 0x9999AAAABBBBCCCC
+        event_sequence = 0x11223344
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
+        generic = parse_stream_record(
+            stream_record(
+                gateway_assignment_event_payload(
+                    event_sequence=event_sequence,
+                    stage=1,
+                    anchor_id=0,
+                    discovery_slot=0xFF,
+                    progress_count=0,
+                    total_count=0,
+                    success_count=0,
+                    failure_count=0,
+                ),
+                msg_type=MSG_GATEWAY_COMMAND_EVENT,
+                packet_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                packet_src_id=gateway_id,
+                packet_dst_id=gateway_id,
+                packet_session_id=event_sequence,
+                packet_seq=event_sequence & 0xFFFF,
+            )
+        )
+
+        self.assertIsNone(gui._observe_assignment_replay(generic))
+        self.assertFalse(gui.assignment_replay_barrier.active)
+
     def test_unknown_gatt_identity_uses_stream_destination_for_receipt_scope(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.gateway_id = None
@@ -1205,7 +1236,7 @@ class AppModelTests(unittest.TestCase):
         self.set_default_policy_variables(gui, expected_anchors="5")
         gui.assignment_response_spread_text = FakeVariable("750")  # type: ignore[assignment]
         gui.discovery_round_count_text = FakeVariable("4")  # type: ignore[assignment]
-        gui.pair_max_parallel_text = FakeVariable("8")  # type: ignore[assignment]
+        gui.pair_max_parallel_text = FakeVariable("1")  # type: ignore[assignment]
         submit_command = Mock(return_value=True)
         gui.__dict__["_submit_gateway_command"] = submit_command
         gui.__dict__["_show_error"] = Mock()
@@ -1223,7 +1254,7 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(policies[0]["expected_anchor_count"], 5)
         self.assertEqual(policies[0]["response_spread_ms"], 750)
         self.assertEqual(policies[1]["round_count"], 4)
-        self.assertEqual(policies[2]["max_parallel_pairs"], 8)
+        self.assertEqual(policies[2]["max_parallel_pairs"], 1)
 
     def test_accepted_survey_telemetry_refreshes_geometry_view(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)

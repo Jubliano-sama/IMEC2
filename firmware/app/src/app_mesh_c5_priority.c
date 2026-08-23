@@ -233,6 +233,36 @@ bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
     return true;
 }
 
+bool app_mesh_c5_gateway_operation_outranks_unaccepted_click(
+    uint8_t msg_type,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    enum command_id command_id = CMD_VENDOR_BASE;
+
+    if (msg_type == MSG_GATEWAY_ROUTE_ADV ||
+        msg_type == MSG_SURVEY_PAIR_PREPARE ||
+        msg_type == MSG_SURVEY_DISCOVERY_START) {
+        return true;
+    }
+    if (msg_type != MSG_COMMAND ||
+        gateway_command_extract_id(payload, payload_len, &command_id) !=
+            PROTO_OK) {
+        return false;
+    }
+
+    switch (command_id) {
+    case CMD_ASSIGN_DISCOVERY_SLOTS:
+    case CMD_SURVEY_REACHABILITY:
+    case CMD_SURVEY_PREPARE_PAIR:
+    case CMD_SURVEY_START_PAIR:
+    case CMD_SURVEY_ABORT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 bool app_mesh_c5_event_accept_reservation(
     const struct mesh_event_timing *accepted,
     uint16_t realign_slop_ms,

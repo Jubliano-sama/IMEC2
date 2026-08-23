@@ -1145,11 +1145,8 @@ static void test_discovery_report_custody_tracks_upstream_hops(void)
 static void test_discovery_start_delay_covers_the_known_or_worst_case_depth(void)
 {
     for (uint8_t hop_count = 1u; hop_count <= 5u; hop_count++) {
-        /* Floor is 2 s; depths 1-5 are sized by redrives + PHY prep. */
-        assert(survey_discovery_required_start_delay_ms(hop_count) ==
-               (uint32_t)(hop_count + SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
-                       SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
-                   SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS + 1u);
+        /* Healthy shallow topologies retain the shared 20 s RF floor. */
+        assert(survey_discovery_required_start_delay_ms(hop_count) == 20000u);
     }
     assert(survey_discovery_required_start_delay_ms(6u) == 21104u);
     assert(survey_discovery_required_start_delay_ms(7u) == 23104u);
@@ -1577,20 +1574,31 @@ static void test_discovery_report_delay_uses_deterministic_anchor_slot(void)
     };
     uint32_t delay_ms = 0u;
 
-    assert(survey_discovery_report_delay_ms(&config, 0u, 1u, 2270u, &delay_ms) == PROTO_OK);
+    assert(survey_discovery_report_delay_ms(
+               &config, 0u, 1u,
+               OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS,
+               &delay_ms) == PROTO_OK);
     assert(delay_ms == 4800u);
-    assert(survey_discovery_report_delay_ms(&config, 3u, 1u, 2270u, &delay_ms) == PROTO_OK);
-    assert(delay_ms == 4800u + (3u * 2270u));
-    assert(survey_discovery_report_delay_ms(&config, 3u, 2u, 2270u,
+    assert(survey_discovery_report_delay_ms(
+               &config, 3u, 1u,
+               OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS,
+               &delay_ms) == PROTO_OK);
+    assert(delay_ms == 4800u + (3u * 450u));
+    assert(survey_discovery_report_delay_ms(
+               &config, 3u, 2u,
+               OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS,
                                             &delay_ms) == PROTO_OK);
-    assert(delay_ms == 4800u + (9u * 2270u));
-    assert(survey_discovery_report_delay_ms(&config, 6u, 1u, 2270u, &delay_ms) ==
+    assert(delay_ms == 4800u + (6u * 450u) + (3u * 1090u));
+    assert(survey_discovery_report_delay_ms(
+               &config, 6u, 1u,
+               OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS,
+               &delay_ms) ==
            PROTO_ERR_MALFORMED);
     assert(survey_discovery_report_delay_ms(&config, 0u, 1u, 0u, &delay_ms) ==
            PROTO_ERR_MALFORMED);
 }
 
-static void test_discovery_report_delay_rejects_overflow(void)
+static void test_discovery_report_delay_rejects_non_firmware_cell(void)
 {
     const struct survey_discovery_config config = {
         .survey_id = 0xABCDEF01u,
@@ -1601,11 +1609,9 @@ static void test_discovery_report_delay_rejects_overflow(void)
     };
     uint32_t delay_ms = 0u;
 
-    assert(survey_discovery_report_delay_ms(&config,
-                                            49u,
-                                            SURVEY_DEFAULT_TTL,
-                                            UINT32_MAX,
-                                            &delay_ms) == PROTO_ERR_NO_SPACE);
+    assert(survey_discovery_report_delay_ms(
+               &config, 49u, SURVEY_DEFAULT_TTL, UINT32_MAX,
+               &delay_ms) == PROTO_ERR_MALFORMED);
 }
 
 static void test_discovery_packets_use_diagnostic_ids(void)
@@ -5088,7 +5094,7 @@ int main(void)
     test_ml_anchor_pair_request_rejects_invalid_slot_counts();
     test_discovery_timing_uses_packet_age();
     test_discovery_report_delay_uses_deterministic_anchor_slot();
-    test_discovery_report_delay_rejects_overflow();
+    test_discovery_report_delay_rejects_non_firmware_cell();
     test_discovery_packets_use_diagnostic_ids();
     test_reach_report_tlvs_include_peer_entries();
     test_reach_report_tlv_parser_round_trips_entries();

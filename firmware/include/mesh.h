@@ -14,6 +14,16 @@ extern "C" {
 #endif
 
 #define MESH_NETWORK_MAX_HOPS 8u
+#define MESH_FLOOD_COPY_DIVERSIFICATION_WINDOW_MS 40u
+#define MESH_ENUMERATION_RELAY_SLOT_COUNT 8u
+#define MESH_ENUMERATION_RELAY_SLOT_MS 25u
+#define MESH_ENUMERATION_RELAY_COPY_GUARD_MS 25u
+#define MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS \
+    ((MESH_ENUMERATION_RELAY_SLOT_COUNT - 1u) * \
+     MESH_ENUMERATION_RELAY_SLOT_MS)
+#define MESH_ENUMERATION_RELAY_THREE_COPY_TAIL_MS \
+    (2u * (MESH_ENUMERATION_RELAY_COPY_GUARD_MS + \
+           MESH_FLOOD_COPY_DIVERSIFICATION_WINDOW_MS))
 #define MESH_DEFAULT_TTL MESH_NETWORK_MAX_HOPS
 #define MESH_GATEWAY_ACK_TTL MESH_NETWORK_MAX_HOPS
 #define MESH_EVENT_CHANNEL UWB_CHANNEL_MESH_PAYLOAD
@@ -313,6 +323,13 @@ int mesh_init_command_result(struct proto_packet *packet,
                                   uint16_t seq,
                                   uint8_t payload_len,
                                   bool diagnostic);
+uint32_t mesh_flood_copy_diversification_ms(
+    uint64_t local_id,
+    const struct proto_packet *packet,
+    uint8_t copy_index);
+uint32_t mesh_enumeration_relay_delay_ms(
+    uint64_t local_id,
+    const struct proto_packet *packet);
 
 #ifdef __cplusplus
 }

@@ -169,6 +169,8 @@ bool gateway_command_observability_pending_snapshot(
     const struct gateway_command_observability_state *state,
     enum gateway_command_event_kind kind,
     struct gateway_command_event *event);
+/* Retire the exact terminal or latest progress snapshot only after the BLE
+ * owner validates its complete host-receipt identity. */
 void gateway_command_observability_mark_sent(
     struct gateway_command_observability_state *state,
     uint32_t event_seq);

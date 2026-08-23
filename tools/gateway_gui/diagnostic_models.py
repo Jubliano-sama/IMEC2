@@ -70,7 +70,7 @@ class _SurveySampleOutcome:
 
 
 class SurveyGeometryModel:
-    """Accept successful pair rows and infer missing pairs only after complete coverage."""
+    """Retain survey diagnostics and admit only proven-rigid geometry graphs."""
 
     def __init__(self) -> None:
         self.survey_id: int | None = None
@@ -80,8 +80,12 @@ class SurveyGeometryModel:
         self.expected_opportunities: int | None = None
         self.planned_opportunities: set[tuple[str, str]] = set()
         self.successful_opportunities: set[tuple[str, str]] = set()
+        self.failed_opportunities: set[tuple[str, str]] = set()
         self.terminal_seen = False
         self.terminal_complete = False
+        self.terminal_success_count: int | None = None
+        self.terminal_failure_count: int | None = None
+        self.evidence_warning: str | None = None
         self.positions_m: dict[str, tuple[float, float]] = {}
         self.generation = 0
         self._command_identity: tuple[int, int] | None = None
@@ -94,27 +98,27 @@ class SurveyGeometryModel:
 
     @property
     def missing_pairs(self) -> frozenset[tuple[str, str]]:
-        if not self.terminal_complete or self.expected_opportunities is None:
+        if (
+            not self.terminal_complete
+            or self.evidence_warning is not None
+            or self.expected_opportunities is None
+            or len(self.planned_opportunities) != self.expected_opportunities
+        ):
             return frozenset()
-        if len(self.observed_opportunities) != self.expected_opportunities:
-            return frozenset()
-        return frozenset(self.failures)
+        return frozenset(self.planned_opportunities - set(self.pairs))
 
     def solve_readiness(self) -> tuple[bool, str]:
         successful = len(self.pairs)
         observed = len(self.observed_opportunities)
         expected = self.expected_opportunities
-        if expected is not None and observed != expected:
-            disposition = "waiting for the remaining results" if observed < expected else "unexpected pair results were received"
-            return False, (
-                f"Received {observed}/{expected} pair results "
-                f"({successful} successful); {disposition}."
-            )
+        if self.evidence_warning is not None:
+            return False, f"Survey evidence conflict: {self.evidence_warning}"
         if expected is not None and self._command_identity is not None:
             if not self.terminal_seen:
                 return False, (
-                    f"Received {successful} successful pair distance(s); waiting "
-                    "for the survey terminal result."
+                    f"Received {observed}/{expected} pair results "
+                    f"({successful} successful); waiting for the survey "
+                    "terminal result."
                 )
             if not self.terminal_complete:
                 return False, (
@@ -126,8 +130,13 @@ class SurveyGeometryModel:
                     f"Received {len(self.planned_opportunities)}/{expected} planned "
                     "pair identities from command telemetry."
                 )
-            if self.observed_opportunities != self.planned_opportunities:
+            if not self.observed_opportunities <= self.planned_opportunities:
                 return False, "Received pair identities do not match the planned survey pairs."
+            if len(self.successful_opportunities) != self.terminal_success_count:
+                return False, "Successful pair telemetry contradicts the survey terminal counters."
+            terminal_failures = self.terminal_failure_count
+            if terminal_failures is None or expected - successful != terminal_failures:
+                return False, "Missing/failed pair evidence contradicts the survey terminal counters."
             if set(self.pairs) != self.successful_opportunities:
                 return False, "Usable distances do not match the gateway's successful pair set."
         if not self.pairs:
@@ -136,7 +145,10 @@ class SurveyGeometryModel:
 
         anchor_ids = {
             anchor_id
-            for pair in self.observed_opportunities
+            for pair in (
+                self.planned_opportunities
+                if self.planned_opportunities else self.observed_opportunities
+            )
             for anchor_id in pair
         }
         neighbors: dict[str, set[str]] = {
@@ -236,6 +248,9 @@ class SurveyGeometryModel:
             self._replace_provisional_operation(operation_generation)
         known_commitment = self._round_commitments.get(round_id)
         if known_commitment is not None and round_commitment != known_commitment:
+            self._note_evidence_warning(
+                f"round {round_id} has conflicting plan commitments"
+            )
             return None
         if isinstance(round_commitment, bytes):
             self._round_commitments[round_id] = round_commitment
@@ -263,6 +278,9 @@ class SurveyGeometryModel:
         if known_sample_count is None:
             self._sample_counts[round_key] = sample_count
         elif known_sample_count != sample_count:
+            self._note_evidence_warning(
+                f"pair {pair[0]}--{pair[1]} round {round_id} has conflicting sample counts"
+            )
             return None
         candidate = _SurveySampleOutcome(
             success,
@@ -272,6 +290,12 @@ class SurveyGeometryModel:
         previous = samples.get(sample_index)
         if previous is None:
             samples[sample_index] = candidate
+        elif previous != candidate:
+            self._note_evidence_warning(
+                f"pair {pair[0]}--{pair[1]} round {round_id} sample "
+                f"{sample_index} has conflicting outcomes"
+            )
+            return None
 
         self._refresh_pair_aggregate(pair, survey_id)
         after = (self.pairs.get(pair), pair in self.failures,
@@ -374,29 +398,94 @@ class SurveyGeometryModel:
             self._command_identity = event_identity
         before = (
             self.expected_opportunities, frozenset(self.planned_opportunities),
-            frozenset(self.successful_opportunities), self.terminal_seen,
-            self.terminal_complete, self.missing_pairs,
+            frozenset(self.successful_opportunities),
+            frozenset(self.failed_opportunities), self.terminal_seen,
+            self.terminal_complete, self.terminal_success_count,
+            self.terminal_failure_count, self.evidence_warning,
+            self.missing_pairs,
         )
         if event.stage == 8 and event.total_count:
-            self.expected_opportunities = event.total_count
+            if (
+                self.expected_opportunities is not None
+                and self.expected_opportunities != event.total_count
+            ):
+                self._note_evidence_warning(
+                    "pair schedule count changed within one command identity"
+                )
+            else:
+                self.expected_opportunities = event.total_count
         if event.stage in (9, 10, 11):
+            if (
+                (event.stage in (9, 10) and
+                 (event.command_status != 0 or event.reason != 0))
+                or (event.stage == 11 and
+                    (event.command_status == 0 or event.reason == 0))
+            ):
+                self._note_evidence_warning(
+                    "pair telemetry stage contradicts its status or reason"
+                )
             pair = _anchor_pair_key(
                 event.pair_initiator_id, event.pair_responder_id
             )
-            if pair is not None:
+            if pair is None:
+                self._note_evidence_warning(
+                    "pair telemetry contains a malformed endpoint identity"
+                )
+            else:
                 self.planned_opportunities.add(pair)
                 if event.stage == 10:
+                    if pair in self.failed_opportunities:
+                        self._note_evidence_warning(
+                            f"pair {pair[0]}--{pair[1]} has conflicting terminal outcomes"
+                        )
                     self.successful_opportunities.add(pair)
                 elif event.stage == 11:
-                    self.successful_opportunities.discard(pair)
+                    if pair in self.successful_opportunities:
+                        self._note_evidence_warning(
+                            f"pair {pair[0]}--{pair[1]} has conflicting terminal outcomes"
+                        )
+                    self.failed_opportunities.add(pair)
         if event.terminal:
-            self.expected_opportunities = event.total_count or self.expected_opportunities
+            terminal_total = event.total_count or self.expected_opportunities
+            if self.terminal_seen and (
+                terminal_total != self.expected_opportunities
+                or event.success_count != self.terminal_success_count
+                or event.failure_count != self.terminal_failure_count
+                or (
+                    event.command_status == 0 and event.reason in (0, 10)
+                ) != self.terminal_complete
+            ):
+                self._note_evidence_warning(
+                    "duplicate survey terminals contain conflicting outcomes"
+                )
+            if (
+                terminal_total is None
+                or event.success_count + event.failure_count != terminal_total
+            ):
+                self._note_evidence_warning(
+                    "terminal success and failure counters do not match its pair total"
+                )
+            if (
+                self.expected_opportunities is not None
+                and terminal_total != self.expected_opportunities
+            ):
+                self._note_evidence_warning(
+                    "terminal pair total contradicts the scheduled pair count"
+                )
+            self.expected_opportunities = terminal_total
             self.terminal_seen = True
-            self.terminal_complete = event.command_status == 0 and event.reason == 0
+            self.terminal_complete = (
+                event.command_status == 0 and event.reason in (0, 10)
+            )
+            self.terminal_success_count = event.success_count
+            self.terminal_failure_count = event.failure_count
         after = (
             self.expected_opportunities, frozenset(self.planned_opportunities),
-            frozenset(self.successful_opportunities), self.terminal_seen,
-            self.terminal_complete, self.missing_pairs,
+            frozenset(self.successful_opportunities),
+            frozenset(self.failed_opportunities), self.terminal_seen,
+            self.terminal_complete, self.terminal_success_count,
+            self.terminal_failure_count, self.evidence_warning,
+            self.missing_pairs,
         )
         if after != before:
             self._invalidate_solution()
@@ -410,8 +499,12 @@ class SurveyGeometryModel:
         self.expected_opportunities = None
         self.planned_opportunities.clear()
         self.successful_opportunities.clear()
+        self.failed_opportunities.clear()
         self.terminal_seen = False
         self.terminal_complete = False
+        self.terminal_success_count = None
+        self.terminal_failure_count = None
+        self.evidence_warning = None
         self.positions_m.clear()
         self._command_identity = None
         self._operation_generation = None
@@ -423,6 +516,11 @@ class SurveyGeometryModel:
     def _invalidate_solution(self) -> None:
         self.positions_m.clear()
         self.generation += 1
+
+    def _note_evidence_warning(self, message: str) -> None:
+        if self.evidence_warning is None:
+            self.evidence_warning = message
+        self._invalidate_solution()
 
     def _replace_provisional_operation(self, operation_generation: int) -> None:
         """Replace stale raw results when a newer durable operation arrives."""
@@ -1082,6 +1180,11 @@ def command_run_status(events: tuple[GatewayCommandEvent, ...]) -> tuple[str, st
         if loss_delta > 0:
             return "Succeeded with warnings", f"{result}; {loss_delta} telemetry event(s) were lost."
         return "Succeeded", result + "."
+    if terminal.command_kind == 2 and terminal.command_status == 0 and terminal.reason == 10:
+        return "Incomplete", (
+            f"Survey retained partial data: {terminal.success_count} pair(s) "
+            f"succeeded and {terminal.failure_count} failed or were missing."
+        )
     reason = GATEWAY_COMMAND_REASON_NAMES[terminal.reason]
     if terminal.command_kind == 2 and terminal.reason == 3:
         return "Failed", "No survey reports were received before the collection deadline."
@@ -1283,4 +1386,3 @@ def classify_survey_topology(
         topology=topology_name,
         message="Survey topology is healthy and well within RF timing budgets.",
     )
-

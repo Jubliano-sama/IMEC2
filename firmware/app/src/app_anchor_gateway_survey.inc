@@ -377,6 +377,10 @@ static void gateway_manual_survey_control_service(void)
 static uint32_t gateway_survey_operation_started_at_ms;
 static uint32_t gateway_survey_collection_started_at_ms;
 static uint32_t gateway_survey_collection_finalize_cutoff_ms;
+static uint32_t gateway_survey_adaptive_margin_ms;
+static uint8_t gateway_survey_adaptive_max_hop_count;
+static uint8_t gateway_survey_adaptive_observed_hop_count;
+static uint8_t gateway_survey_adaptive_slot_count;
 static bool gateway_survey_collection_finalize_cutoff_valid;
 #if DEVICE_ROLE == ROLE_GATEWAY
 static struct survey_gateway_observation_origin
@@ -570,6 +574,62 @@ static uint32_t gateway_survey_collection_receive_deadline_ms(void)
     return gateway_survey_collection_finalize_cutoff_valid ?
            gateway_survey_collection_finalize_cutoff_ms :
            gateway_survey_collection_deadline_ms;
+}
+
+static uint32_t gateway_survey_adaptive_depth_wait_ms(uint8_t hop_count)
+{
+    uint8_t effective_hop_count = hop_count;
+    uint64_t wait_ms;
+
+    if (effective_hop_count == 0u ||
+        effective_hop_count > gateway_survey_adaptive_max_hop_count) {
+        effective_hop_count = gateway_survey_adaptive_max_hop_count;
+    }
+    if (effective_hop_count == 0u) {
+        effective_hop_count = 1u;
+    }
+    wait_ms = (uint64_t)gateway_survey_adaptive_slot_count *
+              operation_policy_first_contact_cell_ms(effective_hop_count);
+    wait_ms += gateway_survey_adaptive_margin_ms;
+    return wait_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)wait_ms;
+}
+
+static void gateway_survey_refresh_adaptive_collection_deadline(
+    uint64_t received_at_ms,
+    uint8_t observed_hop_count)
+{
+    uint8_t next_hop_count;
+    uint32_t candidate_deadline_ms;
+
+    if (!gateway_survey_collection_pending ||
+        observed_hop_count == 0u ||
+        observed_hop_count > SURVEY_DEFAULT_TTL ||
+        gateway_survey_adaptive_max_hop_count == 0u) {
+        return;
+    }
+    if (observed_hop_count >
+        gateway_survey_adaptive_observed_hop_count) {
+        gateway_survey_adaptive_observed_hop_count = observed_hop_count;
+    }
+    next_hop_count = gateway_survey_adaptive_observed_hop_count <
+            gateway_survey_adaptive_max_hop_count ?
+        gateway_survey_adaptive_observed_hop_count + 1u :
+        gateway_survey_adaptive_max_hop_count;
+    candidate_deadline_ms = (uint32_t)received_at_ms +
+        gateway_survey_adaptive_depth_wait_ms(next_hop_count);
+    if (uptime_deadline_reached(candidate_deadline_ms,
+                                gateway_survey_collection_deadline_ms)) {
+        candidate_deadline_ms = gateway_survey_collection_deadline_ms;
+    }
+    gateway_survey_collection_finalize_cutoff_ms =
+        candidate_deadline_ms;
+    gateway_survey_collection_finalize_cutoff_valid = true;
+    status_debug_printf(
+        "DBG_SURVEY_ADAPTIVE_DEADLINE observed_hop=%u next_hop=%u deadline=%u reports=%u\n",
+        observed_hop_count,
+        next_hop_count,
+        gateway_survey_collection_finalize_cutoff_ms,
+        (unsigned int)gateway_survey_context.report_count);
 }
 
 #if DEVICE_ROLE == ROLE_GATEWAY
@@ -973,10 +1033,10 @@ static void gateway_observe_survey_terminal(
         UINT16_MAX);
     event.total_count = (uint16_t)gateway_survey_context.pair_count;
     event.success_count = gateway_survey_pair_success_count;
-    event.failure_count = (uint16_t)MIN(
-        (uint32_t)gateway_survey_pair_failure_count +
-            gateway_survey_discovery_failure_count,
-        UINT16_MAX);
+    /* This counter shares total_count's planned-pair unit. Discovery-report
+     * degradation is retained by the terminal reason and report diagnostics,
+     * but must not corrupt exact pair outcome accounting at the host. */
+    event.failure_count = gateway_survey_pair_failure_count;
     event.duplicate_count = gateway_survey_duplicate_count;
     (void)gateway_observe_command_event(&event, true);
 }
@@ -1789,8 +1849,24 @@ static int gateway_route_survey_reachability(const struct proto_packet *host_pac
     gateway_survey_collection_emission_deadline_ms =
         command_origin_ms + emission_horizon_delay_ms;
     gateway_survey_collection_started_at_ms = command_origin_ms;
-    gateway_survey_collection_finalize_cutoff_ms = 0u;
-    gateway_survey_collection_finalize_cutoff_valid = false;
+    gateway_survey_adaptive_margin_ms = duration_ms;
+    gateway_survey_adaptive_max_hop_count = max_report_hops;
+    gateway_survey_adaptive_observed_hop_count = 0u;
+    gateway_survey_adaptive_slot_count = config.slot_count;
+    {
+        uint32_t direct_cutoff_ms = command_origin_ms +
+            config.start_delay_ms + discovery_duration_ms +
+            gateway_survey_adaptive_depth_wait_ms(1u);
+
+        if (uptime_deadline_reached(
+                direct_cutoff_ms,
+                gateway_survey_collection_deadline_ms)) {
+            direct_cutoff_ms = gateway_survey_collection_deadline_ms;
+        }
+        gateway_survey_collection_finalize_cutoff_ms =
+            direct_cutoff_ms;
+        gateway_survey_collection_finalize_cutoff_valid = true;
+    }
     gateway_survey_collection_duration_ms = collection_delay_ms;
     gateway_survey_collection_window_armed = false;
     gateway_survey_collection_pending = true;
@@ -2252,6 +2328,20 @@ static int gateway_survey_preflight_discovery_report(
         gateway_survey_context.survey_id != survey_id) {
         return -ESTALE;
     }
+    if (!gateway_survey_collection_pending) {
+        /*
+         * The adaptive boundary deliberately lets pair orchestration proceed
+         * without a slow report.  A later exact-generation report is fully
+         * decoded above but must not mutate the frozen graph; acknowledge it
+         * as retired transport so its anchor and relays do not keep stale
+         * custody through the rest of this survey.
+         */
+        LOG_WRN("gateway survey discovery report retired after orchestration start: survey=%u anchor=0x%016llx entries=%u",
+                survey_id,
+                (unsigned long long)anchor_id,
+                (unsigned int)entry_count);
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+    }
     if (!gateway_survey_collection_window_armed &&
         (gateway_survey_discovery_delivery_handle == 0u ||
          app_node_comm_peek_delivery_attempts_started(
@@ -2406,6 +2496,9 @@ static int gateway_handle_survey_discovery_report(const struct proto_packet *pac
                 link_quality);
         return ret;
     }
+    if (ret == APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE) {
+        return ret;
+    }
     if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
         return gateway_note_survey_pair_result(
             packet, payload, payload_len, received_at_ms);
@@ -2535,14 +2628,6 @@ static int gateway_handle_survey_discovery_report(const struct proto_packet *pac
                 (unsigned long long)previous_hop_id);
         return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
-    if (!gateway_survey_collection_pending) {
-        LOG_WRN("gateway survey discovery report ignored after orchestration start: survey=%u anchor=0x%016llx entries=%u",
-                survey_id,
-                (unsigned long long)anchor_id,
-                (unsigned int)entry_count);
-        return -ESTALE;
-    }
-
     reverse_hint = (struct survey_gateway_reverse_hint) {
         .target_id = anchor_id,
         .next_hop_id = previous_hop_id,
@@ -2577,8 +2662,9 @@ static int gateway_handle_survey_discovery_report(const struct proto_packet *pac
         }
     }
 #endif
+    gateway_survey_refresh_adaptive_collection_deadline(
+        received_at_ms, reverse_hint.hop_count);
     if (gateway_survey_expected_node_count_present &&
-        !gateway_survey_collection_finalize_cutoff_valid &&
         gateway_survey_context.report_count ==
             gateway_survey_expected_node_count) {
         /*
@@ -2754,6 +2840,10 @@ static int gateway_survey_finish_status(
     gateway_survey_collection_emission_deadline_ms = 0u;
     gateway_survey_collection_finalize_cutoff_ms = 0u;
     gateway_survey_collection_finalize_cutoff_valid = false;
+    gateway_survey_adaptive_margin_ms = 0u;
+    gateway_survey_adaptive_max_hop_count = 0u;
+    gateway_survey_adaptive_observed_hop_count = 0u;
+    gateway_survey_adaptive_slot_count = 0u;
     gateway_survey_collection_duration_ms = 0u;
     gateway_survey_collection_window_armed = false;
     gateway_survey_expected_node_count = 0u;

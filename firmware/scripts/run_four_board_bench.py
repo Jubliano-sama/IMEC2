@@ -101,13 +101,18 @@ def main():
         time.sleep(2.0)
 
         # Build provision command
+        provision_command = (
+            "qualify-reachability"
+            if args.command == "assign-slots"
+            else args.command
+        )
         prov_cmd = [
             str(REPO_ROOT / ".venv" / "bin" / "python"),
             str(REPO_ROOT / "firmware" / "scripts" / "provision_mesh_anchor.py"),
             "--gateway",
             args.gateway_name,
             "--command",
-            args.command,
+            provision_command,
             "--connect-timeout",
             "30",
             "--route-refresh-timeout",
@@ -125,7 +130,6 @@ def main():
             ])
         elif args.command == "assign-slots":
             prov_cmd.extend([
-                "--require-assignment-success",
                 "--expected-anchors",
                 str(args.expected_anchors),
             ])

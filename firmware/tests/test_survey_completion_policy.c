@@ -148,7 +148,7 @@ static void test_exact_minimum_budget_leaves_terminal_scheduling_guard(void)
         .operation_budget_ms = 600000u,
     };
     const struct operation_policy_discovery_budget_terms terms = {
-        .report_slot_ms = 2270u,
+        .report_slot_ms = OPERATION_POLICY_FIRST_CONTACT_DIRECT_SLOT_MS,
         .report_custody_ms = 17000u,
         .report_delivery_tail_ms = 63060u,
         .terminal_scheduling_guard_ms = 102u,

@@ -208,16 +208,14 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                                            &plan,
                                            metadata,
                                            2u,
-                                           2u,
+                                           1u,
                                            1u) == PROTO_OK);
     assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
     arm_lane(&runtime, 0u);
-    arm_lane(&runtime, 1u);
     assert(survey_pair_round_runtime_mark_observing(&runtime, 0u) == PROTO_OK);
-    assert(survey_pair_round_runtime_mark_observing(&runtime, 1u) == PROTO_OK);
 
     sample = lane_sample(&runtime,
-                         &runtime.lanes[1],
+                         &runtime.lanes[0],
                          0u,
                          1200,
                          RANGE_OK);
@@ -228,17 +226,15 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                &lane_index,
                &accepted_new) == PROTO_ERR_MALFORMED);
     assert(runtime.lanes[0].usable_result_mask == 0u);
-    assert(runtime.lanes[1].usable_result_mask == 0u);
     assert(survey_pair_round_runtime_note_sample(
                &runtime,
                sample.pair.responder_id,
                &sample,
                &lane_index,
                &accepted_new) == PROTO_OK);
-    assert(lane_index == 1u);
+    assert(lane_index == 0u);
     assert(accepted_new);
-    assert(runtime.lanes[0].usable_result_mask == 0u);
-    assert(runtime.lanes[1].usable_result_mask == 0x01u);
+    assert(runtime.lanes[0].usable_result_mask == 0x01u);
 
     accepted_new = true;
     assert(survey_pair_round_runtime_note_sample(
@@ -256,7 +252,7 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                &sample,
                NULL,
                NULL) == PROTO_ERR_STALE);
-    sample.pair = runtime.lanes[1].pair;
+    sample.pair = runtime.lanes[0].pair;
     assert(survey_pair_round_runtime_note_sample(&runtime,
                                                   0xDEADu,
                                                   &sample,
@@ -264,27 +260,11 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                                                   NULL) ==
            PROTO_ERR_MALFORMED);
 
-    for (uint16_t index = 0u; index < 2u; index++) {
-        sample = lane_sample(&runtime,
-                             &runtime.lanes[0],
-                             index,
-                             0,
-                             RANGE_RX_TIMEOUT);
-        assert(survey_pair_round_runtime_note_sample(
-                   &runtime,
-                   sample.pair.responder_id,
-                   &sample,
-                   NULL,
-                   NULL) == PROTO_OK);
-    }
-    assert(survey_pair_round_lane_missing_samples_all_unusable(
-        &runtime.lanes[0]));
-
     sample = lane_sample(&runtime,
                          &runtime.lanes[0],
-                         0u,
-                         800,
-                         RANGE_OK);
+                         1u,
+                         0,
+                         RANGE_RX_TIMEOUT);
     assert(survey_pair_round_runtime_note_sample(
                &runtime,
                sample.pair.responder_id,
@@ -292,10 +272,8 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                NULL,
                &accepted_new) == PROTO_OK);
     assert(accepted_new);
-    assert(survey_pair_round_lane_missing_samples_all_unusable(
+    assert(!survey_pair_round_lane_preferred_results_complete(
         &runtime.lanes[0]));
-    assert((runtime.lanes[0].initiator_unusable_mask & 0x01u) == 0u);
-    assert((runtime.lanes[0].responder_unusable_mask & 0x01u) == 0u);
 
     sample = lane_sample(&runtime,
                          &runtime.lanes[0],
@@ -308,22 +286,9 @@ static void test_exact_result_demux_and_usability_are_lane_local(void)
                &sample,
                NULL,
                NULL) == PROTO_OK);
-    assert(!survey_pair_round_lane_missing_samples_all_unusable(
-        &runtime.lanes[0]));
-
-    sample = lane_sample(&runtime,
-                         &runtime.lanes[1],
-                         1u,
-                         900,
-                         RANGE_OK);
-    assert(survey_pair_round_runtime_note_sample(
-               &runtime,
-               sample.pair.responder_id,
-               &sample,
-               NULL,
-               NULL) == PROTO_OK);
-    assert(survey_pair_round_lane_results_complete(&runtime.lanes[1]));
     assert(survey_pair_round_lane_results_complete(&runtime.lanes[0]));
+    assert(survey_pair_round_lane_preferred_results_complete(
+        &runtime.lanes[0]));
 }
 
 static void test_initiator_reporter_is_rejected_and_responder_is_idempotent(void)
@@ -480,43 +445,24 @@ static void test_chunks_cleanup_and_reruns_remain_isolated(void)
                                            &plan,
                                            metadata,
                                            3u,
-                                           2u,
+                                           1u,
                                            1u) == PROTO_OK);
     assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
     assert(runtime.batch_kind == SURVEY_PAIR_ROUND_BATCH_PLANNED);
-    assert(runtime.lane_count == 2u);
+    assert(runtime.lane_count == 1u);
     assert(runtime.lanes[0].plan_pair_index == 0u);
-    assert(runtime.lanes[1].plan_pair_index == 1u);
 
     assert(survey_pair_round_runtime_require_cleanup(
                &runtime,
                0u,
                SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK,
                SURVEY_PAIR_ROUND_CLEANUP_RETRY) == PROTO_OK);
-    assert(survey_pair_round_runtime_require_cleanup(
-               &runtime,
-               1u,
-               SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
-               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
     assert(survey_pair_round_runtime_note_cleanup_complete(
                &runtime,
                0u,
                SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
     assert(runtime.lanes[0].state ==
            SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED);
-    assert(runtime.lanes[1].state == SURVEY_PAIR_ROUND_LANE_CLEANUP);
-    assert(!survey_pair_round_runtime_batch_complete(&runtime));
-
-    assert(survey_pair_round_runtime_note_cleanup_complete(
-               &runtime,
-               1u,
-               SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
-    assert(runtime.lanes[1].state == SURVEY_PAIR_ROUND_LANE_CLEANUP);
-    assert(survey_pair_round_runtime_note_cleanup_complete(
-               &runtime,
-               1u,
-               SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
-    assert(runtime.lanes[1].state == SURVEY_PAIR_ROUND_LANE_SUCCEEDED);
     assert(survey_pair_round_runtime_batch_complete(&runtime));
 
     assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
@@ -532,6 +478,15 @@ static void test_chunks_cleanup_and_reruns_remain_isolated(void)
     assert(runtime.lanes[0].state == SURVEY_PAIR_ROUND_LANE_FAILED);
     assert(survey_pair_round_runtime_batch_complete(&runtime));
 
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.batch_kind == SURVEY_PAIR_ROUND_BATCH_PLANNED);
+    assert(runtime.lane_count == 1u);
+    assert(runtime.lanes[0].plan_pair_index == 1u);
+    assert(survey_pair_round_runtime_require_cleanup(
+               &runtime,
+               0u,
+               0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
     assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
     assert(runtime.batch_kind == SURVEY_PAIR_ROUND_BATCH_PLANNED);
     assert(runtime.lane_count == 1u);
@@ -564,33 +519,39 @@ static void test_interleaved_round_metadata_loads_in_round_position_order(void)
                                            &plan,
                                            metadata,
                                            4u,
-                                           2u,
+                                           1u,
                                            0u) == PROTO_OK);
     assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.lane_count == 1u);
     assert(runtime.lanes[0].plan_pair_index == 0u);
-    assert(runtime.lanes[1].plan_pair_index == 2u);
-    for (size_t i = 0u; i < runtime.lane_count; i++) {
-        assert(survey_pair_round_runtime_require_cleanup(
-                   &runtime,
-                   i,
-                   0u,
-                   SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
-    }
+    assert(survey_pair_round_runtime_require_cleanup(
+               &runtime, 0u, 0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
 
     assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.lane_count == 1u);
+    assert(runtime.lanes[0].plan_pair_index == 2u);
+    assert(survey_pair_round_runtime_require_cleanup(
+               &runtime, 0u, 0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
+
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.lane_count == 1u);
     assert(runtime.lanes[0].plan_pair_index == 1u);
-    assert(runtime.lanes[1].plan_pair_index == 3u);
-    for (size_t i = 0u; i < runtime.lane_count; i++) {
-        assert(survey_pair_round_runtime_require_cleanup(
-                   &runtime,
-                   i,
-                   0u,
-                   SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
-    }
+    assert(survey_pair_round_runtime_require_cleanup(
+               &runtime, 0u, 0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
+
+    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+    assert(runtime.lane_count == 1u);
+    assert(runtime.lanes[0].plan_pair_index == 3u);
+    assert(survey_pair_round_runtime_require_cleanup(
+               &runtime, 0u, 0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
     assert(survey_pair_round_runtime_complete(&runtime));
 }
 
-static void test_maximum_runtime_cap_is_bounded(void)
+static void test_maximum_plan_serializes_under_the_policy_cap(void)
 {
     struct survey_gateway_context plan;
     struct survey_pair_round_metadata
@@ -606,14 +567,15 @@ static void test_maximum_runtime_cap_is_bounded(void)
                &plan,
                metadata,
                SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES,
-               SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES,
+               1u,
                0u) == PROTO_OK);
-    assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
-    assert(runtime.lane_count == SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES);
-    for (size_t i = 0u; i < runtime.lane_count; i++) {
+    for (size_t i = 0u; i < SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES; i++) {
+        assert(survey_pair_round_runtime_load_next_batch(&runtime) == PROTO_OK);
+        assert(runtime.lane_count == 1u);
+        assert(runtime.lanes[0].plan_pair_index == i);
         assert(survey_pair_round_runtime_require_cleanup(
                    &runtime,
-                   i,
+                   0u,
                    0u,
                    SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
     }
@@ -626,7 +588,7 @@ static void test_maximum_runtime_cap_is_bounded(void)
                &plan,
                metadata,
                SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES,
-               SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES + 1u,
+               OPERATION_POLICY_PAIR_MAX_PARALLEL_PAIRS + 1u,
                0u) == PROTO_ERR_MALFORMED);
 }
 
@@ -641,9 +603,9 @@ static void test_batch_load_failure_does_not_advance_cursors(void)
                                            &plan,
                                            metadata,
                                            2u,
-                                           2u,
+                                           1u,
                                            0u) == PROTO_OK);
-    metadata[1].pair_index_in_round = 5u;
+    metadata[0].pair_index_in_round = 5u;
     assert(survey_pair_round_runtime_load_next_batch(&runtime) ==
            PROTO_ERR_NOT_FOUND);
     assert(runtime.lane_count == 0u);
@@ -843,7 +805,7 @@ int main(void)
     test_delayed_prior_batch_sample_cannot_complete_rerun();
     test_chunks_cleanup_and_reruns_remain_isolated();
     test_interleaved_round_metadata_loads_in_round_position_order();
-    test_maximum_runtime_cap_is_bounded();
+    test_maximum_plan_serializes_under_the_policy_cap();
     test_batch_load_failure_does_not_advance_cursors();
     test_duplicate_cleanup_completion_is_idempotent();
     test_armed_lane_accepts_current_attempt_sample();

@@ -17,6 +17,11 @@ void app_watchdog_stop_feeding(void)
     watchdog_stop_calls++;
 }
 
+void status_debug_printf(const char *fmt, ...)
+{
+    (void)fmt;
+}
+
 static void test_exact_lease_release_rejects_stale_owner(void)
 {
     struct radio_guard_uwb_lease owner = {0};

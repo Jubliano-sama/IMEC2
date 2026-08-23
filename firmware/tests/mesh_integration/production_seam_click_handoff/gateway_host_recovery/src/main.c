@@ -178,6 +178,7 @@ static struct gateway_command_event
     test_published_events[TEST_PUBLISH_CAPTURE_CAP];
 static size_t test_published_event_count;
 static uint32_t test_published_next_sequence;
+static bool test_gateway_owner_work_initialized;
 
 static int test_publisher_reserve_sequence(struct gateway_command_event *event,
                                            void *context)
@@ -723,6 +724,16 @@ static void build_stale_bundle(struct recovery_fixture *fixture,
 
 static void reset_gateway_owner(void)
 {
+    if (test_gateway_owner_work_initialized) {
+        struct k_work_sync sync;
+
+        (void)k_work_cancel_delayable_sync(
+            &gateway_ble_stream_work, &sync);
+        (void)k_work_cancel_delayable_sync(
+            &gateway_ble_host_receipt_timeout_work, &sync);
+        (void)k_work_cancel_delayable_sync(
+            &gateway_persistence_retry_work, &sync);
+    }
     k_msgq_purge(&mesh_rx_msgq);
     zassert_ok(app_mesh_report_init(NULL));
     /* This test application reinitializes the production mesh owner between
@@ -746,6 +757,7 @@ static void reset_gateway_owner(void)
                           gateway_ble_host_receipt_timeout_work_handler);
     k_work_init_delayable(&gateway_persistence_retry_work,
                           gateway_persistence_retry_work_handler);
+    test_gateway_owner_work_initialized = true;
     atomic_clear(&gateway_persistence_retry_schedule_deferred);
     atomic_clear(&gateway_persistence_retry_deferred_delay_ms);
     app_gateway_command_result_queue_init(&gateway_host_command_results);
@@ -769,11 +781,6 @@ static void reset_assignment_adoption_fixture(bool retain_restored_membership)
      * retry work, and restore-before-admission state. The test installs the
      * fake durable backend first, so its real restore path is safe to use. */
     gateway_command_result_tracking_init();
-    /* app_mesh_report_init() deliberately resets role-owned work structures
-     * in this amalgamated seam. Reinstall this real handler after that reset,
-     * exactly as gateway startup does before a save can schedule adoption. */
-    k_work_init_delayable(&gateway_persistence_retry_work,
-                          gateway_persistence_retry_work_handler);
     /* Keep the local result in its production bounded command-result queue
      * during this ownership test. The receipt-domain cases below separately
      * exercise its real BLE retirement without pulling the whole ingress
@@ -1433,83 +1440,53 @@ ZTEST(production_seam_gateway_host_recovery,
 }
 
 ZTEST(production_seam_gateway_host_recovery,
-      test_generic_command_telemetry_never_claims_host_receipt_custody)
+      test_generic_command_telemetry_retires_only_on_exact_host_receipt)
 {
-    const struct gateway_command_event event = {
-        .schema_version = GATEWAY_COMMAND_EVENT_SCHEMA_VERSION,
-        .record_len = GATEWAY_COMMAND_EVENT_WIRE_LEN,
+    struct gateway_command_event event = {
         .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
-        .stage = GATEWAY_COMMAND_EVENT_STAGE_ACCEPTED,
-        .status = COMMAND_OK,
-        .reason = GATEWAY_COMMAND_EVENT_REASON_NONE,
+        .stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+        .status = COMMAND_TIMEOUT,
+        .reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS,
         .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
         .gateway_epoch = TEST_CURRENT_GATEWAY_EPOCH,
         .correlation_id = UINT32_C(0x11223344),
         .gateway_sequence = UINT32_C(0x55667788),
         .host_session_id = UINT32_C(0x11223344),
         .host_seq = 17u,
-        .event_seq = UINT32_C(0x00001011),
         .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
     };
-    struct proto_packet packet = {
-        .msg_type = MSG_GATEWAY_COMMAND_EVENT,
-        .flags = 0u,
-        .src_id = DEVICE_ID,
-        .dst_id = DEVICE_ID,
-        .session_id = event.event_seq,
-        .seq = (uint16_t)event.event_seq,
-        .ttl = 1u,
-        .payload_len = GATEWAY_COMMAND_EVENT_WIRE_LEN,
-    };
-    struct gateway_host_receipt_identity identity;
-    struct proto_packet head;
-    uint8_t event_payload[GATEWAY_COMMAND_EVENT_WIRE_LEN];
+    struct proto_packet receipt = {0};
+    struct proto_packet head = {0};
     uint8_t receipt_payload[PROTO_GATEWAY_HOST_RECEIPT_TLV_BYTES] = {0};
-    size_t event_payload_len = 0u;
     size_t receipt_payload_len = 0u;
-    const uint8_t *record = NULL;
-    size_t record_len = 0u;
-    k_spinlock_key_t key;
 
     reset_gateway_owner();
-    zassert_ok(gateway_command_event_encode(&event,
-                                            event_payload,
-                                            sizeof(event_payload),
-                                            &event_payload_len));
-    zassert_equal(event_payload_len, sizeof(event_payload));
-    zassert_ok(gateway_ble_stream_packet(&packet,
-                                         event_payload,
-                                         event_payload_len,
-                                         k_uptime_get_32()));
+    gateway_command_observability_init(
+        &gateway_command_observability_state);
+    test_enable_receipt_stream_fixture();
+    zassert_ok(gateway_observe_command_event_if_available(
+        &event, true, NULL));
     zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 1u);
-    zassert_false(gateway_host_custody_supported(&packet));
+    zassert_ok(gateway_ble_stream_head_packet(&gateway_ble_stream_state,
+                                              &head));
+    zassert_equal(head.flags, FLAG_GATEWAY_ACK_REQUIRED);
+    zassert_true(gateway_ble_stream_state.items[0].retain_until_sent);
+    zassert_true(gateway_command_observability_state.terminals[0].valid);
+    zassert_equal(
+        gateway_command_observability_state.terminals[0].event.event_seq,
+        event.event_seq);
 
-    key = k_spin_lock(&gateway_ble_stream_lock);
-    zassert_false(gateway_ble_stream_state.items[0].retain_until_sent);
-    zassert_false(gateway_ble_stream_state.items[0].host_custody_owner);
-    zassert_ok(gateway_ble_stream_begin_send_view(&gateway_ble_stream_state,
-                                                  &record,
-                                                  &record_len));
-    zassert_not_null(record);
-    zassert_not_equal(record_len, 0u);
-    zassert_equal(gateway_ble_stream_mark_host_notified(&gateway_ble_stream_state),
-                  -EPERM);
-    gateway_ble_stream_cancel_send(&gateway_ble_stream_state);
-    k_spin_unlock(&gateway_ble_stream_lock, key);
-
-    capture_head_host_receipt_identity(&identity, &head);
-    zassert_equal(gateway_host_receipt_identity_append_tlv(
-                      receipt_payload,
-                      sizeof(receipt_payload),
-                      &receipt_payload_len,
-                      &identity),
-                  PROTO_ERR_MALFORMED,
-                  "flags=0 telemetry must be unreceiptable by construction");
-
-    key = k_spin_lock(&gateway_ble_stream_lock);
-    gateway_ble_stream_mark_sent(&gateway_ble_stream_state, k_uptime_get_32());
-    k_spin_unlock(&gateway_ble_stream_lock, key);
+    mark_exact_head_host_notified();
+    build_exact_host_receipt(&receipt,
+                             receipt_payload,
+                             sizeof(receipt_payload),
+                             &receipt_payload_len);
+    zassert_ok(gateway_ble_accept_host_receipt(&receipt,
+                                               receipt_payload,
+                                               receipt_payload_len));
     zassert_equal(gateway_ble_stream_depth(&gateway_ble_stream_state), 0u);
+    zassert_false(gateway_command_observability_state.terminals[0].valid);
+    test_disable_receipt_stream_fixture();
 }
 
 ZTEST(production_seam_gateway_host_recovery,
@@ -2037,6 +2014,242 @@ ZTEST(production_seam_gateway_host_recovery,
      * state.  A null/non-frozen candidate must never borrow the recovery
      * exception merely because it is a priority C5 flood. */
     zassert_true(mesh_c5_flood_defer_active_cb(&unrelated));
+}
+
+ZTEST(production_seam_gateway_host_recovery,
+      test_assignment_end_terminal_completes_and_releases_operation)
+{
+    const struct proto_packet host_command = {
+        .msg_type = MSG_COMMAND,
+        .src_id = TEST_HOST_ID,
+        .dst_id = DEVICE_ID,
+        .session_id = UINT32_C(0x44556671),
+        .seq = 71u,
+        .ttl = 1u,
+    };
+    struct gateway_command_event base_event;
+
+    reset_assignment_adoption_fixture(false);
+    zassert_ok(gateway_operation_owner_claim(
+        APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
+        &gateway_assignment_operation_lease));
+    gateway_discovery_assignment_state =
+        (struct gateway_discovery_assignment_state) {
+            .host_command = host_command,
+            .anchor_ids = {TEST_SOURCE_A},
+            .anchor_slots = {0u},
+            .ack_mask = UINT64_C(1),
+            .claim_response_mask = UINT64_C(1),
+            .confirmation_mask = UINT64_C(1),
+            .epoch = UINT32_C(0x10203041),
+            .claim_count = 1u,
+            .expected_claim_count = 1u,
+            .stage = GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY,
+            .table_round = 1u,
+            .table_delivery_succeeded = true,
+            .active = true,
+        };
+    base_event = gateway_observability_event(
+        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+        CMD_ASSIGN_DISCOVERY_SLOTS,
+        &host_command,
+        gateway_discovery_assignment_state.epoch);
+    zassert_ok(app_gateway_assignment_publisher_prepare_table(
+        &base_event,
+        gateway_discovery_assignment_state.anchor_ids,
+        gateway_discovery_assignment_state.anchor_slots,
+        NULL,
+        1u,
+        UINT64_C(1),
+        0u));
+
+    gateway_discovery_assignment_complete_success_locked();
+    zassert_false(gateway_discovery_assignment_state.active,
+                  "delivered END left enumeration active");
+    zassert_equal(gateway_operation_owner.active.owner,
+                  APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
+                  "host publication lost its exact operation lease");
+    zassert_ok(app_anchor_gateway_assignment_publication_complete());
+    zassert_equal(gateway_operation_owner.active.owner,
+                  APP_GATEWAY_OPERATION_OWNER_NONE,
+                  "terminal host publication did not release enumeration");
+    (void)k_work_cancel_delayable(&gateway_persistence_retry_work);
+    test_publisher_capture_reset();
+}
+
+ZTEST(production_seam_gateway_host_recovery,
+      test_assignment_builder_propagates_ram_only_policy)
+{
+    struct operation_policy_set decoded;
+    struct mesh_outbound outbound;
+
+    reset_assignment_adoption_fixture(false);
+    gateway_discovery_assignment_state.expected_claim_count = 3u;
+    gateway_discovery_assignment_state.command_budget_ms =
+        DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS;
+    gateway_discovery_assignment_state.response_spread_ms =
+        DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS;
+    gateway_discovery_assignment_state.ram_only_iteration = true;
+    zassert_ok(gateway_build_discovery_assignment_command(
+        &outbound,
+        DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+        UINT32_C(0x10203042),
+        UINT32_C(0x10203043),
+        72u));
+    operation_policy_set_defaults(&decoded);
+    zassert_ok(operation_policy_set_from_tlvs(
+        outbound.payload, outbound.payload_len, &decoded));
+    zassert_true(decoded.assignment.ram_only_iteration,
+                 "gateway erased the host RAM-only assignment option");
+}
+
+ZTEST(production_seam_gateway_host_recovery,
+      test_ram_only_assignment_discards_cold_restored_publication_before_claim)
+{
+    static struct test_durable_store durable;
+    const uint64_t old_node_ids[] = {TEST_SOURCE_A};
+    const uint8_t old_slots[] = {0u};
+    const uint32_t old_assignment_epoch = UINT32_C(0x10203045);
+    const uint32_t old_table_sequence = UINT32_C(0x10203046);
+    const struct discovery_assignment_table_commitment old_commitment = {
+        .bytes = {[0] = 0x46u, [31] = 0x64u},
+    };
+    const struct proto_packet old_host_command = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = TEST_HOST_ID,
+        .dst_id = DEVICE_ID,
+        .session_id = UINT32_C(0x10203047),
+        .seq = 74u,
+        .ttl = 3u,
+        .payload_len = PROTO_TLV_U16_ENCODED_LEN,
+    };
+    struct gateway_membership_publication old_publication = {
+        .host_command = old_host_command,
+        .committed_mask = UINT64_C(1),
+        .acknowledged_mask = UINT64_C(1),
+        .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
+        .event_gateway_epoch = TEST_CURRENT_GATEWAY_EPOCH,
+        .claimed_count = 1u,
+        .claimed_slot_span = 1u,
+        .table_round = 1u,
+        .publish_pending = 1u,
+    };
+    struct proto_packet new_host_command = {
+        .msg_type = MSG_COMMAND,
+        .flags = FLAG_DIAGNOSTIC,
+        .src_id = TEST_HOST_ID,
+        .dst_id = DEVICE_ID,
+        .session_id = UINT32_C(0x10203048),
+        .seq = 75u,
+        .ttl = 3u,
+    };
+    struct operation_policy policy = {
+        .family = OPERATION_POLICY_FAMILY_ASSIGNMENT,
+    };
+    struct k_work_sync work_sync = {0};
+    uint8_t payload[32] = {0};
+    size_t payload_len = 0u;
+    int start_ret;
+
+    memset(&durable, 0, sizeof(durable));
+    old_publication.claimed_node_ids[0] = old_node_ids[0];
+    test_durable_install(&durable);
+    reset_assignment_adoption_fixture(false);
+    zassert_ok(gateway_set_registered_membership_roster(
+        discovery_assignment_membership_epoch(old_assignment_epoch),
+        old_node_ids,
+        old_slots,
+        ARRAY_SIZE(old_node_ids),
+        old_assignment_epoch,
+        old_table_sequence,
+        &old_commitment,
+        &old_publication));
+    zassert_true(gateway_assignment_publication_pending());
+    zassert_true(gateway_membership_publication_live_owner,
+                 "the pre-reset publication must still have its live owner");
+
+    app_durable_state_test_reset();
+    test_durable_install(&durable);
+    reset_assignment_adoption_fixture(true);
+    zassert_true(gateway_assignment_publication_pending(),
+                 "cold boot did not restore the pending publication debt");
+    zassert_true(gateway_membership_roster_state.valid);
+    zassert_false(gateway_membership_publication_live_owner,
+                  "the regression requires restored debt, not reentrant ownership");
+    zassert_equal(gateway_membership_assignment_identity.correlation_id,
+                  old_host_command.session_id);
+    zassert_equal(gateway_membership_assignment_identity.gateway_sequence,
+                  old_assignment_epoch);
+    zassert_equal(gateway_membership_assignment_identity.host_session_id,
+                  old_host_command.session_id);
+    zassert_equal(gateway_membership_assignment_identity.gateway_epoch,
+                  old_publication.event_gateway_epoch);
+    zassert_equal(gateway_membership_assignment_identity.host_seq,
+                  old_host_command.seq);
+
+    operation_policy_assignment_defaults(&policy.value.assignment);
+    policy.value.assignment.ram_only_iteration = true;
+    zassert_ok(operation_policy_append_tlv(
+        payload, sizeof(payload), &payload_len, &policy));
+    new_host_command.payload_len = (uint16_t)payload_len;
+    k_work_init_delayable(&gateway_discovery_assignment_finalize_work,
+                          gateway_discovery_assignment_finalize_work_handler);
+    k_work_init_delayable(&gateway_discovery_assignment_publish_work,
+                          gateway_discovery_assignment_publish_work_handler);
+    app_discovery_assignment_work_guard_init(
+        &gateway_discovery_assignment_publish_guard);
+
+    start_ret = gateway_start_discovery_assignment(
+        &new_host_command, payload, payload_len);
+    zassert_equal(start_ret, 0,
+                  "restored publication debt rejected an explicit clean-slate run: ret=%d pending=%u roster=%u",
+                  start_ret,
+                  gateway_assignment_publication_pending() ? 1u : 0u,
+                  gateway_membership_roster_state.valid ? 1u : 0u);
+    zassert_false(gateway_assignment_publication_pending(),
+                  "the superseded restored publication was not retired");
+    zassert_false(gateway_membership_roster_state.valid,
+                  "the superseded restored roster survived clean-slate admission");
+    zassert_true(gateway_discovery_assignment_state.active,
+                 "the replacement assignment did not reach CLAIM ownership");
+    zassert_true(gateway_discovery_assignment_state.ram_only_iteration);
+    zassert_equal(gateway_discovery_assignment_state.stage,
+                  GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS);
+    zassert_not_equal(gateway_discovery_assignment_state.claim_command_seq, 0u);
+
+    (void)k_work_cancel_delayable_sync(
+        &gateway_discovery_assignment_finalize_work, &work_sync);
+    memset(&work_sync, 0, sizeof(work_sync));
+    (void)k_work_cancel_delayable_sync(
+        &gateway_discovery_assignment_publish_work, &work_sync);
+    gateway_discovery_assignment_state.active = false;
+    gateway_discovery_assignment_state.round_open = false;
+    (void)gateway_operation_owner_release(
+        &gateway_assignment_operation_lease);
+    app_operation_policy_reset_defaults();
+}
+
+ZTEST(production_seam_gateway_host_recovery,
+      test_assignment_abort_terminal_finishes_failure_and_releases_operation)
+{
+    reset_assignment_adoption_fixture(false);
+    zassert_ok(gateway_operation_owner_claim(
+        APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
+        &gateway_assignment_operation_lease));
+    gateway_discovery_assignment_state.active = true;
+    gateway_discovery_assignment_state.stage =
+        GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_ABORT_DELIVERY;
+    gateway_discovery_assignment_state.epoch = UINT32_C(0x10203044);
+    gateway_discovery_assignment_finish_failure_locked(
+        COMMAND_RADIO_ERROR, EIO);
+    zassert_false(gateway_discovery_assignment_state.active,
+                  "delivered ABORT left failed enumeration active");
+    zassert_equal(gateway_operation_owner.active.owner,
+                  APP_GATEWAY_OPERATION_OWNER_NONE,
+                  "ABORT terminal retained the failed operation lease");
+    (void)k_work_cancel_delayable(&gateway_persistence_retry_work);
 }
 
 ZTEST_SUITE(production_seam_gateway_host_recovery, NULL, NULL, NULL, NULL,

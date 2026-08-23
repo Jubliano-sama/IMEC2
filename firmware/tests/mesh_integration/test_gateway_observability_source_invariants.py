@@ -36,6 +36,16 @@ def function_body(source: str, name: str) -> str:
             return source[match.start() : index + 1]
     raise AssertionError(f"unterminated function {name}")
 
+
+def closing_brace_index(source: str, opening_brace: int) -> int:
+    depth = 0
+    for index in range(opening_brace, len(source)):
+        depth += source[index] == "{"
+        depth -= source[index] == "}"
+        if depth == 0:
+            return index
+    raise AssertionError("unterminated braced block")
+
 command_sequence = function_body(BLE, "gateway_next_command_seq")
 sequence_lock = command_sequence.index(
     "k_spin_lock(&gateway_command_seq_lock)"
@@ -718,29 +728,25 @@ assert "gateway_observability_pending_terminal_state" in flush
 assert "gateway_observability_snapshot_state" in flush
 
 tx_complete = function_body(BLE, "gateway_ble_tx_complete")
-generic_sent = tx_complete.index("generic_command_event_sent =")
-generic_mark_sent = tx_complete.index(
-    "gateway_observability_mark_sent_state(", generic_sent
-)
+unretained_event = tx_complete.index("unretained_command_event =")
 host_custody_gate = tx_complete.index("host_custody_supported =")
 host_notified = tx_complete.index(
     "gateway_ble_stream_mark_host_notified", host_custody_gate
 )
-assert generic_sent < generic_mark_sent
-assert host_custody_gate < host_notified < generic_mark_sent, (
-    "only a flags-zero generic command event retires on ATT completion; "
-    "a reliable publisher item remains host-notified until its exact GUI "
-    "receipt advances the publisher"
+assert host_custody_gate < host_notified
+assert "gateway_observability_mark_sent_state(" not in tx_complete[unretained_event:], (
+    "command observability may retire only after an exact GUI receipt"
 )
+assert "unretained-command-observability" in tx_complete[unretained_event:]
 
 finish_command_event = function_body(
     BLE, "gateway_command_event_finish_host_receipt"
 )
 assert "gateway_observability_mark_sent_state(event.event_seq)" in finish_command_event
 assert "packet->flags != FLAG_GATEWAY_ACK_REQUIRED" in finish_command_event
-assert "app_gateway_assignment_publisher_event_is_reliable(&event)" in finish_command_event
+assert "app_gateway_assignment_publisher_event_is_reliable(" in finish_command_event
 publisher_advance = finish_command_event.index(
-    "app_gateway_assignment_publisher_note_host_receipt(&event)"
+    "app_gateway_assignment_publisher_note_host_receipt("
 )
 stream_retire = finish_command_event.index(
     "gateway_ble_stream_mark_sent", publisher_advance
@@ -749,6 +755,37 @@ assert publisher_advance < stream_retire, (
     "publisher semantic advancement must succeed before its exact retained "
     "BLE head can retire"
 )
+retirement_complete = finish_command_event.index(
+    "gateway_observability_mark_sent_state(event.event_seq)", stream_retire
+)
+publisher_pump = finish_command_event.index(
+    "app_gateway_assignment_publisher_pump();", retirement_complete
+)
+publisher_owned_fallback = finish_command_event.index(
+    "if (publisher_owned && publisher_ret > 0)", retirement_complete
+)
+persistence_fallback_end = closing_brace_index(
+    finish_command_event,
+    finish_command_event.index("{", publisher_owned_fallback),
+)
+persistence_retry = finish_command_event.index(
+    "gateway_schedule_persistence_retry(", publisher_owned_fallback
+)
+assert retirement_complete < publisher_owned_fallback < persistence_retry, (
+    "persistence fallback scheduling must remain conditional on an exact "
+    "publisher-owned receipt"
+)
+assert persistence_retry < persistence_fallback_end
+assert retirement_complete < publisher_pump
+assert not (
+    publisher_owned_fallback < publisher_pump < persistence_fallback_end
+), (
+    "every accepted and retired host receipt must pump a prepared assignment "
+    "publisher, including mapping receipts that are not publisher-owned"
+)
+assert finish_command_event.count(
+    "app_gateway_assignment_publisher_pump();"
+) == 1
 
 stream_packet = function_body(RESULT_RUNTIME, "gateway_ble_stream_packet")
 assert "MSG_GATEWAY_COMMAND_EVENT" in stream_packet
@@ -779,30 +816,17 @@ assert "gateway_ble_stream_packet(&packet" in publisher_emit
 observe_available = function_body(
     BLE, "gateway_observe_command_event_if_available"
 )
-first_capacity_check = observe_available.index(
-    "gateway_ble_stream_state.count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH"
+assert "gateway_observability_prepare_state(event, terminal)" in observe_available
+assert "gateway_observability_enqueue_prepared(event)" in observe_available
+assert "return 0;" in observe_available
+assert "gateway_ble_stream_ready()" not in observe_available, (
+    "BLE disconnect must not stall or abort accepted RF command ownership"
 )
-reserve = observe_available.index(
-    "gateway_observability_reserve_identity", first_capacity_check
-)
-second_capacity_check = observe_available.index(
-    "gateway_ble_stream_state.count >= GATEWAY_BLE_STREAM_QUEUE_DEPTH",
-    reserve,
-)
-prepare_reserved = observe_available.index(
-    "gateway_observability_prepare_reserved_state", second_capacity_check
-)
-assert first_capacity_check < reserve < second_capacity_check < prepare_reserved
-assert observe_available.count("if (!gateway_ble_stream_ready())") == 2
-assert "gateway_next_broadcast_command_seq" not in observe_available, (
-    "durable identity allocation must stay outside BLE and stream spinlocks"
-)
-assert "packet.session_id = event->event_seq" in observe_available
-assert "packet.seq = (uint16_t)event->event_seq" in observe_available
-assert "packet.flags = 0u" in observe_available
-assert "gateway_ble_stream_enqueue_packet(" in observe_available
-assert "gateway_ble_stream_enqueue_retained_packet" not in observe_available
-assert "gateway_observability_note_enqueue_state" in observe_available
+
+enqueue_prepared = function_body(BLE, "gateway_observability_enqueue_prepared")
+assert "packet.flags = FLAG_GATEWAY_ACK_REQUIRED" in enqueue_prepared
+assert "gateway_ble_stream_enqueue_retained_packet(" in enqueue_prepared
+assert "gateway_observability_note_enqueue_state" in enqueue_prepared
 
 ble_init = function_body(BLE, "gateway_ble_init")
 assert ble_init.count("return ret;") >= 2

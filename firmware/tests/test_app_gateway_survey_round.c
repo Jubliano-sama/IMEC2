@@ -110,7 +110,7 @@ static void test_maximum_25_sparse_pairs_serialize_and_complete(void)
     assert(app_gateway_survey_round_begin(
                &round,
                &context,
-               SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES,
+               1u,
                1u) == PROTO_OK);
     assert(round.planned_round_count == 25u);
     for (size_t pair_index = 0u; pair_index < 25u; pair_index++) {
@@ -153,8 +153,8 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
     struct survey_gateway_context context;
     struct app_gateway_survey_round round;
     const struct survey_pair failed_pair = {
-        .initiator_id = UINT64_C(0x1002),
-        .responder_id = UINT64_C(0x1003),
+        .initiator_id = UINT64_C(0x1000),
+        .responder_id = UINT64_C(0x1001),
         .survey_id = UINT32_C(0x27182818),
         .sample_count = 2u,
     };
@@ -166,7 +166,7 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
     context_init(&context, 2u, 2u);
     assert(app_gateway_survey_round_begin(&round,
                                            &context,
-                                           2u,
+                                           1u,
                                            1u) == PROTO_OK);
     dispatch_current_batch(&round);
 
@@ -184,42 +184,30 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
                &sample,
                &lane_index,
                &accepted_new) == PROTO_ERR_MALFORMED);
-    assert(app_gateway_survey_round_lane(&round, 1u)->usable_result_mask ==
-           0u);
     assert(app_gateway_survey_round_note_sample(
                &round,
                failed_pair.responder_id,
                &sample,
                &lane_index,
                &accepted_new) == PROTO_OK);
-    assert(lane_index == 1u);
+    assert(lane_index == 0u);
     assert(accepted_new);
     assert(app_gateway_survey_round_lane(&round, 0u)->usable_result_mask ==
-           0u);
+           0x1u);
 
     assert(app_gateway_survey_round_finalize_lane(
                &round,
                0u,
                SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
-               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
-    assert(app_gateway_survey_round_finalize_lane(
-               &round,
-               1u,
-               SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK,
                SURVEY_PAIR_ROUND_CLEANUP_RETRY) == PROTO_OK);
     assert(app_gateway_survey_round_note_cleanup_complete(
                &round,
                0u,
-               SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK) == PROTO_OK);
-    assert(round.runtime.completed_success_count == 1u);
-    assert(app_gateway_survey_round_note_cleanup_complete(
-               &round,
-               1u,
                SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK) == PROTO_OK);
     assert(!app_gateway_survey_round_batch_complete(&round));
     assert(app_gateway_survey_round_note_cleanup_complete(
                &round,
-               1u,
+               0u,
                SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK) == PROTO_OK);
     assert(app_gateway_survey_round_batch_complete(&round));
 
@@ -239,20 +227,33 @@ static void test_one_lane_failure_rerun_does_not_disturb_peer(void)
     assert(app_gateway_survey_round_batch_complete(&round));
     assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
            PROTO_OK);
+    assert(!complete);
+    assert(app_gateway_survey_round_lane_count(&round) == 1u);
+    assert(app_gateway_survey_round_lane(&round, 0u)->pair.initiator_id ==
+           UINT64_C(0x1002));
+    dispatch_current_batch(&round);
+    assert(app_gateway_survey_round_finalize_lane(
+               &round,
+               0u,
+               0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
+    assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
+           PROTO_OK);
     assert(complete);
     assert(round.runtime.completed_success_count == 1u);
     assert(round.runtime.completed_failure_count == 1u);
 }
 
-static void test_control_failure_skips_only_one_lane(void)
+static void test_control_failure_queues_only_the_active_lane(void)
 {
     struct survey_gateway_context context;
     struct app_gateway_survey_round round;
     struct app_gateway_survey_round_control control;
     size_t failed_lane = SIZE_MAX;
+    bool complete = true;
 
     context_init(&context, 2u, 2u);
-    assert(app_gateway_survey_round_begin(&round, &context, 2u, 1u) ==
+    assert(app_gateway_survey_round_begin(&round, &context, 1u, 1u) ==
            PROTO_OK);
     assert(app_gateway_survey_round_current_control(&round, &control) ==
            PROTO_OK);
@@ -267,11 +268,12 @@ static void test_control_failure_skips_only_one_lane(void)
     assert(failed_lane == 0u);
     assert(round.runtime.lanes[0].state ==
            SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED);
-    dispatch_current_batch(&round);
-    assert(round.runtime.lanes[0].state ==
-           SURVEY_PAIR_ROUND_LANE_RERUN_QUEUED);
-    assert(round.runtime.lanes[1].state ==
-           SURVEY_PAIR_ROUND_LANE_OBSERVING);
+    assert(app_gateway_survey_round_batch_complete(&round));
+    assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
+           PROTO_OK);
+    assert(!complete);
+    assert(app_gateway_survey_round_lane_count(&round) == 1u);
+    assert(app_gateway_survey_round_lane(&round, 0u)->reruns_started == 1u);
 }
 
 static void test_cleanup_completed_batch_advance_stress(void)
@@ -479,9 +481,8 @@ static void termination_round_init(struct app_gateway_survey_round *round)
     memset(round, 0, sizeof(*round));
     round->phase = APP_GATEWAY_SURVEY_ROUND_OBSERVING;
     round->runtime.active = true;
-    round->runtime.lane_count = SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES;
-    round->runtime.pending_rerun_count =
-        SURVEY_PAIR_ROUND_RUNTIME_MAX_LANES;
+    round->runtime.lane_count = 1u;
+    round->runtime.pending_rerun_count = 1u;
     for (size_t i = 0u; i < round->runtime.lane_count; i++) {
         struct survey_pair_round_lane *lane = &round->runtime.lanes[i];
 
@@ -504,7 +505,7 @@ static void termination_round_init(struct app_gateway_survey_round *round)
     }
 }
 
-static void test_termination_retains_all_25_lane_cleanup_masks(void)
+static void test_termination_retains_the_active_lane_cleanup_mask(void)
 {
     struct app_gateway_survey_round round;
     struct survey_pair pair;
@@ -514,28 +515,17 @@ static void test_termination_retains_all_25_lane_cleanup_masks(void)
     size_t cleanup_lane_count = 0u;
 
     termination_round_init(&round);
-    /*
-     * Lane 2 has no confirmed PREPARE, but its in-flight PREPARE may have
-     * reached the responder. Lane 4 was already in cleanup when the global
-     * abort arrived and must retain that outstanding endpoint as well.
-     */
-    round.runtime.lanes[4].state = SURVEY_PAIR_ROUND_LANE_CLEANUP;
-    round.runtime.lanes[4].cleanup_mask =
-        SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK;
-    pair = round.runtime.lanes[2].pair;
+    pair = round.runtime.lanes[0].pair;
     assert(app_gateway_survey_round_begin_termination(
                &round,
                &pair,
                SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK,
                &active_lane) == PROTO_OK);
-    assert(active_lane == 2u);
+    assert(active_lane == 0u);
     assert(app_gateway_survey_round_terminating(&round));
     assert(round.runtime.pending_rerun_count == 0u);
-    assert(round.runtime.lanes[2].cleanup_mask ==
-           SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK);
-    assert(round.runtime.lanes[4].cleanup_mask ==
-           (SURVEY_PAIR_ROUND_ENDPOINT_INITIATOR_MASK |
-            SURVEY_PAIR_ROUND_ENDPOINT_RESPONDER_MASK));
+    assert(round.runtime.lanes[0].cleanup_mask ==
+           SURVEY_PAIR_ROUND_ENDPOINT_BOTH_MASK);
 
     while (app_gateway_survey_round_next_termination_cleanup(
                &round, &lane_index, &pair, &cleanup_mask) == PROTO_OK) {
@@ -562,7 +552,7 @@ static void test_termination_retains_all_25_lane_cleanup_masks(void)
                    PROTO_OK);
         }
     }
-    assert(cleanup_lane_count == 18u);
+    assert(cleanup_lane_count == 1u);
     assert(app_gateway_survey_round_next_termination_cleanup(
                &round, &lane_index, &pair, &cleanup_mask) ==
            PROTO_ERR_NOT_FOUND);
@@ -580,7 +570,7 @@ static void test_termination_rejects_unowned_active_pair_atomically(void)
 
     termination_round_init(&round);
     before = round;
-    pair = round.runtime.lanes[7].pair;
+    pair = round.runtime.lanes[0].pair;
     pair.operation_generation++;
     assert(app_gateway_survey_round_begin_termination(
                &round,
@@ -1214,9 +1204,9 @@ static void test_outcome_event_identity_survives_retry_and_blocks_batch_advance(
     bool complete = false;
 
     context_init(&context, 2u, 1u);
-    assert(app_gateway_survey_round_begin(&round, &context, 2u, 0u) ==
+    assert(app_gateway_survey_round_begin(&round, &context, 1u, 0u) ==
            PROTO_OK);
-    assert(app_gateway_survey_round_lane_count(&round) == 2u);
+    assert(app_gateway_survey_round_lane_count(&round) == 1u);
     assert(app_gateway_survey_round_outcome_event_seed(
                &round, 0u, &event_seq) == PROTO_OK);
     assert(event_seq == 0u);
@@ -1229,14 +1219,9 @@ static void test_outcome_event_identity_survives_retry_and_blocks_batch_advance(
                &round, 0u, &event_seq) == PROTO_OK);
     assert(event_seq == 41u);
 
-    /* No other lane or changed identity can replace the retained owner. */
-    event_seq = 0u;
-    assert(app_gateway_survey_round_outcome_event_seed(
-               &round, 1u, &event_seq) == PROTO_ERR_BUSY);
+    /* A changed identity cannot replace the retained owner. */
     assert(app_gateway_survey_round_outcome_event_retain(
                &round, 0u, 42u) == PROTO_ERR_BUSY);
-    assert(app_gateway_survey_round_outcome_event_complete(
-               &round, 1u) == PROTO_ERR_BUSY);
     assert(round.outcome_event_pending);
     assert(round.outcome_event_lane_index == 0u);
     assert(round.outcome_event_seq == 41u);
@@ -1245,11 +1230,6 @@ static void test_outcome_event_identity_survives_retry_and_blocks_batch_advance(
     assert(app_gateway_survey_round_finalize_lane(
                &round,
                0u,
-               0u,
-               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
-    assert(app_gateway_survey_round_finalize_lane(
-               &round,
-               1u,
                0u,
                SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
     assert(app_gateway_survey_round_batch_complete(&round));
@@ -1267,10 +1247,19 @@ static void test_outcome_event_identity_survives_retry_and_blocks_batch_advance(
     assert(event_seq == 0u);
     assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
            PROTO_OK);
+    assert(!complete);
+    dispatch_current_batch(&round);
+    assert(app_gateway_survey_round_finalize_lane(
+               &round,
+               0u,
+               0u,
+               SURVEY_PAIR_ROUND_CLEANUP_SUCCESS) == PROTO_OK);
+    assert(app_gateway_survey_round_advance_batch(&round, &complete) ==
+           PROTO_OK);
     assert(complete);
 
     /* Starting a fresh operation clears every retry identity field. */
-    assert(app_gateway_survey_round_begin(&round, &context, 2u, 0u) ==
+    assert(app_gateway_survey_round_begin(&round, &context, 1u, 0u) ==
            PROTO_OK);
     assert(!round.outcome_event_pending);
     assert(round.outcome_event_seq == 0u);
@@ -1854,10 +1843,10 @@ int main(void)
 {
     test_maximum_25_sparse_pairs_serialize_and_complete();
     test_one_lane_failure_rerun_does_not_disturb_peer();
-    test_control_failure_skips_only_one_lane();
+    test_control_failure_queues_only_the_active_lane();
     test_cleanup_completed_batch_advance_stress();
     test_partial_start_cleans_both_leases_before_rerun_commitment();
-    test_termination_retains_all_25_lane_cleanup_masks();
+    test_termination_retains_the_active_lane_cleanup_mask();
     test_termination_rejects_unowned_active_pair_atomically();
     test_incarnation_tracker_is_bounded_and_rfc1982_ordered();
     test_asymmetric_anchor_reset_cleans_old_generation_only();

@@ -8,21 +8,7 @@ static bool anchor_discovery_ack_route_wait_pending;
 static struct app_mesh_discovery_assignment_snapshot
     anchor_ram_discovery_assignment_snapshot;
 static bool anchor_discovery_assignment_restore_complete;
-
-#define ANCHOR_ASSIGNMENT_COMMISSIONING_BURST 4u
-#define ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS UINT64_C(86400000)
-#if DEVICE_ROLE == ROLE_ANCHOR
-/*
- * This RAM admission guard allows four distinct TABLE identities after each
- * boot, then one per uptime day. A reboot intentionally grants a fresh
- * commissioning burst, so this is a fail-closed hot-path bound rather than a
- * power-cycle-independent NVS endurance guarantee.
- */
-static uint32_t anchor_assignment_next_reassign_uptime_day;
-static uint32_t anchor_assignment_last_admitted_epoch;
-static uint32_t anchor_assignment_last_admitted_table_seq;
-static uint8_t anchor_assignment_commissioning_remaining;
-#endif
+static bool anchor_discovery_assignment_ram_only_iteration;
 
 static int anchor_restore_live_discovery_assignment_snapshot(
     const struct app_mesh_discovery_assignment_snapshot *snapshot);
@@ -119,6 +105,10 @@ static int anchor_save_discovery_assignment_semantic(
         return -EINVAL;
     }
 #if defined(CONFIG_IMEC_DURABLE_STATE)
+    if (anchor_discovery_assignment_ram_only_iteration) {
+        anchor_ram_discovery_assignment_snapshot = *snapshot;
+        return 0;
+    }
     anchor_assignment_snapshot_to_durable(snapshot, &assignment);
     ret = app_durable_state_save_anchor_assignment(GATEWAY_ID, &assignment);
     if (ret < 0) {
@@ -145,10 +135,13 @@ static int anchor_save_discovery_assignment_retry_ram(
 static int anchor_clear_discovery_assignment_semantic(void)
 {
 #if defined(CONFIG_IMEC_DURABLE_STATE)
-    int ret = app_durable_state_delete_anchor_assignment(GATEWAY_ID);
+    int ret = 0;
 
-    if (ret < 0) {
-        return ret;
+    if (!anchor_discovery_assignment_ram_only_iteration) {
+        ret = app_durable_state_delete_anchor_assignment(GATEWAY_ID);
+        if (ret < 0) {
+            return ret;
+        }
     }
 #endif
     memset(&anchor_ram_discovery_assignment_snapshot, 0,
@@ -202,47 +195,6 @@ static int anchor_restore_discovery_assignment_durable(void)
     ARG_UNUSED(snapshot);
     anchor_discovery_assignment_restore_complete = true;
     return 0;
-#endif
-}
-
-static int anchor_admit_discovery_assignment_semantic_change(
-    uint32_t epoch,
-    uint32_t table_seq)
-{
-#if DEVICE_ROLE == ROLE_ANCHOR
-    uint64_t now_ms;
-    uint32_t now_day;
-
-    if (epoch == 0u || table_seq == 0u) {
-        return -EINVAL;
-    }
-    if (anchor_assignment_last_admitted_epoch == epoch &&
-        anchor_assignment_last_admitted_table_seq == table_seq) {
-        return 0;
-    }
-    now_ms = (uint64_t)k_uptime_get();
-    now_day = (uint32_t)(now_ms /
-                         ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS);
-    if (anchor_assignment_next_reassign_uptime_day == 0u) {
-        anchor_assignment_commissioning_remaining =
-            ANCHOR_ASSIGNMENT_COMMISSIONING_BURST;
-        anchor_assignment_next_reassign_uptime_day = now_day + 1u;
-    }
-    if (anchor_assignment_commissioning_remaining != 0u) {
-        anchor_assignment_commissioning_remaining--;
-    } else if (now_day >=
-               anchor_assignment_next_reassign_uptime_day) {
-        anchor_assignment_next_reassign_uptime_day = now_day + 1u;
-    } else {
-        return -EAGAIN;
-    }
-    anchor_assignment_last_admitted_epoch = epoch;
-    anchor_assignment_last_admitted_table_seq = table_seq;
-    return 0;
-#else
-    ARG_UNUSED(epoch);
-    ARG_UNUSED(table_seq);
-    return -ENOTSUP;
 #endif
 }
 
@@ -1243,6 +1195,100 @@ static int anchor_discovery_assignment_gateway_accepted(
     return ret;
 }
 
+static int anchor_discovery_assignment_gateway_confirmed(
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    struct anchor_discovery_claim_pending pending;
+    struct mesh_outbound expected = {0};
+    uint8_t expected_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    int ret;
+
+    if (packet == NULL || semantic_digest == NULL ||
+        packet->msg_type != MSG_COMMAND_RESULT ||
+        packet->src_id != DEVICE_ID || packet->dst_id != GATEWAY_ID) {
+        return -ENOENT;
+    }
+
+    k_mutex_lock(
+        &anchor_discovery_assignment_transaction_mutex, K_FOREVER);
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    if (!anchor_discovery_claim_pending.active ||
+        packet->session_id !=
+            anchor_discovery_claim_pending.command.session_id ||
+        packet->seq != anchor_discovery_claim_pending.command.seq) {
+        k_mutex_unlock(&anchor_discovery_claim_mutex);
+        k_mutex_unlock(
+            &anchor_discovery_assignment_transaction_mutex);
+        return -ENOENT;
+    }
+    pending = anchor_discovery_claim_pending;
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+
+    ret = anchor_build_discovery_response(&pending, &expected);
+    if (ret < 0 ||
+        !mesh_packet_semantic_digest(&expected.packet,
+                                     expected.payload,
+                                     expected.payload_len,
+                                     expected_digest) ||
+        memcmp(expected_digest,
+               semantic_digest,
+               sizeof(expected_digest)) != 0) {
+        k_mutex_unlock(
+            &anchor_discovery_assignment_transaction_mutex);
+        return ret < 0 ? ret : -EBADMSG;
+    }
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    anchor_discovery_response_terminal.epoch = pending.epoch;
+    anchor_discovery_response_terminal.command_session_id =
+        pending.command.session_id;
+    anchor_discovery_response_terminal.command_packet_seq =
+        pending.command.seq;
+    anchor_discovery_response_terminal.phase = pending.phase;
+    anchor_discovery_response_terminal.table_commitment =
+        pending.table_commitment;
+    anchor_discovery_response_terminal.valid = true;
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+    k_mutex_unlock(
+        &anchor_discovery_assignment_transaction_mutex);
+
+    status_debug_printf(
+        "DBG_DISCOVERY_SLOT_RESPONSE_TERMINAL phase=%u epoch=%u generation=%u\n",
+        pending.phase,
+        pending.epoch,
+        pending.command.session_id);
+    return 0;
+}
+
+static bool anchor_discovery_response_terminal_matches(
+    uint32_t epoch,
+    enum discovery_assignment_phase response_phase,
+    uint32_t command_session_id,
+    uint16_t command_packet_seq,
+    const struct discovery_assignment_table_commitment *table_commitment)
+{
+    bool matches;
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    matches = anchor_discovery_response_terminal.valid &&
+        anchor_discovery_response_terminal.epoch == epoch &&
+        anchor_discovery_response_terminal.phase == response_phase &&
+        anchor_discovery_response_terminal.command_session_id ==
+            command_session_id &&
+        anchor_discovery_response_terminal.command_packet_seq ==
+            command_packet_seq &&
+        ((response_phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
+          table_commitment == NULL) ||
+         (response_phase == DISCOVERY_ASSIGNMENT_PHASE_ACK &&
+          table_commitment != NULL &&
+          discovery_assignment_table_commitment_equal(
+              &anchor_discovery_response_terminal.table_commitment,
+              table_commitment)));
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+    return matches;
+}
+
 static int anchor_persist_discovery_assignment_ack_retry_round(
     const struct anchor_discovery_claim_pending *pending,
     uint8_t retry_round)
@@ -1751,8 +1797,8 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
         LOG_ERR("anchor discovery-slot response retry scheduling failed: phase=%u epoch=%u ret=%d schedule_ret=%d",
                 pending.phase,
                 pending.epoch,
-                ret,
-                schedule_ret);
+                    ret,
+                    schedule_ret);
         return;
     }
     LOG_ERR("anchor discovery-slot response admission failed: phase=%u epoch=%u ret=%d transient=%u",
@@ -1853,6 +1899,49 @@ static int anchor_settle_ack_before_newer_assignment(uint32_t incoming_epoch)
     }
     k_mutex_unlock(&anchor_discovery_claim_mutex);
     k_mutex_unlock(&anchor_discovery_assignment_transaction_mutex);
+    return 0;
+}
+
+static int anchor_clear_committed_assignment_for_new_claim(
+    uint32_t incoming_epoch)
+{
+    struct app_mesh_discovery_assignment_snapshot snapshot = {0};
+    int ret;
+
+    if (incoming_epoch == 0u) {
+        return -EINVAL;
+    }
+    ret = anchor_restore_discovery_assignment_ram(&snapshot);
+    if (ret < 0 || !snapshot.valid || snapshot.provisioned == 0u) {
+        return ret;
+    }
+    if (snapshot.ordered_epoch_valid != 0u &&
+        !discovery_assignment_epoch_strictly_newer(incoming_epoch,
+                                                    snapshot.epoch)) {
+        return 0;
+    }
+
+    /*
+     * CLAIM starts a clean-slate run. Keep the ordered epoch proof only as a
+     * stale-packet barrier, but remove the old slot from both durable and live
+     * assignment state before this run can send a response.
+     */
+    snapshot.slot = 0u;
+    snapshot.slot_count = 0u;
+    snapshot.provisioned = 0u;
+    ret = anchor_save_discovery_assignment_semantic(&snapshot);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = anchor_restore_live_discovery_assignment_snapshot(&snapshot);
+    if (ret != PROTO_OK) {
+        app_watchdog_stop_feeding();
+        return -ESTALE;
+    }
+    status_debug_printf(
+        "DBG_DISCOVERY_SLOT_CLEARED epoch=%u prior_epoch=%u\n",
+        incoming_epoch,
+        snapshot.epoch);
     return 0;
 }
 
@@ -2136,11 +2225,13 @@ static int anchor_schedule_discovery_claim(const struct proto_packet *command,
 static int anchor_schedule_late_discovery_claim(
     const struct proto_packet *table_command,
     uint32_t epoch,
+    uint8_t table_entry_count,
     uint16_t response_spread_ms)
 {
     struct proto_packet claim_command;
 
-    if (table_command == NULL || epoch == 0u) {
+    if (table_command == NULL || epoch == 0u || table_entry_count == 0u ||
+        table_entry_count > UWB_DISCOVERY_SLOT_COUNT) {
         return -EINVAL;
     }
     claim_command = *table_command;
@@ -2151,7 +2242,7 @@ static int anchor_schedule_late_discovery_claim(
      * request without guessing the gateway's private CLAIM sequence.
      */
     return anchor_schedule_discovery_claim(
-        &claim_command, epoch, 0u, response_spread_ms);
+        &claim_command, epoch, table_entry_count, response_spread_ms);
 }
 
 static int anchor_resume_pending_discovery_assignment_ack(
@@ -3166,39 +3257,82 @@ static void anchor_rearm_discovery_ack_after_table_rollback(
     }
 }
 
-/*
- * The assignment flood itself proves a live upstream edge: whatever peer
- * handed the local anchor this gateway command can also carry its claim
- * response toward the gateway. Learning that parent here keeps a
- * fresh-booted anchor from discarding the evidence and flooding Channel-5
- * ROUTE_REQ wake trains before it answers. Unknown ingress hops (delayed
- * executions) skip silently.
- */
-static void anchor_learn_flood_parent_candidate(
-    const struct proto_packet *packet,
+static void anchor_retire_discovery_response_for_terminal_locked(
     uint32_t epoch,
-    uint64_t ingress_hop_id)
+    const char *reason)
 {
-    uint8_t origin_ttl = 0u;
+#if DEVICE_ROLE == ROLE_ANCHOR
+    struct anchor_discovery_claim_pending retired = {0};
+    uint32_t handle = 0u;
+    bool matched = false;
+    bool retry_abandon = false;
     int ret;
 
-    if (packet == NULL ||
-        !app_mesh_c5_gateway_control_origin_ttl(MSG_COMMAND,
-                                                CMD_ASSIGN_DISCOVERY_SLOTS,
-                                                &origin_ttl)) {
+    if (epoch == 0u) {
         return;
     }
-    ret = mesh_relay_note_flood_parent_candidate(&mesh_runtime,
-                                                 packet,
-                                                 ingress_hop_id,
-                                                 100u,
-                                                 origin_ttl,
-                                                 epoch,
-                                                 k_uptime_get_32());
-    if (ret != PROTO_OK && ret != PROTO_ERR_STALE &&
-        ret != PROTO_ERR_ARG) {
-        LOG_DBG("anchor flood parent candidate not stored: ret=%d", ret);
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    if (anchor_discovery_claim_pending.active &&
+        anchor_discovery_claim_pending.epoch == epoch) {
+        retired = anchor_discovery_claim_pending;
+        handle = retired.delivery_handle;
+        anchor_discovery_claim_pending.active = false;
+        anchor_discovery_claim_pending.delivery_handle = 0u;
+        anchor_discovery_claim_pending.generation =
+            anchor_discovery_claim_next_generation(retired.generation);
+        if (anchor_discovery_ack_liveness_generation == retired.generation) {
+            anchor_discovery_ack_liveness_generation = 0u;
+        }
+        anchor_discovery_ack_route_wait_pending = false;
+        matched = true;
     }
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+
+    (void)k_work_cancel_delayable(&anchor_discovery_claim_work);
+    (void)k_work_cancel_delayable(&anchor_discovery_ack_liveness_work);
+    if (handle != 0u) {
+        ret = app_node_comm_abandon_delivery(handle);
+        if (ret < 0 && ret != -ENOENT && ret != -EALREADY) {
+            k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+            if (anchor_discovery_claim_failed_abandon_handle == 0u ||
+                anchor_discovery_claim_failed_abandon_handle == handle) {
+                anchor_discovery_claim_failed_abandon_handle = handle;
+            }
+            k_mutex_unlock(&anchor_discovery_claim_mutex);
+            LOG_ERR("anchor terminal enumeration response abandonment failed: epoch=%u handle=%u ret=%d",
+                    epoch,
+                    handle,
+                    ret);
+            retry_abandon = true;
+            app_watchdog_stop_feeding();
+        }
+    }
+    if (retry_abandon) {
+        ret = anchor_checked_work_reschedule(
+            &anchor_discovery_claim_work,
+            K_MSEC(ANCHOR_COMMAND_DELIVERY_POLL_MS),
+            "terminal-enumeration-response-abandon-retry");
+        if (ret < 0) {
+            LOG_ERR("anchor terminal enumeration response cleanup retry scheduling failed: epoch=%u handle=%u ret=%d",
+                    epoch,
+                    handle,
+                    ret);
+            app_watchdog_stop_feeding();
+        }
+    }
+    if (matched) {
+        status_debug_printf(
+            "DBG_DISCOVERY_SLOT_RESPONSE_RETIRED phase=%u epoch=%u handle=%u reason=%s\n",
+            retired.phase,
+            epoch,
+            handle,
+            reason == NULL ? "terminal" : reason);
+    }
+#else
+    ARG_UNUSED(epoch);
+    ARG_UNUSED(reason);
+#endif
 }
 
 static int anchor_apply_discovery_assignment_command(
@@ -3214,12 +3348,13 @@ static int anchor_apply_discovery_assignment_command(
     struct gateway_command_options assignment_options = {0};
     enum discovery_assignment_phase phase = 0;
     enum app_discovery_assignment_table_decision table_decision;
-    bool table_matches_persisted_pending;
     uint32_t epoch = 0u;
     struct discovery_assignment_table_commitment table_commitment = {0};
     size_t entry_count = 0u;
     uint8_t slot_count = 0u;
     int ret;
+
+    ARG_UNUSED(ingress_hop_id);
 
     ret = app_operation_policy_prepare_payload(payload,
                                                payload_len,
@@ -3230,6 +3365,8 @@ static int anchor_apply_discovery_assignment_command(
         return ret;
     }
     operation_policy = policy_candidate.resolved;
+    anchor_discovery_assignment_ram_only_iteration =
+        operation_policy.assignment.ram_only_iteration;
 
     ret = discovery_assignment_extract_control_tlvs(payload,
                                                     payload_len,
@@ -3248,14 +3385,100 @@ static int anchor_apply_discovery_assignment_command(
         return -EINVAL;
     }
     if (phase != DISCOVERY_ASSIGNMENT_PHASE_CLAIM &&
-        phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE) {
+        phase != DISCOVERY_ASSIGNMENT_PHASE_TABLE &&
+        phase != DISCOVERY_ASSIGNMENT_PHASE_END &&
+        phase != DISCOVERY_ASSIGNMENT_PHASE_ABORT) {
         return -EINVAL;
     }
     /*
-     * Learn before any claim/response scheduling so both CLAIM and TABLE
-     * phases answer over the proven flood edge instead of route discovery.
+     * The preceding here-I-am activation establishes the response parent.
+     * A later command copy may arrive through any sibling relay, so its
+     * ingress is command-delivery evidence only and must not rewrite routing.
      */
-    anchor_learn_flood_parent_candidate(packet, epoch, ingress_hop_id);
+    if (phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT) {
+        struct discovery_assignment_abort_identity abort_identity = {0};
+
+        ret = discovery_assignment_extract_abort_identity(
+            payload, payload_len, &abort_identity);
+        if (ret != PROTO_OK || abort_identity.epoch != epoch) {
+            return ret == PROTO_OK ? -ESTALE : mesh_errno_from_proto(ret);
+        }
+        if (!anchor_enumeration_rx_terminate_claim(
+                epoch,
+                abort_identity.claim_session_id,
+                abort_identity.claim_command_seq,
+                "abort")) {
+            status_debug_printf(
+                "DBG_ENUM_ABORT_REJECT epoch=%u claim_session=%u claim_seq=%u reason=identity\n",
+                epoch,
+                abort_identity.claim_session_id,
+                abort_identity.claim_command_seq);
+            return -ESTALE;
+        }
+        anchor_retire_discovery_response_for_terminal_locked(epoch, "abort");
+        app_operation_policy_commit_prepared(&policy_candidate);
+        status_debug_printf(
+            "DBG_ENUM_ABORT_ACCEPT epoch=%u claim_session=%u claim_seq=%u\n",
+            epoch,
+            abort_identity.claim_session_id,
+            abort_identity.claim_command_seq);
+        return 0;
+    }
+    if (phase == DISCOVERY_ASSIGNMENT_PHASE_END) {
+        struct discovery_assignment_end_identity end_identity = {0};
+        bool exact_pending;
+        bool exact_committed;
+
+        ret = discovery_assignment_extract_end_identity(
+            payload, payload_len, &end_identity);
+        if (ret != PROTO_OK || end_identity.epoch != epoch) {
+            return ret == PROTO_OK ? -ESTALE : mesh_errno_from_proto(ret);
+        }
+        ret = anchor_restore_discovery_assignment_ram(&snapshot);
+        if (ret < 0) {
+            return ret;
+        }
+        exact_pending = snapshot.valid && snapshot.pending_valid != 0u &&
+            snapshot.pending_epoch == epoch &&
+            snapshot.pending_table_command_seq ==
+                end_identity.table_command_seq &&
+            discovery_assignment_table_commitment_equal(
+                &snapshot.pending_table_commitment,
+                &end_identity.table_commitment);
+        exact_committed = snapshot.valid && snapshot.provisioned != 0u &&
+            snapshot.epoch == epoch &&
+            snapshot.table_command_seq == end_identity.table_command_seq &&
+            discovery_assignment_table_commitment_equal(
+                &snapshot.table_commitment,
+                &end_identity.table_commitment);
+        if (!exact_pending && !exact_committed) {
+            status_debug_printf(
+                "DBG_ENUM_END_REJECT epoch=%u table_seq=%u reason=identity\n",
+                epoch,
+                end_identity.table_command_seq);
+            return -ESTALE;
+        }
+        if (!anchor_enumeration_rx_terminate_table(
+                epoch,
+                end_identity.table_command_seq,
+                &end_identity.table_commitment,
+                "end")) {
+            status_debug_printf(
+                "DBG_ENUM_END_REJECT epoch=%u table_seq=%u reason=inactive-observation\n",
+                epoch,
+                end_identity.table_command_seq);
+            return -ESTALE;
+        }
+        anchor_retire_discovery_response_for_terminal_locked(epoch, "end");
+        app_operation_policy_commit_prepared(&policy_candidate);
+        status_debug_printf(
+            "DBG_ENUM_END_ACCEPT epoch=%u table_seq=%u pending=%u committed=%u\n",
+            epoch,
+            end_identity.table_command_seq,
+            exact_pending ? 1u : 0u,
+            exact_committed ? 1u : 0u);
+        return 0;
+    }
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
         ret = anchor_restore_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
@@ -3266,9 +3489,36 @@ static int anchor_apply_discovery_assignment_command(
              snapshot.gateway_id != GATEWAY_ID)) {
             return -ESTALE;
         }
+        if (anchor_discovery_response_terminal_matches(
+                epoch,
+                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                packet->session_id,
+                packet->seq,
+                NULL)) {
+            status_debug_printf(
+                "DBG_DISCOVERY_SLOT_RESPONSE_TERMINAL_REPLAY phase=%u epoch=%u generation=%u\n",
+                DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                epoch,
+                packet->session_id);
+            app_operation_policy_commit_prepared(&policy_candidate);
+            return 0;
+        }
         if (snapshot.valid && snapshot.pending_valid != 0u &&
             snapshot.ack_pending != 0u &&
             epoch == snapshot.pending_epoch) {
+            ret = anchor_enumeration_rx_begin(
+                epoch,
+                operation_policy.assignment.operation_budget_ms,
+                false);
+            if (ret < 0) {
+                return ret;
+            }
+            if (!anchor_enumeration_rx_bind_claim(
+                    epoch,
+                    packet->session_id,
+                    assignment_options.command_seq)) {
+                return -ESTALE;
+            }
             ret = anchor_resume_pending_discovery_assignment_ack(false);
             if (ret < 0) {
                 return ret;
@@ -3296,6 +3546,10 @@ static int anchor_apply_discovery_assignment_command(
                 return ret;
             }
         }
+        ret = anchor_clear_committed_assignment_for_new_claim(epoch);
+        if (ret < 0) {
+            return ret;
+        }
         enum app_discovery_assignment_claim_decision claim_decision =
             local_anchor_discovery_assignment_note_claim(epoch);
 
@@ -3311,6 +3565,19 @@ static int anchor_apply_discovery_assignment_command(
                     epoch);
             return 0;
         }
+        ret = anchor_enumeration_rx_begin(
+            epoch,
+            operation_policy.assignment.operation_budget_ms,
+            true);
+        if (ret < 0) {
+            return ret;
+        }
+        if (!anchor_enumeration_rx_bind_claim(
+                epoch,
+                packet->session_id,
+                assignment_options.command_seq)) {
+            return -ESTALE;
+        }
         ret = anchor_schedule_discovery_claim(
             packet,
             epoch,
@@ -3319,7 +3586,6 @@ static int anchor_apply_discovery_assignment_command(
         if (ret < 0) {
             return ret;
         }
-        anchor_operation_high_duty_boost_begin(1500u);
         app_operation_policy_commit_prepared(&policy_candidate);
         return 0;
     }
@@ -3346,30 +3612,22 @@ static int anchor_apply_discovery_assignment_command(
          snapshot.gateway_id != GATEWAY_ID)) {
         return -ESTALE;
     }
+    if (anchor_discovery_response_terminal_matches(
+            epoch,
+            DISCOVERY_ASSIGNMENT_PHASE_ACK,
+            packet->session_id,
+            packet->seq,
+            &table_commitment)) {
+        status_debug_printf(
+            "DBG_DISCOVERY_SLOT_RESPONSE_TERMINAL_REPLAY phase=%u epoch=%u generation=%u\n",
+            DISCOVERY_ASSIGNMENT_PHASE_ACK,
+            epoch,
+            packet->session_id);
+        app_operation_policy_commit_prepared(&policy_candidate);
+        return 0;
+    }
     table_decision = local_anchor_discovery_assignment_preview_table(
         epoch, packet->session_id, &table_commitment);
-    table_matches_persisted_pending =
-        snapshot.valid && snapshot.pending_valid != 0u &&
-        snapshot.pending_epoch == epoch &&
-        snapshot.pending_table_command_seq == packet->session_id &&
-        discovery_assignment_table_commitment_equal(
-            &snapshot.pending_table_commitment, &table_commitment);
-    if ((table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY ||
-         table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) &&
-        !table_matches_persisted_pending) {
-        ret = anchor_admit_discovery_assignment_semantic_change(
-            epoch, packet->session_id);
-        if (ret < 0) {
-            LOG_WRN("anchor assignment change admission rate-limited: epoch=%u generation=%u ret=%d burst=%u interval_ms=%llu",
-                    epoch,
-                    packet->session_id,
-                    ret,
-                    (unsigned int)ANCHOR_ASSIGNMENT_COMMISSIONING_BURST,
-                    (unsigned long long)
-                        ANCHOR_ASSIGNMENT_REASSIGN_INTERVAL_MS);
-            return ret;
-        }
-    }
     if ((table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_APPLY ||
          table_decision == APP_DISCOVERY_ASSIGNMENT_TABLE_LATE_CLAIM) &&
         snapshot.valid && snapshot.pending_valid != 0u &&
@@ -3458,8 +3716,20 @@ static int anchor_apply_discovery_assignment_command(
         LOG_WRN("anchor received discovery table before claim epoch: epoch=%u count=%u; retaining committed assignment and late-claiming",
                 epoch,
                 (unsigned int)entry_count);
+        ret = anchor_enumeration_rx_begin_table(
+            epoch,
+            operation_policy.assignment.operation_budget_ms,
+            packet->session_id,
+            &table_commitment,
+            true);
+        if (ret < 0) {
+            return ret;
+        }
         ret = anchor_schedule_late_discovery_claim(
-            packet, epoch, operation_policy.assignment.response_spread_ms);
+            packet,
+            epoch,
+            (uint8_t)entry_count,
+            operation_policy.assignment.response_spread_ms);
         if (ret < 0) {
             (void)anchor_restore_live_discovery_assignment_snapshot(
                 &snapshot);
@@ -3483,6 +3753,15 @@ static int anchor_apply_discovery_assignment_command(
                     &response_lane_count);
                 if (ret != PROTO_OK) {
                     return mesh_errno_from_proto(ret);
+                }
+                ret = anchor_enumeration_rx_begin_table(
+                    epoch,
+                    operation_policy.assignment.operation_budget_ms,
+                    packet->session_id,
+                    &table_commitment,
+                    false);
+                if (ret < 0) {
+                    return ret;
                 }
                 ret = anchor_resume_pending_discovery_assignment_ack(true);
                 if (ret < 0) {
@@ -3520,6 +3799,15 @@ static int anchor_apply_discovery_assignment_command(
          * ACK to send, but it still re-establishes the accepted RAM-only
          * operation profile after a reset.
          */
+        ret = anchor_enumeration_rx_begin_table(
+            epoch,
+            operation_policy.assignment.operation_budget_ms,
+            packet->session_id,
+            &table_commitment,
+            false);
+        if (ret < 0) {
+            return ret;
+        }
         app_operation_policy_commit_prepared(&policy_candidate);
         return 0;
     }
@@ -3567,6 +3855,15 @@ static int anchor_apply_discovery_assignment_command(
                     if (ret < 0) {
                         return ret;
                     }
+                }
+                ret = anchor_enumeration_rx_begin_table(
+                    epoch,
+                    operation_policy.assignment.operation_budget_ms,
+                    packet->session_id,
+                    &table_commitment,
+                    false);
+                if (ret < 0) {
+                    return ret;
                 }
                 ret = anchor_resume_pending_discovery_assignment_ack(true);
                 if (ret < 0) {
@@ -3654,8 +3951,16 @@ static int anchor_apply_discovery_assignment_command(
                 return ret == PROTO_OK ? -ESTALE : -EILSEQ;
             }
         }
-        anchor_operation_high_duty_boost_begin(1500u);
         app_operation_policy_commit_prepared(&policy_candidate);
+        ret = anchor_enumeration_rx_begin_table(
+            epoch,
+            operation_policy.assignment.operation_budget_ms,
+            packet->session_id,
+            &table_commitment,
+            true);
+        if (ret < 0) {
+            return ret;
+        }
         ret = anchor_schedule_discovery_response(
             packet,
             epoch,
@@ -3776,8 +4081,24 @@ static int anchor_apply_discovery_assignment_command(
     LOG_WRN("anchor not listed in uncommitted discovery table; retaining committed assignment and late-claiming: epoch=%u count=%u",
             epoch,
             (unsigned int)entry_count);
-    return anchor_schedule_late_discovery_claim(
-        packet, epoch, operation_policy.assignment.response_spread_ms);
+    ret = anchor_enumeration_rx_begin_table(
+        epoch,
+        operation_policy.assignment.operation_budget_ms,
+        packet->session_id,
+        &table_commitment,
+        true);
+    if (ret < 0) {
+        return ret;
+    }
+    ret = anchor_schedule_late_discovery_claim(
+        packet,
+        epoch,
+        (uint8_t)entry_count,
+        operation_policy.assignment.response_spread_ms);
+    if (ret < 0) {
+        return ret;
+    }
+    return 0;
 }
 
 static int anchor_apply_discovery_assignment_command_serialized(

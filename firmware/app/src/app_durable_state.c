@@ -814,9 +814,6 @@ static int durable_validate_anchor_assignment(
         if (assignment->slot != 0u || assignment->slot_count != 0u) {
             return -EINVAL;
         }
-    } else if (assignment->slot != 0u || assignment->slot_count == 0u ||
-               assignment->slot_count > UWB_DISCOVERY_SLOT_COUNT) {
-        return -EINVAL;
     }
 
     if (assignment->pending_valid != 0u) {

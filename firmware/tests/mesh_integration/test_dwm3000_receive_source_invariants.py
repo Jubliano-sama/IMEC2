@@ -41,8 +41,10 @@ read_frame = function_body("read_rx_frame")
 receive = function_body("receive_frame_with_preamble_timeout")
 receive_range_frame = function_body("receive_frame")
 responder = function_body("responder_poll_once")
-invalidate_radio_state = function_body("invalidate_radio_state")
-mark_radio_awake_unconfigured = function_body("mark_radio_awake_unconfigured")
+invalidate_radio_state = function_body("invalidate_radio_state_tagged")
+mark_radio_awake_unconfigured = function_body(
+    "mark_radio_awake_unconfigured_tagged"
+)
 check_device_fatal_status = function_body("check_device_fatal_status")
 initialise = function_body("initialise_radio")
 probe = function_body("dwm3000_driver_probe")
@@ -53,6 +55,9 @@ ensure_current = function_body("ensure_current_phy_or_range")
 receive_response = function_body("receive_response")
 continuous_activity = function_body(
     "receive_frame_continuous_extend_on_activity"
+)
+finish_abortible_continuous_receive = function_body(
+    "finish_abortible_continuous_receive"
 )
 sniff = function_body("dwm3000_driver_sniff_activity")
 wait_status = function_body("wait_status_internal")
@@ -107,7 +112,12 @@ for frame_consumer in (
         "if (ret < 0 && ret != -EMSGSIZE)", frame_read
     )
     malformed_failure = frame_consumer.index("if (ret < 0)", hardware_failure)
-    assert "return ret" in frame_consumer[
+    propagated_return = (
+        "return finish_abortible_continuous_receive(ret)"
+        if frame_consumer is continuous_activity
+        else "return ret"
+    )
+    assert propagated_return in frame_consumer[
         hardware_failure:malformed_failure
     ], "RX frame SPI faults must propagate before malformed-frame handling"
 
@@ -166,7 +176,7 @@ assert_order(
     "fatal_status = status_hi & DWM3000_SYS_STATUS_HI_FATAL_MASK",
     "dwt_write32bitreg(SYS_STATUS_HI_ID, fatal_status)",
     'take_port_error("device-fatal-status-clear")',
-    "invalidate_radio_state()",
+    "invalidate_radio_state_tagged(__func__)",
 )
 assert "return ret < 0 ? ret : -EIO" in check_device_fatal_status, (
     "fatal device command/SPI status must fail the operation after being cleared"
@@ -180,7 +190,7 @@ assert "if (ret < 0)" in initialise[slow_spi:initialise_chip], (
 
 slow_spi = probe.index("ret = dwm3000_port_set_slow_spi()")
 read_id = probe.index("read_id = dwt_readdevid()", slow_spi)
-assert probe.index("invalidate_radio_state()") < slow_spi, (
+assert probe.index("invalidate_radio_state_tagged(__func__)") < slow_spi, (
     "an out-of-band reset/probe must invalidate every prior PHY claim"
 )
 assert "if (ret < 0)" in probe[slow_spi:read_id], (
@@ -192,11 +202,11 @@ assert "active_phy_mode =" not in probe, (
 )
 assert_order(
     probe,
-    "invalidate_radio_state()",
+    "invalidate_radio_state_tagged(__func__)",
     "read_id = dwt_readdevid()",
     "dwm3000_port_dev_id_supported(read_id)",
     "*dev_id = read_id",
-    "mark_radio_awake_unconfigured()",
+    "mark_radio_awake_unconfigured_tagged(__func__)",
 )
 
 assert "configure_radio_from_reset(DWM3000_PHY_RANGE)" in configure_default, (
@@ -243,14 +253,59 @@ first_failure = continuous_activity.index(
     "if (ret < 0 && !rx_status_has_activity(status))", first_wait
 )
 first_failure_end = continuous_activity.index(
-    "return -ETIMEDOUT", first_failure
+    "return finish_abortible_continuous_receive(-ETIMEDOUT)", first_failure
 )
 assert "if (ret != -ETIMEDOUT)" in continuous_activity[
     first_failure:first_failure_end
 ]
-assert "return ret" in continuous_activity[
+assert "return finish_abortible_continuous_receive(ret)" in continuous_activity[
     first_failure:first_failure_end
 ], "continuous RX acquisition must preserve port/status failures"
+
+continuous_abort_enable = continuous_activity.index(
+    "atomic_set(&receive_abort_enabled, 1)"
+)
+assert continuous_abort_enable < first_wait, (
+    "continuous RX must enable existing abort-owner polling before its first wait"
+)
+assert_order(
+    finish_abortible_continuous_receive,
+    "atomic_set(&receive_abort_enabled, 0)",
+    "return ret",
+)
+continuous_abort_scope = continuous_activity[continuous_abort_enable:]
+raw_returns = [
+    statement
+    for statement in re.findall(r"return\s+[^;]+;", continuous_abort_scope)
+    if "finish_abortible_continuous_receive(" not in statement
+]
+assert not raw_returns, (
+    "every continuous RX exit after abort enable must disable polling: "
+    + ", ".join(raw_returns)
+)
+assert continuous_abort_scope.count(
+    "finish_abortible_continuous_receive("
+) >= 10, "continuous RX success, timeout, abort, and rearm failures need cleanup"
+continuous_waits = [
+    match.start()
+    for match in re.finditer(
+        r"ret\s*=\s*wait_status_internal\s*\(", continuous_abort_scope
+    )
+]
+assert len(continuous_waits) == 3, (
+    "continuous RX must cover acquisition, rearm, and completion waits"
+)
+for wait_index, next_wait_index in zip(
+    continuous_waits,
+    continuous_waits[1:] + [len(continuous_abort_scope)],
+):
+    wait_phase = continuous_abort_scope[wait_index:next_wait_index]
+    assert_order(
+        wait_phase,
+        "if (ret == -ECANCELED)",
+        "dwt_forcetrxoff()",
+        "return finish_abortible_continuous_receive(-ECANCELED)",
+    )
 
 sniff_wait = sniff.index("ret = wait_status_internal(")
 sniff_activity = sniff.index(

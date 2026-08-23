@@ -287,7 +287,7 @@ int survey_gateway_transaction_load_pair(
         survey_pair_validate(pair) != PROTO_OK) {
         return -EINVAL;
     }
-    if (context->abandoning ||
+    if (context->pair_loaded || context->abandoning ||
         context->active.state != NODE_TRANSACTION_EMPTY) {
         return -EBUSY;
     }

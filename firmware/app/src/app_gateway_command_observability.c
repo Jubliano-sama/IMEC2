@@ -104,16 +104,18 @@ void gateway_command_survey_terminal_outcome(
     if (report_count == 0u) {
         *status = COMMAND_TIMEOUT;
         *reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS;
-    } else if (failure_count > 0u) {
-        *status = COMMAND_INTERNAL_ERROR;
-        *reason = survey_failure_reason_priority(failure_reason) > 0u ?
-                      failure_reason :
-                      GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED;
     } else if (!pairs_planned) {
         *status = COMMAND_INTERNAL_ERROR;
         *reason = GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
-    } else if (pair_count == 0u || !topology_complete) {
-        *status = COMMAND_INTERNAL_ERROR;
+    } else if (failure_count > 0u || pair_count == 0u ||
+               !topology_complete) {
+        /*
+         * Pair failures and an incomplete discovery graph are degraded survey
+         * data, not a failed collection transaction.  The terminal counters
+         * retain that debt for the host, which alone decides whether the
+         * successful-distance graph is safe to solve.
+         */
+        (void)failure_reason;
         *reason = GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE;
     }
 }
@@ -473,6 +475,16 @@ void gateway_command_observability_mark_sent(
         }
         terminal->valid = false;
         terminal->enqueue_pending = false;
+        return;
+    }
+    for (size_t i = 0u; i < GATEWAY_COMMAND_EVENT_MAX_TRACKED; i++) {
+        struct gateway_command_event_snapshot *snapshot = &state->snapshots[i];
+
+        if (!snapshot->valid || snapshot->event.event_seq != event_seq) {
+            continue;
+        }
+        snapshot->valid = false;
+        snapshot->enqueue_pending = false;
         return;
     }
 }

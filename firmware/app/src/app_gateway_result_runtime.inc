@@ -23,6 +23,7 @@ static bool gateway_membership_publisher_activation_pending;
  * no old lease to release after it retires the durable publication debt. */
 static bool gateway_membership_publication_live_owner;
 static bool gateway_membership_publication_owner_release_pending;
+static bool gateway_membership_ram_only_assignment;
 static struct k_work_delayable gateway_command_result_timeout_work;
 static struct k_work_delayable gateway_command_timeout_side_effect_work;
 static struct k_work_delayable gateway_command_timeout_side_effect_retry_work;
@@ -474,7 +475,7 @@ static void gateway_membership_hold_adoption(
      * assignment until this exact candidate is adopted and host-receipted. */
     gateway_membership_publication_live_owner = true;
     gateway_membership_publication_owner_release_pending = false;
-    atomic_set(&gateway_assignment_publication_pending_state, 0);
+    atomic_clear(&gateway_assignment_publication_pending_state);
     gateway_schedule_persistence_retry(reason);
 }
 
@@ -547,6 +548,7 @@ static void gateway_finalize_membership_clear(void)
     gateway_membership_clear_pending = false;
     gateway_membership_publication_live_owner = false;
     gateway_membership_publication_owner_release_pending = false;
+    gateway_membership_ram_only_assignment = false;
     atomic_set(&gateway_assignment_publication_pending_state, 0);
 }
 
@@ -2379,6 +2381,95 @@ int gateway_set_registered_membership_roster(uint16_t membership_epoch,
     gateway_membership_publication_live_owner = true;
     gateway_membership_publication_owner_release_pending = false;
     atomic_set(&gateway_assignment_publication_pending_state, 1);
+    gateway_membership_ram_only_assignment = false;
+    return 0;
+}
+
+int gateway_set_registered_membership_roster_ram_only(
+    uint16_t membership_epoch,
+    const uint64_t *node_ids,
+    const uint8_t *slots,
+    size_t node_count,
+    uint32_t assignment_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    const struct gateway_membership_publication *publication)
+{
+    struct gateway_membership_roster candidate;
+    struct gateway_membership_snapshot candidate_snapshot;
+    struct app_durable_state_gateway_assignment_identity candidate_identity;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || node_ids == NULL || slots == NULL ||
+        table_commitment == NULL || publication == NULL ||
+        publication->publish_pending == 0u ||
+        gateway_assignment_publication_pending()) {
+        return -EINVAL;
+    }
+    ret = gateway_membership_set_roster_explicit_slots(
+        &candidate, membership_epoch, node_ids, slots, node_count);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = gateway_membership_export_assignment_snapshot(
+        &candidate,
+        assignment_epoch,
+        table_seq,
+        table_commitment,
+        publication,
+        &candidate_snapshot);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = gateway_membership_identity_from_publication(
+        assignment_epoch, publication, &candidate_identity);
+    if (ret < 0) {
+        return ret;
+    }
+
+    gateway_membership_roster_state = candidate;
+    gateway_membership_snapshot_state = candidate_snapshot;
+    gateway_membership_assignment_identity = candidate_identity;
+    memset(&gateway_membership_durable_receipt,
+           0,
+           sizeof(gateway_membership_durable_receipt));
+    gateway_membership_durable_receipt_valid = false;
+    gateway_membership_publication_live_owner = true;
+    gateway_membership_publication_owner_release_pending = false;
+    gateway_membership_ram_only_assignment = true;
+    atomic_set(&gateway_assignment_publication_pending_state, 1);
+    return 0;
+}
+
+int gateway_abort_pending_assignment_publication_ram_only(
+    const struct gateway_command_event *base_event)
+{
+    if (DEVICE_ROLE != ROLE_GATEWAY || base_event == NULL ||
+        base_event->kind !=
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION ||
+        base_event->command_id != CMD_ASSIGN_DISCOVERY_SLOTS) {
+        return -EINVAL;
+    }
+    if (!gateway_membership_ram_only_assignment) {
+        return -ENOTSUP;
+    }
+    if (atomic_get(&gateway_assignment_publication_pending_state) == 0 ||
+        !gateway_membership_publication_live_owner ||
+        !gateway_membership_identity_matches_event(
+            &gateway_membership_assignment_identity, base_event)) {
+        return -ESTALE;
+    }
+
+    /* The table never reached protocol confirmation, so this in-RAM roster
+     * is not an assignment that later operations may reuse.  Durable
+     * publications deliberately take a different recovery path. */
+    gateway_membership_clear(&gateway_membership_roster_state);
+    gateway_membership_clear_durable_evidence();
+    gateway_membership_clear_pending = false;
+    gateway_membership_publication_live_owner = false;
+    gateway_membership_publication_owner_release_pending = false;
+    gateway_membership_ram_only_assignment = false;
+    atomic_clear(&gateway_assignment_publication_pending_state);
     return 0;
 }
 
@@ -2432,7 +2523,8 @@ int gateway_get_registered_membership_assignment_identity(
     if (gateway_assignment_publication_pending()) {
         return -EAGAIN;
     }
-    if (!gateway_membership_durable_receipt_valid ||
+    if ((!gateway_membership_durable_receipt_valid &&
+         !gateway_membership_ram_only_assignment) ||
         gateway_membership_snapshot_state.valid == 0u ||
         gateway_membership_snapshot_state.assignment_proof_valid == 0u) {
         return -ENOENT;
@@ -2469,7 +2561,8 @@ int gateway_registered_membership_proves_assignment_ack(
      * acknowledging it only releases sender/relay transport custody and must
      * never mutate the newer assignment.  Same-epoch mismatches, future
      * epochs, and RFC-1982 half-range ambiguity still fail closed. */
-    if (!gateway_membership_durable_receipt_valid ||
+    if ((!gateway_membership_durable_receipt_valid &&
+         !gateway_membership_ram_only_assignment) ||
         gateway_membership_snapshot_state.assignment_proof_valid == 0u ||
         assignment_epoch == 0u || table_seq == 0u ||
         table_commitment == NULL || node_id == 0u) {
@@ -2531,6 +2624,20 @@ int gateway_complete_assignment_publication(
         return -ESTALE;
     }
 
+    if (gateway_membership_ram_only_assignment) {
+        ret = gateway_membership_snapshot_retire_publication(
+            &gateway_membership_snapshot_state, &retired_snapshot);
+        if (ret != PROTO_OK) {
+            return -EPROTO;
+        }
+        gateway_membership_snapshot_state = retired_snapshot;
+        gateway_membership_publication_owner_release_pending =
+            gateway_membership_publication_live_owner;
+        gateway_membership_publication_live_owner = false;
+        atomic_set(&gateway_assignment_publication_pending_state, 0);
+        return 0;
+    }
+
     /* Do not pre-validate the old receipt here. A prior durable write may
      * have committed before its readback failed; retire() deliberately
      * recognizes that exact already-retired terminal and returns its new
@@ -2573,6 +2680,10 @@ void gateway_clear_registered_membership_roster(void)
     if (!gateway_membership_roster_state.valid) {
         return;
     }
+    if (gateway_membership_ram_only_assignment) {
+        gateway_finalize_membership_clear();
+        return;
+    }
 
     ret = app_durable_state_delete_gateway_assignment(
         DEVICE_ID,
@@ -2585,6 +2696,81 @@ void gateway_clear_registered_membership_roster(void)
         return;
     }
     gateway_finalize_membership_clear();
+}
+
+int gateway_clear_registered_membership_roster_ram_only(void)
+{
+    struct gateway_command_event publication_event = {
+        .schema_version = GATEWAY_COMMAND_EVENT_SCHEMA_VERSION,
+        .record_len = GATEWAY_COMMAND_EVENT_WIRE_LEN,
+        .kind = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+        .stage = GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
+        .status = COMMAND_OK,
+        .reason = GATEWAY_COMMAND_EVENT_REASON_NONE,
+        .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
+        .slot = GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE,
+        .flags = GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
+        /* Internal retirement proof only; this event is never published. */
+        .event_seq = 1u,
+    };
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return -ENOTSUP;
+    }
+    if (gateway_membership_restore_pending ||
+        gateway_membership_clear_pending ||
+        gateway_membership_adoption_pending) {
+        return -EBUSY;
+    }
+    /* A same-boot publisher still owns the assignment operation lease. Its
+     * host receipt normally releases that owner promptly; don't call back
+     * into the assignment mutex from this already-locked admission path.
+     * Reset replay has no live lease and is the stale debt this API discards. */
+    if (gateway_membership_publication_live_owner) {
+        return -EBUSY;
+    }
+
+    if (atomic_get(&gateway_assignment_publication_pending_state) != 0) {
+        publication_event.correlation_id =
+            gateway_membership_assignment_identity.correlation_id;
+        publication_event.gateway_sequence =
+            gateway_membership_assignment_identity.gateway_sequence;
+        publication_event.host_session_id =
+            gateway_membership_assignment_identity.host_session_id;
+        publication_event.gateway_epoch =
+            gateway_membership_assignment_identity.gateway_epoch;
+        publication_event.host_seq =
+            gateway_membership_assignment_identity.host_seq;
+
+        /* RAM-only means the caller explicitly chose a clean slate. Retire
+         * the exact durable replay debt first, then abandon only its matching
+         * host publisher. Already queued BLE records are harmless: without
+         * this old publisher identity they retire as stale observability and
+         * cannot advance the replacement assignment. */
+        ret = gateway_complete_assignment_publication(
+            &publication_event, NULL);
+        if (ret < 0) {
+            return ret;
+        }
+        (void)app_gateway_assignment_publisher_discard_batch(
+            &publication_event);
+    }
+
+    if (gateway_membership_durable_receipt_valid) {
+        ret = app_durable_state_delete_gateway_assignment(
+            DEVICE_ID,
+            &gateway_membership_assignment_identity,
+            &gateway_membership_durable_receipt);
+        if (ret < 0) {
+            gateway_membership_clear_pending = true;
+            gateway_schedule_persistence_retry(
+                "ram-only-assignment-clear-delete");
+            return ret;
+        }
+    }
+    gateway_finalize_membership_clear();
+    return 0;
 }
 
 int gateway_replay_pending_assignment_publication(void)
@@ -3641,6 +3827,27 @@ int gateway_commit_host_command_result_reserved(
     return -ENOTSUP;
 }
 
+int gateway_set_registered_membership_roster_ram_only(
+    uint16_t membership_epoch,
+    const uint64_t *node_ids,
+    const uint8_t *slots,
+    size_t node_count,
+    uint32_t assignment_epoch,
+    uint32_t table_seq,
+    const struct discovery_assignment_table_commitment *table_commitment,
+    const struct gateway_membership_publication *publication)
+{
+    ARG_UNUSED(membership_epoch);
+    ARG_UNUSED(node_ids);
+    ARG_UNUSED(slots);
+    ARG_UNUSED(node_count);
+    ARG_UNUSED(assignment_epoch);
+    ARG_UNUSED(table_seq);
+    ARG_UNUSED(table_commitment);
+    ARG_UNUSED(publication);
+    return -ENOTSUP;
+}
+
 void gateway_emit_host_command_result(const struct proto_packet *command,
                                       enum command_id command_id,
                                       enum command_status status,
@@ -3880,6 +4087,11 @@ int gateway_complete_assignment_publication(
 
 void gateway_clear_registered_membership_roster(void)
 {
+}
+
+int gateway_clear_registered_membership_roster_ram_only(void)
+{
+    return -ENOTSUP;
 }
 
 int gateway_note_command_result(const struct proto_packet *packet,

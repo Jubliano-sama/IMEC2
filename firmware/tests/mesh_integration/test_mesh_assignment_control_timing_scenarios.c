@@ -17,6 +17,9 @@
 
 #define GATEWAY_ID UINT64_C(0xA501000000000001)
 #define ANCHOR_ID UINT64_C(0xA502000000000001)
+#define RELAY_A_ID UINT64_C(0xA502000000000011)
+#define RELAY_B_ID UINT64_C(0xA502000000000022)
+#define DOWNSTREAM_ID UINT64_C(0xA502000000000033)
 #define ASSIGNMENT_EPOCH UINT32_C(0xA5510001)
 #define COMMAND_SESSION UINT32_C(0xA5510002)
 #define COMMAND_SEQUENCE UINT16_C(1)
@@ -535,6 +538,101 @@ static int test_direct_route_retry_reenters_control_lane_inside_wake_train(void)
     return 0;
 }
 
+static int test_two_simultaneous_relays_diversify_three_copy_schedule(void)
+{
+    static struct mesh_sim_world world;
+    struct mesh_outbound command;
+    uint8_t frame[PACKET_EXT_MAX_LEN];
+    size_t frame_len = 0u;
+    uint64_t starts_a[3] = {FIRST_COMMAND_TX_US};
+    uint64_t starts_b[3] = {FIRST_COMMAND_TX_US};
+    uint64_t frame_duration_us;
+    uint64_t rx_end_us;
+    uint8_t relay_a;
+    uint8_t relay_b;
+    uint8_t downstream;
+    size_t decoded = 0u;
+    int ret;
+
+    mesh_sim_init(&world, UINT32_C(0xA55171D5));
+    ret = mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            RELAY_A_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                            &relay_a);
+    REQUIRE(ret == MESH_SIM_OK, "add relay A ret=%d", ret);
+    ret = mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            RELAY_B_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                            &relay_b);
+    REQUIRE(ret == MESH_SIM_OK, "add relay B ret=%d", ret);
+    ret = mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                            DOWNSTREAM_ID, GATEWAY_ID, ASSIGNMENT_EPOCH,
+                            &downstream);
+    REQUIRE(ret == MESH_SIM_OK, "add downstream ret=%d", ret);
+    REQUIRE(mesh_sim_set_link(&world, relay_a, downstream, 100u, 10u) ==
+                MESH_SIM_OK,
+            "set relay A link");
+    REQUIRE(mesh_sim_set_link(&world, relay_b, downstream, 100u, 10u) ==
+                MESH_SIM_OK,
+            "set relay B link");
+    REQUIRE(build_assignment_command(&command) == PROTO_OK,
+            "build relay command");
+    REQUIRE(encode_application_packet(&command.packet,
+                                      command.payload,
+                                      command.payload_len,
+                                      frame,
+                                      sizeof(frame),
+                                      &frame_len) == PROTO_OK,
+            "encode relay command");
+    frame_duration_us = mesh_sim_frame_duration_us(
+        MESH_SIM_PHY_CHANNEL5_MESH_CONTROL, frame_len);
+    for (uint8_t copy = 1u; copy < 3u; copy++) {
+        starts_a[copy] = starts_a[copy - 1u] + frame_duration_us +
+            ((uint64_t)FLOOD_POST_ROOT_GUARD_MS +
+             mesh_flood_copy_diversification_ms(
+                 RELAY_A_ID, &command.packet, copy)) * 1000u;
+        starts_b[copy] = starts_b[copy - 1u] + frame_duration_us +
+            ((uint64_t)FLOOD_POST_ROOT_GUARD_MS +
+             mesh_flood_copy_diversification_ms(
+                 RELAY_B_ID, &command.packet, copy)) * 1000u;
+    }
+    REQUIRE(starts_a[1] != starts_b[1] || starts_a[2] != starts_b[2],
+            "node-specific repeat schedule remained collision-locked");
+    rx_end_us = (starts_a[2] > starts_b[2] ? starts_a[2] : starts_b[2]) +
+        frame_duration_us + RX_GUARD_US;
+    REQUIRE(mesh_sim_schedule_rx(
+                &world, downstream,
+                FIRST_COMMAND_TX_US - RX_GUARD_US,
+                rx_end_us,
+                UWB_CHANNEL_WAKE_CONTACT,
+                MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                NULL) == MESH_SIM_OK,
+            "arm downstream continuous RX");
+    for (uint8_t copy = 0u; copy < 3u; copy++) {
+        REQUIRE(mesh_sim_schedule_raw_tx(
+                    &world, relay_a, starts_a[copy],
+                    UWB_CHANNEL_WAKE_CONTACT,
+                    MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                    frame, frame_len, false, NULL) == MESH_SIM_OK,
+                "schedule relay A copy=%u", copy);
+        REQUIRE(mesh_sim_schedule_raw_tx(
+                    &world, relay_b, starts_b[copy],
+                    UWB_CHANNEL_WAKE_CONTACT,
+                    MESH_SIM_PHY_CHANNEL5_MESH_CONTROL,
+                    frame, frame_len, false, NULL) == MESH_SIM_OK,
+                "schedule relay B copy=%u", copy);
+    }
+    REQUIRE(mesh_sim_run(&world) == MESH_SIM_OK,
+            "run diversified relay scenario");
+    for (size_t i = 0u; i < world.reception_count; i++) {
+        if (world.receptions[i].receiver_id == DOWNSTREAM_ID &&
+            world.receptions[i].outcome == MESH_SIM_RX_DECODED) {
+            decoded++;
+        }
+    }
+    REQUIRE(decoded >= 1u,
+            "all three copies stayed collision-locked decoded=%zu", decoded);
+    return 0;
+}
+
 int main(void)
 {
     int ret = test_gateway_command_yields_for_assignment_claim();
@@ -543,6 +641,10 @@ int main(void)
         return ret;
     }
     ret = test_direct_route_retry_reenters_control_lane_inside_wake_train();
+    if (ret != 0) {
+        return ret;
+    }
+    ret = test_two_simultaneous_relays_diversify_three_copy_schedule();
     if (ret != 0) {
         return ret;
     }

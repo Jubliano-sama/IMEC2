@@ -453,6 +453,8 @@ static void test_duplicate_and_conflicting_history_fail_closed(void)
                SURVEY_GATEWAY_TRANSACTION_RESPONDER_MASK,
                202u) == 0);
     assert(context.active.state == NODE_TRANSACTION_EMPTY);
+    survey_gateway_transaction_pair_complete(&context, true, 202u);
+    assert(!context.pair_loaded);
     pair.survey_id = 78u;
     assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
     {
@@ -941,6 +943,9 @@ static void test_cleanup_deadline_is_frozen_and_retirement_admits_next_pair(void
     assert(survey_gateway_transaction_cleanup_deadline(&context) == 0u);
     assert(!survey_gateway_transaction_cleanup_pending(&context));
 
+    survey_gateway_transaction_pair_complete(
+        &context, true, cleanup_deadline_ms);
+    assert(!context.pair_loaded);
     pair.survey_id++;
     assert(survey_gateway_transaction_load_pair(&context, &pair) == 0);
 }
@@ -1330,6 +1335,27 @@ static void test_same_owner_due_and_receive_interval_cross_uptime_wrap(void)
         now_ms - 1u, now_ms, deadline_ms));
 }
 
+static void test_loaded_pair_cannot_be_replaced_before_result_custody_retires(void)
+{
+    struct survey_gateway_transaction context;
+    struct survey_pair first = test_pair();
+    struct survey_pair replacement = first;
+
+    replacement.initiator_id++;
+    replacement.responder_id++;
+    survey_gateway_transaction_init(&context);
+    assert(survey_gateway_transaction_load_pair(&context, &first) == 0);
+    assert(context.pair_loaded);
+    assert(survey_gateway_transaction_load_pair(&context, &replacement) ==
+           -EBUSY);
+    assert(context.pair.initiator_id == first.initiator_id);
+    assert(context.pair.responder_id == first.responder_id);
+
+    survey_gateway_transaction_pair_complete(&context, true, 100u);
+    assert(!context.pair_loaded);
+    assert(survey_gateway_transaction_load_pair(&context, &replacement) == 0);
+}
+
 int main(void)
 {
     test_four_phase_success_tracks_prepared_peers();
@@ -1359,6 +1385,7 @@ int main(void)
     test_observation_origin_keeps_a_wrapped_zero_start();
     test_due_registry_keeps_order_across_uptime_wrap();
     test_same_owner_due_and_receive_interval_cross_uptime_wrap();
+    test_loaded_pair_cannot_be_replaced_before_result_custody_retires();
     puts("survey gateway transaction tests passed");
     return 0;
 }
