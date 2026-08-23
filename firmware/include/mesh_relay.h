@@ -256,6 +256,10 @@ enum mesh_relay_action {
     MESH_RELAY_ACTION_DELIVER_LOCAL = 1u << 1,
     MESH_RELAY_ACTION_FORWARD = 1u << 2,
     MESH_RELAY_ACTION_SEND_GATEWAY_ACK = 1u << 3,
+    /* An exact next-hop ACK transferred an assignment response into the
+     * parent's RAM custody. The source may retire its Channel-9 exchange;
+     * TABLE END or ABORT still decides the provisional assignment. */
+    MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED = 1u << 4,
     MESH_RELAY_ACTION_DROP = 1u << 6,
     /* The original gateway ACK was authenticated. The immutable source packet
      * remains the owner while its compact ACK_CONFIRM is generated transiently. */
@@ -1146,6 +1150,10 @@ int mesh_relay_commit_gateway_ack_confirm_terminal(
     const uint8_t *confirm_payload,
     size_t confirm_payload_len,
     uint32_t now_ms);
+int mesh_relay_commit_next_hop_custody_terminal(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
 /*
  * Materialize the current source-local ACK_CONFIRM wire image without
  * replacing its immutable original pending packet. This is also the exact

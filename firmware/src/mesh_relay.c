@@ -3631,6 +3631,52 @@ static int gateway_ack_history_store(
     return PROTO_OK;
 }
 
+static int gateway_ack_history_confirm_packet(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    struct mesh_gateway_ack_store *store;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    int origin_index;
+
+    if (relay == NULL || packet == NULL ||
+        (payload == NULL && payload_len != 0u) ||
+        packet->payload_len != payload_len ||
+        relay->role != MESH_RELAY_ROLE_GATEWAY ||
+        relay->gateway_ack_store == NULL ||
+        !relay_semantic_packet_digest(packet,
+                                      payload,
+                                      payload_len,
+                                      semantic_digest)) {
+        return PROTO_ERR_ARG;
+    }
+    store = relay->gateway_ack_store;
+    origin_index = gateway_ack_history_find_origin_index(relay,
+                                                          packet->src_id);
+    if (origin_index < 0) {
+        return PROTO_ERR_NOT_FOUND;
+    }
+    for (uint16_t i = 0u; i < MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY; i++) {
+        const struct mesh_gateway_ack_identity_entry *identity =
+            &store->identities[i];
+
+        if (gateway_ack_identity_matches_packet(identity,
+                                                (uint8_t)origin_index,
+                                                packet) &&
+            (identity->owner_state &
+             GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) != 0u &&
+            semantic_digest_equal(identity->semantic_digest,
+                                  semantic_digest,
+                                  sizeof(semantic_digest))) {
+            gateway_ack_identity_set_confirmed_bit(store, i);
+            return PROTO_OK;
+        }
+    }
+    return PROTO_ERR_NOT_FOUND;
+}
+
 static int gateway_ack_history_accept_generic(
     struct mesh_relay *relay,
     const struct proto_packet *packet,

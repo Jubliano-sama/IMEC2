@@ -594,13 +594,23 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
                                             &outbound));
     if (result.sent_count == 0u && mesh_send_failure_retryable(ret)) {
         uint32_t retry_ms;
+        bool local_deferral = ret == -EAGAIN || ret == -EBUSY;
 
         k_mutex_lock(&mesh_c5_flood_deferred_lock, K_FOREVER);
         entry = route_adv_lane ? &mesh_route_adv_deferred :
                                  &mesh_c5_flood_deferred;
         current_generation = entry->valid &&
                              entry->generation == generation;
-        if (current_generation &&
+        if (current_generation && local_deferral &&
+            k_uptime_get_32() - entry->queued_at_ms <
+                MESH_C5_LOCAL_DEFER_MAX_AGE_MS) {
+            (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
+                                             MESH_C5_LOCAL_DEFER_RETRY_MS,
+                                             "c5-flood-local-defer");
+            k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+            return;
+        }
+        if (current_generation && !local_deferral &&
             entry->retry_count < MESH_C5_DEFERRED_MAX_RETRIES) {
             retry_ms = mesh_c5_flood_deferred_retry_ms(
                 &outbound, &entry->rf_retry);
@@ -3860,6 +3870,7 @@ after_gateway_ack:
                             forward_ack->next_hop_id,
                             "forwarded-gateway-ack-event-repair",
                             &authorization,
+                            false,
                             false);
                     if (promote_ret != 0 && promote_ret != -EAGAIN &&
                         promote_ret != -EBUSY) {
@@ -4637,6 +4648,79 @@ after_gateway_ack:
         }
     }
 #if DEVICE_ROLE == ROLE_ANCHOR || DEVICE_ROLE == ROLE_CLICKER
+    if (result->actions &
+        MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED) {
+        struct discovery_assignment_result assignment = {0};
+        const uint64_t accepted_at_ms =
+            rx == NULL ? (uint64_t)k_uptime_get() : rx->first_received_at_ms;
+        /* Normal assignment responses are retained in relay pending state;
+         * confirmed_payload is populated only for the separate gateway-ACK-
+         * confirm wire image.  Classify this exact response before terminal
+         * commit clears it. */
+        const bool table_response_custody =
+            confirmed_packet != NULL &&
+            confirmed_packet->msg_type == MSG_COMMAND_RESULT &&
+            discovery_assignment_parse_result_tlvs(
+                mesh_runtime.pending.payload,
+                mesh_runtime.pending.payload_len,
+                &assignment) == PROTO_OK &&
+            assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK;
+        const uint64_t custody_parent =
+            mesh_runtime.outbox_record.custody_parent;
+        int producer_ret = -ENOENT;
+        int commit_ret;
+        int comm_ret;
+
+        if (confirmed_packet != NULL && confirmed_digest != NULL &&
+            confirmed_packet->src_id == DEVICE_ID &&
+            mesh_report_callbacks != NULL &&
+            mesh_report_callbacks->anchor_delivery_gateway_confirmed != NULL) {
+            /* This callback records only the exact response as transport-
+             * terminal. END remains responsible for promoting its pending
+             * slot, while ABORT can still clear the provisional snapshot. */
+            producer_ret =
+                mesh_report_callbacks->anchor_delivery_gateway_confirmed(
+                    confirmed_packet, confirmed_digest);
+        }
+        if (producer_ret != 0) {
+            LOG_ERR("assignment next-hop custody producer cleanup failed: ret=%d",
+                    producer_ret);
+            app_watchdog_stop_feeding();
+            mesh_schedule_tx_timeout();
+            goto gateway_confirmation_done;
+        }
+        commit_ret = mesh_relay_commit_next_hop_custody_terminal(
+            &mesh_runtime,
+            confirmed_packet,
+            confirmed_digest);
+        if (commit_ret != PROTO_OK) {
+            LOG_ERR("assignment next-hop custody core commit failed: ret=%d",
+                    commit_ret);
+            app_watchdog_stop_feeding();
+            mesh_schedule_tx_timeout();
+            goto gateway_confirmation_done;
+        }
+        comm_ret = app_node_comm_note_gateway_confirmed_digest_at(
+            confirmed_packet, confirmed_digest, accepted_at_ms);
+        if (!mesh_terminal_cleanup_idempotent_status(comm_ret)) {
+            LOG_ERR("assignment next-hop custody node communication cleanup failed: ret=%d",
+                    comm_ret);
+            app_watchdog_stop_feeding();
+        }
+        status_debug_printf(
+            "DBG_ENUM_NEXT_HOP_CUSTODY seq=%u parent=0x%llx\n",
+            confirmed_packet == NULL ? 0u : confirmed_packet->seq,
+            (unsigned long long)(confirmed_packet == NULL ? 0u :
+                                 custody_parent));
+        if (table_response_custody) {
+            if (mesh_id_is_unicast(custody_parent) &&
+                custody_parent != GATEWAY_ID) {
+                mesh_retire_assignment_channel9_peer(
+                    custody_parent, "assignment-table-custody");
+            }
+        }
+        mesh_schedule_tx_timeout();
+    }
     if (result->actions &
         MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING) {
         int accepted_ret = -ENOENT;
@@ -5567,7 +5651,9 @@ gateway_semantic_result_ready:
 #endif
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
             pending->packet.msg_type == MSG_GATEWAY_ACK) {
-            if ((result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) != 0u) {
+            if ((result->actions &
+                 (MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED |
+                  MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED)) != 0u) {
                 status_debug_note("DBG_LEGACY_ACK_CONFIRMED\n");
             } else if (mesh_relay_tx_active(&mesh_runtime)) {
                 status_debug_note("DBG_LEGACY_ACK_NO_MATCH\n");

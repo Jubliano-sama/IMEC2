@@ -1681,6 +1681,93 @@ static void test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff(
     assert(app_mesh_ch9_ack_table_pending_for_peer(&table, RELAY_ID));
 }
 
+static void test_assignment_hop_ack_cleanup_classification_survives_send_failure(void)
+{
+    struct app_mesh_ch9_ack_table table = {0};
+    struct mesh_outbound assignment_ack =
+        ack_outbound(RELAY_ID, MSG_MESH_HOP_ACK);
+    struct mesh_outbound ordinary_ack =
+        ack_outbound(TRANSMITTER_ID, MSG_MESH_HOP_ACK);
+    struct mesh_outbound forwarded_ack =
+        ack_outbound(SECOND_RELAY_ID, MSG_GATEWAY_ACK);
+    struct app_mesh_ch9_ack_batch_entry assignment_entry =
+        ack_batch_entry(UINT32_C(0x3300), UINT16_C(0x44), UINT32_C(55));
+    struct app_mesh_ch9_ack_batch_entry ordinary_entry =
+        ack_batch_entry(UINT32_C(0x3301), UINT16_C(0x45), UINT32_C(56));
+    const struct app_mesh_ch9_ack_batch *batch;
+    uint32_t retry_delay_ms = 0u;
+
+    assignment_entry.assignment_turn_action =
+        APP_MESH_CH9_ASSIGNMENT_TURN_RETIRE;
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &assignment_ack,
+                                        &assignment_entry,
+                                        NULL) == PROTO_OK);
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &ordinary_ack,
+                                        &ordinary_entry,
+                                        NULL) == PROTO_OK);
+
+    batch = app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID);
+    assert(batch != NULL);
+    assert(app_mesh_ch9_ack_batch_consumes_next_peer_turn(batch));
+    assert(app_mesh_ch9_ack_batch_retires_peer_timing(batch));
+    batch = app_mesh_ch9_ack_table_get_peer(&table, TRANSMITTER_ID);
+    assert(batch != NULL);
+    assert(!app_mesh_ch9_ack_batch_consumes_next_peer_turn(batch));
+    assert(!app_mesh_ch9_ack_batch_retires_peer_timing(batch));
+
+    /* A failed physical send keeps both ACK custody and the deferred one-turn
+     * marker. The later successful send remains the only boundary allowed to
+     * consume the next reciprocal turn; the reusable timing itself remains. */
+    assert(app_mesh_ch9_ack_table_note_send_failure(
+               &table,
+               RELAY_ID,
+               UINT32_C(4000),
+               UINT32_C(17),
+               &retry_delay_ms) == PROTO_OK);
+    assert(retry_delay_ms > 0u);
+    batch = app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID);
+    assert(batch != NULL && batch->retry_deferred);
+    assert(app_mesh_ch9_ack_batch_consumes_next_peer_turn(batch));
+    assert(app_mesh_ch9_ack_batch_retires_peer_timing(batch));
+
+    forwarded_ack.packet.dst_id = TRANSMITTER_ID;
+    forwarded_ack.payload[0] = UINT8_C(0xa5);
+    forwarded_ack.payload_len = 1u;
+    forwarded_ack.packet.payload_len = 1u;
+    assert(app_mesh_ch9_ack_table_clear_peer(&table, TRANSMITTER_ID));
+    assert(app_mesh_ch9_ack_table_queue_forwarded(&table,
+                                                  &forwarded_ack,
+                                                  NULL) == PROTO_OK);
+    batch = app_mesh_ch9_ack_table_get_peer(&table, SECOND_RELAY_ID);
+    assert(batch != NULL && batch->preserve_payload);
+    assert(!app_mesh_ch9_ack_batch_consumes_next_peer_turn(batch));
+    assert(!app_mesh_ch9_ack_batch_retires_peer_timing(batch));
+
+    assert(app_mesh_ch9_ack_table_clear_peer(&table, RELAY_ID));
+    assert(!app_mesh_ch9_ack_batch_consumes_next_peer_turn(
+        app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID)));
+    assert(!app_mesh_ch9_ack_batch_retires_peer_timing(
+        app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID)));
+
+    /* CLAIM consumes the now-empty reciprocal turn but deliberately retains
+     * the assignment cadence for the later TABLE response. */
+    assignment_entry.session_id++;
+    assignment_entry.seq++;
+    assignment_entry.packet_id++;
+    assignment_entry.assignment_turn_action =
+        APP_MESH_CH9_ASSIGNMENT_TURN_CONSUME;
+    assert(app_mesh_ch9_ack_table_queue(&table,
+                                        &assignment_ack,
+                                        &assignment_entry,
+                                        NULL) == PROTO_OK);
+    batch = app_mesh_ch9_ack_table_get_peer(&table, RELAY_ID);
+    assert(batch != NULL);
+    assert(app_mesh_ch9_ack_batch_consumes_next_peer_turn(batch));
+    assert(!app_mesh_ch9_ack_batch_retires_peer_timing(batch));
+}
+
 static void test_duplicate_sender_retry_does_not_reset_ack_retry_round(void)
 {
     struct app_mesh_ch9_ack_table table = {0};
@@ -1727,6 +1814,7 @@ int main(void)
     test_forwarded_gateway_ack_owner_class_tracks_real_custody();
     test_forwarded_gateway_ack_table_full_preserves_existing_peers();
     test_ack_send_failure_keeps_exact_peer_custody_until_random_backoff();
+    test_assignment_hop_ack_cleanup_classification_survives_send_failure();
     test_duplicate_sender_retry_does_not_reset_ack_retry_round();
     test_ack_complete_keeps_idle_route_test_timing_open();
     test_ack_complete_closes_idle_cadence_parent();

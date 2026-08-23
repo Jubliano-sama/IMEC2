@@ -78,11 +78,18 @@ enum app_mesh_ch9_ack_owner {
     APP_MESH_CH9_ACK_OWNER_LATE_TERMINAL_FORWARD,
 };
 
+enum app_mesh_ch9_assignment_turn_action {
+    APP_MESH_CH9_ASSIGNMENT_TURN_NONE = 0,
+    APP_MESH_CH9_ASSIGNMENT_TURN_CONSUME,
+    APP_MESH_CH9_ASSIGNMENT_TURN_RETIRE,
+};
+
 struct app_mesh_ch9_ack_batch_entry {
     uint32_t session_id;
     uint32_t packet_id;
     uint16_t seq;
     bool has_packet_id;
+    uint8_t assignment_turn_action;
 };
 
 struct app_mesh_ch9_ack_batch {
@@ -126,6 +133,10 @@ bool app_mesh_ch9_ack_table_pending_for_peer(
 const struct app_mesh_ch9_ack_batch *app_mesh_ch9_ack_table_get_peer(
     const struct app_mesh_ch9_ack_table *table,
     uint64_t peer_id);
+bool app_mesh_ch9_ack_batch_consumes_next_peer_turn(
+    const struct app_mesh_ch9_ack_batch *batch);
+bool app_mesh_ch9_ack_batch_retires_peer_timing(
+    const struct app_mesh_ch9_ack_batch *batch);
 
 int app_mesh_ch9_ack_table_queue(
     struct app_mesh_ch9_ack_table *table,

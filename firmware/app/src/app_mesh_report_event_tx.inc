@@ -294,6 +294,24 @@ static void mesh_event_owner_abandon_peer(uint64_t peer_id)
     mesh_event_owner_registry_abandon(&mesh_event_owner_registry, peer_id);
 }
 
+static void mesh_retire_assignment_channel9_peer(uint64_t peer_id,
+                                                 const char *reason)
+{
+    if (!mesh_id_is_unicast(peer_id) || peer_id == DEVICE_ID ||
+        peer_id == GATEWAY_ID) {
+        return;
+    }
+    mesh_event_accept_rx_clear_peer(peer_id);
+    mesh_event_accept_completed_clear_peer(peer_id);
+    mesh_relay_clear_channel9_timing(&mesh_runtime, peer_id);
+    mesh_event_owner_abandon_peer(peer_id);
+    mesh_restore_anchor_low_duty_if_no_ch9(reason);
+    status_debug_printf(
+        "DBG_ENUM_CH9_RETIRED peer=0x%llx reason=%s\n",
+        (unsigned long long)peer_id,
+        reason == NULL ? "assignment-table-custody" : reason);
+}
+
 static bool mesh_event_session_retained(uint32_t session_id)
 {
     for (size_t i = 0u; i < ARRAY_SIZE(mesh_event_owners); i++) {
@@ -519,7 +537,8 @@ static int mesh_send_event_control_record(
     bool *rf_started,
     struct mesh_event_timing *transmitted_timing,
     const struct app_mesh_c5_tx_authorization_token *authorization,
-    enum fw_c5_tx_intent c5_tx_intent)
+    enum fw_c5_tx_intent c5_tx_intent,
+    bool assignment_parent_protocol_awake)
 {
     struct app_mesh_tx_observation observation = {0};
     struct mesh_outbound *outbound = &mesh_event_control_retry_scratch;
@@ -550,7 +569,8 @@ static int mesh_send_event_control_record(
         0u,
         &observation,
         authorization,
-        c5_tx_intent);
+        c5_tx_intent,
+        assignment_parent_protocol_awake);
     if (rf_started != NULL) {
         *rf_started = observation.rf_started;
     }
@@ -1160,17 +1180,15 @@ static bool mesh_outbound_is_survey_uplink(const struct mesh_outbound *out)
 static bool mesh_outbound_is_assignment_response(
     const struct mesh_outbound *out)
 {
-    const uint8_t *command_raw = NULL;
-    uint8_t command_len = 0u;
+    struct discovery_assignment_result assignment = {0};
 
     return out != NULL && out->packet.msg_type == MSG_COMMAND_RESULT &&
-           tlv_find_unique(out->payload,
-                           out->payload_len,
-                           TLV_COMMAND_ID,
-                           &command_raw,
-                           &command_len) == PROTO_OK &&
-           command_len == sizeof(uint16_t) &&
-           proto_get_u16_le(command_raw) == CMD_ASSIGN_DISCOVERY_SLOTS;
+           discovery_assignment_parse_result_tlvs(
+               out->payload,
+               out->payload_len,
+               &assignment) == PROTO_OK &&
+           (assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
+            assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK);
 }
 
 static bool mesh_outbound_is_survey_control_response(
@@ -1362,7 +1380,8 @@ static int mesh_propose_event_after_channel5_contact_authorized(
     uint64_t peer_id,
     const char *reason,
     const struct app_mesh_c5_tx_authorization_token *authorization,
-    bool topology_operation)
+    bool topology_operation,
+    bool assignment_response)
 {
     bool require_accept = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                           DEVICE_ROLE != ROLE_GATEWAY;
@@ -1543,7 +1562,8 @@ static int mesh_propose_event_after_channel5_contact_authorized(
         &transmitted_timing,
         mesh_forwarded_ack_event_repair_authorization.valid ?
             &mesh_forwarded_ack_event_repair_authorization : NULL,
-        FW_C5_TX_INTENT_BACKGROUND);
+        FW_C5_TX_INTENT_BACKGROUND,
+        assignment_response);
     if (ret < 0) {
         LOG_WRN("mesh channel-9 event proposal failed: peer=0x%016llx ret=%d reason=%s",
                 (unsigned long long)peer_id,
@@ -1651,6 +1671,7 @@ static int mesh_propose_event_after_channel5_contact(uint64_t peer_id,
     return mesh_propose_event_after_channel5_contact_authorized(peer_id,
                                                                 reason,
                                                                 NULL,
+                                                                false,
                                                                 false);
 }
 
@@ -1663,7 +1684,8 @@ static int mesh_propose_event_for_outbound(
         peer_id,
         reason,
         NULL,
-        mesh_outbound_is_topology_operation_uplink(out));
+        mesh_outbound_is_topology_operation_uplink(out),
+        mesh_outbound_is_assignment_response(out));
 }
 
 static int mesh_retry_deferred_forwarded_ack_event_repair(void)
@@ -1695,6 +1717,7 @@ static int mesh_retry_deferred_forwarded_ack_event_repair(void)
         authorization->peer_id,
         "deferred-forwarded-ack-event-repair",
         authorization,
+        false,
         false);
     if (ret == -EBUSY) {
         (void)mesh_event_negotiation_schedule_next();
@@ -2015,7 +2038,8 @@ static int mesh_event_accept_attempt(const char *reason)
         &transmitted_timing,
         mesh_event_accept_retry.c5_repair_authorization.valid ?
             &mesh_event_accept_retry.c5_repair_authorization : NULL,
-        FW_C5_TX_INTENT_CAUSAL_RESPONSE);
+        FW_C5_TX_INTENT_CAUSAL_RESPONSE,
+        false);
     atomic_set(&mesh_rx_response_active_state, 0);
     if (ret == 0) {
         return mesh_event_accept_finish_send(&transmitted_timing, reason);
@@ -3812,6 +3836,8 @@ static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *t
                                                    const char *reason,
                                                    int tx_ret)
 {
+    int defer_ret;
+
     if (tx == NULL || tx->packet.dst_id != GATEWAY_ID) {
         return tx_ret;
     }
@@ -3828,6 +3854,43 @@ static int mesh_handle_direct_gateway_retry_policy(const struct mesh_outbound *t
                 tx->packet.seq,
                 reason == NULL ? "direct-gateway" : reason);
         return tx_ret;
+    }
+    if (mesh_outbound_is_assignment_response(tx)) {
+        const struct app_mesh_rf_retry_key retry_key =
+            mesh_rf_retry_packet_key(
+                &tx->packet,
+                APP_MESH_RF_RETRY_OPERATION_RETRANSMIT);
+        uint32_t retry_delay_ms = mesh_rf_retry_next_delay_ms(
+            &mesh_retransmit_rf_retry,
+            &retry_key,
+            APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+            "assignment-immediate-ack-miss");
+
+        /*
+         * Assignment collection already gives the sender one synchronous
+         * 250 ms ACK receive turn.  Keeping the exact response in the generic
+         * two-second gateway-ACK state after that proven miss adds no useful
+         * listening and lets long Channel-5 work postpone the first retry by
+         * several seconds.  Retain the same core custody, but move it directly
+         * to the normal jittered retry state so the gateway's next-depth
+         * collection band contains one complete retry opportunity.
+         */
+        defer_ret = mesh_relay_note_retransmit_deferred(
+            &mesh_runtime,
+            tx,
+            k_uptime_get_32() + retry_delay_ms);
+        if (defer_ret == PROTO_OK) {
+            status_debug_printf(
+                "DBG_ENUM_DIRECT_GW_FAST_RETRY seq=%u delay=%u reason=%s\n",
+                tx->packet.seq,
+                retry_delay_ms,
+                reason == NULL ? "direct-gateway" : reason);
+            (void)mesh_schedule_tx_timeout();
+            return 0;
+        }
+        LOG_ERR("assignment response fast retry defer failed: seq=%u ret=%d",
+                tx->packet.seq,
+                defer_ret);
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_DIRECT_GW_ACK_DEFER_CORE seq=%u ret=%d state=%u deadline=%u reason=%s\n",
@@ -4721,7 +4784,8 @@ send_prepared:
             absolute_deadline_ms,
             observation,
             NULL,
-            FW_C5_TX_INTENT_BACKGROUND);
+            FW_C5_TX_INTENT_BACKGROUND,
+            false);
     } else if (direct_gateway_tx_pending) {
         ret = mesh_send_direct_gateway_payload_and_wait_ack(
             &tx,

@@ -46,10 +46,14 @@ extern "C" {
 #define DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 450u
 /*
  * The analytical next-depth bound ends at the nominal response-ready edge.
- * Leave one gateway RX work slice for radio completion and workqueue jitter
- * so a response retry is not rejected at that exact boundary.
+ * Assignment responses listen 250 ms for their immediate gateway ACK, then
+ * enter a prompt jittered retry whose first backoff is below 100 ms.  The
+ * The 850 ms tail contains that complete retry opportunity plus the measured
+ * worst-case parent-turn alignment, radio reconfigure, frame airtime, and
+ * gateway RX workqueue margin.  The F1DD bound needs 788 ms after the nominal
+ * band edge; retain another 62 ms of clock and scheduler redundancy.
  */
-#define DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS 500u
+#define DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS 850u
 #define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_PER_ADDITIONAL_HOP_MS 640u
 #define DISCOVERY_ASSIGNMENT_CLAIM_ACK_SETTLE_MAX_MS \
     (DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS + \
@@ -355,12 +359,12 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
 uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
                                                uint32_t random_value);
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count);
-int discovery_assignment_adaptive_next_depth_wait_ms(
+int discovery_assignment_adaptive_depth_deadline_offset_ms(
     uint16_t response_spread_ms,
     uint8_t slot_count,
     uint8_t observed_hop_count,
     uint8_t max_hop_count,
-    uint32_t *wait_ms);
+    uint32_t *deadline_offset_ms);
 uint64_t discovery_assignment_response_deadline_ms(uint64_t now_ms,
                                                    uint32_t response_delay_ms,
                                                    uint8_t hop_count);

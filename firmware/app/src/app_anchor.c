@@ -250,7 +250,6 @@ struct gateway_discovery_assignment_state {
     uint8_t anchor_hop_counts[UWB_DISCOVERY_SLOT_COUNT];
     uint64_t ack_mask;
     uint64_t claim_response_mask;
-    uint64_t confirmation_mask;
     uint32_t epoch;
     uint32_t claim_command_seq;
     struct discovery_assignment_table_commitment table_commitment;
@@ -264,6 +263,7 @@ struct gateway_discovery_assignment_state {
     uint64_t claim_collection_deadline_ms;
     uint64_t claim_ack_settle_deadline_ms;
     uint64_t response_ack_settle_deadline_ms;
+    uint64_t response_window_origin_ms;
     uint32_t command_budget_ms;
     uint16_t response_spread_ms;
     uint32_t generation;
@@ -686,6 +686,14 @@ static bool anchor_enumeration_rx_bind_claim(uint32_t epoch,
                                              uint32_t claim_session_id,
                                              uint32_t claim_command_seq);
 static bool anchor_enumeration_rx_active(void);
+static bool anchor_enumeration_rx_matches_claim(
+    uint32_t epoch,
+    uint32_t claim_session_id,
+    uint32_t claim_command_seq);
+static bool anchor_enumeration_rx_matches_table(
+    uint32_t epoch,
+    uint32_t table_command_seq,
+    const struct discovery_assignment_table_commitment *table_commitment);
 static enum protocol_rx_recovery_result anchor_enumeration_rx_note_recovery(
     bool recovered,
     const char *reason);
@@ -767,9 +775,6 @@ static void gateway_manual_survey_pair_reset(void);
 static int gateway_discovery_assignment_reschedule(k_timeout_t delay,
                                                     const char *source);
 static int gateway_discovery_assignment_wake_now(const char *source);
-static bool gateway_discovery_assignment_note_ack_confirm(
-    const struct proto_packet *confirm_packet,
-    const struct mesh_gateway_ack_confirm_identity *identity);
 #endif
 static void anchor_heartbeat_work_handler(struct k_work *work);
 

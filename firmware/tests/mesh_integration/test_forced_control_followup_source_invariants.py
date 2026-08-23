@@ -367,7 +367,7 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
             REPORT,
         )
 
-    def test_first_released_scan_after_channel9_uses_full_followup_slice(self):
+    def test_first_released_scan_after_channel9_uses_full_gap_slice(self):
         notification = function_body(
             ANCHOR_RADIO, "app_anchor_note_channel9_window_released"
         )
@@ -385,6 +385,14 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
             notification,
         )
         self.assertNotIn("atomic_clear", notification)
+        self.assertIn(
+            "#define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u",
+            RADIO_TIMING,
+        )
+        self.assertIn(
+            "#define MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS 20u",
+            RADIO_TIMING,
+        )
 
         release = rx_worker.index(
             "radio_release_ret = mesh_rx_radio_finish(&radio_lease, radio_release_ret)"
@@ -426,15 +434,33 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
             "scan_rx_ms = UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS",
             enumeration_branch,
         )
-        followup_branch = scan.index(
-            "else if (control_followup_boost_active || post_ch9_recovery_scan)",
+        recovery_branch = scan.index(
+            "else if (post_ch9_recovery_scan)",
             enumeration_window,
+        )
+        recovery_window = scan.index(
+            "scan_rx_ms = MESH_ROUTE_TEST_CH5_GAP_SCAN_MS",
+            recovery_branch,
+        )
+        followup_branch = scan.index(
+            "else if (control_followup_boost_active)",
+            recovery_window,
         )
         followup_window = scan.index(
             "scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS",
             followup_branch,
         )
-        conflict = scan.index("ch9_rx_conflict =", followup_window)
+        prepare_gate = scan.index(
+            "ch9_receive_prepare_pending =", followup_window
+        )
+        prepare_cap = scan.index(
+            "if (ch9_receive_prepare_pending)", prepare_gate
+        )
+        conflict = scan.index("ch9_rx_conflict = true", prepare_cap)
+        clamp = scan.index(
+            "ch9_receive_prepare_delay_ms - scan_reserve_ms",
+            conflict,
+        )
         retain = scan.index(
             "atomic_set(&anchor_ch5_post_ch9_recovery_scan_pending, 1)",
             conflict,
@@ -456,8 +482,14 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
 
         self.assertLess(pending_read, enumeration_branch)
         self.assertLess(enumeration_branch, enumeration_window)
-        self.assertLess(enumeration_window, followup_branch)
+        self.assertLess(enumeration_window, recovery_branch)
+        self.assertLess(recovery_branch, recovery_window)
+        self.assertLess(recovery_window, followup_branch)
         self.assertLess(followup_branch, followup_window)
+        self.assertLess(followup_window, prepare_gate)
+        self.assertLess(prepare_gate, prepare_cap)
+        self.assertLess(prepare_cap, conflict)
+        self.assertLess(conflict, clamp)
         self.assertLess(followup_window, conflict)
         self.assertLess(conflict, retain)
         self.assertLess(retain, blocked)
@@ -468,8 +500,17 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
         self.assertLess(release, consume_gate)
         self.assertLess(consume_gate, consume)
         self.assertIn(
-            "scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS",
-            scan[followup_branch:conflict],
+            "(enumeration_continuous_rx || post_ch9_recovery_scan)",
+            scan[prepare_gate:prepare_cap],
+        )
+        self.assertIn(
+            "mesh_report_next_channel9_activity_prepare_delay_ms(",
+            scan[prepare_gate:prepare_cap],
+        )
+        self.assertIn(
+            "scan_rx_ms =\n"
+            "                ch9_receive_prepare_delay_ms - scan_reserve_ms;",
+            scan[prepare_cap:retain],
         )
         self.assertNotIn(
             "atomic_clear(&anchor_ch5_post_ch9_recovery_scan_pending)",
@@ -507,15 +548,20 @@ class ForcedControlFollowupSourceInvariantTests(unittest.TestCase):
 
     def test_boosted_scanner_ignores_incompatible_control_payloads(self):
         scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
+        boosted_skip_pos = scan.index(
+            "DBG_ANCHOR_RELAY_CONTROL_FOLLOWUP_SKIP"
+        )
+        boosted_branch = scan.rindex(
+            "else if (control_followup_boost_active)",
+            0,
+            boosted_skip_pos,
+        )
         boosted_skip = braced_block_after(
-            scan, "else if (control_followup_boost_active)"
+            scan[boosted_branch:], "else if (control_followup_boost_active)"
         )
         normal_cooldown = scan.index(
             "uwb_anchor_note_false_wake_cooldown(",
-            scan.index("else if (control_followup_boost_active)"),
-        )
-        boosted_skip_pos = scan.index(
-            "DBG_ANCHOR_RELAY_CONTROL_FOLLOWUP_SKIP"
+            boosted_skip_pos,
         )
 
         self.assertIn("goto scan_complete", boosted_skip)

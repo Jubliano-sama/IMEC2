@@ -206,7 +206,6 @@ BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
 #define MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS \
     (MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS + \
      MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS)
-#define MESH_ROUTE_TEST_CH5_GAP_SCAN_MS 100u
 #define MESH_GATEWAY_CH5_CONTINUOUS_RX_MS 2000u
 #define MESH_ROUTE_TEST_CH5_GAP_MIN_SCAN_MS 20u
 #define MESH_ROUTE_TEST_CH5_GAP_RETUNE_MARGIN_MS MESH_ROUTE_TEST_CH9_RETUNE_GUARD_MS
@@ -1059,6 +1058,9 @@ static struct mesh_c5_flood_deferred_entry mesh_route_adv_deferred;
 static K_MUTEX_DEFINE(mesh_c5_flood_deferred_lock);
 
 #define MESH_C5_DEFERRED_MAX_RETRIES 8u
+#define MESH_C5_LOCAL_DEFER_RETRY_MS 5u
+#define MESH_C5_LOCAL_DEFER_MAX_AGE_MS \
+    NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS
 
 struct mesh_c5_flood_tx_context {
     bool *rf_started_out;
@@ -1307,7 +1309,8 @@ static int mesh_propose_event_after_channel5_contact_authorized(
     uint64_t peer_id,
     const char *reason,
     const struct app_mesh_c5_tx_authorization_token *authorization,
-    bool topology_operation);
+    bool topology_operation,
+    bool assignment_response);
 static void mesh_uwb_rx_rearm_work_handler(struct k_work *work);
 static void mesh_node_comm_cancel_work_handler(struct k_work *work);
 static bool mesh_queue_from_frame_at(const uint8_t *frame,
@@ -1337,6 +1340,10 @@ static uint64_t mesh_expand_uptime32(uint32_t timestamp_ms);
 static bool mesh_outbound_is_local_origin_priority(
     const struct mesh_outbound *out);
 #endif
+static void mesh_event_accept_rx_clear_peer(uint64_t peer_id);
+static void mesh_event_accept_completed_clear_peer(uint64_t peer_id);
+static void mesh_retire_assignment_channel9_peer(uint64_t peer_id,
+                                                 const char *reason);
 
 /* Implementation is split by responsibility but remains one translation unit. */
 #include "app_mesh_report_coordination.inc"

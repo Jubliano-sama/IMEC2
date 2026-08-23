@@ -1217,18 +1217,20 @@ uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count)
             DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS);
 }
 
-int discovery_assignment_adaptive_next_depth_wait_ms(
+int discovery_assignment_adaptive_depth_deadline_offset_ms(
     uint16_t response_spread_ms,
     uint8_t slot_count,
     uint8_t observed_hop_count,
     uint8_t max_hop_count,
-    uint32_t *wait_ms)
+    uint32_t *deadline_offset_ms)
 {
     uint32_t jitter_cap_ms;
-    uint32_t next_cell_ms;
-    uint64_t wait;
+    uint32_t target_depth;
+    uint32_t last_slot_offset_ms;
+    uint32_t target_cell_ms;
+    uint64_t deadline_offset;
 
-    if (wait_ms == NULL || slot_count == 0u ||
+    if (deadline_offset_ms == NULL || slot_count == 0u ||
         slot_count > UWB_DISCOVERY_SLOT_COUNT ||
         observed_hop_count == 0u || max_hop_count == 0u ||
         observed_hop_count > max_hop_count ||
@@ -1239,17 +1241,33 @@ int discovery_assignment_adaptive_next_depth_wait_ms(
     }
     jitter_cap_ms =
         DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms);
-    next_cell_ms = operation_policy_first_contact_cell_ms(
-        observed_hop_count < max_hop_count ?
-            (uint8_t)(observed_hop_count + 1u) : max_hop_count);
-    wait = DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS +
-           ((uint64_t)slot_count * next_cell_ms) +
-           DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + jitter_cap_ms - 1u +
-           DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS;
-    if (wait > UINT32_MAX) {
+    target_depth = observed_hop_count < max_hop_count ?
+        (uint32_t)observed_hop_count + 1u : max_hop_count;
+    if (operation_policy_first_contact_offset_ms(
+            slot_count - 1u,
+            slot_count,
+            (uint8_t)target_depth,
+            &last_slot_offset_ms) != PROTO_OK) {
         return PROTO_ERR_NO_SPACE;
     }
-    *wait_ms = (uint32_t)wait;
+    target_cell_ms = operation_policy_first_contact_cell_ms(
+        (uint8_t)target_depth);
+    /*
+     * This is an absolute offset from the common phase-response origin, not
+     * a fresh relative wait from whichever response happened to arrive last.
+     * Include the complete target-depth band: its final legal sender may use
+     * the last slot, then needs one cell for relay admission/forwarding space
+     * before the prompt retry margin begins.
+     */
+    deadline_offset = DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS +
+                      (uint64_t)last_slot_offset_ms + target_cell_ms +
+                      DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS +
+                      jitter_cap_ms - 1u +
+                      DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS;
+    if (deadline_offset > UINT32_MAX) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    *deadline_offset_ms = (uint32_t)deadline_offset;
     return PROTO_OK;
 }
 

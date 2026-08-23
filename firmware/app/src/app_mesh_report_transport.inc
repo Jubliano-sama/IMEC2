@@ -122,6 +122,12 @@ static bool mesh_next_channel9_activity_delay_ms(uint32_t now_ms,
     return found;
 }
 
+bool mesh_report_next_channel9_activity_prepare_delay_ms(uint32_t now_ms,
+                                                         uint32_t *delay_ms)
+{
+    return mesh_next_channel9_activity_delay_ms(now_ms, delay_ms);
+}
+
 /*
  * A long channel-5 control listener may span several connection turns.  It
  * must still release the radio before the next downstream child transmit
@@ -361,6 +367,7 @@ static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                                 peer_id,
                                 "forwarded-gateway-ack-event-repair",
                                 &authorization,
+                                false,
                                 false);
                     }
 
@@ -1716,13 +1723,15 @@ static int mesh_send_c5_control_attempt(
     uint64_t absolute_deadline_ms,
     struct app_mesh_tx_observation *observation,
     const struct app_mesh_c5_tx_authorization_token *authorization,
-    enum fw_c5_tx_intent c5_tx_intent)
+    enum fw_c5_tx_intent c5_tx_intent,
+    bool assignment_parent_protocol_awake)
 {
     const struct mesh_outbound *tx = out;
     uint64_t peer_id;
     uint64_t wake_target_id;
     uint64_t wake_rf_started_at_ms = 0u;
     bool active_exchange = false;
+    bool assignment_parent_awake = false;
     bool wake_rf_started = false;
     uint32_t now_ms;
     int ret;
@@ -1747,6 +1756,10 @@ static int mesh_send_c5_control_attempt(
         active_exchange = mesh_c5_contact_active(peer_id,
                                                   purpose,
                                                   now_ms);
+        assignment_parent_awake =
+            purpose == C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION &&
+            assignment_parent_protocol_awake &&
+            tx->packet.msg_type == MSG_MESH_EVENT_PROPOSE;
     }
 
     if (mode == MESH_C5_CONTROL_ACCEPTED_EXCHANGE && !active_exchange) {
@@ -1759,7 +1772,8 @@ static int mesh_send_c5_control_attempt(
         goto out_unlock;
     }
 
-    if (mode == MESH_C5_CONTROL_WAKE_IF_NEEDED && !active_exchange) {
+    if (mode == MESH_C5_CONTROL_WAKE_IF_NEEDED && !active_exchange &&
+        !assignment_parent_awake) {
         wake_target_id = peer_id != 0u ? peer_id : MESH_BROADCAST_ID;
         ret = mesh_send_route_wake_train(wake_target_id, NULL, NULL,
                                          purpose, reason, tx,
@@ -1778,6 +1792,11 @@ static int mesh_send_c5_control_attempt(
         }
         mesh_wait_for_c5_control_followup_turnaround(tx->packet.msg_type,
                                                      reason);
+    } else if (assignment_parent_awake) {
+        status_debug_printf(
+            "DBG_ENUM_EVENT_PROPOSE_DIRECT peer=0x%llx reason=%s\n",
+            (unsigned long long)peer_id,
+            reason == NULL ? "assignment-parent-awake" : reason);
     }
 
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -1833,7 +1852,8 @@ int mesh_send_c5_control(const struct mesh_outbound *out,
 {
     return mesh_send_c5_control_attempt(out, purpose, mode, reason, 0u, NULL,
                                         NULL,
-                                        FW_C5_TX_INTENT_BACKGROUND);
+                                        FW_C5_TX_INTENT_BACKGROUND,
+                                        false);
 }
 
 static int mesh_send_c5_causal_response(
@@ -1844,7 +1864,7 @@ static int mesh_send_c5_causal_response(
 {
     return mesh_send_c5_control_attempt(
         out, purpose, mode, reason, 0u, NULL, NULL,
-        FW_C5_TX_INTENT_CAUSAL_RESPONSE);
+        FW_C5_TX_INTENT_CAUSAL_RESPONSE, false);
 }
 
 static uint32_t mesh_c5_flood_now_ms(void *ctx)
@@ -1856,7 +1876,17 @@ static uint32_t mesh_c5_flood_now_ms(void *ctx)
 
 static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
 {
+    const struct mesh_c5_flood_tx_context *flood_ctx = ctx;
     int64_t uwb_window_start_ms;
+
+    /* A gateway-command relay burst is itself the highest-priority Channel-5
+     * work.  Listening between its closely spaced copies lets an echo of the
+     * same command abort the remaining redundancy, so keep that short gap as
+     * a plain wait.  Background floods retain their polite RX yield. */
+    if (flood_ctx != NULL && flood_ctx->response_priority) {
+        mesh_wait_until_ms(due_ms);
+        return;
+    }
 
     while (true) {
         uint32_t now_ms = k_uptime_get_32();
@@ -1954,8 +1984,6 @@ static void mesh_c5_flood_sleep_until_ms(uint32_t due_ms, void *ctx)
                                 remaining_ms);
         }
     }
-
-    ARG_UNUSED(ctx);
 }
 
 static bool mesh_c5_flood_defer_active_cb(void *ctx)
@@ -2142,10 +2170,12 @@ bool mesh_c5_protocol_flood_work_pending(void)
 static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
                                         uint8_t purpose,
                                         const char *reason,
-                                        bool response_priority)
+                                        bool response_priority,
+                                        bool local_deferral)
 {
     struct mesh_c5_flood_deferred_entry *entry =
         &mesh_c5_flood_deferred;
+    bool abort_background_scan = false;
     uint32_t retry_ms;
 
     if (out == NULL) {
@@ -2214,13 +2244,30 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
         entry->generation = 1u;
     }
     entry->valid = true;
-    retry_ms = mesh_c5_flood_deferred_retry_ms(
-        out, &entry->rf_retry);
-    entry->retry_count = 1u;
+    retry_ms = local_deferral ? MESH_C5_LOCAL_DEFER_RETRY_MS :
+        mesh_c5_flood_deferred_retry_ms(out, &entry->rf_retry);
+    entry->retry_count = local_deferral ? 0u : 1u;
     (void)mesh_reschedule_owned_work(&mesh_c5_flood_work,
                                      retry_ms,
                                      "c5-flood-admission");
+    if (DEVICE_ROLE == ROLE_ANCHOR && response_priority &&
+        out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV &&
+        radio_guard_uwb_owner_client() ==
+            RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN &&
+        !anchor_uwb_window_active() &&
+        !anchor_click_window_active() &&
+        !mesh_report_anchor_survey_radio_active()) {
+        abort_background_scan = true;
+    }
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
+    if (abort_background_scan) {
+        status_debug_printf(
+            "DBG_C5_FLOOD_SCAN_PREEMPT msg=%02x seq=%u\n",
+            out->packet.msg_type,
+            out->packet.seq);
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    }
     return 0;
 }
 
@@ -3288,7 +3335,8 @@ int mesh_send_c5_flood(const struct mesh_outbound *out,
     }
     if (!attempted && mesh_send_failure_retryable(ret)) {
         ret = mesh_c5_flood_store_deferred(
-            out, purpose, reason, priority);
+            out, purpose, reason, priority,
+            ret == -EAGAIN || ret == -EBUSY);
     }
     return ret;
 }

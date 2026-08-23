@@ -38,7 +38,8 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     if (mesh_send_failure_retryable(ret)) {
         store_ret =
             mesh_c5_flood_store_deferred(
-                out, purpose, reason, true);
+                out, purpose, reason, true,
+                ret == -EAGAIN || ret == -EBUSY);
         if (store_ret == 0) {
             if (forward_admission_retained != NULL) {
                 *forward_admission_retained = true;
@@ -879,6 +880,7 @@ static void mesh_ch9_ack_batch_queue(const struct mesh_outbound *ack,
                                      const struct mesh_rx_pending *rx)
 {
     struct app_mesh_ch9_ack_batch_entry entry = {0};
+    struct discovery_assignment_result assignment = {0};
     enum app_mesh_ch9_ack_queue_result queue_result =
         APP_MESH_CH9_ACK_QUEUE_ADDED;
     uint32_t packet_id = 0u;
@@ -917,6 +919,20 @@ static void mesh_ch9_ack_batch_queue(const struct mesh_outbound *ack,
                                                 TLV_MESH_TEST_PACKET_ID,
                                                 &packet_id);
     entry.packet_id = entry.has_packet_id ? packet_id : 0u;
+    if (ack->packet.msg_type == MSG_MESH_HOP_ACK &&
+        rx->packet.msg_type == MSG_COMMAND_RESULT &&
+        discovery_assignment_parse_result_tlvs(
+            rx->payload,
+            rx->payload_len,
+            &assignment) == PROTO_OK) {
+        if (assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+            entry.assignment_turn_action =
+                APP_MESH_CH9_ASSIGNMENT_TURN_RETIRE;
+        } else if (assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+            entry.assignment_turn_action =
+                APP_MESH_CH9_ASSIGNMENT_TURN_CONSUME;
+        }
+    }
     ret = app_mesh_ch9_ack_table_queue(&mesh_ch9_ack_table,
                                        ack,
                                        &entry,
@@ -1077,6 +1093,8 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
         app_mesh_ch9_ack_table_get_peer(&mesh_ch9_ack_table, peer_id);
     bool forwarded_gateway_ack;
     bool transit_core_commit;
+    bool consume_next_peer_turn;
+    bool retire_peer_timing;
     uint8_t count;
     int ret;
 
@@ -1088,6 +1106,10 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
         batch->template_ack.packet.msg_type == MSG_GATEWAY_ACK;
     transit_core_commit = forwarded_gateway_ack &&
         batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE;
+    consume_next_peer_turn =
+        app_mesh_ch9_ack_batch_consumes_next_peer_turn(batch);
+    retire_peer_timing =
+        app_mesh_ch9_ack_batch_retires_peer_timing(batch);
     count = batch->count;
     ret = mesh_ch9_ack_batch_build(peer_id, &ack);
     if (ret < 0) {
@@ -1171,9 +1193,24 @@ static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
             }
             (void)app_mesh_ch9_ack_table_clear_peer(&mesh_ch9_ack_table,
                                                      peer_id);
-            /* The child owns connection teardown. It may have another
-             * queued result ready for the next reciprocal turn; only its
-             * EVENT_END (or supervision expiry) closes the parent half. */
+            if (retire_peer_timing) {
+                /*
+                 * The child's exact TABLE response is now in this relay's
+                 * custody. Both ends can discard the temporary assignment
+                 * cadence; END or ABORT arrives independently on Channel 5.
+                 */
+                mesh_retire_assignment_channel9_peer(
+                    peer_id, "assignment-table-hop-ack");
+            } else if (consume_next_peer_turn) {
+                /*
+                 * CLAIM custody still needs this cadence for the child's
+                 * later TABLE response. Skip only the reciprocal empty turn
+                 * so the gateway's next Channel-5 phase has room.
+                 */
+                mesh_event_accept_rx_clear_peer(peer_id);
+                mesh_event_accept_completed_clear_peer(peer_id);
+                (void)mesh_consume_next_channel9_peer_turn(peer_id);
+            }
         }
 	    } else {
 	        uint32_t retry_delay_ms = 0u;

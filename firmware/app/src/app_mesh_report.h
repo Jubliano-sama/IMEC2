@@ -297,6 +297,8 @@ uint32_t report_tx_queue_used(void);
 bool mesh_report_tx_backlog_active(void);
 bool mesh_report_ch9_ack_wait_active(void);
 bool mesh_report_local_protocol_response_active(void);
+bool mesh_report_next_channel9_activity_prepare_delay_ms(uint32_t now_ms,
+                                                         uint32_t *delay_ms);
 int mesh_range_report_batch_reserve(uint64_t clicker_id,
                                     uint32_t event_seq,
                                     uint8_t attempt_index);

@@ -453,13 +453,13 @@ static bool anchor_apply_table(struct anchor_model *anchor,
     return true;
 }
 
-static bool anchor_promote_after_proven_ack_delivery(
+static bool anchor_promote_after_table_end(
     struct anchor_model *anchor,
-    bool gateway_proof_committed,
-    bool transport_ack_delivered)
+    bool exact_end_received,
+    bool response_custody_released)
 {
     if (anchor == NULL || !anchor->pending_persisted ||
-        !gateway_proof_committed || !transport_ack_delivered ||
+        !exact_end_received || !response_custody_released ||
         !app_discovery_assignment_policy_commit(
             &anchor->policy,
             anchor->pending_epoch,
@@ -482,6 +482,31 @@ static bool anchor_promote_after_proven_ack_delivery(
            0,
            sizeof(anchor->pending_table_commitment));
     anchor->pending_slot = UINT8_MAX;
+    return true;
+}
+
+static bool anchor_abort_provisional_table(struct anchor_model *anchor,
+                                           uint32_t epoch)
+{
+    if (anchor == NULL || !anchor->pending_persisted || epoch == 0u ||
+        anchor->pending_epoch != epoch ||
+        anchor->policy.joining_epoch != epoch) {
+        return false;
+    }
+
+    anchor->pending_persisted = false;
+    anchor->pending_epoch = 0u;
+    anchor->pending_table_seq = 0u;
+    memset(&anchor->pending_table_commitment,
+           0,
+           sizeof(anchor->pending_table_commitment));
+    anchor->pending_slot = UINT8_MAX;
+    anchor->policy.joining_epoch = 0u;
+    anchor->policy.joining_table_seq = 0u;
+    memset(&anchor->policy.joining_table_commitment,
+           0,
+           sizeof(anchor->policy.joining_table_commitment));
+    anchor->policy.claim_observed = false;
     return true;
 }
 
@@ -740,16 +765,16 @@ static bool run_workflow(size_t anchor_count)
         CHECK(anchors[i].pending_persisted &&
                   !anchors[i].persisted_provisioned &&
                   anchors[i].assigned_slot == UINT8_MAX,
-              "anchor promoted before gateway proof count=%zu anchor=%zu",
+              "anchor promoted before TABLE END count=%zu anchor=%zu",
               anchor_count, i);
     }
     gateway.assignment_proof_committed = true;
     for (size_t i = 0u; i < anchor_count; i++) {
-        CHECK(anchor_promote_after_proven_ack_delivery(
+        CHECK(anchor_promote_after_table_end(
                   &anchors[i],
                   gateway.assignment_proof_committed,
                   true),
-              "proven ACK did not promote count=%zu anchor=%zu",
+              "TABLE END did not promote count=%zu anchor=%zu",
               anchor_count, i);
     }
     elapsed_ms += DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS;
@@ -1672,7 +1697,7 @@ static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(voi
     CHECK(anchor.pending_persisted && !anchor.persisted_provisioned &&
               anchor.assigned_slot == UINT8_MAX,
           "first TABLE promoted before proof");
-    CHECK(anchor_promote_after_proven_ack_delivery(
+    CHECK(anchor_promote_after_table_end(
               &anchor, true, true),
           "first proven TABLE ACK did not promote");
     CHECK(discovery_assignment_table_commitment_equal(
@@ -1690,7 +1715,7 @@ static bool test_ordered_epoch_expansion_and_unassigned_reboot_are_monotonic(voi
               anchor.persisted_table_seq == TABLE_GENERATION_1 &&
               anchor.pending_slot == 4u,
           "pending expansion disrupted committed slot");
-    CHECK(anchor_promote_after_proven_ack_delivery(
+    CHECK(anchor_promote_after_table_end(
               &anchor, true, true),
           "expanded proven TABLE ACK did not promote");
     expanded_slot = anchor.assigned_slot;
@@ -1809,7 +1834,7 @@ static bool test_real_rf_attempt_preserves_delayed_assignment_responses(void)
     return true;
 }
 
-static bool test_pending_ack_expiry_retries_without_reset_and_keeps_old_slot(void)
+static bool test_hop_custody_allows_late_end_and_keeps_old_slot_until_end(void)
 {
     struct anchor_model anchor = {
         .id = ANCHOR_BASE,
@@ -1826,10 +1851,9 @@ static bool test_pending_ack_expiry_retries_without_reset_and_keeps_old_slot(voi
         .persisted_provisioned = true,
         .pending_persisted = true,
     };
-    const uint64_t gateway_deadline_ms = UINT64_C(10000);
-    const uint64_t physical_ack_rx_ms = gateway_deadline_ms - 1u;
-    const uint64_t proof_commit_ms = gateway_deadline_ms + 5u;
-    uint8_t bounded_attempts = 1u;
+    const uint64_t response_deadline_ms = UINT64_C(10000);
+    const uint64_t hop_ack_rx_ms = response_deadline_ms - 1u;
+    const uint64_t end_rx_ms = response_deadline_ms + 5u;
 
     app_discovery_assignment_policy_init(
         &anchor.policy,
@@ -1846,32 +1870,80 @@ static bool test_pending_ack_expiry_retries_without_reset_and_keeps_old_slot(voi
               &anchor.pending_table_commitment),
           "pending ACK restore rejected");
 
-    CHECK(physical_ack_rx_ms < gateway_deadline_ms &&
-              proof_commit_ms >= gateway_deadline_ms,
-          "D-1/proof-after-D fixture invalid");
-    CHECK(!anchor_promote_after_proven_ack_delivery(
+    CHECK(hop_ack_rx_ms < response_deadline_ms &&
+              end_rx_ms >= response_deadline_ms,
+          "hop-ACK-before-deadline/END-after-deadline fixture invalid");
+    CHECK(!anchor_promote_after_table_end(
               &anchor, false, false),
-          "anchor promoted before durable gateway proof");
+          "anchor promoted before exact TABLE END");
     CHECK(anchor.pending_persisted &&
               anchor.assigned_slot == 1u &&
               app_discovery_assignment_policy_normal_click_reply_allowed(
                   &anchor.policy),
-          "expired first custody attempt disrupted committed behavior");
+          "hop custody disrupted the old committed assignment before END");
 
-    /*
-     * DEADLINE_EXPIRED closes one bounded node-communication handle. Durable
-     * ACK_PENDING creates a fresh handle instead of waiting for reset.
-     */
-    bounded_attempts++;
-    CHECK(bounded_attempts == 2u && anchor.pending_persisted,
-          "terminal expiry did not preserve autonomous retry custody");
-    CHECK(anchor_promote_after_proven_ack_delivery(
+    /* Hop custody completed the response path before its deadline. A later
+     * exact END is an independent Channel-5 command and may commit the
+     * provisional table without reopening Channel 9. */
+    CHECK(anchor_promote_after_table_end(
               &anchor, true, true),
-          "proof-after-D retry did not promote exact D-1 ACK");
+          "late exact TABLE END did not promote the provisional slot");
     CHECK(anchor.assigned_slot == 4u &&
               anchor.persisted_epoch == ASSIGNMENT_EPOCH + 1u &&
               !anchor.pending_persisted,
           "fresh bounded attempt did not atomically replace assignment");
+    return true;
+}
+
+static bool test_abort_discards_only_provisional_table_after_hop_custody(void)
+{
+    struct anchor_model anchor = {
+        .id = ANCHOR_BASE,
+        .persisted_epoch = ASSIGNMENT_EPOCH,
+        .persisted_table_seq = TABLE_GENERATION_1,
+        .persisted_table_commitment = {.bytes = {0x10u}},
+        .pending_epoch = ASSIGNMENT_EPOCH + 1u,
+        .pending_table_seq = TABLE_GENERATION_2,
+        .pending_table_commitment = {.bytes = {0x20u}},
+        .persisted_slot = 1u,
+        .pending_slot = 4u,
+        .assigned_slot = 1u,
+        .persisted = true,
+        .persisted_provisioned = true,
+        .pending_persisted = true,
+    };
+
+    app_discovery_assignment_policy_init(
+        &anchor.policy,
+        true,
+        true,
+        true,
+        anchor.persisted_epoch,
+        anchor.persisted_table_seq,
+        &anchor.persisted_table_commitment);
+    CHECK(app_discovery_assignment_policy_restore_pending(
+              &anchor.policy,
+              anchor.pending_epoch,
+              anchor.pending_table_seq,
+              &anchor.pending_table_commitment),
+          "pending TABLE restore rejected before ABORT");
+    CHECK(!anchor_abort_provisional_table(
+              &anchor, anchor.pending_epoch + 1u),
+          "wrong-epoch ABORT cleared provisional state");
+    CHECK(anchor.pending_persisted && anchor.assigned_slot == 1u,
+          "wrong-epoch ABORT mutated assignment state");
+    CHECK(anchor_abort_provisional_table(
+              &anchor, ASSIGNMENT_EPOCH + 1u),
+          "exact ABORT did not clear provisional state");
+    CHECK(!anchor.pending_persisted &&
+              anchor.assigned_slot == 1u &&
+              anchor.persisted_epoch == ASSIGNMENT_EPOCH &&
+              anchor.persisted_table_seq == TABLE_GENERATION_1 &&
+              app_discovery_assignment_policy_normal_click_reply_allowed(
+                  &anchor.policy),
+          "ABORT damaged the previously committed assignment");
+    CHECK(!anchor_promote_after_table_end(&anchor, true, true),
+          "END promoted a provisional table after exact ABORT");
     return true;
 }
 
@@ -2422,7 +2494,10 @@ int main(void)
     if (!test_real_rf_attempt_preserves_delayed_assignment_responses()) {
         return EXIT_FAILURE;
     }
-    if (!test_pending_ack_expiry_retries_without_reset_and_keeps_old_slot()) {
+    if (!test_hop_custody_allows_late_end_and_keeps_old_slot_until_end()) {
+        return EXIT_FAILURE;
+    }
+    if (!test_abort_discards_only_provisional_table_after_hop_custody()) {
         return EXIT_FAILURE;
     }
     if (!test_assignment_snapshot_transactions_reject_stale_rmw()) {

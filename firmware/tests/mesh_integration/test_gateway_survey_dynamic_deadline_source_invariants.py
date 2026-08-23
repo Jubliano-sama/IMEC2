@@ -350,12 +350,14 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             "the ordinary emission or safety horizon",
         )
 
-    def test_assignment_claim_advances_but_table_commit_requires_confirm(
+    def test_assignment_ack_quorum_and_short_settle_gate_end(
         self,
     ) -> None:
-        confirm = function_body(
-            CONTROL,
-            "gateway_discovery_assignment_note_ack_confirm",
+        claim = function_body(
+            CONTROL, "gateway_discovery_assignment_note_claim"
+        )
+        finalize = function_body(
+            CONTROL, "gateway_discovery_assignment_finalize_work_handler"
         )
         publish = function_body(
             CONTROL, "gateway_discovery_assignment_publish_work_handler"
@@ -367,19 +369,47 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             CONTROL, "gateway_discovery_assignment_complete_success_locked"
         )
 
+        ack_branch = claim[claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)",
+            claim.index("mesh_relay_reserve_gateway_ack_candidate(")
+        ):]
         for exact_guard in (
-            "identity->msg_type != MSG_COMMAND_RESULT",
             "GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS",
             "gateway_discovery_assignment_state.table_command_seq",
-            "gateway_discovery_assignment_state.claim_response_mask",
-            "gateway_discovery_assignment_state.ack_mask",
+            "discovery_assignment_table_commitment_equal(",
+            "gateway_registered_membership_proves_assignment_ack(",
         ):
-            self.assertIn(exact_guard, confirm)
+            self.assertIn(exact_guard, claim)
         self.assertIn(
-            "gateway_discovery_assignment_state.confirmation_mask |= bit",
-            confirm,
+            "gateway_discovery_assignment_state.ack_mask |=",
+            ack_branch,
         )
-        self.assertIn("gateway_discovery_assignment_wake_now(", confirm)
+        self.assertIn(
+            "discovery_assignment_ack_quorum_settle_should_arm(",
+            ack_branch,
+        )
+        self.assertIn(
+            "discovery_assignment_response_ack_settle_deadline_ms(",
+            ack_branch,
+        )
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 450u",
+            (ROOT / "include/discovery_assignment.h").read_text(),
+        )
+
+        quorum = finalize.index("missing_proof_count == 0u")
+        settle = finalize.index(
+            "discovery_assignment_response_ack_settle_pending(", quorum
+        )
+        end = finalize.index(
+            "gateway_discovery_assignment_publish_end()", settle
+        )
+        self.assertLess(quorum, settle)
+        self.assertLess(settle, end)
+        self.assertNotIn("confirmation_mask", CONTROL)
+        self.assertNotIn(
+            "gateway_discovery_assignment_note_ack_confirm", CONTROL
+        )
 
         table_publish = publish.index(
             "gateway_discovery_assignment_publish_table()"
@@ -399,7 +429,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         self.assertLess(durable_prepare, table_send)
         self.assertIn(
-            "gateway_discovery_assignment_missing_confirmation_count_locked() !=",
+            "gateway_discovery_assignment_missing_ack_count_locked() !=",
             complete,
         )
         self.assertIn(
@@ -437,7 +467,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertLess(mapping_commit, table_ready)
         self.assertLess(table_ready, terminal_capture)
 
-    def test_assignment_table_round_owner_survives_ack_confirm_barrier(
+    def test_assignment_table_round_owner_survives_ack_settle_until_end(
         self,
     ) -> None:
         finalize = function_body(
@@ -463,15 +493,15 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             fast_complete[:fast_complete.index(
                 "gateway_discovery_assignment_state.response_ack_settle_armed = false"
             )],
-            "the table-round owner must survive a pending ACK_CONFIRM barrier",
+            "the table-round owner must survive the short ACK-quorum settle",
         )
         self.assertIn(
             "gateway_discovery_assignment_state.round_open = false",
             fast_complete[:completion_call],
-            "the exact END must take ownership after the ACK_CONFIRM barrier",
+            "the exact END must take ownership after the ACK-quorum settle",
         )
         table_barrier = complete.index(
-            "gateway_discovery_assignment_missing_confirmation_count_locked()"
+            "gateway_discovery_assignment_missing_ack_count_locked()"
         )
         owner_release = complete.index(
             "gateway_discovery_assignment_state.round_open = false",
@@ -520,83 +550,49 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         self.assertNotIn("ret = -EAGAIN", worker[:lifecycle])
         self.assertNotIn("gateway_host_command_retry_round", worker[:lifecycle])
 
-    def test_exact_confirm_wakes_fifo_assignment_and_survey_barriers(self) -> None:
+    def test_exact_confirm_wakes_fifo_and_survey_barriers_only(self) -> None:
         callback = function_body(SURVEY, "gateway_note_survey_ack_confirm")
         fifo = callback.index("gateway_host_command_retry_pending")
         fifo_wake = callback.index("gateway_host_command_retry_work", fifo)
-        assignment = callback.index(
-            "gateway_discovery_assignment_note_ack_confirm(", fifo_wake
-        )
-        survey = callback.index("gateway_survey_active", assignment)
+        survey = callback.index("gateway_survey_active", fifo_wake)
         survey_wake = callback.index(
             "SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u", survey
         )
 
         self.assertIn("K_NO_WAIT", callback[fifo:fifo_wake + 100])
         self.assertLess(fifo, fifo_wake)
-        self.assertLess(fifo_wake, assignment)
-        self.assertLess(assignment, survey)
+        self.assertLess(fifo_wake, survey)
         self.assertLess(survey, survey_wake)
+        self.assertNotIn(
+            "gateway_discovery_assignment_note_ack_confirm", callback
+        )
+        self.assertNotIn(
+            "gateway_discovery_assignment_note_ack_confirm", CONTROL
+        )
 
-    def test_confirmation_callback_replaces_each_delayed_owner_deadline(self) -> None:
+    def test_confirmation_callback_replaces_remaining_delayed_owner_deadlines(self) -> None:
         callback = function_body(SURVEY, "gateway_note_survey_ack_confirm")
         fifo_start = callback.index("gateway_host_command_retry_pending")
-        assignment_start = callback.index(
-            "gateway_discovery_assignment_note_ack_confirm(", fifo_start
-        )
-        survey_start = callback.index("gateway_survey_active", assignment_start)
-        fifo = callback[fifo_start:assignment_start]
-        assignment = callback[assignment_start:survey_start]
+        survey_start = callback.index("gateway_survey_active", fifo_start)
+        fifo = callback[fifo_start:survey_start]
         survey = callback[survey_start:]
-        assignment_confirm = function_body(
-            CONTROL, "gateway_discovery_assignment_note_ack_confirm"
-        )
-        assignment_wake = function_body(
-            CONTROL, "gateway_discovery_assignment_wake_now"
-        )
 
         self.assertRegex(
             fifo,
             r"k_work_reschedule\s*\(\s*"
             r"&gateway_host_command_retry_work\s*,\s*K_NO_WAIT\s*\)",
         )
-        self.assertIn(
-            "gateway_discovery_assignment_note_ack_confirm(confirm_packet,",
-            assignment,
-        )
-        self.assertIn('gateway_discovery_assignment_wake_now(', assignment_confirm)
-        self.assertIn('"ack-confirm"', assignment_confirm)
-        self.assertIn("k_work_cancel_delayable(", assignment_wake)
-        self.assertRegex(
-            assignment_wake,
-            r"gateway_discovery_assignment_reschedule\s*\(\s*"
-            r"K_NO_WAIT\s*,\s*source\s*\)",
-        )
         self.assertIn("gateway_survey_work_schedule(", survey)
         self.assertIn("SURVEY_GATEWAY_DUE_CONTROL_DELIVERY, 0u", survey)
-        for owner_slice in (
-            fifo,
-            assignment,
-            assignment_confirm,
-            assignment_wake,
-            survey,
-        ):
+        self.assertNotIn("gateway_discovery_assignment", callback)
+        for owner_slice in (fifo, survey):
             self.assertNotIn("mesh_gateway_command_priority_submit", owner_slice)
             self.assertNotIn("k_work_submit(", owner_slice)
             self.assertNotIn("k_work_submit_to_queue(", owner_slice)
 
-    def test_confirmation_wakes_are_isolated_to_matching_owners(self) -> None:
+    def test_survey_confirmation_wakes_are_isolated_to_matching_owner(self) -> None:
         callback = function_body(SURVEY, "gateway_note_survey_ack_confirm")
-        assignment = function_body(
-            CONTROL, "gateway_discovery_assignment_note_ack_confirm"
-        )
-        assignment_start = callback.index(
-            "gateway_discovery_assignment_note_ack_confirm("
-        )
-        assignment_end = callback.index(
-            "if (!gateway_survey_active)", assignment_start
-        )
-        survey_start = callback.index("if (!gateway_survey_active)", assignment_end)
+        survey_start = callback.index("if (!gateway_survey_active)")
         proof_start = callback.index(
             "struct app_gateway_survey_round_ack_confirm confirm", survey_start
         )
@@ -612,18 +608,7 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
         )
         proof = callback[proof_start:proof_note]
 
-        self.assertIn("identity->msg_type != MSG_COMMAND_RESULT", assignment)
-        self.assertIn("identity->session_id !=", assignment)
-        self.assertIn("table_command_seq", assignment)
-        self.assertIn("confirm_packet->src_id", assignment)
-        self.assertNotIn(
-            "gateway_survey_work_schedule",
-            callback[assignment_start:assignment_end],
-        )
-        self.assertNotIn(
-            "gateway_host_command_retry_work",
-            callback[assignment_start:assignment_end],
-        )
+        self.assertNotIn("gateway_discovery_assignment", callback)
         for exact_field in (
             ".source_id = confirm_packet->src_id",
             ".destination_id = confirm_packet->dst_id",
@@ -706,11 +691,11 @@ class GatewaySurveyDynamicDeadlineTests(unittest.TestCase):
             "discovery_assignment_table_commitment_equal(",
             "gateway_discovery_assignment_state.claim_response_mask !=",
             "gateway_discovery_assignment_state.ack_mask & complete_mask",
-            "gateway_discovery_assignment_state.confirmation_mask &",
             "hop_count == 0u",
             "hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS",
         ):
             self.assertIn(guard, proof)
+        self.assertNotIn("confirmation_mask", proof)
         self.assertIn("roster_ids[roster_index]", proof)
         self.assertIn("roster_slots[roster_index]", proof)
 

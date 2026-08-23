@@ -686,8 +686,6 @@ static int gateway_note_survey_ack_confirm(
             &gateway_host_command_retry_work, K_NO_WAIT);
     }
 #endif
-    (void)gateway_discovery_assignment_note_ack_confirm(confirm_packet,
-                                                        identity);
     if (!gateway_survey_active) {
         return 0;
     }
@@ -1174,9 +1172,7 @@ static uint8_t gateway_survey_completed_enumeration_max_report_hops(
         gateway_discovery_assignment_state.claim_response_mask !=
             complete_mask ||
         (gateway_discovery_assignment_state.ack_mask & complete_mask) !=
-            complete_mask ||
-        (gateway_discovery_assignment_state.confirmation_mask &
-         complete_mask) != complete_mask) {
+            complete_mask) {
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return 0u;
     }

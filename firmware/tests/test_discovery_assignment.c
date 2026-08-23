@@ -673,36 +673,76 @@ static void test_response_delay_orders_first_contact_and_bounded_backoff(void)
            2u * DISCOVERY_ASSIGNMENT_RETRY_MAX_MS);
 }
 
-static void test_adaptive_next_depth_wait_uses_the_same_worst_case_cells(void)
+static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(void)
 {
-    const uint32_t direct_three_slot_bare_bound_ms =
-        365u + (3u * 1090u) + 100u + 449u;
-    const uint32_t retry_rx_completed_ms =
-        direct_three_slot_bare_bound_ms + 250u;
-    uint32_t wait_ms = UINT32_MAX;
+    const uint32_t jitter_cap_ms =
+        DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(
+            DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS);
+    uint32_t deadline_offset_ms = UINT32_MAX;
 
     assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS == 365u);
-    assert(DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS == 500u);
-    assert(discovery_assignment_adaptive_next_depth_wait_ms(
-               1000u, 3u, 1u, 3u, &wait_ms) == PROTO_OK);
-    assert(wait_ms == direct_three_slot_bare_bound_ms +
-                          DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS);
-    assert(retry_rx_completed_ms > direct_three_slot_bare_bound_ms);
-    assert(retry_rx_completed_ms < wait_ms);
-    assert(discovery_assignment_adaptive_next_depth_wait_ms(
-               20u, 3u, 2u, 3u, &wait_ms) == PROTO_OK);
-    assert(wait_ms == 365u + (3u * 1730u) + 100u + 19u +
-                          DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS);
-    assert(discovery_assignment_adaptive_next_depth_wait_ms(
-               1000u, 3u, 3u, 3u, &wait_ms) == PROTO_OK);
-    assert(wait_ms == 365u + (3u * 1730u) + 100u + 449u +
-                          DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS);
-    assert(discovery_assignment_adaptive_next_depth_wait_ms(
-               1000u, 0u, 1u, 3u, &wait_ms) == PROTO_ERR_ARG);
-    assert(discovery_assignment_adaptive_next_depth_wait_ms(
-               1000u, 3u, 0u, 3u, &wait_ms) == PROTO_ERR_ARG);
-    assert(discovery_assignment_adaptive_next_depth_wait_ms(
-               1000u, 3u, 3u, 2u, &wait_ms) == PROTO_ERR_ARG);
+    assert(DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS == 850u);
+    assert(jitter_cap_ms == 450u);
+
+    for (uint8_t slot_count = 1u; slot_count <= 50u; slot_count++) {
+        uint64_t complete_depth_bands_ms = 0u;
+
+        for (uint8_t target_depth = 1u;
+             target_depth <= DISCOVERY_ASSIGNMENT_MAX_HOPS;
+             target_depth++) {
+            uint8_t observed_depth =
+                target_depth == 1u ? 1u : (uint8_t)(target_depth - 1u);
+            uint64_t expected_offset_ms;
+
+            complete_depth_bands_ms +=
+                (uint64_t)slot_count *
+                operation_policy_first_contact_cell_ms(target_depth);
+            expected_offset_ms =
+                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS +
+                complete_depth_bands_ms +
+                DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + jitter_cap_ms - 1u +
+                DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS;
+
+            assert(discovery_assignment_adaptive_depth_deadline_offset_ms(
+                       DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                       slot_count,
+                       observed_depth,
+                       target_depth,
+                       &deadline_offset_ms) == PROTO_OK);
+            assert(deadline_offset_ms == expected_offset_ms);
+        }
+    }
+
+    {
+        const uint32_t old_receive_relative_cutoff_ms =
+            DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS +
+            (3u * operation_policy_first_contact_cell_ms(2u)) +
+            DISCOVERY_ASSIGNMENT_RESPONSE_BASE_MS + jitter_cap_ms - 1u +
+            DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS;
+        const uint32_t observed_forced_claim_decode_ms =
+            old_receive_relative_cutoff_ms + 296u;
+
+        assert(discovery_assignment_adaptive_depth_deadline_offset_ms(
+                   DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS,
+                   3u,
+                   1u,
+                   2u,
+                   &deadline_offset_ms) == PROTO_OK);
+        assert(old_receive_relative_cutoff_ms == 5034u);
+        assert(observed_forced_claim_decode_ms == 5330u);
+        assert(deadline_offset_ms == 6384u);
+        assert(observed_forced_claim_decode_ms < deadline_offset_ms);
+    }
+
+    assert(discovery_assignment_adaptive_depth_deadline_offset_ms(
+               1000u, 0u, 1u, 3u,
+               &deadline_offset_ms) == PROTO_ERR_ARG);
+    assert(discovery_assignment_adaptive_depth_deadline_offset_ms(
+               1000u, 3u, 0u, 3u,
+               &deadline_offset_ms) == PROTO_ERR_ARG);
+    assert(discovery_assignment_adaptive_depth_deadline_offset_ms(
+               1000u, 3u, 3u, 2u,
+               &deadline_offset_ms) == PROTO_ERR_ARG);
 }
 
 static void test_collection_window_covers_spread_and_hops(void)
@@ -1481,7 +1521,7 @@ int main(void)
     test_response_custody_matches_logical_epoch_and_phase();
     test_response_custody_allows_only_valid_supersession_boundaries();
     test_response_delay_orders_first_contact_and_bounded_backoff();
-    test_adaptive_next_depth_wait_uses_the_same_worst_case_cells();
+    test_adaptive_depth_deadline_covers_complete_common_origin_bands();
     test_collection_window_covers_spread_and_hops();
     test_table_window_covers_every_fast_ack_handle();
     test_claim_window_covers_two_fresh_handles();

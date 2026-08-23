@@ -259,6 +259,10 @@ ZTEST(production_seam_gateway_result_actions,
         .actions = MESH_RELAY_ACTION_SEND_HOP_ACK |
                    MESH_RELAY_ACTION_CUSTODY_ACCEPTED,
     };
+    struct mesh_relay_result unretained_forward = {
+        .actions = MESH_RELAY_ACTION_FORWARD |
+                   MESH_RELAY_ACTION_SEND_HOP_ACK,
+    };
     struct app_mesh_result_handoff_status handoff_status;
 
     gateway_init(&gateway, &ack_store);
@@ -295,6 +299,13 @@ ZTEST(production_seam_gateway_result_actions,
                              MESH_RELAY_ACTION_SEND_RESULT_GRANT));
     zassert_equal(second_result.busy.packet.msg_type, MSG_RESULT_BUSY);
     zassert_equal(second_result.busy.next_hop_id, TEST_ANCHOR_B_ID);
+
+    app_mesh_result_handoff_prepare_hop_ack(&unretained_forward,
+                                            false,
+                                            NULL,
+                                            &handoff_status);
+    zassert_false(handoff_status.hop_ack_allowed,
+                  "unretained child response received a false custody ACK");
 
     app_mesh_result_handoff_prepare_hop_ack(&hop_result,
                                             false,

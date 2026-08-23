@@ -1352,6 +1352,31 @@ static uint8_t mesh_advance_channel9_timing_past(uint64_t peer_id,
     return 0u;
 }
 
+static bool mesh_consume_next_channel9_peer_turn(uint64_t peer_id)
+{
+    for (uint8_t i = 0u; i < MESH_RELAY_EVENT_TIMINGS; i++) {
+        struct mesh_relay_event_timing_entry *entry =
+            &mesh_runtime.event_timings[i];
+        uint32_t turn_start_ms;
+
+        if (!entry->valid || entry->next_hop_id != peer_id) {
+            continue;
+        }
+        turn_start_ms = entry->timing.next_event_time_ms;
+        mesh_relay_note_channel9_unobserved_turn(
+            &mesh_runtime, peer_id, turn_start_ms);
+        status_debug_printf(
+            "DBG_ENUM_HOP_ACK_TURN_CONSUMED peer=0x%llx start=%u next=%u cnt=%u\n",
+            (unsigned long long)peer_id,
+            turn_start_ms,
+            entry->timing.next_event_time_ms,
+            entry->timing.event_counter);
+        return true;
+    }
+
+    return false;
+}
+
 static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
                                                       const char *reason)
 {

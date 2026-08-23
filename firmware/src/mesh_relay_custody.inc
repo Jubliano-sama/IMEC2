@@ -247,6 +247,22 @@ static bool pending_is_forwarded_command_result(const struct mesh_relay *relay,
            pending_has_valid_command_result_id(relay, pending);
 }
 
+static bool pending_is_assignment_response(
+    const struct mesh_relay *relay,
+    const struct mesh_pending_tx *pending)
+{
+    struct discovery_assignment_result assignment;
+
+    return relay != NULL && pending != NULL &&
+           pending->state != MESH_RELAY_TX_IDLE &&
+           pending->packet.msg_type == MSG_COMMAND_RESULT &&
+           pending->packet.dst_id == relay->gateway_id &&
+           (pending->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u &&
+           discovery_assignment_parse_result_tlvs(pending->payload,
+                                                  pending->payload_len,
+                                                  &assignment) == PROTO_OK;
+}
+
 static bool pending_is_result_bundle(const struct mesh_relay *relay,
                                      const struct mesh_pending_tx *pending)
 {
@@ -495,6 +511,21 @@ static void outbox_record_mark_custody_accepted(struct mesh_relay *relay,
     relay->outbox_record.custody_accepted = true;
     relay->outbox_record.custody_parent = custody_parent;
     relay->outbox_record.delivery_state = outbox_delivery_state_for(&relay->pending);
+}
+
+static void pending_transfer_assignment_custody(
+    struct mesh_relay *relay,
+    uint64_t custody_parent,
+    uint32_t now_ms)
+{
+    pending_refresh_age(&relay->pending, now_ms);
+    outbox_record_sync_age_from_pending(relay, now_ms);
+    outbox_record_mark_custody_accepted(relay, custody_parent, now_ms);
+    relay->outbox_record.delivery_state =
+        MESH_RELAY_DELIVERY_CUSTODY_ACCEPTED;
+    relay->pending.gateway_ack_deadline_ms = 0u;
+    relay->pending.retry_after_ms = 0u;
+    relay->pending.state = MESH_RELAY_TX_WAIT_TERMINAL_COMMIT;
 }
 
 /*
@@ -1996,6 +2027,19 @@ static int handle_local_ack(struct mesh_relay *relay,
             return PROTO_OK;
         }
         if (transit_gateway_ack) {
+            if (pending_is_assignment_response(relay,
+                                               &relay->pending)) {
+                /* The child already stopped after this relay accepted exact
+                 * custody. The gateway ACK now terminates the relay's copy;
+                 * forwarding it would recreate the removed end-to-end tail. */
+                result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+                mesh_relay_note_route_discovery_ready(
+                    relay, relay->pending.packet.dst_id);
+                outbox_record_mark_gateway_acked(relay, now_ms);
+                relay->pending.state = MESH_RELAY_TX_IDLE;
+                route_record_success_at(&relay->upstream, now_ms);
+                return PROTO_OK;
+            }
             /*
              * The first matching gateway ACK creates exactly one physical
              * child-directed handoff.  Further copies can arrive while that
@@ -2064,6 +2108,16 @@ static int handle_local_ack(struct mesh_relay *relay,
             result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
             return PROTO_OK;
         }
+        if (relay->pending.packet.src_id == relay->local_id &&
+            pending_is_assignment_response(relay, &relay->pending)) {
+            pending_transfer_assignment_custody(relay,
+                                                previous_hop_id,
+                                                now_ms);
+            route_record_success_at(&relay->upstream, now_ms);
+            result->actions |=
+                MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED;
+            return PROTO_OK;
+        }
         if (pending_requires_gateway_ack_confirm(relay, &relay->pending)) {
             ret = pending_transition_to_gateway_ack_confirm(relay, now_ms);
             if (ret != PROTO_OK) {
@@ -2082,6 +2136,26 @@ static int handle_local_ack(struct mesh_relay *relay,
     } else if (packet->msg_type == MSG_MESH_HOP_ACK &&
                (relay->pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
                 relay->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF)) {
+        if (pending_is_assignment_response(relay, &relay->pending)) {
+            if (relay->pending.packet.src_id == relay->local_id) {
+                pending_transfer_assignment_custody(relay,
+                                                    previous_hop_id,
+                                                    now_ms);
+                result->actions |=
+                    MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED;
+            } else {
+                /* This relay's parent has accepted the exact retained bytes,
+                 * so the relay is no longer in their delivery chain. */
+                outbox_record_mark_custody_accepted(relay,
+                                                    previous_hop_id,
+                                                    now_ms);
+                relay->outbox_record.valid = false;
+                relay->pending.state = MESH_RELAY_TX_IDLE;
+                result->actions |= MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED;
+            }
+            route_refresh_selected_at(&relay->upstream, now_ms);
+            return PROTO_OK;
+        }
         if (relay->pending.hop_ack_observed_since_send) {
             /*
              * An exact duplicate ACK proves no new RF progress. Let the
@@ -2098,6 +2172,44 @@ static int handle_local_ack(struct mesh_relay *relay,
         result->actions |= MESH_RELAY_ACTION_TX_HOP_PROGRESS;
     }
 
+    return PROTO_OK;
+}
+
+int mesh_relay_commit_next_hop_custody_terminal(
+    struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
+{
+    uint8_t pending_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+    if (relay == NULL || packet == NULL || semantic_digest == NULL ||
+        relay->pending.state != MESH_RELAY_TX_WAIT_TERMINAL_COMMIT ||
+        !relay->outbox_record.valid ||
+        relay->outbox_record.delivery_state !=
+            MESH_RELAY_DELIVERY_CUSTODY_ACCEPTED ||
+        !pending_is_assignment_response(relay, &relay->pending) ||
+        relay->pending.packet.msg_type != packet->msg_type ||
+        relay->pending.packet.flags != packet->flags ||
+        relay->pending.packet.src_id != packet->src_id ||
+        relay->pending.packet.dst_id != packet->dst_id ||
+        relay->pending.packet.session_id != packet->session_id ||
+        relay->pending.packet.seq != packet->seq ||
+        relay->pending.packet.payload_len != packet->payload_len ||
+        !relay_semantic_packet_digest(&relay->pending.packet,
+                                      relay->pending.payload,
+                                      relay->pending.payload_len,
+                                      pending_digest) ||
+        !semantic_digest_equal(pending_digest,
+                               semantic_digest,
+                               sizeof(pending_digest)) ||
+        !semantic_digest_equal(relay->outbox_record.semantic_digest,
+                               pending_digest,
+                               sizeof(pending_digest))) {
+        return PROTO_ERR_MALFORMED;
+    }
+
+    relay->outbox_record.valid = false;
+    relay->pending.state = MESH_RELAY_TX_IDLE;
     return PROTO_OK;
 }
 
@@ -3125,6 +3237,7 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
                                        struct mesh_relay_result *result)
 {
     struct mesh_ch9_batch_metadata batch_metadata;
+    struct discovery_assignment_result assignment;
     int ret;
 
     if (result == NULL) {
@@ -3184,6 +3297,21 @@ int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,
     if (ret != PROTO_OK) {
         result->status = ret;
         return ret;
+    }
+    if (packet->msg_type == MSG_COMMAND_RESULT &&
+        discovery_assignment_parse_result_tlvs(payload,
+                                               payload_len,
+                                               &assignment) == PROTO_OK &&
+        (assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM ||
+         assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)) {
+        ret = gateway_ack_history_confirm_packet(relay,
+                                                 packet,
+                                                 payload,
+                                                 payload_len);
+        if (ret != PROTO_OK) {
+            result->status = ret;
+            return ret;
+        }
     }
     duplicate_store_payload_identity(relay,
                                      packet,

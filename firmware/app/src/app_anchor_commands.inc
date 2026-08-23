@@ -1538,6 +1538,7 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
     }
     if (pending.delivery_handle != 0u) {
         bool have_event = false;
+        bool next_hop_custody_terminal = false;
 
         /*
          * Delivery-event consumption and assignment supersession use the
@@ -1559,6 +1560,16 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
         if (have_event) {
             have_event = app_node_comm_take_delivery_event_for(
                 pending.delivery_handle, &event);
+            next_hop_custody_terminal =
+                have_event &&
+                event.reason == NODE_COMM_TERMINAL_DELIVERED &&
+                pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK &&
+                anchor_discovery_response_terminal_matches(
+                    pending.epoch,
+                    pending.phase,
+                    pending.command.session_id,
+                    pending.command.seq,
+                    &pending.table_commitment);
         }
         k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
         if (!have_event) {
@@ -1606,10 +1617,13 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
         }
         anchor_discovery_claim_pending.delivery_handle = 0u;
         if (event.reason == NODE_COMM_TERMINAL_DELIVERED &&
-            pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+            pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK &&
+            !next_hop_custody_terminal) {
             anchor_discovery_claim_pending.ack_delivered = true;
             anchor_discovery_claim_pending.next_attempt_not_before_ms =
                 (uint64_t)k_uptime_get();
+        } else if (next_hop_custody_terminal) {
+            anchor_discovery_claim_pending.active = false;
         } else if (retry) {
             if (anchor_discovery_claim_pending.terminal_retry_count <
                 UINT8_MAX) {
@@ -1648,9 +1662,15 @@ static void anchor_discovery_claim_work_handler(struct k_work *work)
                                 pending.phase,
                                 pending.epoch,
                                 event.attempts_started);
-            if (pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+            if (pending.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK &&
+                !next_hop_custody_terminal) {
                 pending.ack_delivered = true;
                 anchor_discovery_assignment_service_ack_promotion(&pending);
+            } else if (next_hop_custody_terminal) {
+                status_debug_printf(
+                    "DBG_DISCOVERY_SLOT_PROVISIONAL epoch=%u slot=%u state=WAIT_END\n",
+                    pending.epoch,
+                    pending.slot);
             }
             return;
         }
@@ -3335,6 +3355,43 @@ static void anchor_retire_discovery_response_for_terminal_locked(
 #endif
 }
 
+static bool anchor_discovery_pending_from_snapshot(
+    const struct app_mesh_discovery_assignment_snapshot *snapshot,
+    struct anchor_discovery_claim_pending *pending)
+{
+    if (snapshot == NULL || pending == NULL || !snapshot->valid ||
+        snapshot->pending_valid == 0u || snapshot->ack_pending == 0u ||
+        snapshot->pending_epoch == 0u ||
+        snapshot->pending_table_command_seq == 0u ||
+        snapshot->table_packet_seq == 0u ||
+        snapshot->pending_slot_count == 0u ||
+        snapshot->pending_slot >= snapshot->pending_slot_count) {
+        return false;
+    }
+
+    memset(pending, 0, sizeof(*pending));
+    pending->command.msg_type = MSG_COMMAND;
+    pending->command.src_id = GATEWAY_ID;
+    pending->command.dst_id = MESH_BROADCAST_ID;
+    pending->command.session_id = snapshot->pending_table_command_seq;
+    pending->command.seq = snapshot->table_packet_seq;
+    pending->epoch = snapshot->pending_epoch;
+    pending->table_commitment = snapshot->pending_table_commitment;
+    pending->response_spread_ms = snapshot->response_spread_ms;
+    pending->phase = DISCOVERY_ASSIGNMENT_PHASE_ACK;
+    pending->slot = snapshot->pending_slot;
+    pending->slot_count = snapshot->pending_slot_count;
+    pending->response_lane = snapshot->pending_response_lane;
+    pending->response_lane_count =
+        snapshot->pending_response_lane_count == 0u ?
+            snapshot->pending_slot_count :
+            snapshot->pending_response_lane_count;
+    if (snapshot->pending_response_lane_count == 0u) {
+        pending->response_lane = snapshot->pending_slot;
+    }
+    return pending->response_lane < pending->response_lane_count;
+}
+
 static int anchor_apply_discovery_assignment_command(
     const struct proto_packet *packet,
     const uint8_t *payload,
@@ -3397,11 +3454,38 @@ static int anchor_apply_discovery_assignment_command(
      */
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_ABORT) {
         struct discovery_assignment_abort_identity abort_identity = {0};
+        struct anchor_discovery_claim_pending pending;
 
         ret = discovery_assignment_extract_abort_identity(
             payload, payload_len, &abort_identity);
         if (ret != PROTO_OK || abort_identity.epoch != epoch) {
             return ret == PROTO_OK ? -ESTALE : mesh_errno_from_proto(ret);
+        }
+        if (!anchor_enumeration_rx_matches_claim(
+                epoch,
+                abort_identity.claim_session_id,
+                abort_identity.claim_command_seq)) {
+            status_debug_printf(
+                "DBG_ENUM_ABORT_REJECT epoch=%u claim_session=%u claim_seq=%u reason=identity\n",
+                epoch,
+                abort_identity.claim_session_id,
+                abort_identity.claim_command_seq);
+            return -ESTALE;
+        }
+        ret = anchor_restore_discovery_assignment_ram(&snapshot);
+        if (ret < 0) {
+            return ret;
+        }
+        if (snapshot.valid && snapshot.pending_valid != 0u &&
+            snapshot.pending_epoch == epoch) {
+            if (!anchor_discovery_pending_from_snapshot(&snapshot,
+                                                        &pending)) {
+                return -ESTALE;
+            }
+            ret = anchor_retire_superseded_discovery_ack(&pending);
+            if (ret < 0) {
+                return ret;
+            }
         }
         if (!anchor_enumeration_rx_terminate_claim(
                 epoch,
@@ -3426,6 +3510,7 @@ static int anchor_apply_discovery_assignment_command(
     }
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_END) {
         struct discovery_assignment_end_identity end_identity = {0};
+        struct anchor_discovery_claim_pending pending;
         bool exact_pending;
         bool exact_committed;
 
@@ -3433,6 +3518,16 @@ static int anchor_apply_discovery_assignment_command(
             payload, payload_len, &end_identity);
         if (ret != PROTO_OK || end_identity.epoch != epoch) {
             return ret == PROTO_OK ? -ESTALE : mesh_errno_from_proto(ret);
+        }
+        if (!anchor_enumeration_rx_matches_table(
+                epoch,
+                end_identity.table_command_seq,
+                &end_identity.table_commitment)) {
+            status_debug_printf(
+                "DBG_ENUM_END_REJECT epoch=%u table_seq=%u reason=inactive-observation\n",
+                epoch,
+                end_identity.table_command_seq);
+            return -ESTALE;
         }
         ret = anchor_restore_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
@@ -3457,6 +3552,17 @@ static int anchor_apply_discovery_assignment_command(
                 epoch,
                 end_identity.table_command_seq);
             return -ESTALE;
+        }
+        if (exact_pending) {
+            if (!anchor_discovery_pending_from_snapshot(&snapshot,
+                                                        &pending)) {
+                return -ESTALE;
+            }
+            ret = anchor_promote_discovery_assignment_after_ack_locked(
+                &pending);
+            if (ret < 0) {
+                return ret;
+            }
         }
         if (!anchor_enumeration_rx_terminate_table(
                 epoch,

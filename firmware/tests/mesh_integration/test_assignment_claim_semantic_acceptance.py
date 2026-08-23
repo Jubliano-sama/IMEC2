@@ -28,6 +28,9 @@ ROUTE_REFRESH_HEADER = (
     ROOT / "app/src/app_node_comm_gateway_route_refresh.h"
 ).read_text(encoding="utf-8")
 RELAY = (ROOT / "src/mesh_relay.c").read_text(encoding="utf-8")
+RELAY_CUSTODY = (ROOT / "src/mesh_relay_custody.inc").read_text(
+    encoding="utf-8"
+)
 DISCOVERY_ASSIGNMENT = (
     ROOT / "src/discovery_assignment.c"
 ).read_text(encoding="utf-8")
@@ -607,7 +610,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         )
 
         missing = publish.index(
-            "gateway_discovery_assignment_missing_confirmation_count_locked() =="
+            "gateway_discovery_assignment_missing_ack_count_locked() =="
         )
         pending = publish.index("late_table_redrive_pending", missing)
         fail = publish.index(
@@ -1175,7 +1178,13 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             )
         ]
         adaptive = function_body(
-            ANCHOR, "gateway_discovery_assignment_adaptive_wait_ms_locked"
+            ANCHOR,
+            "gateway_discovery_assignment_adaptive_deadline_offset_ms_locked",
+        )
+
+        self.assertRegex(
+            DISCOVERY_ASSIGNMENT_HEADER,
+            r"#define\s+DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS\s+850u\b",
         )
 
         self.assertIn("ROUTE_GATEWAY_ACK_TIMEOUT_MS", control_prefix)
@@ -1191,18 +1200,18 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             control_prefix,
         )
 
-        # The direct, three-slot CLAIM calculation is 4,684 ms, including the
-        # shared 500 ms practical RX/scheduling margin.
+        # The direct, three-slot CLAIM calculation covers its complete
+        # absolute depth-one band plus the shared 850 ms retry margin.
         # TABLE needs 4,700 ms for one legal 2,000 + 1,500 + 750 + 450 ms
         # missed-response recovery cycle, without lengthening CLAIM itself.
-        claim_adaptive_ms = 365 + (3 * 1090) + 100 + 449 + 500
+        claim_adaptive_ms = 365 + (3 * 450) + 100 + 449 + 850
         table_recovery_ms = 2000 + 1500 + 750 + 450
-        self.assertEqual(claim_adaptive_ms, 4684)
+        self.assertEqual(claim_adaptive_ms, 3114)
         self.assertEqual(table_recovery_ms, 4700)
         self.assertLess(claim_adaptive_ms, table_recovery_ms)
 
         base_adaptive = adaptive.index(
-            "discovery_assignment_adaptive_next_depth_wait_ms("
+            "discovery_assignment_adaptive_depth_deadline_offset_ms("
         )
         table_gate = adaptive.index(
             "gateway_discovery_assignment_state.stage ==\n"
@@ -1217,69 +1226,91 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "GATEWAY_DISCOVERY_ASSIGNMENT_TABLE_RETRY_RECOVERY_MS",
             adaptive[:table_gate],
         )
-        self.assertIn("wait_ms = MAX(", adaptive[table_gate:table_floor])
+        self.assertIn(
+            "deadline_offset_ms = MAX(", adaptive[table_gate:table_floor]
+        )
         self.assertNotIn(
             "GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS",
             adaptive[table_gate:table_floor + 80],
         )
 
-    def test_final_ack_confirm_rearms_tail_before_end(self):
-        confirm = function_body(
-            GATEWAY_CONTROL, "gateway_discovery_assignment_note_ack_confirm"
+    def test_final_table_ack_arms_short_settle_before_end(self):
+        claim = function_body(
+            GATEWAY_CONTROL, "gateway_discovery_assignment_note_claim"
         )
         finalize = function_body(
             GATEWAY_CONTROL,
             "gateway_discovery_assignment_finalize_work_handler",
         )
 
+        ack_branch = claim[claim.index(
+            "if (phase == DISCOVERY_ASSIGNMENT_PHASE_ACK)",
+            claim.index("mesh_relay_reserve_gateway_ack_candidate(")
+        ):]
+        ack_mask = ack_branch.index(
+            "gateway_discovery_assignment_state.ack_mask |="
+        )
+        quorum = ack_branch.index(
+            "discovery_assignment_ack_quorum_settle_should_arm(", ack_mask
+        )
+        arm = ack_branch.index(
+            "response_ack_settle_armed = true", quorum
+        )
+        deadline = ack_branch.index(
+            "discovery_assignment_response_ack_settle_deadline_ms(", arm
+        )
+        wake = ack_branch.index('"proof-validated-response"', deadline)
+        self.assertLess(ack_mask, quorum)
+        self.assertLess(quorum, arm)
+        self.assertLess(arm, deadline)
+        self.assertLess(deadline, wake)
         self.assertIn(
-            "#define GATEWAY_DISCOVERY_ASSIGNMENT_POST_CONFIRM_TAIL_MS \\\n"
-            "    (ROUTE_GATEWAY_ACK_TIMEOUT_MS + "
-            "ROUTE_RETRY_BACKOFF_FIRST_MS)",
+            "#define DISCOVERY_ASSIGNMENT_RESPONSE_ACK_SETTLE_MS 450u",
+            DISCOVERY_ASSIGNMENT_HEADER,
+        )
+        self.assertNotIn(
+            "gateway_discovery_assignment_note_ack_confirm",
             GATEWAY_CONTROL,
         )
-        self.assertIn(
-            "GATEWAY_DISCOVERY_ASSIGNMENT_POST_CONFIRM_TAIL_MS == 3500u",
-            GATEWAY_CONTROL,
-        )
-
-        newly_confirmed = confirm.index("if (newly_confirmed)")
-        quorum = confirm.index(
-            "gateway_discovery_assignment_missing_confirmation_count_locked() ==",
-            newly_confirmed,
-        )
-        deadline = confirm.index(
-            "GATEWAY_DISCOVERY_ASSIGNMENT_POST_CONFIRM_TAIL_MS", quorum
-        )
-        rearm = confirm.index(
-            "response_ack_settle_armed =\n                        true", deadline
-        )
-        publish_deadline = confirm.index(
-            "response_ack_settle_deadline_ms =", rearm
-        )
-        trace = confirm.index("DBG_DISCOVERY_SLOT_CONFIRM_TAIL", publish_deadline)
-        wake = confirm.index('"ack-confirm"', trace)
-        self.assertLess(newly_confirmed, quorum)
-        self.assertLess(quorum, deadline)
-        self.assertLess(deadline, rearm)
-        self.assertLess(rearm, publish_deadline)
-        self.assertLess(publish_deadline, trace)
-        self.assertLess(trace, wake)
+        self.assertNotIn("POST_CONFIRM_TAIL", GATEWAY_CONTROL)
 
         quorum_complete = finalize.index("missing_proof_count == 0u")
-        tail_pending = finalize.index(
+        settle_pending = finalize.index(
             "discovery_assignment_response_ack_settle_pending(",
             quorum_complete,
         )
-        tail_reschedule = finalize.index(
-            '"response-ack-settle"', tail_pending
+        settle_reschedule = finalize.index(
+            '"response-ack-settle"', settle_pending
         )
         publish_end = finalize.index(
-            "gateway_discovery_assignment_publish_end()", tail_reschedule
+            "gateway_discovery_assignment_publish_end()", settle_reschedule
         )
-        self.assertLess(quorum_complete, tail_pending)
-        self.assertLess(tail_pending, tail_reschedule)
-        self.assertLess(tail_reschedule, publish_end)
+        self.assertLess(quorum_complete, settle_pending)
+        self.assertLess(settle_pending, settle_reschedule)
+        self.assertLess(settle_reschedule, publish_end)
+
+    def test_assignment_result_history_is_confirmed_at_gateway_commit(self):
+        commit = function_body(
+            RELAY_CUSTODY, "mesh_relay_commit_gateway_delivery"
+        )
+        store = commit.index("gateway_ack_history_store(")
+        parse = commit.index(
+            "discovery_assignment_parse_result_tlvs(", store
+        )
+        claim_phase = commit.index(
+            "assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM", parse
+        )
+        ack_phase = commit.index(
+            "assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK", claim_phase
+        )
+        confirm = commit.index(
+            "gateway_ack_history_confirm_packet(", ack_phase
+        )
+
+        self.assertLess(store, parse)
+        self.assertLess(parse, claim_phase)
+        self.assertLess(claim_phase, ack_phase)
+        self.assertLess(ack_phase, confirm)
 
     def test_gateway_ch9_continuous_rx_traces_each_physical_attempt(self):
         arm = REPORT.index("DBG_GATEWAY_CH9_RX_CONT_ARM")
@@ -1439,7 +1470,7 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertLess(handoff_end, restart)
         self.assertNotIn("mesh_restart_role_scan()", send[stop:tx_return])
 
-    def test_table_publication_waits_for_current_responder_confirmations(self):
+    def test_table_publication_waits_for_current_responder_ack_quorum(self):
         service = function_body(
             ANCHOR, "gateway_discovery_assignment_service_delivery"
         )
@@ -1460,7 +1491,8 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             response_window,
         )
         self.assertIn(
-            "gateway_discovery_assignment_adaptive_wait_ms_locked(1u, 1u)",
+            "gateway_discovery_assignment_adaptive_deadline_offset_ms_locked(\n"
+            "                    1u, 1u)",
             service[table_wait:table_wait + 300],
         )
 
@@ -1469,12 +1501,13 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "gateway_discovery_assignment_refresh_adaptive_deadline_locked",
         )
         self.assertIn(
-            "discovery_assignment_adaptive_next_depth_wait_ms(",
+            "discovery_assignment_adaptive_depth_deadline_offset_ms(",
             function_body(
                 ANCHOR,
-                "gateway_discovery_assignment_adaptive_wait_ms_locked",
+                "gateway_discovery_assignment_adaptive_deadline_offset_ms_locked",
             ),
         )
+        self.assertIn("response_window_origin_ms", refresh)
         self.assertIn(
             "gateway_discovery_assignment_set_response_deadline_locked(",
             refresh,

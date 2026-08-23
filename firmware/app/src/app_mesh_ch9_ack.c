@@ -274,6 +274,36 @@ bool app_mesh_ch9_ack_table_any_pending(
     return app_mesh_ch9_ack_table_peer_count(table) > 0u;
 }
 
+bool app_mesh_ch9_ack_batch_consumes_next_peer_turn(
+    const struct app_mesh_ch9_ack_batch *batch)
+{
+    if (batch == NULL || !batch->valid || batch->preserve_payload) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < batch->count; i++) {
+        if (batch->entries[i].assignment_turn_action !=
+            APP_MESH_CH9_ASSIGNMENT_TURN_NONE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool app_mesh_ch9_ack_batch_retires_peer_timing(
+    const struct app_mesh_ch9_ack_batch *batch)
+{
+    if (batch == NULL || !batch->valid || batch->preserve_payload) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < batch->count; i++) {
+        if (batch->entries[i].assignment_turn_action ==
+            APP_MESH_CH9_ASSIGNMENT_TURN_RETIRE) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool app_mesh_ch9_ack_table_pending_for_peer(
     const struct app_mesh_ch9_ack_table *table,
     uint64_t peer_id)
