@@ -3,6 +3,7 @@
 
 #include "protocol.h"
 #include "mesh.h"
+#include "mesh_radio_timing.h"
 #include "node_comm.h"
 #include "operation_policy.h"
 #include "semantic_digest.h"
@@ -76,6 +77,20 @@ extern "C" {
       OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
      MESH_ENUMERATION_RELAY_COPY_TAIL_MS)
 #define DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS 150u
+#define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS 2000u
+#define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MIN_MS \
+    (MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS + \
+     MESH_RADIO_EVENT_RETUNE_GUARD_MS + \
+     DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS + \
+     DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS + \
+     DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS)
+#define DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_MAX_MS \
+    (MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS + \
+     MESH_RADIO_EVENT_RETUNE_GUARD_MS + \
+     DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS + \
+     (DISCOVERY_ASSIGNMENT_MAX_HOPS * \
+      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS) + \
+     DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS)
 #define DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms) \
     ((response_spread_ms) < OPERATION_POLICY_FIRST_CONTACT_SLOT_MS ? \
          (response_spread_ms) : OPERATION_POLICY_FIRST_CONTACT_SLOT_MS)
@@ -368,6 +383,10 @@ uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count);
 uint32_t discovery_assignment_control_propagation_hold_ms(
     uint8_t max_hop_count);
+/* One-based RF depth learned from the selected gateway route. Zero uses the
+ * maximum depth so a missing route cannot shorten the receive window. */
+uint32_t discovery_assignment_control_listener_duration_ms(
+    uint8_t gateway_hop_count);
 int discovery_assignment_adaptive_depth_deadline_offset_ms(
     uint16_t response_spread_ms,
     uint8_t slot_count,

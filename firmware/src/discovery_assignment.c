@@ -1232,6 +1232,23 @@ uint32_t discovery_assignment_control_propagation_hold_ms(
                DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS;
 }
 
+uint32_t discovery_assignment_control_listener_duration_ms(
+    uint8_t gateway_hop_count)
+{
+    uint8_t effective_hop_count =
+        gateway_hop_count == 0u ||
+                gateway_hop_count > DISCOVERY_ASSIGNMENT_MAX_HOPS ?
+            DISCOVERY_ASSIGNMENT_MAX_HOPS : gateway_hop_count;
+    uint32_t depth_duration_ms =
+        MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
+        MESH_RADIO_EVENT_RETUNE_GUARD_MS +
+        discovery_assignment_control_propagation_hold_ms(
+            effective_hop_count) +
+        DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS;
+
+    return depth_duration_ms;
+}
+
 int discovery_assignment_adaptive_depth_deadline_offset_ms(
     uint16_t response_spread_ms,
     uint8_t slot_count,

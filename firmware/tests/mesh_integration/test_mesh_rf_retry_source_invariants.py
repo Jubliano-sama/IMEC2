@@ -2797,7 +2797,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "deadline_ms = k_uptime_get_32() +", wake_seen
         )
         full_relay_window = listener.index(
-            "MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS", renewed_deadline
+            "window_ms", renewed_deadline
         )
         hold = listener.index(
             "DBG_C5_CONTROL_LISTENER_HOLD_EXTENDED", full_relay_window
@@ -2822,6 +2822,26 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn(
             "contact_purpose ==",
             listener[control_gate:hold],
+        )
+
+    def test_gateway_control_listener_uses_here_i_am_route_depth(self):
+        handoff = function_body(REPORT, "mesh_anchor_handoff_route_wake_frame")
+        control = handoff.index("if (control_followup)")
+        route_depth = handoff.index(
+            "app_mesh_report_selected_gateway_hop_count()", control
+        )
+        duration = handoff.index(
+            "discovery_assignment_control_listener_duration_ms(", route_depth
+        )
+        listener = handoff.index("mesh_listen_for_route_reply(", duration)
+
+        self.assertLess(control, route_depth)
+        self.assertLess(route_depth, duration)
+        self.assertLess(duration, listener)
+        self.assertIn("gateway_hop_count", handoff[route_depth:duration])
+        self.assertNotIn(
+            "MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS",
+            handoff[control:listener],
         )
 
     def test_control_followup_waits_after_every_central_wake_path(self):

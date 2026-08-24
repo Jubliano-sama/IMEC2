@@ -1,5 +1,6 @@
 #include "dwm3000_runtime.h"
 #include "dwm3000_timing.h"
+#include "discovery_assignment.h"
 #include "gateway_command.h"
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
@@ -27,7 +28,6 @@
 #define ENUMERATION_CONTROL_TURNAROUND_US \
     ((uint64_t)MESH_RADIO_EVENT_RETUNE_GUARD_MS * 1000u)
 #define ENUMERATION_CONTROL_OWNER_MARGIN_US UINT64_C(25000)
-#define ENUMERATION_CONTROL_LISTENER_US UINT64_C(2000000)
 #define WORKQUEUE_CONTENTION_US UINT64_C(25000)
 #define CLOCK_DRIFT_BOUND_US INT32_C(250)
 #define PHASE_STEP_US UINT64_C(250)
@@ -223,7 +223,9 @@ static bool enumeration_activation_contains_claim_and_followup(
                     .start_us = claim_start_us + claim_airtime_us +
                                 control_prepare_us,
                     .end_us = claim_start_us + claim_airtime_us +
-                              ENUMERATION_CONTROL_LISTENER_US,
+                              (uint64_t)
+                                  discovery_assignment_control_listener_duration_ms(
+                                      1u) * 1000u,
                 };
 
                 return fully_contained(control, listener);
@@ -438,6 +440,44 @@ static void test_enumeration_activation_phase_sweep(void)
     }
 }
 
+static void test_depth_aware_enumeration_control_listener(void)
+{
+    const uint32_t old_fixed_listener_ms = 2000u;
+    uint32_t previous_ms = 0u;
+
+    CHECK(discovery_assignment_control_listener_duration_ms(1u) == 3750u,
+          "direct control listener lost its two-second safety margin");
+    CHECK(discovery_assignment_control_listener_duration_ms(2u) == 4290u,
+          "one-relay control listener does not cover its route depth");
+    CHECK(discovery_assignment_control_listener_duration_ms(3u) == 4830u,
+          "two-relay control listener does not cover F2F1D");
+    CHECK(discovery_assignment_control_listener_duration_ms(0u) == 7530u,
+          "unknown route depth did not fail safe to the maximum window");
+    CHECK(old_fixed_listener_ms <
+              MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
+                  MESH_RADIO_EVENT_RETUNE_GUARD_MS +
+                  discovery_assignment_control_propagation_hold_ms(3u),
+          "old fixed listener no longer reproduces the F2 timing gap");
+
+    for (uint8_t hop_count = 1u;
+         hop_count <= DISCOVERY_ASSIGNMENT_MAX_HOPS;
+         hop_count++) {
+        uint32_t listen_ms =
+            discovery_assignment_control_listener_duration_ms(hop_count);
+        uint32_t required_ms =
+            MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
+            MESH_RADIO_EVENT_RETUNE_GUARD_MS +
+            discovery_assignment_control_propagation_hold_ms(hop_count);
+
+        CHECK(listen_ms == required_ms +
+                               DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS,
+              "depth-aware listener lost its explicit safety margin");
+        CHECK(listen_ms > previous_ms,
+              "deeper gateway route did not lengthen the listener");
+        previous_ms = listen_ms;
+    }
+}
+
 static void test_maintained_normal_click_phy_and_capacity_contract(void)
 {
     const struct dwm3000_phy_timing *wake =
@@ -486,6 +526,7 @@ int main(void)
     test_channel9_hil_phase_skew_is_inside_receiver_window();
     test_claim_phase_sweep();
     test_enumeration_activation_phase_sweep();
+    test_depth_aware_enumeration_control_listener();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
     test_multi_anchor_claim_and_range_schedule_invariants();
 

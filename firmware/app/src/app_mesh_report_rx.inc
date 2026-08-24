@@ -1209,6 +1209,7 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
     bool embedded_route_frame = false;
     bool captured_route_reply = false;
     bool control_followup;
+    uint8_t gateway_hop_count = 0u;
     uint32_t listen_ms;
     int listen_ret = 0;
 
@@ -1264,21 +1265,23 @@ bool mesh_anchor_handoff_route_wake_frame(const uint8_t *frame,
     }
     if (control_followup) {
         /*
-         * A deeper relay starts in a later flood wave.  The sender's
-         * remaining claim only covers its own payload; keep the receiver
-         * through the next bounded wave so a forced-depth child can hear the
-         * next relay wake and payload.  The listener still probes clicks
-         * before accepting another control wake.
+         * Here-I-Am installed a one-based gateway depth before the host sent
+         * this command. Keep deeper anchors through every bounded relay wave
+         * implied by that route. An absent route uses the maximum depth so
+         * stale or missing topology can never shorten the receive window.
          */
-        listen_ms = MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS;
+        gateway_hop_count = app_mesh_report_selected_gateway_hop_count();
+        listen_ms = discovery_assignment_control_listener_duration_ms(
+            gateway_hop_count);
     }
 
-    status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_HANDOFF src=0x%llx evt=%u attempt=%u flags=0x%02x embedded=%u listen=%u\n",
+    status_debug_printf("DBG_ANCHOR_ROUTE_WAKE_HANDOFF src=0x%llx evt=%u attempt=%u flags=0x%02x embedded=%u hop=%u listen=%u\n",
                         (unsigned long long)claim.clicker_id,
                         claim.click_event_id,
                         claim.attempt_index,
                         claim.flags,
                         embedded_route_frame ? 1u : 0u,
+                        gateway_hop_count,
                         listen_ms);
 
     if (!embedded_route_frame) {

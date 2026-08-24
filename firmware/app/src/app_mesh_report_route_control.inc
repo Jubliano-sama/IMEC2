@@ -2893,8 +2893,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
                              * by the previous hop, so give its payload one
                              * complete bounded follow-up window of its own.
                              */
-                            deadline_ms = k_uptime_get_32() +
-                                MESH_GATEWAY_CONTROL_DEEP_RELAY_LISTEN_MS;
+                            deadline_ms = k_uptime_get_32() + window_ms;
                             status_debug_printf(
                                 "DBG_C5_CONTROL_DEEPER_RELAY_LISTEN deadline=%u\n",
                                 deadline_ms);

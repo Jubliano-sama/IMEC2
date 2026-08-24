@@ -1,0 +1,1313 @@
+[34m0000577[0m [36mI[0m Target type is nrf52833 [2m[board][0m
+[34m0000598[0m [36mI[0m Performing connect pre-reset [2m[coresight_target][0m
+[34m0000849[0m [36mI[0m DAP is not accessible after reset; attempting reconnect [2m[dap][0m
+[34m0000956[0m [36mI[0m DP IDR = 0x2ba01477 (v1 rev2) [2m[dap][0m
+[34m0000962[0m [36mI[0m AHB-AP#0 IDR = 0x24770011 (AHB-AP var1 rev2) [2m[discovery][0m
+[34m0000962[0m [36mI[0m AP#1 IDR = 0x02880000 (AP var0 rev0) [2m[discovery][0m
+[34m0000963[0m [36mI[0m NRF52833 not in secure state [2m[target_nRF52][0m
+[34m0000967[0m [36mI[0m AHB-AP#0 Class 0x1 ROM table #0 @ 0xe00ff000 (designer=244 part=00d) [2m[rom_table][0m
+[34m0000969[0m [36mI[0m [0]<e000e000:SCS v7-M class=14 designer=43b:Arm part=00c> [2m[rom_table][0m
+[34m0000971[0m [36mI[0m [1]<e0001000:DWT v7-M class=14 designer=43b:Arm part=002> [2m[rom_table][0m
+[34m0000972[0m [36mI[0m [2]<e0002000:FPB v7-M class=14 designer=43b:Arm part=003> [2m[rom_table][0m
+[34m0000974[0m [36mI[0m [3]<e0000000:ITM v7-M class=14 designer=43b:Arm part=001> [2m[rom_table][0m
+[34m0000976[0m [36mI[0m [4]<e0040000:TPIU M4 class=9 designer=43b:Arm part=9a1 devtype=11 archid=0000 devid=ca1:0:0> [2m[rom_table][0m
+[34m0000979[0m [36mI[0m [5]<e0041000:ETM M4 class=9 designer=43b:Arm part=925 devtype=13 archid=0000 devid=0:0:0> [2m[rom_table][0m
+[34m0000982[0m [36mI[0m CPU core #0: Cortex-M4 r0p1, v7.0-M architecture [2m[cortex_m][0m
+[34m0000982[0m [36mI[0m   Extensions: [DSP, FPU, FPU_V4, MPU] [2m[cortex_m][0m
+[34m0000982[0m [36mI[0m   FPU present: FPv4-SP-D16-M [2m[cortex_m][0m
+[34m0000985[0m [36mI[0m This appears to be an nRF52833 AA B0 [2m[target_nRF52][0m
+[34m0000990[0m [36mI[0m 4 hardware watchpoints [2m[dwt][0m
+[34m0000991[0m [36mI[0m 6 hardware breakpoints, 4 literal comparators [2m[fpb][0m
+[34m0001014[0m [36mI[0m 3 up channels and 3 down channels found [2m[rtt_cmd][0m
+[34m0001014[0m [36mI[0m Reading from up channel 0 ("Terminal") [2m[rtt_cmd][0m
+[34m0001016[0m [36mI[0m Writing to down channel 0 ("Terminal") [2m[rtt_cmd][0m
+DBG_STACK_BOOT preset=mesh_gateway build=imec-stack-v1:mesh_gateway:1955fc387dc7700d1d0ef32e5144222ea83271cdd4fc4d1a45934582d79e95c2 epoch=12837300230038735800 uptime=2
+mesh node identity: ficr=0xeefc9670907f2ef7 node=0x9999888877776666 preset=mesh_gateway
+DBG_LED_SELFTEST_CH5_RX
+DBG_DIRECT_GW_PROBE_BOOT resetreas=0x00000000 phase=none
+DBG_NODE_COMM_BOOT stage=init ret=0 running=1 uptime=1009
+DBG_GATEWAY_BOOT stage=ble_begin uptime=1018
+DBG_GATEWAY_BLE stage=entry enabled=1 uptime=1018
+DBG_GATEWAY_BLE stage=bt_enable ret=0 uptime=1024
+DBG_GATEWAY_BLE stage=adv_start ret=0 active=1 quiet=0 uptime=1025
+DBG_GATEWAY_BOOT stage=ble_done ret=0 uptime=1025
+DBG_GATEWAY_BOOT stage=ch9_begin uptime=1025
+DBG_GATEWAY_RX_START reason=gateway startup active=1 qrx=0 qtx=0 adv_due=0
+DBG_GATEWAY_BOOT stage=ch9_done ret=0 uptime=1026
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=0 configured=0 awake=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=99151 end=99652 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=99654 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=99654 end=100155 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=100157 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=100157 end=100658 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=100660 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=100660 end=101161 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=101163 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=101163 end=101664 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=101666 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=101666 end=102167 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=102169 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=102169 end=102670 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=102672 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=102672 end=103173 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=103175 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=103175 end=103676 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=103678 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=103678 end=104179 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=104181 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=104181 end=104682 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=104684 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=104684 end=105185 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=105187 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=105187 end=105688 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=105690 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=105690 end=106191 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=106193 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=106193 end=106694 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=106696 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=106696 end=107197 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=107199 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=107199 end=107700 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=107702 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=107702 end=108203 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=108205 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=108205 end=108706 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=108708 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=108708 end=109209 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=109211 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=109211 end=109712 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=109714 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=109714 end=110215 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=110217 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=110217 end=110718 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=110720 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=110720 end=111221 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=111223 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=111223 end=111724 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=111726 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=111726 end=112227 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=112229 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=112229 end=112730 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=112732 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=112732 end=113233 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=113235 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=113235 end=113736 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=113738 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=113738 end=114239 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=114241 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=114241 end=114742 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=114744 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=114744 end=115245 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=115247 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=115247 end=115748 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=115750 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=115750 end=116251 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=116253 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=116253 end=116754 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=116756 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=116756 end=117257 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=117259 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=117259 end=117760 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=117762 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=117762 end=118263 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=118265 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=118265 end=118766 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=118768 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=118768 end=119269 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=119271 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=119271 end=119772 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=119774 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=119774 end=120275 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=120277 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=120277 end=120778 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=120780 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=120780 end=121281 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=121283 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=121283 end=121784 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=121786 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=121786 end=122287 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=122289 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=122289 end=122790 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=122792 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=122792 end=123293 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=123295 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=123295 end=123796 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=123798 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=123798 end=124299 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=124301 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=124301 end=124802 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=124804 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=124804 end=125305 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=125307 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=125307 end=125808 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=125810 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=125810 end=126311 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=126313 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=126313 end=126814 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=126816 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=126816 end=127317 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=127319 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=127319 end=127820 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=127822 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=127822 end=128323 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=128325 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=128325 end=128826 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=128828 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=128828 end=129329 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=129331 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=129331 end=129832 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=129834 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=129834 end=130335 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=130337 rem=500 frames=0 errors=0
+DBG_GATEWAY_BLE event=connected err=0 uptime=130638
+DBG_GATEWAY_BLE event=param-request ret=0 interval=24-40 latency=0 timeout_ms=12000 uptime=130638
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=130337 end=130838 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=130840 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=130840 end=131341 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=131343 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=131343 end=131844 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=131846 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=131846 end=132347 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=132349 rem=500 frames=0 errors=0
+DBG_GATEWAY_BLE event=param-updated interval=36 latency=0 timeout_ms=420 uptime=132366
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=132368
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=1 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244545 seq=1 type=86 sequence=0 previous=0 uptime=132368
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=1 sample=1 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244545 seq=1 type=86 uptime=132368
+DBG_STACK_ISR_CONFIG size=8192 run=1 sample=1
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=1 sample=1
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=2264 free=5928 size=8192 ret=0 run=1 sample=1
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=1 sample=1
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=1 sample=1
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=1 sample=1
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=1 sample=1
+DBG_STACK_SAMPLE_END run=1 sample=1
+DBG_STACK_RUN_END epoch=12837300230038735800 run=1 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244545 seq=1 type=86 samples=1 sequence=0 previous=0 uptime=132397
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=2 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244546 seq=2 type=86 sequence=0 previous=0 uptime=132457
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=2 sample=2 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244546 seq=2 type=86 uptime=132458
+DBG_STACK_ISR_CONFIG size=8192 run=2 sample=2
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=2 sample=2
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=2264 free=5928 size=8192 ret=0 run=2 sample=2
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=2 sample=2
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=2 sample=2
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=2 sample=2
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=2 sample=2
+DBG_STACK_SAMPLE_END run=2 sample=2
+DBG_STACK_RUN_END epoch=12837300230038735800 run=2 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244546 seq=2 type=86 samples=1 sequence=0 previous=0 uptime=132473
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=150 msg=3c reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=3c seq=2 ch=5 seen=1 at=132929
+DBG_MESH_TX_STAGE stage=complete msg=3c seq=2 ch=5 seen=1 at=132935 ret=0
+DBG_MESH_TX_STAGE stage=park msg=3c seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_GATEWAY_RX_DECODE ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x708bc0aab970300e seq=2 flags=0x00 plen=97 q=100
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x708bc0aab970300e seq=2 q=1
+DBG_ROUTE_ADV_QUEUED q=1 prev=0x708bc0aab970300e seq=2
+DBG_MESH_RX_DEFERRED q=1 msg=0x3c
+DBG_C5_FLOOD_DELAY_RX_YIELD queued=1 q=1 rem=39
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_CAP now=133001 win=9 adv_wait=9 due=133010
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=133027 rem=9 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=133027 end=133037 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=133038 due=133010
+DBG_ROUTE_REFRESH_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=150 msg=3c reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=3c seq=2 ch=5 seen=1 at=133086
+DBG_MESH_TX_STAGE stage=complete msg=3c seq=2 ch=5 seen=1 at=133092 ret=0
+DBG_MESH_TX_STAGE stage=park msg=3c seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_CAP now=133186 win=9 adv_wait=9 due=133195
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=133212 rem=9 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=133212 end=133221 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=133222 due=133195
+DBG_ROUTE_REFRESH_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=150 msg=3c reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=3c seq=2 ch=5 seen=1 at=133270
+DBG_MESH_TX_STAGE stage=complete msg=3c seq=2 ch=5 seen=1 at=133276 ret=0
+DBG_MESH_TX_STAGE stage=park msg=3c seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_GATEWAY_RX_DECODE ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x708bc0aab970300e seq=2 flags=0x00 plen=97 q=100
+DBG_UWB_RX_CH5
+DBG_MESH_RX_QUEUED ch=5 msg=0x3c src=0x9999888877776666 dst=0x0 prev=0x708bc0aab970300e seq=2 q=1
+DBG_ROUTE_ADV_QUEUED q=1 prev=0x708bc0aab970300e seq=2
+DBG_MESH_RX_DEFERRED q=1 msg=0x3c
+DBG_C5_FLOOD_DELAY_RX_YIELD queued=1 q=1 rem=40
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=1 qtx=0 adv_due=0
+DBG_MESH_RX_WORK_WAIT q=1
+DBG_MESH_RX_WORK_ENTER q=1
+DBG_MESH_RX_DRAIN_ENTER owner=work q=1
+DBG_MESH_RX_DRAIN_EXIT owner=work handled=0 q=0
+DBG_MESH_RX_WORK_EXIT handled=0 q=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_GATEWAY_CH9_RX_CONT_CAP now=133338 win=9 adv_wait=9 due=133347
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=133364 rem=9 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=133364 end=133374 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=133375 due=133347
+DBG_ROUTE_REFRESH_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=150 msg=3c reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=3c seq=2 ch=5 seen=1 at=133422
+DBG_MESH_TX_STAGE stage=complete msg=3c seq=2 ch=5 seen=1 at=133428 ret=0
+DBG_MESH_TX_STAGE stage=park msg=3c seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=3 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244548 seq=4 type=86 sequence=0 previous=0 uptime=133430
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=3 sample=3 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244548 seq=4 type=86 uptime=133430
+DBG_STACK_ISR_CONFIG size=8192 run=3 sample=3
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=3 sample=3
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=3 sample=3
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=3 sample=3
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=3 sample=3
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=3 sample=3
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=3 sample=3
+DBG_STACK_SAMPLE_END run=3 sample=3
+DBG_STACK_RUN_END epoch=12837300230038735800 run=3 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244548 seq=4 type=86 samples=1 sequence=0 previous=0 uptime=133455
+DBG_GATEWAY_CH9_RX_CONT_ARM now=133460 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=133460 end=133961 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_CAP now=133963 win=943 adv_wait=943 due=134906
+DBG_GATEWAY_CH9_RX_CONT_ARM now=133963 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=133963 end=134464 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_CAP now=134466 win=440 adv_wait=440 due=134906
+DBG_GATEWAY_CH9_RX_CONT_ARM now=134466 rem=440 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=134466 end=134907 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_DONE_YIELD_ADV now=134908 due=134906
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=4 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=2439692663 seq=49527 type=65 sequence=0 previous=0 uptime=134908
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=4 sample=4 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=2439692663 seq=49527 type=65 uptime=134908
+DBG_STACK_ISR_CONFIG size=8192 run=4 sample=4
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=4 sample=4
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=4 sample=4
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=4 sample=4
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=4 sample=4
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=4 sample=4
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=4 sample=4
+DBG_STACK_SAMPLE_END run=4 sample=4
+DBG_STACK_RUN_END epoch=12837300230038735800 run=4 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=2439692663 seq=49527 type=65 samples=1 sequence=0 previous=0 uptime=134937
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=5 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244549 seq=5 type=86 sequence=0 previous=0 uptime=135022
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=5 sample=5 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244549 seq=5 type=86 uptime=135023
+DBG_STACK_ISR_CONFIG size=8192 run=5 sample=5
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=5 sample=5
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=5 sample=5
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=5 sample=5
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=5 sample=5
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=5 sample=5
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=5 sample=5
+DBG_STACK_SAMPLE_END run=5 sample=5
+DBG_STACK_RUN_END epoch=12837300230038735800 run=5 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244549 seq=5 type=86 samples=1 sequence=0 previous=0 uptime=135039
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=135202
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=6 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244550 seq=6 type=86 sequence=0 previous=0 uptime=135203
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=6 sample=6 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244550 seq=6 type=86 uptime=135203
+DBG_STACK_ISR_CONFIG size=8192 run=6 sample=6
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=6 sample=6
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=6 sample=6
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=6 sample=6
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=6 sample=6
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=6 sample=6
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=6 sample=6
+DBG_STACK_SAMPLE_END run=6 sample=6
+DBG_STACK_RUN_END epoch=12837300230038735800 run=6 kind=ble_backpressure owner=system_workqueue outcome=ack queue=3 custody=0 credit=1 retry=0 drain=3 src=11068027678940948070 dst=11068027678940948070 session=59244550 seq=6 type=86 samples=1 sequence=0 previous=0 uptime=135219
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=7 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244551 seq=7 type=86 sequence=0 previous=0 uptime=135292
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=7 sample=7 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244551 seq=7 type=86 uptime=135293
+DBG_STACK_ISR_CONFIG size=8192 run=7 sample=7
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=7 sample=7
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=7 sample=7
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=7 sample=7
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=7 sample=7
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=7 sample=7
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=7 sample=7
+DBG_STACK_SAMPLE_END run=7 sample=7
+DBG_STACK_RUN_END epoch=12837300230038735800 run=7 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244551 seq=7 type=86 samples=1 sequence=0 previous=0 uptime=135308
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=8 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244553 seq=9 type=86 sequence=0 previous=0 uptime=135382
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=8 sample=8 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244553 seq=9 type=86 uptime=135383
+DBG_STACK_ISR_CONFIG size=8192 run=8 sample=8
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=8 sample=8
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=8 sample=8
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=8 sample=8
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=8 sample=8
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=8 sample=8
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=8 sample=8
+DBG_STACK_SAMPLE_END run=8 sample=8
+DBG_STACK_RUN_END epoch=12837300230038735800 run=8 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244553 seq=9 type=86 samples=1 sequence=0 previous=0 uptime=135397
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=135208 end=135709 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=9 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=135710
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=9 sample=9 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=135710
+DBG_STACK_ISR_CONFIG size=8192 run=9 sample=9
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=9 sample=9
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5004 free=3188 size=8192 ret=0 run=9 sample=9
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=9 sample=9
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=9 sample=9
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=9 sample=9
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=9 sample=9
+DBG_STACK_SAMPLE_END run=9 sample=9
+DBG_STACK_RUN_END epoch=12837300230038735800 run=9 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=135736
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=135736
+DBG_GATEWAY_CH9_RX_CONT_ARM now=135737 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=135737 end=135738 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=135738 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_NC o=0000000000000001 g=00000001 w=00 e=0000003c s=00000005 q=0000>0004 r=00000000 f=00000024 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_SUBMIT handle=1 profile=0 token=17039361 deadline=145739
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_BEGIN
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_WAKE_TRAIN_CONFIG_OK
+DBG_WAKE_TRAIN_FIRST_SEND_BEGIN
+DBG_WAKE_TRAIN_FIRST_SEND_OK
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_GATEWAY_BLE event=param-updated interval=36 latency=0 timeout_ms=12000 uptime=135966
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_UWB_TX_CH5
+DBG_TX_WAKE_CLAIM_SENT
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_C5_CONTROL_FOLLOWUP_TURNAROUND delay=60 msg=40 reason=node-comm-bounded-control-flood
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=136 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=1 ch=5 seen=1 at=136962
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=1 ch=5 seen=1 at=136963 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=1 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000022 s=00000005 q=0004>0005 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000042 s=00000005 q=0005>0006 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=1 ret=0 rf=1 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=10 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=136966
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=10 sample=10 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=136966
+DBG_STACK_ISR_CONFIG size=8192 run=10 sample=10
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=10 sample=10
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5888 free=2304 size=8192 ret=0 run=10 sample=10
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=10 sample=10
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=10 sample=10
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=10 sample=10
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=10 sample=10
+DBG_STACK_SAMPLE_END run=10 sample=10
+DBG_STACK_RUN_END epoch=12837300230038735800 run=10 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=136992
+DBG_ENUM_RF_BEGIN kind=1 handle=1 attempt=1 tries=1
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=11 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244555 seq=11 type=86 sequence=0 previous=0 uptime=136999
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=11 sample=11 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244555 seq=11 type=86 uptime=137013
+DBG_STACK_ISR_CONFIG size=8192 run=11 sample=11
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=11 sample=11
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5888 free=2304 size=8192 ret=0 run=11 sample=11
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=11 sample=11
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=11 sample=11
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=11 sample=11
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=11 sample=11
+DBG_STACK_SAMPLE_END run=11 sample=11
+DBG_STACK_RUN_END epoch=12837300230038735800 run=11 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244555 seq=11 type=86 samples=1 sequence=0 previous=0 uptime=137039
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=137027 end=137040 ret=-140 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=137040 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=12 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=137041
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=12 sample=12 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=137052
+DBG_STACK_ISR_CONFIG size=8192 run=12 sample=12
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=12 sample=12
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5888 free=2304 size=8192 ret=0 run=12 sample=12
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=12 sample=12
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=12 sample=12
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=12 sample=12
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=12 sample=12
+DBG_STACK_SAMPLE_END run=12 sample=12
+DBG_STACK_RUN_END epoch=12837300230038735800 run=12 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=137078
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000023 s=00000005 q=0006>0004 r=00000000 f=00000024 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_COORD state=idle owner=c5-flood reason=idle rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=136 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=1 ch=5 seen=1 at=137148
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=1 ch=5 seen=1 at=137150 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=1 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000022 s=00000005 q=0004>0005 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000042 s=00000005 q=0005>0006 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=2 ret=0 rf=1 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=13 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=137152
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=13 sample=13 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=137153
+DBG_STACK_ISR_CONFIG size=8192 run=13 sample=13
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=13 sample=13
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=13 sample=13
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=13 sample=13
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=13 sample=13
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=13 sample=13
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=13 sample=13
+DBG_STACK_SAMPLE_END run=13 sample=13
+DBG_STACK_RUN_END epoch=12837300230038735800 run=13 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=137176
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=137210 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=137210 end=137211 ret=-140 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=137212 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=14 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=137212
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=14 sample=14 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=137212
+DBG_STACK_ISR_CONFIG size=8192 run=14 sample=14
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=14 sample=14
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=14 sample=14
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=14 sample=14
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=14 sample=14
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=14 sample=14
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=14 sample=14
+DBG_STACK_SAMPLE_END run=14 sample=14
+DBG_STACK_RUN_END epoch=12837300230038735800 run=14 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=137238
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000023 s=00000005 q=0006>0004 r=00000000 f=00000024 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_TX_BEGIN handle=1 profile=0 msg=64 dst=0x0 seq=1
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=136 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=1 ch=5 seen=1 at=137292
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=1 ch=5 seen=1 at=137293 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=1 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000022 s=00000005 q=0004>0005 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NC o=0000000000000001 g=00000001 w=00 e=00000041 s=00000005 q=0005>0008 r=00000000 f=00000026 t=00000000 p=00000001 a=03
+DBG_NODE_COMM_ATTEMPT handle=1 profile=0 attempt=3 ret=0 rf=1 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=15 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=137296
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=15 sample=15 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=137296
+DBG_STACK_ISR_CONFIG size=8192 run=15 sample=15
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=15 sample=15
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=15 sample=15
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=15 sample=15
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=15 sample=15
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=15 sample=15
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=15 sample=15
+DBG_STACK_SAMPLE_END run=15 sample=15
+DBG_STACK_RUN_END epoch=12837300230038735800 run=15 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=137322
+DBG_ENUM_RF_RESULT kind=1 handle=1 success=1 reason=0 tries=3
+DBG_ENUM_COMPACT_GATEWAY_SCHEDULE now=137334 start=139239 deadline=140739 wait=3405
+DBG_GATEWAY_RX_START reason=compact-enumeration active=1 qrx=0 qtx=0 adv_due=0
+DBG_COORD state=gateway-rx owner=uwb-rx reason=gateway-rx rx=0 tx=0 relay=0 route=0 ack=0 qack=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=137361 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=137361 end=137862 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=137864 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=137864 end=138365 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=138367 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=138367 end=138868 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CAP_ENUM now=138870 wait=329
+DBG_GATEWAY_CH9_RX_CONT_ARM now=138870 rem=329 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=138870 end=139200 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ENUM_COMPACT_GATEWAY_BEGIN now=139223 first_window=141 ret=0
+DBG_ENUM_COMPACT_DEPTH_WAIT observed_hop=1 through_hop=2 deadline=142489
+DBG_ENUM_COMPACT_GATEWAY_ACK_TX epoch=59244552 child=0x56da25fe4af6d141 seq=0 remaining=79 ret=0
+DBG_ENUM_COMPACT_GATEWAY_RX epoch=59244552 child=0x56da25fe4af6d141 seq=0 records=1 ret=0
+DBG_ENUM_COMPACT_GATEWAY_RX epoch=59244552 child=0x708bc0aab970300e seq=0 records=1 ret=-22
+DBG_ENUM_COMPACT_GATEWAY_END now=140871 timeouts=13 raw=0 bundles=2 errors=0 ret=-22
+DBG_ENUM_COMPACT_RECORD_PUBLISHED epoch=59244552 anchor=0x56da25fe4af6d141 hop=1 via=0x56da25fe4af6d141 progress=1
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=16 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244556 seq=12 type=86 sequence=0 previous=0 uptime=140872
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=16 sample=16 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244556 seq=12 type=86 uptime=140872
+DBG_STACK_ISR_CONFIG size=8192 run=16 sample=16
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=16 sample=16
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=16 sample=16
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=16 sample=16
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=16 sample=16
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=16 sample=16
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=16 sample=16
+DBG_STACK_SAMPLE_END run=16 sample=16
+DBG_STACK_RUN_END epoch=12837300230038735800 run=16 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244556 seq=12 type=86 samples=1 sequence=0 previous=0 uptime=140901
+DBG_ENUM_COMPACT_DEPTH_WAIT observed_hop=2 through_hop=3 deadline=144489
+DBG_ENUM_COMPACT_GATEWAY_ACK_TX epoch=59244552 child=0x56da25fe4af6d141 seq=0 remaining=78 ret=0
+DBG_ENUM_COMPACT_GATEWAY_RX epoch=59244552 child=0x56da25fe4af6d141 seq=0 records=2 ret=0
+DBG_ENUM_COMPACT_GATEWAY_RX epoch=59244552 child=0x191a9619c6c8cb07 seq=0 records=1 ret=-22
+DBG_ENUM_COMPACT_GATEWAY_END now=142643 timeouts=14 raw=0 bundles=2 errors=0 ret=-22
+DBG_ENUM_COMPACT_RECORD_PUBLISHED epoch=59244552 anchor=0x708bc0aab970300e hop=2 via=0x56da25fe4af6d141 progress=2
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=17 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244557 seq=13 type=86 sequence=0 previous=0 uptime=142644
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=17 sample=17 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244557 seq=13 type=86 uptime=142644
+DBG_STACK_ISR_CONFIG size=8192 run=17 sample=17
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=17 sample=17
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=17 sample=17
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=17 sample=17
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=17 sample=17
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=17 sample=17
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=17 sample=17
+DBG_STACK_SAMPLE_END run=17 sample=17
+DBG_STACK_RUN_END epoch=12837300230038735800 run=17 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244557 seq=13 type=86 samples=1 sequence=0 previous=0 uptime=142667
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ENUM_COMPACT_GATEWAY_BEGIN now=142668 first_window=71 ret=0
+DBG_ENUM_COMPACT_GATEWAY_RX epoch=59244552 child=0x708bc0aab970300e seq=0 records=2 ret=-22
+DBG_ENUM_COMPACT_GATEWAY_END now=144126 timeouts=12 raw=0 bundles=1 errors=0 ret=-22
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_ENUM_COMPACT_GATEWAY_BEGIN now=144148 first_window=91 ret=0
+DBG_ENUM_COMPACT_DEPTH_WAIT observed_hop=3 through_hop=4 deadline=146739
+DBG_ENUM_COMPACT_GATEWAY_ACK_TX epoch=59244552 child=0x56da25fe4af6d141 seq=0 remaining=82 ret=0
+DBG_ENUM_COMPACT_GATEWAY_RX epoch=59244552 child=0x56da25fe4af6d141 seq=0 records=3 ret=0
+DBG_ENUM_COMPACT_GATEWAY_END now=146740 timeouts=21 raw=0 bundles=1 errors=0 ret=0
+DBG_ENUM_COMPACT_RECORD_PUBLISHED epoch=59244552 anchor=0x191a9619c6c8cb07 hop=3 via=0x56da25fe4af6d141 progress=3
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=18 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244558 seq=14 type=86 sequence=0 previous=0 uptime=146741
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=18 sample=18 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244558 seq=14 type=86 uptime=146742
+DBG_STACK_ISR_CONFIG size=8192 run=18 sample=18
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=18 sample=18
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=18 sample=18
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=18 sample=18
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=18 sample=18
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=18 sample=18
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=18 sample=18
+DBG_STACK_SAMPLE_END run=18 sample=18
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=19 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=146767
+DBG_STACK_RUN_END epoch=12837300230038735800 run=18 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244558 seq=14 type=86 samples=1 sequence=0 previous=0 uptime=146768
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=19 sample=19 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=146768
+DBG_STACK_ISR_CONFIG size=8192 run=19 sample=19
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=19 sample=19
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=19 sample=19
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=19 sample=19
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=19 sample=19
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=19 sample=19
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=19 sample=19
+DBG_STACK_SAMPLE_END run=19 sample=19
+DBG_STACK_RUN_END epoch=12837300230038735800 run=19 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=146790
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=146805
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=146827 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=146827 end=146828 ret=-140 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=146829 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_NC o=0000000000000002 g=00000002 w=00 e=0000003c s=00000005 q=0000>0004 r=00000000 f=00000024 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_SUBMIT handle=2 profile=6 token=17039362 deadline=156831
+DBG_ENUM_FLOOD kind=2 handle=2
+DBG_ENUM_TABLE_TX epoch=59244552 count=3 round=1 ret=0
+DBG_NODE_COMM_TX_BEGIN handle=2 profile=6 msg=64 dst=0x0 seq=2
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=2 active=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=187 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=2 ch=5 seen=1 at=146881
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=2 ch=5 seen=1 at=146887 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=187 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=2 ch=5 seen=1 at=146936
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=2 ch=5 seen=1 at=146942 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=187 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=2 ch=5 seen=1 at=146990
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=2 ch=5 seen=1 at=146997 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=2 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_ENUM_CONTROL_BURST state=end active=0
+DBG_NC o=0000000000000002 g=00000002 w=00 e=00000022 s=00000005 q=0004>0005 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NC o=0000000000000002 g=00000002 w=00 e=00000041 s=00000005 q=0005>0008 r=00000000 f=00000026 t=00000000 p=00000001 a=01
+DBG_NODE_COMM_ATTEMPT handle=2 profile=6 attempt=1 ret=0 rf=1 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=20 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=146999
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=20 sample=20 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=147000
+DBG_STACK_ISR_CONFIG size=8192 run=20 sample=20
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=20 sample=20
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=20 sample=20
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=20 sample=20
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=20 sample=20
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=20 sample=20
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=20 sample=20
+DBG_STACK_SAMPLE_END run=20 sample=20
+DBG_STACK_RUN_END epoch=12837300230038735800 run=20 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=147023
+DBG_ENUM_RF_RESULT kind=2 handle=2 success=1 reason=0 tries=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=147065 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=147065 end=147566 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=147568 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=147568 end=148069 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=148071 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=148071 end=148572 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=148574 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=148574 end=149075 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=21 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=149076
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=21 sample=21 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=149076
+DBG_STACK_ISR_CONFIG size=8192 run=21 sample=21
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=21 sample=21
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=21 sample=21
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=21 sample=21
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=21 sample=21
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=21 sample=21
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=21 sample=21
+DBG_STACK_SAMPLE_END run=21 sample=21
+DBG_STACK_RUN_END epoch=12837300230038735800 run=21 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=149104
+DBG_NC o=0000000000000003 g=00000003 w=00 e=0000003c s=00000005 q=0000>0004 r=00000000 f=00000024 t=00000000 p=00000000 a=00
+DBG_NODE_COMM_SUBMIT handle=3 profile=6 token=17039363 deadline=159104
+DBG_ENUM_FLOOD kind=3 handle=3
+DBG_ENUM_END_TX epoch=59244552 table_seq=59244559 ret=0
+DBG_NODE_COMM_TX_BEGIN handle=3 profile=6 msg=64 dst=0x0 seq=3
+DBG_CONTROL_RX_HANDOFF_READY abort=0
+DBG_ENUM_CONTROL_BURST state=begin msg=40 seq=3 active=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=3 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=169 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=3 ch=5 seen=1 at=149154
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=3 ch=5 seen=1 at=149160 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=3 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=169 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=3 ch=5 seen=1 at=149210
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=3 ch=5 seen=1 at=149216 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=3 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=2 configured=1 awake=0
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_DWM_WAKE_MESH_CTRL_OK sfd=4073
+DBG_C5_TX_CONFIG ret=0 ext=1 len=169 msg=40 reason=bounded-c5-flood
+DBG_MESH_TX_STAGE stage=start msg=40 seq=3 ch=5 seen=1 at=149266
+DBG_MESH_TX_STAGE stage=complete msg=40 seq=3 ch=5 seen=1 at=149272 ret=0
+DBG_MESH_TX_STAGE stage=park msg=40 seq=3 ch=5 park_ret=0 release_ret=0
+DBG_UWB_TX_CH5
+DBG_ENUM_CONTROL_BURST state=end active=0
+DBG_NC o=0000000000000003 g=00000003 w=00 e=00000022 s=00000005 q=0004>0005 r=00000000 f=00000001 t=00000000 p=00000000 a=00
+DBG_NC o=0000000000000003 g=00000003 w=00 e=00000041 s=00000005 q=0005>0008 r=00000000 f=00000026 t=00000000 p=00000001 a=01
+DBG_NODE_COMM_ATTEMPT handle=3 profile=6 attempt=1 ret=0 rf=1 scheduled=0 state=0
+DBG_GATEWAY_RX_START reason=gateway mesh restart active=1 qrx=0 qtx=0 adv_due=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=22 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=149275
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=22 sample=22 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=149275
+DBG_STACK_ISR_CONFIG size=8192 run=22 sample=22
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=22 sample=22
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=22 sample=22
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=22 sample=22
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=22 sample=22
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=22 sample=22
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=22 sample=22
+DBG_STACK_SAMPLE_END run=22 sample=22
+DBG_STACK_RUN_END epoch=12837300230038735800 run=22 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=149301
+DBG_ENUM_RF_RESULT kind=3 handle=3 success=1 reason=0 tries=1
+DBG_DWM_INVALIDATE tag=configure_radio_from_reset active_phy=4 configured=1 awake=1
+DBG_DWM_MARK_UNCONFIGURED tag=initialise_radio prev_phy=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=149341 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=149341 end=149842 ret=-116 fail=0 status=0x02000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=149844 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=149844 end=150345 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=150347 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=150347 end=150848 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=150850 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=150850 end=151351 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=23 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 sequence=0 previous=0 uptime=151352
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=23 sample=23 kind=gateway_priority_control owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 uptime=151352
+DBG_STACK_ISR_CONFIG size=8192 run=23 sample=23
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=23 sample=23
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=23 sample=23
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=23 sample=23
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=23 sample=23
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=23 sample=23
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=23 sample=23
+DBG_STACK_SAMPLE_END run=23 sample=23
+DBG_STACK_RUN_END epoch=12837300230038735800 run=23 kind=gateway_priority_control owner=system_workqueue outcome=ack queue=1 custody=1 credit=0 retry=0 drain=0 src=1 dst=11068027678940948070 session=2439692664 seq=49528 type=64 samples=1 sequence=0 previous=0 uptime=151375
+DBG_GATEWAY_COMMAND_PRIORITY_SUBMIT ret=0 now=151376
+DBG_GATEWAY_CH9_RX_CONT_ARM now=151376 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=151376 end=151377 ret=-140 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_COMMAND_PREEMPT now=151378 rem=500 frames=0
+DBG_GATEWAY_CH9_RX_CONT_DONE ret=-140 len=0 fail=0 recover=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=24 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244563 seq=19 type=86 sequence=0 previous=0 uptime=151379
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=24 sample=24 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244563 seq=19 type=86 uptime=151381
+DBG_STACK_ISR_CONFIG size=8192 run=24 sample=24
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=24 sample=24
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=24 sample=24
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2288 free=2192 size=4480 ret=0 run=24 sample=24
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=24 sample=24
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=24 sample=24
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=24 sample=24
+DBG_STACK_SAMPLE_END run=24 sample=24
+DBG_STACK_RUN_END epoch=12837300230038735800 run=24 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=59244563 seq=19 type=86 samples=1 sequence=0 previous=0 uptime=151405
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=25 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=2439692664 seq=49528 type=65 sequence=0 previous=0 uptime=151493
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=25 sample=25 kind=ble_backpressure owner=system_workqueue queue=2 custody=2 credit=0 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=2439692664 seq=49528 type=65 uptime=151493
+DBG_STACK_ISR_CONFIG size=8192 run=25 sample=25
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=25 sample=25
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=25 sample=25
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2400 free=2080 size=4480 ret=0 run=25 sample=25
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=25 sample=25
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=25 sample=25
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=25 sample=25
+DBG_STACK_SAMPLE_END run=25 sample=25
+DBG_STACK_RUN_END epoch=12837300230038735800 run=25 kind=ble_backpressure owner=system_workqueue outcome=ack queue=2 custody=0 credit=1 retry=0 drain=2 src=11068027678940948070 dst=11068027678940948070 session=2439692664 seq=49528 type=65 samples=1 sequence=0 previous=0 uptime=151512
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=26 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244564 seq=20 type=86 sequence=0 previous=0 uptime=151582
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=26 sample=26 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244564 seq=20 type=86 uptime=151583
+DBG_STACK_ISR_CONFIG size=8192 run=26 sample=26
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=26 sample=26
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=26 sample=26
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2400 free=2080 size=4480 ret=0 run=26 sample=26
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=26 sample=26
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=26 sample=26
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=26 sample=26
+DBG_STACK_SAMPLE_END run=26 sample=26
+DBG_STACK_RUN_END epoch=12837300230038735800 run=26 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244564 seq=20 type=86 samples=1 sequence=0 previous=0 uptime=151600
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=27 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244565 seq=21 type=86 sequence=0 previous=0 uptime=151673
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=27 sample=27 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244565 seq=21 type=86 uptime=151673
+DBG_STACK_ISR_CONFIG size=8192 run=27 sample=27
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=27 sample=27
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=27 sample=27
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2400 free=2080 size=4480 ret=0 run=27 sample=27
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=27 sample=27
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=27 sample=27
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=27 sample=27
+DBG_STACK_SAMPLE_END run=27 sample=27
+DBG_STACK_RUN_END epoch=12837300230038735800 run=27 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244565 seq=21 type=86 samples=1 sequence=0 previous=0 uptime=151696
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=28 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244566 seq=22 type=86 sequence=0 previous=0 uptime=151763
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=28 sample=28 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244566 seq=22 type=86 uptime=151763
+DBG_STACK_ISR_CONFIG size=8192 run=28 sample=28
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=28 sample=28
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=28 sample=28
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2400 free=2080 size=4480 ret=0 run=28 sample=28
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=28 sample=28
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=28 sample=28
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=28 sample=28
+DBG_STACK_SAMPLE_END run=28 sample=28
+DBG_STACK_RUN_END epoch=12837300230038735800 run=28 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244566 seq=22 type=86 samples=1 sequence=0 previous=0 uptime=151782
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=29 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244567 seq=23 type=86 sequence=0 previous=0 uptime=151853
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=29 sample=29 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244567 seq=23 type=86 uptime=151853
+DBG_STACK_ISR_CONFIG size=8192 run=29 sample=29
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=29 sample=29
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=29 sample=29
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2400 free=2080 size=4480 ret=0 run=29 sample=29
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=29 sample=29
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=29 sample=29
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=29 sample=29
+DBG_STACK_SAMPLE_END run=29 sample=29
+DBG_STACK_RUN_END epoch=12837300230038735800 run=29 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244567 seq=23 type=86 samples=1 sequence=0 previous=0 uptime=151869
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=151380 end=151881 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=151883 rem=500 frames=0 errors=0
+DBG_STACK_RUN_BEGIN epoch=12837300230038735800 run=30 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244568 seq=24 type=86 sequence=0 previous=0 uptime=151943
+DBG_STACK_SAMPLE_BEGIN epoch=12837300230038735800 run=30 sample=30 kind=ble_backpressure owner=system_workqueue queue=1 custody=1 credit=0 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244568 seq=24 type=86 uptime=151943
+DBG_STACK_ISR_CONFIG size=8192 run=30 sample=30
+DBG_STACK name=BT RX WQ tid=0x2000e968 used=760 free=776 size=1536 ret=0 run=30 sample=30
+DBG_STACK name=mesh_route tid=0x2000d4f0 used=5896 free=2296 size=8192 ret=0 run=30 sample=30
+DBG_STACK name=sysworkq tid=0x2000f8c0 used=2400 free=2080 size=4480 ret=0 run=30 sample=30
+DBG_STACK name=MPSL Work tid=0x2000f678 used=376 free=648 size=1024 ret=0 run=30 sample=30
+DBG_STACK name=logging tid=0x2000e470 used=480 free=1568 size=2048 ret=0 run=30 sample=30
+DBG_STACK name=idle tid=0x2000f750 used=64 free=256 size=320 ret=0 run=30 sample=30
+DBG_STACK_SAMPLE_END run=30 sample=30
+DBG_STACK_RUN_END epoch=12837300230038735800 run=30 kind=ble_backpressure owner=system_workqueue outcome=ack queue=1 custody=0 credit=1 retry=0 drain=1 src=11068027678940948070 dst=11068027678940948070 session=59244568 seq=24 type=86 samples=1 sequence=0 previous=0 uptime=151963
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=151883 end=152384 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=152389 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=152389 end=152890 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=152892 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=152892 end=153393 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=153395 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=153395 end=153896 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=153898 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=153898 end=154399 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=154401 rem=500 frames=0 errors=0
+DBG_GATEWAY_BLE event=disconnected reason=19 uptime=154506
+DBG_GATEWAY_BLE event=recovery round=1 delay_ms=290 reason=disconnected uptime=154506
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=154401 end=154902 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=154904 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=154904 end=155405 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=155407 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=155407 end=155908 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=155910 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=155910 end=156411 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=156413 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=156413 end=156914 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=156916 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=156916 end=157417 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=157419 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=157419 end=157920 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=157922 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=157922 end=158423 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=158425 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=158425 end=158926 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=158928 rem=500 frames=0 errors=0
+DBG_GATEWAY_CH9_RX_CONT_RESULT start=158928 end=159429 ret=-116 fail=0 status=0x00000000 len=0 frames=0
+DBG_GATEWAY_CH9_RX_CONT_ARM now=159431 rem=500 frames=0 errors=0
