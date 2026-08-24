@@ -2419,13 +2419,6 @@ int app_node_comm_submit_delivery(
     if (envelope->packet.payload_len != envelope->payload_len) {
         return -EINVAL;
     }
-    if ((profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ||
-         profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN) &&
-        envelope->flood_retry_count != 0u) {
-        /* One scheduler attempt must correspond to one bounded flood. */
-        return -EINVAL;
-    }
-
     return app_node_comm_submit_delivery_internal(
         envelope, profile, absolute_deadline_ms, client_token, false, false,
         handle_out);
@@ -3367,7 +3360,7 @@ int app_node_comm_service_deliveries(void)
     if (attempt_record.profile == NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD ||
         attempt_record.profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN) {
         /*
-         * One logical bounded flood owns one wake train followed by four real
+         * One logical bounded flood owns one wake train followed by three real
          * RF opportunities.  Re-waking before every opportunity stretches the
          * channel-5 blackout across response retries and can starve the
          * gateway's channel-9 receive path.

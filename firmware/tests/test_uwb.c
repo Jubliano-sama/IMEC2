@@ -2066,6 +2066,79 @@ static void test_anchor_pair_schedule_and_result_round_trip(void)
                                          &decoded_result) == PROTO_ERR_BAD_CRC);
 }
 
+static void test_enumeration_bundle_and_hop_ack_round_trip(void)
+{
+    struct uwb_enumeration_bundle_frame bundle = {
+        .network_id = 0x11223344u,
+        .epoch = 0x55667788u,
+        .sender_id = UINT64_C(0xA100000000000001),
+        .parent_id = UINT64_C(0xA100000000000002),
+        .sequence = 4u,
+        .record_count = UWB_ENUM_RECORDS_PER_BUNDLE,
+    };
+    const struct uwb_enumeration_hop_ack_frame ack = {
+        .network_id = bundle.network_id,
+        .epoch = bundle.epoch,
+        .parent_id = bundle.parent_id,
+        .child_id = bundle.sender_id,
+        .sequence = bundle.sequence,
+    };
+    struct uwb_enumeration_bundle_frame decoded_bundle = {0};
+    struct uwb_enumeration_hop_ack_frame decoded_ack = {0};
+    uint8_t frame[UWB_ENUM_BUNDLE_MAX_LEN];
+    size_t written = 0u;
+
+    for (uint8_t i = 0u; i < bundle.record_count; i++) {
+        bundle.records[i].anchor_id = UINT64_C(0xB200000000000000) + i + 1u;
+        bundle.records[i].hop_count = (uint8_t)((i % UWB_ENUM_MAX_HOPS) + 1u);
+    }
+
+    assert(uwb_enumeration_bundle_encoded_len(0u) == 0u);
+    assert(uwb_enumeration_bundle_encoded_len(bundle.record_count) ==
+           UWB_ENUM_BUNDLE_MAX_LEN);
+    assert(uwb_encode_enumeration_bundle(&bundle,
+                                         frame,
+                                         sizeof(frame),
+                                         &written) == PROTO_OK);
+    assert(written == UWB_ENUM_BUNDLE_MAX_LEN);
+    assert(uwb_decode_enumeration_bundle(frame,
+                                         written,
+                                         &decoded_bundle) == PROTO_OK);
+    assert(decoded_bundle.network_id == bundle.network_id);
+    assert(decoded_bundle.epoch == bundle.epoch);
+    assert(decoded_bundle.sender_id == bundle.sender_id);
+    assert(decoded_bundle.parent_id == bundle.parent_id);
+    assert(decoded_bundle.sequence == bundle.sequence);
+    assert(decoded_bundle.record_count == bundle.record_count);
+    assert(decoded_bundle.records[9].anchor_id == bundle.records[9].anchor_id);
+    assert(decoded_bundle.records[9].hop_count == bundle.records[9].hop_count);
+
+    frame[29] ^= 0x01u;
+    assert(uwb_decode_enumeration_bundle(frame,
+                                         written,
+                                         &decoded_bundle) == PROTO_ERR_BAD_CRC);
+    frame[29] ^= 0x01u;
+    bundle.records[1] = bundle.records[0];
+    assert(uwb_encode_enumeration_bundle(&bundle,
+                                         frame,
+                                         sizeof(frame),
+                                         &written) == PROTO_ERR_MALFORMED);
+
+    assert(uwb_encode_enumeration_hop_ack(&ack,
+                                          frame,
+                                          sizeof(frame),
+                                          &written) == PROTO_OK);
+    assert(written == UWB_ENUM_HOP_ACK_LEN);
+    assert(uwb_decode_enumeration_hop_ack(frame,
+                                          written,
+                                          &decoded_ack) == PROTO_OK);
+    assert(decoded_ack.network_id == ack.network_id);
+    assert(decoded_ack.epoch == ack.epoch);
+    assert(decoded_ack.parent_id == ack.parent_id);
+    assert(decoded_ack.child_id == ack.child_id);
+    assert(decoded_ack.sequence == ack.sequence);
+}
+
 int main(void)
 {
     test_poll_round_trip_diagnostic_not_click();
@@ -2099,5 +2172,6 @@ int main(void)
     test_uwb_mesh_frame_round_trip_and_filters();
     test_uwb_mesh_frame_max_extended_packet();
     test_anchor_pair_schedule_and_result_round_trip();
+    test_enumeration_bundle_and_hop_ack_round_trip();
     return 0;
 }

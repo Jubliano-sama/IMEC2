@@ -3759,9 +3759,11 @@ static enum duplicate_classification duplicate_classify(
                  * different path metrics. Search for an exact cached reply,
                  * then admit a different candidate as new.
                  *
-                 * Gateway route advertisements are mutable floods too, but a
-                 * later path for the same advertisement is still stale flood
-                 * traffic rather than a conflicting immutable message.
+                 * A gateway route advertisement can legitimately reach an
+                 * anchor through more than one loop-free ancestry. Admit a
+                 * distinct path so the route layer can retain its physical
+                 * ingress parent as a fallback. The exact same path still
+                 * matches the semantic digest above and remains a duplicate.
                  */
                 if (packet->msg_type == MSG_ROUTE_REPLY ||
                     packet->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
@@ -3777,7 +3779,7 @@ static enum duplicate_classification duplicate_classify(
                     continue;
                 }
                 if (packet->msg_type == MSG_GATEWAY_ROUTE_ADV) {
-                    return DUPLICATE_CLASS_EXACT;
+                    continue;
                 }
                 return DUPLICATE_CLASS_CONFLICT;
             }

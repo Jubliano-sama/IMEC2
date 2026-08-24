@@ -17,11 +17,28 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     bool send_wake_train =
         out != NULL && out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV &&
         !mesh_report_anchor_survey_operation_generation_active(0u);
+    enum discovery_assignment_phase enumeration_phase;
+    uint32_t enumeration_epoch;
+    uint32_t enumeration_operation_budget_ms;
+    bool enumeration_burst_owned = mesh_c5_flood_enumeration_identity(
+        out,
+        &enumeration_phase,
+        &enumeration_epoch,
+        &enumeration_operation_budget_ms);
     int store_ret;
     int ret;
 
     if (forward_admission_retained != NULL) {
         *forward_admission_retained = false;
+    }
+    if (enumeration_burst_owned) {
+        /*
+         * Cover the admission-to-deferred handoff as part of the same burst.
+         * The inner sender takes another reference while it owns the physical
+         * copies, so neither an immediate send nor a deferred send exposes a
+         * scanner-rearm gap.
+         */
+        mesh_c5_enumeration_relay_burst_begin(out);
     }
     ret = mesh_send_c5_flood_now_intent(
         out, purpose, reason, send_wake_train, true, false, NULL, &result, NULL,
@@ -29,6 +46,9 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     if (result.sent_count > 0u) {
         if (forward_admission_retained != NULL) {
             *forward_admission_retained = true;
+        }
+        if (enumeration_burst_owned) {
+            mesh_c5_enumeration_relay_burst_end();
         }
         return ret;
     }
@@ -47,6 +67,9 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
         } else {
             ret = store_ret;
         }
+    }
+    if (enumeration_burst_owned) {
+        mesh_c5_enumeration_relay_burst_end();
     }
     return ret;
 }

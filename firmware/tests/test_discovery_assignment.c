@@ -680,7 +680,45 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
             DISCOVERY_ASSIGNMENT_RESPONSE_SPREAD_DEFAULT_MS);
     uint32_t deadline_offset_ms = UINT32_MAX;
 
-    assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS == 365u);
+    assert(MESH_ENUMERATION_RELAY_COPY_COUNT == 3u);
+    assert(MESH_ENUMERATION_RELAY_COPY_SPACING_MAX_MS ==
+           MESH_ENUMERATION_RELAY_COPY_GUARD_MS +
+               MESH_FLOOD_COPY_DIVERSIFICATION_WINDOW_MS);
+    assert(MESH_ENUMERATION_RELAY_COPY_TAIL_MS ==
+           (MESH_ENUMERATION_RELAY_COPY_COUNT - 1u) *
+               MESH_ENUMERATION_RELAY_COPY_SPACING_MAX_MS);
+    assert(DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS ==
+           (MESH_ENUMERATION_RELAY_COPY_COUNT - 1u) *
+               (OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS +
+                MESH_ENUMERATION_RELAY_COPY_SPACING_MAX_MS) +
+               5u);
+    assert(DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS == 175u);
+    assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS ==
+           DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
+               MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS +
+               MESH_ENUMERATION_RELAY_COPY_COUNT *
+                   OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS +
+               MESH_ENUMERATION_RELAY_COPY_TAIL_MS);
+    assert(DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS == 540u);
+    assert(discovery_assignment_control_propagation_hold_ms(0u) ==
+           DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+               DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS);
+    assert(discovery_assignment_control_propagation_hold_ms(1u) ==
+           discovery_assignment_control_propagation_hold_ms(0u));
+    assert(discovery_assignment_control_propagation_hold_ms(2u) ==
+           DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+               2u * DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS);
+    assert(discovery_assignment_control_propagation_hold_ms(UINT8_MAX) ==
+           DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS +
+               DISCOVERY_ASSIGNMENT_MAX_HOPS *
+                   DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS);
+    assert(MESH_ENUMERATION_RELAY_COPY_COUNT == 3u);
+    assert(MESH_ENUMERATION_RELAY_COPY_TAIL_MS == 130u);
+    assert(discovery_assignment_control_propagation_hold_ms(0u) == 690u);
+    assert(discovery_assignment_control_propagation_hold_ms(1u) == 690u);
+    assert(discovery_assignment_control_propagation_hold_ms(2u) == 1230u);
+    assert(discovery_assignment_control_propagation_hold_ms(UINT8_MAX) ==
+           4470u);
     assert(DISCOVERY_ASSIGNMENT_ADAPTIVE_RX_MARGIN_MS == 850u);
     assert(jitter_cap_ms == 450u);
 
@@ -728,9 +766,9 @@ static void test_adaptive_depth_deadline_covers_complete_common_origin_bands(voi
                    1u,
                    2u,
                    &deadline_offset_ms) == PROTO_OK);
-        assert(old_receive_relative_cutoff_ms == 5034u);
-        assert(observed_forced_claim_decode_ms == 5330u);
-        assert(deadline_offset_ms == 6384u);
+        assert(old_receive_relative_cutoff_ms == 5209u);
+        assert(observed_forced_claim_decode_ms == 5505u);
+        assert(deadline_offset_ms == 6559u);
         assert(observed_forced_claim_decode_ms < deadline_offset_ms);
     }
 

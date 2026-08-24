@@ -795,7 +795,7 @@ static void test_inflight_attempt_can_finish_while_quiescing(void)
     assert(node_comm_note_quiesced(&comm, &pause, 1u) == 0);
 }
 
-static void test_bounded_control_flood_runs_four_successful_rf_opportunities(void)
+static void test_bounded_control_flood_runs_three_successful_rf_opportunities(void)
 {
     struct node_comm comm;
     struct node_comm_request request = request_with(
@@ -808,7 +808,7 @@ static void test_bounded_control_flood_runs_four_successful_rf_opportunities(voi
 
     init_running(&comm, now_ms);
     handle = submit_request(&comm, &request, now_ms);
-    for (uint8_t attempt = 1u; attempt <= 4u; attempt++) {
+    for (uint8_t attempt = 1u; attempt <= 3u; attempt++) {
         assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
         assert(lease.handle == handle);
         assert(lease.attempt_number == attempt);
@@ -816,7 +816,7 @@ static void test_bounded_control_flood_runs_four_successful_rf_opportunities(voi
         assert(node_comm_lease_complete(&comm, &lease,
                                         NODE_COMM_DELIVERY_SUCCEEDED,
                                         now_ms) == 0);
-        if (attempt < 4u) {
+        if (attempt < 3u) {
             assert(!node_comm_take_terminal_event_for(&comm, handle, &event));
             assert(node_comm_next_service_due_ms(&comm, now_ms, &due_ms));
             assert(due_ms == now_ms + 40u);
@@ -826,7 +826,43 @@ static void test_bounded_control_flood_runs_four_successful_rf_opportunities(voi
     }
     assert(node_comm_take_terminal_event_for(&comm, handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
+    assert(node_comm_acquire(&comm, now_ms, &lease) == -EAGAIN);
+}
+
+static void test_bounded_control_flood_does_not_count_failed_copy_as_success(void)
+{
+    struct node_comm comm;
+    struct node_comm_request request = request_with(
+        145u, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 1000u);
+    struct node_comm_terminal_event event;
+    struct node_comm_lease lease;
+    uint32_t handle;
+    uint64_t now_ms = 0u;
+    uint64_t due_ms = 0u;
+
+    init_running(&comm, now_ms);
+    handle = submit_request(&comm, &request, now_ms);
+    for (uint8_t attempt = 1u; attempt <= 3u; attempt++) {
+        assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
+        assert(lease.handle == handle);
+        assert(lease.attempt_number == attempt);
+        assert(node_comm_lease_note_rf_started(&comm, &lease, now_ms) == 0);
+        assert(node_comm_lease_complete(
+                   &comm, &lease,
+                   attempt == 2u ? NODE_COMM_DELIVERY_RETRY :
+                                   NODE_COMM_DELIVERY_SUCCEEDED,
+                   now_ms) == 0);
+        if (attempt < 3u) {
+            assert(!node_comm_take_terminal_event_for(&comm, handle, &event));
+            assert(node_comm_next_service_due_ms(&comm, now_ms, &due_ms));
+            now_ms = due_ms;
+        }
+    }
+    assert(node_comm_take_terminal_event_for(&comm, handle, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED);
+    assert(event.attempts_started == 3u);
+    assert(node_comm_acquire(&comm, now_ms, &lease) == -EAGAIN);
 }
 
 static void test_single_control_origin_runs_exactly_one_rf_opportunity(void)
@@ -866,7 +902,7 @@ static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wav
 
     init_running(&comm, now_ms);
     handle = submit_request(&comm, &request, now_ms);
-    for (uint8_t attempt = 1u; attempt <= 4u; attempt++) {
+    for (uint8_t attempt = 1u; attempt <= 3u; attempt++) {
         assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
         assert(lease.handle == handle);
         assert(lease.attempt_number == attempt);
@@ -874,14 +910,14 @@ static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wav
         assert(node_comm_lease_complete(&comm, &lease,
                                         NODE_COMM_DELIVERY_SUCCEEDED,
                                         now_ms) == 0);
-        if (attempt < 4u) {
+        if (attempt < 3u) {
             now_ms += 40u;
         }
     }
     assert(node_comm_peek_terminal_event_for(&comm, handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(event.client_token == request.client_token);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
     assert(event.terminal_at_ms == now_ms);
 
     memset(&prior_terminal, 0, sizeof(prior_terminal));
@@ -899,7 +935,7 @@ static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wav
     assert(prior_terminal.handle == handle);
     assert(prior_terminal.client_token == request.client_token);
     assert(prior_terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(prior_terminal.attempts_started == 4u);
+    assert(prior_terminal.attempts_started == 3u);
     assert(!node_comm_peek_terminal_event_for(&comm, handle, &event));
     assert(node_comm_pending_count(&comm) == 1u);
     assert(node_comm_next_service_due_ms(&comm, now_ms, &due_ms));
@@ -907,7 +943,7 @@ static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wav
     assert(node_comm_acquire(&comm, due_ms - 1u, &lease) == -EAGAIN);
 
     now_ms = due_ms;
-    for (uint8_t attempt = 1u; attempt <= 4u; attempt++) {
+    for (uint8_t attempt = 1u; attempt <= 3u; attempt++) {
         assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
         assert(lease.handle == handle);
         assert(lease.attempt_number == attempt);
@@ -915,7 +951,7 @@ static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wav
         assert(node_comm_lease_complete(&comm, &lease,
                                         NODE_COMM_DELIVERY_SUCCEEDED,
                                         now_ms) == 0);
-        if (attempt < 4u) {
+        if (attempt < 3u) {
             now_ms += 40u;
         }
     }
@@ -923,7 +959,7 @@ static void test_delivered_control_redrive_retains_identity_and_starts_fresh_wav
     assert(event.handle == handle);
     assert(event.client_token == request.client_token);
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
     assert(event.terminal_at_ms == now_ms);
 }
 
@@ -2014,7 +2050,7 @@ static void test_resource_wait_failure_and_stale_resume_are_transactional(void)
     assert(old_owner.delivery_generation == lease.delivery_generation);
     assert(node_comm_release_resource_wait(&comm, &old_owner, 2u) == 0);
 
-    for (uint64_t now_ms = 2u; now_ms < 162u; now_ms += 40u) {
+    for (uint64_t now_ms = 2u; now_ms < 122u; now_ms += 40u) {
         assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
         assert(lease.delivery_generation == old_owner.delivery_generation);
         assert(node_comm_lease_note_rf_started(&comm, &lease, now_ms) == 0);
@@ -2022,7 +2058,7 @@ static void test_resource_wait_failure_and_stale_resume_are_transactional(void)
                                         NODE_COMM_DELIVERY_SUCCEEDED,
                                         now_ms) == 0);
     }
-    assert(node_comm_redrive_delivered(&comm, handle, 200u, 1000u, 162u,
+    assert(node_comm_redrive_delivered(&comm, handle, 200u, 1000u, 122u,
                                        &prior_terminal) == 0);
     assert(prior_terminal.delivery_generation == old_owner.delivery_generation);
     assert(node_comm_acquire(&comm, 200u, &lease) == 0);
@@ -2086,7 +2122,7 @@ static void test_redrive_rejects_stale_generation_without_duplicate_custody(void
     assert(node_comm_delivery_generation(&comm, handle, &old_generation) ==
            0);
 
-    for (uint64_t now_ms = 0u; now_ms < 160u; now_ms += 40u) {
+    for (uint64_t now_ms = 0u; now_ms < 120u; now_ms += 40u) {
         assert(node_comm_acquire(&comm, now_ms, &lease) == 0);
         assert(lease.delivery_generation == old_generation);
         assert(node_comm_lease_note_rf_started(&comm, &lease, now_ms) == 0);
@@ -2094,7 +2130,7 @@ static void test_redrive_rejects_stale_generation_without_duplicate_custody(void
                                         NODE_COMM_DELIVERY_SUCCEEDED,
                                         now_ms) == 0);
     }
-    assert(node_comm_redrive_delivered(&comm, handle, 200u, 1000u, 160u,
+    assert(node_comm_redrive_delivered(&comm, handle, 200u, 1000u, 120u,
                                        &prior_terminal) == 0);
     assert(prior_terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(prior_terminal.proof == NODE_COMM_TERMINAL_PROOF_TRANSPORT);
@@ -2159,7 +2195,8 @@ int main(void)
     test_targeted_terminal_poll_leaves_other_clients_queued();
     test_next_service_due_tracks_ready_retry_and_deadline();
     test_inflight_attempt_can_finish_while_quiescing();
-    test_bounded_control_flood_runs_four_successful_rf_opportunities();
+    test_bounded_control_flood_runs_three_successful_rf_opportunities();
+    test_bounded_control_flood_does_not_count_failed_copy_as_success();
     test_single_control_origin_runs_exactly_one_rf_opportunity();
     test_delivered_control_redrive_retains_identity_and_starts_fresh_wave();
     test_delivered_control_redrive_rejects_other_profiles();

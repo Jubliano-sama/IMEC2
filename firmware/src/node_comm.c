@@ -18,8 +18,8 @@ static const struct node_comm_profile_policy profile_policies[] = {
     [NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD] = {
         .retry_delay_ms = 200u,
         .success_repeat_delay_ms = 40u,
-        .max_attempts = 4u,
-        .successful_attempts_required = 4u,
+        .max_attempts = 3u,
+        .successful_attempts_required = 3u,
         .retry_backoff_shift_cap = 3u,
         .priority = 255u,
     },
@@ -52,7 +52,7 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .success_repeat_delay_ms = 0u,
         /*
          * A survey START result can become ready while the gateway is still
-         * completing the required four-copy channel-5 control flood. Keep
+         * completing the required three-copy channel-5 control flood. Keep
          * enough channel-9 opportunities to outlive that bounded blackout;
          * the caller's absolute deadline remains the final time bound.
          */
@@ -1593,8 +1593,19 @@ int node_comm_lease_complete(struct node_comm *comm,
         const struct node_comm_profile_policy *policy =
             &profile_policies[slot->request.profile];
 
-        if (slot->owner.delivery.attempts_started <
+        if (slot->successful_attempts_completed == UINT8_MAX) {
+            return -EOVERFLOW;
+        }
+        slot->successful_attempts_completed++;
+        if (slot->successful_attempts_completed <
             policy->successful_attempts_required) {
+            if (slot->owner.delivery.attempts_started >=
+                slot->max_attempts) {
+                return terminalize(
+                           comm, slot,
+                           NODE_COMM_TERMINAL_ATTEMPTS_EXHAUSTED,
+                           now_ms) ? 0 : -EPROTO;
+            }
             ret = delivery_apply(comm, slot, FW_EVENT_ACK_TIMED_OUT, 0u);
             if (ret < 0) {
                 return ret;

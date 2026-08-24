@@ -36,6 +36,7 @@
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "discovery_assignment.h"
+#include "enumeration_response_lane.h"
 #include "gateway_command.h"
 #include "mesh.h"
 #include "mesh_relay.h"
@@ -96,6 +97,9 @@ BUILD_ASSERT((SURVEY_DISCOVERY_MAX_SLOT_COUNT *
              "the maximum valid discovery must fit inside the watchdog lease");
 BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT == MESH_CONNECTED_MAX_ANCHORS,
              "gateway enumeration must cover the connected anchor maximum");
+BUILD_ASSERT(ENUMERATION_RESPONSE_START_DELAY_MS <
+                 DISCOVERY_ASSIGNMENT_CONTROL_FLOOD_DEADLINE_MS,
+             "compact response delay is a tighter bound than generic delivery expiry");
 BUILD_ASSERT(DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS >=
              DISCOVERY_ASSIGNMENT_OPERATION_MIN_BUDGET_MS,
              "default assignment budget must cover claim and table response horizons");
@@ -212,6 +216,15 @@ struct anchor_discovery_claim_pending {
     bool active;
 };
 
+struct anchor_enumeration_response_config {
+    uint64_t start_ms;
+    uint64_t parent_id;
+    uint32_t epoch;
+    uint8_t hop_count;
+    uint8_t max_hop_count;
+    bool active;
+};
+
 /*
  * RAM-only proof that this exact response completed the full gateway
  * ACK-confirm handshake.  It deliberately does not survive reset: after a
@@ -246,10 +259,12 @@ struct gateway_discovery_assignment_state {
     struct proto_packet host_command;
     uint32_t result_reservation_token;
     uint64_t anchor_ids[UWB_DISCOVERY_SLOT_COUNT];
+    uint64_t anchor_previous_hop_ids[UWB_DISCOVERY_SLOT_COUNT];
     uint8_t anchor_slots[UWB_DISCOVERY_SLOT_COUNT];
     uint8_t anchor_hop_counts[UWB_DISCOVERY_SLOT_COUNT];
     uint64_t ack_mask;
     uint64_t claim_response_mask;
+    uint64_t compact_observability_pending_mask;
     uint32_t epoch;
     uint32_t claim_command_seq;
     struct discovery_assignment_table_commitment table_commitment;
@@ -264,6 +279,8 @@ struct gateway_discovery_assignment_state {
     uint64_t claim_ack_settle_deadline_ms;
     uint64_t response_ack_settle_deadline_ms;
     uint64_t response_window_origin_ms;
+    uint64_t response_lane_start_ms;
+    uint64_t phase_propagation_deadline_ms;
     uint32_t command_budget_ms;
     uint16_t response_spread_ms;
     uint32_t generation;
@@ -278,6 +295,7 @@ struct gateway_discovery_assignment_state {
     uint8_t table_admission_retry_round;
     uint8_t abort_admission_retry_count;
     uint8_t max_hop_count;
+    uint8_t response_lane_max_hop_count;
     uint8_t prior_anchor_count;
     uint16_t expected_claim_count;
     uint16_t duplicate_count;
@@ -295,11 +313,20 @@ struct gateway_discovery_assignment_state {
     bool table_delivery_is_redrive;
     bool ram_only_iteration;
     bool replay;
+    bool response_lane_active;
+    bool end_propagation_pending;
     bool active;
 };
 #endif
 
 static struct anchor_discovery_claim_pending anchor_discovery_claim_pending;
+static struct anchor_enumeration_response_config
+    anchor_enumeration_response_config;
+#if DEVICE_ROLE == ROLE_ANCHOR
+/* The scanner is the sole mutator. This keeps ACK and child-record custody
+ * across its short radio handoffs without retaining encoded RF frames. */
+static struct enumeration_response_lane anchor_enumeration_response_lane;
+#endif
 static struct anchor_discovery_response_terminal
     anchor_discovery_response_terminal;
 static uint32_t anchor_discovery_claim_failed_abandon_handle;

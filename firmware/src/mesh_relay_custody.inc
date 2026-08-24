@@ -3127,13 +3127,15 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->queued_at_ms = now_ms;
     out->queued_at_valid = true;
     /*
-     * Survey-start forwarding already owns four randomized RF opportunities
-     * inside the bounded flood.  Inheriting the generic outer retry count
-     * multiplies those opportunities and can delay local survey acceptance
-     * until the shared discovery epoch has passed.
+     * Survey-start forwarding owns its copies inside the generic bounded
+     * flood. Enumeration controls instead own exactly three diversified outer
+     * opportunities; the transport sends each of those as one physical copy.
      */
     out->flood_retry_count = packet->msg_type == MSG_SURVEY_DISCOVERY_START ?
-                                 0u : flood_control.retry_count;
+                                 0u :
+                             enumeration_control ?
+                                 MESH_ENUMERATION_RELAY_COPY_COUNT - 1u :
+                                 flood_control.retry_count;
     if (packet->msg_type == MSG_COMMAND) {
         ret = ensure_flood_control_tlvs(out, &flood_control);
         if (ret != PROTO_OK) {
@@ -3143,7 +3145,8 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     slot_seed = flood_identity_seed(packet, relay->local_id);
     out->earliest_tx_ms = now_ms +
         (enumeration_control ?
-             mesh_enumeration_relay_delay_ms(relay->local_id, packet) :
+             DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
+                 mesh_enumeration_relay_delay_ms(relay->local_id, packet) :
              flood_forward_total_delay_ms(
                  relay->local_id,
                  slot_seed,

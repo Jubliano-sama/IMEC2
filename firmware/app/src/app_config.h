@@ -296,6 +296,8 @@ BUILD_ASSERT(MESH_ENUMERATION_RELAY_SLOT_MS >=
 BUILD_ASSERT(MESH_ENUMERATION_RELAY_COPY_GUARD_MS >=
                  UWB_CONTROL_TX_TIMEOUT_MS + 5u,
              "enumeration relay copies must not overlap one control TX");
+BUILD_ASSERT(MESH_ENUMERATION_RELAY_COPY_COUNT == 3u,
+             "enumeration controls must relay exactly three copies");
 BUILD_ASSERT(OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS ==
                  UWB_CONTROL_TX_TIMEOUT_MS,
              "response timing model must match the control TX timeout");

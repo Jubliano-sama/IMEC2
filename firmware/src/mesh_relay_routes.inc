@@ -1078,8 +1078,10 @@ int mesh_relay_build_gateway_route_adv_from_snapshot(
     fields.slot_seed = gateway_route_adv_slot_seed(fields.gateway_id,
                                                    fields.gateway_route_seq,
                                                    fields.gateway_epoch);
-    fields.random_backoff_max_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS;
-    fields.random_backoff_slot_ms = FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS;
+    fields.random_backoff_max_ms =
+        MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS;
+    fields.random_backoff_slot_ms =
+        MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS;
     fields.flood_retry_count = FLOOD_DEFAULT_RETRY_COUNT;
 
     ret = append_gateway_route_adv_tlvs(out->payload,

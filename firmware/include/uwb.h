@@ -75,6 +75,14 @@ extern "C" {
      (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS) + \
      UWB_FRAME_CRC_LEN)
 #define UWB_ANCHOR_PAIR_RESULT_LEN 56u
+#define UWB_ENUM_RECORD_LEN 9u
+#define UWB_ENUM_RECORDS_PER_BUNDLE 10u
+#define UWB_ENUM_MAX_HOPS 5u
+#define UWB_ENUM_BUNDLE_BASE_LEN 31u
+#define UWB_ENUM_BUNDLE_MAX_LEN \
+    (UWB_ENUM_BUNDLE_BASE_LEN + \
+     (UWB_ENUM_RECORDS_PER_BUNDLE * UWB_ENUM_RECORD_LEN))
+#define UWB_ENUM_HOP_ACK_LEN 30u
 #define UWB_ANCHOR_PAIR_SURVEY_MIN_STRIDE_MS 80u
 #define UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS 100u
 #define UWB_ANCHOR_PAIR_SURVEY_THEORETICAL_MIN_MS \
@@ -367,6 +375,29 @@ struct uwb_anchor_pair_result_frame {
     uint8_t flags;
 };
 
+struct uwb_enumeration_record {
+    uint64_t anchor_id;
+    uint8_t hop_count;
+};
+
+struct uwb_enumeration_bundle_frame {
+    uint32_t network_id;
+    uint32_t epoch;
+    uint64_t sender_id;
+    uint64_t parent_id;
+    uint8_t sequence;
+    uint8_t record_count;
+    struct uwb_enumeration_record records[UWB_ENUM_RECORDS_PER_BUNDLE];
+};
+
+struct uwb_enumeration_hop_ack_frame {
+    uint32_t network_id;
+    uint32_t epoch;
+    uint64_t parent_id;
+    uint64_t child_id;
+    uint8_t sequence;
+};
+
 enum uwb_anchor_claim_decision {
     UWB_ANCHOR_CLAIM_ACCEPTED = 0,
     UWB_ANCHOR_CLAIM_REJECTED_STALE = 1,
@@ -519,6 +550,25 @@ int uwb_encode_anchor_pair_result(const struct uwb_anchor_pair_result_frame *fra
 int uwb_decode_anchor_pair_result(const uint8_t *data,
                                   size_t len,
                                   struct uwb_anchor_pair_result_frame *frame);
+size_t uwb_enumeration_bundle_encoded_len(uint8_t record_count);
+int uwb_encode_enumeration_bundle(
+    const struct uwb_enumeration_bundle_frame *frame,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *written);
+int uwb_decode_enumeration_bundle(
+    const uint8_t *data,
+    size_t len,
+    struct uwb_enumeration_bundle_frame *frame);
+int uwb_encode_enumeration_hop_ack(
+    const struct uwb_enumeration_hop_ack_frame *frame,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *written);
+int uwb_decode_enumeration_hop_ack(
+    const uint8_t *data,
+    size_t len,
+    struct uwb_enumeration_hop_ack_frame *frame);
 int uwb_validate_range_release(const struct uwb_range_release_frame *frame);
 int uwb_discovery_slot_for_anchor(uint64_t anchor_id,
                                   uint8_t slot_count,

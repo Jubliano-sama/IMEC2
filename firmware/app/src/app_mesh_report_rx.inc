@@ -1415,6 +1415,220 @@ static bool mesh_process_received_frame(const uint8_t *frame,
     return false;
 }
 
+static bool mesh_gateway_run_enumeration_response_slice(void)
+{
+    uint8_t *frame = mesh_uwb_rx_frame;
+    struct radio_guard_uwb_lease lease = {0};
+    uint64_t round_deadline_ms = 0u;
+    uint64_t first_receive_start_ms;
+    uint16_t timeout_count = 0u;
+    uint16_t raw_frame_count = 0u;
+    uint16_t bundle_count = 0u;
+    uint16_t error_count = 0u;
+    bool functional_rx_outcome = false;
+    int parking_ret;
+    int release_ret;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY ||
+        !app_gateway_enumeration_response_window(
+            (uint64_t)k_uptime_get(), &round_deadline_ms)) {
+        return false;
+    }
+    ret = mesh_rx_radio_claim("gateway compact enumeration RX", &lease);
+    if (ret < 0) {
+        mesh_schedule_uwb_rx(0u);
+        return true;
+    }
+    ret = dwm3000_driver_configure_wake_mesh_control_mode();
+    if (ret < 0) {
+        int configure_ret = ret;
+        int recovery_ret = dwm3000_driver_force_recovery();
+
+        ret = recovery_ret < 0 ? recovery_ret :
+            dwm3000_driver_configure_wake_mesh_control_mode();
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_GATEWAY_RECOVER stage=config first=%d recovery=%d ret=%d\n",
+            configure_ret,
+            recovery_ret,
+            ret);
+    }
+    first_receive_start_ms = (uint64_t)k_uptime_get();
+    status_debug_printf(
+        "DBG_ENUM_COMPACT_GATEWAY_BEGIN now=%u first_window=%u ret=%d\n",
+        (uint32_t)first_receive_start_ms,
+        round_deadline_ms > first_receive_start_ms ?
+            (uint32_t)(round_deadline_ms - first_receive_start_ms) : 0u,
+        ret);
+    while (ret == 0 &&
+           app_gateway_enumeration_response_window(
+               (uint64_t)k_uptime_get(), &round_deadline_ms)) {
+        struct uwb_enumeration_bundle_frame bundle;
+        struct uwb_enumeration_hop_ack_frame ack;
+        enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
+        uint8_t encoded[UWB_ENUM_HOP_ACK_LEN];
+        size_t frame_len = 0u;
+        size_t encoded_len = 0u;
+        uint8_t quality = 0u;
+        uint64_t receive_start_ms = (uint64_t)k_uptime_get();
+        uint32_t window_ms;
+        uint64_t received_at_ms;
+
+        if (receive_start_ms >= round_deadline_ms) {
+            continue;
+        }
+        window_ms = round_deadline_ms - receive_start_ms > UINT32_MAX ?
+            UINT32_MAX : (uint32_t)(round_deadline_ms - receive_start_ms);
+
+        ret = dwm3000_driver_receive_frame_continuous(
+            window_ms,
+            frame,
+            UWB_MESH_MAX_FRAME_LEN,
+            &frame_len,
+            &quality,
+            NULL,
+            &failure);
+        received_at_ms = (uint64_t)k_uptime_get();
+        functional_rx_outcome =
+            app_mesh_rx_policy_dwm_attempt_made_progress(ret, failure);
+        if (ret == -ETIMEDOUT) {
+            if (timeout_count < UINT16_MAX) {
+                timeout_count++;
+            }
+            ret = 0;
+            continue;
+        }
+        if (ret == -ECANCELED) {
+            break;
+        }
+        if (ret < 0) {
+            int receive_ret = ret;
+            int recovery_ret = dwm3000_driver_force_recovery();
+
+            if (error_count < UINT16_MAX) {
+                error_count++;
+            }
+
+            ret = recovery_ret < 0 ? recovery_ret :
+                dwm3000_driver_configure_wake_mesh_control_mode();
+            status_debug_printf(
+                "DBG_ENUM_COMPACT_GATEWAY_RECOVER stage=rx first=%d failure=%u recovery=%d ret=%d\n",
+                receive_ret,
+                (unsigned int)failure,
+                recovery_ret,
+                ret);
+            continue;
+        }
+        if (uwb_decode_enumeration_bundle(
+                frame, frame_len, &bundle) != PROTO_OK) {
+            /* The compact lane owns extended-PHR Channel 5 exclusively.
+             * Unrelated raw frames are harmless and must not escape into the
+             * normal mesh decoder. */
+            if (raw_frame_count < UINT16_MAX) {
+                raw_frame_count++;
+            }
+            status_debug_printf(
+                "DBG_ENUM_COMPACT_GATEWAY_RAW len=%u b0=%02x b1=%02x b2=%02x\n",
+                (unsigned int)frame_len,
+                frame_len > 0u ? frame[0] : 0u,
+                frame_len > 1u ? frame[1] : 0u,
+                frame_len > 2u ? frame[2] : 0u);
+            ret = 0;
+            continue;
+        }
+        if (bundle_count < UINT16_MAX) {
+            bundle_count++;
+        }
+        ret = app_gateway_enumeration_response_handle_bundle(
+            &bundle, received_at_ms, &ack);
+        if (ret == 0) {
+            int encode_ret = uwb_encode_enumeration_hop_ack(
+                &ack, encoded, sizeof(encoded), &encoded_len);
+
+            if (encode_ret != PROTO_OK) {
+                status_debug_printf(
+                    "DBG_ENUM_COMPACT_GATEWAY_ACK_ENCODE_FAIL epoch=%u child=0x%016llx seq=%u ret=%d\n",
+                    ack.epoch,
+                    (unsigned long long)ack.child_id,
+                    ack.sequence,
+                    encode_ret);
+                ret = mesh_errno_from_proto(encode_ret);
+                functional_rx_outcome = false;
+            }
+        }
+        if (ret == 0) {
+            uint64_t ack_start_ms = (uint64_t)k_uptime_get();
+            int ack_ret = dwm3000_driver_send_frame_tracked_until(
+                encoded,
+                encoded_len,
+                UWB_CONTROL_TX_TIMEOUT_MS,
+                round_deadline_ms,
+                NULL);
+
+            if (ack_ret == -ETIMEDOUT) {
+                status_debug_printf(
+                    "DBG_ENUM_COMPACT_GATEWAY_ACK_SKIP epoch=%u child=0x%016llx seq=%u remaining=%u\n",
+                    ack.epoch,
+                    (unsigned long long)ack.child_id,
+                    ack.sequence,
+                    round_deadline_ms > ack_start_ms ?
+                        (uint32_t)(round_deadline_ms - ack_start_ms) : 0u);
+                /* The child retains custody and retries in another random
+                 * round. A late ACK is local contention, not a reason to tear
+                 * down the gateway's continuous receiver. */
+                ret = 0;
+            } else {
+                status_debug_printf(
+                    "DBG_ENUM_COMPACT_GATEWAY_ACK_TX epoch=%u child=0x%016llx seq=%u remaining=%u ret=%d\n",
+                    ack.epoch,
+                    (unsigned long long)ack.child_id,
+                    ack.sequence,
+                    round_deadline_ms > ack_start_ms ?
+                        (uint32_t)(round_deadline_ms - ack_start_ms) : 0u,
+                    ack_ret);
+                ret = ack_ret;
+                if (ack_ret < 0) {
+                    functional_rx_outcome = false;
+                }
+            }
+        }
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_GATEWAY_RX epoch=%u child=0x%016llx seq=%u records=%u ret=%d\n",
+            bundle.epoch,
+            (unsigned long long)bundle.sender_id,
+            bundle.sequence,
+            bundle.record_count,
+            ret);
+        if (ret >= 0) {
+            ret = 0;
+        }
+    }
+    status_debug_printf(
+        "DBG_ENUM_COMPACT_GATEWAY_END now=%u timeouts=%u raw=%u bundles=%u errors=%u ret=%d\n",
+        k_uptime_get_32(),
+        timeout_count,
+        raw_frame_count,
+        bundle_count,
+        error_count,
+        ret);
+
+    parking_ret = mesh_radio_idle_with_bounded_recovery(
+        "gateway-enumeration-lane");
+    release_ret = mesh_rx_radio_finish(&lease, parking_ret);
+    app_gateway_enumeration_response_publish_pending();
+    if (release_ret < 0) {
+        mesh_uwb_rx_active = false;
+        return true;
+    } else if (functional_rx_outcome) {
+        app_watchdog_note_radio_progress();
+    }
+    if (ret == -ECANCELED) {
+        (void)app_node_comm_gateway_delivery_safe_boundary();
+    }
+    mesh_schedule_uwb_rx(0u);
+    return true;
+}
+
 static void mesh_uwb_rx_work_handler(struct k_work *work)
 {
     uint8_t *frame = mesh_uwb_rx_frame;
@@ -1489,6 +1703,9 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         return;
     }
+    if (mesh_gateway_run_enumeration_response_slice()) {
+        return;
+    }
     if (mesh_rx_response_active()) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_note("DBG_UWB_RX_YIELD_EVENT_RESPONSE\n");
@@ -1541,6 +1758,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             uint32_t remaining_ms;
             uint32_t slice_remaining_ms;
             uint32_t ack_retry_wait_ms = 0u;
+            uint32_t enumeration_wait_ms = 0u;
             uint32_t protocol_validation_token = 0u;
             bool functional_rx_outcome = false;
             struct radio_guard_uwb_lease radio_lease = {0};
@@ -1551,6 +1769,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 uptime_deadline_reached(now_ms,
                                         gateway_rx_slice_deadline_ms)) {
                 break;
+            }
+            if (app_gateway_enumeration_response_window(
+                    (uint64_t)k_uptime_get(), NULL)) {
+                status_debug_printf(
+                    "DBG_GATEWAY_CH9_RX_YIELD_ENUM now=%u\n", now_ms);
+                mesh_schedule_uwb_rx(0u);
+                return;
             }
             remaining_ms =
                 uptime_ms_until_deadline(now_ms, gateway_rx_deadline_ms);
@@ -1567,6 +1792,15 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     k_uptime_get_32(), &ack_retry_wait_ms) &&
                 ack_retry_wait_ms < remaining_ms) {
                 remaining_ms = ack_retry_wait_ms;
+            }
+            if (app_gateway_enumeration_response_pending_wait_ms(
+                    (uint64_t)k_uptime_get(), &enumeration_wait_ms) &&
+                enumeration_wait_ms < remaining_ms) {
+                remaining_ms = enumeration_wait_ms;
+                status_debug_printf(
+                    "DBG_GATEWAY_CH9_RX_CAP_ENUM now=%u wait=%u\n",
+                    now_ms,
+                    enumeration_wait_ms);
             }
 
             if (remaining_ms == 0u) {

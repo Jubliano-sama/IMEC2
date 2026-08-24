@@ -963,6 +963,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     decode_errors: list[str] = []
     disconnect_errors: list[str] = []
     qualification: Qualification | None = None
+    qualified_assignment_repeats = 0
     qualification_done = asyncio.Event()
     transport_failed = asyncio.Event()
     link_disconnected = asyncio.Event()
@@ -1901,6 +1902,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         operation_policy=assignment_policy,
                     )
                     if args.require_assignment_success:
+                        qualification_done.clear()
                         qualification = AssignmentQualification(
                             identity,
                             identity & 0xFFFF,
@@ -1981,6 +1983,30 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 )
                 if defer_notifications:
                     await enable_notifications(qualification_deadline)
+                if (
+                    isinstance(qualification, AssignmentQualification)
+                    and args.command == "assign-slots"
+                    and args.require_assignment_success
+                    and args.repeat > 1
+                ):
+                    await await_qualification(
+                        qualification,
+                        qualification_timeout_s,
+                        f"assignment {index + 1}/{args.repeat}",
+                        deadline=qualification_deadline,
+                    )
+                    print(
+                        "ASSIGNMENT_QUALIFICATION_OK "
+                        f"run={index + 1}/{args.repeat} "
+                        f"anchors={len(qualification.anchors)} "
+                        f"direct={qualification.direct_count} "
+                        f"multihop={qualification.multihop_count} "
+                        f"retries={qualification.retries}",
+                        flush=True,
+                    )
+                    qualified_assignment_repeats += 1
+                    qualification = None
+                    qualification_deadline = None
                 if index + 1 < args.repeat:
                     await asyncio.sleep(args.interval)
                     raise_transport_errors(args.command)
@@ -2029,7 +2055,10 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"retries={qualification.retries}",
                 flush=True,
             )
-        elif args.command != "qualify-reachability":
+        elif (
+            args.command != "qualify-reachability"
+            and qualified_assignment_repeats == 0
+        ):
             await await_transport_duration(
                 args.duration,
                 args.command,
@@ -2162,10 +2191,8 @@ def main() -> None:
         parser.error("survey qualification requires at least two anchors and one pair")
     if args.require_assignment_success and args.command != "assign-slots":
         parser.error("--require-assignment-success requires --command assign-slots")
-    if (
-        args.require_assignment_success or args.command == "qualify-reachability"
-    ) and args.repeat != 1:
-        parser.error("assignment qualification requires --repeat 1")
+    if args.command == "qualify-reachability" and args.repeat != 1:
+        parser.error("reachability qualification requires --repeat 1")
     if (
         args.require_assignment_success or args.command == "qualify-reachability"
     ) and not 1 <= args.expected_anchors <= 50:

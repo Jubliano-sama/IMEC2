@@ -10,23 +10,20 @@
 
 struct k_work_delayable;
 
-/*
- * Do not start the next gateway command while Here-I-Am is still propagating.
- * A relay can wait through the full deterministic wave and randomized slot,
- * then needs its bounded burst and post-wave guard.  Two relay waves carry
- * the gateway's root transmission through hop one and hop two to hop three;
- * by then hop-one transmitters are spatially separate from any later wave.
- */
+/* Two relay waves carry the gateway's root transmission through hop one and
+ * hop two to hop three.  Relays actively yield the background receiver, then
+ * use the shared fast advertisement profile above; one final guard covers the
+ * gateway/host handoff after the last possible physical copy. */
 #define APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS 2u
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS \
-    (FLOOD_WAVE_MS + FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS + \
-     FLOOD_RELAY_BURST_MS + FLOOD_POST_ROOT_GUARD_MS)
+    MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS
 #define APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS \
     (APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS * \
-     APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS)
+     APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS + \
+     FLOOD_POST_ROOT_GUARD_MS)
 
-_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 12700u,
-               "Here-I-Am settle must cover two worst-case relay waves");
+_Static_assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 1476u,
+               "Here-I-Am settle must cover two fast relay waves");
 
 typedef int (*app_node_comm_route_refresh_build_fn)(
     void *ctx,

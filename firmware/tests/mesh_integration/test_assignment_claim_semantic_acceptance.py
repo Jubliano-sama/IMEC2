@@ -116,6 +116,9 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         depth = retry.index(
             "gateway_hop_count > survey_report_first_contact_schedule.hop_count"
         )
+        timing = retry.index(
+            "operation_policy_first_contact_timing_ms(", depth
+        )
         postpone = retry.index(
             "app_mesh_local_delivery_postpone_not_before", depth
         )
@@ -123,9 +126,12 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
             "app_mesh_local_delivery_retire_elapsed_not_before", postpone
         )
         submit = retry.index("app_node_comm_submit_delivery", retire)
-        self.assertLess(depth, postpone)
+        self.assertLess(depth, timing)
+        self.assertLess(timing, postpone)
         self.assertLess(postpone, retire)
         self.assertLess(retire, submit)
+        self.assertIn("report_timing.slot_offset_ms", retry[timing:postpone])
+        self.assertNotIn("response_cell * SURVEY_RESULT_MESH_SLOT_MS", retry)
         self.assertIn("survey_report_first_contact_remember", prepare)
 
     def test_survey_converts_zero_based_route_hops_to_rf_depth(self):
@@ -538,11 +544,6 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         self.assertIn(
             "gateway_discovery_assignment_expected_claims_complete_locked()",
             service,
-        )
-        self.assertNotIn(
-            "app_discovery_assignment_semantic_terminal_success(",
-            service,
-            "a failed bounded RF delivery must not be rewritten as success",
         )
 
         window = function_body(
@@ -1857,23 +1858,60 @@ class AssignmentClaimSemanticAcceptanceTests(unittest.TestCase):
         )
         self.assertLess(poll, terminal)
 
-    def test_failed_bounded_assignment_rf_is_terminal_radio(self):
+    def test_partial_claim_send_preserves_collection_but_other_phases_are_strict(self):
         service = function_body(
             ANCHOR, "gateway_discovery_assignment_service_delivery"
         )
         result = service.index("DBG_ENUM_RF_RESULT")
-        delivered = service.index(
+        transport_delivered = service.index(
             "effective_delivered = "
             "event.reason == NODE_COMM_TERMINAL_DELIVERED",
             result,
         )
+        claim = service.index(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM",
+            transport_delivered,
+        )
+        semantic = service.index(
+            "app_discovery_assignment_semantic_terminal_success(", claim
+        )
+        semantic_end = service.index(");", semantic)
+        semantic_call = service[semantic:semantic_end]
+        table = service.index(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE",
+            semantic_end,
+        )
+        compact_rx = service.index(
+            'mesh_start_uwb_rx("compact-enumeration")', table
+        )
         failure = service.index(
             "gateway_discovery_assignment_fail_locked(COMMAND_RADIO_ERROR",
-            delivered,
+            compact_rx,
         )
 
-        self.assertLess(result, delivered)
-        self.assertLess(delivered, failure)
+        self.assertEqual(
+            service.count(
+                "app_discovery_assignment_semantic_terminal_success("
+            ),
+            1,
+        )
+        self.assertIn(
+            "APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM", semantic_call
+        )
+        self.assertIn("event.attempts_started", semantic_call)
+        self.assertIn("operation_deadline_ms", semantic_call)
+        self.assertIn("!gateway_discovery_assignment_state.active", semantic_call)
+        self.assertLess(result, transport_delivered)
+        self.assertLess(transport_delivered, claim)
+        self.assertLess(claim, semantic)
+        self.assertLess(semantic, table)
+        self.assertLess(table, compact_rx)
+        self.assertLess(compact_rx, failure)
+        self.assertNotIn(
+            "app_discovery_assignment_semantic_terminal_success(",
+            service[table:],
+            "TABLE, END, and ABORT must keep their transport terminal",
+        )
         self.assertNotIn(
             "gateway_discovery_assignment_fail_locked(COMMAND_TIMEOUT",
             service,

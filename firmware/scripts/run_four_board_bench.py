@@ -60,7 +60,14 @@ def main():
     parser.add_argument("--gateway-name", default="IMEC Mesh Test Gateway")
     parser.add_argument("--expected-anchors", type=int, default=3)
     parser.add_argument("--expected-pairs", type=int, default=3)
+    parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument(
+        "--post-capture-seconds",
+        type=float,
+        default=1.0,
+        help="Continue draining every RTT stream after the host command exits",
+    )
     parser.add_argument("--erase-storage", action="store_true", help="Erase NVS storage partition (0x7a000-0x80000) on all boards before starting")
     parser.add_argument("--deepest-hop", type=int, default=None)
     args = parser.parse_args()
@@ -103,7 +110,7 @@ def main():
         # Build provision command
         provision_command = (
             "qualify-reachability"
-            if args.command == "assign-slots"
+            if args.command == "assign-slots" and args.repeat == 1
             else args.command
         )
         prov_cmd = [
@@ -133,6 +140,14 @@ def main():
                 "--expected-anchors",
                 str(args.expected_anchors),
             ])
+            if args.repeat > 1:
+                prov_cmd.extend([
+                    "--repeat",
+                    str(args.repeat),
+                    "--interval",
+                    "0.05",
+                    "--require-assignment-success",
+                ])
         if args.deepest_hop is not None:
             prov_cmd.extend(["--deepest-hop", str(args.deepest_hop)])
 
@@ -184,17 +199,36 @@ def main():
         # Save provision output
         (log_dir / "provision.log").write_text("".join(prov_output))
 
-        # Drain final RTT
-        time.sleep(1.0)
+        # Keep draining after host completion so delayed END application,
+        # retries, and post-command radio faults remain in the same trace.
+        post_capture_deadline = time.time() + max(
+            0.0, args.post_capture_seconds
+        )
+        while time.time() < post_capture_deadline:
+            ready, _, _ = select.select(list(fds.values()), [], [], 0.05)
+            for fd in ready:
+                try:
+                    data = os.read(fd, 4096)
+                    if data:
+                        role = next(name for name, value in fds.items()
+                                    if value == fd)
+                        buffers[role].append(data)
+                except OSError:
+                    pass
+
         for role, fd in fds.items():
-            r_fds, _, _ = select.select([fd], [], [], 0.1)
-            if r_fds:
+            while True:
+                r_fds, _, _ = select.select([fd], [], [], 0.0)
+                if not r_fds:
+                    break
                 try:
                     data = os.read(fd, 4096)
                     if data:
                         buffers[role].append(data)
+                    else:
+                        break
                 except OSError:
-                    pass
+                    break
             # Write out RTT log
             raw_data = b"".join(buffers[role])
             text = raw_data.decode("utf-8", errors="replace")

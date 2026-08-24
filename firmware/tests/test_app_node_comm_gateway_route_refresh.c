@@ -475,18 +475,17 @@ static void test_host_completion_waits_for_bounded_relay_settle(void)
            APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS);
     assert(APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS == 2u);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS ==
-           FLOOD_WAVE_MS + FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS +
-               FLOOD_RELAY_BURST_MS + FLOOD_POST_ROOT_GUARD_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS == 6350u);
+           MESH_GATEWAY_ROUTE_ADV_RELAY_HOP_MAX_MS);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS == 663u);
     assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS ==
            APP_NODE_COMM_ROUTE_REFRESH_SETTLE_HOPS *
-               APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS);
-    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 12700u);
+               APP_NODE_COMM_ROUTE_REFRESH_RELAY_HOP_MAX_MS +
+               FLOOD_POST_ROOT_GUARD_MS);
+    assert(APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS == 1476u);
 
-    /* The old fixed delay would already have released the next host command,
-     * even though the analytical two-wave relay interval is still live. */
-    fixture.now_ms = wave_complete_ms + 3500u;
-    fixture.scheduled_delay_ms -= 3500u;
+    fixture.now_ms = wave_complete_ms +
+        APP_NODE_COMM_ROUTE_REFRESH_RELAY_SETTLE_MS - 1u;
+    fixture.scheduled_delay_ms = 1u;
     assert(fixture.event_count == 1u);
     assert(fixture.events[0].kind ==
            APP_NODE_COMM_ROUTE_REFRESH_FLOOD_ATTEMPT);

@@ -1778,7 +1778,7 @@ static void test_delivery_copies_envelope_and_wakes_once_per_flood(void)
     envelope.packet.session_id = 0u;
     memset(envelope.payload, 0xee, sizeof(envelope.payload));
 
-    for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)(attempt * 40u));
         if (attempt == 0u) {
             struct k_work_delayable *scheduled_work;
@@ -1803,7 +1803,7 @@ static void test_delivery_copies_envelope_and_wakes_once_per_flood(void)
                       &expected,
                       sizeof(expected)) == 0);
         assert(try_flood_wake_train[attempt] == (attempt == 0u));
-        if (attempt < 3u) {
+        if (attempt < 2u) {
             assert(!app_node_comm_take_delivery_event_for(handle, &event));
         }
     }
@@ -1811,7 +1811,7 @@ static void test_delivery_copies_envelope_and_wakes_once_per_flood(void)
     assert(event.handle == handle);
     assert(event.client_token == 77u);
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
     assert(app_node_comm_pending_delivery_count() == 0u);
 }
 
@@ -1881,6 +1881,7 @@ static void test_single_control_origin_sends_one_frame_with_only_claim_wake(void
     reset_fixture();
     envelope = assignment_control_envelope(
         13u, DISCOVERY_ASSIGNMENT_PHASE_TABLE);
+    envelope.flood_retry_count = 2u;
     assert(app_node_comm_submit_delivery(
         &envelope,
         NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
@@ -1890,6 +1891,10 @@ static void test_single_control_origin_sends_one_frame_with_only_claim_wake(void
     assert(app_node_comm_service_deliveries() == 0);
     assert(try_flood_calls == 1u);
     assert(!try_flood_wake_train[0]);
+    assert(try_flood_envelopes[0].flood_retry_count == 2u);
+    assert(memcmp(&try_flood_envelopes[0],
+                  &envelope,
+                  sizeof(envelope)) == 0);
     assert(app_node_comm_take_delivery_event_for(handle, &event));
     assert(event.attempts_started == 1u);
 #endif
@@ -2006,7 +2011,7 @@ static void test_gateway_large_control_retries_exact_fifty_anchor_payload(void)
     }
     assert(app_node_comm_take_delivery_event_for(handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
 
     assert(app_node_comm_submit_delivery(
         &replacement,
@@ -2645,15 +2650,15 @@ static void test_delivery_pre_rf_busy_defers_without_consuming_attempts(void)
     assert(try_flood_wake_train[1]);
 
     first_rf_ms = first_delay_ms + second_delay_ms;
-    for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)(first_rf_ms + attempt * 40u));
         assert(app_node_comm_service_deliveries() == 0);
         assert(try_flood_wake_train[2u + attempt] == (attempt == 0u));
     }
     assert(app_node_comm_take_delivery_event_for(handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(event.attempts_started == 4u);
-    assert(try_flood_calls == 6u);
+    assert(event.attempts_started == 3u);
+    assert(try_flood_calls == 5u);
 }
 
 static void test_auto_reaped_control_flood_retries_without_leaking_handle(void)
@@ -2679,12 +2684,12 @@ static void test_auto_reaped_control_flood_retries_without_leaking_handle(void)
 
     assert(app_node_comm_service_deliveries() == -EBUSY);
     atomic_store(&fake_now_ms, first_delay_ms);
-    for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++) {
         assert(app_node_comm_service_deliveries() == 0);
         atomic_fetch_add(&fake_now_ms, 40);
     }
 
-    assert(try_flood_calls == 5u);
+    assert(try_flood_calls == 4u);
     assert(app_node_comm_pending_delivery_count() == 0u);
     assert(!app_node_comm_take_delivery_event_for(handle, &event));
 }
@@ -2715,12 +2720,12 @@ static void test_auto_reap_closes_channel9_idle_parent_with_reaped_reason(void)
 
     assert(app_node_comm_service_deliveries() == -EBUSY);
     atomic_store(&fake_now_ms, first_delay_ms);
-    for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++) {
         assert(app_node_comm_service_deliveries() == 0);
         atomic_fetch_add(&fake_now_ms, 40);
     }
 
-    assert(try_flood_calls == 5u);
+    assert(try_flood_calls == 4u);
     assert(app_node_comm_pending_delivery_count() == 0u);
     assert(!app_node_comm_take_delivery_event_for(handle, &event));
 
@@ -2787,7 +2792,7 @@ static void test_gateway_control_flood_preempts_queued_control_response(void)
     assert(try_response_calls == 0u);
     assert(memcmp(&try_flood_envelopes[0], &flood,
                   sizeof(flood)) == 0);
-    for (uint8_t attempt = 1u; attempt < 4u; attempt++) {
+    for (uint8_t attempt = 1u; attempt < 3u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)attempt * 40);
         assert(app_node_comm_service_deliveries() == 0);
     }
@@ -2883,13 +2888,13 @@ static void test_replayed_gateway_ack_coalesces_by_acknowledged_identity(void)
     app_node_comm_control_response_health_get(&health);
     assert(health.submitted == 2u);
 
-    for (uint8_t attempt = 0u; attempt < 4u; attempt++) {
+    for (uint8_t attempt = 0u; attempt < 3u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)attempt * 40);
         assert(app_node_comm_service_deliveries() == 0);
     }
     assert(app_node_comm_service_deliveries() == 0);
     assert(app_node_comm_service_deliveries() == 0);
-    assert(try_flood_calls == 4u);
+    assert(try_flood_calls == 3u);
     assert(try_response_calls == 2u);
     assert(try_response_envelopes[0].packet.seq == first.packet.seq);
     assert(try_response_envelopes[1].packet.seq == different.packet.seq);
@@ -3155,7 +3160,7 @@ static void test_control_response_txfrs_at_or_after_deadline_loses(void)
     }
 }
 
-static void test_fourth_bounded_copy_before_deadline_beats_service_race(void)
+static void test_third_bounded_copy_before_deadline_beats_service_race(void)
 {
     struct adapter_thread_result service_result = {0};
     struct mesh_outbound flood = delivery_envelope(185u);
@@ -3167,7 +3172,7 @@ static void test_fourth_bounded_copy_before_deadline_beats_service_race(void)
     assert(app_node_comm_submit_delivery(
                &flood, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
                130u, 185u, &handle) == 0);
-    for (uint64_t attempt_ms = 0u; attempt_ms <= 80u; attempt_ms += 40u) {
+    for (uint64_t attempt_ms = 0u; attempt_ms <= 40u; attempt_ms += 40u) {
         atomic_store(&fake_now_ms, (int64_t)attempt_ms);
         assert(app_node_comm_service_deliveries() == 0);
     }
@@ -3187,7 +3192,7 @@ static void test_fourth_bounded_copy_before_deadline_beats_service_race(void)
     assert(app_node_comm_take_delivery_event_for(handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(event.terminal_at_ms == 129u);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
 }
 
 static void test_reliable_ack_timestamp_controls_deadline_race(void)
@@ -5089,7 +5094,7 @@ static void test_adapter_trace_distinguishes_transport_and_semantic_proof(void)
     assert(app_node_comm_submit_delivery(
                &control, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
                1000u, 611u, &handle) == 0);
-    for (uint64_t now_ms = 0u; now_ms < 160u; now_ms += 40u) {
+    for (uint64_t now_ms = 0u; now_ms < 120u; now_ms += 40u) {
         atomic_store(&fake_now_ms, (int64_t)now_ms);
         assert(app_node_comm_service_deliveries() == 0);
     }
@@ -5129,22 +5134,22 @@ test_redrive_rejects_delayed_old_generation_rf_evidence(void)
                1000u, 612u, &handle) == 0);
     assert(app_node_comm_delivery_generation(handle, &old_generation) == 0);
 
-    for (uint64_t now_ms = 0u; now_ms < 160u; now_ms += 40u) {
+    for (uint64_t now_ms = 0u; now_ms < 120u; now_ms += 40u) {
         atomic_store(&fake_now_ms, (int64_t)now_ms);
         assert(app_node_comm_service_deliveries() == 0);
     }
-    assert(try_flood_calls == 4u);
+    assert(try_flood_calls == 3u);
     assert(app_node_comm_redrive_delivered_control(
                handle, 200u, 1000u, &prior_terminal) == 0);
     assert(prior_terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(prior_terminal.attempts_started == 4u);
+    assert(prior_terminal.attempts_started == 3u);
     assert(app_node_comm_delivery_generation(handle, &new_generation) == 0);
     assert(new_generation != old_generation);
 
     /*
      * This callback belongs to the completed flood. It must trace as stale
      * evidence, leave the fresh generation in WAIT_TX, and never spend one
-     * of its four physical-copy attempts.
+     * of its three physical-copy attempts.
      */
     assert(app_node_comm_note_backend_rf_started_for_generation(
                &control.packet, old_generation) == -ESTALE);
@@ -5163,15 +5168,15 @@ test_redrive_rejects_delayed_old_generation_rf_evidence(void)
     }
     assert(saw_stale_rf_evidence);
 
-    for (uint64_t now_ms = 200u; now_ms < 360u; now_ms += 40u) {
+    for (uint64_t now_ms = 200u; now_ms < 320u; now_ms += 40u) {
         atomic_store(&fake_now_ms, (int64_t)now_ms);
         assert(app_node_comm_service_deliveries() == 0);
     }
-    assert(try_flood_calls == 8u);
+    assert(try_flood_calls == 6u);
     assert(app_node_comm_take_delivery_event_for(handle, &terminal));
     assert(terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(terminal.proof == NODE_COMM_TERMINAL_PROOF_TRANSPORT);
-    assert(terminal.attempts_started == 4u);
+    assert(terminal.attempts_started == 3u);
 }
 
 static void test_delivered_control_supports_four_same_handle_redrives(void)
@@ -5192,12 +5197,12 @@ static void test_delivered_control_supports_four_same_handle_redrives(void)
         const uint64_t wave_start_ms = (uint64_t)wave * 200u;
 
         for (uint64_t now_ms = wave_start_ms;
-             now_ms < wave_start_ms + 160u;
+             now_ms < wave_start_ms + 120u;
              now_ms += 40u) {
             atomic_store(&fake_now_ms, (int64_t)now_ms);
             assert(app_node_comm_service_deliveries() == 0);
         }
-        assert(try_flood_calls == (wave + 1u) * 4u);
+        assert(try_flood_calls == (wave + 1u) * 3u);
 
         if (wave < 4u) {
             uint32_t next_generation = 0u;
@@ -5208,7 +5213,7 @@ static void test_delivered_control_supports_four_same_handle_redrives(void)
                        2000u,
                        &prior_terminal) == 0);
             assert(prior_terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
-            assert(prior_terminal.attempts_started == 4u);
+            assert(prior_terminal.attempts_started == 3u);
             assert(app_node_comm_delivery_generation(
                        handle, &next_generation) == 0);
             assert(next_generation != prior_generation);
@@ -5219,7 +5224,7 @@ static void test_delivered_control_supports_four_same_handle_redrives(void)
     assert(app_node_comm_take_delivery_event_for(handle, &terminal));
     assert(terminal.reason == NODE_COMM_TERMINAL_DELIVERED);
     assert(terminal.proof == NODE_COMM_TERMINAL_PROOF_TRANSPORT);
-    assert(terminal.attempts_started == 4u);
+    assert(terminal.attempts_started == 3u);
 }
 
 static void test_production_six_slot_exhaustion_keeps_unique_trace_owners(void)
@@ -5282,7 +5287,7 @@ static void test_production_six_slot_exhaustion_keeps_unique_trace_owners(void)
     assert(app_node_comm_pending_delivery_count() == 0u);
 }
 
-static void test_delivery_rejects_unbounded_or_over_capacity_work(void)
+static void test_delivery_rejects_invalid_or_over_capacity_work(void)
 {
     struct mesh_outbound envelope = delivery_envelope(12u);
     struct mesh_outbound protocol = reliable_uplink_envelope(99u);
@@ -5306,7 +5311,10 @@ static void test_delivery_rejects_unbounded_or_over_capacity_work(void)
     envelope.flood_retry_count = 1u;
     assert(app_node_comm_submit_delivery(&envelope,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 1000u, 1u, &extra) ==
-        -EINVAL);
+        0);
+    assert(app_node_comm_cancel_delivery(extra) == 0);
+    assert(app_node_comm_take_delivery_event_for(extra, &event));
+    assert(event.reason == NODE_COMM_TERMINAL_CANCELLED);
     envelope = delivery_envelope(12u);
     envelope.payload_len = APP_NODE_COMM_LARGE_CONTROL_PAYLOAD_MAX_LEN + 1u;
     envelope.packet.payload_len = envelope.payload_len;
@@ -5372,7 +5380,7 @@ static void test_delivery_queue_survives_stop_and_restart(void)
     assert(app_node_comm_pending_delivery_count() == 1u);
     assert(app_node_comm_service_deliveries() == -ESHUTDOWN);
     assert(app_node_comm_start() == 0);
-    for (uint32_t attempt = 0u; attempt < 4u; attempt++) {
+    for (uint32_t attempt = 0u; attempt < 3u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)(attempt * 40u));
         assert(app_node_comm_service_deliveries() == 0);
     }
@@ -5412,13 +5420,13 @@ static void test_inflight_delivery_is_accounted_before_preserving_stop(void)
     assert(app_node_comm_pending_delivery_count() == 1u);
     assert(app_node_comm_start() == 0);
 
-    for (uint32_t attempt = 1u; attempt < 4u; attempt++) {
+    for (uint32_t attempt = 1u; attempt < 3u; attempt++) {
         atomic_store(&fake_now_ms, (int64_t)(attempt * 40u));
         assert(app_node_comm_service_deliveries() == 0);
     }
     assert(app_node_comm_take_delivery_event_for(handle, &event));
     assert(event.reason == NODE_COMM_TERMINAL_DELIVERED);
-    assert(event.attempts_started == 4u);
+    assert(event.attempts_started == 3u);
 }
 
 static void test_retry_backoff_hashes_complete_packet_identity(void)
@@ -5855,7 +5863,7 @@ int main(void)
     test_control_response_terminal_records_do_not_leak_capacity();
     test_control_response_txfrs_before_deadline_beats_service_race();
     test_control_response_txfrs_at_or_after_deadline_loses();
-    test_fourth_bounded_copy_before_deadline_beats_service_race();
+    test_third_bounded_copy_before_deadline_beats_service_race();
     test_reliable_ack_timestamp_controls_deadline_race();
     test_reliable_uplink_waits_for_exact_gateway_confirmation();
     test_four_durable_pair_results_survive_long_single_flight_confirmation_outage();
@@ -5902,7 +5910,7 @@ int main(void)
     test_redrive_rejects_delayed_old_generation_rf_evidence();
     test_delivered_control_supports_four_same_handle_redrives();
     test_production_six_slot_exhaustion_keeps_unique_trace_owners();
-    test_delivery_rejects_unbounded_or_over_capacity_work();
+    test_delivery_rejects_invalid_or_over_capacity_work();
     test_delivery_queue_survives_stop_and_restart();
     test_inflight_delivery_is_accounted_before_preserving_stop();
     test_retry_backoff_hashes_complete_packet_identity();

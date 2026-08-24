@@ -15,6 +15,7 @@ add_library(core
     src/discovery_assignment.c
     src/dwm3000_runtime.c
     src/dwm3000_timing.c
+    src/enumeration_response_lane.c
     src/firmware_events.c
     src/firmware_delivery_loss.c
     src/firmware_state_click.c
@@ -170,6 +171,13 @@ set_tests_properties(app_operation_policy PROPERTIES
 add_executable(test_discovery_assignment tests/test_discovery_assignment.c)
 target_link_libraries(test_discovery_assignment PRIVATE core)
 add_test(NAME discovery_assignment COMMAND test_discovery_assignment)
+
+add_executable(test_enumeration_response_lane
+    tests/test_enumeration_response_lane.c)
+target_link_libraries(test_enumeration_response_lane PRIVATE core)
+add_test(NAME enumeration_response_lane COMMAND test_enumeration_response_lane)
+set_tests_properties(enumeration_response_lane PROPERTIES
+    LABELS "mesh_integration;hardware_models;assignment;radio;timing")
 
 add_executable(test_flood_parent_learning
     tests/test_flood_parent_learning.c)

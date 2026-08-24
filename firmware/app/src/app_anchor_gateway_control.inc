@@ -129,6 +129,21 @@ static int gateway_build_discovery_assignment_command(
                                                        phase,
                                                        epoch);
     }
+    if (ret == PROTO_OK && phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+        ret = tlv_append_u8(
+            outbound->payload,
+            sizeof(outbound->payload),
+            &payload_len,
+            TLV_HOP_COUNT,
+            gateway_discovery_assignment_state.response_lane_max_hop_count);
+    }
+    if (ret == PROTO_OK && phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+        ret = tlv_append_u32(outbound->payload,
+                             sizeof(outbound->payload),
+                             &payload_len,
+                             TLV_DISCOVERY_START_DELAY_MS,
+                             ENUMERATION_RESPONSE_START_DELAY_MS);
+    }
     if (ret == PROTO_OK) {
         const struct operation_policy policy = {
             .family = OPERATION_POLICY_FAMILY_ASSIGNMENT,
@@ -404,13 +419,7 @@ static void gateway_discovery_assignment_complete_success_locked(void)
     if (!gateway_discovery_assignment_state.active ||
         gateway_discovery_assignment_state.stage !=
             GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY ||
-        !gateway_discovery_assignment_state.table_delivery_succeeded ||
-        gateway_discovery_assignment_missing_ack_count_locked() !=
-            0u ||
-        (gateway_discovery_assignment_state.response_ack_settle_armed &&
-         discovery_assignment_response_ack_settle_pending(
-             (uint64_t)k_uptime_get(),
-             gateway_discovery_assignment_state.response_ack_settle_deadline_ms))) {
+        !gateway_discovery_assignment_state.table_delivery_succeeded) {
         return;
     }
     published_count =
@@ -588,7 +597,7 @@ int app_anchor_gateway_assignment_publication_complete(void)
 }
 
 static int gateway_discovery_assignment_submit_control_flood_locked(
-    const struct mesh_outbound *outbound,
+    struct mesh_outbound *outbound,
     enum gateway_discovery_assignment_delivery_kind kind)
 {
     enum node_comm_delivery_profile profile;
@@ -600,6 +609,11 @@ static int gateway_discovery_assignment_submit_control_flood_locked(
     if (outbound == NULL ||
         kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_NONE) {
         return -EINVAL;
+    }
+    if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE ||
+        kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END) {
+        outbound->flood_retry_count =
+            MESH_ENUMERATION_RELAY_COPY_COUNT - 1u;
     }
     if (gateway_discovery_assignment_state.delivery_handle != 0u) {
         return -EBUSY;
@@ -628,8 +642,9 @@ static int gateway_discovery_assignment_submit_control_flood_locked(
      * The activation train establishes each anchor's response parent before
      * the command arrives.  Send a few real gateway CLAIM copies after that
      * train so one damaged extended frame does not make a direct anchor rely
-     * on a sibling's relay.  Later phases remain single-origin; anchors are
-     * already in their continuous protocol listener and relay those phases.
+     * on a sibling's relay. TABLE and END remain one logical
+     * gateway-originated delivery each, but carry three quick physical copies
+     * before anchor relays begin. ABORT stays a single-copy origin.
      */
     profile = kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM ?
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD :
@@ -666,6 +681,7 @@ static int gateway_discovery_assignment_submit_control_flood_locked(
 static int gateway_send_discovery_assignment_claim_request_locked(void)
 {
     struct mesh_outbound outbound;
+    uint64_t claim_origin_ms;
     int ret;
 
     ret = gateway_build_discovery_assignment_command(
@@ -677,12 +693,38 @@ static int gateway_send_discovery_assignment_claim_request_locked(void)
     if (ret < 0) {
         return ret;
     }
+    /*
+     * Freeze the same origin used by the gateway lane before node-comm begins
+     * its wake train. The packet header then accumulates the ordinary gateway
+     * and relay delays, so the advertised countdown may legitimately be
+     * negative at a deeper anchor without losing the shared start edge.
+     */
+    claim_origin_ms = (uint64_t)k_uptime_get();
+    outbound.queued_at_ms = (uint32_t)claim_origin_ms;
+    outbound.queued_at_valid = true;
+    gateway_discovery_assignment_state.response_lane_start_ms =
+        claim_origin_ms + ENUMERATION_RESPONSE_START_DELAY_MS;
+    gateway_discovery_assignment_state.claim_collection_deadline_ms =
+        gateway_discovery_assignment_state.response_lane_start_ms +
+        ENUMERATION_RESPONSE_DEPTH_MS;
+    if (gateway_discovery_assignment_state.claim_collection_deadline_ms >
+        gateway_discovery_assignment_state.operation_deadline_ms) {
+        gateway_discovery_assignment_state.claim_collection_deadline_ms =
+            gateway_discovery_assignment_state.operation_deadline_ms;
+    }
+    gateway_discovery_assignment_state.response_lane_active = true;
     ret = gateway_discovery_assignment_submit_control_flood_locked(
         &outbound,
         GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM);
-    status_debug_printf("DBG_ENUM_CLAIM_TX epoch=%u round=%u ret=%d\n",
+    status_debug_printf("DBG_ENUM_CLAIM_TX epoch=%u round=%u max_hop=%u first_wait_ms=%u ceiling_ms=%u ret=%d\n",
                         gateway_discovery_assignment_state.epoch,
                         gateway_discovery_assignment_state.claim_round + 1u,
+                        gateway_discovery_assignment_state
+                            .response_lane_max_hop_count,
+                        ENUMERATION_RESPONSE_DEPTH_MS,
+                        enumeration_response_duration_ms(
+                            gateway_discovery_assignment_state
+                                .response_lane_max_hop_count),
                         ret);
     return ret;
 }
@@ -734,6 +776,18 @@ static uint8_t gateway_discovery_assignment_adaptive_max_hop_count_locked(void)
     return (uint8_t)MIN(
         gateway_discovery_assignment_state.expected_claim_count,
         (uint16_t)DISCOVERY_ASSIGNMENT_MAX_HOPS);
+}
+
+static uint32_t gateway_discovery_assignment_propagation_hold_ms_locked(void)
+{
+    uint8_t hop_count = gateway_discovery_assignment_state.max_hop_count;
+
+    if (hop_count == 0u) {
+        hop_count = gateway_discovery_assignment_state
+            .response_lane_max_hop_count;
+    }
+    hop_count = CLAMP(hop_count, 1u, UWB_ENUM_MAX_HOPS);
+    return discovery_assignment_control_propagation_hold_ms(hop_count);
 }
 
 static uint8_t gateway_discovery_assignment_adaptive_slot_count_locked(void)
@@ -995,6 +1049,14 @@ static bool gateway_discovery_assignment_expected_claims_complete_locked(void)
 {
     return gateway_discovery_assignment_state.expected_claim_count != 0u &&
            gateway_discovery_assignment_current_claim_count_locked() >=
+               gateway_discovery_assignment_state.expected_claim_count;
+}
+
+static bool gateway_discovery_assignment_expected_claims_missing_locked(void)
+{
+    return gateway_discovery_assignment_state.expected_claim_count != 0u &&
+           gateway_discovery_assignment_current_claim_count_locked() != 0u &&
+           gateway_discovery_assignment_current_claim_count_locked() <
                gateway_discovery_assignment_state.expected_claim_count;
 }
 
@@ -1578,6 +1640,11 @@ static int gateway_start_discovery_assignment(
         ram_only_iteration;
     gateway_discovery_assignment_state.expected_claim_count =
         expected_count_present ? expected_claim_count : 0u;
+    /* The current operation starts without a trustworthy roster. Anchors get
+     * the full supported ceiling, while the gateway expands its own receive
+     * deadline only when a newly observed hop proves another band is needed. */
+    gateway_discovery_assignment_state.response_lane_max_hop_count =
+        UWB_ENUM_MAX_HOPS;
     gateway_discovery_assignment_state.generation =
         gateway_discovery_assignment_next_generation();
     /*
@@ -1677,6 +1744,285 @@ static int gateway_discovery_assignment_ack_proof_admission(
     return proof_ret < 0 ? proof_ret : -EAGAIN;
 }
 
+static int gateway_discovery_assignment_note_compact_record_locked(
+    const struct uwb_enumeration_record *record,
+    uint64_t received_at_ms,
+    uint64_t previous_hop_id)
+{
+    size_t anchor_index = SIZE_MAX;
+
+    if (record == NULL || record->anchor_id == 0u ||
+        record->hop_count == 0u || record->hop_count > UWB_ENUM_MAX_HOPS ||
+        !gateway_discovery_assignment_state.active ||
+        !gateway_discovery_assignment_state.response_lane_active ||
+        gateway_discovery_assignment_state.stage !=
+            GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS ||
+        received_at_ms <
+            gateway_discovery_assignment_state.response_lane_start_ms ||
+        received_at_ms >=
+            gateway_discovery_assignment_state.response_lane_start_ms +
+                enumeration_response_duration_ms(
+                    gateway_discovery_assignment_state
+                        .response_lane_max_hop_count)) {
+        return -ESTALE;
+    }
+    for (size_t i = 0u;
+         i < gateway_discovery_assignment_state.claim_count;
+         i++) {
+        if (gateway_discovery_assignment_state.anchor_ids[i] ==
+            record->anchor_id) {
+            anchor_index = i;
+            break;
+        }
+    }
+    if (anchor_index == SIZE_MAX) {
+        if (gateway_discovery_assignment_state.claim_count >=
+            ARRAY_SIZE(gateway_discovery_assignment_state.anchor_ids)) {
+            return -ENOSPC;
+        }
+        anchor_index = gateway_discovery_assignment_state.claim_count++;
+        gateway_discovery_assignment_state.anchor_ids[anchor_index] =
+            record->anchor_id;
+        gateway_discovery_assignment_state.anchor_slots[anchor_index] =
+            GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE;
+    } else if ((gateway_discovery_assignment_state.claim_response_mask &
+                (UINT64_C(1) << anchor_index)) != 0u) {
+        if (gateway_discovery_assignment_state.anchor_hop_counts[anchor_index] !=
+            record->hop_count) {
+            return -EBADMSG;
+        }
+        if (gateway_discovery_assignment_state.duplicate_count < UINT16_MAX) {
+            gateway_discovery_assignment_state.duplicate_count++;
+        }
+        return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+    }
+
+    gateway_discovery_assignment_state.anchor_hop_counts[anchor_index] =
+        record->hop_count;
+    gateway_discovery_assignment_state.anchor_previous_hop_ids[anchor_index] =
+        previous_hop_id;
+    gateway_discovery_assignment_state.claim_response_mask |=
+        UINT64_C(1) << anchor_index;
+    gateway_discovery_assignment_state.compact_observability_pending_mask |=
+        UINT64_C(1) << anchor_index;
+    if (record->hop_count >
+        gateway_discovery_assignment_state.max_hop_count) {
+        gateway_discovery_assignment_state.max_hop_count =
+            record->hop_count;
+    }
+    return APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
+}
+
+bool app_gateway_enumeration_response_pending_wait_ms(
+    uint64_t now_ms,
+    uint32_t *wait_ms)
+{
+    uint64_t prepare_start_ms;
+    uint64_t remaining_ms;
+    bool pending = false;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return false;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    prepare_start_ms = gateway_discovery_assignment_state
+            .response_lane_start_ms > ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS ?
+        gateway_discovery_assignment_state.response_lane_start_ms -
+            ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS : 0u;
+    if (gateway_discovery_assignment_state.active &&
+        gateway_discovery_assignment_state.response_lane_active &&
+        gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS &&
+        now_ms < prepare_start_ms) {
+        remaining_ms = prepare_start_ms - now_ms;
+        if (wait_ms != NULL) {
+            *wait_ms = remaining_ms > UINT32_MAX ?
+                UINT32_MAX : (uint32_t)remaining_ms;
+        }
+        pending = true;
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return pending;
+}
+
+bool app_gateway_enumeration_response_window(
+    uint64_t now_ms,
+    uint64_t *round_deadline_ms)
+{
+    uint64_t elapsed_ms;
+    uint64_t deadline_ms;
+    uint64_t prepare_start_ms;
+    bool active = false;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY) {
+        return false;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    prepare_start_ms = gateway_discovery_assignment_state
+            .response_lane_start_ms > ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS ?
+        gateway_discovery_assignment_state.response_lane_start_ms -
+            ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS : 0u;
+    if (gateway_discovery_assignment_state.active &&
+        gateway_discovery_assignment_state.response_lane_active &&
+        gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS &&
+        now_ms >= prepare_start_ms &&
+        now_ms < gateway_discovery_assignment_state.claim_collection_deadline_ms) {
+        if (now_ms < gateway_discovery_assignment_state
+                         .response_lane_start_ms) {
+            deadline_ms = gateway_discovery_assignment_state
+                .response_lane_start_ms + ENUMERATION_RESPONSE_ROUND_MS;
+        } else {
+            elapsed_ms = now_ms -
+                gateway_discovery_assignment_state.response_lane_start_ms;
+            deadline_ms = now_ms -
+                (elapsed_ms % ENUMERATION_RESPONSE_ROUND_MS) +
+                ENUMERATION_RESPONSE_ROUND_MS;
+        }
+        if (deadline_ms >
+            gateway_discovery_assignment_state.claim_collection_deadline_ms) {
+            deadline_ms =
+                gateway_discovery_assignment_state.claim_collection_deadline_ms;
+        }
+        if (round_deadline_ms != NULL) {
+            *round_deadline_ms = deadline_ms;
+        }
+        active = true;
+    }
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return active;
+}
+
+int app_gateway_enumeration_response_handle_bundle(
+    const struct uwb_enumeration_bundle_frame *bundle,
+    uint64_t received_at_ms,
+    struct uwb_enumeration_hop_ack_frame *ack)
+{
+    struct enumeration_response_timing timing;
+    bool valid_bundle_activity = false;
+    int ret = 0;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY || bundle == NULL || ack == NULL ||
+        bundle->network_id != NETWORK_ID || bundle->parent_id != DEVICE_ID) {
+        return -EINVAL;
+    }
+    k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+    if (!gateway_discovery_assignment_state.active ||
+        !gateway_discovery_assignment_state.response_lane_active ||
+        bundle->epoch != gateway_discovery_assignment_state.epoch ||
+        !enumeration_response_timing_at_depth(
+            gateway_discovery_assignment_state.response_lane_start_ms,
+            received_at_ms,
+            gateway_discovery_assignment_state.response_lane_max_hop_count,
+            &timing)) {
+        ret = -ESTALE;
+        goto out;
+    }
+    for (uint8_t i = 0u; i < bundle->record_count; i++) {
+        int note_ret = gateway_discovery_assignment_note_compact_record_locked(
+            &bundle->records[i], received_at_ms, bundle->sender_id);
+
+        if (note_ret < 0) {
+            ret = note_ret;
+            goto out;
+        }
+        valid_bundle_activity = true;
+    }
+    if (valid_bundle_activity) {
+        uint8_t observed_hop_count =
+            gateway_discovery_assignment_state.max_hop_count;
+        uint8_t active_hop_count = MAX(observed_hop_count, timing.depth);
+        uint8_t wait_through_hop_count = active_hop_count <
+                    gateway_discovery_assignment_state
+                        .response_lane_max_hop_count ?
+            (uint8_t)(active_hop_count + 1u) : active_hop_count;
+        uint64_t depth_deadline =
+            gateway_discovery_assignment_state.response_lane_start_ms +
+            enumeration_response_duration_ms(wait_through_hop_count);
+
+        if (depth_deadline >
+            gateway_discovery_assignment_state.claim_collection_deadline_ms) {
+            if (depth_deadline >
+                gateway_discovery_assignment_state.operation_deadline_ms) {
+                depth_deadline =
+                    gateway_discovery_assignment_state.operation_deadline_ms;
+            }
+            gateway_discovery_assignment_state.claim_collection_deadline_ms =
+                depth_deadline;
+            gateway_discovery_assignment_state.response_window_deadline_ms =
+                (uint32_t)depth_deadline;
+            gateway_discovery_assignment_state.response_window_deadline_valid =
+                true;
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC(depth_deadline > received_at_ms ?
+                    (uint32_t)(depth_deadline - received_at_ms) : 0u),
+                "compact-next-depth");
+            status_debug_printf(
+                "DBG_ENUM_COMPACT_DEPTH_WAIT observed_hop=%u through_hop=%u deadline=%u\n",
+                observed_hop_count,
+                wait_through_hop_count,
+                (uint32_t)depth_deadline);
+        }
+    }
+    *ack = (struct uwb_enumeration_hop_ack_frame) {
+        .network_id = NETWORK_ID,
+        .epoch = gateway_discovery_assignment_state.epoch,
+        .parent_id = DEVICE_ID,
+        .child_id = bundle->sender_id,
+        .sequence = bundle->sequence,
+    };
+out:
+    k_mutex_unlock(&gateway_discovery_assignment_mutex);
+    return ret;
+}
+
+void app_gateway_enumeration_response_publish_pending(void)
+{
+    while (DEVICE_ROLE == ROLE_GATEWAY) {
+        struct gateway_command_event event;
+        uint64_t pending_mask;
+        size_t anchor_index;
+        uint32_t assignment_epoch;
+
+        k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
+        pending_mask = gateway_discovery_assignment_state
+            .compact_observability_pending_mask;
+        if (!gateway_discovery_assignment_state.active || pending_mask == 0u) {
+            k_mutex_unlock(&gateway_discovery_assignment_mutex);
+            return;
+        }
+        anchor_index = (size_t)__builtin_ctzll(pending_mask);
+        gateway_discovery_assignment_state.compact_observability_pending_mask &=
+            ~(UINT64_C(1) << anchor_index);
+        event = gateway_observability_event(
+            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
+            GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED,
+            CMD_ASSIGN_DISCOVERY_SLOTS,
+            &gateway_discovery_assignment_state.host_command,
+            gateway_discovery_assignment_state.epoch);
+        event.anchor_id =
+            gateway_discovery_assignment_state.anchor_ids[anchor_index];
+        event.previous_hop_id = gateway_discovery_assignment_state
+            .anchor_previous_hop_ids[anchor_index];
+        event.hop_count = gateway_discovery_assignment_state
+            .anchor_hop_counts[anchor_index];
+        event.progress_count = (uint16_t)(anchor_index + 1u);
+        event.duplicate_count =
+            gateway_discovery_assignment_state.duplicate_count;
+        assignment_epoch = gateway_discovery_assignment_state.epoch;
+        k_mutex_unlock(&gateway_discovery_assignment_mutex);
+
+        (void)gateway_observe_command_event(&event, false);
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_RECORD_PUBLISHED epoch=%u anchor=0x%016llx hop=%u via=0x%016llx progress=%u\n",
+            assignment_epoch,
+            (unsigned long long)event.anchor_id,
+            event.hop_count,
+            (unsigned long long)event.previous_hop_id,
+            event.progress_count);
+    }
+}
+
 int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                                             const uint8_t *payload,
                                             size_t payload_len,
@@ -1724,6 +2070,13 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                             epoch);
         return -EBADMSG;
     }
+    /*
+     * Enumeration claims and table receipts now use the compact raw-UWB
+     * lane.  Retire a valid legacy result so an old queued frame cannot hold
+     * mesh custody, but never let that obsolete path mutate the new roster.
+     */
+    return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
+#if 0
     /*
      * A valid result that arrives after its assignment transaction has
      * become terminal must still receive the transport ACK.  Otherwise every
@@ -2086,6 +2439,7 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
                         (unsigned int)gateway_discovery_assignment_state.claim_count);
     GATEWAY_ASSIGNMENT_RETURN(APP_GATEWAY_SEMANTIC_ACCEPT_NEW);
 #undef GATEWAY_ASSIGNMENT_RETURN
+#endif
 }
 
 /*
@@ -2233,8 +2587,7 @@ static int gateway_discovery_assignment_publish_end(void)
     k_mutex_lock(&gateway_discovery_assignment_mutex, K_FOREVER);
     if (gateway_discovery_assignment_state.stage !=
             GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS ||
-        gateway_discovery_assignment_missing_ack_count_locked() !=
-            0u) {
+        !gateway_discovery_assignment_state.table_delivery_succeeded) {
         k_mutex_unlock(&gateway_discovery_assignment_mutex);
         return -EAGAIN;
     }
@@ -2350,6 +2703,26 @@ static bool gateway_discovery_assignment_service_delivery(void)
                         event.attempts_started);
 
     effective_delivered = event.reason == NODE_COMM_TERMINAL_DELIVERED;
+    if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM) {
+        /*
+         * A bounded redundant CLAIM flood can reach anchors even when a later
+         * local copy fails and the transport terminal is ATTEMPTS_EXHAUSTED.
+         * Once any RF attempt began, preserve the already-advertised compact
+         * response horizon and let the response window prove delivery.
+         */
+        effective_delivered =
+            effective_delivered ||
+            app_discovery_assignment_semantic_terminal_success(
+                APP_DISCOVERY_ASSIGNMENT_TERMINAL_CLAIM,
+                gateway_discovery_assignment_state.expected_claim_count,
+                gateway_discovery_assignment_current_claim_count_locked(),
+                gateway_discovery_assignment_missing_ack_count_locked(),
+                event.attempts_started,
+                app_discovery_assignment_operation_expired(
+                    (uint64_t)k_uptime_get(),
+                    gateway_discovery_assignment_state.operation_deadline_ms),
+                !gateway_discovery_assignment_state.active);
+    }
 
     if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM) {
         if (event.attempts_started > 0u) {
@@ -2384,7 +2757,13 @@ static bool gateway_discovery_assignment_service_delivery(void)
         uint32_t wait_ms;
 
         if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END) {
-            gateway_discovery_assignment_complete_success_locked();
+            wait_ms =
+                gateway_discovery_assignment_propagation_hold_ms_locked();
+            gateway_discovery_assignment_state.phase_propagation_deadline_ms =
+                response_window_origin_ms + wait_ms;
+            gateway_discovery_assignment_state.end_propagation_pending = true;
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC(wait_ms), "end-propagation-hold");
             k_mutex_unlock(&gateway_discovery_assignment_mutex);
             return true;
         }
@@ -2400,12 +2779,9 @@ static bool gateway_discovery_assignment_service_delivery(void)
         gateway_discovery_assignment_state.response_window_origin_ms =
             response_window_origin_ms;
         if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM) {
-            uint32_t full_window_ms =
-                gateway_discovery_assignment_adaptive_deadline_offset_ms_locked(
-                    1u, 1u);
             uint64_t collection_deadline_ms =
-                UINT64_MAX - event.terminal_at_ms < full_window_ms ?
-                    UINT64_MAX : event.terminal_at_ms + full_window_ms;
+                gateway_discovery_assignment_state
+                    .claim_collection_deadline_ms;
 
             if (collection_deadline_ms >
                 gateway_discovery_assignment_state.operation_deadline_ms) {
@@ -2421,24 +2797,30 @@ static bool gateway_discovery_assignment_service_delivery(void)
                 gateway_discovery_assignment_state
                     .claim_ack_settle_deadline_ms = collection_deadline_ms;
             }
-        }
-        if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM &&
-            gateway_discovery_assignment_expected_claims_complete_locked()) {
-            if (!gateway_discovery_assignment_state.claim_ack_settle_armed) {
-                (void)gateway_discovery_assignment_arm_claim_ack_settle_locked(
-                    k_uptime_get_32());
-            }
-            wait_ms =
-                gateway_discovery_assignment_claim_ack_settle_remaining_locked(
-                    (uint64_t)k_uptime_get());
+            wait_ms = collection_deadline_ms > (uint64_t)k_uptime_get() ?
+                (uint32_t)(collection_deadline_ms -
+                           (uint64_t)k_uptime_get()) : 0u;
+            gateway_discovery_assignment_state.response_window_deadline_ms =
+                (uint32_t)collection_deadline_ms;
+            gateway_discovery_assignment_state.response_window_deadline_valid =
+                true;
+            status_debug_printf(
+                "DBG_ENUM_COMPACT_GATEWAY_SCHEDULE now=%u start=%u deadline=%u wait=%u\n",
+                k_uptime_get_32(),
+                (uint32_t)gateway_discovery_assignment_state
+                    .response_lane_start_ms,
+                (uint32_t)collection_deadline_ms,
+                wait_ms);
             (void)gateway_discovery_assignment_reschedule(
-                K_MSEC(wait_ms), "expected-count-settle");
+                K_MSEC(wait_ms), "compact-response-lane");
+            (void)mesh_start_uwb_rx("compact-enumeration");
             k_mutex_unlock(&gateway_discovery_assignment_mutex);
             return true;
         } else if (kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE) {
             wait_ms =
-                gateway_discovery_assignment_adaptive_deadline_offset_ms_locked(
-                    1u, 1u);
+                gateway_discovery_assignment_propagation_hold_ms_locked();
+            gateway_discovery_assignment_state.phase_propagation_deadline_ms =
+                response_window_origin_ms + wait_ms;
         } else {
             wait_ms =
                 gateway_discovery_assignment_adaptive_deadline_offset_ms_locked(
@@ -2515,6 +2897,28 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
 
     if (gateway_discovery_assignment_state.stage ==
         GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS) {
+        uint64_t lane_end_ms =
+            gateway_discovery_assignment_state.claim_collection_deadline_ms;
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+
+        if (gateway_discovery_assignment_state.response_lane_active &&
+            now_ms < lane_end_ms) {
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC((uint32_t)(lane_end_ms - now_ms)),
+                "compact-response-lane-open");
+            GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+        }
+        gateway_discovery_assignment_state.response_lane_active = false;
+        if (gateway_discovery_assignment_expected_claims_missing_locked()) {
+            status_debug_printf(
+                "DBG_ENUM_EXPECTED_MISSING expected=%u received=%u\n",
+                gateway_discovery_assignment_state.expected_claim_count,
+                (unsigned int)
+                    gateway_discovery_assignment_current_claim_count_locked());
+            gateway_discovery_assignment_fail_locked(
+                COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
+            GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+        }
         if (gateway_discovery_assignment_expected_claims_complete_locked()) {
             uint32_t settle_ms =
                 gateway_discovery_assignment_claim_ack_settle_remaining_locked(
@@ -2586,8 +2990,37 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
         GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
     }
 
-    if (gateway_discovery_assignment_missing_ack_count_locked() ==
-        0u) {
+    if (gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_END_DELIVERY &&
+        gateway_discovery_assignment_state.end_propagation_pending) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+
+        if (now_ms < gateway_discovery_assignment_state
+                .phase_propagation_deadline_ms) {
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC((uint32_t)(gateway_discovery_assignment_state
+                    .phase_propagation_deadline_ms - now_ms)),
+                "end-propagation-hold");
+            GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+        }
+        gateway_discovery_assignment_state.end_propagation_pending = false;
+        gateway_discovery_assignment_complete_success_locked();
+        GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+    }
+
+    if (gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
+        gateway_discovery_assignment_state.table_delivery_succeeded) {
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+
+        if (now_ms < gateway_discovery_assignment_state
+                .phase_propagation_deadline_ms) {
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC((uint32_t)(gateway_discovery_assignment_state
+                    .phase_propagation_deadline_ms - now_ms)),
+                "table-propagation-hold");
+            GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
+        }
         gateway_discovery_assignment_state.late_table_redrive_pending = false;
         ret = gateway_discovery_assignment_publish_end();
         if (ret < 0) {
@@ -2596,21 +3029,19 @@ static void gateway_discovery_assignment_publish_work_handler(struct k_work *wor
         }
         GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
     }
-    if (gateway_discovery_assignment_state.late_table_redrive_pending) {
-        gateway_discovery_assignment_fail_locked(COMMAND_TIMEOUT, 0u);
+    if (gateway_discovery_assignment_state.replay &&
+        gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS) {
+        ret = gateway_discovery_assignment_publish_table();
+        if (ret < 0) {
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC(100u), "table-resume-retry");
+        }
         GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
     }
-    if (gateway_discovery_assignment_state.table_round >=
-        gateway_discovery_assignment_table_round_limit_locked()) {
-        gateway_discovery_assignment_fail_locked(COMMAND_TIMEOUT, 0u);
-        GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
-    }
-    ret = gateway_discovery_assignment_publish_table();
-    if (ret < 0 && gateway_discovery_assignment_state.table_round >=
-        gateway_discovery_assignment_table_round_limit_locked()) {
-        gateway_discovery_assignment_fail_locked(COMMAND_RADIO_ERROR,
-                                                 (uint8_t)(-ret));
-    }
+    (void)gateway_discovery_assignment_reschedule(
+        K_MSEC(GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_POLL_MS),
+        "table-delivery-await");
     GATEWAY_ASSIGNMENT_PUBLISH_RETURN();
 #undef GATEWAY_ASSIGNMENT_PUBLISH_RETURN
 }
@@ -2643,8 +3074,6 @@ static bool gateway_discovery_assignment_boundary_ready_locked(
 static void gateway_discovery_assignment_finalize_work_handler(struct k_work *work)
 {
     enum app_discovery_assignment_work_request request;
-    uint8_t missing_proof_count;
-    uint8_t table_round_limit;
     int ret;
 
     ARG_UNUSED(work);
@@ -2658,6 +3087,33 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     if (gateway_discovery_assignment_service_delivery()) {
+        GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
+    }
+    if (gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS &&
+        gateway_discovery_assignment_state.response_lane_active) {
+        uint64_t lane_end_ms =
+            gateway_discovery_assignment_state.claim_collection_deadline_ms;
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+
+        if (now_ms < lane_end_ms) {
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC((uint32_t)(lane_end_ms - now_ms)),
+                "compact-response-lane-finalize");
+            GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
+        }
+        gateway_discovery_assignment_state.response_lane_active = false;
+    }
+    if (gateway_discovery_assignment_state.stage ==
+            GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS &&
+        gateway_discovery_assignment_expected_claims_missing_locked()) {
+        status_debug_printf(
+            "DBG_ENUM_EXPECTED_MISSING expected=%u received=%u\n",
+            gateway_discovery_assignment_state.expected_claim_count,
+            (unsigned int)
+                gateway_discovery_assignment_current_claim_count_locked());
+        gateway_discovery_assignment_fail_locked(
+            COMMAND_TIMEOUT, GATEWAY_COMMAND_EVENT_REASON_TIMEOUT);
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     /*
@@ -2690,15 +3146,10 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
             gateway_discovery_assignment_state.pending_failure_reason);
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
-    missing_proof_count =
-        gateway_discovery_assignment_missing_ack_count_locked();
-    table_round_limit =
-        gateway_discovery_assignment_table_round_limit_locked();
     if (gateway_discovery_assignment_state.stage ==
             GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
         gateway_discovery_assignment_state.round_open &&
-        gateway_discovery_assignment_state.table_delivery_succeeded &&
-        missing_proof_count == 0u) {
+        gateway_discovery_assignment_state.table_delivery_succeeded) {
         uint32_t completion_deadline =
             gateway_discovery_assignment_state
                     .response_window_deadline_valid ?
@@ -2710,38 +3161,15 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
                 completion_deadline)) {
             GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
         }
-        {
-            uint64_t now_ms = (uint64_t)k_uptime_get();
-
-            if (gateway_discovery_assignment_state.response_ack_settle_armed &&
-                discovery_assignment_response_ack_settle_pending(
-                    now_ms,
-                    gateway_discovery_assignment_state.response_ack_settle_deadline_ms)) {
-                uint64_t remaining_64 =
-                    gateway_discovery_assignment_state.response_ack_settle_deadline_ms -
-                    now_ms;
-                uint32_t remaining_ms = remaining_64 > UINT32_MAX ?
-                                        UINT32_MAX : (uint32_t)remaining_64;
-
-                (void)gateway_discovery_assignment_reschedule(
-                    K_MSEC(remaining_ms), "response-ack-settle");
-                GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
-            }
-            gateway_discovery_assignment_state.response_ack_settle_armed = false;
-            gateway_discovery_assignment_state.response_ack_settle_deadline_ms = 0u;
-            /*
-             * Keep the TABLE round owned until completion actually commits.
-             * The exact current-responder quorum is complete, so keep this
-             * round owned until the durable roster commit consumes it.
-             */
-            gateway_discovery_assignment_state.round_open = false;
-            ret = gateway_discovery_assignment_publish_end();
-            if (ret < 0) {
-                (void)gateway_discovery_assignment_reschedule(
-                    K_MSEC(100u), "end-submit-retry");
-            }
-            GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
+        gateway_discovery_assignment_state.response_ack_settle_armed = false;
+        gateway_discovery_assignment_state.response_ack_settle_deadline_ms = 0u;
+        gateway_discovery_assignment_state.round_open = false;
+        ret = gateway_discovery_assignment_publish_end();
+        if (ret < 0) {
+            (void)gateway_discovery_assignment_reschedule(
+                K_MSEC(100u), "end-submit-retry");
         }
+        GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
     if (app_discovery_assignment_operation_expired(
             (uint64_t)k_uptime_get(),
@@ -2756,15 +3184,7 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
         }
         GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
     }
-    if (gateway_discovery_assignment_state.round_open &&
-        gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS &&
-        gateway_discovery_assignment_state.late_table_redrive_pending) {
-        /* A TABLE-correlated late CLAIM proves the one-origin publication did
-         * not reach every participant. Close the window so the publisher
-         * fails the strict run; it must never originate the TABLE again. */
-        gateway_discovery_assignment_state.round_open = false;
-    } else if (gateway_discovery_assignment_state.round_open) {
+    if (gateway_discovery_assignment_state.round_open) {
         if (gateway_discovery_assignment_state
                        .response_window_deadline_valid) {
             uint32_t now_ms = k_uptime_get_32();
@@ -2782,25 +3202,6 @@ static void gateway_discovery_assignment_finalize_work_handler(struct k_work *wo
                     deadline_ms)) {
                 GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
             }
-        }
-        if (gateway_discovery_assignment_state.stage ==
-            GATEWAY_DISCOVERY_ASSIGNMENT_WAIT_TABLE_ACKS) {
-        gateway_discovery_assignment_state.round_open = false;
-        if (app_discovery_assignment_table_retry_backoff_required(
-                true,
-                missing_proof_count,
-                gateway_discovery_assignment_state.table_round,
-                table_round_limit)) {
-            uint32_t retry_ms = discovery_assignment_retry_backoff_ms(
-                gateway_discovery_assignment_state.table_round - 1u,
-                sys_rand32_get());
-
-            status_debug_printf("DBG_ENUM_BACKOFF phase=table delay=%u\n",
-                                retry_ms);
-            (void)gateway_discovery_assignment_reschedule(
-                K_MSEC(retry_ms), "table-round-backoff");
-            GATEWAY_ASSIGNMENT_FINALIZE_RETURN();
-        }
         }
     }
     request = app_discovery_assignment_work_guard_request(
@@ -2969,6 +3370,39 @@ int gateway_discovery_assignment_note_claim(const struct proto_packet *packet,
     ARG_UNUSED(received_at_ms);
     ARG_UNUSED(previous_hop_id);
     return -ENOTSUP;
+}
+
+bool app_gateway_enumeration_response_window(
+    uint64_t now_ms,
+    uint64_t *round_deadline_ms)
+{
+    ARG_UNUSED(now_ms);
+    ARG_UNUSED(round_deadline_ms);
+    return false;
+}
+
+bool app_gateway_enumeration_response_pending_wait_ms(
+    uint64_t now_ms,
+    uint32_t *wait_ms)
+{
+    ARG_UNUSED(now_ms);
+    ARG_UNUSED(wait_ms);
+    return false;
+}
+
+int app_gateway_enumeration_response_handle_bundle(
+    const struct uwb_enumeration_bundle_frame *bundle,
+    uint64_t received_at_ms,
+    struct uwb_enumeration_hop_ack_frame *ack)
+{
+    ARG_UNUSED(bundle);
+    ARG_UNUSED(received_at_ms);
+    ARG_UNUSED(ack);
+    return -ENOTSUP;
+}
+
+void app_gateway_enumeration_response_publish_pending(void)
+{
 }
 
 int gateway_discovery_assignment_admit_nonassignment_source(uint64_t src_id)

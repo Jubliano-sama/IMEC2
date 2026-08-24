@@ -14,16 +14,24 @@ GATEWAY_CONTROL = (
 ).read_text()
 RADIO = (ROOT / "app/src/app_anchor_radio.inc").read_text()
 REPORT_TRANSPORT = (ROOT / "app/src/app_mesh_report_transport.inc").read_text()
+REPORT_DELIVERY = (ROOT / "app/src/app_mesh_report_delivery.inc").read_text()
 REPORT_ROUTE_CONTROL = (
     ROOT / "app/src/app_mesh_report_route_control.inc"
 ).read_text()
 REPORT_RX = (ROOT / "app/src/app_mesh_report_rx.inc").read_text()
+APP_NODE_COMM = (ROOT / "app/src/app_node_comm.c").read_text()
+APP_MESH_FLOOD = (ROOT / "app/src/app_mesh_flood.c").read_text()
 DRIVER = (ROOT / "app/src/dwm3000_driver.c").read_text()
 DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 LIFECYCLE = (ROOT / "src/protocol_rx_lifecycle.c").read_text()
+RELAY_CUSTODY = (ROOT / "src/mesh_relay_custody.inc").read_text()
 NODE_COMM = (ROOT / "src/node_comm.c").read_text()
+MESH = (ROOT / "include/mesh.h").read_text()
+PROTOCOL = (ROOT / "include/protocol.h").read_text()
 UWB = (ROOT / "include/uwb.h").read_text()
+ENUMERATION_LANE = (ROOT / "include/enumeration_response_lane.h").read_text()
 RADIO_TIMING = (ROOT / "include/mesh_radio_timing.h").read_text()
+UWB_TIMING = (ROOT / "src/dwm3000_timing.c").read_text()
 
 
 def function_body(source: str, name: str) -> str:
@@ -42,6 +50,28 @@ def function_body(source: str, name: str) -> str:
     if depth:
         raise AssertionError(f"unterminated function {name}")
     return source[start : index - 1]
+
+
+def unsigned_define(source: str, name: str) -> int:
+    match = re.search(rf"^#define\s+{name}\s+(\d+)u\s*$", source, re.M)
+    if match is None:
+        raise AssertionError(f"missing unsigned integer define {name}")
+    return int(match.group(1))
+
+
+def braced_block(source: str, start: int) -> str:
+    open_brace = source.index("{", start)
+    depth = 1
+    index = open_brace + 1
+    while index < len(source) and depth:
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+        index += 1
+    if depth:
+        raise AssertionError("unterminated braced block")
+    return source[open_brace + 1 : index - 1]
 
 
 class EnumerationRxLifecycleSourceTests(unittest.TestCase):
@@ -159,8 +189,8 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertLess(bounded_profile, later_phases)
         self.assertLess(later_phases, single_origin)
         self.assertLess(single_origin, delivery)
-        self.assertIn(".max_attempts = 4u", bounded)
-        self.assertIn(".successful_attempts_required = 4u", bounded)
+        self.assertIn(".max_attempts = 3u", bounded)
+        self.assertIn(".successful_attempts_required = 3u", bounded)
         self.assertNotIn(".max_attempts = 1u", bounded)
 
     def test_claim_and_table_admit_one_exact_ram_owner(self) -> None:
@@ -234,18 +264,12 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             replay_start : apply.index("An exact replay", replay_start)
         ]
 
-        self.assertLess(
-            claim.index("anchor_enumeration_rx_begin("),
-            claim.index("anchor_schedule_discovery_claim"),
-        )
+        self.assertIn("anchor_enumeration_rx_begin(", claim)
         self.assertLess(
             late_table.index("anchor_enumeration_rx_begin_table"),
             late_table.index("anchor_schedule_late_discovery_claim"),
         )
-        self.assertLess(
-            replay.index("anchor_enumeration_rx_begin_table"),
-            replay.index("anchor_resume_pending_discovery_assignment_ack"),
-        )
+        self.assertIn("anchor_enumeration_rx_begin_table", replay)
 
     def test_abort_requires_exact_active_claim_identity(self) -> None:
         apply = function_body(
@@ -291,6 +315,105 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         self.assertIn("anchor_enumeration_rx_active()) {", scan)
         self.assertIn("next_scan_delay_ms = 0u", scan)
+
+    def test_every_generic_enumeration_reentry_rechecks_compact_prepare(
+        self,
+    ) -> None:
+        scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
+        reentry = scan.index("enumeration_rx_window:")
+        generic_rx = scan.index(
+            "dwm3000_driver_receive_frame_continuous_extend_on_activity(",
+            reentry,
+        )
+        gate = scan[reentry:generic_rx]
+
+        current_clock = gate.index(
+            "enumeration_now_ms = (uint64_t)k_uptime_get()"
+        )
+        compact_check = gate.index(
+            "anchor_compact_enumeration_window(", current_clock
+        )
+        prepare_check = gate.index(
+            "anchor_compact_enumeration_prepare_window(", compact_check
+        )
+        compact_switch = gate.index(
+            "anchor_run_compact_enumeration_lane(", prepare_check
+        )
+        current_start_distance = gate.index(
+            "anchor_compact_enumeration_ms_until_prepare(", compact_switch
+        )
+        receive_cap = gate.index(
+            "scan_rx_ms = compact_lane_start_wait_ms", current_start_distance
+        )
+
+        self.assertIn("if (anchor_enumeration_rx_active())", gate)
+        self.assertIn("enumeration_now_ms, NULL, NULL", gate)
+        self.assertIn("(\n                    enumeration_now_ms);", gate)
+        self.assertLess(current_clock, compact_check)
+        self.assertLess(compact_check, prepare_check)
+        self.assertLess(prepare_check, compact_switch)
+        self.assertLess(compact_switch, current_start_distance)
+        self.assertLess(current_start_distance, receive_cap)
+        self.assertGreaterEqual(scan.count("goto enumeration_rx_window"), 3)
+
+    def test_anchor_compact_lane_prearms_rx_without_early_tx(self) -> None:
+        prepare = function_body(
+            RADIO, "anchor_compact_enumeration_prepare_window"
+        )
+        until_prepare = function_body(
+            RADIO, "anchor_compact_enumeration_ms_until_prepare"
+        )
+        run = function_body(RADIO, "anchor_run_compact_enumeration_lane")
+        scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
+
+        self.assertEqual(
+            unsigned_define(
+                ENUMERATION_LANE, "ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS"
+            ),
+            40,
+        )
+        for helper in (prepare, until_prepare):
+            self.assertIn(
+                "start_ms >\n"
+                "                    ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS",
+                helper,
+            )
+            self.assertIn(
+                "start_ms -\n"
+                "                    ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS",
+                helper,
+            )
+        self.assertIn("now_ms >= prepare_start_ms", prepare)
+        self.assertIn("prepare_start_ms - now_ms", until_prepare)
+
+        self.assertEqual(
+            scan.count("anchor_compact_enumeration_prepare_window("), 3
+        )
+        self.assertGreaterEqual(
+            scan.count("anchor_compact_enumeration_window("), 3
+        )
+        self.assertEqual(
+            scan.count("anchor_compact_enumeration_ms_until_prepare("), 2
+        )
+
+        lane_started = run.index("bool lane_started = now_ms >= config.start_ms")
+        prestart = run.index("if (!lane_started)", lane_started)
+        prestart_block = braced_block(run, prestart)
+        receive = run.index(
+            "dwm3000_driver_receive_frame_continuous(", prestart
+        )
+        timeout = run.index("if (ret == -ETIMEDOUT)", receive)
+        timeout_block = braced_block(run, timeout)
+
+        self.assertIn("round_deadline_ms = config.start_ms", prestart_block)
+        self.assertIn("receive_deadline_ms = config.start_ms", prestart_block)
+        self.assertNotIn("anchor_compact_enumeration_try_tx", prestart_block)
+        self.assertLess(prestart, receive)
+        self.assertIn("remaining_ms", run[receive : run.index(");", receive)])
+        self.assertIn("continue;", timeout_block)
+        self.assertIn(
+            "if (!lane_started)", run[receive:timeout]
+        )
 
     def test_continuous_listener_uses_extended_phr_and_protocol_max_slice(self) -> None:
         scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
@@ -343,6 +466,1010 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertNotIn("MIN(acquire_timeout_ms", receive)
         self.assertNotIn("MAX(acquire_timeout_ms", receive)
         self.assertIn("(unsigned int)frame_cap", receive)
+
+    def test_compact_lane_keeps_anchor_and_gateway_on_extended_phr(self) -> None:
+        anchor_lane = function_body(
+            RADIO, "anchor_run_compact_enumeration_lane"
+        )
+        gateway_lane = function_body(
+            REPORT_RX, "mesh_gateway_run_enumeration_response_slice"
+        )
+
+        self.assertEqual(
+            anchor_lane.count(
+                "dwm3000_driver_configure_wake_mesh_control_mode()"
+            ),
+            1,
+        )
+        self.assertEqual(
+            gateway_lane.count(
+                "dwm3000_driver_configure_wake_mesh_control_mode()"
+            ),
+            3,
+        )
+        self.assertNotIn(
+            "dwm3000_driver_configure_wake_mode()", anchor_lane
+        )
+        self.assertNotIn(
+            "dwm3000_driver_configure_wake_mode()", gateway_lane
+        )
+
+        ch5_control_profile = UWB_TIMING[
+            UWB_TIMING.index("[DWM3000_TIMING_PHY_CH5_MESH_CONTROL]") :
+            UWB_TIMING.index("[DWM3000_TIMING_PHY_CH9_MESH]")
+        ]
+        self.assertIn(
+            "DWM3000_TIMING_EXTENDED_PSDU_MAX_BYTES - "
+            "DWM3000_TIMING_FCS_BYTES",
+            ch5_control_profile,
+        )
+        self.assertIn(
+            ".phr_mode = DWM3000_TIMING_PHR_EXTENDED",
+            ch5_control_profile,
+        )
+
+        extended_payload_cap = (
+            unsigned_define(UWB, "UWB_PHY_EXTENDED_FRAME_MAX_LEN")
+            - unsigned_define(UWB, "UWB_PHY_FCS_LEN")
+        )
+        max_control_frame = (
+            unsigned_define(UWB, "UWB_MESH_FRAME_HEADER_LEN")
+            + unsigned_define(PROTOCOL, "PACKET_EXT_HEADER_LEN")
+            + unsigned_define(PROTOCOL, "PACKET_EXT_MAX_PAYLOAD_LEN")
+            + unsigned_define(PROTOCOL, "PACKET_CRC_LEN")
+            + unsigned_define(UWB, "UWB_FRAME_CRC_LEN")
+        )
+        compact_bundle = (
+            unsigned_define(UWB, "UWB_ENUM_BUNDLE_BASE_LEN")
+            + unsigned_define(UWB, "UWB_ENUM_RECORDS_PER_BUNDLE")
+            * unsigned_define(UWB, "UWB_ENUM_RECORD_LEN")
+        )
+        compact_ack = unsigned_define(UWB, "UWB_ENUM_HOP_ACK_LEN")
+
+        self.assertLessEqual(max_control_frame, extended_payload_cap)
+        self.assertLessEqual(compact_bundle, extended_payload_cap)
+        self.assertLessEqual(compact_ack, extended_payload_cap)
+
+    def test_compact_bundle_acks_have_no_fixed_turnaround_delay(self) -> None:
+        anchor_ack = function_body(
+            RADIO, "anchor_compact_enumeration_handle_raw"
+        )
+        gateway_lane = function_body(
+            REPORT_RX, "mesh_gateway_run_enumeration_response_slice"
+        )
+
+        for ack_path in (anchor_ack, gateway_lane):
+            encode = ack_path.index("uwb_encode_enumeration_hop_ack(")
+            send = ack_path.index(
+                "dwm3000_driver_send_frame_tracked_until(", encode
+            )
+            ack_turnaround = ack_path[encode:send]
+
+            self.assertNotIn("k_sleep(", ack_turnaround)
+            self.assertNotIn("k_msleep(", ack_turnaround)
+            self.assertNotIn("ACK_TURNAROUND", ack_turnaround)
+            self.assertNotIn("ACK_TX_BUDGET", ack_turnaround)
+
+        self.assertNotIn("ANCHOR_ENUMERATION_ACK_TURNAROUND_MS", RADIO)
+        self.assertNotIn("ANCHOR_ENUMERATION_ACK_TX_BUDGET_MS", RADIO)
+        self.assertNotIn("GATEWAY_ENUMERATION_ACK_TURNAROUND_MS", REPORT_RX)
+        self.assertNotIn("GATEWAY_ENUMERATION_ACK_TX_BUDGET_MS", REPORT_RX)
+        self.assertIn("DBG_ENUM_COMPACT_ACK_TX", anchor_ack)
+        self.assertIn("DBG_ENUM_COMPACT_ACK_SKIP", anchor_ack)
+        self.assertIn("DBG_ENUM_COMPACT_GATEWAY_ACK_TX", gateway_lane)
+        self.assertIn("DBG_ENUM_COMPACT_GATEWAY_ACK_SKIP", gateway_lane)
+
+    def test_only_valid_current_epoch_bundles_advance_empty_band_proof(
+        self,
+    ) -> None:
+        handle = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_handle_bundle",
+        )
+        note_record = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_note_compact_record_locked",
+        )
+
+        self.assertIn("bool valid_bundle_activity = false;", handle)
+        self.assertEqual(handle.count("valid_bundle_activity = true;"), 1)
+        epoch_check = handle.index(
+            "bundle->epoch != gateway_discovery_assignment_state.epoch"
+        )
+        timing_check = handle.index(
+            "enumeration_response_timing_at_depth(", epoch_check
+        )
+        stale_exit = handle.index("goto out;", timing_check)
+        note = handle.index(
+            "gateway_discovery_assignment_note_compact_record_locked("
+        )
+        reject = handle.index("if (note_ret < 0)", note)
+        reject_exit = handle.index("goto out;", reject)
+        activity = handle.index("valid_bundle_activity = true;", reject_exit)
+        depth_guard = handle.index("if (valid_bundle_activity)", activity)
+
+        self.assertLess(epoch_check, stale_exit)
+        self.assertLess(stale_exit, note)
+        self.assertLess(note, reject)
+        self.assertLess(reject, reject_exit)
+        self.assertLess(reject_exit, activity)
+        self.assertLess(activity, depth_guard)
+        self.assertNotIn(
+            "APP_GATEWAY_SEMANTIC_ACCEPT_NEW", handle[reject_exit:activity]
+        )
+        self.assertNotIn(
+            "APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE",
+            handle[reject_exit:activity],
+        )
+        self.assertRegex(
+            note_record,
+            r"(?s)anchor_hop_counts\[anchor_index\]\s*!=\s*"
+            r"record->hop_count\s*\)\s*\{\s*return\s+-EBADMSG\s*;\s*\}"
+            r".*return\s+APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE\s*;",
+        )
+
+        depth_block = braced_block(handle, depth_guard)
+        self.assertIn("uint8_t observed_hop_count", depth_block)
+        self.assertIn("MAX(observed_hop_count, timing.depth)", depth_block)
+        self.assertIn("active_hop_count + 1u", depth_block)
+        self.assertIn("claim_collection_deadline_ms =", depth_block)
+        self.assertIn('"compact-next-depth"', depth_block)
+
+        ack = handle.index("*ack =", depth_guard)
+        post_ack = handle[ack:]
+        self.assertNotIn("expected_claim_count", post_ack)
+        self.assertNotIn("claim_collection_deadline_ms =", post_ack)
+        self.assertNotIn('"compact-roster-quiet"', handle)
+
+    def test_expected_roster_never_shortens_adaptive_compact_deadline(
+        self,
+    ) -> None:
+        handle = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_handle_bundle",
+        )
+        activity = handle.index("if (valid_bundle_activity)")
+        adaptive = braced_block(handle, activity)
+        ack = handle.index("*ack =", activity)
+        post_ack = handle[ack:]
+
+        self.assertIn("depth_deadline >", adaptive)
+        self.assertIn(
+            "gateway_discovery_assignment_state.claim_collection_deadline_ms",
+            adaptive,
+        )
+        self.assertIn("claim_collection_deadline_ms =", adaptive)
+        self.assertNotIn("expected_claim_count", post_ack)
+        self.assertNotIn("claim_collection_deadline_ms =", post_ack)
+        self.assertNotIn("gateway_discovery_assignment_reschedule", post_ack)
+
+    def test_known_incomplete_roster_aborts_before_table_publication(
+        self,
+    ) -> None:
+        missing = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_expected_claims_missing_locked",
+        )
+        publish = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_publish_work_handler",
+        )
+        finalize = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_finalize_work_handler",
+        )
+
+        self.assertIn("expected_claim_count != 0u", missing)
+        self.assertRegex(
+            missing,
+            r"gateway_discovery_assignment_current_claim_count_locked\s*"
+            r"\(\)\s*!=\s*0u",
+        )
+        self.assertRegex(
+            missing,
+            r"gateway_discovery_assignment_current_claim_count_locked\s*"
+            r"\(\)\s*<\s*\n?\s*"
+            r"gateway_discovery_assignment_state.expected_claim_count",
+        )
+
+        collect = publish.index(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_COLLECT_CLAIMS"
+        )
+        lane_close = publish.index(
+            "response_lane_active = false", collect
+        )
+        missing_check = publish.index(
+            "gateway_discovery_assignment_expected_claims_missing_locked()",
+            lane_close,
+        )
+        missing_block = braced_block(publish, missing_check)
+        first_table = publish.index(
+            "gateway_discovery_assignment_publish_table()", missing_check
+        )
+        self.assertIn("gateway_discovery_assignment_fail_locked(", missing_block)
+        self.assertIn("GATEWAY_ASSIGNMENT_PUBLISH_RETURN()", missing_block)
+        self.assertLess(missing_check, first_table)
+
+        finalize_missing = finalize.index(
+            "gateway_discovery_assignment_expected_claims_missing_locked()"
+        )
+        finalize_block = braced_block(finalize, finalize_missing)
+        self.assertIn(
+            "gateway_discovery_assignment_fail_locked(", finalize_block
+        )
+        self.assertIn("GATEWAY_ASSIGNMENT_FINALIZE_RETURN()", finalize_block)
+
+        final_table = publish.rindex(
+            "gateway_discovery_assignment_publish_table()"
+        )
+        unknown_fallback = publish[
+            publish.rindex(
+                "gateway_discovery_assignment_current_claim_count_locked() == 0u",
+                collect,
+                final_table,
+            ) : final_table
+        ]
+        self.assertIn("gateway_discovery_assignment_fail_locked(", unknown_fallback)
+        self.assertNotIn("expected_claim_count", unknown_fallback)
+
+    def test_compact_semantic_lane_survives_scanner_reentry(self) -> None:
+        owner = ANCHOR.index(
+            "static struct enumeration_response_lane "
+            "anchor_enumeration_response_lane;"
+        )
+        owner_guard = ANCHOR.rfind(
+            "#if DEVICE_ROLE == ROLE_ANCHOR", 0, owner
+        )
+        owner_end = ANCHOR.index("#endif", owner)
+        lane_state = braced_block(
+            ENUMERATION_LANE,
+            ENUMERATION_LANE.index("struct enumeration_response_lane"),
+        )
+        run = function_body(RADIO, "anchor_run_compact_enumeration_lane")
+        resume = function_body(
+            RADIO, "anchor_compact_enumeration_lane_resume"
+        )
+        start = function_body(
+            COMMANDS, "anchor_start_compact_enumeration_response_lane"
+        )
+
+        self.assertGreater(owner_guard, -1)
+        self.assertGreater(owner_end, owner)
+        self.assertEqual(
+            ANCHOR.count("anchor_enumeration_response_lane;"), 1
+        )
+        self.assertNotIn("encoded", lane_state)
+        self.assertNotIn("frame", lane_state)
+        self.assertNotIn("UWB_ENUM_BUNDLE_MAX_LEN", lane_state)
+        self.assertNotIn("UWB_ENUM_HOP_ACK_LEN", lane_state)
+
+        self.assertIn("&anchor_enumeration_response_lane", run)
+        self.assertIn("anchor_compact_enumeration_lane_resume(&config)", run)
+        self.assertNotRegex(
+            run, r"struct\s+enumeration_response_lane\s+lane\s*;"
+        )
+        self.assertNotIn("enumeration_response_lane_begin(", run)
+        self.assertNotIn("enumeration_response_lane_stop(", run)
+
+        exact = resume.index("if (lane->active")
+        exact_return = resume.index("return PROTO_OK;", exact)
+        begin = resume.index("enumeration_response_lane_begin(")
+        for identity in (
+            "lane->network_id == NETWORK_ID",
+            "lane->epoch == config->epoch",
+            "enumeration_response_lane_local_id(lane) == DEVICE_ID",
+            "lane->parent_id == config->parent_id",
+            "lane->hop_count == config->hop_count",
+            "lane->start_ms == config->start_ms",
+        ):
+            self.assertIn(identity, resume[exact:exact_return])
+        self.assertLess(exact_return, begin)
+        self.assertEqual(resume.count("enumeration_response_lane_begin("), 1)
+        self.assertEqual(RADIO.count("enumeration_response_lane_begin("), 1)
+        self.assertNotIn("enumeration_response_lane_stop(", resume)
+        self.assertNotIn("memset(", resume)
+
+        active_replay = start[
+            start.index("if (anchor_enumeration_response_config.active") :
+            start.index("} else {", start.index(
+                "if (anchor_enumeration_response_config.active"
+            ))
+        ]
+        for identity in (
+            "anchor_enumeration_response_config.epoch == epoch",
+            "anchor_enumeration_response_config.hop_count == hop_count",
+            "anchor_enumeration_response_config.max_hop_count ==",
+            "anchor_enumeration_response_config.start_ms == start_ms",
+            "anchor_enumeration_response_config.parent_id ==",
+            "selected->next_hop_id",
+        ):
+            self.assertIn(identity, active_replay)
+        self.assertIn("PROTO_OK : PROTO_ERR_STALE", active_replay)
+
+        begin_table = function_body(RADIO, "anchor_enumeration_rx_begin_table")
+        terminate_claim = function_body(
+            RADIO, "anchor_enumeration_rx_terminate_claim"
+        )
+        terminate_table = function_body(
+            RADIO, "anchor_enumeration_rx_terminate_table"
+        )
+        for terminal in (begin_table, terminate_claim, terminate_table):
+            self.assertEqual(
+                terminal.count("anchor_compact_enumeration_deactivate(epoch)"),
+                1,
+            )
+        self.assertNotIn(
+            "anchor_enumeration_response_lane", terminate_claim
+        )
+        self.assertNotIn(
+            "anchor_enumeration_response_lane", terminate_table
+        )
+
+    def test_enumeration_transport_owns_exactly_one_physical_send_per_copy(self) -> None:
+        send = function_body(
+            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
+        )
+        opportunity = function_body(
+            APP_MESH_FLOOD, "app_mesh_flood_send_opportunity"
+        )
+        forward = function_body(RELAY_CUSTODY, "build_broadcast_forward")
+        gateway_origin = function_body(
+            GATEWAY_CONTROL, "gateway_build_discovery_assignment_command"
+        )
+        gateway_hold = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_propagation_hold_ms_locked",
+        )
+        copy_count = unsigned_define(
+            MESH, "MESH_ENUMERATION_RELAY_COPY_COUNT"
+        )
+
+        attempts = send.index(
+            "attempt_count = 1u + tx.flood_retry_count;"
+        )
+        loop = send.index("attempt < attempt_count", attempts)
+        select = send.index(
+            "(single_opportunity || enumeration_control)", loop
+        )
+        one_copy = send.index(
+            "app_mesh_flood_send_opportunity", select
+        )
+        generic_flood = send.index(
+            "app_mesh_command_orchestrator_serialize_flood", one_copy
+        )
+        next_attempt = send.index("attempt + 1u < attempt_count", generic_flood)
+        diversification = send.index(
+            "mesh_flood_copy_diversification_ms", next_attempt
+        )
+        enumeration_guard = send.index(
+            "MESH_ENUMERATION_RELAY_COPY_GUARD_MS", diversification
+        )
+
+        self.assertLess(attempts, loop)
+        self.assertLess(loop, select)
+        self.assertLess(select, one_copy)
+        self.assertLess(one_copy, generic_flood)
+        self.assertLess(generic_flood, next_attempt)
+        self.assertLess(next_attempt, diversification)
+        self.assertLess(diversification, enumeration_guard)
+        self.assertIn(
+            "app_mesh_flood_send_resume_limit(out, ops, &progress, result, 1u)",
+            opportunity,
+        )
+        self.assertIn("enumeration_control ?", forward)
+        self.assertIn(
+            "MESH_ENUMERATION_RELAY_COPY_COUNT - 1u", forward
+        )
+        self.assertIn("memset(outbound, 0, sizeof(*outbound))", gateway_origin)
+        self.assertNotIn("flood_retry_count", gateway_origin)
+        self.assertIn(
+            "discovery_assignment_control_propagation_hold_ms(hop_count)",
+            gateway_hold,
+        )
+        self.assertRegex(
+            MESH,
+            r"#define\s+MESH_ENUMERATION_RELAY_COPY_TAIL_MS\s*\\\s*"
+            r"\(\(MESH_ENUMERATION_RELAY_COPY_COUNT\s*-\s*1u\)\s*\*\s*\\\s*"
+            r"\s*MESH_ENUMERATION_RELAY_COPY_SPACING_MAX_MS\)",
+        )
+
+        gateway_retry_count = 0
+        relay_retry_count = copy_count - 1
+        self.assertEqual(copy_count, 3)
+        self.assertEqual(1 + gateway_retry_count, 1)
+        self.assertEqual(1 + relay_retry_count, 3)
+        old_nested_flood_count = (1 + relay_retry_count) * 4
+        self.assertEqual(old_nested_flood_count, 12)
+        self.assertNotEqual(old_nested_flood_count, copy_count)
+
+    def test_table_and_end_root_copy_bursts_finish_before_anchor_relays(
+        self,
+    ) -> None:
+        submit = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_submit_control_flood_locked",
+        )
+        send = function_body(
+            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
+        )
+        quick_root = function_body(
+            REPORT_TRANSPORT,
+            "mesh_c5_gateway_enumeration_quick_copy_burst",
+        )
+        node_comm = function_body(
+            APP_NODE_COMM, "app_node_comm_service_deliveries"
+        )
+        forward = function_body(RELAY_CUSTODY, "build_broadcast_forward")
+        copy_count = unsigned_define(
+            MESH, "MESH_ENUMERATION_RELAY_COPY_COUNT"
+        )
+
+        retry_assignment = submit.index(
+            "outbound->flood_retry_count ="
+        )
+        retry_guard = submit.rfind("if (", 0, retry_assignment)
+        retry_condition = submit[
+            retry_guard : submit.index("{", retry_guard)
+        ]
+        retry_block = braced_block(submit, retry_guard)
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE",
+            retry_condition,
+        )
+        self.assertIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_END",
+            retry_condition,
+        )
+        self.assertNotIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM",
+            retry_condition,
+        )
+        self.assertNotIn(
+            "GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_ABORT",
+            retry_condition,
+        )
+        self.assertIn(
+            "outbound->flood_retry_count =\n"
+            "            MESH_ENUMERATION_RELAY_COPY_COUNT - 1u",
+            retry_block,
+        )
+        self.assertEqual(
+            submit.count("outbound->flood_retry_count ="),
+            1,
+        )
+        profile = submit.index(
+            "NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN", retry_assignment
+        )
+        delivery = submit.index("app_node_comm_submit_delivery(", profile)
+        self.assertLess(retry_assignment, profile)
+        self.assertLess(profile, delivery)
+
+        single_origin = node_comm.index(
+            "attempt_record.profile == NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN"
+        )
+        view_send = node_comm.index(
+            "mesh_try_send_c5_flood_view(", single_origin
+        )
+        self.assertLess(single_origin, view_send)
+
+        attempts = send.index("attempt_count = 1u + tx.flood_retry_count")
+        physical = send.index(
+            "(single_opportunity || enumeration_control)", attempts
+        )
+        one_copy = send.index("app_mesh_flood_send_opportunity", physical)
+        self.assertLess(attempts, physical)
+        self.assertLess(physical, one_copy)
+
+        self.assertIn("#if DEVICE_ROLE == ROLE_GATEWAY", quick_root)
+        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_TABLE", quick_root)
+        self.assertIn("DISCOVERY_ASSIGNMENT_PHASE_END", quick_root)
+        self.assertNotIn("DISCOVERY_ASSIGNMENT_PHASE_CLAIM", quick_root)
+        root_classification = send.index(
+            "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
+        )
+        copy_gap = send.index(
+            "tx.packet.msg_type == MSG_GATEWAY_ROUTE_ADV ||",
+            root_classification,
+        )
+        short_gap = send.index(
+            "MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS + 1u",
+            copy_gap,
+        )
+        relay_guard = send.index(
+            "MESH_ENUMERATION_RELAY_COPY_GUARD_MS", short_gap
+        )
+        self.assertLess(root_classification, copy_gap)
+        self.assertLess(copy_gap, short_gap)
+        self.assertLess(short_gap, relay_guard)
+
+        schedule = forward.index("out->earliest_tx_ms = now_ms +")
+        upstream_burst = forward.index(
+            "DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS",
+            schedule,
+        )
+        relay_slot = forward.index(
+            "mesh_enumeration_relay_delay_ms", upstream_burst
+        )
+        self.assertLess(schedule, upstream_burst)
+        self.assertLess(upstream_burst, relay_slot)
+        self.assertEqual(copy_count, 3)
+
+    def test_gateway_table_end_burst_keeps_one_handoff_and_requires_all_copies(
+        self,
+    ) -> None:
+        view_send = function_body(
+            REPORT_TRANSPORT, "mesh_try_send_c5_flood_view"
+        )
+        burst_send = function_body(
+            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
+        )
+        physical_send = function_body(
+            REPORT_TRANSPORT,
+            "mesh_send_outbound_with_release_on_channel_until",
+        )
+        restart_scan = function_body(
+            REPORT_TRANSPORT, "mesh_restart_role_scan"
+        )
+        burst_active = function_body(
+            REPORT_TRANSPORT, "mesh_c5_enumeration_relay_burst_active"
+        )
+        burst_begin = function_body(
+            REPORT_TRANSPORT, "mesh_c5_enumeration_relay_burst_begin"
+        )
+        burst_end = function_body(
+            REPORT_TRANSPORT, "mesh_c5_enumeration_relay_burst_end"
+        )
+        defer = function_body(
+            REPORT_TRANSPORT, "mesh_c5_flood_defer_active_cb"
+        )
+
+        # The gateway's outer RX-to-control handoff encloses the complete
+        # logical flood call, rather than one physical-copy callback.
+        handoff_begin = view_send.index("mesh_rx_handoff_begin_control(")
+        logical_send = view_send.index(
+            "mesh_send_c5_flood_now_until(", handoff_begin
+        )
+        handoff_end = view_send.index(
+            "mesh_rx_handoff_end_control()", logical_send
+        )
+        final_rearm = view_send.index("mesh_restart_role_scan()", handoff_end)
+        self.assertLess(handoff_begin, logical_send)
+        self.assertLess(logical_send, handoff_end)
+        self.assertLess(handoff_end, final_rearm)
+
+        # TABLE/END and relayed anchor controls share one ref-counted burst
+        # owner. It is acquired before the copy loop and released after the
+        # all-copies completeness check on every exit.
+        quick = burst_send.index(
+            "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
+        )
+        owner_if = burst_send.index(
+            "if (enumeration_control || gateway_enumeration_quick_copies)",
+            quick,
+        )
+        owner_condition = burst_send[owner_if:burst_send.index("{", owner_if)]
+        owner_begin = burst_send.index(
+            "mesh_c5_enumeration_relay_burst_begin(&tx)", owner_if
+        )
+        copy_loop = burst_send.index(
+            "attempt < attempt_count", owner_begin
+        )
+        completeness = burst_send.index(
+            "aggregate_result.sent_count != attempt_count", copy_loop
+        )
+        out_label = burst_send.index("out:", completeness)
+        owner_end = burst_send.index(
+            "mesh_c5_enumeration_relay_burst_end()", out_label
+        )
+        self.assertIn("enumeration_control", owner_condition)
+        self.assertIn("gateway_enumeration_quick_copies", owner_condition)
+        self.assertLess(owner_begin, copy_loop)
+        self.assertLess(copy_loop, completeness)
+        self.assertLess(completeness, out_label)
+        self.assertLess(out_label, owner_end)
+        self.assertEqual(
+            burst_send.count("mesh_c5_enumeration_relay_burst_begin(&tx)"),
+            1,
+        )
+        self.assertEqual(
+            burst_send.count("mesh_c5_enumeration_relay_burst_end()"),
+            1,
+        )
+
+        # A physical-copy send still reaches its generic restart call, so the
+        # role restart itself must reject rearm while the burst ref is live.
+        nested_rearm = physical_send.index("mesh_restart_role_scan()")
+        active_guard = restart_scan.index(
+            "if (mesh_c5_enumeration_relay_burst_active())"
+        )
+        ordinary_rearm = restart_scan.index("mesh_start_uwb_rx(", active_guard)
+        self.assertGreater(nested_rearm, 0)
+        self.assertLess(active_guard, ordinary_rearm)
+        self.assertIn(
+            "atomic_get(&mesh_c5_enumeration_relay_burst_count) != 0",
+            burst_active,
+        )
+        self.assertIn(
+            "atomic_inc(&mesh_c5_enumeration_relay_burst_count)", burst_begin
+        )
+        self.assertIn(
+            "atomic_dec(&mesh_c5_enumeration_relay_burst_count)", burst_end
+        )
+
+        # Pending scanner work cannot split an already-admitted quick burst,
+        # and a failed copy cannot be rewritten as success merely because an
+        # earlier copy reached RF.
+        quick_defer = defer.index(
+            "mesh_c5_enumeration_relay_burst_active()"
+        )
+        no_defer = defer.index("return false;", quick_defer)
+        pending_rx = defer.index("mesh_rx_pending_count()", no_defer)
+        failed_copy = burst_send.index("if (ret != 0)", copy_loop)
+        failed_block = braced_block(burst_send, failed_copy)
+        incomplete_if = burst_send.rfind("if (", copy_loop, completeness)
+        incomplete_condition = burst_send[
+            incomplete_if:burst_send.index("{", incomplete_if)
+        ]
+        incomplete_block = braced_block(burst_send, incomplete_if)
+        self.assertIn(
+            "mesh_c5_gateway_enumeration_quick_copy_burst(",
+            defer[quick_defer:no_defer],
+        )
+        self.assertLess(quick_defer, no_defer)
+        self.assertLess(no_defer, pending_rx)
+        self.assertIn("!gateway_enumeration_quick_copies", failed_block)
+        self.assertIn("aggregate_result.sent_count > 0u", failed_block)
+        self.assertIn("ret = 0", failed_block)
+        self.assertIn(
+            "gateway_enumeration_quick_copies", incomplete_condition
+        )
+        self.assertIn("ret == 0", incomplete_condition)
+        self.assertIn(
+            "aggregate_result.sent_count != attempt_count",
+            incomplete_condition,
+        )
+        self.assertIn("ret = -EIO", incomplete_block)
+
+    def test_compact_gateway_clock_domain_stays_64_bit_across_wrap(
+        self,
+    ) -> None:
+        state = braced_block(
+            ANCHOR,
+            ANCHOR.index("struct gateway_discovery_assignment_state"),
+        )
+        claim = function_body(
+            GATEWAY_CONTROL,
+            "gateway_send_discovery_assignment_claim_request_locked",
+        )
+        window = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_window",
+        )
+        lane = function_body(
+            REPORT_RX, "mesh_gateway_run_enumeration_response_slice"
+        )
+
+        self.assertRegex(
+            state,
+            r"uint64_t\s+claim_collection_deadline_ms\s*;",
+        )
+        self.assertRegex(
+            state,
+            r"uint64_t\s+response_lane_start_ms\s*;",
+        )
+        self.assertRegex(
+            GATEWAY_CONTROL,
+            r"bool\s+app_gateway_enumeration_response_window\s*\(\s*"
+            r"uint64_t\s+now_ms\s*,\s*"
+            r"uint64_t\s*\*\s*round_deadline_ms\s*\)",
+        )
+        self.assertEqual(
+            len(re.findall(
+                r"bool\s+app_gateway_enumeration_response_window\s*\(\s*"
+                r"uint64_t\s+now_ms\s*,\s*"
+                r"uint64_t\s*\*\s*round_deadline_ms\s*\)",
+                GATEWAY_CONTROL,
+            )),
+            2,
+        )
+        self.assertRegex(
+            (ROOT / "app/src/app_anchor.h").read_text(),
+            r"bool\s+app_gateway_enumeration_response_window\s*\(\s*"
+            r"uint64_t\s+now_ms\s*,\s*"
+            r"uint64_t\s*\*\s*round_deadline_ms\s*\)",
+        )
+        self.assertNotIn("uint64_t now = now_ms", window)
+        self.assertIn("uint64_t round_deadline_ms = 0u;", lane)
+        self.assertIn("uint64_t claim_origin_ms", claim)
+        self.assertIn("(uint64_t)k_uptime_get()", claim)
+        self.assertNotIn("uint32_t claim_origin_ms", claim)
+        self.assertGreaterEqual(
+            len(re.findall(
+                r"app_gateway_enumeration_response_window\s*\(\s*"
+                r"\(uint64_t\)k_uptime_get\s*\(\)",
+                lane,
+            )),
+            2,
+        )
+        self.assertNotRegex(
+            lane,
+            r"app_gateway_enumeration_response_window\s*\(\s*"
+            r"k_uptime_get_32\s*\(",
+        )
+
+    def test_gateway_channel9_slice_yields_at_compact_prepare_boundary(
+        self,
+    ) -> None:
+        pending = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_pending_wait_ms",
+        )
+        scanner = function_body(REPORT_RX, "mesh_uwb_rx_work_handler")
+        gateway = scanner[scanner.index("if (mesh_gateway_route_test_role())") :]
+
+        self.assertIn(
+            "gateway_discovery_assignment_state.active", pending
+        )
+        self.assertIn(
+            "gateway_discovery_assignment_state.response_lane_active",
+            pending,
+        )
+        self.assertEqual(
+            unsigned_define(
+                ENUMERATION_LANE, "ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS"
+            ),
+            40,
+        )
+        self.assertIn(
+            ".response_lane_start_ms > ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS",
+            pending,
+        )
+        self.assertIn(
+            "response_lane_start_ms -\n"
+            "            ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS : 0u",
+            pending,
+        )
+        self.assertIn("now_ms < prepare_start_ms", pending)
+        self.assertIn("remaining_ms = prepare_start_ms - now_ms", pending)
+
+        active_yield = gateway.index(
+            "app_gateway_enumeration_response_window("
+        )
+        pending_wait = gateway.index(
+            "app_gateway_enumeration_response_pending_wait_ms(", active_yield
+        )
+        cap = gateway.index(
+            "enumeration_wait_ms < remaining_ms", pending_wait
+        )
+        apply_cap = gateway.index(
+            "remaining_ms = enumeration_wait_ms", cap
+        )
+        receive = gateway.index(
+            "dwm3000_driver_receive_frame_continuous(", apply_cap
+        )
+        receive_call = gateway[receive : gateway.index(");", receive)]
+
+        self.assertLess(active_yield, pending_wait)
+        self.assertLess(pending_wait, cap)
+        self.assertLess(cap, apply_cap)
+        self.assertLess(apply_cap, receive)
+        self.assertIn("remaining_ms", receive_call)
+
+    def test_gateway_compact_window_prepares_early_but_rejects_early_bundles(
+        self,
+    ) -> None:
+        window = function_body(
+            GATEWAY_CONTROL, "app_gateway_enumeration_response_window"
+        )
+        handle = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_handle_bundle",
+        )
+        note = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_note_compact_record_locked",
+        )
+
+        self.assertIn(
+            ".response_lane_start_ms > ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS",
+            window,
+        )
+        self.assertIn("now_ms >= prepare_start_ms", window)
+        self.assertIn(
+            "now_ms < gateway_discovery_assignment_state\n"
+            "                         .response_lane_start_ms",
+            window,
+        )
+        self.assertIn(
+            ".response_lane_start_ms + ENUMERATION_RESPONSE_ROUND_MS",
+            window,
+        )
+
+        semantic_timing = handle.index(
+            "enumeration_response_timing_at_depth("
+        )
+        nominal_start = handle.index(
+            "gateway_discovery_assignment_state.response_lane_start_ms",
+            semantic_timing,
+        )
+        received_at = handle.index("received_at_ms", nominal_start)
+        self.assertLess(semantic_timing, nominal_start)
+        self.assertLess(nominal_start, received_at)
+        self.assertNotIn(
+            "ENUMERATION_RESPONSE_GATEWAY_PREPARE_MS",
+            handle[semantic_timing:received_at],
+        )
+        self.assertIn(
+            "received_at_ms <\n"
+            "            gateway_discovery_assignment_state.response_lane_start_ms",
+            note,
+        )
+
+    def test_compact_gateway_ack_precedes_record_observability(self) -> None:
+        note = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_note_compact_record_locked",
+        )
+        handle = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_handle_bundle",
+        )
+        publish = function_body(
+            GATEWAY_CONTROL,
+            "app_gateway_enumeration_response_publish_pending",
+        )
+        lane = function_body(
+            REPORT_RX, "mesh_gateway_run_enumeration_response_slice"
+        )
+
+        self.assertIn("compact_observability_pending_mask |=", note)
+        self.assertNotIn("gateway_observe_command_event", note)
+        self.assertNotIn("gateway_observe_command_event", handle)
+        self.assertNotIn("DBG_ENUM_COMPACT_RECORD", note)
+        self.assertNotIn("DBG_ENUM_COMPACT_RECORD", handle)
+        self.assertIn("gateway_observe_command_event", publish)
+        self.assertIn("DBG_ENUM_COMPACT_RECORD_PUBLISHED", publish)
+
+        accept = lane.index(
+            "app_gateway_enumeration_response_handle_bundle("
+        )
+        ack_send = lane.index(
+            "dwm3000_driver_send_frame_tracked_until(", accept
+        )
+        radio_finish = lane.index("mesh_rx_radio_finish(", ack_send)
+        publish_pending = lane.index(
+            "app_gateway_enumeration_response_publish_pending()",
+            radio_finish,
+        )
+
+        self.assertLess(accept, ack_send)
+        self.assertLess(ack_send, radio_finish)
+        self.assertLess(radio_finish, publish_pending)
+        self.assertNotIn(
+            "app_gateway_enumeration_response_publish_pending()",
+            lane[accept:radio_finish],
+        )
+
+    def test_anchor_enumeration_relay_holds_scan_handoff_across_copy_waits(
+        self,
+    ) -> None:
+        submit = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_send_c5_flood_response"
+        )
+        burst = function_body(
+            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
+        )
+        begin = function_body(
+            REPORT_TRANSPORT,
+            "mesh_c5_enumeration_relay_burst_begin",
+        )
+        end = function_body(
+            REPORT_TRANSPORT, "mesh_c5_enumeration_relay_burst_end"
+        )
+        active = function_body(
+            REPORT_TRANSPORT,
+            "mesh_c5_enumeration_relay_burst_active",
+        )
+        pending = function_body(
+            REPORT_TRANSPORT, "mesh_c5_protocol_flood_work_pending"
+        )
+        scanner = function_body(RADIO, "anchor_uwb_scan_work_handler")
+
+        outer_classify = submit.index("mesh_c5_flood_enumeration_identity(")
+        outer_begin = submit.index(
+            "mesh_c5_enumeration_relay_burst_begin(out)", outer_classify
+        )
+        immediate_send = submit.index(
+            "mesh_send_c5_flood_now_intent(", outer_begin
+        )
+        immediate_result = submit.index(
+            "if (result.sent_count > 0u)", immediate_send
+        )
+        immediate_end = submit.index(
+            "mesh_c5_enumeration_relay_burst_end()", immediate_result
+        )
+        deferred_store = submit.index(
+            "mesh_c5_flood_store_deferred(", immediate_end
+        )
+        deferred_end = submit.index(
+            "mesh_c5_enumeration_relay_burst_end()", deferred_store
+        )
+        self.assertLess(outer_classify, outer_begin)
+        self.assertLess(outer_begin, immediate_send)
+        self.assertLess(immediate_send, immediate_result)
+        self.assertLess(immediate_result, immediate_end)
+        self.assertLess(immediate_end, deferred_store)
+        self.assertLess(deferred_store, deferred_end)
+
+        classify = burst.index("mesh_c5_flood_enumeration_identity(")
+        burst_begin = burst.index(
+            "mesh_c5_enumeration_relay_burst_begin(&tx)", classify
+        )
+        first_defer_check = burst.index(
+            "mesh_c5_flood_defer_active_cb(&flood_ctx)", burst_begin
+        )
+        loop = burst.index("attempt < attempt_count", first_defer_check)
+        inter_copy_wait = burst.index("mesh_wait_until_ms(", loop)
+        physical_copy = burst.index(
+            "app_mesh_flood_send_opportunity", inter_copy_wait
+        )
+        next_copy = burst.index("attempt + 1u < attempt_count", physical_copy)
+        next_copy_guard = burst.index(
+            "MESH_ENUMERATION_RELAY_COPY_GUARD_MS", next_copy
+        )
+        cleanup = burst.index("\nout:", next_copy_guard)
+        result_accounting = burst.index("*result = aggregate_result", cleanup)
+        activation_accounting = burst.index(
+            "protocol_rx_downstream_activation_mark", result_accounting
+        )
+        burst_end = burst.index(
+            "mesh_c5_enumeration_relay_burst_end()",
+            activation_accounting,
+        )
+        final_return = burst.index("return ret", burst_end)
+        self.assertLess(classify, burst_begin)
+        self.assertLess(burst_begin, first_defer_check)
+        self.assertLess(first_defer_check, loop)
+        self.assertLess(loop, inter_copy_wait)
+        self.assertLess(inter_copy_wait, physical_copy)
+        self.assertLess(physical_copy, next_copy)
+        self.assertLess(next_copy, next_copy_guard)
+        self.assertLess(next_copy_guard, cleanup)
+        self.assertLess(cleanup, result_accounting)
+        self.assertLess(result_accounting, activation_accounting)
+        self.assertLess(activation_accounting, burst_end)
+        self.assertLess(burst_end, final_return)
+        self.assertNotIn(
+            "mesh_c5_enumeration_relay_burst_end()",
+            burst[burst_begin:cleanup],
+        )
+        self.assertNotIn("return ", burst[burst_begin:cleanup])
+
+        self.assertIn(
+            "atomic_inc(&mesh_c5_enumeration_relay_burst_count)", begin
+        )
+        self.assertIn("RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN", begin)
+        self.assertIn("dwm3000_driver_request_receive_abort", begin)
+        self.assertIn(
+            "atomic_dec(&mesh_c5_enumeration_relay_burst_count)", end
+        )
+        self.assertIn(
+            "atomic_get(&mesh_c5_enumeration_relay_burst_count) != 0",
+            active,
+        )
+        active_gate = pending.index(
+            "mesh_c5_enumeration_relay_burst_active()"
+        )
+        deferred_gate = pending.index("mesh_c5_flood_deferred.valid")
+        self.assertLess(active_gate, deferred_gate)
+
+        scanner_pending = scanner.index(
+            "protocol_flood_pending = mesh_c5_protocol_flood_work_pending()"
+        )
+        scanner_block = scanner.index("protocol_flood_pending ||", scanner_pending)
+        scanner_claim = scanner.index("radio_guard_uwb_claim(", scanner_block)
+        self.assertLess(scanner_pending, scanner_block)
+        self.assertLess(scanner_block, scanner_claim)
 
     def test_enumeration_scan_caps_before_earliest_required_channel9_activity(self) -> None:
         scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
@@ -552,7 +1679,9 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             planner.index("*scan_rx_ms = remaining_ms - scan_guard_ms"),
         )
 
-    def test_protocol_flood_blocks_scan_start_and_rearm_but_route_adv_does_not(self) -> None:
+    def test_protocol_flood_blocks_scan_start_and_rearm_including_route_adv(
+        self,
+    ) -> None:
         scan = function_body(RADIO, "anchor_uwb_scan_work_handler")
         all_pending = function_body(
             REPORT_TRANSPORT, "mesh_c5_flood_work_pending"
@@ -619,13 +1748,14 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("mesh_c5_flood_deferred.valid", all_pending)
         self.assertIn("mesh_route_adv_deferred.valid", all_pending)
         self.assertNotIn("MSG_GATEWAY_ROUTE_ADV", all_pending)
-        self.assertGreaterEqual(
-            protocol_pending.count("MSG_GATEWAY_ROUTE_ADV"), 2
-        )
-        self.assertGreaterEqual(protocol_pending.count("!=\n"), 2)
         self.assertIn("mesh_c5_flood_deferred.valid", protocol_pending)
         self.assertIn("mesh_route_adv_deferred.valid", protocol_pending)
         self.assertIn("mesh_c5_flood_deferred_lock", protocol_pending)
+        self.assertNotRegex(
+            protocol_pending,
+            r"(?:mesh_c5_flood_deferred|mesh_route_adv_deferred)\.valid\s*&&\s*"
+            r"(?:\([^)]*\)\s*)?[^;{}]*MSG_GATEWAY_ROUTE_ADV",
+        )
 
     def test_response_priority_flood_aborts_only_background_anchor_scan(self) -> None:
         store = function_body(
@@ -649,7 +1779,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
 
         admission = store[eligibility:mark_abort]
-        self.assertIn("out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV", admission)
+        self.assertNotIn("MSG_GATEWAY_ROUTE_ADV", admission)
         self.assertIn(
             "radio_guard_uwb_owner_client() ==\n"
             "            RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN",
@@ -673,6 +1803,67 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertNotIn("DWM3000_RECEIVE_ABORT_GATEWAY_PRIORITY", store)
         self.assertEqual(
             store.count("dwm3000_driver_request_receive_abort("), 1
+        )
+
+    def test_deferred_route_adv_retry_stays_no_wake_and_is_not_starved(
+        self,
+    ) -> None:
+        response = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_send_c5_flood_response"
+        )
+        store = function_body(
+            REPORT_TRANSPORT, "mesh_c5_flood_store_deferred"
+        )
+        worker = function_body(
+            REPORT_DELIVERY, "mesh_c5_flood_work_handler"
+        )
+
+        initial_policy = response.index("bool send_wake_train")
+        initial_send = response.index(
+            "mesh_send_c5_flood_now_intent(", initial_policy
+        )
+        initial_defer = response.index(
+            "mesh_c5_flood_store_deferred(", initial_send
+        )
+        self.assertIn(
+            "out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV",
+            response[initial_policy:initial_send],
+        )
+        self.assertIn(
+            "send_wake_train", response[initial_send:initial_defer]
+        )
+
+        route_lane = store.index("&mesh_route_adv_deferred")
+        retained = store.index("entry->valid = true", route_lane)
+        scheduled = store.index("mesh_reschedule_owned_work(", retained)
+        self.assertLess(route_lane, retained)
+        self.assertLess(retained, scheduled)
+
+        load = worker.index("outbound = entry->outbound")
+        retry_send = worker.index("mesh_send_c5_flood_now_intent(", load)
+        retry_end = worker.index(");", retry_send)
+        retry_setup = worker[load:retry_send]
+        retry_call = worker[retry_send:retry_end]
+        self.assertRegex(
+            retry_setup,
+            r"send_wake_train\s*=\s*"
+            r"outbound\.packet\.msg_type\s*!=\s*MSG_GATEWAY_ROUTE_ADV",
+        )
+        self.assertIn("send_wake_train", retry_call)
+
+        local_defer = worker.index(
+            "if (current_generation && local_deferral", retry_end
+        )
+        local_reschedule = worker.index(
+            "mesh_reschedule_owned_work(", local_defer
+        )
+        local_return = worker.index("return;", local_reschedule)
+        clear = worker.index("entry->valid = false", local_return)
+        self.assertLess(local_defer, local_reschedule)
+        self.assertLess(local_reschedule, local_return)
+        self.assertLess(local_return, clear)
+        self.assertNotIn(
+            "entry->valid = false", worker[local_defer:local_return]
         )
 
     def test_unexpected_rx_error_uses_bounded_recovery_or_fails_closed(self) -> None:

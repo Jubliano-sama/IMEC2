@@ -2,6 +2,7 @@
 #define APP_ANCHOR_H
 
 #include "protocol.h"
+#include "uwb.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -14,6 +15,17 @@ struct gateway_membership_publication;
 
 const struct app_mesh_report_callbacks *app_anchor_mesh_report_callbacks(void);
 int app_anchor_init(void);
+bool app_gateway_enumeration_response_window(
+    uint64_t now_ms,
+    uint64_t *round_deadline_ms);
+bool app_gateway_enumeration_response_pending_wait_ms(
+    uint64_t now_ms,
+    uint32_t *wait_ms);
+int app_gateway_enumeration_response_handle_bundle(
+    const struct uwb_enumeration_bundle_frame *bundle,
+    uint64_t received_at_ms,
+    struct uwb_enumeration_hop_ack_frame *ack);
+void app_gateway_enumeration_response_publish_pending(void);
 int app_anchor_start_anchor_role(void);
 int app_anchor_start_gateway_role(void);
 /* Retain one widened Channel-5 scan after an anchor releases Channel-9. */

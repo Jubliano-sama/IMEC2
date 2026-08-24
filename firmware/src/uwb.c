@@ -200,7 +200,9 @@ bool uwb_frame_type_valid(uint8_t type)
            type == MSG_UWB_ANCHOR_DIAG_FRAGMENT ||
            type == MSG_UWB_ANCHOR_PAIR_SCHEDULE ||
            type == MSG_UWB_ANCHOR_PAIR_RESULT ||
-           type == MSG_UWB_SURVEY_DISCOVERY_PROBE;
+           type == MSG_UWB_SURVEY_DISCOVERY_PROBE ||
+           type == MSG_UWB_ENUM_BUNDLE ||
+           type == MSG_UWB_ENUM_HOP_ACK;
 }
 
 int uwb_header_validate(const struct uwb_range_header *header, uint8_t expected_type)
@@ -1730,6 +1732,202 @@ int uwb_decode_anchor_pair_result(const uint8_t *data,
     frame->rsl_dbm = (int8_t)data[52];
     frame->flags = data[53];
     return validate_anchor_pair_result(frame);
+}
+
+static int validate_enumeration_bundle(
+    const struct uwb_enumeration_bundle_frame *frame)
+{
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (frame->network_id == 0u || frame->epoch == 0u ||
+        frame->sender_id == 0u || frame->parent_id == 0u ||
+        frame->sender_id == frame->parent_id ||
+        frame->record_count == 0u ||
+        frame->record_count > UWB_ENUM_RECORDS_PER_BUNDLE) {
+        return PROTO_ERR_MALFORMED;
+    }
+    for (uint8_t i = 0u; i < frame->record_count; i++) {
+        if (frame->records[i].anchor_id == 0u ||
+            frame->records[i].hop_count == 0u ||
+            frame->records[i].hop_count > UWB_ENUM_MAX_HOPS) {
+            return PROTO_ERR_MALFORMED;
+        }
+        for (uint8_t j = 0u; j < i; j++) {
+            if (frame->records[i].anchor_id == frame->records[j].anchor_id) {
+                return PROTO_ERR_MALFORMED;
+            }
+        }
+    }
+    return PROTO_OK;
+}
+
+size_t uwb_enumeration_bundle_encoded_len(uint8_t record_count)
+{
+    if (record_count == 0u || record_count > UWB_ENUM_RECORDS_PER_BUNDLE) {
+        return 0u;
+    }
+    return UWB_ENUM_BUNDLE_BASE_LEN +
+           ((size_t)record_count * UWB_ENUM_RECORD_LEN);
+}
+
+int uwb_encode_enumeration_bundle(
+    const struct uwb_enumeration_bundle_frame *frame,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *written)
+{
+    size_t len;
+    size_t offset = 29u;
+    int ret;
+
+    if (out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = validate_enumeration_bundle(frame);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    len = uwb_enumeration_bundle_encoded_len(frame->record_count);
+    if (out_cap < len) {
+        return PROTO_ERR_NO_SPACE;
+    }
+
+    put_sync_prefix(out, MSG_UWB_ENUM_BUNDLE);
+    proto_put_u32_le(&out[3], frame->network_id);
+    proto_put_u32_le(&out[7], frame->epoch);
+    proto_put_u64_le(&out[11], frame->sender_id);
+    proto_put_u64_le(&out[19], frame->parent_id);
+    out[27] = frame->sequence;
+    out[28] = frame->record_count;
+    for (uint8_t i = 0u; i < frame->record_count; i++) {
+        proto_put_u64_le(&out[offset], frame->records[i].anchor_id);
+        out[offset + 8u] = frame->records[i].hop_count;
+        offset += UWB_ENUM_RECORD_LEN;
+    }
+    append_crc(out, len - UWB_FRAME_CRC_LEN);
+    *written = len;
+    return PROTO_OK;
+}
+
+int uwb_decode_enumeration_bundle(
+    const uint8_t *data,
+    size_t len,
+    struct uwb_enumeration_bundle_frame *frame)
+{
+    size_t expected_len;
+    size_t offset = 29u;
+    int ret;
+
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (data == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (len < UWB_ENUM_BUNDLE_BASE_LEN + UWB_ENUM_RECORD_LEN) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+    if (data[0] != UWB_MARKER || data[1] != UWB_VERSION ||
+        data[2] != MSG_UWB_ENUM_BUNDLE) {
+        return validate_sync_prefix(data, len, len, MSG_UWB_ENUM_BUNDLE);
+    }
+    ret = verify_crc(data, len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    memset(frame, 0, sizeof(*frame));
+    frame->network_id = proto_get_u32_le(&data[3]);
+    frame->epoch = proto_get_u32_le(&data[7]);
+    frame->sender_id = proto_get_u64_le(&data[11]);
+    frame->parent_id = proto_get_u64_le(&data[19]);
+    frame->sequence = data[27];
+    frame->record_count = data[28];
+    expected_len = uwb_enumeration_bundle_encoded_len(frame->record_count);
+    if (expected_len == 0u || len != expected_len) {
+        return PROTO_ERR_BAD_LENGTH;
+    }
+    for (uint8_t i = 0u; i < frame->record_count; i++) {
+        frame->records[i].anchor_id = proto_get_u64_le(&data[offset]);
+        frame->records[i].hop_count = data[offset + 8u];
+        offset += UWB_ENUM_RECORD_LEN;
+    }
+    return validate_enumeration_bundle(frame);
+}
+
+static int validate_enumeration_hop_ack(
+    const struct uwb_enumeration_hop_ack_frame *frame)
+{
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (frame->network_id == 0u || frame->epoch == 0u ||
+        frame->parent_id == 0u || frame->child_id == 0u ||
+        frame->parent_id == frame->child_id) {
+        return PROTO_ERR_MALFORMED;
+    }
+    return PROTO_OK;
+}
+
+int uwb_encode_enumeration_hop_ack(
+    const struct uwb_enumeration_hop_ack_frame *frame,
+    uint8_t *out,
+    size_t out_cap,
+    size_t *written)
+{
+    int ret;
+
+    if (out == NULL || written == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    if (out_cap < UWB_ENUM_HOP_ACK_LEN) {
+        return PROTO_ERR_NO_SPACE;
+    }
+    ret = validate_enumeration_hop_ack(frame);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    put_sync_prefix(out, MSG_UWB_ENUM_HOP_ACK);
+    proto_put_u32_le(&out[3], frame->network_id);
+    proto_put_u32_le(&out[7], frame->epoch);
+    proto_put_u64_le(&out[11], frame->parent_id);
+    proto_put_u64_le(&out[19], frame->child_id);
+    out[27] = frame->sequence;
+    append_crc(out, UWB_ENUM_HOP_ACK_LEN - UWB_FRAME_CRC_LEN);
+    *written = UWB_ENUM_HOP_ACK_LEN;
+    return PROTO_OK;
+}
+
+int uwb_decode_enumeration_hop_ack(
+    const uint8_t *data,
+    size_t len,
+    struct uwb_enumeration_hop_ack_frame *frame)
+{
+    int ret;
+
+    if (frame == NULL) {
+        return PROTO_ERR_ARG;
+    }
+    ret = validate_sync_prefix(data,
+                               len,
+                               UWB_ENUM_HOP_ACK_LEN,
+                               MSG_UWB_ENUM_HOP_ACK);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+    ret = verify_crc(data, len);
+    if (ret != PROTO_OK) {
+        return ret;
+    }
+
+    frame->network_id = proto_get_u32_le(&data[3]);
+    frame->epoch = proto_get_u32_le(&data[7]);
+    frame->parent_id = proto_get_u64_le(&data[11]);
+    frame->child_id = proto_get_u64_le(&data[19]);
+    frame->sequence = data[27];
+    return validate_enumeration_hop_ack(frame);
 }
 
 int uwb_encode_range_release(const struct uwb_range_release_frame *frame,

@@ -65,10 +65,17 @@ extern "C" {
     (DISCOVERY_ASSIGNMENT_RESPONSE_DIRECT_CUSTODY_MS + \
      ((DISCOVERY_ASSIGNMENT_MAX_HOPS - 1u) * \
       DISCOVERY_ASSIGNMENT_RESPONSE_PER_ADDITIONAL_HOP_MS))
+#define DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS \
+    (((MESH_ENUMERATION_RELAY_COPY_COUNT - 1u) * \
+      (OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS + \
+       MESH_ENUMERATION_RELAY_COPY_SPACING_MAX_MS)) + 5u)
 #define DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS \
-    (MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS + \
-     (3u * OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
-     MESH_ENUMERATION_RELAY_THREE_COPY_TAIL_MS)
+    (DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS + \
+     MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS + \
+     (MESH_ENUMERATION_RELAY_COPY_COUNT * \
+      OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS) + \
+     MESH_ENUMERATION_RELAY_COPY_TAIL_MS)
+#define DISCOVERY_ASSIGNMENT_CONTROL_PROPAGATION_MARGIN_MS 150u
 #define DISCOVERY_ASSIGNMENT_RESPONSE_JITTER_CAP_MS(response_spread_ms) \
     ((response_spread_ms) < OPERATION_POLICY_FIRST_CONTACT_SLOT_MS ? \
          (response_spread_ms) : OPERATION_POLICY_FIRST_CONTACT_SLOT_MS)
@@ -359,6 +366,8 @@ int discovery_assignment_response_delay_ms(uint8_t slot,
 uint32_t discovery_assignment_retry_backoff_ms(uint8_t retry_round,
                                                uint32_t random_value);
 uint32_t discovery_assignment_response_custody_ms(uint8_t hop_count);
+uint32_t discovery_assignment_control_propagation_hold_ms(
+    uint8_t max_hop_count);
 int discovery_assignment_adaptive_depth_deadline_offset_ms(
     uint16_t response_spread_ms,
     uint8_t slot_count,

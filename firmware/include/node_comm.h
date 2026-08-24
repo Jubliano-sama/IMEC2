@@ -147,6 +147,7 @@ struct node_comm_request_slot {
     uint32_t retry_delay_ms;
     uint16_t retry_rounds;
     uint8_t max_attempts;
+    uint8_t successful_attempts_completed;
     uint8_t retry_backoff_shift_cap;
     uint8_t priority;
     bool terminal_pending;

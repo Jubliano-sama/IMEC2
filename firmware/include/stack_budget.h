@@ -18,19 +18,22 @@ extern "C" {
  * This table is the review baseline for the production-candidate presets.
  * Keep it machine-readable: firmware/scripts/verify_stack_evidence.py parses
  * these rows and compares them with each exact Zephyr build's generated data.
+ * Anchor enumeration now retains a 456-byte semantic custody lane in BSS
+ * across radio-owner handoffs. Its 8.5 KiB static reserve remains separate
+ * from every measured stack margin and is still enforced before flashing.
  */
 /* STACK_BUDGET_POLICY_BEGIN */
 #define STACK_BUDGET_DEPLOYABLE_PRESET_POLICY(X)                              \
     X(CLICKER, "mesh_clicker", 4096u, 6144u, 6784u, 8192u, 320u, 2048u, 1536u,   \
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
-      0u, 9216u, true, true, true, true, false)                               \
+      0u, 8704u, true, true, true, true, false)                               \
     X(GATEWAY, "mesh_gateway", 4096u, 4480u, 8192u, 8192u, 320u, 2048u, 1536u,  \
       1536u, 6000u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
     X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 5376u, 9472u, 8192u, \
-      320u, 2048u, 0u, 0u, 9216u, true, true, true, true, false)              \
+      320u, 2048u, 0u, 0u, 8704u, true, true, true, true, false)              \
     X(TRANSMITTER, "mesh_transmitter", 4096u, 8192u, 9216u, 8192u, 320u, 0u, 0u, \
       0u, 18432u, true, true, true, true, false)                              \
     X(TRANSMITTER_FORCEDHOP, "mesh_transmitter_forcedhop", 4096u, 8192u, \

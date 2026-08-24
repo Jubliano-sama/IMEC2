@@ -1025,9 +1025,9 @@ static bool gateway_route_adv_fields_valid(const struct gateway_route_adv_fields
         fields->flood_profile_version !=
             MESH_ROUTE_DISCOVERY_FLOOD_PROFILE_VERSION ||
         fields->random_backoff_max_ms !=
-            FLOOD_RANDOM_BACKOFF_DEFAULT_MAX_MS ||
+            MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_MAX_MS ||
         fields->random_backoff_slot_ms !=
-            FLOOD_RANDOM_BACKOFF_DEFAULT_SLOT_MS ||
+            MESH_GATEWAY_ROUTE_ADV_FORWARD_JITTER_SLOT_MS ||
         fields->flood_retry_count != FLOOD_DEFAULT_RETRY_COUNT ||
         fields->path_quality_min > 100u ||
         fields->gateway_capacity_state > RELAY_CAP_BLACK ||
@@ -1148,9 +1148,22 @@ static int validate_gateway_route_adv_packet(
     }
     if (*route_epoch == relay->upstream.current_epoch &&
         relay->gateway_route_adv_seq != 0u &&
+        fields->gateway_route_seq != relay->gateway_route_adv_seq &&
         !gateway_route_adv_sequence_strictly_newer(
             fields->gateway_route_seq,
             relay->gateway_route_adv_seq)) {
+        return PROTO_ERR_STALE;
+    }
+    if (*route_epoch == relay->upstream.current_epoch &&
+        relay->gateway_route_adv_seq != 0u &&
+        fields->gateway_route_seq == relay->gateway_route_adv_seq &&
+        find_upstream_candidate(relay,
+                                previous_hop_id,
+                                *route_epoch) != NULL) {
+        /* Equal-sequence advertisements may contribute one route per
+         * physical ingress parent. An exact retry through a parent already
+         * retained for this epoch remains stale even if transport rollback
+         * released its duplicate-cache entry. */
         return PROTO_ERR_STALE;
     }
     return PROTO_OK;
@@ -1238,11 +1251,10 @@ static int build_gateway_route_adv_forward(const struct proto_packet *packet,
     flood_control.random_backoff_max_ms = fields.random_backoff_max_ms;
     flood_control.random_backoff_slot_ms = fields.random_backoff_slot_ms;
     flood_control.retry_count = fields.flood_retry_count;
-    out->earliest_tx_ms = now_ms + flood_forward_total_delay_ms(local_id,
-                                                                fields.slot_seed,
-                                                                fields.hop_count,
-                                                                &flood_control,
-                                                                random_value);
+    out->earliest_tx_ms = now_ms +
+        flood_random_slotted_delay_ms(flood_control.random_backoff_max_ms,
+                                      flood_control.random_backoff_slot_ms,
+                                      random_value);
     out->earliest_tx_valid = true;
     return PROTO_OK;
 }
@@ -1264,6 +1276,7 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     uint32_t previous_gateway_epoch;
     uint32_t route_epoch;
     uint8_t path_quality;
+    bool alternate_path;
     bool forward_valid = false;
     int ret;
     int route_ret;
@@ -1280,18 +1293,25 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
         return ret;
     }
 
-    ret = build_gateway_route_adv_forward(packet,
-                                          payload,
-                                          payload_len,
-                                          link_quality,
-                                          relay->local_id,
-                                          now_ms,
-                                          random_value,
-                                          &result->gateway_route_adv);
-    if (ret == PROTO_OK) {
-        forward_valid = true;
-    } else if (ret != PROTO_ERR_STALE) {
-        return ret;
+    alternate_path =
+        route_epoch == previous_gateway_epoch &&
+        relay->gateway_route_adv_seq != 0u &&
+        fields.gateway_route_seq == relay->gateway_route_adv_seq;
+
+    if (!alternate_path) {
+        ret = build_gateway_route_adv_forward(packet,
+                                              payload,
+                                              payload_len,
+                                              link_quality,
+                                              relay->local_id,
+                                              now_ms,
+                                              random_value,
+                                              &result->gateway_route_adv);
+        if (ret == PROTO_OK) {
+            forward_valid = true;
+        } else if (ret != PROTO_ERR_STALE) {
+            return ret;
+        }
     }
 
     path_quality = combined_quality(fields.path_quality_min, link_quality);
@@ -1344,7 +1364,7 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
     if (forward_valid) {
         result->actions |= MESH_RELAY_ACTION_SEND_GATEWAY_ROUTE_ADV;
     }
-    if (fields.operation_policy_present) {
+    if (fields.operation_policy_present && !alternate_path) {
         result->operation_policy = fields.operation_policy;
         result->actions |= MESH_RELAY_ACTION_INSTALL_OPERATION_POLICY;
     }
@@ -1354,7 +1374,9 @@ static int handle_gateway_route_adv(struct mesh_relay *relay,
      * failure must leave this exact sequence retryable.
      */
     relay->gateway_route_adv_seq = fields.gateway_route_seq;
-    note_route_state_change(result);
+    if (!alternate_path || route_ret == PROTO_OK) {
+        note_route_state_change(result);
+    }
     if (pending_recover_original_after_new_gateway_epoch(relay, now_ms)) {
         /* Reuse the existing adapter scheduling hook. The retained
          * owner is still the original; this bit denotes the confirmation

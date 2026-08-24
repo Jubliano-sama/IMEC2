@@ -540,6 +540,7 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
     bool pending_after;
     bool response_priority;
     bool route_adv_lane;
+    bool send_wake_train;
     struct app_mesh_flood_result result = {0};
     int ret;
 
@@ -579,12 +580,14 @@ static void mesh_c5_flood_work_handler(struct k_work *work)
     purpose = entry->purpose;
     reason = entry->reason;
     response_priority = entry->response_priority;
+    send_wake_train =
+        outbound.packet.msg_type != MSG_GATEWAY_ROUTE_ADV;
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
 
     ret = mesh_send_c5_flood_now_intent(&outbound,
                                         purpose,
                                         reason,
-                                        true,
+                                        send_wake_train,
                                         response_priority,
                                         false,
                                         NULL,

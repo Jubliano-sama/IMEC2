@@ -457,6 +457,7 @@ target_sources(app PRIVATE
     ../src/gateway_ble_transport.c
     ../src/discovery_assignment.c
     ../src/dwm3000_timing.c
+    ../src/enumeration_response_lane.c
     ../src/firmware_events.c
     ../src/firmware_delivery_loss.c
     ../src/firmware_state_click.c

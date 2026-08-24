@@ -2122,6 +2122,15 @@ static void anchor_enumeration_rx_clear_phase_identities(void)
     anchor_enumeration_rx_clear_table_identity();
 }
 
+static void anchor_compact_enumeration_deactivate(uint32_t epoch)
+{
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    if (anchor_enumeration_response_config.epoch == epoch) {
+        anchor_enumeration_response_config.active = false;
+    }
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+}
+
 static int anchor_enumeration_rx_begin(uint32_t epoch,
                                        uint32_t operation_budget_ms,
                                        bool allow_supersede)
@@ -2207,6 +2216,12 @@ static int anchor_enumeration_rx_begin_table(
         }
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
+    if (bound) {
+        /* TABLE is the semantic end of CLAIM collection. The persistent lane
+         * remains scanner-owned but becomes inaccessible immediately, so an
+         * unACKed response cannot interfere with TABLE/END propagation. */
+        anchor_compact_enumeration_deactivate(epoch);
+    }
     return bound ? 0 : -ESTALE;
 }
 
@@ -2371,6 +2386,7 @@ static bool anchor_enumeration_rx_terminate_claim(
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
     if (terminated) {
+        anchor_compact_enumeration_deactivate(epoch);
         status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
                             epoch,
                             reason == NULL ? "claim-terminal" : reason);
@@ -2407,6 +2423,7 @@ static bool anchor_enumeration_rx_terminate_table(
     }
     k_spin_unlock(&anchor_enumeration_rx_lock, key);
     if (terminated) {
+        anchor_compact_enumeration_deactivate(epoch);
         status_debug_printf("DBG_ENUM_RX_TERMINAL epoch=%u reason=%s\n",
                             epoch,
                             reason == NULL ? "table-terminal" : reason);
@@ -2538,6 +2555,428 @@ static bool anchor_relay_retry_plan_scan(uint32_t now_ms,
     return false;
 }
 
+static bool anchor_compact_enumeration_window(
+    uint64_t now_ms,
+    const struct anchor_enumeration_response_config *expected,
+    struct enumeration_response_timing *timing_out)
+{
+    struct enumeration_response_timing timing;
+    bool matches;
+    bool active;
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    matches = expected == NULL ||
+        (anchor_enumeration_response_config.epoch == expected->epoch &&
+         anchor_enumeration_response_config.start_ms == expected->start_ms &&
+         anchor_enumeration_response_config.parent_id == expected->parent_id &&
+         anchor_enumeration_response_config.hop_count == expected->hop_count &&
+         anchor_enumeration_response_config.max_hop_count ==
+             expected->max_hop_count);
+    if (anchor_enumeration_response_config.active && matches &&
+        enumeration_response_lane_complete_depth(
+            anchor_enumeration_response_config.start_ms,
+            now_ms,
+            anchor_enumeration_response_config.max_hop_count)) {
+        anchor_enumeration_response_config.active = false;
+    }
+    active = anchor_enumeration_response_config.active && matches &&
+        enumeration_response_timing_at_depth(
+            anchor_enumeration_response_config.start_ms,
+            now_ms,
+            anchor_enumeration_response_config.max_hop_count,
+            &timing);
+    if (active && timing_out != NULL) {
+        *timing_out = timing;
+    }
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+    return active;
+}
+
+#if DEVICE_ROLE == ROLE_ANCHOR
+static int anchor_compact_enumeration_lane_resume(
+    const struct anchor_enumeration_response_config *config)
+{
+    struct enumeration_response_lane *lane =
+        &anchor_enumeration_response_lane;
+    int ret;
+
+    if (config == NULL || !config->active || config->epoch == 0u ||
+        config->parent_id == 0u) {
+        return PROTO_ERR_ARG;
+    }
+    if (lane->active && lane->network_id == NETWORK_ID &&
+        lane->epoch == config->epoch &&
+        enumeration_response_lane_local_id(lane) == DEVICE_ID &&
+        lane->parent_id == config->parent_id &&
+        lane->hop_count == config->hop_count &&
+        lane->start_ms == config->start_ms) {
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_RESUME epoch=%u records=%u acked=0x%02x\n",
+            lane->epoch,
+            lane->record_count,
+            lane->acked_mask);
+        return PROTO_OK;
+    }
+    ret = enumeration_response_lane_begin(lane,
+                                           NETWORK_ID,
+                                           config->epoch,
+                                           DEVICE_ID,
+                                           config->parent_id,
+                                           config->hop_count,
+                                           config->start_ms);
+    status_debug_printf(
+        "DBG_ENUM_COMPACT_STATE_BEGIN epoch=%u parent=0x%016llx hop=%u bytes=%u ret=%d\n",
+        config->epoch,
+        (unsigned long long)config->parent_id,
+        config->hop_count,
+        (unsigned int)sizeof(*lane),
+        ret);
+    return ret;
+}
+#endif
+
+static bool anchor_compact_enumeration_prepare_window(uint64_t now_ms)
+{
+    uint64_t prepare_start_ms;
+    bool active = false;
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    if (anchor_enumeration_response_config.active &&
+        now_ms < anchor_enumeration_response_config.start_ms) {
+        prepare_start_ms =
+            anchor_enumeration_response_config.start_ms >
+                    ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS ?
+                anchor_enumeration_response_config.start_ms -
+                    ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS :
+                0u;
+        active = now_ms >= prepare_start_ms;
+    }
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+    return active;
+}
+
+static uint32_t anchor_compact_enumeration_ms_until_prepare(uint64_t now_ms)
+{
+    uint64_t prepare_start_ms;
+    uint32_t remaining_ms = 0u;
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    if (anchor_enumeration_response_config.active &&
+        now_ms < anchor_enumeration_response_config.start_ms) {
+        prepare_start_ms =
+            anchor_enumeration_response_config.start_ms >
+                    ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS ?
+                anchor_enumeration_response_config.start_ms -
+                    ENUMERATION_RESPONSE_ANCHOR_PREPARE_MS :
+                0u;
+        if (now_ms < prepare_start_ms) {
+            uint64_t remaining = prepare_start_ms - now_ms;
+
+            remaining_ms = remaining > UINT32_MAX ?
+                UINT32_MAX : (uint32_t)remaining;
+        }
+    }
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+    return remaining_ms;
+}
+
+static int anchor_compact_enumeration_try_tx(
+    struct enumeration_response_lane *lane,
+    const struct enumeration_response_timing *timing)
+{
+    struct uwb_enumeration_bundle_frame bundle;
+    uint8_t encoded[UWB_ENUM_BUNDLE_MAX_LEN];
+    size_t encoded_len = 0u;
+    int ret;
+
+    if (lane == NULL || !lane->active ||
+        !enumeration_response_lane_tx_round_allowed(
+            timing->depth, lane->hop_count, timing->round)) {
+        return 0;
+    }
+    ret = enumeration_response_lane_prepare_round(
+        lane,
+        timing->round,
+        sys_rand32_get());
+    if (ret == PROTO_OK) {
+        ret = enumeration_response_lane_bundle_for_offset(
+            lane, timing, &bundle);
+    }
+    if (ret == PROTO_ERR_NOT_FOUND) {
+        return 0;
+    }
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = uwb_encode_enumeration_bundle(
+        &bundle, encoded, sizeof(encoded), &encoded_len);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = dwm3000_driver_send_frame(
+        encoded, encoded_len, UWB_CONTROL_TX_TIMEOUT_MS);
+    status_debug_printf(
+        "DBG_ENUM_COMPACT_TX epoch=%u parent=0x%016llx hop=%u round=%u offset_ms=%u seq=%u records=%u ret=%d\n",
+        bundle.epoch,
+        (unsigned long long)bundle.parent_id,
+        timing->depth,
+        timing->round,
+        timing->round_offset_ms,
+        bundle.sequence,
+        bundle.record_count,
+        ret);
+    return ret < 0 ? ret : 1;
+}
+
+static int anchor_compact_enumeration_handle_raw(
+    struct enumeration_response_lane *lane,
+    const uint8_t *frame,
+    size_t frame_len,
+    const struct enumeration_response_timing *timing,
+    uint64_t round_deadline_ms)
+{
+    struct uwb_enumeration_bundle_frame bundle;
+    struct uwb_enumeration_hop_ack_frame ack;
+    uint8_t encoded[UWB_ENUM_HOP_ACK_LEN];
+    size_t encoded_len = 0u;
+    bool added = false;
+    bool matched;
+    int ret;
+
+    ret = uwb_decode_enumeration_hop_ack(frame, frame_len, &ack);
+    if (ret == PROTO_OK) {
+        matched = enumeration_response_lane_note_ack(lane, &ack);
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_ACK_RX epoch=%u parent=0x%016llx seq=%u matched=%u\n",
+            ack.epoch,
+            (unsigned long long)ack.parent_id,
+            ack.sequence,
+            matched ? 1u : 0u);
+        return 1;
+    }
+    ret = uwb_decode_enumeration_bundle(frame, frame_len, &bundle);
+    if (ret != PROTO_OK) {
+        return 0;
+    }
+
+    if (lane == NULL || !lane->active ||
+        timing->depth <= lane->hop_count) {
+        ret = PROTO_ERR_STALE;
+    } else {
+        ret = enumeration_response_lane_merge_bundle(lane, &bundle, &added);
+        if (ret == PROTO_OK) {
+            ack = (struct uwb_enumeration_hop_ack_frame) {
+                .network_id = lane->network_id,
+                .epoch = lane->epoch,
+                .parent_id = enumeration_response_lane_local_id(lane),
+                .child_id = bundle.sender_id,
+                .sequence = bundle.sequence,
+            };
+        }
+    }
+    if (ret != PROTO_OK) {
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_BUNDLE_REJECT epoch=%u sender=0x%016llx depth=%u ret=%d\n",
+            bundle.epoch,
+            (unsigned long long)bundle.sender_id,
+            timing->depth,
+            ret);
+        return 1;
+    }
+    ret = uwb_encode_enumeration_hop_ack(
+        &ack, encoded, sizeof(encoded), &encoded_len);
+    if (ret != PROTO_OK) {
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_ACK_ENCODE_FAIL epoch=%u child=0x%016llx seq=%u ret=%d\n",
+            ack.epoch,
+            (unsigned long long)ack.child_id,
+            ack.sequence,
+            ret);
+        return 1;
+    }
+    {
+        uint64_t ack_start_ms = (uint64_t)k_uptime_get();
+
+        ret = dwm3000_driver_send_frame_tracked_until(
+            encoded,
+            encoded_len,
+            UWB_CONTROL_TX_TIMEOUT_MS,
+            round_deadline_ms,
+            NULL);
+        if (ret == -ETIMEDOUT) {
+            status_debug_printf(
+                "DBG_ENUM_COMPACT_ACK_SKIP epoch=%u child=0x%016llx seq=%u remaining=%u\n",
+                ack.epoch,
+                (unsigned long long)ack.child_id,
+                ack.sequence,
+                round_deadline_ms > ack_start_ms ?
+                    (uint32_t)(round_deadline_ms - ack_start_ms) : 0u);
+        } else {
+            status_debug_printf(
+                "DBG_ENUM_COMPACT_ACK_TX epoch=%u child=0x%016llx seq=%u remaining=%u ret=%d\n",
+                ack.epoch,
+                (unsigned long long)ack.child_id,
+                ack.sequence,
+                round_deadline_ms > ack_start_ms ?
+                    (uint32_t)(round_deadline_ms - ack_start_ms) : 0u,
+                ret);
+        }
+    }
+    status_debug_printf(
+        "DBG_ENUM_COMPACT_BUNDLE_RX epoch=%u child=0x%016llx seq=%u records=%u added=%u ack_ret=%d\n",
+        bundle.epoch,
+        (unsigned long long)bundle.sender_id,
+        bundle.sequence,
+        bundle.record_count,
+        added ? 1u : 0u,
+        ret);
+    return 1;
+}
+
+/*
+ * Keep extended-PHR RX armed across the expanding lane, without cell gaps.
+ * Compact BUNDLE/ACK frames remain short, while the same listener can hand
+ * the full assignment TABLE straight to the normal mesh decoder as soon as
+ * the gateway closes collection.  One PHY for both phases removes a lossy
+ * retune boundary without changing the response-slot schedule.
+ */
+static int anchor_run_compact_enumeration_lane(
+    uint8_t *frame,
+    size_t *frame_len,
+    uint8_t *quality,
+    enum dwm3000_rx_failure *rx_failure,
+    uint32_t *elapsed_us)
+{
+#if DEVICE_ROLE != ROLE_ANCHOR
+    ARG_UNUSED(frame);
+    ARG_UNUSED(frame_len);
+    ARG_UNUSED(quality);
+    ARG_UNUSED(rx_failure);
+    ARG_UNUSED(elapsed_us);
+    return -ENOTSUP;
+#else
+    struct anchor_enumeration_response_config config;
+    struct enumeration_response_lane *lane =
+        &anchor_enumeration_response_lane;
+    int ret;
+
+    k_mutex_lock(&anchor_discovery_claim_mutex, K_FOREVER);
+    config = anchor_enumeration_response_config;
+    k_mutex_unlock(&anchor_discovery_claim_mutex);
+    if (!config.active) {
+        return -EAGAIN;
+    }
+    ret = anchor_compact_enumeration_lane_resume(&config);
+    if (ret != PROTO_OK) {
+        return mesh_errno_from_proto(ret);
+    }
+    ret = dwm3000_driver_configure_wake_mesh_control_mode();
+
+    if (ret < 0) {
+        return ret;
+    }
+    while (true) {
+        struct enumeration_response_timing timing;
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+        uint64_t round_start_ms;
+        uint64_t round_deadline_ms;
+        uint64_t receive_deadline_ms;
+        uint8_t next_tx_offset_ms;
+        uint32_t remaining_ms;
+        uint32_t started_cycles;
+        int tx_ret;
+        bool lane_started = now_ms >= config.start_ms;
+
+        if (lane_started && !anchor_compact_enumeration_window(
+                                now_ms, &config, &timing)) {
+            return -EAGAIN;
+        }
+        if (dwm3000_driver_receive_abort_pending() ||
+            mesh_c5_protocol_flood_work_pending() ||
+            radio_guard_uwb_admission_paused()) {
+            return -ECANCELED;
+        }
+        if (!lane_started) {
+            round_deadline_ms = config.start_ms;
+            receive_deadline_ms = config.start_ms;
+        } else {
+            round_start_ms = now_ms - timing.round_offset_ms;
+            round_deadline_ms = round_start_ms +
+                                ENUMERATION_RESPONSE_ROUND_MS;
+            tx_ret = anchor_compact_enumeration_try_tx(lane, &timing);
+            if (tx_ret < 0) {
+                status_debug_printf(
+                    "DBG_ENUM_COMPACT_TX_FAIL depth=%u round=%u offset_ms=%u ret=%d\n",
+                    timing.depth,
+                    timing.round,
+                    timing.round_offset_ms,
+                    tx_ret);
+            }
+            next_tx_offset_ms = enumeration_response_lane_next_offset_ms(
+                lane, &timing);
+            receive_deadline_ms = round_deadline_ms;
+            if (next_tx_offset_ms != ENUMERATION_RESPONSE_NO_OFFSET) {
+                uint64_t next_tx_ms = round_start_ms + next_tx_offset_ms;
+
+                if (next_tx_ms > now_ms && next_tx_ms < receive_deadline_ms) {
+                    receive_deadline_ms = next_tx_ms;
+                }
+            }
+        }
+        now_ms = (uint64_t)k_uptime_get();
+        if (now_ms >= receive_deadline_ms) {
+            continue;
+        }
+        remaining_ms = (uint32_t)(receive_deadline_ms - now_ms);
+        *frame_len = 0u;
+        *quality = 0u;
+        *rx_failure = DWM3000_RX_FAILURE_NONE;
+        started_cycles = k_cycle_get_32();
+        ret = dwm3000_driver_receive_frame_continuous(
+            remaining_ms,
+            frame,
+            UWB_MESH_MAX_FRAME_LEN,
+            frame_len,
+            quality,
+            NULL,
+            rx_failure);
+        *elapsed_us = u32_saturating_add(
+            *elapsed_us,
+            (uint32_t)k_cyc_to_us_floor64(
+                (uint32_t)(k_cycle_get_32() - started_cycles)));
+        if (ret == 0) {
+            if (!lane_started) {
+                /* Let the normal decoder handle any last control frame. */
+                return 0;
+            }
+            int handled = anchor_compact_enumeration_handle_raw(
+                lane, frame, *frame_len, &timing, round_deadline_ms);
+
+            if (handled == 0) {
+                return 0;
+            }
+            app_watchdog_note_radio_progress();
+            continue;
+        }
+        if (ret == -ETIMEDOUT) {
+            app_watchdog_note_radio_progress();
+            continue;
+        }
+        if (ret == -ECANCELED) {
+            return ret;
+        }
+        /* A collision/CRC loss consumes this attempt; the next round retries. */
+        status_debug_printf(
+            "DBG_ENUM_COMPACT_RX_RETRY depth=%u round=%u offset_ms=%u ret=%d fail=%u\n",
+            timing.depth,
+            timing.round,
+            timing.round_offset_ms,
+            ret,
+            (unsigned int)*rx_failure);
+    }
+#endif
+}
+
 static void anchor_uwb_scan_work_handler(struct k_work *work)
 {
     uint8_t *frame = anchor_uwb_scan_frame;
@@ -2565,6 +3004,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool uwb_radio_busy = false;
     bool control_followup_boost_active = false;
     bool enumeration_continuous_rx = false;
+    bool compact_enumeration_window = false;
     bool local_protocol_response_active = false;
     bool enumeration_owned_work_due = false;
     bool protocol_flood_pending = false;
@@ -2572,6 +3012,7 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     bool ch9_receive_prepare_pending = false;
     uint32_t ch9_retry_ms = 0u;
     uint32_t ch9_receive_prepare_delay_ms = 0u;
+    uint32_t compact_lane_start_wait_ms = 0u;
     uint32_t relay_tx_retry_ms = 0u;
     uint32_t scan_rx_ms = ANCHOR_UWB_SCAN_RX_MS;
     uint32_t mesh_rx_queue_depth = 0u;
@@ -2639,6 +3080,15 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         scan_rx_ms = MESH_ROUTE_TEST_CH5_GAP_SCAN_MS;
     } else if (control_followup_boost_active) {
         scan_rx_ms = MESH_RADIO_CONTROL_FOLLOWUP_SCAN_MS;
+    }
+    if (enumeration_continuous_rx) {
+        compact_lane_start_wait_ms =
+            anchor_compact_enumeration_ms_until_prepare(
+                (uint64_t)k_uptime_get());
+        if (compact_lane_start_wait_ms != 0u &&
+            scan_rx_ms > compact_lane_start_wait_ms) {
+            scan_rx_ms = compact_lane_start_wait_ms;
+        }
     }
     route_waiting_active = IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
                            mesh_route_waiting_tx_active();
@@ -2771,6 +3221,25 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
         }
     }
 
+    compact_enumeration_window = anchor_compact_enumeration_window(
+        (uint64_t)k_uptime_get(), NULL, NULL) ||
+        anchor_compact_enumeration_prepare_window(
+            (uint64_t)k_uptime_get());
+    if (compact_enumeration_window) {
+        rx_attempted = true;
+        ret = anchor_run_compact_enumeration_lane(
+            frame,
+            &frame_len,
+            &quality,
+            &rx_failure,
+            &scan_rx_elapsed_us);
+        if (ret == 0) {
+            goto scan_frame_ready;
+        }
+        next_scan_delay_ms = 0u;
+        goto scan_complete;
+    }
+
     ret = enumeration_continuous_rx ?
         dwm3000_driver_configure_wake_mesh_control_mode() :
         dwm3000_driver_configure_wake_mode();
@@ -2779,6 +3248,41 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
     }
     if (ret == 0) {
 enumeration_rx_window:
+        if (anchor_enumeration_rx_active()) {
+            uint64_t enumeration_now_ms = (uint64_t)k_uptime_get();
+
+            /*
+             * Every duplicate control frame and recoverable RX error returns
+             * through this label.  Re-evaluate the phase boundary here rather
+             * than reusing the generic-listener decision made when this work
+             * item first acquired the radio: otherwise continuous activity can
+             * carry that listener across compact-lane start and consume the
+             * anchor's own response bands.
+             */
+            if (anchor_compact_enumeration_window(
+                    enumeration_now_ms, NULL, NULL) ||
+                anchor_compact_enumeration_prepare_window(
+                    enumeration_now_ms)) {
+                ret = anchor_run_compact_enumeration_lane(
+                    frame,
+                    &frame_len,
+                    &quality,
+                    &rx_failure,
+                    &scan_rx_elapsed_us);
+                if (ret == 0) {
+                    goto scan_frame_ready;
+                }
+                next_scan_delay_ms = 0u;
+                goto scan_complete;
+            }
+            compact_lane_start_wait_ms =
+                anchor_compact_enumeration_ms_until_prepare(
+                    enumeration_now_ms);
+            if (compact_lane_start_wait_ms != 0u &&
+                scan_rx_ms > compact_lane_start_wait_ms) {
+                scan_rx_ms = compact_lane_start_wait_ms;
+            }
+        }
         scan_rx_start_cycles = k_cycle_get_32();
         rx_attempted = true;
         ret = dwm3000_driver_receive_frame_continuous_extend_on_activity(
@@ -2823,6 +3327,13 @@ enumeration_rx_window:
             }
 
             if (ret == -ETIMEDOUT && !enumeration_owned_work_due) {
+                if (anchor_compact_enumeration_window(
+                        (uint64_t)k_uptime_get(), NULL, NULL) ||
+                    anchor_compact_enumeration_prepare_window(
+                        (uint64_t)k_uptime_get())) {
+                    next_scan_delay_ms = 0u;
+                    goto scan_complete;
+                }
                 /*
                  * A bounded timeout leaves the configured Channel-5 PHY in a
                  * known idle state. Rearm RX under the same guard lease:
@@ -2834,6 +3345,7 @@ enumeration_rx_window:
             }
         }
     }
+scan_frame_ready:
     preamble_detected = ret == 0 ||
                         app_anchor_rx_failure_detected_preamble(rx_failure);
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&

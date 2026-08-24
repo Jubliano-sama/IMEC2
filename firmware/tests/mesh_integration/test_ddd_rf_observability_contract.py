@@ -63,23 +63,50 @@ class DddRfObservabilityContractTests(unittest.TestCase):
         )
         self.assertLess(attempts, flood)
 
-    def test_hard_rf_terminal_cannot_fall_through_to_no_anchors(self) -> None:
+    def test_claim_partial_send_precedes_strict_nonclaim_radio_terminal(
+        self,
+    ) -> None:
         service = function_body(
             GATEWAY_CONTROL,
             "gateway_discovery_assignment_service_delivery",
         )
-        delivered = service.index(
+        transport_delivered = service.index(
             "effective_delivered = "
             "event.reason == NODE_COMM_TERMINAL_DELIVERED"
         )
+        claim = service.index(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_CLAIM",
+            transport_delivered,
+        )
+        semantic = service.index(
+            "app_discovery_assignment_semantic_terminal_success(", claim
+        )
+        table = service.index(
+            "kind == GATEWAY_DISCOVERY_ASSIGNMENT_DELIVERY_TABLE",
+            semantic,
+        )
+        compact_rx = service.index(
+            'mesh_start_uwb_rx("compact-enumeration")', table
+        )
         hard_terminal = service.index(
             "gateway_discovery_assignment_state.round_open = false;",
-            delivered,
+            compact_rx,
         )
         radio_terminal = service.index(
             "gateway_discovery_assignment_fail_locked(COMMAND_RADIO_ERROR",
             hard_terminal,
         )
+        self.assertEqual(
+            service.count(
+                "app_discovery_assignment_semantic_terminal_success("
+            ),
+            1,
+        )
+        self.assertLess(transport_delivered, claim)
+        self.assertLess(claim, semantic)
+        self.assertLess(semantic, table)
+        self.assertLess(table, compact_rx)
+        self.assertLess(compact_rx, hard_terminal)
         self.assertLess(hard_terminal, radio_terminal)
         self.assertNotIn(
             "GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS",
@@ -149,6 +176,72 @@ class DddRfObservabilityContractTests(unittest.TestCase):
         self.assertNotIn(
             "app_anchor_rx_failure_detected_preamble",
             anchor_scan[progress_guard:final_progress],
+        )
+
+    def test_compact_enumeration_progress_requires_successful_radio_finish(
+        self,
+    ) -> None:
+        compact = function_body(
+            REPORT_RX, "mesh_gateway_run_enumeration_response_slice"
+        )
+
+        evidence = compact.index("bool functional_rx_outcome = false;")
+        receive = compact.index(
+            "dwm3000_driver_receive_frame_continuous(", evidence
+        )
+        classify = compact.index(
+            "functional_rx_outcome =\n"
+            "            app_mesh_rx_policy_dwm_attempt_made_progress(",
+            receive,
+        )
+        hard_receive = compact.index("if (ret < 0)", classify)
+        encode_failure = compact.index(
+            "functional_rx_outcome = false;", hard_receive
+        )
+        ack_send = compact.index(
+            "dwm3000_driver_send_frame_tracked_until(", encode_failure
+        )
+        hard_ack = compact.index("if (ack_ret < 0)", ack_send)
+        clear_after_ack = compact.index(
+            "functional_rx_outcome = false;", hard_ack
+        )
+
+        # Every receive replaces the prior observation, so a hard receive in
+        # a later loop iteration erases earlier functional evidence. A hard
+        # ACK or ACK-encode result clears it explicitly in the same iteration.
+        self.assertLess(receive, classify)
+        self.assertLess(classify, hard_receive)
+        self.assertNotIn(
+            "functional_rx_outcome ||", compact[receive:hard_receive]
+        )
+        self.assertLess(hard_receive, encode_failure)
+        self.assertLess(encode_failure, ack_send)
+        self.assertLess(ack_send, hard_ack)
+        self.assertLess(hard_ack, clear_after_ack)
+
+        parking = compact.index(
+            "mesh_radio_idle_with_bounded_recovery(", clear_after_ack
+        )
+        finish = compact.index("mesh_rx_radio_finish(&lease, parking_ret)", parking)
+        release_failure = compact.index("if (release_ret < 0)", finish)
+        release_failure_block = compact[
+            release_failure:compact.index("} else if", release_failure)
+        ]
+        progress_guard = compact.index(
+            "else if (functional_rx_outcome)", release_failure
+        )
+        progress = compact.index(
+            "app_watchdog_note_radio_progress();", progress_guard
+        )
+
+        self.assertEqual(compact.count("app_watchdog_note_radio_progress();"), 1)
+        self.assertLess(parking, finish)
+        self.assertLess(finish, release_failure)
+        self.assertIn("return true;", release_failure_block)
+        self.assertLess(release_failure, progress_guard)
+        self.assertLess(progress_guard, progress)
+        self.assertNotIn(
+            "app_watchdog_note_radio_progress();", compact[:finish]
         )
 
     def test_disconnect_replay_is_ram_bounded_until_receipt_or_reset(self) -> None:

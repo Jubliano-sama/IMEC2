@@ -949,6 +949,13 @@ static K_MUTEX_DEFINE(report_tx_queue_overflow_lock);
 static K_MUTEX_DEFINE(mesh_c5_control_scratch_lock);
 static struct k_spinlock mesh_rx_handoff_lock;
 static struct app_mesh_rx_handoff_state mesh_rx_handoff;
+/*
+ * An enumeration control burst is one radio operation even though it has
+ * several physical copies. Keep a reference count because a duplicate can
+ * be admitted while the first copy set is still completing; a boolean would
+ * let the first finisher reopen the scanner.
+ */
+static atomic_t mesh_c5_enumeration_relay_burst_count;
 #if DEVICE_ROLE == ROLE_ANCHOR
 static K_MUTEX_DEFINE(mesh_route_reply_scratch_lock);
 static struct mesh_outbound mesh_route_reply_backup_scratch;
@@ -1213,6 +1220,9 @@ static int mesh_send_c5_flood_now_until(
     uint64_t absolute_deadline_ms,
     struct app_mesh_tx_observation *observation,
     enum fw_c5_tx_intent c5_tx_intent);
+static bool mesh_c5_enumeration_relay_burst_active(void);
+static bool mesh_c5_gateway_enumeration_quick_copy_burst(
+    const struct mesh_outbound *out);
 static void mesh_c5_flood_work_handler(struct k_work *work);
 struct mesh_route_capture_identity {
     uint32_t session_id;
