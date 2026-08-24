@@ -14,6 +14,10 @@ and erases only the compiled storage partition before the candidate is reset.
 journal only after its exact capture and three-role topology are validated.
 ``--supersede-staged-candidate`` retires a stale journal only after a live
 readback proves that its recorded code has already been replaced out of band.
+``--retire-qualified-candidate`` closes a still-running, successfully tested
+candidate when its original promotion artifacts are no longer available.  It
+requires the exact reachability success transcript and preserves a fresh live
+readback without claiming production promotion.
 """
 
 from __future__ import annotations
@@ -58,6 +62,16 @@ STORAGE_PARTITION_SIZE = STORAGE_PARTITION_END - STORAGE_PARTITION_ADDRESS
 TRANSACTION_SCHEMA = 1
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SECTOR_ADDRESS_RE = re.compile(r"^0x[0-9a-f]{8}$")
+_REACHABILITY_SUCCESS_RE = re.compile(
+    r"^HERE_I_AM_REACHABILITY_QUALIFICATION_OK "
+    r"anchors=(\d+) direct=(\d+) multihop=(\d+) retries=(\d+)$",
+    re.MULTILINE,
+)
+_ASSIGNMENT_SUCCESS_RE = re.compile(
+    r"^ASSIGNMENT_QUALIFICATION_OK run=(\d+)/(\d+) "
+    r"anchors=(\d+) direct=(\d+) multihop=(\d+) retries=(\d+)$",
+    re.MULTILINE,
+)
 
 class TransactionError(RuntimeError):
     """A transaction could not be safely completed or recovered."""
@@ -124,6 +138,29 @@ def _write_json_once(path: Path, data: dict[str, object]) -> None:
         _durable_sync(path)
         return
     _atomic_json(path, data)
+
+
+def _write_bytes_once(path: Path, content: bytes) -> None:
+    """Durably create an evidence file, accepting an identical recovery copy."""
+    if path.exists():
+        if not path.is_file() or path.read_bytes() != content:
+            raise TransactionError(
+                f"existing evidence differs from recovery state: {path}"
+            )
+        _durable_sync(path)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as destination:
+            destination.write(content)
+            destination.flush()
+            os.fsync(destination.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    _fsync_directory(path.parent)
 
 
 def _durable_unlink(path: Path) -> None:
@@ -207,12 +244,21 @@ def _run(command: list[str], *, capture_output: bool = False) -> subprocess.Comp
         tool_directory if not inherited_path else
         tool_directory + os.pathsep + inherited_path
     )
+    working_directory = None
+    if command and Path(command[0]).resolve() == WEST_EXECUTABLE.resolve():
+        resolved_west = WEST_EXECUTABLE.resolve()
+        if (
+            resolved_west.parent.name == "bin"
+            and resolved_west.parent.parent.name == ".venv"
+        ):
+            working_directory = resolved_west.parents[2]
     return subprocess.run(
         command,
         capture_output=capture_output,
         text=True,
         check=False,
         env=environment,
+        cwd=working_directory,
     )
 
 
@@ -572,7 +618,7 @@ def _load_journal(probe_id: str) -> dict[str, object] | None:
     allowed_states = {
         "prepared", "staging", "staged", "awaiting_qualification",
         "promotion_intent", "bench_completion_intent", "supersede_intent",
-        "committed", "rejected",
+        "qualified_retirement_intent", "committed", "rejected",
     }
     if (not isinstance(data, dict) or set(data) < required
             or data.get("schema") != TRANSACTION_SCHEMA
@@ -590,14 +636,16 @@ def _load_journal(probe_id: str) -> dict[str, object] | None:
             or not _valid_storage_initialization(data)
             or (data.get("state") in {
                     "awaiting_qualification", "promotion_intent",
-                    "bench_completion_intent", "supersede_intent", "committed",
+                    "bench_completion_intent", "supersede_intent",
+                    "qualified_retirement_intent", "committed",
                 } and (not isinstance(data.get("staged_flash_sha256"), str) or
                        _SHA256_RE.fullmatch(str(data.get("staged_flash_sha256"))) is None))):
         raise TransactionError("active flash transaction journal is invalid")
     if (data.get("storage_initialized") is True and
             data.get("state") in {
                 "awaiting_qualification", "promotion_intent",
-                "bench_completion_intent", "supersede_intent", "committed",
+                "bench_completion_intent", "supersede_intent",
+                "qualified_retirement_intent", "committed",
             } and not _storage_erase_is_verified(data)):
         raise TransactionError(
             "active storage-initialization transaction lacks an erased-storage verification"
@@ -660,6 +708,41 @@ def _load_journal(probe_id: str) -> dict[str, object] | None:
             or _SHA256_RE.fullmatch(readback_sha256) is None
         ):
             raise TransactionError("active supersede transaction record is invalid")
+    if data.get("state") == "qualified_retirement_intent":
+        readback_path = data.get("qualified_retirement_readback_path")
+        transcript_path = data.get("qualification_transcript_path")
+        if (
+            data.get("qualified_retirement_reason")
+            != "successful_test_candidate_replaced_by_planned_successor"
+            or not isinstance(data.get("qualified_retired_at_utc"), str)
+            or not data.get("qualified_retired_at_utc")
+            or not isinstance(data.get("qualification_success_terminal"), str)
+            or (
+                _REACHABILITY_SUCCESS_RE.fullmatch(
+                    str(data.get("qualification_success_terminal"))
+                ) is None
+                and _ASSIGNMENT_SUCCESS_RE.fullmatch(
+                    str(data.get("qualification_success_terminal"))
+                ) is None
+            )
+            or not isinstance(readback_path, str)
+            or Path(readback_path).resolve()
+            != (backup.parent / "qualified-retirement-readback.bin").resolve()
+            or not isinstance(transcript_path, str)
+            or Path(transcript_path).resolve()
+            != (backup.parent / "qualification-transcript.log").resolve()
+            or any(
+                not isinstance(data.get(key), str)
+                or _SHA256_RE.fullmatch(str(data.get(key))) is None
+                for key in (
+                    "qualified_retirement_readback_sha256",
+                    "qualification_transcript_sha256",
+                )
+            )
+        ):
+            raise TransactionError(
+                "active qualified-retirement transaction record is invalid"
+            )
     return data
 
 
@@ -817,6 +900,9 @@ def _recover_interrupted_transaction(probe_id: str) -> str:
     if data["state"] == "supersede_intent":
         _finish_supersede(data)
         return "superseded"
+    if data["state"] == "qualified_retirement_intent":
+        _finish_qualified_retirement(data)
+        return "qualified_retired"
     _probe_is_visible(probe_id)
     if data["state"] == "promotion_intent":
         record = data.get("deployment_record")
@@ -1535,6 +1621,132 @@ def _supersede_staged_candidate(
     _finish_supersede(data)
 
 
+def _qualification_success_terminal(content: bytes) -> str:
+    text = content.decode("utf-8", errors="replace")
+    matches = list(_REACHABILITY_SUCCESS_RE.finditer(text))
+    assignment_matches = list(_ASSIGNMENT_SUCCESS_RE.finditer(text))
+    if len(matches) == 1 and not assignment_matches:
+        anchors, direct, multihop, _retries = (
+            int(value) for value in matches[0].groups()
+        )
+        if anchors <= 0 or direct + multihop != anchors:
+            raise TransactionError(
+                "qualification success terminal contains an invalid topology count"
+            )
+        return matches[0].group(0)
+    if matches or not assignment_matches:
+        raise TransactionError(
+            "qualification transcript must contain one reachability success or one complete assignment run"
+        )
+    totals = {int(match.group(2)) for match in assignment_matches}
+    topologies = {
+        tuple(int(value) for value in match.groups()[2:5])
+        for match in assignment_matches
+    }
+    if len(totals) != 1 or len(topologies) != 1:
+        raise TransactionError(
+            "assignment qualification transcript changes its run or topology contract"
+        )
+    total = totals.pop()
+    anchors, direct, multihop = topologies.pop()
+    runs = [int(match.group(1)) for match in assignment_matches]
+    if (
+        total <= 0
+        or runs != list(range(1, total + 1))
+        or anchors <= 0
+        or direct + multihop != anchors
+    ):
+        raise TransactionError(
+            "assignment qualification transcript is incomplete or has invalid topology counts"
+        )
+    return assignment_matches[-1].group(0)
+
+
+def _qualified_retirement_archive(data: dict[str, object]) -> dict[str, object]:
+    archived = dict(data)
+    archived["state"] = "qualified_retired"
+    return archived
+
+
+def _finish_qualified_retirement(data: dict[str, object]) -> None:
+    """Finish a journal close from already-durable success and readback proof."""
+    if data.get("state") != "qualified_retirement_intent":
+        raise TransactionError("qualified-retirement intent is missing")
+    backup = Path(str(data["backup_path"])).resolve()
+    readback = Path(str(data["qualified_retirement_readback_path"])).resolve()
+    transcript = Path(str(data["qualification_transcript_path"])).resolve()
+    if (
+        not readback.is_file()
+        or readback.stat().st_size != TARGET_FLASH_SIZE
+        or _sha256(readback)
+        != data.get("qualified_retirement_readback_sha256")
+        or not _code_sectors_match(
+            readback,
+            data["code_sector_sha256"],  # type: ignore[arg-type]
+        )
+    ):
+        raise TransactionError(
+            "qualified-retirement live readback proof is missing or changed"
+        )
+    if (
+        not transcript.is_file()
+        or _sha256(transcript) != data.get("qualification_transcript_sha256")
+        or _qualification_success_terminal(transcript.read_bytes())
+        != data.get("qualification_success_terminal")
+    ):
+        raise TransactionError(
+            "qualified-retirement success transcript is missing or changed"
+        )
+    archive = backup.parent / "qualified-retirement-journal.json"
+    _write_json_once(archive, _qualified_retirement_archive(data))
+    _checkpoint("qualified_retirement_archive_durable")
+    _durable_unlink(_journal_path(str(data["probe_id"])))
+
+
+def _retire_qualified_candidate(
+    data: dict[str, object],
+    probe_id: str,
+    qualification_log: Path,
+) -> None:
+    if data.get("state") != "awaiting_qualification":
+        raise TransactionError(
+            "selected probe has no staged candidate awaiting qualification"
+        )
+    try:
+        transcript_content = qualification_log.resolve().read_bytes()
+    except OSError as exc:
+        raise TransactionError("qualification transcript is unreadable") from exc
+    terminal = _qualification_success_terminal(transcript_content)
+    _probe_is_visible(probe_id)
+    backup = Path(str(data["backup_path"])).resolve()
+    transcript = backup.parent / "qualification-transcript.log"
+    readback = backup.parent / "qualified-retirement-readback.bin"
+    _write_bytes_once(transcript, transcript_content)
+    observed_sha256 = _read_target_flash(
+        probe_id, readback, resume_after=True,
+    )
+    if not _code_sectors_match(
+        readback,
+        data["code_sector_sha256"],  # type: ignore[arg-type]
+    ):
+        raise TransactionError(
+            "current target code sectors differ from the qualified candidate"
+        )
+    data["state"] = "qualified_retirement_intent"
+    data["qualified_retirement_reason"] = (
+        "successful_test_candidate_replaced_by_planned_successor"
+    )
+    data["qualified_retired_at_utc"] = _utc_text()
+    data["qualification_success_terminal"] = terminal
+    data["qualification_transcript_path"] = str(transcript.resolve())
+    data["qualification_transcript_sha256"] = _sha256(transcript)
+    data["qualified_retirement_readback_path"] = str(readback.resolve())
+    data["qualified_retirement_readback_sha256"] = observed_sha256
+    _write_journal(data)
+    _checkpoint("qualified_retirement_intent_durable")
+    _finish_qualified_retirement(data)
+
+
 def _abandon_staged_candidate(data: dict[str, object]) -> None:
     if data.get("state") != "awaiting_qualification":
         raise TransactionError(
@@ -1879,18 +2091,26 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--reject-staged-candidate", action="store_true")
     parser.add_argument("--supersede-staged-candidate", action="store_true")
     parser.add_argument("--abandon-staged-candidate", action="store_true")
+    parser.add_argument("--retire-qualified-candidate", action="store_true")
+    parser.add_argument("--qualification-log", type=Path)
     args = parser.parse_args(argv)
     if sum((args.stage_only,
             args.reject_staged_candidate,
             args.supersede_staged_candidate,
             args.abandon_staged_candidate,
+            args.retire_qualified_candidate,
             args.complete_bench_qualification,
             args.hardware_manifest is not None
             and not args.complete_bench_qualification)) != 1:
         parser.error(
             "select exactly one of --stage-only, production --hardware-manifest, "
             "--complete-bench-qualification, --reject-staged-candidate, "
-            "--supersede-staged-candidate, or --abandon-staged-candidate"
+            "--supersede-staged-candidate, --abandon-staged-candidate, or "
+            "--retire-qualified-candidate"
+        )
+    if args.retire_qualified_candidate != (args.qualification_log is not None):
+        parser.error(
+            "--retire-qualified-candidate requires exactly one --qualification-log"
         )
     if args.complete_bench_qualification and (
         args.hardware_manifest is None or args.topology_manifest is None
@@ -1931,6 +2151,9 @@ def main(argv: list[str] | None = None) -> int:
             ) or (
                 recovery == "superseded"
                 and args.supersede_staged_candidate
+            ) or (
+                recovery == "qualified_retired"
+                and args.retire_qualified_candidate
             ):
                 return 0
             if args.stage_only:
@@ -1985,6 +2208,17 @@ def main(argv: list[str] | None = None) -> int:
                         "selected probe has no staged candidate awaiting qualification"
                     )
                 _abandon_staged_candidate(data)
+                return 0
+
+            if args.retire_qualified_candidate:
+                if data is None:
+                    raise TransactionError(
+                        "selected probe has no staged candidate awaiting qualification"
+                    )
+                assert args.qualification_log is not None
+                _retire_qualified_candidate(
+                    data, args.probe_id, args.qualification_log,
+                )
                 return 0
 
             if args.complete_bench_qualification:

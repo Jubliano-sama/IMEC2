@@ -41,15 +41,14 @@ FIXED_GATEWAY_NODE_ID = 0x9999888877776666
 SOURCE_PATHS = (
     "firmware/CMakeLists.txt",
     "firmware/app",
+    "firmware/cmake",
     "firmware/include",
     "firmware/src",
-    "dwm3000 examples and sdk",
-    ".gitmodules",
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _BUILD_ID_RE = re.compile(rb"imec-stack-v1:[A-Za-z0-9_.-]+:[0-9a-f]{64}")
 _DEPENDENCY_CACHE_KEYS = frozenset({
-    "NRF_DIR", "NRFXLIB_DIR", "NRFX_DIR", "ZEPHYR_BASE",
+    "DWM3000_SDK_DIR", "NRF_DIR", "NRFXLIB_DIR", "NRFX_DIR", "ZEPHYR_BASE",
 })
 _TOOLCHAIN_CACHE_KEYS = (
     "CMAKE_C_COMPILER", "CMAKE_AR", "CMAKE_OBJCOPY", "CMAKE_RANLIB",

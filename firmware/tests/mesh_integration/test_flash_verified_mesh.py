@@ -139,6 +139,8 @@ class MockTarget:
                         operation = "promotion_read"
                     elif destination.name == "supersede-readback.bin":
                         operation = "supersede_read"
+                    elif destination.name == "qualified-retirement-readback.bin":
+                        operation = "qualified_retirement_read"
                     elif destination.name == "restored-readback.bin":
                         operation = "restore_read"
                     else:
@@ -264,6 +266,24 @@ class VerifiedFlashTests(unittest.TestCase):
             environment["PATH"].split(os.pathsep)[0],
         )
 
+    def test_west_runs_from_its_canonical_workspace_in_a_worktree(self) -> None:
+        workspace = self.case.root / "west-workspace"
+        west = workspace / ".venv" / "bin" / "west"
+        west.parent.mkdir(parents=True)
+        west.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        west.chmod(0o755)
+
+        with mock.patch.object(
+            flash, "WEST_EXECUTABLE", west,
+        ), mock.patch.object(
+            flash.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess([str(west)], 0, "", ""),
+        ) as run:
+            flash._run([str(west), "flash"])
+
+        self.assertEqual(workspace.resolve(), run.call_args.kwargs["cwd"])
+
     def _args(self, build: Path, manifest: Path | None = None) -> list[str]:
         manifest = manifest or self.target.manifest
         assert manifest is not None
@@ -327,6 +347,20 @@ class VerifiedFlashTests(unittest.TestCase):
             "--build-dir", str(build),
             "--probe-id", "TEST-PROBE",
             "--abandon-staged-candidate",
+        ]
+
+    def _retire_qualified_args(self, build: Path) -> list[str]:
+        transcript = self.case.root / "reachability-success.log"
+        transcript.write_text(
+            "HERE_I_AM_REACHABILITY_QUALIFICATION_OK "
+            "anchors=3 direct=3 multihop=0 retries=0\n",
+            encoding="utf-8",
+        )
+        return [
+            "--build-dir", str(build),
+            "--probe-id", "TEST-PROBE",
+            "--retire-qualified-candidate",
+            "--qualification-log", str(transcript),
         ]
 
     def _stage(self, build: Path) -> int:
@@ -1466,6 +1500,90 @@ class VerifiedFlashTests(unittest.TestCase):
         self.assertEqual("abandoned", archived["state"])
         self.assertEqual([], self.target.calls)
 
+    def test_qualified_retirement_proves_success_and_live_candidate(self) -> None:
+        build, _ = self._valid()
+        self.assertEqual(0, self._stage(build))
+        journal = json.loads(self.journal.read_text(encoding="utf-8"))
+        backup = Path(journal["backup_path"])
+        self.target.calls.clear()
+
+        self.assertEqual(0, flash.main(self._retire_qualified_args(build)))
+        self.assertFalse(self.journal.exists())
+        archive = backup.parent / "qualified-retirement-journal.json"
+        readback = backup.parent / "qualified-retirement-readback.bin"
+        transcript = backup.parent / "qualification-transcript.log"
+        self.assertTrue(archive.exists())
+        self.assertEqual(self.target.candidate, readback.read_bytes())
+        self.assertIn(
+            "HERE_I_AM_REACHABILITY_QUALIFICATION_OK",
+            transcript.read_text(encoding="utf-8"),
+        )
+        archived = json.loads(archive.read_text(encoding="utf-8"))
+        self.assertEqual("qualified_retired", archived["state"])
+        self.assertEqual(
+            "successful_test_candidate_replaced_by_planned_successor",
+            archived["qualified_retirement_reason"],
+        )
+
+    def test_qualified_retirement_rejects_failure_or_changed_target(self) -> None:
+        build, _ = self._valid()
+        self.assertEqual(0, self._stage(build))
+        args = self._retire_qualified_args(build)
+        Path(args[-1]).write_text(
+            "HERE_I_AM_REACHABILITY_QUALIFICATION_FAILED reason=timeout\n",
+            encoding="utf-8",
+        )
+        self.target.calls.clear()
+        self.assertEqual(1, flash.main(args))
+        self.assertTrue(self.journal.exists())
+        self.assertEqual([], self.target.calls)
+
+        args = self._retire_qualified_args(build)
+        changed = bytearray(self.target.target)
+        changed[0] ^= 0x5a
+        self.target.target = bytes(changed)
+        self.assertEqual(1, flash.main(args))
+        self.assertTrue(self.journal.exists())
+
+    def test_qualified_retirement_accepts_one_complete_assignment_run(self) -> None:
+        build, _ = self._valid()
+        self.assertEqual(0, self._stage(build))
+        args = self._retire_qualified_args(build)
+        Path(args[-1]).write_text(
+            "".join(
+                "ASSIGNMENT_QUALIFICATION_OK "
+                f"run={run}/3 anchors=3 direct=3 multihop=0 retries=0\n"
+                for run in range(1, 4)
+            ),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(0, flash.main(args))
+        self.assertFalse(self.journal.exists())
+
+    def test_qualified_retirement_recovers_without_second_target_read(self) -> None:
+        build, _ = self._valid()
+        self.assertEqual(0, self._stage(build))
+        args = self._retire_qualified_args(build)
+
+        def crash(name: str) -> None:
+            if name == "qualified_retirement_archive_durable":
+                raise SimulatedPowerLoss(name)
+
+        self.target.calls.clear()
+        with mock.patch.object(flash, "_checkpoint", side_effect=crash):
+            with self.assertRaises(SimulatedPowerLoss):
+                flash.main(args)
+        self.assertEqual(
+            "qualified_retirement_intent",
+            json.loads(self.journal.read_text(encoding="utf-8"))["state"],
+        )
+
+        self.target.calls.clear()
+        self.assertEqual(0, flash.main(args))
+        self.assertEqual([], self.target.calls)
+        self.assertFalse(self.journal.exists())
+
     def test_supersede_proves_out_of_band_code_replacement_and_resumes_target(self) -> None:
         build, _ = self._valid()
         self.assertEqual(0, self._stage(build))
@@ -1954,6 +2072,13 @@ class VerifiedFlashTests(unittest.TestCase):
             "--abandon-staged-candidate",
         ])
         self.assertTrue(abandoned.abandon_staged_candidate)
+        retired = flash.parse_args([
+            "--build-dir", "x", "--probe-id", "x",
+            "--retire-qualified-candidate",
+            "--qualification-log", "qualification.log",
+        ])
+        self.assertTrue(retired.retire_qualified_candidate)
+        self.assertEqual(Path("qualification.log"), retired.qualification_log)
         completed = flash.parse_args([
             "--build-dir", "x", "--probe-id", "x",
             "--hardware-manifest", "capture.json",

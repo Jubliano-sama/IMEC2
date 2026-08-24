@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 set(IMEC_APP_DIR "${CMAKE_CURRENT_LIST_DIR}/../app")
-set(DWM3000_SDK_DIR "${CMAKE_CURRENT_LIST_DIR}/../../dwm3000 examples and sdk")
 list(APPEND DTS_ROOT "${IMEC_APP_DIR}")
 
 set(TWR_RANGE_ROLE "initiator" CACHE STRING "DS-TWR range-test role: initiator or responder")
@@ -52,6 +51,8 @@ endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(imec_twr_range_test)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/dwm3000_sdk.cmake")
+imec_resolve_dwm3000_sdk(DWM3000_SDK_DIR)
 
 target_sources(app PRIVATE
     src/main.c

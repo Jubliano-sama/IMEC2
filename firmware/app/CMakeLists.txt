@@ -91,8 +91,6 @@ set(IMEC_FORCED_GATEWAY_RELAY_HOPS "1" CACHE STRING
 
 set(FIRMWARE_ROLE "clicker" CACHE STRING "Firmware role: clicker/tag, anchor, or gateway")
 set_property(CACHE FIRMWARE_ROLE PROPERTY STRINGS clicker tag anchor gateway)
-set(DWM3000_SDK_DIR "${CMAKE_CURRENT_LIST_DIR}/../../dwm3000 examples and sdk")
-
 if(IMEC_BUILD_PRESET)
     set(IMEC_ML_BUILD OFF CACHE BOOL "Build the ML data-collection firmware variant" FORCE)
     set(IMEC_MESH_ROUTE_TEST_BUILD OFF CACHE BOOL "Build the connected-routing mesh runtime" FORCE)
@@ -337,6 +335,8 @@ endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(uwb_firmware)
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/dwm3000_sdk.cmake")
+imec_resolve_dwm3000_sdk(DWM3000_SDK_DIR)
 
 # Five immutable survey samples (or transmitter stress datagrams) may be
 # admitted together while one protocol-response slot remains available.

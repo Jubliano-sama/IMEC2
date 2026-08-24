@@ -919,6 +919,8 @@ def _parse_su(
     translation_unit: str = "",
     object_path: Path | None = None,
     allow_empty: bool = False,
+    application_source_dir: Path | None = None,
+    west_topdir: Path | None = None,
 ) -> list[StackUsage]:
     records: list[StackUsage] = []
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -932,7 +934,11 @@ def _parse_su(
         if location is None or not columns[1].isdigit():
             raise EvidenceError(f"malformed compiler stack row in {path}: {line!r}")
         records.append(StackUsage(
-            Path(location.group(1)),
+            _resolve_compiler_source(
+                Path(location.group(1)),
+                application_source_dir=application_source_dir,
+                west_topdir=west_topdir,
+            ),
             int(location.group(2)),
             location.group(4),
             int(columns[1]),
@@ -943,10 +949,19 @@ def _parse_su(
     return records
 
 
-def _resolve_compiler_source(path: Path) -> Path:
-    """Resolve GCC paths after Zephyr's WEST_TOPDIR prefix remapping."""
+def _resolve_compiler_source(
+    path: Path,
+    *,
+    application_source_dir: Path | None = None,
+    west_topdir: Path | None = None,
+) -> Path:
+    """Resolve GCC paths after Zephyr's source-prefix remapping."""
+    if not path.is_absolute() and path.parts[:1] == ("CMAKE_SOURCE_DIR",):
+        if application_source_dir is not None:
+            return application_source_dir.joinpath(*path.parts[1:]).resolve()
     if not path.is_absolute() and path.parts[:1] == ("WEST_TOPDIR",):
-        return (REPO_ROOT.joinpath(*path.parts[1:])).resolve()
+        root = REPO_ROOT if west_topdir is None else west_topdir
+        return root.joinpath(*path.parts[1:]).resolve()
     return path.resolve()
 
 
@@ -1275,6 +1290,8 @@ def _parse_tu_compiler_evidence(
     *,
     final_map_path: Path | None = None,
     linked_object: LinkedObject | None = None,
+    application_source_dir: Path | None = None,
+    west_topdir: Path | None = None,
 ) -> tuple[
     list[StackUsage],
     dict[tuple[str, str], set[str]],
@@ -1307,6 +1324,8 @@ def _parse_tu_compiler_evidence(
         translation_unit=translation_unit,
         object_path=object_path,
         allow_empty=not has_function_definition,
+        application_source_dir=application_source_dir,
+        west_topdir=west_topdir,
     )
     synchronous = (
         _parse_synchronous_cgraph(graph_path, translation_unit)
@@ -1923,6 +1942,14 @@ def verify_build(
     evidence = BuildEvidence(build_dir)
     try:
         cache = parse_cmake_cache(build_dir / "CMakeCache.txt")
+        application_source_dir = Path(
+            cache.get("APPLICATION_SOURCE_DIR", str(REPO_ROOT / "firmware" / "app"))
+        ).resolve()
+        zephyr_base_text = cache.get("ZEPHYR_BASE")
+        west_topdir = (
+            Path(zephyr_base_text).resolve().parent
+            if zephyr_base_text else REPO_ROOT
+        )
         evidence.preset = cache.get("IMEC_BUILD_PRESET", "")
         policy = policies.get(evidence.preset)
         if policy is None:
@@ -1990,6 +2017,8 @@ def verify_build(
                     object_path,
                     final_map_path=build_dir / "zephyr" / "zephyr.map",
                     linked_object=linked_object,
+                    application_source_dir=application_source_dir,
+                    west_topdir=west_topdir,
                 )
             )
             records_by_tu[tu] = (source_path, source_records)

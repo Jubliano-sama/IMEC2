@@ -1115,6 +1115,29 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             ),
         )
 
+    def test_compiler_cmake_source_path_resolves_to_worktree_application(self) -> None:
+        application = self.root / "worktree" / "firmware" / "app"
+        expected = application / "src" / "app_anchor.c"
+
+        self.assertEqual(
+            expected.resolve(),
+            verifier._resolve_compiler_source(
+                Path("CMAKE_SOURCE_DIR/src/app_anchor.c"),
+                application_source_dir=application,
+            ),
+        )
+
+        usage = self.root / "app_anchor.c.su"
+        usage.write_text(
+            "CMAKE_SOURCE_DIR/src/app_anchor.c:12:3:worker\t64\tstatic\n",
+            encoding="utf-8",
+        )
+        records = verifier._parse_su(
+            usage,
+            application_source_dir=application,
+        )
+        self.assertEqual(expected.resolve(), records[0].source)
+
     def test_bare_clone_suffix_stack_usage_is_linked_and_attributed(self) -> None:
         policy = self.policies["mesh_anchor"]
         function = "anchor_uwb_scan_work_handler"
@@ -2021,6 +2044,29 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "readfromspi(sizeof(crc_header), crc_header,",
             body,
         )
+
+    def test_every_dwm3000_build_uses_the_pinned_worktree_resolver(self) -> None:
+        helper = (
+            REPO_ROOT / "firmware" / "cmake" / "dwm3000_sdk.cmake"
+        ).read_text(encoding="utf-8")
+        self.assertIn("70231425cbadc83e1d1a8b526868e3461391dd9b", helper)
+        self.assertIn("${ZEPHYR_BASE}/..", helper)
+        self.assertIn("rev-parse HEAD", helper)
+
+        for application in (
+            "app", "uwb_smoke_test", "twr_range_test", "power_profile_test",
+        ):
+            with self.subTest(application=application):
+                cmake = (
+                    REPO_ROOT / "firmware" / application / "CMakeLists.txt"
+                ).read_text(encoding="utf-8")
+                self.assertIn(
+                    "include(\"${CMAKE_CURRENT_LIST_DIR}/../cmake/dwm3000_sdk.cmake\")",
+                    cmake,
+                )
+                self.assertIn(
+                    "imec_resolve_dwm3000_sdk(DWM3000_SDK_DIR)", cmake,
+                )
 
     def test_rejects_self_attestation_marker_fabrication_missing_samples_and_replay(self) -> None:
         policy = self.policies["mesh_clicker"]
