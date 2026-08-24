@@ -1021,9 +1021,6 @@ static bool bounded_control_type(uint8_t msg_type)
     case MSG_RESULT_OFFER:
     case MSG_RESULT_GRANT:
     case MSG_GATEWAY_COLLECTION_EACK:
-    case MSG_SURVEY_REACH_REQ:
-    case MSG_SURVEY_PAIR_PREPARE:
-    case MSG_SURVEY_DISCOVERY_START:
     case MSG_GATEWAY_COMMAND_EVENT:
         return true;
     default:

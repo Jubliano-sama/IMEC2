@@ -28,6 +28,4 @@ target_sources(app PRIVATE
     ../../../../src/protocol.c
     ../../../../src/route.c
     ../../../../src/semantic_digest.c
-    ../../../../src/survey.c
-    ../../../../src/survey_round_control.c
 )

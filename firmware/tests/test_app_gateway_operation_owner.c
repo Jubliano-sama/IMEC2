@@ -13,7 +13,7 @@ static void test_stale_release_cannot_clear_successor(void)
 
     assert(app_gateway_operation_owner_claim(
                &owner,
-               APP_GATEWAY_OPERATION_OWNER_AUTO_SURVEY,
+               APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
                &first) == 0);
     assert(app_gateway_operation_owner_release(&owner, &first) == 0);
     assert(app_gateway_operation_owner_claim(
@@ -36,7 +36,7 @@ static void test_wrap_skips_invalid_generation_zero(void)
 
     assert(app_gateway_operation_owner_claim(
                &owner,
-               APP_GATEWAY_OPERATION_OWNER_MANUAL_SURVEY,
+               APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
                &lease) == 0);
     assert(lease.generation == 1u);
 }

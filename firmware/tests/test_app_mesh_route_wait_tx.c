@@ -248,61 +248,6 @@ static void test_clear_rejects_same_header_different_payload(void)
         original_digest));
 }
 
-static struct proto_packet survey_report_packet(uint32_t survey_id)
-{
-    const struct proto_packet packet = {
-        .msg_type = MSG_SURVEY_DISCOVERY_REPORT,
-        .src_id = UINT64_C(0x1020304050607080),
-        .session_id = survey_id,
-    };
-
-    return packet;
-}
-
-static void test_retained_survey_retry_identity_uses_owner_generation(void)
-{
-    const struct proto_packet packet = survey_report_packet(0x12345678u);
-    struct app_mesh_route_retry_identity identity;
-
-    app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL,
-        &packet, 0x87654321u, &identity);
-    assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY);
-    assert(identity.survey_id == 0x87654321u);
-
-    app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL,
-        &packet, 0u, &identity);
-    assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE);
-    assert(identity.survey_id == 0u);
-}
-
-static void test_generic_retry_identity_preserves_existing_selection(void)
-{
-    const struct proto_packet survey = survey_report_packet(0x89abcdefu);
-    struct proto_packet normal = survey;
-    struct app_mesh_route_retry_identity identity;
-
-    app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
-        &survey, 0u, &identity);
-    assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY);
-    assert(identity.survey_id == survey.session_id);
-
-    normal.msg_type = MSG_CLICK_REPORT;
-    app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
-        &normal, survey.session_id, &identity);
-    assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE);
-    assert(identity.survey_id == 0u);
-
-    app_mesh_route_retry_identity_select(
-        APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC,
-        NULL, survey.session_id, &identity);
-    assert(identity.mode == APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE);
-    assert(identity.survey_id == 0u);
-}
-
 int main(void)
 {
     test_not_ready_schedules_route_retry();
@@ -316,7 +261,5 @@ int main(void)
     test_retained_owner_cannot_overwrite_generic_wait_slot();
     test_clear_requires_exact_owner_and_immutable_packet_identity();
     test_clear_rejects_same_header_different_payload();
-    test_retained_survey_retry_identity_uses_owner_generation();
-    test_generic_retry_identity_preserves_existing_selection();
     return 0;
 }

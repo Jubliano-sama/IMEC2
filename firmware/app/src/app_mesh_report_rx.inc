@@ -235,13 +235,11 @@ static void mesh_handle_ch9_gateway_ack_timeout_route_failure(
         return;
     }
 
-    if (failed->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-        failed->packet.msg_type == MSG_SURVEY_PAIR_RESULT ||
-        failed->packet.msg_type == MSG_COMMAND_RESULT) {
+    if (failed->packet.msg_type == MSG_COMMAND_RESULT) {
         selected = route_selected(&mesh_runtime.upstream);
         failure_count = selected == NULL ? 1u : selected->failure_count;
-        delay_ms = survey_identity_backoff_ms(DEVICE_ID, timed_out_next_hop_id, failure_count);
-        report_tx_schedule_backoff(delay_ms, "ch9-survey-route-timeout");
+        delay_ms = mesh_identity_backoff_ms(DEVICE_ID, timed_out_next_hop_id, failure_count);
+        report_tx_schedule_backoff(delay_ms, "ch9-operation-route-timeout");
         return;
     }
 
@@ -512,13 +510,6 @@ static void mesh_tx_timeout_handler(struct k_work *work)
         return;
     }
 
-    if (DEVICE_ROLE == ROLE_ANCHOR && mesh_report_anchor_survey_radio_active()) {
-        (void)mesh_reschedule_owned_work(&mesh_tx_timeout_work,
-                                         REPORT_TX_RETRY_DELAY_MS,
-                                         "survey-discovery-tx-timeout");
-        return;
-    }
-
     if (mesh_relay_tx_active(&mesh_runtime)) {
         pending_waiting->packet = mesh_runtime.pending.packet;
         pending_waiting->payload_len = mesh_runtime.pending.payload_len;
@@ -712,9 +703,7 @@ static bool mesh_queue_from_frame_at_internal(
     if (radio_channel == UWB_CHANNEL_WAKE_CONTACT &&
         DEVICE_ROLE == ROLE_ANCHOR &&
         context.packet.src_id == GATEWAY_ID &&
-        (context.packet.msg_type == MSG_COMMAND ||
-         context.packet.msg_type == MSG_SURVEY_PAIR_PREPARE ||
-         context.packet.msg_type == MSG_SURVEY_DISCOVERY_START) &&
+        context.packet.msg_type == MSG_COMMAND &&
         !app_mesh_c5_gateway_control_rx_allowed(
             context.packet.msg_type,
             context.packet.ttl,
@@ -1713,8 +1702,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         return;
     }
-    if ((DEVICE_ROLE == ROLE_ANCHOR &&
-         (anchor_uwb_window_active() || mesh_report_anchor_survey_radio_active())) ||
+    if ((DEVICE_ROLE == ROLE_ANCHOR && anchor_uwb_window_active()) ||
         mesh_pending_tx_blocks_uwb_rx()) {
         mesh_schedule_uwb_rx(mesh_uwb_rx_idle_delay_ms());
         return;

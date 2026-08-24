@@ -189,7 +189,7 @@ static void test_persistent_collision_exhausts_then_queue_recovers(void)
 static void test_protocol_response_survives_bounded_receiver_blackout(void)
 {
     enum {
-        BOUNDED_CONTROL_RF_OPPORTUNITIES = 4,
+        BOUNDED_CONTROL_RF_OPPORTUNITIES = 3,
         OLD_PROTOCOL_RESPONSE_ATTEMPT_LIMIT = 4,
         BLACKOUT_FAILED_ATTEMPTS = 8,
     };
@@ -210,7 +210,7 @@ static void test_protocol_response_survives_bounded_receiver_blackout(void)
     uint32_t control_handle;
     uint32_t response_handle;
 
-    /* The gateway control contract remains exactly four real RF copies. */
+    /* The gateway control contract remains exactly three real RF copies. */
     node_comm_init(&control_comm);
     assert(node_comm_start(&control_comm, now_ms) == 0);
     control_handle = submit(&control_comm, &control, now_ms);
@@ -283,11 +283,11 @@ static void test_protocol_response_survives_bounded_receiver_blackout(void)
     assert(node_comm_pending_count(&response_comm) == 0u);
 }
 
-static void test_owed_gateway_ack_precedes_later_survey_control(void)
+static void test_owed_gateway_ack_precedes_later_priority_control(void)
 {
     enum {
-        SURVEY_PHASE_COUNT = 3,
-        BOUNDED_CONTROL_RF_OPPORTUNITIES = 4,
+        PRIORITY_PHASE_COUNT = 3,
+        BOUNDED_CONTROL_RF_OPPORTUNITIES = 3,
     };
     struct node_comm comm;
     uint64_t now_ms = 0u;
@@ -295,7 +295,7 @@ static void test_owed_gateway_ack_precedes_later_survey_control(void)
     node_comm_init(&comm);
     assert(node_comm_start(&comm, now_ms) == 0);
 
-    for (uint32_t phase = 0u; phase < SURVEY_PHASE_COUNT; phase++) {
+    for (uint32_t phase = 0u; phase < PRIORITY_PHASE_COUNT; phase++) {
         struct node_comm_request owed_ack = request_for(
             NODE_COMM_PROFILE_CONTROL_RESPONSE,
             5000u + phase,
@@ -310,7 +310,7 @@ static void test_owed_gateway_ack_precedes_later_survey_control(void)
         uint32_t control_handle;
 
         /*
-         * Accepting one survey command result owes its gateway ACK before
+         * Accepting one priority command result owes its gateway ACK before
          * driving the next phase. The later control must not overtake that
          * already-queued ACK, or the anchor's response single-flight remains
          * occupied and cannot carry the next phase result.
@@ -450,7 +450,7 @@ int main(void)
     test_fifty_response_sweep_eventually_delivers();
     test_persistent_collision_exhausts_then_queue_recovers();
     test_protocol_response_survives_bounded_receiver_blackout();
-    test_owed_gateway_ack_precedes_later_survey_control();
+    test_owed_gateway_ack_precedes_later_priority_control();
     test_fifty_anchor_gateway_confirmation_sweep();
 
     return 0;

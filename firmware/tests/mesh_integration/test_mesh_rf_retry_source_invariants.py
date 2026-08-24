@@ -115,8 +115,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "MSG_CLICK_REPORT",
             "MSG_SELF_TEST_REPORT",
             "MSG_MESH_DATA",
-            "MSG_SURVEY_PAIR_RESULT",
-            "MSG_SURVEY_DISCOVERY_REPORT",
         ):
             self.assertIn(report_type, classify)
         self.assertNotIn("MSG_ANCHOR_HEARTBEAT", classify)
@@ -373,9 +371,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         for broad_or_unrelated_match in (
             "TLV_COMMAND_ID",
             "CMD_ASSIGN_DISCOVERY_SLOTS",
-            "mesh_outbound_is_survey_uplink",
-            "MSG_SURVEY_DISCOVERY_REPORT",
-            "MSG_SURVEY_PAIR_RESULT",
         ):
             self.assertNotIn(broad_or_unrelated_match, classify)
         self.assertNotIn("mesh_runtime.pending", classify)
@@ -445,8 +440,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(direct, finalize)
         self.assertLess(finalize, physical_tx)
 
-        # Survey topology traffic can still request a longer retry horizon,
-        # but only the exact assignment classifier supplies the wake shortcut.
+        # Only the exact assignment classifier supplies the wake shortcut.
         self.assertIn(
             "MESH_C5_CONTROL_WAKE_IF_NEEDED", propose[send:failure]
         )
@@ -533,7 +527,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(coordinator, state_exception)
         self.assertLess(state_exception, lock)
         self.assertNotIn("FW_RADIO_ACTIVITY_CLICK", internal)
-        self.assertNotIn("FW_RADIO_ACTIVITY_SURVEY", internal)
         self.assertIn("mesh_process_queued_rx_now_internal(reason, false)", ordinary)
         self.assertIn('"gateway-ch9-continuous-rx", true', boundary)
         self.assertEqual(
@@ -658,8 +651,8 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         mesh_rx = helper.index(
             "RADIO_GUARD_UWB_CLIENT_MESH_RX", owner
         )
-        survey_guard = helper.index("!anchor_uwb_window_active()", mesh_rx)
-        click_guard = helper.index("!anchor_click_window_active()", survey_guard)
+        window_guard = helper.index("!anchor_uwb_window_active()", mesh_rx)
+        click_guard = helper.index("!anchor_click_window_active()", window_guard)
         abort = helper.index(
             "dwm3000_driver_request_receive_abort(", click_guard
         )
@@ -676,8 +669,8 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(begin, stop)
         self.assertLess(stop, owner)
         self.assertLess(owner, mesh_rx)
-        self.assertLess(mesh_rx, survey_guard)
-        self.assertLess(survey_guard, click_guard)
+        self.assertLess(mesh_rx, window_guard)
+        self.assertLess(window_guard, click_guard)
         self.assertLess(click_guard, abort)
         self.assertLess(abort, wait)
         self.assertLess(wait, send)
@@ -953,12 +946,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             queued, "if (gateway_priority_control)"
         )
 
-        self.assertIn(
-            "MSG_SURVEY_DISCOVERY_START",
-            listener[classify:queue],
-            "survey START is one valid gateway control that can interrupt a "
-            "route-reply wait",
-        )
         yield_match = re.search(
             r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*true;\s*"
             r"last_ret\s*=\s*-EAGAIN;",
@@ -1646,9 +1633,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         classify = function_body(
             REPORT_EVENT_TX, "mesh_outbound_is_topology_operation_uplink"
         )
-        keep_waiting = function_body(
-            REPORT_EVENT_TX, "mesh_event_propose_keep_waiting"
-        )
         propose = function_body(
             REPORT_EVENT_TX,
             "mesh_propose_event_after_channel5_contact_authorized",
@@ -1663,19 +1647,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             REPORT_EVENT_TX, "mesh_event_propose_terminal_failure"
         )
 
-        self.assertIn("mesh_outbound_is_survey_uplink", classify)
         self.assertIn("mesh_outbound_is_assignment_response", classify)
-        self.assertIn(
-            "mesh_event_propose_has_pending_survey_uplink()",
-            keep_waiting,
-        )
-        self.assertIn(
-            "mesh_event_propose_topology_operation", keep_waiting
-        )
-        self.assertIn(
-            "mesh_event_survey_cadence_wait_deadline_ms(now_ms)",
-            keep_waiting,
-        )
         active = propose.index(
             "if (mesh_event_propose_retry.active"
         )
@@ -1703,19 +1675,9 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertLess(active, active_topology)
         self.assertLess(active_topology, promote_once)
         self.assertLess(promote_once, extend)
-        self.assertNotIn(
-            "mesh_event_propose_has_pending_survey_uplink",
-            propose[active:extend],
-        )
         self.assertLess(begin, initial_topology)
         self.assertLess(initial_topology, topology_deadline)
         self.assertLess(topology_deadline, ordinary_deadline)
-        self.assertNotIn(
-            "mesh_event_propose_has_pending_survey_uplink", propose
-        )
-        self.assertNotIn(
-            "mesh_event_survey_cadence_wait_deadline_ms", propose
-        )
         topology_horizon = function_body(
             REPORT_EVENT_TX, "mesh_event_topology_contact_deadline_ms"
         )
@@ -1759,51 +1721,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertNotIn("mesh_relay_abandon_upstream_parent_at", terminal)
         self.assertNotIn("ROUTE_DELIVERY_TRY_ALTERNATE", terminal)
         self.assertNotIn("mesh_schedule_route_request", terminal)
-
-    def test_all_survey_control_results_join_topology_repair_regardless_of_status(self):
-        classify = function_body(
-            REPORT_EVENT_TX, "mesh_outbound_is_topology_operation_uplink"
-        )
-        survey_control = function_body(
-            REPORT_EVENT_TX, "mesh_outbound_is_survey_control_response"
-        )
-        topology_ack = function_body(
-            REPORT_EVENT_TX, "mesh_outbound_is_topology_ack_confirm"
-        )
-
-        self.assertIn(
-            "mesh_outbound_is_survey_control_response(out)", classify
-        )
-        self.assertRegex(
-            survey_control,
-            r"out->packet\.msg_type\s*[!=]=\s*MSG_COMMAND_RESULT",
-        )
-        self.assertIn("TLV_COMMAND_ID", survey_control)
-        for command_id in (
-            "CMD_SURVEY_PREPARE_PAIR",
-            "CMD_SURVEY_START_PAIR",
-            "CMD_SURVEY_ABORT",
-        ):
-            self.assertIn(command_id, survey_control)
-        self.assertNotIn("TLV_COMMAND_STATUS", survey_control)
-        self.assertNotIn("COMMAND_OK", survey_control)
-        self.assertRegex(
-            survey_control,
-            r"return command_id == CMD_SURVEY_PREPARE_PAIR\s*\|\|\s*"
-            r"command_id == CMD_SURVEY_START_PAIR\s*\|\|\s*"
-            r"command_id == CMD_SURVEY_ABORT;",
-            "every survey control result needs the topology retry policy",
-        )
-        self.assertIn("mesh_outbound_is_topology_ack_confirm(out)", classify)
-        self.assertIn("MSG_GATEWAY_ACK_CONFIRM", topology_ack)
-        self.assertIn("mesh_gateway_ack_confirm_payload_parse", topology_ack)
-        self.assertRegex(
-            topology_ack,
-            r"return confirmed\.msg_type == MSG_COMMAND_RESULT\s*\|\|\s*"
-            r"confirmed\.msg_type == MSG_SURVEY_DISCOVERY_REPORT\s*\|\|\s*"
-            r"confirmed\.msg_type == MSG_SURVEY_PAIR_RESULT;",
-            "terminal topology ACK_CONFIRM packets need the same repair policy",
-        )
 
     def test_retransmit_repairs_missing_selected_parent_despite_downstream_link(self):
         helper = function_body(
@@ -1937,7 +1854,7 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
 
     def test_timing_negotiation_wake_is_not_marked_control_followup(self):
         wake = function_body(
-            REPORT_ROUTE_CONTROL, "mesh_send_route_wake_train"
+            REPORT_ROUTE_CONTROL, "mesh_send_route_wake_train_with_duration"
         )
         base_flags = wake.index(
             "config->flags = FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | "
@@ -2553,8 +2470,6 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
         self.assertIn("pending->packet.dst_id != GATEWAY_ID", classifier)
         self.assertIn("FLAG_GATEWAY_ACK_REQUIRED", classifier)
         self.assertIn("MSG_COMMAND_RESULT", classifier)
-        self.assertIn("MSG_SURVEY_DISCOVERY_REPORT", classifier)
-        self.assertIn("MSG_SURVEY_PAIR_RESULT", classifier)
 
         scan = function_body(ANCHOR_RADIO, "anchor_uwb_scan_work_handler")
         snapshot = scan.index(
@@ -2932,8 +2847,14 @@ class MeshRfRetrySourceInvariantTests(unittest.TestCase):
             "mesh_send_c5_flood_now_until",
             "mesh_try_send_c5_flood_resume",
         ):
-            body = function_body(REPORT, name)
-            wake = body.index("mesh_send_route_wake_train(")
+            body = function_body(REPORT_TRANSPORT, name)
+            wake = min(
+                index for index in (
+                    body.find("mesh_send_route_wake_train("),
+                    body.find("mesh_send_route_wake_train_with_duration("),
+                )
+                if index >= 0
+            )
             turnaround = body.index(
                 "mesh_wait_for_c5_control_followup_turnaround", wake
             )

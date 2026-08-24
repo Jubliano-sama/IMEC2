@@ -27,8 +27,6 @@ from .protocol import (
     MSG_MESH_DATA,
     MSG_RESULT_BUNDLE,
     MSG_SELF_TEST_REPORT,
-    MSG_SURVEY_DISCOVERY_REPORT,
-    MSG_SURVEY_PAIR_RESULT,
     Packet,
     is_gateway_assignment_publisher_event,
     validate_gateway_command_event_packet,
@@ -51,8 +49,6 @@ GATEWAY_ACK_REQUIRED_MESSAGE_TYPES = frozenset(
         MSG_ANCHOR_HEARTBEAT,
         MSG_COMMAND_RESULT,
         MSG_RESULT_BUNDLE,
-        MSG_SURVEY_DISCOVERY_REPORT,
-        MSG_SURVEY_PAIR_RESULT,
     }
 )
 

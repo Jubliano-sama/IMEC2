@@ -1461,8 +1461,6 @@ static bool gateway_semantic_delivery_requires_commit(
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
     case MSG_GATEWAY_ACK_CONFIRM:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return true;
     default:
         return false;
@@ -1789,6 +1787,21 @@ static int process_relay_actions(struct mesh_sim_world *world,
                                         result->retransmit.packet.message_age_ms);
         if (ret != MESH_SIM_OK) {
             return ret;
+        }
+    }
+    if ((result->actions &
+         MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED) != 0u) {
+        struct proto_packet confirmed_packet = node->relay.pending.packet;
+        uint8_t confirmed_digest[SEMANTIC_DIGEST_SHA256_LEN];
+
+        memcpy(confirmed_digest,
+               node->relay.outbox_record.semantic_digest,
+               sizeof(confirmed_digest));
+        remove_queued_packet_identity(node, &confirmed_packet);
+        ret = mesh_relay_commit_next_hop_custody_terminal(
+            &node->relay, &confirmed_packet, confirmed_digest);
+        if (ret != PROTO_OK) {
+            return mesh_sim_fail(world, MESH_SIM_ERR_PROTOCOL);
         }
     }
     if ((result->actions & MESH_RELAY_ACTION_TX_GATEWAY_CONFIRMED) != 0u) {

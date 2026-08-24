@@ -12,7 +12,6 @@ from .protocol import CMD_FORCE_REDISCOVERY, CMD_REBOOT, CMD_CLEAR_ROUTE
 # These commands must remain immediate when they are exposed by the GUI.  They
 # either are the preflight itself or exist to stop/maintain an active operation.
 CMD_STOP_HEARTBEAT = 0x000A
-CMD_SURVEY_ABORT = 0x0103
 CMD_ML_LIVE_TRACKING_HEARTBEAT = 0x8004
 CMD_ML_STOP_LIVE_TRACKING = 0x8005
 PREFLIGHT_EXEMPT_COMMAND_IDS = frozenset(
@@ -21,7 +20,6 @@ PREFLIGHT_EXEMPT_COMMAND_IDS = frozenset(
         CMD_CLEAR_ROUTE,
         CMD_STOP_HEARTBEAT,
         CMD_FORCE_REDISCOVERY,
-        CMD_SURVEY_ABORT,
         CMD_ML_LIVE_TRACKING_HEARTBEAT,
         CMD_ML_STOP_LIVE_TRACKING,
     }

@@ -72,7 +72,6 @@ BUILD_ASSERT((DT_REG_SIZE(DT_NODELABEL(storage_partition)) %
 #define APP_DURABLE_STATE_VALID_FLAG 1u
 
 #define APP_DURABLE_STATE_ID_GATEWAY_COMMAND UINT16_C(0x010f)
-#define APP_DURABLE_STATE_ID_SURVEY_GENERATION UINT16_C(0x01a1)
 #define APP_DURABLE_STATE_ID_CLICK_SEQUENCE UINT16_C(0x0201)
 #define APP_DURABLE_STATE_ID_BOOT_INCARNATION UINT16_C(0x0300)
 #define APP_DURABLE_STATE_ID_ANCHOR_ASSIGNMENT UINT16_C(0x0301)
@@ -247,22 +246,6 @@ static const struct durable_counter_spec durable_counter_specs[] = {
         .reservation_count = APP_DURABLE_STATE_COMMAND_BLOCK_SIZE,
         .high_water_alignment = APP_DURABLE_STATE_COMMAND_BLOCK_SIZE,
         .counter_is_u32 = true,
-    },
-    {
-        .type = APP_DURABLE_STATE_SURVEY_GENERATION,
-        .nvs_id = APP_DURABLE_STATE_ID_SURVEY_GENERATION,
-        .restore_roles = APP_DURABLE_STATE_ROLE_BIT(
-                             APP_DURABLE_STATE_ROLE_ANCHOR) |
-                         APP_DURABLE_STATE_ROLE_BIT(
-                             APP_DURABLE_STATE_ROLE_GATEWAY),
-        .reserve_roles = APP_DURABLE_STATE_ROLE_BIT(
-            APP_DURABLE_STATE_ROLE_GATEWAY),
-        .advance_roles = APP_DURABLE_STATE_ROLE_BIT(
-            APP_DURABLE_STATE_ROLE_ANCHOR),
-        .first_install_floor = 0u,
-        .reservation_count = 1u,
-        .scope_required = true,
-        .skip_low_u32_zero = true,
     },
 };
 

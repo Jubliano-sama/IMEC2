@@ -47,7 +47,7 @@ class GatewayCommandEvent:
         return bool(self.flags & 0x01) and self.stage == 12
 
 
-GATEWAY_COMMAND_KIND_NAMES = {1: "Anchor enumeration", 2: "Anchor survey", 3: "Route refresh"}
+GATEWAY_COMMAND_KIND_NAMES = {1: "Anchor enumeration", 3: "Route refresh"}
 GATEWAY_COMMAND_STAGE_NAMES = {
     1: "Accepted", 2: "Queued", 3: "Dispatching", 4: "Flood attempt",
     5: "Retry / backoff", 6: "Anchor enumerated", 7: "Enumeration complete",
@@ -57,8 +57,7 @@ GATEWAY_COMMAND_STAGE_NAMES = {
 GATEWAY_COMMAND_REASON_NAMES = {
     0: "None", 1: "Invalid request", 2: "Busy", 3: "No anchors", 4: "Capacity",
     5: "Radio", 6: "Timeout", 7: "Malformed response", 8: "Route unavailable",
-    9: "Retry exhausted", 10: "Pair incomplete", 11: "Pair range failed",
-    12: "Aborted", 13: "Internal", 14: "Survey radio preparation failed",
+    9: "Retry exhausted", 13: "Internal",
 }
 
 

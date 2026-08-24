@@ -10,7 +10,6 @@
 struct app_mesh_c5_flood_priority_state {
     bool response_priority;
     bool anchor_busy;
-    bool survey_busy;
     bool gateway_ch5_preempt;
 };
 

@@ -10,10 +10,27 @@ from source_text import read_composed_source
 ROOT = Path(__file__).resolve().parents[2]
 APP_SRC = ROOT / "app" / "src"
 
+
+def function_body(source: str, name: str) -> str:
+    match = re.search(
+        rf"\b{re.escape(name)}\s*\([^;{{}}]*\)\s*\{{", source
+    )
+    if match is None:
+        raise AssertionError(f"function definition not found: {name}")
+    start = source.index("{", match.start())
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"unterminated function: {name}")
+
 # Existing callers are migration debt, not precedent for new protocol modules.
 LEGACY_REPORT_CLIENTS = {
     "app_anchor.c",
-    "app_anchor_survey_discovery.c",
     "app_gateway_ble.c",
     "app_mesh_test.c",
     "main.c",
@@ -32,7 +49,6 @@ TRANSPORT_STATE_IMPLEMENTATION = {
 }
 LEGACY_TRANSPORT_CLIENTS = {
     "app_anchor.c",
-    "app_anchor_survey_discovery.c",
     "app_clicker.c",
     "app_config.h",
     "app_discovery_assignment_stack.h",
@@ -196,16 +212,12 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "static int mesh_complete_terminal_release(", complete_start
         )
         complete = report[complete_start:complete_end]
-        producer_cleanup = complete.index(
-            "anchor_survey_delivery_gateway_confirmed"
-        )
         facade_proof = complete.index(
             "app_node_comm_note_gateway_confirmed_digest_at("
         )
         relay_commit = complete.index(
             "mesh_relay_commit_gateway_ack_confirm_terminal("
         )
-        self.assertLess(producer_cleanup, relay_commit)
         self.assertLess(relay_commit, facade_proof)
         self.assertNotIn("mesh_save_outbox_durable", complete)
         self.assertNotIn("mesh_deferred_outbox_pending", complete)
@@ -333,7 +345,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         # ACK payload commits the stable acknowledged packet.  Coalescing is
         # deliberately closed to this profile/type and exact reverse edge.
         self.assertEqual(
-            ["MSG_GATEWAY_ACK", "MSG_GATEWAY_ACK"],
+            ["MSG_COMMAND", "MSG_GATEWAY_ACK", "MSG_GATEWAY_ACK"],
             re.findall(r"MSG_[A-Z0-9_]+", source),
         )
         coalescer = source[
@@ -468,7 +480,7 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         self.assertIn("app_node_comm_take_delivery_event_for(", source)
         self.assertGreaterEqual(source.count("app_node_comm_require_running()"), 7)
 
-        for name in ("app_anchor.c", "app_anchor_survey_discovery.c", "app_clicker.c"):
+        for name in ("app_anchor.c", "app_clicker.c"):
             with self.subTest(name=name):
                 protocol_source = (APP_SRC / name).read_text(encoding="utf-8")
                 self.assertNotIn("node_comm_submit(", protocol_source)
@@ -1099,11 +1111,8 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
         immediate_action = ack_path.index(
             "APP_MESH_GATEWAY_ACK_ACTION_SEND_CURRENT_CHANNEL9"
         )
-        guard = ack_path.index(
-            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", immediate_action
-        )
         immediate_send = ack_path.index(
-            "mesh_send_causal_channel9_response(", guard
+            "mesh_send_causal_channel9_response(", immediate_action
         )
         send_success = ack_path.index("if (ret == 0)", immediate_send)
         success_exit = ack_path.index("goto after_gateway_ack", send_success)
@@ -1111,11 +1120,22 @@ class NodeCommSourceBoundaryTests(unittest.TestCase):
             "app_node_comm_submit_control_response(", success_exit
         )
 
-        self.assertLess(immediate_action, guard)
-        self.assertLess(guard, immediate_send)
+        self.assertLess(immediate_action, immediate_send)
         self.assertLess(immediate_send, send_success)
         self.assertLess(send_success, success_exit)
         self.assertLess(success_exit, fallback_admission)
+        causal_send = function_body(
+            report, "mesh_send_causal_channel9_response"
+        )
+        handoff = causal_send.index("mesh_rx_handoff_begin_control(")
+        guard = causal_send.index(
+            "k_msleep(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS)", handoff
+        )
+        radio_send = causal_send.index(
+            "mesh_send_outbound_keep_channel9_awake(", guard
+        )
+        self.assertLess(handoff, guard)
+        self.assertLess(guard, radio_send)
         probe_retry_owned = ack_path.index(
             "rx->packet.msg_type == MSG_GATEWAY_ROUTE_REQ", success_exit
         )

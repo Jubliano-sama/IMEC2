@@ -9,9 +9,9 @@
 #include "protocol.h"
 
 /*
- * Five immutable survey samples (or stress datagrams) plus one slot that
- * ordinary reliable uplinks cannot consume.  Survey execution reserves its
- * complete five-record burst before taking the radio.
+ * Five immutable priority uplinks (or stress datagrams) plus one slot that
+ * ordinary reliable uplinks cannot consume. A producer reserves its complete
+ * five-record burst before taking the radio.
  */
 #define APP_NODE_COMM_MAX_DELIVERIES 6u
 #define APP_NODE_COMM_PROTOCOL_RESERVED_DELIVERIES 1u
@@ -79,7 +79,7 @@ struct app_node_comm_durable_attempt_ops {
 /* Every reserved record belongs to one semantic producer generation. */
 enum app_node_comm_reservation_owner_kind {
     APP_NODE_COMM_RESERVATION_OWNER_RELIABLE_UPLINK = 1,
-    APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT,
+    APP_NODE_COMM_RESERVATION_OWNER_PRIORITY_RELIABLE_UPLINK,
     APP_NODE_COMM_RESERVATION_OWNER_COMMAND_RESPONSE,
     APP_NODE_COMM_RESERVATION_OWNER_BOUNDED_CONTROL,
 };
@@ -229,18 +229,18 @@ int app_node_comm_cancel_reliable_uplink_reservation(
  * durable attempt journal, but they do not gain admission to the protocol
  * reserve merely by selecting that retry profile.
  */
-int app_node_comm_reserve_durable_reliable_uplinks(
+int app_node_comm_reserve_priority_reliable_uplinks(
     uint64_t owner_generation,
     size_t reservation_count,
     struct app_node_comm_reservation_lease *reservation_leases,
     size_t reservation_lease_capacity);
-int app_node_comm_commit_durable_reliable_uplink_reservation(
+int app_node_comm_commit_priority_reliable_uplink_reservation(
     const struct app_node_comm_reservation_lease *reservation,
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
     uint32_t client_token,
     uint32_t *handle_out);
-int app_node_comm_cancel_durable_reliable_uplink_reservation(
+int app_node_comm_cancel_priority_reliable_uplink_reservation(
     const struct app_node_comm_reservation_lease *reservation);
 int app_node_comm_reserve_protocol_response(
     uint64_t owner_generation,

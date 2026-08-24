@@ -88,23 +88,8 @@ uint32_t mesh_relay_outbox_expiry_s_for_packet(
     if (packet->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
         return expiry_s;
     }
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-        packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
-        return SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S;
-    }
     if (packet->msg_type != MSG_COMMAND_RESULT) {
         return expiry_s;
-    }
-    if (command_result_has_command_id(payload,
-                                      payload_len,
-                                      CMD_SURVEY_PREPARE_PAIR) ||
-        command_result_has_command_id(payload,
-                                      payload_len,
-                                      CMD_SURVEY_START_PAIR) ||
-        command_result_has_command_id(payload,
-                                      payload_len,
-                                      CMD_SURVEY_ABORT)) {
-        return SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S;
     }
     if (command_result_has_command_id(payload,
                                       payload_len,
@@ -2478,8 +2463,7 @@ static bool gateway_targeted_control_can_forward_independently(
 
     if (relay == NULL || packet == NULL ||
         packet->src_id != relay->gateway_id ||
-        (packet->msg_type != MSG_COMMAND &&
-         packet->msg_type != MSG_SURVEY_PAIR_PREPARE) ||
+        packet->msg_type != MSG_COMMAND ||
         !id_is_unicast(packet->dst_id) ||
         packet->dst_id == relay->local_id ||
         packet->ttl <= 1u ||
@@ -2514,8 +2498,6 @@ bool mesh_relay_packet_requires_channel9_payload_event(
     case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
     default:
         return false;
@@ -2537,8 +2519,6 @@ bool mesh_relay_packet_can_queue_gateway_report(
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
     case MSG_MESH_DATA:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
     default:
         return false;
@@ -2717,9 +2697,6 @@ static bool gateway_bound_packet_flags_valid(
     case MSG_COMMAND_RESULT:
         return packet->flags == ack || packet->flags == diagnostic;
     case MSG_MESH_DATA:
-        return packet->flags == diagnostic;
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         return packet->flags == diagnostic;
     default:
         return true;
@@ -2977,94 +2954,6 @@ static int handle_collection_eack_for_pending(struct mesh_relay *relay,
 }
 #endif
 
-/*
- * Dedicated survey controls are gateway-owned protocol messages, not generic
- * application datagrams. Validate their complete immutable envelope before
- * duplicate history, local delivery, reverse-route learning, or forwarding
- * can consume the packet.
- */
-static bool survey_gateway_control_semantics_valid(
-    const struct mesh_relay *relay,
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t previous_hop_id)
-{
-    struct operation_policy_set policies;
-    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
-    uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
-    int ret;
-
-    if (packet == NULL ||
-        (packet->msg_type != MSG_SURVEY_DISCOVERY_START &&
-         packet->msg_type != MSG_SURVEY_PAIR_PREPARE)) {
-        return true;
-    }
-    if (relay == NULL || relay->role != MESH_RELAY_ROLE_ANCHOR ||
-        !id_is_unicast(relay->gateway_id) ||
-        packet->src_id != relay->gateway_id ||
-        packet->flags != FLAG_DIAGNOSTIC ||
-        packet->payload_len != payload_len ||
-        payload == NULL ||
-        packet->ttl == 0u || packet->ttl > SURVEY_DEFAULT_TTL ||
-        !id_is_unicast(previous_hop_id) ||
-        previous_hop_id == relay->local_id ||
-        ((packet->ttl == SURVEY_DEFAULT_TTL) !=
-         (previous_hop_id == relay->gateway_id))) {
-        return false;
-    }
-
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
-        struct survey_discovery_config config;
-        struct survey_discovery_timing timing;
-
-        if (packet->dst_id != MESH_BROADCAST_ID) {
-            return false;
-        }
-        ret = survey_extract_discovery_start_tlvs(
-            payload, payload_len, &config);
-        if (ret != PROTO_OK || config.operation_generation == 0u ||
-            packet->session_id !=
-                survey_operation_session_id(config.operation_generation) ||
-            operation_policy_set_from_tlvs(
-                payload, payload_len, &policies) != PROTO_OK ||
-            policies.assignment_present ||
-            !policies.discovery_present ||
-            !policies.pair_present) {
-            return false;
-        }
-        ret = survey_discovery_timing_from_age(
-            &config, packet->message_age_ms, &timing);
-        return ret == PROTO_OK && !timing.expired;
-    }
-
-    {
-        struct survey_pair pair;
-
-        if (!id_is_unicast(packet->dst_id) ||
-            packet->dst_id == relay->gateway_id ||
-            survey_extract_pair_tlvs(payload, payload_len, &pair) !=
-                PROTO_OK ||
-            pair.operation_generation == 0u ||
-            packet->session_id !=
-                survey_operation_session_id(pair.operation_generation) ||
-            (packet->dst_id != pair.initiator_id &&
-             packet->dst_id != pair.responder_id) ||
-            operation_policy_set_from_tlvs(
-                payload, payload_len, &policies) != PROTO_OK ||
-            policies.assignment_present ||
-            policies.discovery_present ||
-            survey_round_id_extract_tlv(
-                payload, payload_len, &round_id) != PROTO_OK ||
-            round_id == SURVEY_LEGACY_ROUND_ID ||
-            survey_round_commitment_extract_tlv(
-                payload, payload_len, round_commitment) != PROTO_OK) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static bool broadcast_packet_needs_forward(const struct mesh_relay *relay,
                                            const struct proto_packet *packet,
                                            const uint8_t *payload,
@@ -3072,9 +2961,6 @@ static bool broadcast_packet_needs_forward(const struct mesh_relay *relay,
 {
     if (packet->dst_id != MESH_BROADCAST_ID || packet->ttl <= 1u) {
         return false;
-    }
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
-        return true;
     }
     if (packet->msg_type == MSG_GATEWAY_COLLECTION_EACK) {
         return collection_eack_broadcast_valid(relay, packet, payload, payload_len);
@@ -3126,14 +3012,9 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->queued_at_ms = now_ms;
     out->queued_at_valid = true;
-    /*
-     * Survey-start forwarding owns its copies inside the generic bounded
-     * flood. Enumeration controls instead own exactly three diversified outer
-     * opportunities; the transport sends each of those as one physical copy.
-     */
-    out->flood_retry_count = packet->msg_type == MSG_SURVEY_DISCOVERY_START ?
-                                 0u :
-                             enumeration_control ?
+    /* Enumeration controls own exactly three diversified outer
+     * opportunities; the transport sends each as one physical copy. */
+    out->flood_retry_count = enumeration_control ?
                                  MESH_ENUMERATION_RELAY_COPY_COUNT - 1u :
                                  flood_control.retry_count;
     if (packet->msg_type == MSG_COMMAND) {
@@ -3203,8 +3084,6 @@ static bool gateway_delivery_requires_commit(
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
     case MSG_GATEWAY_ACK_CONFIRM:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return true;
     default:
         return false;

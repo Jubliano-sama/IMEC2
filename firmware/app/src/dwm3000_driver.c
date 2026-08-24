@@ -86,7 +86,7 @@ static atomic_t receive_abort_enabled;
  * after proving the slower path still has headroom.
  *
  * Current timing-critical frame sizes before the radio FCS are 42 B for a
- * diagnostic/survey poll, 46 B for a normal-click poll, 50 B for a response,
+ * diagnostic poll, 46 B for a normal-click poll, 50 B for a response,
  * 57 B for a final, and 50 B for a report. The worst case remains the compact
  * poll: the initiator receives an 8 B longer response before scheduling the
  * final than the responder receives before scheduling the response. At

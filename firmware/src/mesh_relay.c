@@ -6,8 +6,6 @@
 #include "gateway_command.h"
 #include "mesh.h"
 #include "semantic_digest.h"
-#include "survey.h"
-#include "survey_round_control.h"
 
 #include <string.h>
 
@@ -23,19 +21,10 @@ _Static_assert(sizeof(struct mesh_relay_result) <=
                (3u * sizeof(struct mesh_outbound)) +
                    sizeof(struct operation_policy_set) + 48u,
                "relay result must retain only three simultaneous outbound buffers");
-_Static_assert(SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u >=
-                   SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS,
-               "survey outbox expiry must cover maximum relayed custody");
 _Static_assert(DISCOVERY_ASSIGNMENT_COMMAND_EXPIRY_S * 1000u +
                    MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS + 1000u <=
                    INT32_MAX,
                "bounded gateway ACK history must remain wrap-safe");
-_Static_assert(SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S * 1000u +
-                   MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS + 1000u <=
-                   INT32_MAX,
-               "survey cleanup ACK history must remain wrap-safe");
-_Static_assert(2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS <= INT32_MAX,
-               "survey cleanup reservation must remain wrap-safe");
 _Static_assert(MESH_RELAY_RESULT_OFFER_EXPIRY_S <= INT32_MAX / 1000u,
                "result-offer reservation expiry must remain wrap-safe");
 _Static_assert(MESH_RELAY_GATEWAY_ACK_CONFIRM_REPLAY_MS +
@@ -257,31 +246,16 @@ static int mesh_relay_operation_policy_set_validate_complete(
     const struct operation_policy_set *set)
 {
     struct operation_policy policy;
-    int ret;
-
     if (set == NULL) {
         return PROTO_ERR_ARG;
     }
-    if (!set->assignment_present || !set->discovery_present ||
-        !set->pair_present) {
+    if (!set->assignment_present) {
         return PROTO_ERR_MALFORMED;
     }
 
     memset(&policy, 0, sizeof(policy));
     policy.family = OPERATION_POLICY_FAMILY_ASSIGNMENT;
     policy.value.assignment = set->assignment;
-    ret = operation_policy_validate(&policy);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    policy.family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY;
-    policy.value.discovery = set->discovery;
-    ret = operation_policy_validate(&policy);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    policy.family = OPERATION_POLICY_FAMILY_SURVEY_PAIR;
-    policy.value.pair = set->pair;
     return operation_policy_validate(&policy);
 }
 
@@ -306,18 +280,6 @@ static int mesh_relay_operation_policy_encode_complete(
     memset(&policy, 0, sizeof(policy));
     policy.family = OPERATION_POLICY_FAMILY_ASSIGNMENT;
     policy.value.assignment = set->assignment;
-    ret = operation_policy_append_tlv(local, sizeof(local), &offset, &policy);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    policy.family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY;
-    policy.value.discovery = set->discovery;
-    ret = operation_policy_append_tlv(local, sizeof(local), &offset, &policy);
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    policy.family = OPERATION_POLICY_FAMILY_SURVEY_PAIR;
-    policy.value.pair = set->pair;
     ret = operation_policy_append_tlv(local, sizeof(local), &offset, &policy);
     if (ret != PROTO_OK) {
         return ret;
@@ -2407,25 +2369,7 @@ static uint32_t gateway_ack_history_retention_ms_for(
 {
     uint32_t source_expiry_ms = 0u;
 
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-        packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
-        source_expiry_ms = SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u;
-    } else if (packet->msg_type == MSG_COMMAND_RESULT &&
-               (command_result_has_command_id(
-                    payload,
-                    payload_len,
-                    CMD_SURVEY_PREPARE_PAIR) ||
-                command_result_has_command_id(
-                    payload,
-                    payload_len,
-                    CMD_SURVEY_START_PAIR) ||
-                command_result_has_command_id(
-                    payload,
-                    payload_len,
-                    CMD_SURVEY_ABORT))) {
-        source_expiry_ms =
-            SURVEY_PAIR_CONTROL_RESULT_OUTBOX_EXPIRY_S * 1000u;
-    } else if (packet->msg_type == MSG_COMMAND_RESULT &&
+    if (packet->msg_type == MSG_COMMAND_RESULT &&
                command_result_has_command_id(
                    payload,
                    payload_len,
@@ -2893,230 +2837,6 @@ static int gateway_ack_history_owner_replacement_index(
     return replacement;
 }
 
-static bool gateway_ack_history_cleanup_result_header_valid(
-    const struct mesh_relay *relay,
-    const struct proto_packet *packet)
-{
-    return relay != NULL && packet != NULL &&
-           relay->role == MESH_RELAY_ROLE_GATEWAY &&
-           relay->local_id == relay->gateway_id &&
-           packet->msg_type == MSG_COMMAND_RESULT &&
-           packet->flags == FLAG_GATEWAY_ACK_REQUIRED &&
-           id_is_unicast(packet->src_id) &&
-           packet->src_id != relay->local_id &&
-           packet->dst_id == relay->local_id &&
-           packet->session_id != 0u && packet->seq != 0u;
-}
-
-static int gateway_ack_history_cleanup_reservation_index(
-    const struct mesh_gateway_ack_store *store,
-    uint8_t owner_index,
-    const struct proto_packet *packet)
-{
-    for (uint16_t i = MESH_RELAY_GATEWAY_ACK_CAPACITY;
-         i < MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY;
-         i++) {
-        const struct mesh_gateway_ack_identity_entry *identity =
-            &store->identities[i];
-
-        if (gateway_ack_identity_candidate_bit(store, i) &&
-            (identity->owner_state &
-             GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) == 0u &&
-            gateway_ack_identity_matches_packet(identity,
-                                                owner_index,
-                                                packet)) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-static int gateway_ack_history_cleanup_identity_index(
-    const struct mesh_gateway_ack_store *store,
-    uint8_t owner_index,
-    const struct proto_packet *packet)
-{
-    for (uint16_t i = MESH_RELAY_GATEWAY_ACK_CAPACITY;
-         i < MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY;
-         i++) {
-        if (gateway_ack_identity_matches_packet(&store->identities[i],
-                                                owner_index,
-                                                packet)) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
-static int gateway_ack_history_free_cleanup_reserve_index(
-    const struct mesh_gateway_ack_store *store,
-    uint32_t now_ms)
-{
-    int replacement = -1;
-    uint32_t shortest_remaining_ms = UINT32_MAX;
-
-    for (uint16_t i = MESH_RELAY_GATEWAY_ACK_CAPACITY;
-         i < MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY;
-         i++) {
-        const struct mesh_gateway_ack_identity_entry *identity =
-            &store->identities[i];
-        uint32_t remaining_ms;
-
-        if (!gateway_ack_identity_valid(identity)) {
-            return (int)i;
-        }
-        if ((identity->owner_state &
-             GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) == 0u ||
-            !gateway_ack_identity_confirmed_bit(store, i)) {
-            continue;
-        }
-        remaining_ms =
-            (int32_t)(identity->expires_at_ms - now_ms) <= 0 ?
-                0u : identity->expires_at_ms - now_ms;
-        if (replacement < 0 || remaining_ms < shortest_remaining_ms) {
-            replacement = (int)i;
-            shortest_remaining_ms = remaining_ms;
-        }
-    }
-    return replacement;
-}
-
-int mesh_relay_reserve_gateway_ack_cleanup_result(
-    struct mesh_relay *relay,
-    const struct proto_packet *expected_result,
-    uint32_t now_ms)
-{
-    struct mesh_gateway_ack_store *store;
-    struct mesh_gateway_ack_identity_entry *reservation;
-    int origin_index;
-    int identity_index;
-
-    if (!gateway_ack_history_cleanup_result_header_valid(
-            relay, expected_result) || relay->gateway_ack_store == NULL) {
-        return PROTO_ERR_ARG;
-    }
-    store = relay->gateway_ack_store;
-    gateway_ack_history_expire_stale(relay, now_ms);
-    origin_index = gateway_ack_history_find_origin_index(
-        relay, expected_result->src_id);
-    if (origin_index >= 0) {
-        identity_index = gateway_ack_history_cleanup_identity_index(
-            store, (uint8_t)origin_index, expected_result);
-        if (identity_index >= 0) {
-            struct mesh_gateway_ack_identity_entry *identity =
-                &store->identities[identity_index];
-
-            if ((identity->owner_state &
-                 GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) == 0u) {
-                identity->expires_at_ms =
-                    now_ms +
-                    (2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS);
-            }
-            return PROTO_OK;
-        }
-    }
-    identity_index = gateway_ack_history_free_cleanup_reserve_index(
-        store, now_ms);
-    if (identity_index < 0) {
-        return PROTO_ERR_NO_SPACE;
-    }
-    if (origin_index < 0) {
-        if (gateway_ack_history_origin_count(store) >=
-            MESH_RELAY_GATEWAY_ACK_ORIGIN_MAX) {
-            return PROTO_ERR_NO_SPACE;
-        }
-        origin_index = gateway_ack_history_free_origin_index(relay);
-        if (origin_index < 0) {
-            return PROTO_ERR_NO_SPACE;
-        }
-        gateway_ack_origin_clear(store, (uint8_t)origin_index);
-        store->origin_src_ids[origin_index] = expected_result->src_id;
-    }
-    reservation = &store->identities[identity_index];
-    gateway_ack_identity_clear(store, (uint16_t)identity_index);
-    reservation->session_id = expected_result->session_id;
-    reservation->expires_at_ms =
-        now_ms + (2u * SURVEY_PAIR_CONTROL_MAX_REQUEST_TIMEOUT_MS);
-    reservation->seq = expected_result->seq;
-    reservation->msg_type = expected_result->msg_type;
-    reservation->owner_state = (uint8_t)(origin_index + 1);
-    gateway_ack_identity_set_candidate_bit(store, (uint16_t)identity_index);
-    return PROTO_OK;
-}
-
-int mesh_relay_release_gateway_ack_cleanup_result(
-    struct mesh_relay *relay,
-    const struct proto_packet *expected_result)
-{
-    struct mesh_gateway_ack_store *store;
-    int origin_index;
-
-    if (!gateway_ack_history_cleanup_result_header_valid(
-            relay, expected_result) || relay->gateway_ack_store == NULL) {
-        return PROTO_ERR_ARG;
-    }
-    store = relay->gateway_ack_store;
-    origin_index = gateway_ack_history_find_origin_index(
-        relay, expected_result->src_id);
-    if (origin_index < 0) {
-        return PROTO_OK;
-    }
-    {
-        int identity_index = gateway_ack_history_cleanup_reservation_index(
-            store, (uint8_t)origin_index, expected_result);
-
-        if (identity_index < 0) {
-            return PROTO_OK;
-        }
-        gateway_ack_identity_clear(store, (uint16_t)identity_index);
-        if (gateway_ack_history_owner_count(
-                store, (uint8_t)origin_index) == 0u) {
-            gateway_ack_origin_clear(store, (uint8_t)origin_index);
-        }
-        return PROTO_OK;
-    }
-}
-
-int mesh_relay_gateway_ack_cleanup_pair_capacity(
-    struct mesh_relay *relay,
-    uint32_t now_ms,
-    uint32_t *retry_delay_ms)
-{
-    struct mesh_gateway_ack_store *store;
-    bool blocked = false;
-
-    if (relay == NULL || retry_delay_ms == NULL ||
-        relay->role != MESH_RELAY_ROLE_GATEWAY ||
-        relay->gateway_ack_store == NULL) {
-        return PROTO_ERR_ARG;
-    }
-    store = relay->gateway_ack_store;
-    *retry_delay_ms = 0u;
-    gateway_ack_history_expire_stale(relay, now_ms);
-    for (uint16_t i = MESH_RELAY_GATEWAY_ACK_CAPACITY;
-         i < MESH_RELAY_GATEWAY_ACK_STORAGE_CAPACITY;
-         i++) {
-        const struct mesh_gateway_ack_identity_entry *identity =
-            &store->identities[i];
-        uint32_t remaining_ms;
-
-        if (!gateway_ack_identity_valid(identity) ||
-            ((identity->owner_state &
-              GATEWAY_ACK_HISTORY_SEMANTIC_IDENTITY) != 0u &&
-             gateway_ack_identity_confirmed_bit(store, i))) {
-            continue;
-        }
-        blocked = true;
-        remaining_ms =
-            (int32_t)(identity->expires_at_ms - now_ms) <= 0 ?
-                0u : identity->expires_at_ms - now_ms;
-        if (remaining_ms > *retry_delay_ms) {
-            *retry_delay_ms = remaining_ms;
-        }
-    }
-    return blocked ? PROTO_ERR_BUSY : PROTO_OK;
-}
-
 static bool gateway_ack_history_seen(
     struct mesh_relay *relay,
     const struct proto_packet *packet,
@@ -3413,19 +3133,11 @@ static int gateway_ack_history_can_accept(
         return PROTO_ERR_NO_SPACE;
     }
     {
-        int cleanup_reservation_index =
-            gateway_ack_history_cleanup_reservation_index(
-                store, (uint8_t)origin_index, packet);
         int identity_index = gateway_ack_history_find_identity_index(
             store,
             (uint8_t)origin_index,
             packet);
 
-        if (cleanup_reservation_index >= 0) {
-            return command_result_has_command_id(
-                       payload, payload_len, CMD_SURVEY_ABORT) ?
-                       PROTO_OK : PROTO_ERR_MALFORMED;
-        }
         if (identity_index >= 0) {
             const struct mesh_gateway_ack_identity_entry *identity =
                 &store->identities[identity_index];
@@ -3524,15 +3236,8 @@ static int gateway_ack_history_store(
         packet->msg_type == MSG_COMMAND_RESULT &&
         command_result_has_command_id(
             payload, payload_len, CMD_ASSIGN_DISCOVERY_SLOTS);
-    identity_index = initialize_origin ? -1 :
-        gateway_ack_history_cleanup_reservation_index(
-            store, (uint8_t)origin_index, packet);
-    if (identity_index >= 0 &&
-        !command_result_has_command_id(
-            payload, payload_len, CMD_SURVEY_ABORT)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    if (identity_index < 0 && !initialize_origin) {
+    identity_index = -1;
+    if (!initialize_origin) {
         identity_index = gateway_ack_history_find_identity_index(
             store, (uint8_t)origin_index, packet);
     }
@@ -3563,8 +3268,8 @@ static int gateway_ack_history_store(
         if (assignment_candidate_packet) {
             /*
              * CLAIM and TABLE ACK are one assignment-control owner. Reuse its
-             * older confirmed identity before touching unrelated lost survey
-             * ACK debt held by the same unprovisioned anchor.
+             * older confirmed identity before touching unrelated ACK debt
+             * held by the same unprovisioned anchor.
              */
             int candidate_index =
                 gateway_ack_history_assignment_candidate_identity_index(
@@ -3792,31 +3497,6 @@ static enum duplicate_classification duplicate_classify(
                                     semantic_digest) ?
            DUPLICATE_CLASS_EXACT :
            DUPLICATE_CLASS_NEW;
-}
-
-static bool survey_discovery_duplicate_reflood_due(
-    const struct mesh_relay *relay,
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint32_t now_ms)
-{
-    if (relay == NULL || packet == NULL ||
-        packet->msg_type != MSG_SURVEY_DISCOVERY_START ||
-        packet->dst_id != MESH_BROADCAST_ID) {
-        return false;
-    }
-
-    for (uint8_t i = 0u; i < MESH_RELAY_DUP_CACHE_SIZE; i++) {
-        const struct mesh_duplicate_entry *entry = &relay->duplicates[i];
-
-        if (entry->delivery_accepted &&
-            duplicate_matches_packet(entry, packet, payload, payload_len)) {
-            return (uint32_t)(now_ms - entry->last_seen_ms) >=
-                   SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS;
-        }
-    }
-    return false;
 }
 
 static void duplicate_store(struct mesh_relay *relay,

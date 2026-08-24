@@ -35,17 +35,6 @@ static bool anchor_claim_collection_candidate_allowed(
 #include "app_node_comm.h"
 
 #line 6569 __BASE_FILE__
-#define SURVEY_PAIR_RESULT_TIMING_TLV_MAX_LEN                            \
-    (PROTO_TLV_U8_ENCODED_LEN + (2u * PROTO_TLV_U16_ENCODED_LEN) +     \
-     PROTO_TLV_U32_ENCODED_LEN +                                       \
-     PROTO_TLV_HEADER_LEN + (6u * sizeof(uint32_t)))
-#define SURVEY_PAIR_RESULT_MAX_PAYLOAD_LEN                               \
-    (SURVEY_SAMPLE_TLV_MAX_LEN + PROTO_TLV_U64_ENCODED_LEN +           \
-     SURVEY_PAIR_RESULT_TIMING_TLV_MAX_LEN)
-
-BUILD_ASSERT(SURVEY_PAIR_RESULT_MAX_PAYLOAD_LEN <=
-                 APP_NODE_COMM_FROZEN_PAYLOAD_MAX_LEN,
-             "maximum survey pair result must fit durable communication");
 
 int anchor_uwb_scan_schedule_ms(uint32_t delay_ms)
 {
@@ -87,99 +76,6 @@ static uint32_t anchor_uwb_scan_blocked_retry_ms(void)
         return ANCHOR_UWB_SCAN_BUSY_RETRY_MS;
     }
     return anchor_uwb_scan_interval_ms;
-}
-
-static int anchor_queue_survey_sample_result(
-    const struct survey_pair *pair,
-    uint16_t round_id,
-    uint16_t sample_index,
-    uint64_t reporter_id,
-    const struct app_node_comm_reservation_lease *delivery_reservation,
-    const uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN],
-    const struct dwm3000_range_result *range_result)
-{
-    struct mesh_outbound outbound = {0};
-    struct survey_sample sample = {0};
-    struct dwm3000_range_result survey_result;
-    size_t payload_len = 0u;
-    uint16_t transport_sequence;
-    enum range_status status;
-    int64_t sample_local_ms;
-    int ret;
-
-    if (pair == NULL || reporter_id == 0u || round_commitment == NULL ||
-        delivery_reservation == NULL || delivery_reservation->token == 0u ||
-        delivery_reservation->owner_generation != pair->operation_generation ||
-        range_result == NULL) {
-        return -EINVAL;
-    }
-    ret = survey_pair_result_transport_sequence(round_id,
-                                                sample_index,
-                                                &transport_sequence);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-
-    status = range_status_valid(range_result->status) ?
-             range_result->status : RANGE_INTERNAL_ERROR;
-
-    sample.pair = *pair;
-    sample.round_id = round_id;
-    sample.sample_index = sample_index;
-    sample.distance_mm = range_result->distance_mm;
-    sample.quality = range_result->quality;
-    sample.range_status = status;
-    survey_result = *range_result;
-    /*
-     * Raw receiver diagnostics are click-debug artifacts and can add 110
-     * bytes to one record. Survey results retain the bounded scalar timing
-     * fields and raw DS-TWR timestamps, so every legal sample remains within
-     * the production durable-communication snapshot on every driver path.
-     */
-    survey_result.clicker_rx_diag_sampled = false;
-    survey_result.anchor_rx_diag_sampled = false;
-    survey_result.clicker_rx_diag_raw_len = 0u;
-    survey_result.anchor_rx_diag_raw_len = 0u;
-
-    ret = survey_append_sample_tlvs(outbound.payload,
-                                    sizeof(outbound.payload),
-                                    &payload_len,
-                                    &sample);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    sample_local_ms = range_result->exchange_started ?
-                      range_result->exchange_start_ms :
-                      k_uptime_get();
-    ret = anchor_append_sequence_time_tlvs(outbound.payload,
-                                           sizeof(outbound.payload),
-                                           &payload_len,
-                                           sample_local_ms);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    ret = append_range_result_timing_tlvs(outbound.payload,
-                                          sizeof(outbound.payload),
-                                          &payload_len,
-                                          &survey_result);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    ret = survey_init_result_packet_from_reporter(
-        &outbound.packet,
-        &sample,
-        reporter_id,
-        GATEWAY_ID,
-        transport_sequence,
-        (uint8_t)payload_len);
-    if (ret != PROTO_OK) {
-        return mesh_errno_from_proto(ret);
-    }
-    outbound.payload_len = (uint8_t)payload_len;
-    return app_anchor_survey_result_delivery_stage_reserved(
-        delivery_reservation,
-        &outbound,
-        round_commitment);
 }
 
 static bool anchor_relay_tx_active(void)
@@ -786,199 +682,6 @@ static uint32_t anchor_run_scheduled_uwb_ranges(const struct uwb_range_schedule_
     return retained_sleep_us;
 }
 
-#if defined(CONFIG_IMEC_ML_ANCHOR)
-static bool anchor_pair_schedule_matches_epoch(
-    const struct uwb_anchor_pair_schedule_frame *schedule)
-{
-    return schedule != NULL &&
-           anchor_uwb_session.epoch.active &&
-           schedule->network_id == anchor_uwb_session.epoch.network_id &&
-           schedule->clicker_id == anchor_uwb_session.epoch.clicker_id &&
-           schedule->survey_id == anchor_uwb_session.epoch.click_event_id &&
-           schedule->attempt_index == anchor_uwb_session.epoch.attempt_index &&
-           schedule->nonce == anchor_uwb_session.epoch.nonce &&
-           schedule->flags == anchor_uwb_session.epoch.flags;
-}
-
-static int anchor_send_pair_survey_result(
-    const struct uwb_anchor_pair_schedule_frame *schedule,
-    uint8_t pair_index,
-    uint64_t initiator_id,
-    uint64_t responder_id,
-    const struct dwm3000_range_result *range_result)
-{
-    struct uwb_anchor_pair_result_frame result = {0};
-    uint8_t frame[UWB_ANCHOR_PAIR_RESULT_LEN];
-    size_t frame_len = 0u;
-    int ret;
-
-    if (schedule == NULL || range_result == NULL) {
-        return -EINVAL;
-    }
-
-    result.network_id = schedule->network_id;
-    result.clicker_id = schedule->clicker_id;
-    result.survey_id = schedule->survey_id;
-    result.nonce = schedule->nonce;
-    result.initiator_id = initiator_id;
-    result.responder_id = responder_id;
-    result.pair_index = pair_index;
-    result.pair_count = schedule->pair_count;
-    result.seq = (uint8_t)(pair_index + 1u);
-    result.status = range_status_valid(range_result->status) ?
-                    range_result->status : RANGE_INTERNAL_ERROR;
-    result.quality = range_result->quality;
-    result.distance_mm = range_result->status == RANGE_OK ?
-                         range_result->distance_mm : 0;
-    result.rsl_dbm = range_result->rsl_sampled ? range_result->rsl_dbm : 0;
-    result.flags = schedule->flags;
-
-    ret = uwb_encode_anchor_pair_result(&result, frame, sizeof(frame), &frame_len);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-
-    ret = dwm3000_driver_send_frame(frame, frame_len, UWB_CONTROL_TX_TIMEOUT_MS);
-    if (ret < 0) {
-        LOG_WRN("anchor pair-survey result TX failed: survey=%u pair=%u ret=%d",
-                schedule->survey_id,
-                pair_index,
-                ret);
-        return ret;
-    }
-    LOG_INF("anchor pair-survey result TX: survey=%u pair=%u/%u initiator=0x%016llx responder=0x%016llx status=%s(%u) distance_mm=%d",
-            schedule->survey_id,
-            (unsigned int)(pair_index + 1u),
-            schedule->pair_count,
-            (unsigned long long)initiator_id,
-            (unsigned long long)responder_id,
-            range_status_name(result.status),
-            result.status,
-            result.distance_mm);
-    return 0;
-}
-
-static uint32_t anchor_run_clicker_pair_survey(
-    const struct uwb_anchor_pair_schedule_frame *schedule,
-    int64_t schedule_rx_ms)
-{
-    uint32_t retained_sleep_us = 0u;
-    uint16_t local_start_delay_ms = 0u;
-    bool local_listed = false;
-
-    if (!anchor_pair_schedule_matches_epoch(schedule)) {
-        LOG_WRN("anchor rejected pair-survey schedule identity");
-        return 0u;
-    }
-
-    for (uint8_t i = 0u; i < schedule->anchor_count; i++) {
-        if (schedule->anchor_ids[i] == DEVICE_ID) {
-            local_start_delay_ms = schedule->anchor_start_delay_ms[i];
-            local_listed = true;
-            break;
-        }
-    }
-    if (!local_listed) {
-        LOG_INF("anchor pair-survey schedule not for local anchor: survey=%u",
-                schedule->survey_id);
-        return 0u;
-    }
-
-    LOG_INF("anchor pair-survey start: survey=%u anchors=%u pairs=%u schedule_start_ms=%u stride_ms=%u window_ms=%u rx_guard_ms=%u",
-            schedule->survey_id,
-            schedule->anchor_count,
-            schedule->pair_count,
-            local_start_delay_ms,
-            schedule->pair_stride_ms,
-            schedule->pair_window_ms,
-            UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS);
-
-    for (uint8_t pair_index = 0u; pair_index < schedule->pair_count; pair_index++) {
-        struct dwm3000_range_request request = {0};
-        struct dwm3000_range_result range_result = {0};
-        uint64_t initiator_id = 0u;
-        uint64_t responder_id = 0u;
-        int64_t target_ms;
-        int low_power_ret = 0;
-        int ret;
-
-        ret = uwb_anchor_pair_at(schedule, pair_index, &initiator_id, &responder_id);
-        if (ret != PROTO_OK) {
-            continue;
-        }
-        if (DEVICE_ID != initiator_id && DEVICE_ID != responder_id) {
-            continue;
-        }
-
-        target_ms = schedule_rx_ms + local_start_delay_ms +
-                    ((int64_t)pair_index * schedule->pair_stride_ms);
-        request.initiator_id = initiator_id;
-        request.responder_id = responder_id;
-        request.network_id = schedule->network_id;
-        request.session_nonce = schedule->nonce;
-        request.responder_short_addr = uwb_session_short_addr_from_id(responder_id);
-        request.session_id = schedule->survey_id;
-        request.seq = (uint8_t)(pair_index + 1u);
-        request.round_index = 0u;
-        request.flags = schedule->flags;
-        request.timeout_ms = schedule->pair_window_ms;
-        request.reply_delay_uus = 0u;
-        request.capture_rsl = false;
-        request.skip_responder_report = false;
-
-        if (DEVICE_ID == initiator_id) {
-            retained_sleep_us = u32_saturating_add(
-                retained_sleep_us,
-                sleep_with_uwb_idle_until_ms(target_ms));
-            memset(&range_result, 0, sizeof(range_result));
-            range_result.status = RANGE_RX_TIMEOUT;
-            ret = dwm3000_driver_range_initiator(&request, &range_result);
-            if (ret < 0 && !range_status_valid(range_result.status)) {
-                range_result.status = RANGE_INTERNAL_ERROR;
-            }
-            (void)anchor_send_pair_survey_result(schedule,
-                                                 pair_index,
-                                                 initiator_id,
-                                                 responder_id,
-                                                 &range_result);
-            low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
-                                                   "pair-survey-initiator");
-        } else {
-            int64_t listen_start_ms = target_ms -
-                                      UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS;
-            int64_t listen_deadline_ms = target_ms + schedule->pair_window_ms;
-
-            retained_sleep_us = u32_saturating_add(
-                retained_sleep_us,
-                sleep_with_uwb_idle_until_ms(listen_start_ms));
-            while (k_uptime_get() < listen_deadline_ms) {
-                int64_t remaining_ms = listen_deadline_ms - k_uptime_get();
-
-                memset(&range_result, 0, sizeof(range_result));
-                range_result.status = RANGE_RX_TIMEOUT;
-                request.timeout_ms = (uint32_t)MAX(1, remaining_ms);
-                ret = dwm3000_driver_responder_poll_expected(DEVICE_ID,
-                                                             &request,
-                                                             request.timeout_ms,
-                                                             &range_result);
-                if (ret == -EAGAIN) {
-                    continue;
-                }
-                break;
-            }
-            low_power_ret = anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,
-                                                   "pair-survey-responder");
-        }
-        if (low_power_ret < 0) {
-            break;
-        }
-    }
-
-    LOG_INF("anchor pair-survey done: survey=%u", schedule->survey_id);
-    return retained_sleep_us;
-}
-#endif
-
 static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_claim,
                                     uint8_t first_quality,
                                     int64_t first_rx_ms,
@@ -1529,9 +1232,6 @@ discovery_miss:
 
             frame_type = frame[2];
             if (frame_type != MSG_UWB_RANGE_SCHEDULE &&
-#if defined(CONFIG_IMEC_ML_ANCHOR)
-                frame_type != MSG_UWB_ANCHOR_PAIR_SCHEDULE &&
-#endif
                 frame_type != MSG_UWB_RANGE_RELEASE) {
                 last_schedule_ret = -EBADMSG;
                 LOG_DBG("anchor ignored non-schedule frame while waiting for RANGE_SCHEDULE: type=0x%02x len=%u",
@@ -1585,38 +1285,6 @@ discovery_miss:
             claim_handled = true;
             goto claim_complete;
         }
-
-#if defined(CONFIG_IMEC_ML_ANCHOR)
-        if (frame_len >= UWB_SYNC_HEADER_LEN &&
-            frame[2] == MSG_UWB_ANCHOR_PAIR_SCHEDULE) {
-            struct uwb_anchor_pair_schedule_frame pair_schedule;
-
-            ret = uwb_decode_anchor_pair_schedule(frame, frame_len, &pair_schedule);
-            if (ret != PROTO_OK) {
-                LOG_WRN("anchor pair-survey schedule decode failed: %d", ret);
-                anchor_click_event_abort_if_needed("pair-schedule-decode");
-                claim_handled = true;
-                goto claim_complete;
-            }
-            if (!anchor_pair_schedule_matches_epoch(&pair_schedule)) {
-                LOG_WRN("anchor rejected pair-survey schedule identity: survey=%u",
-                        pair_schedule.survey_id);
-                anchor_click_event_abort_if_needed("pair-schedule-identity");
-                claim_handled = true;
-                goto claim_complete;
-            }
-            if (retained_sleep_us != NULL) {
-                *retained_sleep_us = u32_saturating_add(
-                    *retained_sleep_us,
-                    anchor_run_clicker_pair_survey(&pair_schedule, schedule_rx_ms));
-            } else {
-                (void)anchor_run_clicker_pair_survey(&pair_schedule, schedule_rx_ms);
-            }
-            anchor_click_event_abort_if_needed("pair-survey-complete");
-            claim_handled = true;
-            goto claim_complete;
-        }
-#endif
 
         ret = uwb_decode_range_schedule(frame, frame_len, &schedule);
         if (ret != PROTO_OK) {
@@ -3146,7 +2814,6 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
      * packet until its semantic-custody deadline.
      */
     if (anchor_uwb_window_active() ||
-        app_anchor_survey_runtime_radio_active() ||
         relay_tx_retry_blocks_scan ||
         protocol_flood_pending ||
         mesh_rx_active ||
@@ -3158,9 +2825,8 @@ static void anchor_uwb_scan_work_handler(struct k_work *work)
                             ch9_rx_conflict ? ch9_retry_ms : blocked_retry_ms;
 
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_ANCHOR_CH5_SCAN_BLOCKED win=%u survey=%u tx=%u retry_gap=%u flood=%u wait=%u rx=%u rxq=%u rxr=%u ack=%u ch9=%u rf=%u retry=%u interval=%u\n",
+            status_debug_printf("DBG_ANCHOR_CH5_SCAN_BLOCKED win=%u tx=%u retry_gap=%u flood=%u wait=%u rx=%u rxq=%u rxr=%u ack=%u ch9=%u rf=%u retry=%u interval=%u\n",
                                 anchor_uwb_window_active() ? 1u : 0u,
-                                app_anchor_survey_runtime_radio_active() ? 1u : 0u,
                                 relay_tx_active ? 1u : 0u,
                                 relay_tx_retry_blocks_scan ? 1u : 0u,
                                 protocol_flood_pending ? 1u : 0u,
@@ -3674,6 +3340,18 @@ scan_complete:
                 anchor_uwb_session.diagnostics.scan_rx_time_us,
                 anchor_uwb_session.diagnostics.awake_time_us,
                 anchor_uwb_session.diagnostics.false_wake_cooldowns);
+    {
+        const struct proto_packet scan_identity = {
+            .src_id = DEVICE_ID,
+            .dst_id = GATEWAY_ID,
+            .msg_type = MSG_MESH_DATA,
+        };
+
+        app_stack_workload_diag_anchor_scan_cycle(
+            &scan_identity,
+            (uint16_t)MIN(mesh_rx_queue_depth, UINT16_MAX),
+            anchor_uwb_window_active() ? 1u : 0u);
+    }
     anchor_uwb_scan_schedule_ms(next_scan_delay_ms);
 }
 
@@ -3711,24 +3389,6 @@ static int anchor_start_uwb_scan(void)
 }
 
 
-static int anchor_survey_delivery_gateway_confirmed(
-    const struct proto_packet *packet,
-    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
-{
-    if (packet == NULL || semantic_digest == NULL) {
-        return -EINVAL;
-    }
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT) {
-        return app_anchor_survey_delivery_gateway_confirmed(
-            packet, semantic_digest);
-    }
-    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
-        return app_anchor_survey_result_delivery_gateway_confirmed(
-            packet, semantic_digest);
-    }
-    return -ENOENT;
-}
-
 static int anchor_delivery_gateway_accepted(
     const struct proto_packet *packet,
     const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN])
@@ -3745,52 +3405,17 @@ static int anchor_delivery_gateway_confirmed(
                                                          semantic_digest);
 }
 
-static int anchor_survey_delivery_transport_released(
-    const struct proto_packet *packet,
-    const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
-    bool preempted)
-{
-    if (packet == NULL || semantic_digest == NULL) {
-        return -EINVAL;
-    }
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT) {
-        return app_anchor_survey_delivery_transport_released(
-            packet, semantic_digest, preempted);
-    }
-    if (packet->msg_type == MSG_SURVEY_PAIR_RESULT) {
-        return app_anchor_survey_result_delivery_transport_released(
-            packet, semantic_digest, preempted);
-    }
-    return 0;
-}
-
 static const struct app_mesh_report_callbacks anchor_mesh_report_callbacks = {
 #if DEVICE_ROLE == ROLE_ANCHOR
-    .anchor_survey_radio_active =
-        app_anchor_survey_runtime_radio_active,
-    .anchor_survey_operation_generation_active =
-        app_anchor_survey_runtime_operation_generation_active,
     .anchor_note_uwb_awake_since = anchor_note_uwb_awake_since,
     .anchor_handle_click_wake_claim = anchor_handle_mesh_click_wake_claim,
     .anchor_handle_local_command = anchor_handle_local_command,
-    .anchor_handle_survey_discovery_start =
-        app_anchor_survey_discovery_handle_start,
-    .anchor_handle_survey_pair_prepare =
-        app_anchor_survey_runtime_handle_pair_prepare,
     .anchor_delivery_gateway_accepted =
         anchor_delivery_gateway_accepted,
     .anchor_delivery_gateway_confirmed =
         anchor_delivery_gateway_confirmed,
-    .anchor_survey_delivery_gateway_confirmed =
-        anchor_survey_delivery_gateway_confirmed,
-    .anchor_survey_delivery_transport_released =
-        anchor_survey_delivery_transport_released,
 #endif
 #if DEVICE_ROLE == ROLE_GATEWAY
-    .gateway_handle_survey_discovery_report = gateway_handle_survey_discovery_report,
-    .gateway_note_anchor_boot_observation =
-        gateway_note_anchor_boot_observation,
-    .gateway_note_ack_confirm = gateway_note_survey_ack_confirm,
     .gateway_route_refresh_event = gateway_route_refresh_observe,
 #endif
 };

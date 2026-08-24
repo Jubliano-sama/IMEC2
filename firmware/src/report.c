@@ -879,7 +879,7 @@ int report_init_anchor_heartbeat_packet(struct proto_packet *packet,
 
     packet->msg_type = MSG_ANCHOR_HEARTBEAT;
     /* Heartbeats repeat periodically and carry status only.  Keeping one in
-     * gateway-ACK custody can block a time-bounded click or survey report at
+     * gateway-ACK custody can block a time-bounded click report at
      * a relay after the host has already observed the heartbeat. */
     packet->flags = 0u;
     packet->src_id = anchor_id;

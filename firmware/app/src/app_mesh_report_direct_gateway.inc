@@ -924,8 +924,7 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
 static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *probe,
                                                    const char *reason,
                                                    bool apply_tracked_ack,
-                                                   uint8_t attempt,
-                                                   bool bounded_scratch_acquire)
+                                                   uint8_t attempt)
 {
     int64_t uwb_window_start_ms = -1;
     struct mesh_direct_gateway_ack_debug ack_debug = {0};
@@ -946,10 +945,7 @@ static int mesh_send_direct_gateway_probe_and_wait(const struct mesh_outbound *p
     app_mesh_direct_probe_breadcrumb_note(APP_MESH_DIRECT_PROBE_PHASE_SCRATCH_ACQUIRE,
                                           attempt,
                                           probe->packet.seq);
-    ret = k_mutex_lock(&mesh_send_scratch_lock,
-                       bounded_scratch_acquire ?
-                           K_MSEC(APP_MESH_DIRECT_GATEWAY_SURVEY_SCRATCH_ACQUIRE_MS) :
-                           K_FOREVER);
+    ret = k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
     if (ret < 0) {
         return -EBUSY;
     }
@@ -1076,12 +1072,11 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                                                const char *reason,
                                                bool install_direct_route,
                                                enum app_mesh_direct_gateway_retry_mode retry_mode,
-                                               uint32_t survey_id)
+                                               uint32_t context_id)
 {
     struct mesh_outbound *probe = &mesh_direct_gateway_probe_scratch;
     struct app_mesh_direct_gateway_retry_state retry_state;
     struct app_mesh_direct_gateway_retry_decision retry_decision;
-    uint32_t policy_deadline_ms = 0u;
     int last_ret = -ETIMEDOUT;
     int ret;
 
@@ -1095,36 +1090,12 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
         install_direct_route = false;
     }
     if (app_mesh_direct_gateway_retry_init(&retry_state, retry_mode,
-                                           DEVICE_ID, survey_id) != 0) {
+                                           DEVICE_ID, context_id) != 0) {
         return -EINVAL;
     }
-    if (retry_mode == APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY) {
-        policy_deadline_ms = k_uptime_get_32() +
-            app_mesh_direct_gateway_retry_policy_horizon_ms(
-                retry_mode, SURVEY_DIRECT_GATEWAY_PROBE_ATTEMPT_MS,
-                APP_MESH_DIRECT_GATEWAY_SURVEY_SCRATCH_ACQUIRE_MS);
-    }
-
-    while ((ret = k_mutex_lock(&mesh_direct_gateway_probe_scratch_lock,
-                               K_NO_WAIT)) < 0) {
-        if (retry_mode != APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY) {
-            return -EBUSY;
-        }
-        (void)app_mesh_direct_gateway_retry_note(
-            &retry_state, APP_MESH_DIRECT_GATEWAY_ATTEMPT_RF_BUSY, 0u,
-            &retry_decision);
-        if (!retry_decision.retry) {
-            status_debug_printf("DBG_DIRECT_GW_PROBE_BUSY_TERMINAL attempts=%u deferrals=%u phase=outer-scratch\n",
-                                retry_state.attempts,
-                                retry_state.busy_deferrals);
-            return -EBUSY;
-        }
-        if (retry_decision.delay_ms >
-            app_mesh_direct_gateway_retry_deadline_remaining_ms(
-                k_uptime_get_32(), policy_deadline_ms)) {
-            return -ETIMEDOUT;
-        }
-        k_msleep(retry_decision.delay_ms);
+    ret = k_mutex_lock(&mesh_direct_gateway_probe_scratch_lock, K_NO_WAIT);
+    if (ret < 0) {
+        return -EBUSY;
     }
 
     while (true) {
@@ -1169,17 +1140,12 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                             probe->packet.seq,
                             now_ms,
                             (unsigned int)attempt,
-                            (unsigned int)(retry_mode ==
-                                APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY ?
-                                APP_MESH_DIRECT_GATEWAY_SURVEY_ATTEMPTS :
-                                APP_MESH_DIRECT_GATEWAY_ROUTE_ATTEMPTS),
+                            (unsigned int)APP_MESH_DIRECT_GATEWAY_ROUTE_ATTEMPTS,
                             reason == NULL ? "route" : reason);
         ret = mesh_send_direct_gateway_probe_and_wait(probe,
                                                       reason,
                                                       false,
-                                                      attempt,
-                                                      retry_mode ==
-                                                          APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY);
+                                                      attempt);
         if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
             status_debug_printf(
                 "DBG_DIRECT_GW_PROBE_RX_YIELD q=%u attempt=%u phase=post\n",
@@ -1224,24 +1190,12 @@ static int mesh_try_direct_gateway_route_probe(uint64_t target_id,
                 sys_rand32_get() : 0u,
             &retry_decision);
         if (!retry_decision.retry) {
-            if (retry_decision.busy_exhausted) {
-                status_debug_printf("DBG_DIRECT_GW_PROBE_BUSY_TERMINAL attempts=%u deferrals=%u phase=radio\n",
-                                    retry_state.attempts,
-                                    retry_state.busy_deferrals);
-            }
             break;
         }
         status_debug_printf("DBG_DIRECT_GW_PROBE_BACKOFF ms=%u next_attempt=%u busy_defer=%u\n",
                             retry_decision.delay_ms,
                             (unsigned int)(retry_state.attempts + 1u),
                             retry_decision.attempt_consumed ? 0u : 1u);
-        if (retry_mode == APP_MESH_DIRECT_GATEWAY_RETRY_SURVEY &&
-            retry_decision.delay_ms >
-                app_mesh_direct_gateway_retry_deadline_remaining_ms(
-                    k_uptime_get_32(), policy_deadline_ms)) {
-            last_ret = -ETIMEDOUT;
-            break;
-        }
         k_msleep(retry_decision.delay_ms);
     }
 
@@ -1312,7 +1266,6 @@ static int mesh_request_route_owned(
     struct app_mesh_route_request_policy_state route_policy_state = {0};
     struct app_mesh_route_request_policy_decision route_policy;
     struct mesh_route_capture_identity route_identity = {0};
-    struct app_mesh_route_retry_identity retry_identity;
     struct mesh_route_discovery_state route_discovery_before_prepare;
     struct mesh_event_timing proposed_timing = {0};
     const struct mesh_event_timing *proposed_timing_ptr = NULL;
@@ -1335,9 +1288,6 @@ static int mesh_request_route_owned(
                        &mesh_route_waiting_tx.packet : NULL;
         generation = owner_packet == NULL ? 0u : owner_packet->session_id;
     }
-    app_mesh_route_retry_identity_select(owner, owner_packet, generation,
-                                         &retry_identity);
-
     if (!mesh_id_is_unicast(target_id) || target_id == DEVICE_ID) {
         return -EINVAL;
     }
@@ -1403,8 +1353,8 @@ static int mesh_request_route_owned(
 
     ret = mesh_try_direct_gateway_route_probe(
         target_id, reason, route_policy.install_direct_route_from_probe,
-        retry_identity.mode,
-        retry_identity.survey_id);
+        APP_MESH_DIRECT_GATEWAY_RETRY_ROUTE,
+        generation);
     if (ret != 0 && k_msgq_num_used_get(&mesh_rx_msgq) != 0u) {
         /* The direct probe queued causal RX.  Do not continue into a relay
          * wake train in the same route-work turn; let RX clear or advance the

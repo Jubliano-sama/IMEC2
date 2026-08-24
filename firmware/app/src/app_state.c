@@ -643,26 +643,6 @@ bool local_anchor_discovery_assignment_identity_get(
     return valid;
 }
 
-uint8_t local_survey_discovery_slot(uint8_t slot_count)
-{
-    uint32_t epoch = 0u;
-    uint8_t anchor_slot = 0u;
-    uint8_t assigned_slot_count = 0u;
-
-    if (slot_count != 0u &&
-        local_anchor_discovery_assignment_get(&epoch,
-                                              &anchor_slot,
-                                              &assigned_slot_count) &&
-        epoch != 0u && assigned_slot_count != 0u) {
-        return (uint8_t)(anchor_slot % slot_count);
-    }
-
-    if (uwb_discovery_slot_for_anchor(DEVICE_ID, slot_count, &anchor_slot) != PROTO_OK) {
-        return 0u;
-    }
-    return anchor_slot;
-}
-
 uint64_t mix64(uint64_t value)
 {
     value ^= value >> 33;
@@ -685,13 +665,6 @@ uint64_t clicker_nonce(uint32_t event_seq)
     return mix64(DEVICE_ID ^
                  ((uint64_t)event_seq << 32) ^
                  k_cycle_get_32());
-}
-
-uint8_t survey_sample_seq(uint16_t sample_index)
-{
-    uint8_t seq = (uint8_t)((sample_index + 1u) & 0xffu);
-
-    return seq == 0u ? 1u : seq;
 }
 
 uint32_t u32_saturating_add(uint32_t lhs, uint32_t rhs)

@@ -87,8 +87,6 @@ for connected_mesh_owner in (
     "mesh_relay_init",
     "app_mesh_persistence",
     "app_mesh_report_attach",
-    "app_anchor_survey_runtime",
-    "app_anchor_survey_discovery",
     "mesh_report_wake_active_outbox",
 ):
     assert connected_mesh_owner not in ml_anchor_start, (
@@ -109,29 +107,14 @@ assert (
     "#if defined(CONFIG_IMEC_ML_ANCHOR)\n"
     "#define MESH_CH9_TX_BATCH_MAX 1u"
 ) in MESH_REPORT
-assert (
-    "#if DEVICE_ROLE == ROLE_ANCHOR && !defined(CONFIG_IMEC_ML_ANCHOR)"
-) in ANCHOR
-
 for required_anchor_output in (
     "gateway_ble_enter_uwb_quiet",
     "gateway_ble_exit_uwb_quiet",
     "ml_anchor_run_post_burst_diagnostics",
-    "anchor_run_clicker_pair_survey",
 ):
     assert required_anchor_output in ANCHOR_RADIO, (
         f"ML anchor isolation removed UWB/BLE output {required_anchor_output}"
     )
-
-pair_runner = function_body(ANCHOR_RADIO, "anchor_run_clicker_pair_survey")
-pair_range = pair_runner.index("dwm3000_driver_range_initiator")
-pair_result = pair_runner.index("anchor_send_pair_survey_result", pair_range)
-pair_low_power = pair_runner.index(
-    'anchor_enter_low_power(APP_RADIO_LOW_POWER_IDLE,\n'
-    '                                                   "pair-survey-initiator")',
-    pair_result,
-)
-assert pair_range < pair_result < pair_low_power
 
 ml_collect = function_body(ML, "ml_clicker_collect_work_handler")
 assert "atomic_clear(&ml_clicker_busy)" not in ml_collect, (
@@ -140,20 +123,16 @@ assert "atomic_clear(&ml_clicker_busy)" not in ml_collect, (
 assert ml_collect.count("ml_clicker_finish_request(") == 3, (
     "every ML collection terminal path must defer request-owner release"
 )
-pair_survey = ml_collect.index("ml_clicker_run_anchor_pair_survey")
 normal_collection = ml_collect.index(
-    "app_clicker_collect_uwb_attempt_with_options_until", pair_survey
+    "app_clicker_collect_uwb_attempt_with_options_until"
 )
 normal_range_guard = ml_collect.index(
-    "if (ret == 0 && !request.anchor_pair_survey)", normal_collection
+    "if (ret == 0)", normal_collection
 )
 normal_range = ml_collect.index(
     "app_clicker_range_scheduled_anchors", normal_range_guard
 )
-pair_results = ml_collect.index(
-    "ml_clicker_emit_stored_anchor_pair_results", normal_range
-)
-assert pair_survey < normal_collection < normal_range_guard < normal_range < pair_results
+assert normal_collection < normal_range_guard < normal_range
 
 live_match = function_body(ML, "ml_clicker_live_control_matches_active")
 assert "request->command.src_id" in live_match

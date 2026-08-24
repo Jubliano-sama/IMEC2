@@ -396,99 +396,11 @@ static void test_mount_and_ambiguous_write_fail_closed(void)
     assert(boot_incarnation == 3u);
 }
 
-static void test_schema_crc_role_device_and_scope_are_bound(void)
-{
-    struct fake_store store = {0};
-    struct fake_slot *slot;
-    uint64_t restored = UINT64_MAX;
-
-    install_store(&store, APP_DURABLE_STATE_ROLE_GATEWAY, TEST_DEVICE_A);
-    assert(app_durable_state_test_seed_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               7u) == 0);
-    slot = present_slot_for_type(
-        &store, APP_DURABLE_STATE_SURVEY_GENERATION);
-    slot->data[TEST_PAYLOAD_OFFSET] ^= 1u;
-    assert(app_durable_state_restore_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               &restored) == -EBADMSG);
-    assert(restored == 0u);
-
-    memset(&store, 0, sizeof(store));
-    install_store(&store, APP_DURABLE_STATE_ROLE_GATEWAY, TEST_DEVICE_A);
-    assert(app_durable_state_test_seed_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               7u) == 0);
-    slot = present_slot_for_type(
-        &store, APP_DURABLE_STATE_SURVEY_GENERATION);
-    slot->data[TEST_SCHEMA_OFFSET] ^= 1u;
-    assert(app_durable_state_restore_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               &restored) == -EPROTO);
-
-    memset(&store, 0, sizeof(store));
-    install_store(&store, APP_DURABLE_STATE_ROLE_GATEWAY, TEST_DEVICE_A);
-    assert(app_durable_state_test_seed_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               7u) == 0);
-    app_durable_state_test_reset();
-    {
-        const struct app_durable_state_test_backend backend = {
-            .context = &store,
-            .mount = fake_mount,
-            .read = fake_read,
-            .write = fake_write,
-            .erase = fake_erase,
-        };
-
-        assert(app_durable_state_test_install_backend(
-                   &backend, APP_DURABLE_STATE_ROLE_ANCHOR) == 0);
-        assert(app_durable_state_init(TEST_DEVICE_A) == -EACCES);
-        assert(!app_durable_state_ready());
-    }
-
-    app_durable_state_test_reset();
-    {
-        const struct app_durable_state_test_backend backend = {
-            .context = &store,
-            .mount = fake_mount,
-            .read = fake_read,
-            .write = fake_write,
-            .erase = fake_erase,
-        };
-
-        assert(app_durable_state_test_install_backend(
-                   &backend, APP_DURABLE_STATE_ROLE_GATEWAY) == 0);
-        assert(app_durable_state_init(TEST_DEVICE_B) == -EACCES);
-        assert(!app_durable_state_ready());
-    }
-
-    install_store(&store, APP_DURABLE_STATE_ROLE_GATEWAY, TEST_DEVICE_A);
-    assert(app_durable_state_restore_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID ^ 1u,
-               &restored) == -EACCES);
-
-    slot = present_slot_for_type(
-        &store, APP_DURABLE_STATE_SURVEY_GENERATION);
-    slot->data[TEST_ROLE_OFFSET] ^= 1u;
-    assert(app_durable_state_restore_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               &restored) == -EACCES);
-}
-
 static void test_zero_wrap_and_exhaustion_boundaries(void)
 {
     struct fake_store boot_store = {0};
     struct fake_store command_store = {0};
     struct fake_store click_store = {0};
-    struct fake_store survey_store = {0};
     struct app_durable_state_reservation reservation = {0};
     uint32_t boot_incarnation = 0u;
     const uint32_t final_click_high_water =
@@ -563,57 +475,6 @@ static void test_zero_wrap_and_exhaustion_boundaries(void)
     assert(app_durable_state_test_seed_high_water(
                APP_DURABLE_STATE_CLICK_EVENT_SEQUENCE, 0u, 0u) == -EILSEQ);
 
-    install_store(&survey_store,
-                  APP_DURABLE_STATE_ROLE_GATEWAY,
-                  TEST_DEVICE_A);
-    assert(app_durable_state_test_seed_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               UINT32_MAX) == 0);
-    assert(app_durable_state_reserve(APP_DURABLE_STATE_SURVEY_GENERATION,
-                                     TEST_GATEWAY_ID,
-                                     &reservation) == 0);
-    assert(reservation.first == UINT64_C(0x100000001));
-    assert(reservation.reserved_through == UINT64_C(0x100000001));
-    assert(app_durable_state_test_seed_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               UINT64_MAX) == 0);
-    assert(app_durable_state_reserve(APP_DURABLE_STATE_SURVEY_GENERATION,
-                                     TEST_GATEWAY_ID,
-                                     &reservation) == -EOVERFLOW);
-}
-
-static void test_anchor_high_water_is_idempotent_and_no_rollback(void)
-{
-    struct fake_store store = {0};
-    uint64_t restored = 0u;
-    unsigned int writes;
-
-    install_store(&store, APP_DURABLE_STATE_ROLE_ANCHOR, TEST_DEVICE_A);
-    assert(app_durable_state_advance_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               5u) == 0);
-    writes = store.write_calls;
-    assert(app_durable_state_advance_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               5u) == 0);
-    assert(store.write_calls == writes);
-    assert(app_durable_state_advance_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               4u) == -ESTALE);
-    assert(app_durable_state_advance_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               UINT64_C(0x100000000)) == -EINVAL);
-    assert(app_durable_state_restore_high_water(
-               APP_DURABLE_STATE_SURVEY_GENERATION,
-               TEST_GATEWAY_ID,
-               &restored) == 1);
-    assert(restored == 5u);
 }
 
 static void test_gateway_blocks_skip_reboots(void)
@@ -707,8 +568,6 @@ static void test_gateway_control_sequence_interleaves_without_hot_writes(void)
     assert(store.write_calls == writes + 1u);
     writes = store.write_calls;
 
-    assert(app_gateway_control_sequence_admission_available(
-        APP_GATEWAY_CONTROL_SEQUENCE_SURVEY_ADMISSION_BUDGET));
     assert(app_gateway_control_sequence_admission_available(
         APP_GATEWAY_CONTROL_SEQUENCE_ASSIGNMENT_ADMISSION_BUDGET));
     assert(app_gateway_control_sequence_admission_available(
@@ -1153,9 +1012,7 @@ int main(void)
     test_boot_checkpoint_is_deferred_and_idempotent();
     test_missing_first_install_and_idempotent_write();
     test_mount_and_ambiguous_write_fail_closed();
-    test_schema_crc_role_device_and_scope_are_bound();
     test_zero_wrap_and_exhaustion_boundaries();
-    test_anchor_high_water_is_idempotent_and_no_rollback();
     test_gateway_blocks_skip_reboots();
     test_legacy_256_gateway_command_record_requires_explicit_migration();
     test_gateway_control_sequence_interleaves_without_hot_writes();

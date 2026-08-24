@@ -284,6 +284,20 @@ class VerifiedFlashTests(unittest.TestCase):
 
         self.assertEqual(workspace.resolve(), run.call_args.kwargs["cwd"])
 
+    def test_stage_resolves_relative_worktree_build_before_running_west(self) -> None:
+        relative_build = Path("relative-worktree-build")
+
+        with mock.patch.object(
+            flash,
+            "_run",
+            return_value=subprocess.CompletedProcess([str(self.west)], 0, "", ""),
+        ) as run:
+            flash._stage_candidate(relative_build, "TEST-PROBE")
+
+        command = run.call_args.args[0]
+        build_index = command.index("--build-dir") + 1
+        self.assertEqual(str(relative_build.resolve()), command[build_index])
+
     def _args(self, build: Path, manifest: Path | None = None) -> list[str]:
         manifest = manifest or self.target.manifest
         assert manifest is not None
@@ -720,7 +734,8 @@ class VerifiedFlashTests(unittest.TestCase):
 
         west = next(call for call in self.target.calls if call[0] == str(self.west))
         self.assertEqual([
-            str(self.west), "flash", "--runner", "pyocd", "--build-dir", str(build),
+            str(self.west), "flash", "--runner", "pyocd", "--build-dir",
+            str(build.resolve()),
             "--", "--dev-id", "TEST-PROBE", "--frequency", "4000000",
             "--flash-opt=--no-reset",
         ], west)
@@ -1556,6 +1571,18 @@ class VerifiedFlashTests(unittest.TestCase):
                 for run in range(1, 4)
             ),
             encoding="utf-8",
+        )
+
+        self.assertEqual(0, flash.main(args))
+        self.assertFalse(self.journal.exists())
+
+    def test_qualified_retirement_accepts_tty_crlf_transcript(self) -> None:
+        build, _ = self._valid()
+        self.assertEqual(0, self._stage(build))
+        args = self._retire_qualified_args(build)
+        Path(args[-1]).write_bytes(
+            b"HERE_I_AM_REACHABILITY_QUALIFICATION_OK "
+            b"anchors=3 direct=2 multihop=1 retries=0\r\n"
         )
 
         self.assertEqual(0, flash.main(args))

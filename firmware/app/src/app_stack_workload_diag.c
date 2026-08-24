@@ -212,12 +212,30 @@ DEFINE_WORKLOAD_DIAG(ble, APP_STACK_DIAG_WORKLOAD_BLE_BACKPRESSURE,
                      APP_STACK_DIAG_OWNER_BT_RX)
 DEFINE_WORKLOAD_DIAG(click_activity, APP_STACK_DIAG_WORKLOAD_CLICK_ACTIVITY,
                      APP_STACK_DIAG_OWNER_CLICKER_ACTION)
-DEFINE_WORKLOAD_DIAG(anchor_survey,
-                     APP_STACK_DIAG_WORKLOAD_ANCHOR_SURVEY_REPORT,
-                     APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN)
 DEFINE_WORKLOAD_DIAG(gateway_control,
                      APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL,
                      APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE)
+
+void app_stack_workload_diag_anchor_scan_cycle(
+    const struct proto_packet *packet,
+    uint16_t queue_depth,
+    uint16_t custody_depth)
+{
+    const struct app_stack_workload_diag_pressure pressure = {
+        queue_depth, custody_depth, 0u, 0u, 0u,
+    };
+
+    stack_workload_diag_lock();
+    stack_workload_diag_admit_locked(
+        APP_STACK_DIAG_WORKLOAD_ANCHOR_SCAN,
+        APP_STACK_DIAG_OWNER_ANCHOR_UWB_SCAN, packet, &pressure);
+    stack_workload_diag_sample_locked(
+        APP_STACK_DIAG_WORKLOAD_ANCHOR_SCAN, packet, &pressure);
+    stack_workload_diag_release_locked(
+        APP_STACK_DIAG_WORKLOAD_ANCHOR_SCAN, packet,
+        APP_STACK_DIAG_TERMINAL_ACK, &pressure);
+    k_mutex_unlock(&stack_workload_diag_mutex);
+}
 
 void app_stack_workload_diag_gateway_report_cycle(
     const struct proto_packet *packet,
@@ -231,7 +249,7 @@ void app_stack_workload_diag_gateway_report_cycle(
     stack_workload_diag_lock();
     stack_workload_diag_admit_locked(
         APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS,
-        APP_STACK_DIAG_OWNER_SYSTEM_WORKQUEUE, packet, &pressure);
+        APP_STACK_DIAG_OWNER_MESH_ROUTE, packet, &pressure);
     stack_workload_diag_sample_locked(
         APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS, packet, &pressure);
     stack_workload_diag_release_locked(

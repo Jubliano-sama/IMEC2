@@ -37,25 +37,10 @@ from .operation_policy import (
     ASSIGNMENT_RESPONSE_SPREAD_MIN_MS,
     ASSIGNMENT_RESPONSE_SPREAD_MAX_MS,
     EXPECTED_ANCHOR_COUNT_MAX,
-    DISCOVERY_DEFAULT_BUDGET_MS,
-    DISCOVERY_DEFAULT_REPORT_GRACE_MS,
-    DISCOVERY_DEFAULT_ROUND_COUNT,
-    DISCOVERY_DEFAULT_SLOT_COUNT,
-    DISCOVERY_DEFAULT_SLOT_MS,
-    DISCOVERY_DEFAULT_START_DELAY_MS,
-    DISCOVERY_START_DELAY_MAX_MS,
-    DISCOVERY_START_DELAY_MIN_MS,
-    PAIR_AUTO_MAX_PARALLEL_PAIRS,
-    PAIR_DEFAULT_MAX_RERUNS,
     COMMAND_BUDGET_MAX_MS as OPERATION_POLICY_COMMAND_BUDGET_MAX_MS,
     AssignmentOperationPolicy,
-    DiscoveryOperationPolicy,
     OperationPolicyProfile,
-    PairOperationPolicy,
     assignment_required_budget_ms,
-    discovery_required_budget_ms,
-    discovery_required_start_delay_ms,
-    survey_estimated_duration_ms,
 )
 from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
@@ -72,9 +57,6 @@ from .protocol import (
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
-    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS,
-    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     STREAM_CLASS_NAMES,
     TLV_ANCHOR_DIAG_BYTES,
     TLV_ANCHOR_ID,
@@ -127,7 +109,6 @@ from .protocol import (
     TLV_UWB_RAW_TIMESTAMPS,
     TLV_UWB_RSL_DBM,
     TLV_UWB_RX_DIAG_BYTES,
-    build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_gateway_host_receipt,
     build_here_i_am_command,
@@ -228,7 +209,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._topology_gateway_id: int | None = None
         self._topology_slot_span: int | None = None
         self._topology_timing_summary = "Topology estimate pending enumeration."
-        self._active_survey_estimate_ms: int | None = None
         self._initialize_gateway_diagnostics()
 
         self.connection_text = tk.StringVar(value="Disconnected")
@@ -258,44 +238,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         self.gateway_id_text = tk.StringVar(value="Unavailable")
         self.gateway_id_source = tk.StringVar(value="Connect to read the gateway firmware DEVICE_ID.")
-        survey_id_seed = (time.time_ns() // 1_000_000) & 0xFFFFFFFF or 1
-        self._survey_id_counter = survey_id_seed
-        self._used_survey_ids: set[int] = set()
-        self.survey_id_text = tk.StringVar(value=str(survey_id_seed))
-        self.survey_id_auto = tk.BooleanVar(value=True)
-        self.duration_text = tk.StringVar(
-            value=str(DISCOVERY_DEFAULT_REPORT_GRACE_MS)
-        )
-        self.discovery_start_delay_text = tk.StringVar(
-            value=str(DISCOVERY_DEFAULT_START_DELAY_MS)
-        )
-        self.discovery_slot_ms_text = tk.StringVar(
-            value=str(DISCOVERY_DEFAULT_SLOT_MS)
-        )
-        self.discovery_slots_text = tk.StringVar(
-            value=str(DISCOVERY_DEFAULT_SLOT_COUNT)
-        )
-        self.discovery_round_count_text = tk.StringVar(
-            value=str(DISCOVERY_DEFAULT_ROUND_COUNT)
-        )
-        self.discovery_budget_text = tk.StringVar(
-            value=str(DISCOVERY_DEFAULT_BUDGET_MS)
-        )
         self.operation_estimate_text = tk.StringVar(value="")
-        self.pair_max_reruns_text = tk.StringVar(
-            value=str(PAIR_DEFAULT_MAX_RERUNS)
-        )
-        self.pair_max_parallel_text = tk.StringVar(value="auto (25)")
-        self.sample_count_text = tk.StringVar(
-            value=str(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT)
-        )
-        for variable in (
-            self.discovery_slot_ms_text,
-            self.discovery_slots_text,
-            self.discovery_round_count_text,
-            self.duration_text,
-        ):
-            variable.trace_add("write", self._on_assignment_parameters_changed)
         self._on_assignment_parameters_changed()
         self.sample_warning_text = tk.StringVar(value="Select a click report to inspect aligned samples.")
         self.cir_state_text = tk.StringVar(value="Select a CIR diagnostic fragment to inspect its assembly.")
@@ -425,27 +368,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
             "Discovers all network anchors, refreshes routing trees, and assigns unique, collision-free discovery slots.",
         )
 
-        self.discovery_button = ttk.Button(
-            operations,
-            text="2. Start Anchor Survey",
-            style="Primary.TButton",
-            command=self._send_discovery,
-        )
-        self.discovery_button.grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
-        )
-        Tooltip(
-            self.discovery_button,
-            "Performs deterministic UWB ranging discovery using assigned slots and measures anchor-pair geometry.",
-        )
-
         self.refresh_button = ttk.Button(
             operations,
             text="Refresh Routes (Here I Am)",
             command=self._send_here_i_am,
         )
         self.refresh_button.grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.refresh_button,
@@ -459,7 +388,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._clear_gateway_memory,
         )
         self.clear_memory_button.grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.clear_memory_button,
@@ -473,14 +402,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Label(
             operations,
             textvariable=self.operation_estimate_text,
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Advanced / Protocol Settings
         advanced = ttk.LabelFrame(parent, text="Protocol Parameters", padding=10)
@@ -491,15 +420,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
         ttk.Label(advanced, text="Host ID").grid(row=0, column=0, sticky="w", padx=(0, 8))
         ttk.Entry(advanced, textvariable=self.host_id_text).grid(row=0, column=1, sticky="ew")
 
-        self._labeled_spin(advanced, 1, "Survey ID", self.survey_id_text, 1, 0xFFFFFFFF)
-        auto_survey = ttk.Checkbutton(advanced, text="Auto-generate fresh Survey ID", variable=self.survey_id_auto)
-        auto_survey.grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 4))
-
-        self._labeled_spin(advanced, 3, "Discovery slot (ms)", self.discovery_slot_ms_text, 200, 200)
-        self._labeled_spin(advanced, 4, "Discovery rounds", self.discovery_round_count_text, 4, 4)
-        self._labeled_spin(advanced, 5, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
-        self._labeled_spin(advanced, 6, "Known max hop", self.deepest_hop_text, 1, 8)
-        self._labeled_spin(advanced, 7, "Pair reruns", self.pair_max_reruns_text, 0, 2)
+        self._labeled_spin(advanced, 1, "Response spread (ms)", self.assignment_response_spread_text, 20, 10000)
+        self._labeled_spin(advanced, 2, "Known max hop", self.deepest_hop_text, 1, 8)
     def _labeled_spin(
         self,
         parent: ttk.LabelFrame,
@@ -826,58 +748,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     spread, expected, deepest
                 )
                 self.assignment_budget_text.set(str(budget))
-            if 1 <= expected <= 50:
-                slot_span = getattr(self, "_topology_slot_span", None)
-                slot_count_text = str(slot_span or expected)
-                if self.discovery_slots_text.get() != slot_count_text:
-                    self.discovery_slots_text.set(slot_count_text)
-            discovery_variables = (
-                getattr(self, "discovery_slot_ms_text", None),
-                getattr(self, "discovery_slots_text", None),
-                getattr(self, "discovery_round_count_text", None),
-                getattr(self, "duration_text", None),
-                getattr(self, "discovery_budget_text", None),
-            )
-            if all(variable is not None for variable in discovery_variables):
-                discovery_start_delay_ms = \
-                    discovery_required_start_delay_ms(deepest)
-                self.discovery_start_delay_text.set(
-                    str(discovery_start_delay_ms)
-                )
-                discovery_budget = discovery_required_budget_ms(
-                    discovery_start_delay_ms,
-                    int(self.discovery_slot_ms_text.get()),
-                    int(self.discovery_slots_text.get()),
-                    int(self.discovery_round_count_text.get()),
-                    int(self.duration_text.get()),
-                    deepest,
-                )
-                self.discovery_budget_text.set(str(discovery_budget))
                 estimate_var = getattr(self, "operation_estimate_text", None)
                 if estimate_var is not None:
-                    effective_deepest = deepest or min(expected or 8, 8)
-                    full_estimate = survey_estimated_duration_ms(
-                        expected,
-                        effective_deepest,
-                        int(self.discovery_slots_text.get()),
-                    )
-                    warning = ""
-                    if deepest and (
-                        deepest >= 3
-                        or full_estimate
-                        >= (SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS * 4) // 5
-                    ):
-                        warning = (
-                            " Increase route redundancy before starting if "
-                            "the placement allows it."
-                        )
                     estimate_var.set(
                         f"{self._topology_timing_summary} Enumeration up to "
-                        f"{self._format_duration_ms(budget)}; estimated full "
-                        f"survey {self._format_duration_ms(full_estimate)}; "
-                        f"safety limit "
-                        f"{self._format_duration_ms(SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS)}."
-                        f"{warning}"
+                        f"{self._format_duration_ms(budget)}."
                     )
         except (ValueError, TypeError):
             pass
@@ -908,13 +783,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._parse_int("Deepest hop", deepest_hop_raw)
             if deepest_hop_raw else 0
         )
-        parallel_raw = self.pair_max_parallel_text.get().strip().lower()
-        if parallel_raw in {"auto", "auto25", "auto (25)"}:
-            max_parallel_pairs = PAIR_AUTO_MAX_PARALLEL_PAIRS
-        else:
-            max_parallel_pairs = self._parse_int(
-                "Concurrent pairs", parallel_raw
-            )
         return OperationPolicyProfile(
             assignment=AssignmentOperationPolicy(
                 expected_anchor_count=expected_anchor_count,
@@ -926,33 +794,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     self.assignment_response_spread_text.get(),
                 ),
                 deepest_hop=deepest_hop,
-            ),
-            discovery=DiscoveryOperationPolicy(
-                start_delay_ms=discovery_required_start_delay_ms(
-                    deepest_hop
-                ),
-                slot_ms=self._parse_int(
-                    "Discovery slot duration", self.discovery_slot_ms_text.get()
-                ),
-                slot_count=self._parse_int(
-                    "Discovery slots", self.discovery_slots_text.get()
-                ),
-                round_count=self._parse_int(
-                    "Discovery rounds", self.discovery_round_count_text.get()
-                ),
-                report_grace_ms=self._parse_int(
-                    "Report grace", self.duration_text.get()
-                ),
-                operation_budget_ms=self._parse_int(
-                    "Survey budget", self.discovery_budget_text.get()
-                ),
-                deepest_hop=deepest_hop,
-            ),
-            pair=PairOperationPolicy(
-                max_reruns=self._parse_int(
-                    "Pair reruns", self.pair_max_reruns_text.get()
-                ),
-                max_parallel_pairs=max_parallel_pairs,
             ),
         )
 
@@ -970,26 +811,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             effective_budget_ms / 1000.0
             + GATEWAY_COMMAND_COMPLETION_GUARD_S
         )
-
-    def _survey_id_for_send(self) -> int:
-        if not self.survey_id_auto.get():
-            survey_id = self._parse_int("Survey ID", self.survey_id_text.get())
-            if not 1 <= survey_id <= 0xFFFFFFFF:
-                raise ValueError("Survey ID must be in 1..4294967295")
-            self._used_survey_ids.add(survey_id)
-            return survey_id
-
-        candidate = self._survey_id_counter
-        for _ in range(len(self._used_survey_ids) + 1):
-            candidate = (candidate + 1) & 0xFFFFFFFF
-            if candidate == 0:
-                candidate = 1
-            if candidate not in self._used_survey_ids:
-                self._survey_id_counter = candidate
-                self._used_survey_ids.add(candidate)
-                self.survey_id_text.set(str(candidate))
-                return candidate
-        raise ValueError("No unused Survey ID is available")
 
     def _require_gateway_identity(self) -> int:
         if not self.connected:
@@ -1017,8 +838,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._command_progress_text = "Refreshing routes"
         elif dispatch.command_kind == 1:
             self._command_progress_text = "Collecting enumeration responses"
-        elif dispatch.command_kind == 2:
-            self._command_progress_text = "Starting anchor survey"
         else:
             self._command_progress_text = "Running gateway command"
         self.status_text.set(dispatch.status_text)
@@ -1044,7 +863,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         if transition.completed:
             self._command_progress_text = ""
-            self._active_survey_estimate_ms = None
         self._update_command_state()
 
     def _observe_operation_progress(self, event: Any) -> None:
@@ -1085,49 +903,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 )
             if event.terminal:
                 self._store_enumeration_timing(event, anchors)
-        elif event.command_kind == 2:
-            if event.stage <= 4:
-                self._command_progress_text = "Broadcasting survey schedule"
-            elif event.stage in (5, 6, 7):
-                total = event.total_count
-                suffix = f"/{total}" if total else ""
-                self._command_progress_text = (
-                    f"Collecting survey reports {event.progress_count}{suffix}"
-                )
-            elif event.stage == 8:
-                if event.total_count:
-                    try:
-                        expected_raw = (
-                            self.assignment_expected_anchors_text.get().strip()
-                        )
-                        anchor_count = (
-                            int(expected_raw)
-                            if expected_raw
-                            else int(self.discovery_slots_text.get())
-                        )
-                        deepest_raw = self.deepest_hop_text.get().strip()
-                        deepest = (
-                            int(deepest_raw)
-                            if deepest_raw else min(anchor_count, 8)
-                        )
-                        self._active_survey_estimate_ms = (
-                            survey_estimated_duration_ms(
-                                anchor_count,
-                                deepest,
-                                int(self.discovery_slots_text.get()),
-                                event.total_count,
-                            )
-                        )
-                    except (ValueError, TypeError):
-                        pass
-                self._command_progress_text = (
-                    f"Pair schedule ready ({event.total_count} pairs)"
-                )
-            elif event.stage in (9, 10, 11):
-                self._command_progress_text = (
-                    f"Ranging pairs {event.success_count + event.failure_count}/"
-                    f"{event.total_count}"
-                )
         self._update_command_state()
 
     def _store_enumeration_timing(
@@ -1160,13 +935,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._append_log(
                 "warning",
                 f"Enumeration increased known route depth from {previous_hop} "
-                f"to {deepest_hop}; the survey time allowance was enlarged.",
+                f"to {deepest_hop}; future enumeration timing was enlarged.",
             )
         self._topology_gateway_id = gateway_id
         self._topology_slot_span = slot_span
         self.assignment_expected_anchors_text.set(str(anchor_count))
         self.deepest_hop_text.set(str(deepest_hop))
-        self.discovery_slots_text.set(str(slot_span))
         self._topology_timing_summary = (
             f"Topology: {anchor_count} anchors, max hop {deepest_hop}, "
             f"slot span {slot_span}."
@@ -1183,8 +957,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.assignment_expected_anchors_text.set(
                 DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT
             )
-        if hasattr(self, "discovery_slots_text"):
-            self.discovery_slots_text.set(str(DISCOVERY_DEFAULT_SLOT_COUNT))
 
     def _here_i_am_dispatch(
         self,
@@ -1216,89 +988,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
             ),
             status_text=status_text,
         )
-
-    def _send_discovery(self) -> None:
-        try:
-            host_id = self._parse_int("Host ID", self.host_id_text.get())
-            gateway_id = self._require_gateway_identity()
-            session_id, seq = self._next_identity()
-            operation_policy = self._operation_policy_profile()
-            discovery_policy = operation_policy.discovery
-            expected_anchor_count = (
-                operation_policy.assignment.expected_anchor_count or None
-            )
-            # The host command limit owns only the terminal safety boundary;
-            # the topology estimate below is the user-facing service target.
-            # Discovery retains its own shorter, independently validated
-            # report-collection policy.
-            command_budget_ms = self._command_budget_ms()
-            if (
-                command_budget_ms is not None
-                and command_budget_ms > SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS
-            ):
-                raise ValueError(
-                    "Survey command limit must be at most "
-                    f"{SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS} ms"
-                )
-            estimate_anchor_count = (
-                operation_policy.assignment.expected_anchor_count
-                or discovery_policy.slot_count
-            )
-            effective_deepest = (
-                operation_policy.assignment.deepest_hop
-                or min(estimate_anchor_count, 8)
-            )
-            estimated_survey_ms = survey_estimated_duration_ms(
-                estimate_anchor_count,
-                effective_deepest,
-                discovery_policy.slot_count,
-            )
-            survey_id = self._survey_id_for_send()
-            command = build_anchor_discovery_command(
-                host_id=host_id,
-                gateway_id=gateway_id,
-                session_id=session_id,
-                seq=seq,
-                survey_id=survey_id,
-                duration_ms=discovery_policy.report_grace_ms,
-                discovery_slot_count=discovery_policy.slot_count,
-                sample_count=self._parse_int("Pair samples", self.sample_count_text.get()),
-                expected_anchor_count=expected_anchor_count,
-                command_budget_ms=command_budget_ms,
-                operation_policy=operation_policy,
-            )
-            def begin_survey() -> None:
-                self._active_survey_estimate_ms = estimated_survey_ms
-                self._prepare_anchor_geometry_survey(survey_id, session_id, seq)
-
-            target = GatewayCommandDispatch(
-                command_kind=2,
-                command_id=command.command_id,
-                session_id=session_id,
-                sequence=seq,
-                frame=command.frame,
-                label=command.label,
-                timeout_s=self._command_timeout_s(
-                    command_budget_ms,
-                    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-                ),
-                status_text="Writing anchor-pair survey command over BLE...",
-                on_dispatch=begin_survey,
-            )
-            preflight = self._here_i_am_dispatch(
-                host_id=host_id,
-                gateway_id=gateway_id,
-                command_budget_ms=None,
-                operation_policy=operation_policy,
-                status_text="Refreshing mesh routes before anchor-pair survey...",
-            )
-            plan = GatewayCommandPlan.user_triggered(
-                target, preflight=preflight
-            )
-        except ValueError as exc:
-            self._show_error(str(exc))
-            return
-        self._submit_gateway_command(plan)
 
     def _send_here_i_am(self) -> None:
         try:
@@ -1590,33 +1279,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
             ):
                 remaining_s += orchestrator.plan.target.timeout_s
             progress = self._command_progress_text or "Command running"
-            estimate_ms = getattr(self, "_active_survey_estimate_ms", None)
-            if (
-                pending is not None
-                and pending.command_kind == 2
-                and estimate_ms is not None
-            ):
-                elapsed_ms = max(0, int((now - pending.started_at) * 1000))
-                if elapsed_ms <= estimate_ms:
-                    estimate_text = (
-                        "Estimated countdown: "
-                        f"{self._format_duration_ms(estimate_ms - elapsed_ms)}"
-                    )
-                else:
-                    estimate_text = (
-                        "Over estimate by "
-                        f"{self._format_duration_ms(elapsed_ms - estimate_ms)} "
-                        "- retrying"
-                    )
-                reason = (
-                    f"{progress}. {estimate_text}; safety deadline: "
-                    f"{self._format_duration_ms(int(remaining_s * 1000))}."
-                )
-            else:
-                reason = (
-                    f"{progress}. Deadline countdown: "
-                    f"{self._format_duration_ms(int(remaining_s * 1000))}."
-                )
+            reason = (
+                f"{progress}. Deadline countdown: "
+                f"{self._format_duration_ms(int(remaining_s * 1000))}."
+            )
         elif not self.connected:
             reason = "Connect gateway to run a command."
         elif self.gateway_id is None:
@@ -1624,7 +1290,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
         else:
             reason = "Ready for a gateway command."
         command_state = "normal" if reason.startswith("Ready") else "disabled"
-        self.discovery_button.configure(state=command_state)
         self.refresh_button.configure(state=command_state)
         self.assignment_button.configure(state=command_state)
         if hasattr(self, "clear_memory_button"):

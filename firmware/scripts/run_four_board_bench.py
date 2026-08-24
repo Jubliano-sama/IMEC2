@@ -56,10 +56,13 @@ def start_rtt_capture(role: str, probe_id: str) -> tuple[subprocess.Popen, int]:
 
 def main():
     parser = argparse.ArgumentParser(description="Run 4-board bench test with full RTT logging")
-    parser.add_argument("--command", choices=["here-i-am", "assign-slots", "survey"], default="survey")
+    parser.add_argument(
+        "--command",
+        choices=["here-i-am", "assign-slots"],
+        default="assign-slots",
+    )
     parser.add_argument("--gateway-name", default="IMEC Mesh Test Gateway")
     parser.add_argument("--expected-anchors", type=int, default=3)
-    parser.add_argument("--expected-pairs", type=int, default=3)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument(
@@ -127,15 +130,7 @@ def main():
             "--assignment-timeout",
             "180",
         ]
-        if args.command == "survey":
-            prov_cmd.extend([
-                "--require-survey-success",
-                "--expected-anchors",
-                str(args.expected_anchors),
-                "--expected-pairs",
-                str(args.expected_pairs),
-            ])
-        elif args.command == "assign-slots":
+        if args.command == "assign-slots":
             prov_cmd.extend([
                 "--expected-anchors",
                 str(args.expected_anchors),

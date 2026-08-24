@@ -969,8 +969,6 @@ static bool gateway_host_custody_supported(const struct proto_packet *packet)
     case MSG_ANCHOR_HEARTBEAT:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return true;
     case MSG_MESH_DATA:
         return (packet->flags & FLAG_DIAGNOSTIC) != 0u;

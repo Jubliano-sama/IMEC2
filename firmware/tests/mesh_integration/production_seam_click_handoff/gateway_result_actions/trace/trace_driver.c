@@ -1323,69 +1323,6 @@ static void scenario_route_reply_ack_commitment(void)
                         &ack_store);
 }
 
-static void scenario_downlink_command(void)
-{
-    struct mesh_gateway_ack_store ack_store;
-    struct mesh_relay gateway;
-    struct proto_packet command;
-    struct mesh_outbound outbound;
-    struct mesh_relay_result result;
-    const struct mesh_downlink_entry *downlink;
-    uint8_t payload[16];
-    size_t payload_len = 0u;
-    int ret;
-
-    puts("SCENARIO downlink_command");
-    gateway_init(&gateway, &ack_store);
-    ret = mesh_relay_note_gateway_survey_reverse_route(&gateway,
-                                                       TEST_ANCHOR_A_ID,
-                                                       TEST_ANCHOR_B_ID,
-                                                       87u,
-                                                       7000u);
-    REQUIRE(ret == PROTO_OK);
-    printf("CALL downlink.install status=%d\n", ret);
-    trace_gateway_state("downlink.install", &gateway, &ack_store);
-
-    REQUIRE(mesh_append_command_id(payload,
-                                   sizeof(payload),
-                                   &payload_len,
-                                   CMD_GET_STATUS) == PROTO_OK);
-    REQUIRE(mesh_init_command(&command,
-                              TEST_GATEWAY_ID,
-                              TEST_ANCHOR_A_ID,
-                              UINT32_C(0x70717273),
-                              41u,
-                              (uint8_t)payload_len) == PROTO_OK);
-    command.ttl = gateway_command_origin_ttl(CMD_GET_STATUS);
-    trace_packet("downlink.start", &command, payload, payload_len);
-
-    ret = mesh_relay_start_tx(&gateway,
-                              &command,
-                              payload,
-                              payload_len,
-                              7010u,
-                              &outbound);
-    REQUIRE(ret == PROTO_OK);
-    REQUIRE(outbound.next_hop_id == TEST_ANCHOR_B_ID);
-    REQUIRE(!mesh_relay_tx_active(&gateway));
-    printf("CALL downlink.start status=%d\n", ret);
-    trace_outbound("downlink.start", &outbound);
-    trace_gateway_state("downlink.start", &gateway, &ack_store);
-
-    mesh_relay_note_tx_sent(&gateway, &outbound, 7020u);
-    downlink = mesh_relay_find_downlink(&gateway, TEST_ANCHOR_A_ID);
-    REQUIRE(downlink != NULL);
-    REQUIRE(downlink->last_seen_ms == 7020u);
-    trace_gateway_state("downlink.sent", &gateway, &ack_store);
-
-    REQUIRE(mesh_relay_tick(&gateway, 7030u, &result) == PROTO_OK);
-    require_result_exact(&result,
-                         PROTO_OK,
-                         MESH_RELAY_ACTION_NONE);
-    trace_result("downlink.tick", &result);
-    trace_gateway_state("downlink.tick", &gateway, &ack_store);
-}
-
 static void scenario_ready_bundle_tick(void)
 {
     struct mesh_gateway_ack_store ack_store;
@@ -1996,7 +1933,6 @@ int main(void)
     scenario_ordinary_command_result_duplicate();
     scenario_idle_route_control();
     scenario_route_reply_ack_commitment();
-    scenario_downlink_command();
     scenario_ready_bundle_tick();
     scenario_idle_local_responses();
     scenario_clicker_only_control_envelopes();

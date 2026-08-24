@@ -26,7 +26,6 @@ from tools.gateway_gui.diagnostic_models import CommandTimelineModel
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
-    CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     FLAG_GATEWAY_ACK_REQUIRED,
@@ -37,9 +36,6 @@ from tools.gateway_gui.protocol import (
     MSG_GATEWAY_COMMAND_EVENT,
     Packet,
     parse_stream_record,
-    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS,
-    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_COMMAND_ID,
     TLV_COMMAND_BUDGET_MS,
     TLV_COMMAND_STATUS,
@@ -118,121 +114,6 @@ def assignment_phase_packet(phase: int, epoch: int):
 
 
 class AppModelTests(unittest.TestCase):
-    def test_app_binds_the_survey_sample_default_used_during_construction(self) -> None:
-        self.assertEqual(
-            gateway_app.SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-            SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-        )
-
-    def test_survey_dispatch_waits_for_live_assignment_terminal_receipt_write(
-        self,
-    ) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui.status_text = FakeVariable()  # type: ignore[assignment]
-        gui.transport = Mock()
-        gui.__dict__["_append_log"] = Mock()
-        gui.__dict__["_update_command_state"] = Mock()
-        gui.command_request_tracker = GatewayCommandRequestTracker()
-        gui.command_orchestrator = GatewayCommandOrchestrator(
-            gui.command_request_tracker
-        )
-        gui.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
-
-        preflight = GatewayCommandDispatch(
-            command_kind=3,
-            command_id=CMD_FORCE_REDISCOVERY,
-            session_id=0x11111,
-            sequence=1,
-            frame=b"here-i-am",
-            label="here-i-am",
-            timeout_s=10.0,
-            status_text="preflight",
-        )
-        survey = GatewayCommandDispatch(
-            command_kind=2,
-            command_id=CMD_SURVEY_REACHABILITY,
-            session_id=0x22222,
-            sequence=2,
-            frame=b"survey",
-            label="survey",
-            timeout_s=10.0,
-            status_text="survey",
-        )
-        plan = GatewayCommandPlan.user_triggered(
-            survey, preflight=preflight
-        )
-        self.assertEqual(gui.command_orchestrator.begin(plan), preflight)
-        preflight_terminal = GatewayCommandEvent(
-            3, 12, GATEWAY_COMMAND_EVENT_FLAG_TERMINAL, 1, 0, 0,
-            CMD_FORCE_REDISCOVERY, 0, preflight.session_id, 1,
-            preflight.session_id, preflight.sequence, 1,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        )
-
-        live_mapping = GatewayCommandEvent(
-            1, 6, 0, 0, 0, 0,
-            CMD_ASSIGN_DISCOVERY_SLOTS, 7, 0x33333, 200,
-            0x33333, 3, 200,
-            0x4444, 0, 0, 0, 1, 3, 1, 0, 0, 1, 0, 0,
-        )
-        live_terminal = replace(
-            live_mapping,
-            stage=12,
-            flags=GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
-            gateway_sequence=203,
-            event_sequence=203,
-            anchor_id=0,
-            progress_count=3,
-            success_count=3,
-            hop_count=0,
-            discovery_slot=0xFF,
-        )
-        mapping_token = gui.assignment_replay_barrier.observe(live_mapping)
-        terminal_token = gui.assignment_replay_barrier.observe(live_terminal)
-        self.assertIsNotNone(mapping_token)
-        self.assertIsNotNone(terminal_token)
-        gui._assignment_replay_receipts = {
-            b"mapping-receipt": mapping_token,
-            b"terminal-receipt": terminal_token,
-        }
-
-        waiting = gui.command_orchestrator.observe_event(
-            preflight_terminal,
-            target_dispatch_allowed=not gui.assignment_replay_barrier.blocks(
-                survey.command_id
-            ),
-        )
-        gui._apply_gateway_command_transition(waiting)
-        self.assertEqual(gui.command_orchestrator.phase, "target_wait")
-        gui.transport.send_frame.assert_not_called()
-
-        gui._handle_event(
-            {
-                "kind": "tx_written",
-                "label": "gateway host receipt",
-                "raw": b"mapping-receipt",
-                "byte_count": 20,
-                "chunks": 1,
-            }
-        )
-        self.assertTrue(gui.assignment_replay_barrier.active)
-        self.assertEqual(gui.command_orchestrator.phase, "target_wait")
-        gui.transport.send_frame.assert_not_called()
-
-        gui._handle_event(
-            {
-                "kind": "tx_written",
-                "label": "gateway host receipt",
-                "raw": b"terminal-receipt",
-                "byte_count": 20,
-                "chunks": 1,
-            }
-        )
-        self.assertFalse(gui.assignment_replay_barrier.active)
-        self.assertEqual(gui.command_orchestrator.phase, "target")
-        gui.transport.send_frame.assert_called_once_with(
-            survey.frame, survey.label
-        )
 
     @staticmethod
     def set_default_policy_variables(
@@ -244,18 +125,6 @@ class AppModelTests(unittest.TestCase):
             str(gateway_app.ASSIGNMENT_DEFAULT_BUDGET_MS)
         )  # type: ignore[assignment]
         gui.assignment_response_spread_text = FakeVariable("1000")  # type: ignore[assignment]
-        gui.discovery_start_delay_text = FakeVariable(  # type: ignore[assignment]
-            str(gateway_app.DISCOVERY_DEFAULT_START_DELAY_MS)
-        )
-        gui.discovery_slot_ms_text = FakeVariable("200")  # type: ignore[assignment]
-        gui.discovery_slots_text = FakeVariable("6")  # type: ignore[assignment]
-        gui.discovery_round_count_text = FakeVariable("4")  # type: ignore[assignment]
-        gui.duration_text = FakeVariable("250")  # type: ignore[assignment]
-        gui.discovery_budget_text = FakeVariable(
-            str(gateway_app.DISCOVERY_DEFAULT_BUDGET_MS)
-        )  # type: ignore[assignment]
-        gui.pair_max_reruns_text = FakeVariable("2")  # type: ignore[assignment]
-        gui.pair_max_parallel_text = FakeVariable("auto (25)")  # type: ignore[assignment]
 
     @staticmethod
     def gui_model() -> GatewayGui:
@@ -278,7 +147,6 @@ class AppModelTests(unittest.TestCase):
         gui.connection_label = FakeWidget()  # type: ignore[assignment]
         gui.connect_button = FakeWidget()  # type: ignore[assignment]
         gui.disconnect_button = FakeWidget()  # type: ignore[assignment]
-        gui.discovery_button = FakeWidget()  # type: ignore[assignment]
         gui.refresh_button = FakeWidget()  # type: ignore[assignment]
         gui.assignment_button = FakeWidget()  # type: ignore[assignment]
         return gui
@@ -312,98 +180,17 @@ class AppModelTests(unittest.TestCase):
         gateway_id = 0xAABBCCDDEEFF0011
 
         gui._set_connection_state("connecting")
-        self.assertEqual(gui.discovery_button.options["state"], "disabled")  # type: ignore[attr-defined]
         self.assertIsNone(gui._accept_gateway_identity(gateway_id, "GATT identity"))
-        self.assertEqual(gui.discovery_button.options["state"], "disabled")  # type: ignore[attr-defined]
 
         gui._set_connection_state("connected")
         self.assertEqual(gui._require_gateway_identity(), gateway_id)
-        self.assertEqual(gui.discovery_button.options["state"], "normal")  # type: ignore[attr-defined]
         self.assertEqual(gui.refresh_button.options["state"], "normal")  # type: ignore[attr-defined]
         self.assertEqual(gui.assignment_button.options["state"], "normal")  # type: ignore[attr-defined]
 
         gui._set_connection_state("disconnected")
         self.assertIsNone(gui.gateway_id)
-        self.assertEqual(gui.discovery_button.options["state"], "disabled")  # type: ignore[attr-defined]
         with self.assertRaisesRegex(ValueError, "Connect to a gateway"):
             gui._require_gateway_identity()
-
-    def test_auto_reconnect_failure_keeps_command_countdown_and_replay_custody(
-        self,
-    ) -> None:
-        gui = self.identity_gui_model()
-        gui.connected = True
-        gui.gateway_id = 0xAABBCCDDEEFF0011
-        gui._command_progress_text = "Confirmations 2/3"
-        gui._active_survey_estimate_ms = None
-        gui.command_availability_text = FakeVariable()  # type: ignore[assignment]
-        gui.command_request_tracker = GatewayCommandRequestTracker()
-        gui.command_orchestrator = GatewayCommandOrchestrator(
-            gui.command_request_tracker
-        )
-        command = GatewayCommandDispatch(
-            command_kind=3,
-            command_id=CMD_FORCE_REDISCOVERY,
-            session_id=55,
-            sequence=4,
-            frame=b"here-i-am",
-            label="here-i-am",
-            timeout_s=10.0,
-            status_text="Refreshing routes",
-        )
-        self.assertEqual(
-            gui.command_orchestrator.begin(
-                GatewayCommandPlan.user_triggered(command), now=100.0
-            ),
-            command,
-        )
-        gui.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
-        replay = GatewayCommandEvent(
-            1, 6, 0, 0, 0, 0,
-            CMD_ASSIGN_DISCOVERY_SLOTS, 7, 0x33333, 200,
-            0x33333, 3, 200,
-            0x4444, 0, 0, 0, 1, 3, 1, 0, 0, 1, 0, 0,
-        )
-        receipt_token = gui.assignment_replay_barrier.observe(replay)
-        self.assertIsNotNone(receipt_token)
-        gui._assignment_replay_receipts = {b"receipt": receipt_token}
-
-        expected_countdown = "Confirmations 2/3. Deadline countdown: 0:05."
-        with patch("tools.gateway_gui.app.time.monotonic", return_value=105.0):
-            gui._update_command_state()
-            self.assertEqual(
-                gui.command_availability_text.get(), expected_countdown
-            )
-
-            # The transport reports reconnecting for the dropped link, then
-            # connecting for an automatic attempt, and reconnecting again when
-            # that attempt fails but another retry remains scheduled.
-            for state in ("reconnecting", "connecting", "reconnecting"):
-                gui._set_connection_state(state)
-                self.assertTrue(gui.command_orchestrator.active)
-                self.assertIsNotNone(gui.command_request_tracker.pending)
-                self.assertTrue(gui.assignment_replay_barrier.active)
-                self.assertEqual(
-                    gui._assignment_replay_receipts,
-                    {b"receipt": receipt_token},
-                )
-                self.assertEqual(gui._command_progress_text, "Confirmations 2/3")
-                self.assertEqual(
-                    gui.command_availability_text.get(), expected_countdown
-                )
-
-            # An explicit terminal/manual disconnect owns cancellation.
-            gui._set_connection_state("disconnected")
-
-        self.assertFalse(gui.command_orchestrator.active)
-        self.assertIsNone(gui.command_request_tracker.pending)
-        self.assertFalse(gui.assignment_replay_barrier.active)
-        self.assertEqual(gui._assignment_replay_receipts, {})
-        self.assertEqual(gui._command_progress_text, "")
-        self.assertEqual(
-            gui.command_availability_text.get(),
-            "Connect gateway to run a command.",
-        )
 
     def test_same_gateway_reconnect_preserves_enumeration_topology(self) -> None:
         gui = self.identity_gui_model()
@@ -414,7 +201,6 @@ class AppModelTests(unittest.TestCase):
         gui._topology_gateway_id = gateway_id
         gui._topology_slot_span = 7
         gui.deepest_hop_text.set("3")
-        gui.discovery_slots_text.set("7")
         gui._topology_timing_summary = (
             "Topology: 4 anchors, max hop 3, slot span 7."
         )
@@ -425,7 +211,6 @@ class AppModelTests(unittest.TestCase):
             self.assertEqual(gui._topology_gateway_id, gateway_id)
             self.assertEqual(gui.assignment_expected_anchors_text.get(), "4")
             self.assertEqual(gui.deepest_hop_text.get(), "3")
-            self.assertEqual(gui.discovery_slots_text.get(), "7")
             self.assertEqual(gui._topology_slot_span, 7)
             self.assertIn("4 anchors, max hop 3, slot span 7",
                           gui._topology_timing_summary)
@@ -435,7 +220,6 @@ class AppModelTests(unittest.TestCase):
         self.assertEqual(gui._topology_gateway_id, gateway_id)
         self.assertEqual(gui.assignment_expected_anchors_text.get(), "4")
         self.assertEqual(gui.deepest_hop_text.get(), "3")
-        self.assertEqual(gui.discovery_slots_text.get(), "7")
         self.assertEqual(gui._topology_slot_span, 7)
         self.assertIn("4 anchors, max hop 3, slot span 7",
                       gui._topology_timing_summary)
@@ -452,7 +236,6 @@ class AppModelTests(unittest.TestCase):
         gui._topology_gateway_id = old_gateway_id
         gui._topology_slot_span = 7
         gui.deepest_hop_text.set("3")
-        gui.discovery_slots_text.set("7")
         gui._topology_timing_summary = (
             "Topology: 4 anchors, max hop 3, slot span 7."
         )
@@ -475,22 +258,12 @@ class AppModelTests(unittest.TestCase):
             gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT,
         )
         self.assertEqual(gui.deepest_hop_text.get(), "")
-        self.assertEqual(
-            gui.discovery_slots_text.get(),
-            str(gateway_app.DISCOVERY_DEFAULT_SLOT_COUNT),
-        )
-
         policy = gui._operation_policy_profile()
         self.assertEqual(
             policy.assignment.expected_anchor_count,
             int(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT),
         )
         self.assertEqual(policy.assignment.deepest_hop, 0)
-        self.assertEqual(
-            policy.discovery.slot_count,
-            gateway_app.DISCOVERY_DEFAULT_SLOT_COUNT,
-        )
-
     def test_packet_identity_contradiction_invalidates_connected_identity(self) -> None:
         gui = self.identity_gui_model()
         gui.connected = True
@@ -1001,161 +774,6 @@ class AppModelTests(unittest.TestCase):
             b"receipt", "gateway host receipt"
         )
 
-    def test_auto_survey_id_is_fresh_for_each_send_with_frozen_clocks(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui.connected = True
-        gui.gateway_id = 0xAABBCCDDEEFF0011
-        gui.sequence = 0
-        gui._survey_id_counter = 1234
-        gui._used_survey_ids = set()
-        gui.survey_id_auto = FakeVariable(True)  # type: ignore[assignment]
-        gui.survey_id_text = FakeVariable("1234")  # type: ignore[assignment]
-        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
-        self.set_default_policy_variables(gui)
-        gui.sample_count_text = FakeVariable("5")  # type: ignore[assignment]
-        gui.status_text = FakeVariable()  # type: ignore[assignment]
-        gui.transport = Mock()
-        gui.geometry_model = Mock()
-        gui.geometry_model.generation = 1
-        gui.click_location_model = Mock()
-        gui.click_location_model.state = Mock()
-        gui.anchor_geometry_view = Mock()
-        gui.click_diagnostics_view = Mock()
-        submit_command = Mock(return_value=True)
-        gui.__dict__["_submit_gateway_command"] = submit_command
-        gui.__dict__["_show_error"] = Mock()
-        command = Mock(
-            frame=b"survey-frame",
-            label="survey",
-            command_id=CMD_SURVEY_REACHABILITY,
-        )
-        here_i_am = Mock(
-            frame=b"route-frame",
-            label="route",
-            command_id=CMD_FORCE_REDISCOVERY,
-        )
-
-        with patch("tools.gateway_gui.app.time.time_ns", return_value=99), \
-             patch("tools.gateway_gui.app.time.monotonic_ns", return_value=99), \
-             patch("tools.gateway_gui.app.build_anchor_discovery_command",
-                   return_value=command) as builder, \
-             patch("tools.gateway_gui.app.build_here_i_am_command",
-                   return_value=here_i_am):
-            gui._send_discovery()
-            gui._send_discovery()
-
-        survey_ids = [call.kwargs["survey_id"] for call in builder.call_args_list]
-        self.assertEqual(len(survey_ids), 2)
-        self.assertNotEqual(survey_ids[0], survey_ids[1])
-        self.assertTrue(all(1 <= survey_id <= 0xFFFFFFFF for survey_id in survey_ids))
-        self.assertEqual(gui.survey_id_text.get(), str(survey_ids[-1]))
-        self.assertEqual(submit_command.call_count, 2)
-        plans = [call.args[0] for call in submit_command.call_args_list]
-        self.assertTrue(all(plan.preflight is not None for plan in plans))
-        self.assertTrue(all(
-            plan.target.timeout_s
-            == SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS / 1000.0
-            + GATEWAY_COMMAND_COMPLETION_GUARD_S
-            for plan in plans
-        ))
-        self.assertTrue(all(
-            plan.preflight.session_id != plan.target.session_id for plan in plans
-        ))
-        gui.geometry_model.begin_survey.assert_not_called()
-        plans[-1].target.on_dispatch()
-        gui.geometry_model.begin_survey.assert_called_once_with(
-            survey_ids[-1],
-            host_session_id=plans[-1].target.session_id,
-            host_sequence=plans[-1].target.sequence,
-        )
-
-    def test_survey_frame_and_geometry_wait_for_successful_here_i_am(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui.connected = True
-        gui.gateway_id = 0xAABBCCDDEEFF0011
-        gui.sequence = 0
-        gui._last_command_session_id = 0
-        gui._survey_id_counter = 100
-        gui._used_survey_ids = set()
-        gui.survey_id_auto = FakeVariable(True)  # type: ignore[assignment]
-        gui.survey_id_text = FakeVariable("100")  # type: ignore[assignment]
-        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
-        gui.command_budget_text = FakeVariable(  # type: ignore[assignment]
-            str(SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS)
-        )
-        self.set_default_policy_variables(gui, expected_anchors="2")
-        gui.sample_count_text = FakeVariable("5")  # type: ignore[assignment]
-        gui.status_text = FakeVariable()  # type: ignore[assignment]
-        gui.transport = Mock()
-        gui.geometry_model = Mock()
-        gui.geometry_model.generation = 1
-        gui.click_location_model = Mock()
-        gui.click_location_model.state = Mock()
-        gui.anchor_geometry_view = Mock()
-        gui.click_diagnostics_view = Mock()
-        gui.command_request_tracker = GatewayCommandRequestTracker()
-        gui.command_orchestrator = GatewayCommandOrchestrator(
-            gui.command_request_tracker
-        )
-        gui.__dict__["_update_command_state"] = Mock()
-        gui.__dict__["_show_error"] = Mock()
-
-        with patch("tools.gateway_gui.app.time.monotonic_ns", return_value=99):
-            gui._send_discovery()
-
-        self.assertEqual(gui.transport.send_frame.call_count, 1)
-        gui.geometry_model.begin_survey.assert_not_called()
-        preflight = gui.command_orchestrator.current
-        self.assertIsNotNone(preflight)
-        assert preflight is not None
-        self.assertEqual(preflight.command_id, CMD_FORCE_REDISCOVERY)
-        preflight_policy = tuple(
-            value.raw for value in parse_cobs_packet(preflight.frame).tlvs
-            if value.type_id == TLV_OPERATION_POLICY
-        )
-        self.assertEqual(len(preflight_policy), 3)
-        route_terminal = GatewayCommandEvent(
-            preflight.command_kind, 12, 1, 1, 0, 0,
-            preflight.command_id, 0, preflight.session_id, 1,
-            preflight.session_id, preflight.sequence, 1,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        )
-
-        gui._apply_gateway_command_transition(
-            gui.command_orchestrator.observe_event(route_terminal)
-        )
-
-        self.assertEqual(gui.transport.send_frame.call_count, 2)
-        target = gui.command_orchestrator.current
-        self.assertIsNotNone(target)
-        assert target is not None
-        self.assertEqual(target.command_id, CMD_SURVEY_REACHABILITY)
-        self.assertNotEqual(target.session_id, preflight.session_id)
-        target_policy = tuple(
-            value.raw for value in parse_cobs_packet(target.frame).tlvs
-            if value.type_id == TLV_OPERATION_POLICY
-        )
-        self.assertEqual(target_policy, preflight_policy[1:])
-        self.assertEqual(
-            parse_cobs_packet(target.frame).value(TLV_EXPECTED_NODE_COUNT),
-            2,
-        )
-        self.assertEqual(
-            parse_cobs_packet(target.frame).value(TLV_COMMAND_BUDGET_MS),
-            SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS,
-        )
-        self.assertEqual(
-            target.timeout_s,
-            SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS / 1000.0
-            + GATEWAY_COMMAND_COMPLETION_GUARD_S,
-        )
-        gui.geometry_model.begin_survey.assert_called_once_with(
-            101,
-            host_session_id=target.session_id,
-            host_sequence=target.sequence,
-        )
-
     def test_assignment_is_snapshotted_behind_distinct_here_i_am_preflight(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = True
@@ -1235,8 +853,6 @@ class AppModelTests(unittest.TestCase):
         gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
         self.set_default_policy_variables(gui, expected_anchors="5")
         gui.assignment_response_spread_text = FakeVariable("750")  # type: ignore[assignment]
-        gui.discovery_round_count_text = FakeVariable("4")  # type: ignore[assignment]
-        gui.pair_max_parallel_text = FakeVariable("1")  # type: ignore[assignment]
         submit_command = Mock(return_value=True)
         gui.__dict__["_submit_gateway_command"] = submit_command
         gui.__dict__["_show_error"] = Mock()
@@ -1250,42 +866,9 @@ class AppModelTests(unittest.TestCase):
             value.decoded for value in parse_cobs_packet(plan.target.frame).tlvs
             if value.type_id == TLV_OPERATION_POLICY
         )
-        self.assertEqual(len(policies), 3)
+        self.assertEqual(len(policies), 1)
         self.assertEqual(policies[0]["expected_anchor_count"], 5)
         self.assertEqual(policies[0]["response_spread_ms"], 750)
-        self.assertEqual(policies[1]["round_count"], 4)
-        self.assertEqual(policies[2]["max_parallel_pairs"], 1)
-
-    def test_accepted_survey_telemetry_refreshes_geometry_view(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui.command_timeline_model = Mock()
-        gui.command_request_tracker = GatewayCommandRequestTracker()
-        gui.command_orchestrator = GatewayCommandOrchestrator(
-            gui.command_request_tracker
-        )
-        gui.__dict__["_apply_gateway_command_transition"] = Mock()
-        gui.mesh_diagnostics_view = Mock()
-        gui.geometry_model = Mock()
-        gui.geometry_model.observe_command_event.return_value = True
-        gui.anchor_geometry_view = Mock()
-        gui.topology_model = Mock()
-        gui.topology_model.observe.return_value = None
-        gui.__dict__["_show_error"] = Mock()
-        telemetry_event = Mock()
-        payload = b""
-        telemetry_packet = Packet(
-            "test", payload, None, MSG_GATEWAY_COMMAND_EVENT, 0, 1, 2, 3, 4,
-            None, 0, "gateway_queue_age_ms", payload, parse_tlvs(payload),
-        )
-
-        with patch(
-            "tools.gateway_gui.diagnostics_integration.decode_gateway_command_event",
-            return_value=telemetry_event,
-        ):
-            gui._observe_diagnostic_packet(telemetry_packet)
-
-        gui.geometry_model.observe_command_event.assert_called_once_with(telemetry_event)
-        gui.anchor_geometry_view.show_model.assert_called_once_with(gui.geometry_model)
 
     def test_event_drain_consumes_received_packets_before_wall_clock_expiry(
         self,
@@ -1336,17 +919,6 @@ class AppModelTests(unittest.TestCase):
         self.assertIsNone(gui.command_request_tracker.pending)
         update_command_state.assert_called_once()
 
-    def test_auto_survey_id_wraps_past_zero(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui._survey_id_counter = 0xFFFFFFFF
-        gui._used_survey_ids = set()
-        gui.survey_id_auto = FakeVariable(True)  # type: ignore[assignment]
-        gui.survey_id_text = FakeVariable("invalid")  # type: ignore[assignment]
-
-        self.assertEqual(gui._survey_id_for_send(), 1)
-        self.assertEqual(gui._survey_id_for_send(), 2)
-        self.assertEqual(gui.survey_id_text.get(), "2")
-
     def test_blank_command_limit_uses_full_robust_gui_wait(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         self.assertEqual(DEFAULT_COMMAND_BUDGET_TEXT, "")
@@ -1369,18 +941,6 @@ class AppModelTests(unittest.TestCase):
             + GATEWAY_COMMAND_COMPLETION_GUARD_S,
         )
         self.assertEqual(gui._command_timeout_s(20000), 25.0)
-
-    def test_manual_survey_id_mode_honors_exact_entry(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui._survey_id_counter = 1234
-        gui._used_survey_ids = set()
-        gui.survey_id_auto = FakeVariable(False)  # type: ignore[assignment]
-        gui.survey_id_text = FakeVariable("0xabcdef01")  # type: ignore[assignment]
-
-        self.assertEqual(gui._survey_id_for_send(), 0xABCDEF01)
-        self.assertEqual(gui._survey_id_for_send(), 0xABCDEF01)
-        self.assertEqual(gui.survey_id_text.get(), "0xabcdef01")
-        self.assertEqual(gui._survey_id_counter, 1234)
 
     @staticmethod
     def clear_memory_guard_model() -> GatewayGui:
@@ -1406,60 +966,6 @@ class AppModelTests(unittest.TestCase):
         gui._append_log = Mock()  # type: ignore[method-assign]
         gui._show_error = Mock()  # type: ignore[method-assign]
         return gui
-
-    def test_clear_memory_button_blocks_busy_and_transition_states(
-        self,
-    ) -> None:
-        gui = self.identity_gui_model()
-        gui.clear_memory_button = FakeWidget()  # type: ignore[assignment]
-        gui.command_availability_text = FakeVariable()  # type: ignore[assignment]
-        gui._command_progress_text = "Command running"
-        gui._active_survey_estimate_ms = None
-
-        def set_idle(state: str) -> None:
-            gui.connection_state = state
-            gui.connected = state == "connected"
-            gui.gateway_id = 0x9999888877776666 if gui.connected else None
-            gui.command_request_tracker = GatewayCommandRequestTracker()
-            gui.command_orchestrator = SimpleNamespace(
-                active=False, phase=None, plan=None
-            )
-
-        for state in ("connecting", "reconnecting", "disconnecting"):
-            with self.subTest(state=state):
-                set_idle(state)
-                gui._update_command_state()
-                self.assertEqual(
-                    gui.clear_memory_button.options["state"], "disabled"
-                )
-
-        set_idle("disconnected")
-        gui._update_command_state()
-        self.assertEqual(gui.clear_memory_button.options["state"], "normal")
-
-        set_idle("connected")
-        gui._update_command_state()
-        self.assertEqual(gui.clear_memory_button.options["state"], "normal")
-
-        for owner in ("tracker", "orchestrator"):
-            with self.subTest(owner=owner):
-                set_idle("connected")
-                if owner == "tracker":
-                    self.assertTrue(gui.command_request_tracker.begin(
-                        1, 55, 4, now=100.0, timeout_s=10.0
-                    ))
-                else:
-                    gui.command_orchestrator = SimpleNamespace(
-                        active=True, phase="target", plan=None
-                    )
-                with patch(
-                    "tools.gateway_gui.app.time.monotonic",
-                    return_value=105.0,
-                ):
-                    gui._update_command_state()
-                self.assertEqual(
-                    gui.clear_memory_button.options["state"], "disabled"
-                )
 
     def test_clear_memory_action_copy_makes_connected_reboot_explicit(
         self,
@@ -1582,79 +1088,6 @@ class AppModelTests(unittest.TestCase):
     def test_expected_anchors_default_is_three(self) -> None:
         self.assertEqual(gateway_app.DEFAULT_ASSIGNMENT_EXPECTED_ANCHORS_TEXT, "3")
 
-    def test_successful_enumeration_stores_topology_timing_in_gui_ram(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        self.set_default_policy_variables(gui, expected_anchors="3")
-        gui.gateway_id = 0x9999888877776666
-        gui.deepest_hop_text.set("1")
-        gui.operation_estimate_text = FakeVariable()  # type: ignore[assignment]
-        gui._topology_gateway_id = None
-        gui._topology_slot_span = None
-        gui._topology_timing_summary = "Topology estimate pending enumeration."
-        gui.__dict__["_append_log"] = Mock()
-        gui.command_timeline_model = CommandTimelineModel()
-        key_fields = {
-            "command_kind": 1,
-            "flags": 0,
-            "attempt": 1,
-            "command_status": 0,
-            "reason": 0,
-            "command_id": CMD_ASSIGN_DISCOVERY_SLOTS,
-            "route_epoch": 7,
-            "correlation_id": 55,
-            "gateway_sequence": 70,
-            "host_session_id": 55,
-            "host_sequence": 4,
-            "pair_initiator_id": 0,
-            "pair_responder_id": 0,
-            "previous_hop_id": 0,
-            "total_count": 3,
-            "success_count": 1,
-            "failure_count": 0,
-            "duplicate_count": 0,
-            "lost_event_count": 0,
-        }
-        for index, (anchor_id, hop, slot) in enumerate(
-            ((0x11, 1, 0), (0x22, 2, 2), (0x33, 3, 5)), start=1
-        ):
-            gui.command_timeline_model.observe(GatewayCommandEvent(
-                **key_fields,
-                stage=6,
-                event_sequence=70 + index,
-                anchor_id=anchor_id,
-                progress_count=index,
-                hop_count=hop,
-                discovery_slot=slot,
-            ))
-        terminal = GatewayCommandEvent(
-            **{**key_fields, "flags": GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
-               "success_count": 3},
-            stage=12,
-            event_sequence=80,
-            anchor_id=0,
-            progress_count=3,
-            hop_count=0,
-            discovery_slot=0xFF,
-        )
-        anchors = gui.command_timeline_model.enumerated_anchors[
-            terminal.correlation_key
-        ]
-        gui._store_enumeration_timing(terminal, anchors)
-
-        self.assertEqual(gui._topology_gateway_id, gui.gateway_id)
-        self.assertEqual(gui.assignment_expected_anchors_text.get(), "3")
-        self.assertEqual(gui.deepest_hop_text.get(), "3")
-        self.assertEqual(gui.discovery_slots_text.get(), "6")
-        self.assertEqual(gui.assignment_budget_text.get(), "418524")
-        self.assertEqual(gui.discovery_budget_text.get(), "167073")
-        self.assertIn("3 anchors, max hop 3, slot span 6",
-                      gui.operation_estimate_text.get())
-        self.assertIn("estimated full survey 4:54",
-                      gui.operation_estimate_text.get())
-        self.assertIn("Increase route redundancy",
-                      gui.operation_estimate_text.get())
-        gui._append_log.assert_called_once()
-
     def test_active_command_state_shows_deadline_countdown(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = True
@@ -1667,7 +1100,6 @@ class AppModelTests(unittest.TestCase):
         gui.command_orchestrator = SimpleNamespace(
             active=True, phase="target", plan=None
         )
-        gui.discovery_button = FakeWidget()  # type: ignore[assignment]
         gui.refresh_button = FakeWidget()  # type: ignore[assignment]
         gui.assignment_button = FakeWidget()  # type: ignore[assignment]
         gui.command_availability_text = FakeVariable()  # type: ignore[assignment]
@@ -1680,38 +1112,6 @@ class AppModelTests(unittest.TestCase):
             "Confirmations 2/3. Deadline countdown: 0:05.",
         )
         self.assertEqual(gui.assignment_button.options["state"], "disabled")
-
-    def test_active_survey_shows_soft_estimate_then_keeps_retrying(self) -> None:
-        gui = GatewayGui.__new__(GatewayGui)
-        gui.connected = True
-        gui.gateway_id = 0x1234
-        gui._command_progress_text = "Ranging pairs 1/3"
-        gui._active_survey_estimate_ms = 246_100
-        gui.command_request_tracker = GatewayCommandRequestTracker()
-        self.assertTrue(gui.command_request_tracker.begin(
-            2, 55, 4, now=100.0, timeout_s=1805.0
-        ))
-        gui.command_orchestrator = SimpleNamespace(
-            active=True, phase="target", plan=None
-        )
-        gui.discovery_button = FakeWidget()  # type: ignore[assignment]
-        gui.refresh_button = FakeWidget()  # type: ignore[assignment]
-        gui.assignment_button = FakeWidget()  # type: ignore[assignment]
-        gui.command_availability_text = FakeVariable()  # type: ignore[assignment]
-
-        with patch("tools.gateway_gui.app.time.monotonic", return_value=200.0):
-            gui._update_command_state()
-        self.assertEqual(
-            gui.command_availability_text.get(),
-            "Ranging pairs 1/3. Estimated countdown: 2:27; safety deadline: 28:25.",
-        )
-
-        with patch("tools.gateway_gui.app.time.monotonic", return_value=400.0):
-            gui._update_command_state()
-        self.assertEqual(
-            gui.command_availability_text.get(),
-            "Ranging pairs 1/3. Over estimate by 0:54 - retrying; safety deadline: 25:05.",
-        )
 
     def test_enumeration_updates_topology_view_live_with_discovered_anchors(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)

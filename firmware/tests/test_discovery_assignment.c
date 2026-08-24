@@ -1107,7 +1107,7 @@ static void append_conflicting_assignment_singleton(uint8_t *payload,
     switch (type) {
     case TLV_COMMAND_ID:
         assert(tlv_append_u16(payload, payload_cap, payload_len, type,
-                              CMD_SURVEY_ABORT) == PROTO_OK);
+                              CMD_REBOOT) == PROTO_OK);
         break;
     case TLV_COMMAND_STATUS:
         assert(tlv_append_u16(payload, payload_cap, payload_len, type,

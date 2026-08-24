@@ -183,6 +183,10 @@ class CaptureStackEvidenceTests(unittest.TestCase):
                 f"0x{(0x1020304050607080 ^ cohort.DEVICE_IDENTITY_NODE_DOMAIN):016x}",
                 data["target"]["node_id"],
             )
+            self.assertEqual(
+                "mesh_anchor-TEST-PROBE-",
+                data["transcript"]["path"][:23],
+            )
 
     def test_capture_identity_rejects_missing_conflicting_or_mismapped_records(self) -> None:
         physical_id = 0x1020304050607080

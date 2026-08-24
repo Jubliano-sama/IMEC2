@@ -607,15 +607,6 @@ static void test_wake_discovery_and_schedule_round_trip(void)
         .battery_mv = 3010u,
         .flags = claim.flags,
     };
-    const struct uwb_survey_discovery_probe_frame survey_probe = {
-        .network_id = claim.network_id,
-        .survey_id = 0xAABBCCDDu,
-        .operation_generation = UINT64_C(0x00000001AABBCCDD),
-        .anchor_id = UINT64_C(0xAA00000000000004),
-        .anchor_slot = 8u,
-        .slot_count = UWB_DISCOVERY_SLOT_COUNT,
-        .flags = FLAG_DIAGNOSTIC,
-    };
     const struct uwb_range_release_frame release =
         valid_range_release_for_claim(&claim);
     struct uwb_range_schedule_frame schedule = {
@@ -659,7 +650,6 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     struct uwb_wake_claim_frame decoded_claim = {0};
     struct uwb_discover_frame decoded_discover = {0};
     struct uwb_discovery_reply_frame decoded_reply = {0};
-    struct uwb_survey_discovery_probe_frame decoded_survey_probe = {0};
     struct uwb_range_release_frame decoded_release = {0};
     struct uwb_range_schedule_frame decoded_schedule = {0};
     size_t written = 0u;
@@ -804,18 +794,6 @@ static void test_wake_discovery_and_schedule_round_trip(void)
     assert(decoded_reply.rx_quality == reply.rx_quality);
     assert(decoded_reply.battery_mv == reply.battery_mv);
     assert(decoded_reply.flags == reply.flags);
-
-    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) == PROTO_OK);
-    assert(written == UWB_SURVEY_DISCOVERY_PROBE_LEN);
-    assert(uwb_decode_survey_discovery_probe(buf, written, &decoded_survey_probe) == PROTO_OK);
-    assert(decoded_survey_probe.network_id == survey_probe.network_id);
-    assert(decoded_survey_probe.survey_id == survey_probe.survey_id);
-    assert(decoded_survey_probe.operation_generation ==
-           survey_probe.operation_generation);
-    assert(decoded_survey_probe.anchor_id == survey_probe.anchor_id);
-    assert(decoded_survey_probe.anchor_slot == survey_probe.anchor_slot);
-    assert(decoded_survey_probe.slot_count == survey_probe.slot_count);
-    assert(decoded_survey_probe.flags == survey_probe.flags);
 
     assert(uwb_encode_range_release(&release, buf, sizeof(buf), &written) == PROTO_OK);
     assert(written == UWB_RANGE_RELEASE_LEN);
@@ -1081,15 +1059,6 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
         .battery_mv = 3010u,
         .flags = FLAG_DIAGNOSTIC,
     };
-    const struct uwb_survey_discovery_probe_frame survey_probe = {
-        .network_id = claim.network_id,
-        .survey_id = 0xAABBCCDDu,
-        .operation_generation = UINT64_C(0x00000001AABBCCDD),
-        .anchor_id = UINT64_C(0xAA00000000000004),
-        .anchor_slot = 8u,
-        .slot_count = UWB_DISCOVERY_SLOT_COUNT,
-        .flags = FLAG_DIAGNOSTIC,
-    };
     uint8_t buf[UWB_DISCOVERY_REPLY_LEN];
     size_t written = 0u;
 
@@ -1143,41 +1112,6 @@ static void test_discovery_decode_rejects_valid_crc_malformed_fields(void)
                                       &(struct uwb_discovery_reply_frame){0}) ==
            PROTO_ERR_MALFORMED);
 
-    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
-           PROTO_OK);
-    memset(&buf[11], 0, sizeof(uint64_t));
-    refresh_frame_crc(buf, written);
-    assert(uwb_decode_survey_discovery_probe(buf,
-                                             written,
-                                             &(struct uwb_survey_discovery_probe_frame){0}) ==
-           PROTO_ERR_MALFORMED);
-
-    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
-           PROTO_OK);
-    buf[29] = FLAG_GATEWAY_ACK_REQUIRED;
-    refresh_frame_crc(buf, written);
-    assert(uwb_decode_survey_discovery_probe(buf,
-                                             written,
-                                             &(struct uwb_survey_discovery_probe_frame){0}) ==
-           PROTO_ERR_MALFORMED);
-
-    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
-           PROTO_OK);
-    buf[27] = UWB_DISCOVERY_SLOT_COUNT;
-    refresh_frame_crc(buf, written);
-    assert(uwb_decode_survey_discovery_probe(buf,
-                                             written,
-                                             &(struct uwb_survey_discovery_probe_frame){0}) ==
-           PROTO_ERR_MALFORMED);
-
-    assert(uwb_encode_survey_discovery_probe(&survey_probe, buf, sizeof(buf), &written) ==
-           PROTO_OK);
-    buf[28] = 0u;
-    refresh_frame_crc(buf, written);
-    assert(uwb_decode_survey_discovery_probe(buf,
-                                             written,
-                                             &(struct uwb_survey_discovery_probe_frame){0}) ==
-           PROTO_ERR_MALFORMED);
 }
 
 static void test_range_release_decode_rejects_valid_crc_malformed_fields(void)
@@ -1969,103 +1903,6 @@ static void test_uwb_mesh_frame_max_extended_packet(void)
     assert(memcmp(decoded_payload, payload, sizeof(payload)) == 0);
 }
 
-static void test_anchor_pair_schedule_and_result_round_trip(void)
-{
-    const struct uwb_anchor_pair_schedule_frame schedule = {
-        .network_id = 0x494D4543u,
-        .clicker_id = UINT64_C(0x1111222233334444),
-        .survey_id = 99u,
-        .attempt_index = 1u,
-        .nonce = UINT64_C(0xCAFEBABE00001234),
-        .anchor_count = 4u,
-        .pair_count = 6u,
-        .ranging_channel = UWB_CHANNEL_WAKE_CONTACT,
-        .first_pair_delay_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
-        .pair_stride_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS,
-        .pair_window_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS,
-        .reply_delay_us = UWB_DS_TWR_REPLY_DELAY_US,
-        .flags = FLAG_DIAGNOSTIC,
-        .anchor_ids = {
-            UINT64_C(0xAA00000000000001),
-            UINT64_C(0xAA00000000000002),
-            UINT64_C(0xAA00000000000003),
-            UINT64_C(0xAA00000000000004),
-        },
-        .anchor_start_delay_ms = {
-            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
-            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
-            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
-            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS,
-        },
-    };
-    const struct uwb_anchor_pair_result_frame result = {
-        .network_id = schedule.network_id,
-        .clicker_id = schedule.clicker_id,
-        .survey_id = schedule.survey_id,
-        .nonce = schedule.nonce,
-        .initiator_id = schedule.anchor_ids[1],
-        .responder_id = schedule.anchor_ids[3],
-        .pair_index = 4u,
-        .pair_count = schedule.pair_count,
-        .seq = 5u,
-        .status = RANGE_OK,
-        .quality = 91u,
-        .distance_mm = 1234,
-        .rsl_dbm = -81,
-        .flags = FLAG_DIAGNOSTIC,
-    };
-    uint8_t frame[UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN];
-    struct uwb_anchor_pair_schedule_frame decoded_schedule = {0};
-    struct uwb_anchor_pair_result_frame decoded_result = {0};
-    uint64_t initiator_id = 0u;
-    uint64_t responder_id = 0u;
-    size_t written = 0u;
-
-    assert(uwb_anchor_pair_count(4u) == 6u);
-    assert(uwb_anchor_pair_schedule_encoded_len(schedule.anchor_count) ==
-           UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN +
-           (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * schedule.anchor_count) +
-           UWB_FRAME_CRC_LEN);
-    assert(uwb_encode_anchor_pair_schedule(&schedule,
-                                           frame,
-                                           sizeof(frame),
-                                           &written) == PROTO_OK);
-    assert(uwb_decode_anchor_pair_schedule(frame,
-                                           written,
-                                           &decoded_schedule) == PROTO_OK);
-    assert(decoded_schedule.anchor_count == schedule.anchor_count);
-    assert(decoded_schedule.pair_count == schedule.pair_count);
-    assert(decoded_schedule.anchor_ids[3] == schedule.anchor_ids[3]);
-    assert(decoded_schedule.anchor_start_delay_ms[3] ==
-           schedule.anchor_start_delay_ms[3]);
-    assert(uwb_anchor_pair_at(&decoded_schedule,
-                              4u,
-                              &initiator_id,
-                              &responder_id) == PROTO_OK);
-    assert(initiator_id == schedule.anchor_ids[1]);
-    assert(responder_id == schedule.anchor_ids[3]);
-
-    assert(uwb_encode_anchor_pair_result(&result,
-                                         frame,
-                                         sizeof(frame),
-                                         &written) == PROTO_OK);
-    assert(written == UWB_ANCHOR_PAIR_RESULT_LEN);
-    assert(uwb_decode_anchor_pair_result(frame,
-                                         written,
-                                         &decoded_result) == PROTO_OK);
-    assert(decoded_result.survey_id == result.survey_id);
-    assert(decoded_result.initiator_id == result.initiator_id);
-    assert(decoded_result.responder_id == result.responder_id);
-    assert(decoded_result.pair_index == result.pair_index);
-    assert(decoded_result.distance_mm == result.distance_mm);
-    assert(decoded_result.rsl_dbm == result.rsl_dbm);
-
-    frame[20] ^= 0x01u;
-    assert(uwb_decode_anchor_pair_result(frame,
-                                         written,
-                                         &decoded_result) == PROTO_ERR_BAD_CRC);
-}
-
 static void test_enumeration_bundle_and_hop_ack_round_trip(void)
 {
     struct uwb_enumeration_bundle_frame bundle = {
@@ -2171,7 +2008,6 @@ int main(void)
     test_claim_precedence_compare_uses_canonical_tuple();
     test_uwb_mesh_frame_round_trip_and_filters();
     test_uwb_mesh_frame_max_extended_packet();
-    test_anchor_pair_schedule_and_result_round_trip();
     test_enumeration_bundle_and_hop_ack_round_trip();
     return 0;
 }

@@ -26,8 +26,6 @@
 #include "gateway_command.h"
 #include "route.h"
 #include "serial_frame.h"
-#include "survey.h"
-#include "survey_gateway_transaction.h"
 #include "uwb_ble_courtesy.h"
 
 #include <zephyr/kernel.h>
@@ -176,10 +174,6 @@ BUILD_ASSERT(GATEWAY_BLE_RX_FRAME_QUEUE_DEPTH >= 2u,
              "gateway BLE RX queue must absorb at least one pending and one arriving frame");
 BUILD_ASSERT(GATEWAY_BLE_TX_RETRY_MAX_MS >= GATEWAY_BLE_TX_RETRY_MS,
              "gateway BLE notification retry cap must cover the base delay");
-BUILD_ASSERT(SURVEY_DISCOVERY_SLOT_MS >= SURVEY_DISCOVERY_MIN_SLOT_MS,
-             "survey discovery slots must fit the physical probe envelope");
-BUILD_ASSERT(UWB_DISCOVERY_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,
-             "survey discovery slot helper must cover the UWB slot count");
 BUILD_ASSERT(MAX_SCHEDULED_ANCHORS > 0u &&
              MAX_SCHEDULED_ANCHORS <= UWB_DISCOVERY_SLOT_COUNT &&
              MAX_SCHEDULED_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
@@ -191,26 +185,6 @@ BUILD_ASSERT((UWB_RANGE_SCHEDULE_MAX_ANCHORS +
              "scheduled DS-TWR sequence numbers must fit one byte");
 BUILD_ASSERT(UWB_ML_MAX_SCHEDULED_EXCHANGES <= UINT16_MAX,
              "ML scheduled sample count must fit BLE sample-count TLV");
-BUILD_ASSERT(SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT > 0u &&
-             SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT <= SURVEY_DISCOVERY_MAX_SLOT_COUNT,
-             "default survey discovery slots must fit survey TLV limits");
-BUILD_ASSERT(SURVEY_RESULT_MESH_SLOT_MS >=
-                 UWB_MESH_TX_TIMEOUT_MS +
-                 APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS +
-                 APP_MESH_DIRECT_GATEWAY_ACK_RX_MS +
-                 OPERATION_POLICY_RESPONSE_RADIO_CONFIG_GUARD_MS +
-                 APP_MESH_DIRECT_GATEWAY_SURVEY_SERVICE_GUARD_MS +
-                 (2u * OPERATION_POLICY_RESPONSE_RETUNE_EDGE_MS) +
-                 OPERATION_POLICY_RESPONSE_SCHEDULER_SLOP_MS,
-             "survey result slot must cover direct TX, ACK, retune, and margin");
-BUILD_ASSERT(SURVEY_GATEWAY_RESPONSE_ACK_SETTLE_MS >=
-             (NODE_COMM_PROTOCOL_RESPONSE_RETRY_BACKOFF_MAX_MS +
-              APP_MESH_DIRECT_GATEWAY_ACK_RX_MS +
-              APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS +
-              APP_MESH_DIRECT_GATEWAY_SURVEY_SERVICE_GUARD_MS),
-             "survey response settle must cover the maximum response retry and ACK window");
-BUILD_ASSERT(UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN <= UWB_RANGE_SCHEDULE_MAX_LEN,
-             "anchor-pair schedule must fit the anchor schedule RX buffer");
 #if defined(CONFIG_IMEC_ML_CLICKER)
 BUILD_ASSERT(CONFIG_IMEC_ML_DEFAULT_SAMPLES_PER_ANCHOR <=
              UWB_RANGING_REQUESTS_MAX_PER_ANCHOR,
@@ -219,11 +193,6 @@ BUILD_ASSERT(CONFIG_IMEC_ML_MAX_ANCHORS <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
              "ML selected anchors must fit the production range schedule frame");
 BUILD_ASSERT(CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT <= UWB_RANGE_SCHEDULE_MAX_ANCHORS,
              "ML discovery slot count must fit the selected-anchor schedule");
-BUILD_ASSERT(CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT >=
-                 SURVEY_ML_ANCHOR_PAIR_MIN_DISCOVERY_SLOT_COUNT &&
-             CONFIG_IMEC_ML_DISCOVERY_SLOT_COUNT <=
-                 SURVEY_ML_ANCHOR_PAIR_MAX_DISCOVERY_SLOT_COUNT,
-             "ML anchor-pair survey default discovery slots must fit the 0x8002 contract");
 BUILD_ASSERT(UWB_ML_EXCHANGE_STRIDE_US >= UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US,
              "ML exchange stride must satisfy range schedule validation");
 BUILD_ASSERT(ML_CLICKER_COLLECTION_DEADLINE_MS > UWB_ML_MAX_BURST_MS,
@@ -231,10 +200,6 @@ BUILD_ASSERT(ML_CLICKER_COLLECTION_DEADLINE_MS > UWB_ML_MAX_BURST_MS,
 BUILD_ASSERT(ML_CLICKER_COLLECTION_DEADLINE_MS + 2500u <
                  APP_WATCHDOG_PROGRESS_LEASE_MS,
              "ML click action must finish before its watchdog lease expires");
-BUILD_ASSERT(UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS >=
-             ((UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS *
-               (UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS - 1u)) / 2u),
-             "ML anchor-pair result storage must cover every scheduled pair");
 #endif
 BUILD_ASSERT(CLICK_REPORT_DEADLINE_MS + 2500u <
                  APP_WATCHDOG_PROGRESS_LEASE_MS,

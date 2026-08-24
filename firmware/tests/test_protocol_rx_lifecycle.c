@@ -43,24 +43,24 @@ static void test_forced_hop_activation_is_local_and_wake_once(void)
     protocol_rx_lifecycle_init(&second_hop);
 
     assert(protocol_rx_lifecycle_begin(
-               &first_hop, PROTOCOL_RX_OPERATION_SURVEY,
+               &first_hop, PROTOCOL_RX_OPERATION_ENUMERATION,
                UINT64_C(0x202), 100u, 30000u) ==
            PROTOCOL_RX_BEGIN_ACCEPTED);
     /* F1's first relay activates idle F2. Later phases are duplicates. */
     assert(protocol_rx_lifecycle_begin(
-               &second_hop, PROTOCOL_RX_OPERATION_SURVEY,
+               &second_hop, PROTOCOL_RX_OPERATION_ENUMERATION,
                UINT64_C(0x202), 200u, 30000u) ==
            PROTOCOL_RX_BEGIN_ACCEPTED);
     assert(protocol_rx_lifecycle_begin(
-               &second_hop, PROTOCOL_RX_OPERATION_SURVEY,
+               &second_hop, PROTOCOL_RX_OPERATION_ENUMERATION,
                UINT64_C(0x202), 500u, 30000u) ==
            PROTOCOL_RX_BEGIN_DUPLICATE);
     assert(second_hop.mode == PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5);
 
     assert(protocol_rx_lifecycle_terminate(
-        &first_hop, PROTOCOL_RX_OPERATION_SURVEY, UINT64_C(0x202)));
+        &first_hop, PROTOCOL_RX_OPERATION_ENUMERATION, UINT64_C(0x202)));
     assert(protocol_rx_lifecycle_terminate(
-        &second_hop, PROTOCOL_RX_OPERATION_SURVEY, UINT64_C(0x202)));
+        &second_hop, PROTOCOL_RX_OPERATION_ENUMERATION, UINT64_C(0x202)));
 }
 
 static void test_abort_failure_timeout_and_stale_terminal_return_low_duty(void)
@@ -69,11 +69,11 @@ static void test_abort_failure_timeout_and_stale_terminal_return_low_duty(void)
 
     protocol_rx_lifecycle_init(&anchor);
     assert(protocol_rx_lifecycle_begin(
-               &anchor, PROTOCOL_RX_OPERATION_SURVEY,
+               &anchor, PROTOCOL_RX_OPERATION_ENUMERATION,
                UINT64_C(0x303), UINT32_MAX - 50u, 25u) ==
            PROTOCOL_RX_BEGIN_ACCEPTED);
     assert(!protocol_rx_lifecycle_terminate(
-        &anchor, PROTOCOL_RX_OPERATION_SURVEY, UINT64_C(0x302)));
+        &anchor, PROTOCOL_RX_OPERATION_ENUMERATION, UINT64_C(0x302)));
     assert(anchor.mode == PROTOCOL_RX_MODE_CONTINUOUS_CHANNEL5);
     assert(!protocol_rx_lifecycle_expire(&anchor, UINT32_MAX));
     assert(protocol_rx_lifecycle_expire(&anchor, 25u));
@@ -98,7 +98,7 @@ static void test_one_gateway_operation_owns_channel_five(void)
                UINT64_C(0x505), 0u, 1000u) ==
            PROTOCOL_RX_BEGIN_ACCEPTED);
     assert(protocol_rx_lifecycle_begin(
-               &anchor, PROTOCOL_RX_OPERATION_SURVEY,
+               &anchor, PROTOCOL_RX_OPERATION_HERE_I_AM,
                UINT64_C(0x606), 1u, 1000u) ==
            PROTOCOL_RX_BEGIN_BUSY);
     assert(anchor.operation == PROTOCOL_RX_OPERATION_ENUMERATION);

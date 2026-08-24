@@ -1,21 +1,4 @@
 #line 673 __BASE_FILE__
-static bool mesh_report_anchor_survey_radio_active(void)
-{
-    return mesh_report_callbacks != NULL &&
-           mesh_report_callbacks->anchor_survey_radio_active != NULL &&
-           mesh_report_callbacks->anchor_survey_radio_active();
-}
-
-static bool mesh_report_anchor_survey_operation_generation_active(
-    uint64_t operation_generation)
-{
-    return mesh_report_callbacks != NULL &&
-           mesh_report_callbacks->anchor_survey_operation_generation_active !=
-               NULL &&
-           mesh_report_callbacks->anchor_survey_operation_generation_active(
-               operation_generation);
-}
-
 static uint8_t mesh_channel9_connection_count(void)
 {
     uint8_t count = 0u;
@@ -396,8 +379,6 @@ static void mesh_coordinator_decide_for_c5_intent(
     const bool relay_tx_active = mesh_relay_tx_active(&mesh_runtime);
     const struct fw_radio_activity_capture capture = {
         .click_active = mesh_click_priority_active(),
-        .survey_pending = DEVICE_ROLE == ROLE_ANCHOR &&
-                          mesh_report_anchor_survey_radio_active(),
         .rx_queue_used = rx_queue_used,
         .report_queue_used = report_queue_used,
         .relay_tx_active = relay_tx_active,
@@ -574,70 +555,11 @@ static bool mesh_c5_ack_rx_timing_response_candidate_valid(
 }
 #endif
 
-static bool mesh_c5_gateway_survey_control_candidate_valid(
-    const struct mesh_outbound *candidate)
-{
-#if DEVICE_ROLE == ROLE_ANCHOR
-    uint64_t operation_generation = 0u;
-
-    if (candidate == NULL ||
-        candidate->radio_channel != UWB_CHANNEL_WAKE_CONTACT ||
-        candidate->packet.src_id != GATEWAY_ID ||
-        candidate->packet.flags != FLAG_DIAGNOSTIC ||
-        candidate->packet.payload_len != candidate->payload_len ||
-        candidate->packet.ttl == 0u ||
-        candidate->packet.ttl > SURVEY_DEFAULT_TTL ||
-        survey_operation_generation_extract_tlv(
-            candidate->payload,
-            candidate->payload_len,
-            &operation_generation) != PROTO_OK ||
-        operation_generation == 0u ||
-        candidate->packet.session_id !=
-            survey_operation_session_id(operation_generation)) {
-        return false;
-    }
-
-    if (candidate->packet.msg_type == MSG_SURVEY_DISCOVERY_START) {
-        struct survey_discovery_config config = {0};
-
-        return candidate->packet.dst_id == MESH_BROADCAST_ID &&
-               candidate->next_hop_id == MESH_BROADCAST_ID &&
-               survey_extract_discovery_start_tlvs(
-                   candidate->payload,
-                   candidate->payload_len,
-                   &config) == PROTO_OK &&
-               config.operation_generation == operation_generation;
-    }
-    if (candidate->packet.msg_type == MSG_SURVEY_PAIR_PREPARE) {
-        struct survey_pair pair = {0};
-
-        return mesh_id_is_unicast(candidate->packet.dst_id) &&
-               mesh_id_is_unicast(candidate->next_hop_id) &&
-               survey_extract_pair_tlvs(candidate->payload,
-                                        candidate->payload_len,
-                                        &pair) == PROTO_OK &&
-               pair.operation_generation == operation_generation &&
-               (candidate->packet.dst_id == pair.initiator_id ||
-                candidate->packet.dst_id == pair.responder_id);
-    }
-    return false;
-#else
-    ARG_UNUSED(candidate);
-    return false;
-#endif
-}
-
 static enum fw_c5_tx_intent mesh_c5_forwarded_control_intent(
     const struct mesh_outbound *candidate)
 {
-#if DEVICE_ROLE == ROLE_ANCHOR
-    return mesh_c5_gateway_survey_control_candidate_valid(candidate) ?
-        FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL :
-        FW_C5_TX_INTENT_BACKGROUND;
-#else
     ARG_UNUSED(candidate);
     return FW_C5_TX_INTENT_BACKGROUND;
-#endif
 }
 
 static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
@@ -654,10 +576,6 @@ static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
 
     if (intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE &&
         !mesh_c5_causal_response_candidate_valid(candidate)) {
-        return false;
-    }
-    if (intent == FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL &&
-        !mesh_c5_gateway_survey_control_candidate_valid(candidate)) {
         return false;
     }
 #if DEVICE_ROLE == ROLE_ANCHOR
@@ -700,8 +618,7 @@ static bool mesh_coordinator_c5_tx_allowed_authorized_intent(
         decision.state == FW_RADIO_ACTIVITY_MESH_RX &&
         capture.relay_tx_active && capture.ch9_ack_wait_active &&
         capture.ch9_ack_receive_eligible && capture.rx_queue_used == 0u &&
-        !capture.click_active && !capture.survey_pending &&
-        !capture.gateway_continuous_ch9;
+        !capture.click_active && !capture.gateway_continuous_ch9;
     if (decision.state != FW_RADIO_ACTIVITY_MESH_TX &&
         !exact_ack_rx_repair_state) {
         return false;
@@ -763,8 +680,6 @@ static bool mesh_outbound_reports_local_delivery_loss(const struct mesh_outbound
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
     default:
         return false;
@@ -821,8 +736,6 @@ static uint8_t mesh_c5_purpose_for_packet(const struct proto_packet *packet)
     case MSG_RELAY_BUSY:
         return C5_CONTACT_PURPOSE_ROUTE_CONTACT_REFRESH;
     case MSG_COMMAND:
-    case MSG_SURVEY_PAIR_PREPARE:
-    case MSG_SURVEY_DISCOVERY_START:
         return C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
     case MSG_GATEWAY_COLLECTION_EACK:
         return C5_CONTACT_PURPOSE_COLLECTION_EACK_FLOOD;
@@ -1000,9 +913,7 @@ static void mesh_restore_anchor_low_duty_if_no_ch9(const char *reason)
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
     if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
         DEVICE_ROLE != ROLE_ANCHOR ||
-        mesh_channel9_connection_count() != 0u ||
-        mesh_report_anchor_survey_radio_active() ||
-        mesh_report_anchor_survey_operation_generation_active(0u)) {
+        mesh_channel9_connection_count() != 0u) {
         return;
     }
     if (anchor_uwb_scan_interval_ms != CONFIG_IMEC_MESH_ROUTE_TEST_CH5_SCAN_INTERVAL_MS) {
@@ -1210,7 +1121,7 @@ static bool mesh_local_delivery_blocks_background_event_repair(void)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
     /*
-     * node_comm owns enumeration and survey responses; click priority covers
+     * node_comm owns enumeration responses; click priority covers
      * the independent report path. A stale child-ACK connection repair is
      * background work and must not occupy the single radio while either is
      * waiting to send.
@@ -1429,51 +1340,6 @@ static int mesh_report_anchor_handle_local_command(const struct proto_packet *pa
     return 0;
 }
 
-static void mesh_report_anchor_handle_survey_discovery_start(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len)
-{
-    if (mesh_report_callbacks != NULL &&
-        mesh_report_callbacks->anchor_handle_survey_discovery_start != NULL) {
-        mesh_report_callbacks->anchor_handle_survey_discovery_start(packet, payload, payload_len);
-    }
-}
-
-static void mesh_report_anchor_handle_survey_pair_prepare(const struct proto_packet *packet,
-                                                          const uint8_t *payload,
-                                                          size_t payload_len)
-{
-    if (mesh_report_callbacks != NULL &&
-        mesh_report_callbacks->anchor_handle_survey_pair_prepare != NULL) {
-        mesh_report_callbacks->anchor_handle_survey_pair_prepare(packet, payload, payload_len);
-    }
-}
-
-static int mesh_report_gateway_handle_survey_discovery_report(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t received_at_ms,
-    uint64_t previous_hop_id,
-    uint8_t radio_channel,
-    uint8_t link_quality)
-{
-    if (mesh_report_callbacks != NULL &&
-        mesh_report_callbacks->gateway_handle_survey_discovery_report != NULL) {
-        return mesh_report_callbacks->gateway_handle_survey_discovery_report(
-            packet,
-            payload,
-            payload_len,
-            received_at_ms,
-            previous_hop_id,
-            radio_channel,
-            link_quality);
-    }
-
-    return -ENOTSUP;
-}
-
 static int mesh_report_gateway_note_ack_confirm(
     const struct proto_packet *confirm_packet,
     const struct mesh_gateway_ack_confirm_identity *identity,
@@ -1503,8 +1369,6 @@ static bool mesh_gateway_delivery_requires_semantic_acceptance(
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
     case MSG_GATEWAY_ACK_CONFIRM:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return true;
     default:
         return false;
@@ -1565,7 +1429,7 @@ static int mesh_gateway_accept_semantic_delivery(
         if (assignment_admission == 0) {
             /*
              * Keep the packet in sender custody. Once enumeration is terminal,
-             * an unprovisioned survey anchor or synthetic bench source may
+             * an unprovisioned anchor or synthetic bench source may
              * retry through the ordinary semantic path without having consumed
              * a candidate origin partition while the roster was being built.
              */
@@ -1655,16 +1519,6 @@ static int mesh_gateway_accept_semantic_delivery(
                                                   pending->previous_hop_id,
                                                   pending->radio_channel,
                                                   current_channel9_plan);
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
-        return mesh_report_gateway_handle_survey_discovery_report(
-            &pending->packet,
-            pending->payload,
-            pending->payload_len,
-            pending->first_received_at_ms,
-            pending->previous_hop_id,
-            pending->radio_channel,
-            pending->link_quality);
     default:
         return -EINVAL;
     }
@@ -1740,31 +1594,6 @@ static int mesh_gateway_preflight_semantic_delivery(
             pending->first_received_at_ms,
             pending->result_validation_token,
             pending->previous_hop_id);
-    case MSG_SURVEY_DISCOVERY_REPORT:
-        return gateway_survey_preflight_semantic_delivery(
-            &pending->packet,
-            pending->payload,
-            pending->payload_len,
-            pending->first_received_at_ms,
-            pending->previous_hop_id,
-            pending->radio_channel,
-            pending->link_quality);
-    case MSG_SURVEY_PAIR_RESULT:
-        /*
-         * Pair-result preflight rejects malformed, unrelated, and current-lane
-         * stale traffic. A validated older batch from the same live automatic
-         * survey may instead enter raw GUI custody and receive the normal ACK,
-         * without mutating the successor round, so orphan relay custody cannot
-         * block the remaining pairs indefinitely.
-         */
-        return gateway_survey_preflight_semantic_delivery(
-            &pending->packet,
-            pending->payload,
-            pending->payload_len,
-            pending->first_received_at_ms,
-            pending->previous_hop_id,
-            pending->radio_channel,
-            pending->link_quality);
     default:
         return -EINVAL;
     }

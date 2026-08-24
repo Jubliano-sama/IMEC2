@@ -61,14 +61,6 @@ int fw_radio_activity_decide(
         decision->report_tx_allowed = false;
         decision->uwb_rx_allowed = false;
         decision->reason = "click";
-    } else if (capture->survey_pending) {
-        decision->state = FW_RADIO_ACTIVITY_SURVEY;
-        decision->mesh_work_allowed = false;
-        decision->c5_tx_allowed = false;
-        decision->route_wait_allowed = false;
-        decision->report_tx_allowed = false;
-        decision->uwb_rx_allowed = false;
-        decision->reason = "survey";
     } else if (capture->gateway_continuous_ch9) {
         /*
          * The gateway receiver owns the physical radio for this interval.
@@ -91,11 +83,6 @@ int fw_radio_activity_decide(
             !capture->ch9_ack_send_pending &&
             capture->c5_tx_intent ==
                 FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE;
-        bool survey_control_preemption =
-            capture->rx_queue_used == 0u &&
-            capture->c5_tx_intent ==
-                FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL;
-
         decision->state = FW_RADIO_ACTIVITY_MESH_RX;
         /* The handler may owe an immediate response to the exact packet it
          * just dequeued while unrelated RX records remain queued behind it.
@@ -104,15 +91,12 @@ int fw_radio_activity_decide(
          * creates the cadence needed to receive that ACK; an ACK send remains
          * higher priority. */
         decision->c5_tx_allowed =
-            survey_control_preemption ||
             ack_rx_timing_response ||
             (!live_ack_owner && capture->rx_queue_used > 0u &&
              capture->c5_tx_intent == FW_C5_TX_INTENT_CAUSAL_RESPONSE);
         decision->route_wait_allowed = false;
         decision->report_tx_allowed = false;
-        decision->reason = survey_control_preemption ?
-                           "gateway-survey-control" :
-                           ack_rx_timing_response ?
+        decision->reason = ack_rx_timing_response ?
                            "ack-rx-timing-response" :
                            decision->c5_tx_allowed ?
                            "mesh-rx-causal-response" :
@@ -157,8 +141,6 @@ const char *fw_radio_activity_state_name(enum fw_radio_activity_state state)
         return "idle";
     case FW_RADIO_ACTIVITY_CLICK:
         return "click";
-    case FW_RADIO_ACTIVITY_SURVEY:
-        return "survey";
     case FW_RADIO_ACTIVITY_MESH_RX:
         return "mesh-rx";
     case FW_RADIO_ACTIVITY_MESH_TX:

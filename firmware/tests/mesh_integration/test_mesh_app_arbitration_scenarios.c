@@ -12,7 +12,6 @@
 #include "mesh_preemption.h"
 #include "route.h"
 #include "serial_frame.h"
-#include "survey_round_control.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -1185,116 +1184,6 @@ static void test_paused_delivery_attaches_one_loss_tlv_until_sent(void)
     assert(fw_delivery_loss_count(&state) == 0u);
 }
 
-static void test_click_survey_and_transit_order_defers_command_during_ranging(void)
-{
-    struct fw_radio_activity_capture capture = {0};
-    struct fw_radio_activity_runtime runtime_state;
-    struct fw_radio_activity_decision decision;
-    struct app_mesh_c5_flood_priority_state flood_state = {
-        .response_priority = true,
-        .anchor_busy = true,
-        .survey_busy = false,
-        .gateway_ch5_preempt = true,
-    };
-    bool state_changed;
-
-    capture.click_active = true;
-    capture.survey_pending = true;
-    capture.relay_tx_active = true;
-    fw_radio_activity_runtime_init(&runtime_state);
-    assert(fw_radio_activity_decide(&capture, &runtime_state,
-                                    &decision, &state_changed) == 0);
-    assert(state_changed);
-    assert(decision.state == FW_RADIO_ACTIVITY_CLICK);
-
-    capture.click_active = false;
-    assert(fw_radio_activity_decide(&capture, &runtime_state,
-                                    &decision, &state_changed) == 0);
-    assert(state_changed);
-    assert(decision.state == FW_RADIO_ACTIVITY_SURVEY);
-    assert(!decision.mesh_work_allowed);
-
-    capture.survey_pending = false;
-    assert(fw_radio_activity_decide(&capture, &runtime_state,
-                                    &decision, &state_changed) == 0);
-    assert(state_changed);
-    assert(decision.state == FW_RADIO_ACTIVITY_MESH_TX);
-    assert(!decision.report_tx_allowed);
-
-    assert(app_mesh_c5_flood_should_defer(&flood_state));
-    assert(!app_mesh_c5_gateway_rx_should_yield_to_response(&flood_state));
-}
-
-static void test_future_survey_timer_does_not_claim_current_radio(void)
-{
-    struct fw_radio_activity_capture capture = {
-        .report_queue_used = 1u,
-        /* A synchronized discovery exists, but its RF worker is not due. */
-        .survey_pending = false,
-    };
-    struct fw_radio_activity_runtime runtime_state;
-    struct fw_radio_activity_decision decision;
-    struct app_mesh_c5_flood_priority_state flood_state = {
-        .survey_busy = false,
-    };
-    bool state_changed = false;
-
-    fw_radio_activity_runtime_init(&runtime_state);
-    assert(fw_radio_activity_decide(&capture, &runtime_state,
-                                    &decision, &state_changed) == 0);
-    assert(decision.state == FW_RADIO_ACTIVITY_MESH_TX);
-    assert(decision.c5_tx_allowed);
-    assert(!app_mesh_c5_flood_should_defer(&flood_state));
-
-    /* Once the due worker takes the discovery, the same policy input must
-     * fence every competing Channel-5 producer through radio release. */
-    capture.survey_pending = true;
-    assert(fw_radio_activity_decide(&capture, &runtime_state,
-                                    &decision, &state_changed) == 0);
-    assert(decision.state == FW_RADIO_ACTIVITY_SURVEY);
-    assert(!decision.c5_tx_allowed);
-    flood_state.survey_busy = true;
-    assert(app_mesh_c5_flood_should_defer(&flood_state));
-}
-
-static void test_retired_survey_go_is_rejected_without_admission(void)
-{
-    struct app_mesh_command_orchestrator orchestrator = {0};
-    struct gateway_command_options options;
-    struct proto_packet command = {
-        .msg_type = MSG_COMMAND,
-        .src_id = GATEWAY_ID,
-        .dst_id = MESH_BROADCAST_ID,
-        .session_id = 77u,
-        .seq = 41u,
-        .ttl = MESH_DEFAULT_TTL,
-    };
-    enum command_id command_id;
-    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    size_t payload_len = 0u;
-    bool broadcast;
-    bool expired;
-    bool duplicate;
-
-    assert(mesh_append_command_id(payload, sizeof(payload), &payload_len,
-                                  (enum command_id)
-                                      CMD_SURVEY_GO_RETIRED_ID) == PROTO_OK);
-    command.payload_len = (uint16_t)payload_len;
-
-    assert(app_mesh_command_orchestrator_anchor_receive(
-               &orchestrator,
-               &command,
-               payload,
-               payload_len,
-               GATEWAY_ID,
-               100u,
-               &command_id,
-               &options,
-               &broadcast,
-               &expired,
-               &duplicate) == PROTO_ERR_MALFORMED);
-}
-
 static void test_broadcast_transport_retry_requires_explicit_semantic_commit(void)
 {
     struct app_mesh_command_orchestrator orchestrator = {0};
@@ -1454,9 +1343,6 @@ int main(void)
     test_click_preemption_custody_failures_are_explicit();
     test_ch9_ack_wait_and_send_keep_receive_open();
     test_paused_delivery_attaches_one_loss_tlv_until_sent();
-    test_click_survey_and_transit_order_defers_command_during_ranging();
-    test_future_survey_timer_does_not_claim_current_radio();
-    test_retired_survey_go_is_rejected_without_admission();
     test_broadcast_transport_retry_requires_explicit_semantic_commit();
     return 0;
 }

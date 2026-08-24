@@ -78,7 +78,6 @@ struct fw_radio_handoff_sm {
 enum fw_radio_activity_state {
     FW_RADIO_ACTIVITY_IDLE = 0,
     FW_RADIO_ACTIVITY_CLICK,
-    FW_RADIO_ACTIVITY_SURVEY,
     FW_RADIO_ACTIVITY_MESH_RX,
     FW_RADIO_ACTIVITY_MESH_TX,
     FW_RADIO_ACTIVITY_GATEWAY_RX,
@@ -90,14 +89,10 @@ enum fw_c5_tx_intent {
     /* An exact EVENT_ACCEPT toward the current upstream ACK owner establishes
      * the Channel-9 cadence needed to receive that ACK. */
     FW_C5_TX_INTENT_ACK_RX_TIMING_RESPONSE,
-    /* A relay-core-validated gateway survey control may interrupt a retained
-     * Channel-9 ACK wait without taking ownership of the retained bytes. */
-    FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL,
 };
 
 struct fw_radio_activity_capture {
     bool click_active;
-    bool survey_pending;
     uint32_t rx_queue_used;
     uint32_t report_queue_used;
     bool relay_tx_active;
@@ -280,59 +275,6 @@ struct fw_enumeration_sm {
     enum fw_enumeration_state state;
 };
 
-enum fw_survey_state {
-    FW_SURVEY_IDLE = 0,
-    FW_SURVEY_SEND_CONFIG,
-    FW_SURVEY_DISCOVERY,
-    FW_SURVEY_COLLECT_REPORTS,
-    FW_SURVEY_BUILD_GRAPH,
-    FW_SURVEY_SELECT_PAIRS,
-    FW_SURVEY_ARM_PAIRS,
-    FW_SURVEY_WAIT_RESULTS,
-    FW_SURVEY_UPDATE_GRAPH,
-    FW_SURVEY_PUBLISH,
-    FW_SURVEY_COMPLETE,
-    FW_SURVEY_PARTIAL,
-    FW_SURVEY_FAILED,
-};
-
-struct fw_survey_sm {
-    struct fw_operation_identity identity;
-    enum fw_survey_state state;
-};
-
-enum fw_pair_coordinator_state {
-    FW_PAIR_COORDINATOR_IDLE = 0,
-    FW_PAIR_COORDINATOR_PREPARE_INITIATOR,
-    FW_PAIR_COORDINATOR_PREPARE_RESPONDER,
-    FW_PAIR_COORDINATOR_START_RESPONDER,
-    FW_PAIR_COORDINATOR_START_INITIATOR,
-    FW_PAIR_COORDINATOR_WAIT_RESULT,
-    FW_PAIR_COORDINATOR_COMPLETE,
-    FW_PAIR_COORDINATOR_FAILED,
-};
-
-struct fw_pair_coordinator_sm {
-    struct fw_operation_identity identity;
-    enum fw_pair_coordinator_state state;
-};
-
-enum fw_survey_pair_state {
-    FW_SURVEY_PAIR_IDLE = 0,
-    FW_SURVEY_PAIR_PREPARED,
-    FW_SURVEY_PAIR_ARMED,
-    FW_SURVEY_PAIR_WAIT_START,
-    FW_SURVEY_PAIR_RANGE,
-    FW_SURVEY_PAIR_RESULT_OWNED,
-    FW_SURVEY_PAIR_COMPLETE,
-    FW_SURVEY_PAIR_ABORTED,
-};
-
-struct fw_survey_pair_sm {
-    struct fw_operation_identity identity;
-    enum fw_survey_pair_state state;
-};
-
 void fw_radio_sm_init(struct fw_radio_sm *machine);
 void fw_radio_handoff_sm_init(struct fw_radio_handoff_sm *machine);
 void fw_radio_activity_runtime_init(struct fw_radio_activity_runtime *runtime);
@@ -351,9 +293,6 @@ void fw_delivery_sm_init(struct fw_delivery_sm *machine);
 void fw_gateway_uwb_sm_init(struct fw_gateway_uwb_sm *machine);
 void fw_host_link_sm_init(struct fw_host_link_sm *machine);
 void fw_enumeration_sm_init(struct fw_enumeration_sm *machine);
-void fw_survey_sm_init(struct fw_survey_sm *machine);
-void fw_pair_coordinator_sm_init(struct fw_pair_coordinator_sm *machine);
-void fw_survey_pair_sm_init(struct fw_survey_pair_sm *machine);
 
 enum fw_sm_result fw_radio_sm_handle(void *context,
                                      const struct fw_event *event,
@@ -389,17 +328,6 @@ enum fw_sm_result fw_host_link_sm_handle(void *context,
                                          const struct fw_event *event,
                                          struct fw_transition *transition);
 enum fw_sm_result fw_enumeration_sm_handle(
-    void *context,
-    const struct fw_event *event,
-    struct fw_transition *transition);
-enum fw_sm_result fw_survey_sm_handle(void *context,
-                                      const struct fw_event *event,
-                                      struct fw_transition *transition);
-enum fw_sm_result fw_pair_coordinator_sm_handle(
-    void *context,
-    const struct fw_event *event,
-    struct fw_transition *transition);
-enum fw_sm_result fw_survey_pair_sm_handle(
     void *context,
     const struct fw_event *event,
     struct fw_transition *transition);

@@ -1,6 +1,4 @@
 #include "app_gateway_command_observability.h"
-#include "survey.h"
-
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -16,16 +14,13 @@ static struct gateway_command_event sample_event(
         .stage = stage,
         .status = COMMAND_OK,
         .reason = GATEWAY_COMMAND_EVENT_REASON_NONE,
-        .command_id = kind == GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY ?
-                      CMD_SURVEY_REACHABILITY : CMD_ASSIGN_DISCOVERY_SLOTS,
+        .command_id = CMD_ASSIGN_DISCOVERY_SLOTS,
         .gateway_epoch = 7u,
         .correlation_id = correlation_id,
         .gateway_sequence = 0x11223344u,
         .host_session_id = 0x55667788u,
         .host_seq = 0x1234u,
         .anchor_id = UINT64_C(0x1111222233334444),
-        .pair_initiator_id = UINT64_C(0x0102030405060708),
-        .pair_responder_id = UINT64_C(0x1112131415161718),
         .previous_hop_id = UINT64_C(0x2122232425262728),
         .progress_count = 4u,
         .total_count = 9u,
@@ -67,8 +62,8 @@ static void test_parser_rejects_unknown_and_malformed_records(void)
 {
     struct gateway_command_observability_state state;
     struct gateway_command_event event = sample_event(
-        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
-        GATEWAY_COMMAND_EVENT_STAGE_PAIR_FAILURE,
+        GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
+        GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
         99u);
     struct gateway_command_event decoded;
     uint8_t wire[GATEWAY_COMMAND_EVENT_WIRE_LEN];
@@ -85,7 +80,7 @@ static void test_parser_rejects_unknown_and_malformed_records(void)
     wire[1] = GATEWAY_COMMAND_EVENT_WIRE_LEN;
     wire[2] = 0xffu;
     assert(gateway_command_event_decode(wire, written, &decoded) == -EINVAL);
-    wire[2] = GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY;
+    wire[2] = GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH;
     wire[3] = 0xffu;
     assert(gateway_command_event_decode(wire, written, &decoded) == -EINVAL);
 }
@@ -121,7 +116,7 @@ static void test_terminal_is_retained_until_exact_host_ack(void)
          i < GATEWAY_COMMAND_EVENT_TERMINAL_BACKLOG_DEPTH;
          i++) {
         struct gateway_command_event queued = sample_event(
-            GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+            GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
             GATEWAY_COMMAND_EVENT_STAGE_COMPLETE,
             (uint32_t)(123u + i));
 
@@ -148,7 +143,7 @@ static void test_active_snapshot_survives_disconnect_without_false_loss(void)
 {
     struct gateway_command_observability_state state;
     struct gateway_command_event progress = sample_event(
-        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+        GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
         GATEWAY_COMMAND_EVENT_STAGE_BACKOFF,
         321u);
     struct gateway_command_event replay;
@@ -158,18 +153,18 @@ static void test_active_snapshot_survives_disconnect_without_false_loss(void)
     assert(gateway_command_observability_prepare(&state, &progress, false) == 0);
     gateway_command_observability_note_enqueue(&state, progress.event_seq, -ENOSPC);
     assert(gateway_command_observability_reconnect_snapshot(
-        &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
+        &state, GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH, &replay));
     assert(replay.correlation_id == 321u);
     assert(replay.attempt == 2u);
     assert(replay.lost_event_count == 0u);
     assert(gateway_command_observability_pending_snapshot(
-        &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
+        &state, GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH, &replay));
     assert((replay.flags & GATEWAY_COMMAND_EVENT_FLAG_SNAPSHOT) != 0u);
 
     gateway_command_observability_note_enqueue(&state, progress.event_seq, 0);
     gateway_command_observability_mark_sent(&state, progress.event_seq);
     assert(!gateway_command_observability_reconnect_snapshot(
-        &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
+        &state, GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH, &replay));
 }
 
 static void test_sequential_and_concurrent_correlations_stay_distinct(void)
@@ -179,8 +174,8 @@ static void test_sequential_and_concurrent_correlations_stay_distinct(void)
         GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION,
         GATEWAY_COMMAND_EVENT_STAGE_QUEUED,
         1001u);
-    struct gateway_command_event survey = sample_event(
-        GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY,
+    struct gateway_command_event route_refresh = sample_event(
+        GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH,
         GATEWAY_COMMAND_EVENT_STAGE_QUEUED,
         2002u);
     struct gateway_command_event next_enumeration = sample_event(
@@ -191,17 +186,17 @@ static void test_sequential_and_concurrent_correlations_stay_distinct(void)
 
     gateway_command_observability_init(&state);
     assert(gateway_command_observability_prepare(&state, &enumeration, false) == 0);
-    assert(gateway_command_observability_prepare(&state, &survey, false) == 0);
-    assert(enumeration.event_seq != survey.event_seq);
+    assert(gateway_command_observability_prepare(&state, &route_refresh, false) == 0);
+    assert(enumeration.event_seq != route_refresh.event_seq);
     assert(gateway_command_observability_reconnect_snapshot(
         &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION, &replay));
     assert(replay.correlation_id == 1001u);
     assert(gateway_command_observability_reconnect_snapshot(
-        &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY, &replay));
+        &state, GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH, &replay));
     assert(replay.correlation_id == 2002u);
 
     assert(gateway_command_observability_prepare(&state, &next_enumeration, false) == 0);
-    assert(next_enumeration.event_seq > survey.event_seq);
+    assert(next_enumeration.event_seq > route_refresh.event_seq);
     assert(gateway_command_observability_reconnect_snapshot(
         &state, GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION, &replay));
     assert(replay.correlation_id == 3003u);
@@ -263,113 +258,6 @@ static void test_two_unsent_sequential_terminals_do_not_overwrite(void)
     assert(replay.correlation_id == 5005u);
 }
 
-static void test_survey_terminal_failure_reason_is_specific_and_deterministic(void)
-{
-    enum gateway_command_event_reason reason =
-        GATEWAY_COMMAND_EVENT_REASON_NONE;
-    enum command_status status = COMMAND_OK;
-
-    reason = gateway_command_survey_failure_reason_merge(
-        reason, GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
-    gateway_command_survey_terminal_outcome(2u, 2u, true, true, 1u, reason,
-                                            &status, &reason);
-    assert(status == COMMAND_OK);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
-
-    reason = gateway_command_survey_failure_reason_merge(
-        GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED,
-        GATEWAY_COMMAND_EVENT_REASON_RADIO);
-    reason = gateway_command_survey_failure_reason_merge(
-        reason, GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE);
-    reason = gateway_command_survey_failure_reason_merge(
-        reason, GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
-
-    reason = gateway_command_survey_failure_reason_merge(
-        GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED,
-        GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED);
-}
-
-static void test_survey_terminal_preserves_degraded_useful_data(void)
-{
-    enum gateway_command_event_reason reason =
-        GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
-    enum command_status status = COMMAND_INTERNAL_ERROR;
-
-    gateway_command_survey_terminal_outcome(
-        1u, 0u, true, true, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
-        &status, &reason);
-    assert(status == COMMAND_OK);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
-
-    gateway_command_survey_terminal_outcome(
-        1u, 1u, false, false, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
-        &status, &reason);
-    assert(status == COMMAND_INTERNAL_ERROR);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_INTERNAL);
-
-    gateway_command_survey_terminal_outcome(
-        0u, 0u, false, false, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
-        &status, &reason);
-    assert(status == COMMAND_TIMEOUT);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS);
-
-    gateway_command_survey_terminal_outcome(
-        1u, 1u, true, false, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
-        &status, &reason);
-    assert(status == COMMAND_OK);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE);
-
-    gateway_command_survey_terminal_outcome(
-        1u, 1u, true, true, 0u, GATEWAY_COMMAND_EVENT_REASON_NONE,
-        &status, &reason);
-    assert(status == COMMAND_OK);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
-}
-
-static void test_survey_sample_admission_matches_anchor_execution_capacity(void)
-{
-    enum gateway_command_event_reason reason;
-    enum command_status status;
-
-    assert(SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT == 5u);
-    status = COMMAND_INTERNAL_ERROR;
-    reason = GATEWAY_COMMAND_EVENT_REASON_INTERNAL;
-    assert(gateway_command_survey_sample_admission(
-        SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT, &status, &reason));
-    assert(status == COMMAND_OK);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NONE);
-
-    status = COMMAND_OK;
-    reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
-    assert(!gateway_command_survey_sample_admission(0u, &status, &reason));
-    assert(status == COMMAND_DENIED);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
-
-    status = COMMAND_OK;
-    reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
-    assert(!gateway_command_survey_sample_admission(
-        SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT - 1u, &status, &reason));
-    assert(status == COMMAND_DENIED);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
-
-    status = COMMAND_OK;
-    reason = GATEWAY_COMMAND_EVENT_REASON_NONE;
-    assert(!gateway_command_survey_sample_admission(
-        SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT + 1u, &status, &reason));
-    assert(status == COMMAND_DENIED);
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_CAPACITY);
-
-    status = COMMAND_TIMEOUT;
-    reason = GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS;
-    assert(!gateway_command_survey_sample_admission(1u, NULL, &reason));
-    assert(reason == GATEWAY_COMMAND_EVENT_REASON_NO_ANCHORS);
-    assert(!gateway_command_survey_sample_admission(1u, &status, NULL));
-    assert(status == COMMAND_TIMEOUT);
-    assert(!gateway_command_survey_sample_admission(1u, NULL, NULL));
-}
-
 int main(void)
 {
     test_fixed_record_round_trip();
@@ -379,9 +267,6 @@ int main(void)
     test_sequential_and_concurrent_correlations_stay_distinct();
     test_durable_sequence_survives_runtime_reinitialization();
     test_two_unsent_sequential_terminals_do_not_overwrite();
-    test_survey_terminal_failure_reason_is_specific_and_deterministic();
-    test_survey_terminal_preserves_degraded_useful_data();
-    test_survey_sample_admission_matches_anchor_execution_capacity();
     puts("gateway command observability tests passed");
     return 0;
 }

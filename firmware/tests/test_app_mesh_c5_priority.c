@@ -1,6 +1,5 @@
 #include "app_mesh_c5_priority.h"
 #include "gateway_command.h"
-#include "survey.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -52,14 +51,7 @@ static void test_protected_anchor_work_still_defers_priority_response(void)
         .anchor_busy = true,
         .gateway_ch5_preempt = true,
     };
-    const struct app_mesh_c5_flood_priority_state survey_state = {
-        .response_priority = true,
-        .survey_busy = true,
-        .gateway_ch5_preempt = true,
-    };
-
     assert(app_mesh_c5_flood_should_defer(&anchor_state));
-    assert(app_mesh_c5_flood_should_defer(&survey_state));
 }
 
 static void test_idle_state_does_not_defer(void)
@@ -256,33 +248,13 @@ static void test_control_wake_captures_gateway_broadcast_command(void)
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
-static void test_control_wake_captures_survey_discovery_like_enumeration(void)
-{
-    struct app_mesh_c5_route_capture_state state = {
-        .msg_type = MSG_SURVEY_DISCOVERY_START,
-        .src_id = 0x9999888877776666ull,
-        .dst_id = MESH_BROADCAST_ID,
-        .previous_hop_id = 0x9999888877776666ull,
-        .target_id = 0x9999888877776666ull,
-        .local_id = 0x3333333333333301ull,
-        .control_followup = true,
-    };
-
-    assert(app_mesh_c5_route_capture_relevant(&state));
-    state.control_followup = false;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.control_followup = true;
-    state.dst_id = state.local_id;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-}
-
 static void test_forced_hop_anchor_requires_relayed_gateway_control(void)
 {
     const uint64_t gateway_id = 0x9999888877776666ull;
     const uint64_t local_anchor_id = 0x3333333333333301ull;
     const uint64_t relay_anchor_id = 0x2222222222222301ull;
     struct app_mesh_c5_route_capture_state state = {
-        .msg_type = MSG_SURVEY_DISCOVERY_START,
+        .msg_type = MSG_COMMAND,
         .src_id = gateway_id,
         .dst_id = MESH_BROADCAST_ID,
         .previous_hop_id = gateway_id,
@@ -296,65 +268,9 @@ static void test_forced_hop_anchor_requires_relayed_gateway_control(void)
     state.previous_hop_id = relay_anchor_id;
     assert(app_mesh_c5_route_capture_relevant(&state));
 
-    state.msg_type = MSG_SURVEY_PAIR_PREPARE;
     state.dst_id = local_anchor_id;
     assert(app_mesh_c5_route_capture_relevant(&state));
     state.previous_hop_id = gateway_id;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-}
-
-static void test_control_wake_captures_targeted_survey_pair_prepare(void)
-{
-    const uint64_t gateway_id = 0x9999888877776666ull;
-    const uint64_t local_anchor_id = 0x3333333333333301ull;
-    const uint64_t relay_anchor_id = 0x2222222222222301ull;
-    const uint64_t wrong_anchor_id = 0x1111111111111101ull;
-    struct app_mesh_c5_route_capture_state state = {
-        .msg_type = MSG_SURVEY_PAIR_PREPARE,
-        .src_id = gateway_id,
-        .dst_id = local_anchor_id,
-        .previous_hop_id = gateway_id,
-        .target_id = gateway_id,
-        .local_id = local_anchor_id,
-        .control_origin_id = gateway_id,
-        .control_followup = true,
-    };
-
-    /* Direct delivery: this anchor is the final survey-pair target. */
-    assert(app_mesh_c5_route_capture_relevant(&state));
-
-    /* Relayed delivery keeps the gateway source and local final destination. */
-    state.previous_hop_id = relay_anchor_id;
-    assert(app_mesh_c5_route_capture_relevant(&state));
-
-    /* A relay-owned wake contact still carries the gateway's control origin. */
-    state.target_id = relay_anchor_id;
-    assert(app_mesh_c5_route_capture_relevant(&state));
-    state.src_id = relay_anchor_id;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.src_id = gateway_id;
-    state.target_id = gateway_id;
-    state.previous_hop_id = gateway_id;
-
-    state.control_followup = false;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.control_followup = true;
-
-    state.dst_id = wrong_anchor_id;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.dst_id = MESH_BROADCAST_ID;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.dst_id = local_anchor_id;
-
-    state.src_id = local_anchor_id;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.src_id = gateway_id;
-
-    state.previous_hop_id = local_anchor_id;
-    assert(!app_mesh_c5_route_capture_relevant(&state));
-    state.previous_hop_id = gateway_id;
-
-    state.msg_type = MSG_SURVEY_PAIR_RESULT;
     assert(!app_mesh_c5_route_capture_relevant(&state));
 }
 
@@ -364,7 +280,7 @@ static void test_targeted_gateway_control_requires_validated_downlink_to_relay(v
     const uint64_t local_relay_id = 0x2222222222222301ull;
     const uint64_t downstream_target_id = 0x3333333333333301ull;
     struct app_mesh_c5_route_capture_state state = {
-        .msg_type = MSG_SURVEY_PAIR_PREPARE,
+        .msg_type = MSG_COMMAND,
         .src_id = gateway_id,
         .dst_id = downstream_target_id,
         .previous_hop_id = gateway_id,
@@ -377,7 +293,6 @@ static void test_targeted_gateway_control_requires_validated_downlink_to_relay(v
     state.targeted_control_relay = true;
     assert(app_mesh_c5_route_capture_relevant(&state));
 
-    state.msg_type = MSG_COMMAND;
     assert(app_mesh_c5_route_capture_relevant(&state));
     state.previous_hop_id = local_relay_id;
     assert(!app_mesh_c5_route_capture_relevant(&state));
@@ -440,12 +355,6 @@ static void test_event_accept_reservation_expands_guard(void)
 static void test_channel5_control_phr_policy(void)
 {
     assert(app_mesh_c5_control_uses_extended_phr(MSG_COMMAND, 117u, 125u));
-    assert(app_mesh_c5_control_uses_extended_phr(MSG_SURVEY_DISCOVERY_START,
-                                                 117u,
-                                                 125u));
-    assert(app_mesh_c5_control_uses_extended_phr(MSG_SURVEY_PAIR_PREPARE,
-                                                 91u,
-                                                 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 146u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REQ, 95u, 125u));
     assert(app_mesh_c5_control_uses_extended_phr(MSG_ROUTE_REPLY, 95u, 125u));
@@ -468,24 +377,9 @@ static void test_gateway_control_origin_ttl_matches_command_profile(void)
     uint8_t origin_ttl = 0u;
 
     assert(app_mesh_c5_gateway_control_origin_ttl(
-        MSG_SURVEY_PAIR_PREPARE, CMD_VENDOR_BASE, &origin_ttl));
-    assert(origin_ttl == SURVEY_DEFAULT_TTL);
-    assert(app_mesh_c5_gateway_control_origin_ttl(
-        MSG_SURVEY_DISCOVERY_START, CMD_VENDOR_BASE, &origin_ttl));
-    assert(origin_ttl == SURVEY_DEFAULT_TTL);
-
-    assert(app_mesh_c5_gateway_control_origin_ttl(
-        MSG_COMMAND, CMD_SURVEY_START_PAIR, &origin_ttl));
-    assert(origin_ttl == MESH_DEFAULT_TTL);
-    assert(app_mesh_c5_gateway_control_origin_ttl(
-        MSG_COMMAND, CMD_SURVEY_ABORT, &origin_ttl));
-    assert(origin_ttl == MESH_DEFAULT_TTL);
-    assert(app_mesh_c5_gateway_control_origin_ttl(
         MSG_COMMAND, CMD_ASSIGN_DISCOVERY_SLOTS, &origin_ttl));
     assert(origin_ttl == FLOOD_EPOCH_GLOBAL_TTL);
 
-    assert(!app_mesh_c5_gateway_control_origin_ttl(
-        MSG_SURVEY_PAIR_RESULT, CMD_VENDOR_BASE, &origin_ttl));
     assert(!app_mesh_c5_gateway_control_origin_ttl(
         MSG_COMMAND, CMD_VENDOR_BASE, NULL));
 }
@@ -494,20 +388,11 @@ static void test_gateway_operations_outrank_only_unaccepted_clicks(void)
 {
     static const enum command_id operation_commands[] = {
         CMD_ASSIGN_DISCOVERY_SLOTS,
-        CMD_SURVEY_REACHABILITY,
-        CMD_SURVEY_PREPARE_PAIR,
-        CMD_SURVEY_START_PAIR,
-        CMD_SURVEY_ABORT,
     };
     uint8_t payload[] = {TLV_COMMAND_ID, sizeof(uint16_t), 0u, 0u};
 
     assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
         MSG_GATEWAY_ROUTE_ADV, NULL, 0u));
-    assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
-        MSG_SURVEY_PAIR_PREPARE, NULL, 0u));
-    assert(app_mesh_c5_gateway_operation_outranks_unaccepted_click(
-        MSG_SURVEY_DISCOVERY_START, NULL, 0u));
-
     for (size_t i = 0u;
          i < sizeof(operation_commands) / sizeof(operation_commands[0]);
          i++) {
@@ -531,8 +416,6 @@ static void test_gateway_control_followup_tx_rx_phr_symmetry(void)
 {
     static const uint8_t control_types[] = {
         MSG_COMMAND,
-        MSG_SURVEY_DISCOVERY_START,
-        MSG_SURVEY_PAIR_PREPARE,
     };
     static const size_t frame_lengths[] = {91u, 124u, 125u, 126u};
     const uint8_t wake_claim_flags =
@@ -652,64 +535,70 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
 {
     const uint64_t gateway_id = 0x9999888877776666ull;
     const uint64_t relay_anchor_id = 0x2222222222222301ull;
-    const uint8_t one_relay_ttl = SURVEY_DEFAULT_TTL - 1u;
-    const uint8_t two_relay_ttl = SURVEY_DEFAULT_TTL - 2u;
+    const uint8_t one_relay_ttl = FLOOD_EPOCH_GLOBAL_TTL - 1u;
+    const uint8_t two_relay_ttl = FLOOD_EPOCH_GLOBAL_TTL - 2u;
+    const uint8_t payload[] = {
+        TLV_COMMAND_ID,
+        sizeof(uint16_t),
+        (uint8_t)CMD_ASSIGN_DISCOVERY_SLOTS,
+        (uint8_t)((uint16_t)CMD_ASSIGN_DISCOVERY_SLOTS >> 8u),
+    };
 
     assert(!app_mesh_c5_gateway_control_rx_allowed(
-        MSG_SURVEY_DISCOVERY_START,
-        SURVEY_DEFAULT_TTL,
-        NULL,
-        0u,
+        MSG_COMMAND,
+        FLOOD_EPOCH_GLOBAL_TTL,
+        payload,
+        sizeof(payload),
         gateway_id,
         gateway_id,
         gateway_id,
         true,
         2u));
     assert(!app_mesh_c5_gateway_control_rx_allowed(
-        MSG_SURVEY_DISCOVERY_START,
+        MSG_COMMAND,
         one_relay_ttl,
-        NULL,
-        0u,
+        payload,
+        sizeof(payload),
         gateway_id,
         relay_anchor_id,
         gateway_id,
         true,
         2u));
     assert(app_mesh_c5_gateway_control_rx_allowed(
-        MSG_SURVEY_DISCOVERY_START,
+        MSG_COMMAND,
         two_relay_ttl,
-        NULL,
-        0u,
+        payload,
+        sizeof(payload),
         gateway_id,
         relay_anchor_id,
         gateway_id,
         true,
         2u));
     assert(app_mesh_c5_gateway_control_rx_allowed(
-        MSG_SURVEY_DISCOVERY_START,
+        MSG_COMMAND,
         one_relay_ttl,
-        NULL,
-        0u,
+        payload,
+        sizeof(payload),
         gateway_id,
         relay_anchor_id,
         gateway_id,
         true,
         1u));
     assert(!app_mesh_c5_gateway_control_rx_allowed(
-        MSG_SURVEY_DISCOVERY_START,
+        MSG_COMMAND,
         two_relay_ttl,
-        NULL,
-        0u,
+        payload,
+        sizeof(payload),
         gateway_id,
         relay_anchor_id,
         gateway_id,
         true,
         1u));
     assert(app_mesh_c5_gateway_control_rx_allowed(
-        MSG_SURVEY_PAIR_PREPARE,
+        MSG_COMMAND,
         two_relay_ttl,
-        NULL,
-        0u,
+        payload,
+        sizeof(payload),
         gateway_id,
         relay_anchor_id,
         gateway_id,
@@ -759,7 +648,7 @@ static void test_gateway_control_route_hint_uses_first_transport_copy(void)
     struct app_mesh_c5_control_route_history history = {0};
     const struct app_mesh_c5_control_route_identity direct_first = {
         .route_epoch = 0x10203040u,
-        .msg_type = MSG_SURVEY_DISCOVERY_START,
+        .msg_type = MSG_COMMAND,
         .session_id = 0x50607080u,
         .seq = 0x1122u,
     };
@@ -988,9 +877,7 @@ int main(void)
     test_route_reply_and_event_control_capture_rules();
     test_competing_route_request_yields_without_false_route_success();
     test_control_wake_captures_gateway_broadcast_command();
-    test_control_wake_captures_survey_discovery_like_enumeration();
     test_forced_hop_anchor_requires_relayed_gateway_control();
-    test_control_wake_captures_targeted_survey_pair_prepare();
     test_targeted_gateway_control_requires_validated_downlink_to_relay();
     test_route_reply_capture_requires_exact_discovery_identity();
     test_event_accept_reservation_expands_guard();

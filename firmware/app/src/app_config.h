@@ -9,7 +9,6 @@
 #include "mesh_relay.h"
 #include "operation_policy.h"
 #include "status.h"
-#include "survey.h"
 #include "uwb.h"
 
 #include <zephyr/devicetree.h>
@@ -302,65 +301,17 @@ BUILD_ASSERT(OPERATION_POLICY_RESPONSE_TX_TIMEOUT_MS ==
                  UWB_CONTROL_TX_TIMEOUT_MS,
              "response timing model must match the control TX timeout");
 #define ANCHOR_BATTERY_MV_UNKNOWN 0u
-#define SURVEY_REACH_MAX_ENTRIES 12u
-#define SURVEY_DISCOVERY_START_DELAY_MS \
-    OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS
-BUILD_ASSERT(SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS >=
-             SURVEY_DISCOVERY_TRANSPORT_PREEMPT_BUDGET_MS +
-                 SURVEY_DISCOVERY_PHY_PREP_MEASURED_MAX_MS +
-             SURVEY_DISCOVERY_PHY_PREP_MARGIN_MS,
-             "survey preparation must cover transport preemption and PHY setup");
-BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >=
-             SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS,
-             "default survey start delay must allow early PHY preparation");
-BUILD_ASSERT(SURVEY_DISCOVERY_START_DELAY_MS >
-             (SURVEY_DEFAULT_TTL +
-              SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
-                 SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
-                 SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS,
-             "survey start delay must leave every origin redrive before the full-path guard");
-BUILD_ASSERT(OPERATION_POLICY_DISCOVERY_START_DELAY_MIN_MS ==
-                 SURVEY_DISCOVERY_START_DELAY_FLOOR_MS,
-             "survey start-delay floor must match operation policy");
-BUILD_ASSERT(OPERATION_POLICY_DISCOVERY_START_DELAY_MAX_MS ==
-                 ((SURVEY_DEFAULT_TTL +
-                   SURVEY_DISCOVERY_ORIGIN_REDRIVE_COUNT) *
-                      SURVEY_DISCOVERY_CONTROL_HOP_BUDGET_MS +
-                  SURVEY_DISCOVERY_PHY_PREP_BUDGET_MS + 1u),
-             "maximum survey start delay must cover the eight-hop flood");
-#define SURVEY_DISCOVERY_SLOT_MS OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS
-#define SURVEY_DISCOVERY_DEFAULT_SLOT_COUNT 6u
-#define SURVEY_RESULT_MESH_SLOT_MS OPERATION_POLICY_FIRST_CONTACT_SLOT_MS
-#define SURVEY_DIRECT_GATEWAY_PROBE_ATTEMPT_MS \
-    (UWB_MESH_TX_TIMEOUT_MS + APP_MESH_DIRECT_GATEWAY_ACK_GUARD_MS + \
-     APP_MESH_DIRECT_GATEWAY_ACK_RX_MS + \
-     APP_MESH_DIRECT_GATEWAY_SURVEY_SCRATCH_ACQUIRE_MS + \
-     APP_MESH_DIRECT_GATEWAY_SURVEY_TRANSITION_GUARD_MS)
-#define SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS \
-    APP_MESH_DIRECT_GATEWAY_SURVEY_DELIVERY_TAIL_MS( \
-        SURVEY_DIRECT_GATEWAY_PROBE_ATTEMPT_MS, \
-        APP_MESH_DIRECT_GATEWAY_SURVEY_SCRATCH_ACQUIRE_MS, \
-        MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS)
-BUILD_ASSERT(SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS >
-             MESH_RELAY_GATEWAY_ACK_RETRY_BUDGET_MAX_MS,
-             "survey delivery tail must include direct-probe and ACK retry horizons");
-BUILD_ASSERT(SURVEY_DISCOVERY_REPORT_CUSTODY_MAX_MS <=
-             SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS,
-             "survey delivery tail must cover maximum hop-aware report custody");
-BUILD_ASSERT(SURVEY_MESH_RESULT_OUTBOX_EXPIRY_S * 1000u >=
-             SURVEY_DISCOVERY_REPORT_DELIVERY_TAIL_MS,
-             "survey outbox expiry must cover direct delivery and ACK repair");
 #define ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE 8192u
 /*
- * A complete three-anchor survey measured 6472 bytes on the route-test anchor
- * path. Keep the full 8192-byte queue for every anchor preset so the runtime
+ * The route-test anchor path measured 6472 bytes. Keep the full 8192-byte
+ * queue for every anchor preset so the runtime
  * watermark retains the required 20 percent reserve without splitting radio
  * ownership across another worker.
  */
-#define ANCHOR_SURVEY_WORKQUEUE_HARDWARE_WATERMARK_BYTES 6472u
+#define ANCHOR_UWB_SCAN_WORKQUEUE_HARDWARE_WATERMARK_BYTES 6472u
 BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
-             (ANCHOR_SURVEY_WORKQUEUE_HARDWARE_WATERMARK_BYTES * 5u + 3u) / 4u,
-             "anchor survey recovery needs measured stack plus safety margin");
+             (ANCHOR_UWB_SCAN_WORKQUEUE_HARDWARE_WATERMARK_BYTES * 5u + 3u) / 4u,
+             "anchor radio recovery needs measured stack plus safety margin");
 #define ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(1)
 #define MESH_TEST_WORKQUEUE_STACK_SIZE 8192u
 #define MESH_TEST_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(0)
@@ -376,7 +327,7 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8192u
 #else
 /*
- * Four-board survey qualification measured 7360 bytes in the direct anchor's
+ * Four-board qualification measured 7360 bytes in the direct anchor's
  * route worker. 9472 keeps 2112 bytes free, above both the 20% policy reserve
  * (1895 bytes) and the 1024-byte application floor.
  */
@@ -389,9 +340,7 @@ BUILD_ASSERT(MESH_ROUTE_WORKQUEUE_STACK_SIZE >= 6784u,
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 4096u
 #define MESH_ROUTE_WORKQUEUE_PRIORITY K_PRIO_PREEMPT(1)
 #endif
-#define GATEWAY_SURVEY_AUTO_RETRY_MS 100u
 #define ANCHOR_HEARTBEAT_DELIVERY_TIMEOUT_MS 60000u
-#define GATEWAY_SURVEY_PAIR_SETTLE_MS 50u
 #define GATEWAY_COMMAND_MESH_TIMEOUT_MARGIN_MS 1000u
 #define ML_CLICKER_FAST_CACHE_MIN_ANCHORS 4u
 #define ML_CLICKER_FAST_CACHE_FRESH_MS 30000u

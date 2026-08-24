@@ -248,7 +248,7 @@ static void test_assignment_publish_large_local_budget(void)
     CHECK_TRUE(result.remaining_bytes >= result.required_free_bytes);
 }
 
-static void test_anchor_survey_restore_hardware_watermark(void)
+static void test_anchor_delivery_restore_hardware_watermark(void)
 {
     struct stack_budget_result result;
 
@@ -282,7 +282,7 @@ static void test_anchor_scan_ddd_runtime_watermark(void)
     struct stack_budget_result result;
 
     /*
-     * The fresh three-direct-anchor survey consumed 6472 bytes of the scan
+     * The fresh three-direct-anchor enumeration consumed 6472 bytes of the scan
      * owner. The former aligned 7232-byte runtime stack leaves only 760 bytes,
      * while the 8192-byte queue retains the common 20 percent policy reserve.
      */
@@ -406,7 +406,7 @@ int main(void)
     test_margin_boundaries();
     test_large_local_guard();
     test_assignment_publish_large_local_budget();
-    test_anchor_survey_restore_hardware_watermark();
+    test_anchor_delivery_restore_hardware_watermark();
     test_anchor_scan_ddd_runtime_watermark();
     test_anchor_route_hardware_watermark_rebalances_existing_ram();
     test_worst_combined_scenario();

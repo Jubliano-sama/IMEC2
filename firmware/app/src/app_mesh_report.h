@@ -79,9 +79,6 @@ struct anchor_range_window_report {
 };
 
 struct app_mesh_report_callbacks {
-    bool (*anchor_survey_radio_active)(void);
-    bool (*anchor_survey_operation_generation_active)(
-        uint64_t operation_generation);
     void (*anchor_note_uwb_awake_since)(int64_t start_ms,
                                         uint32_t already_counted_us);
     bool (*anchor_handle_click_wake_claim)(
@@ -92,19 +89,6 @@ struct app_mesh_report_callbacks {
                                        const uint8_t *payload,
                                        size_t payload_len,
                                        uint64_t ingress_hop_id);
-    void (*anchor_handle_survey_discovery_start)(const struct proto_packet *packet,
-                                                 const uint8_t *payload,
-                                                 size_t payload_len);
-    void (*anchor_handle_survey_pair_prepare)(const struct proto_packet *packet,
-                                              const uint8_t *payload,
-                                              size_t payload_len);
-    int (*gateway_handle_survey_discovery_report)(const struct proto_packet *packet,
-                                                  const uint8_t *payload,
-                                                  size_t payload_len,
-                                                  uint64_t received_at_ms,
-                                                  uint64_t previous_hop_id,
-                                                  uint8_t radio_channel,
-                                                  uint8_t link_quality);
     void (*gateway_note_anchor_boot_observation)(
         const struct proto_packet *packet,
         const uint8_t *payload,
@@ -120,13 +104,6 @@ struct app_mesh_report_callbacks {
     int (*anchor_delivery_gateway_confirmed)(
         const struct proto_packet *packet,
         const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
-    int (*anchor_survey_delivery_gateway_confirmed)(
-        const struct proto_packet *packet,
-        const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN]);
-    int (*anchor_survey_delivery_transport_released)(
-        const struct proto_packet *packet,
-        const uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN],
-        bool preempted);
     void (*gateway_route_refresh_event)(
         const struct app_node_comm_route_refresh_event *event);
 };
@@ -164,14 +141,6 @@ enum mesh_c5_control_send_mode {
 
 int app_mesh_report_init(const struct app_mesh_report_callbacks *callbacks);
 int app_mesh_report_attach_gateway_ack_store(void);
-int app_mesh_report_reserve_gateway_ack_cleanup_result(
-    const struct proto_packet *expected_result,
-    uint32_t now_ms);
-int app_mesh_report_release_gateway_ack_cleanup_result(
-    const struct proto_packet *expected_result);
-int app_mesh_report_gateway_ack_cleanup_pair_capacity(
-    uint32_t now_ms,
-    uint32_t *retry_delay_ms);
 bool app_mesh_report_gateway_delivery_confirmation_pending(
     uint64_t src_id,
     uint8_t msg_type,

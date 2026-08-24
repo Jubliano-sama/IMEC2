@@ -1344,8 +1344,10 @@ def _bench_topology_issues(
 
 
 def _stage_candidate(build_dir: Path, probe_id: str) -> None:
+    resolved_build_dir = build_dir.resolve()
     command = [
-        str(WEST_EXECUTABLE), "flash", "--runner", "pyocd", "--build-dir", str(build_dir),
+        str(WEST_EXECUTABLE), "flash", "--runner", "pyocd", "--build-dir",
+        str(resolved_build_dir),
         "--", "--dev-id", probe_id, "--frequency", str(FLASH_FREQUENCY_HZ),
         "--flash-opt=--no-reset",
     ]
@@ -1622,7 +1624,7 @@ def _supersede_staged_candidate(
 
 
 def _qualification_success_terminal(content: bytes) -> str:
-    text = content.decode("utf-8", errors="replace")
+    text = content.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
     matches = list(_REACHABILITY_SUCCESS_RE.finditer(text))
     assignment_matches = list(_ASSIGNMENT_SUCCESS_RE.finditer(text))
     if len(matches) == 1 and not assignment_matches:

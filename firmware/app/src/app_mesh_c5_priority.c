@@ -1,13 +1,9 @@
 #include "app_mesh_c5_priority.h"
 #include "app_mesh_route_request_policy.h"
 #include "gateway_command.h"
-#include "survey.h"
 
 #include <errno.h>
 #include <stddef.h>
-
-_Static_assert(MESH_DEFAULT_TTL == SURVEY_DEFAULT_TTL,
-               "survey MSG_COMMAND and dedicated controls must share one TTL");
 
 static bool event_control_type(uint8_t msg_type)
 {
@@ -19,8 +15,7 @@ static bool event_control_type(uint8_t msg_type)
 
 static bool targeted_control_followup_type(uint8_t msg_type)
 {
-    return msg_type == MSG_COMMAND ||
-           msg_type == MSG_SURVEY_PAIR_PREPARE;
+    return msg_type == MSG_COMMAND;
 }
 
 static bool targeted_control_previous_hop_valid(
@@ -38,7 +33,7 @@ bool app_mesh_c5_flood_should_defer(
         return true;
     }
 
-    if (state->anchor_busy || state->survey_busy) {
+    if (state->anchor_busy) {
         return true;
     }
 
@@ -57,7 +52,7 @@ bool app_mesh_c5_gateway_rx_should_yield_to_response(
     }
 
     return state->response_priority && state->gateway_ch5_preempt &&
-           !state->anchor_busy && !state->survey_busy;
+           !state->anchor_busy;
 }
 
 bool app_mesh_c5_gateway_route_adv_allowed(bool mesh_route_test_enabled)
@@ -164,8 +159,7 @@ bool app_mesh_c5_route_capture_relevant(
             return false;
         }
 
-        if (state->msg_type == MSG_COMMAND ||
-            state->msg_type == MSG_SURVEY_DISCOVERY_START) {
+        if (state->msg_type == MSG_COMMAND) {
             return state->dst_id == MESH_BROADCAST_ID &&
                    targeted_control_previous_hop_valid(state);
         }
@@ -221,10 +215,6 @@ bool app_mesh_c5_gateway_control_origin_ttl(uint8_t msg_type,
     case MSG_COMMAND:
         ttl = gateway_command_origin_ttl((enum command_id)command_id);
         break;
-    case MSG_SURVEY_PAIR_PREPARE:
-    case MSG_SURVEY_DISCOVERY_START:
-        ttl = SURVEY_DEFAULT_TTL;
-        break;
     default:
         return false;
     }
@@ -240,9 +230,7 @@ bool app_mesh_c5_gateway_operation_outranks_unaccepted_click(
 {
     enum command_id command_id = CMD_VENDOR_BASE;
 
-    if (msg_type == MSG_GATEWAY_ROUTE_ADV ||
-        msg_type == MSG_SURVEY_PAIR_PREPARE ||
-        msg_type == MSG_SURVEY_DISCOVERY_START) {
+    if (msg_type == MSG_GATEWAY_ROUTE_ADV) {
         return true;
     }
     if (msg_type != MSG_COMMAND ||
@@ -253,10 +241,6 @@ bool app_mesh_c5_gateway_operation_outranks_unaccepted_click(
 
     switch (command_id) {
     case CMD_ASSIGN_DISCOVERY_SLOTS:
-    case CMD_SURVEY_REACHABILITY:
-    case CMD_SURVEY_PREPARE_PAIR:
-    case CMD_SURVEY_START_PAIR:
-    case CMD_SURVEY_ABORT:
         return true;
     default:
         return false;
@@ -296,8 +280,6 @@ bool app_mesh_c5_control_uses_extended_phr(uint8_t msg_type,
 {
     return frame_len > standard_frame_max_len ||
            msg_type == MSG_COMMAND ||
-           msg_type == MSG_SURVEY_PAIR_PREPARE ||
-           msg_type == MSG_SURVEY_DISCOVERY_START ||
            msg_type == MSG_ROUTE_REQ ||
            msg_type == MSG_ROUTE_REPLY ||
            msg_type == MSG_GATEWAY_ROUTE_ADV ||

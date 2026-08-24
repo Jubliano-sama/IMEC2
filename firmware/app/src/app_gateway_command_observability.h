@@ -20,7 +20,6 @@
 
 enum gateway_command_event_kind {
     GATEWAY_COMMAND_EVENT_KIND_ANCHOR_ENUMERATION = 1,
-    GATEWAY_COMMAND_EVENT_KIND_ANCHOR_SURVEY = 2,
     GATEWAY_COMMAND_EVENT_KIND_ROUTE_REFRESH = 3,
 };
 
@@ -33,9 +32,6 @@ enum gateway_command_event_stage {
     GATEWAY_COMMAND_EVENT_STAGE_ANCHOR_ENUMERATED = 6,
     GATEWAY_COMMAND_EVENT_STAGE_ENUMERATION_COMPLETE = 7,
     GATEWAY_COMMAND_EVENT_STAGE_SCHEDULE_READY = 8,
-    GATEWAY_COMMAND_EVENT_STAGE_PAIR_START = 9,
-    GATEWAY_COMMAND_EVENT_STAGE_PAIR_SUCCESS = 10,
-    GATEWAY_COMMAND_EVENT_STAGE_PAIR_FAILURE = 11,
     GATEWAY_COMMAND_EVENT_STAGE_COMPLETE = 12,
 };
 
@@ -50,11 +46,7 @@ enum gateway_command_event_reason {
     GATEWAY_COMMAND_EVENT_REASON_MALFORMED_RESPONSE = 7,
     GATEWAY_COMMAND_EVENT_REASON_ROUTE_UNAVAILABLE = 8,
     GATEWAY_COMMAND_EVENT_REASON_RETRY_EXHAUSTED = 9,
-    GATEWAY_COMMAND_EVENT_REASON_PAIR_INCOMPLETE = 10,
-    GATEWAY_COMMAND_EVENT_REASON_PAIR_RANGE_FAILED = 11,
-    GATEWAY_COMMAND_EVENT_REASON_ABORTED = 12,
     GATEWAY_COMMAND_EVENT_REASON_INTERNAL = 13,
-    GATEWAY_COMMAND_EVENT_REASON_SURVEY_RADIO_PREPARATION = 14,
 };
 
 enum gateway_command_event_flag {
@@ -63,23 +55,6 @@ enum gateway_command_event_flag {
     GATEWAY_COMMAND_EVENT_FLAG_REPLAY = 1u << 2,
     GATEWAY_COMMAND_EVENT_FLAG_DUPLICATE = 1u << 3,
 };
-
-enum gateway_command_event_reason gateway_command_survey_failure_reason_merge(
-    enum gateway_command_event_reason current,
-    enum gateway_command_event_reason candidate);
-bool gateway_command_survey_sample_admission(
-    uint16_t sample_count,
-    enum command_status *status,
-    enum gateway_command_event_reason *reason);
-void gateway_command_survey_terminal_outcome(
-    size_t report_count,
-    size_t pair_count,
-    bool pairs_planned,
-    bool topology_complete,
-    uint16_t failure_count,
-    enum gateway_command_event_reason failure_reason,
-    enum command_status *status,
-    enum gateway_command_event_reason *reason);
 
 struct gateway_command_event {
     uint8_t schema_version;

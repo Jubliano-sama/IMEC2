@@ -279,7 +279,7 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
      * their SPI work may consume delayed-FINAL arm headroom.  The DW3000 keeps
      * the completed RX diagnostics available while the already-armed delayed
      * TX is pending, so collect them only after dwt_starttx() has accepted the
-     * schedule.  Current click and survey initiators leave capture_rsl false;
+     * schedule. Current click and diagnostic initiators leave capture_rsl false;
      * this preserves the shared driver's explicit opt-in behavior without
      * putting the production fast path back inside the deadline.
     */

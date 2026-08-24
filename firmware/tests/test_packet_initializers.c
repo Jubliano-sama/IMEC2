@@ -1,8 +1,6 @@
 #include "gateway_command.h"
 #include "mesh.h"
 #include "report.h"
-#include "survey.h"
-
 #include <assert.h>
 #include <string.h>
 
@@ -108,93 +106,6 @@ static void test_report_packet_initializers_reset_message_age(void)
                         &packet);
 }
 
-static void test_survey_packet_initializers_reset_message_age(void)
-{
-    const struct survey_pair pair = {
-        .initiator_id = ANCHOR_ID,
-        .responder_id = PEER_ID,
-        .survey_id = SESSION_ID,
-        .sample_count = 3u,
-    };
-    const struct survey_sample sample = {
-        .pair = pair,
-        .sample_index = 0u,
-        .distance_mm = 1234,
-        .quality = 90u,
-        .range_status = RANGE_OK,
-    };
-    const struct survey_discovery_config config = {
-        .survey_id = SESSION_ID,
-        .start_delay_ms = 2000u,
-        .slot_ms = 40u,
-        .slot_count = 6u,
-        .round_count = 4u,
-    };
-    struct proto_packet packet;
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_result_packet(&packet,
-                                                  &sample,
-                                                  GATEWAY_ID,
-                                                  1u,
-                                                  24u),
-                        &packet);
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_result_packet_from_reporter(&packet,
-                                                                &sample,
-                                                                PEER_ID,
-                                                                GATEWAY_ID,
-                                                                2u,
-                                                                24u),
-                        &packet);
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_reach_request_packet(&packet,
-                                                         GATEWAY_ID,
-                                                         SESSION_ID,
-                                                         3u,
-                                                         12u),
-                        &packet);
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_reach_report_packet(&packet,
-                                                        ANCHOR_ID,
-                                                        GATEWAY_ID,
-                                                        SESSION_ID,
-                                                        4u,
-                                                        24u),
-                        &packet);
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_discovery_start_packet(&packet,
-                                                           GATEWAY_ID,
-                                                           &config,
-                                                           5u,
-                                                           20u),
-                        &packet);
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_discovery_report_packet(&packet,
-                                                            ANCHOR_ID,
-                                                            GATEWAY_ID,
-                                                            SESSION_ID,
-                                                            0u,
-                                                            1u,
-                                                            6u,
-                                                            24u),
-                        &packet);
-
-    poison_packet(&packet);
-    expect_fresh_packet(survey_init_pair_prepare_packet(&packet,
-                                                        &pair,
-                                                        GATEWAY_ID,
-                                                        pair.initiator_id,
-                                                        7u,
-                                                        24u),
-                        &packet);
-}
-
 static void test_gateway_result_initializer_resets_message_age(void)
 {
     const struct proto_packet command = {
@@ -228,7 +139,6 @@ int main(void)
 {
     test_mesh_packet_initializers_reset_message_age();
     test_report_packet_initializers_reset_message_age();
-    test_survey_packet_initializers_reset_message_age();
     test_gateway_result_initializer_resets_message_age();
     return 0;
 }

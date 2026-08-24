@@ -53,8 +53,6 @@
 #include "report.h"
 #include "route.h"
 #include "semantic_digest.h"
-#include "survey.h"
-#include "survey_round_control.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -154,7 +152,7 @@ BUILD_ASSERT(MESH_ROUTE_EXHAUSTED_RETRY_BASE_MS >= ROUTE_GATEWAY_ACK_TIMEOUT_MS,
 #define MESH_CH9_PHY_OVERHEAD_US 1500u
 #define MESH_CH9_TX_FRAME_GAP_MS 2u
 #define MESH_GATEWAY_RX_REARM_GUARD_MS \
-    APP_MESH_DIRECT_GATEWAY_SURVEY_SERVICE_GUARD_MS
+    APP_MESH_DIRECT_GATEWAY_SERVICE_GUARD_MS
 #define MESH_CH9_DIRECT_GATEWAY_TX_GAP_SLOP_MS 5u
 #define MESH_CH9_DIRECT_GATEWAY_TX_FRAME_GAP_MS 25u
 #define MESH_CH9_TX_CONFIG_GUARD_MS 25u
@@ -756,74 +754,6 @@ int app_mesh_report_attach_gateway_ack_store(void)
 #endif
 }
 
-int app_mesh_report_reserve_gateway_ack_cleanup_result(
-    const struct proto_packet *expected_result,
-    uint32_t now_ms)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    int ret;
-
-    if (k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT) != 0) {
-        return -EAGAIN;
-    }
-    ret = mesh_relay_reserve_gateway_ack_cleanup_result(
-        &mesh_runtime, expected_result, now_ms);
-    k_mutex_unlock(&mesh_rx_handler_lock);
-    return mesh_errno_from_proto(ret);
-#else
-    ARG_UNUSED(expected_result);
-    ARG_UNUSED(now_ms);
-    return -ENOTSUP;
-#endif
-}
-
-int app_mesh_report_release_gateway_ack_cleanup_result(
-    const struct proto_packet *expected_result)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    int ret;
-
-    if (k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT) != 0) {
-        return -EAGAIN;
-    }
-    ret = mesh_relay_release_gateway_ack_cleanup_result(
-        &mesh_runtime, expected_result);
-    k_mutex_unlock(&mesh_rx_handler_lock);
-    return mesh_errno_from_proto(ret);
-#else
-    ARG_UNUSED(expected_result);
-    return -ENOTSUP;
-#endif
-}
-
-int app_mesh_report_gateway_ack_cleanup_pair_capacity(
-    uint32_t now_ms,
-    uint32_t *retry_delay_ms)
-{
-#if DEVICE_ROLE == ROLE_GATEWAY
-    int ret;
-
-    if (retry_delay_ms == NULL) {
-        return -EINVAL;
-    }
-    *retry_delay_ms = 0u;
-    if (k_mutex_lock(&mesh_rx_handler_lock, K_NO_WAIT) != 0) {
-        return -EAGAIN;
-    }
-    ret = mesh_relay_gateway_ack_cleanup_pair_capacity(
-        &mesh_runtime, now_ms, retry_delay_ms);
-    k_mutex_unlock(&mesh_rx_handler_lock);
-    if (ret == PROTO_ERR_BUSY) {
-        return -EAGAIN;
-    }
-    return mesh_errno_from_proto(ret);
-#else
-    ARG_UNUSED(now_ms);
-    ARG_UNUSED(retry_delay_ms);
-    return -ENOTSUP;
-#endif
-}
-
 bool app_mesh_report_gateway_delivery_confirmation_pending(
     uint64_t src_id,
     uint8_t msg_type,
@@ -1268,9 +1198,9 @@ static uint8_t mesh_advance_all_channel9_timings_past(uint32_t now_ms,
 static void mesh_close_channel9_connection(uint64_t peer_id, const char *reason);
 static void mesh_event_owner_abandon_peer(uint64_t peer_id);
 static struct mesh_event_owner *mesh_event_owner_for_peer(uint64_t peer_id);
-static uint32_t survey_identity_backoff_ms(uint64_t node_id,
-                                           uint64_t parent_id,
-                                           uint8_t deferral_count);
+static uint32_t mesh_identity_backoff_ms(uint64_t node_id,
+                                         uint64_t parent_id,
+                                         uint8_t deferral_count);
 static int mesh_send_pending_ch9_ack_batch(const struct mesh_event_plan *plan,
                                            uint64_t peer_id,
                                            const char *reason);

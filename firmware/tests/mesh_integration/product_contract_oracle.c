@@ -1,7 +1,6 @@
 #include "discovery_assignment.h"
 #include "operation_policy.h"
 #include "app_mesh_c5_priority.h"
-#include "survey_gateway_transaction.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -66,17 +65,10 @@ static int policy_oracle(const char *hex)
         return 1;
     }
     printf("expected=%u assignment_budget=%" PRIu32
-           " assignment_spread=%u discovery_start=%" PRIu32
-           " discovery_slots=%u discovery_budget=%" PRIu32
-           " pair_reruns=%u pair_parallel=%u ram_only=%u\n",
+           " assignment_spread=%u ram_only=%u\n",
            set.assignment.expected_anchor_count,
            set.assignment.operation_budget_ms,
            set.assignment.response_spread_ms,
-           set.discovery.start_delay_ms,
-           set.discovery.slot_count,
-           set.discovery.operation_budget_ms,
-           set.pair.max_reruns,
-           set.pair.max_parallel_pairs,
            set.assignment.ram_only_iteration ? 1u : 0u);
     return 0;
 }
@@ -98,55 +90,16 @@ static int control_oracle(void)
 {
     const bool enumeration = command_outranks_click(
         CMD_ASSIGN_DISCOVERY_SLOTS);
-    const bool survey = command_outranks_click(CMD_SURVEY_REACHABILITY);
-    const bool pair = command_outranks_click(CMD_SURVEY_PREPARE_PAIR) &&
-                      command_outranks_click(CMD_SURVEY_START_PAIR);
-    const bool abort = command_outranks_click(CMD_SURVEY_ABORT);
     const bool here_i_am =
         app_mesh_c5_gateway_operation_outranks_unaccepted_click(
             MSG_GATEWAY_ROUTE_ADV, NULL, 0u);
     const bool unrelated = command_outranks_click(CMD_PING);
 
-    printf("enumeration=%u survey=%u pair=%u abort=%u here_i_am=%u unrelated=%u\n",
+    printf("enumeration=%u here_i_am=%u unrelated=%u\n",
            enumeration ? 1u : 0u,
-           survey ? 1u : 0u,
-           pair ? 1u : 0u,
-           abort ? 1u : 0u,
            here_i_am ? 1u : 0u,
            unrelated ? 1u : 0u);
-    return enumeration && survey && pair && abort && here_i_am && !unrelated ?
-        0 : 1;
-}
-
-static int pair_custody_oracle(void)
-{
-    struct survey_gateway_transaction transaction;
-    const struct survey_pair first = {
-        .initiator_id = UINT64_C(0xa001),
-        .responder_id = UINT64_C(0xa002),
-        .operation_generation = UINT64_C(0x000000010000004d),
-        .survey_id = 77u,
-        .sample_count = 5u,
-    };
-    struct survey_pair second = first;
-    int first_ret;
-    int second_ret;
-
-    second.initiator_id = UINT64_C(0xa003);
-    second.responder_id = UINT64_C(0xa004);
-    survey_gateway_transaction_init(&transaction);
-    first_ret = survey_gateway_transaction_load_pair(&transaction, &first);
-    second_ret = survey_gateway_transaction_load_pair(&transaction, &second);
-    printf("first=%d replacement=%d retained=%u\n",
-           first_ret,
-           second_ret,
-           transaction.pair.initiator_id == first.initiator_id &&
-                   transaction.pair.responder_id == first.responder_id ?
-               1u : 0u);
-    return first_ret == 0 && second_ret == -EBUSY &&
-                   transaction.pair.initiator_id == first.initiator_id &&
-                   transaction.pair.responder_id == first.responder_id ?
-        0 : 1;
+    return enumeration && here_i_am && !unrelated ? 0 : 1;
 }
 
 static int ordering_oracle(void)
@@ -184,9 +137,6 @@ int main(int argc, char **argv)
     }
     if (argc == 2 && strcmp(argv[1], "--control") == 0) {
         return control_oracle();
-    }
-    if (argc == 2 && strcmp(argv[1], "--pair-custody") == 0) {
-        return pair_custody_oracle();
     }
     return 2;
 }

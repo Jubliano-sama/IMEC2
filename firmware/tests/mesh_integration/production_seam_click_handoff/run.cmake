@@ -14,6 +14,10 @@ endif()
 if(NOT west_executable)
     message(FATAL_ERROR "west was not found in ${REPOSITORY_ROOT}/.venv/bin or PATH")
 endif()
+get_filename_component(west_executable_real "${west_executable}" REALPATH)
+get_filename_component(west_bin_dir "${west_executable_real}" DIRECTORY)
+get_filename_component(west_venv_dir "${west_bin_dir}" DIRECTORY)
+get_filename_component(west_workspace "${west_venv_dir}" DIRECTORY)
 
 get_filename_component(seam_build_parent "${SEAM_BUILD_DIR}" DIRECTORY)
 file(MAKE_DIRECTORY "${seam_build_parent}")
@@ -28,13 +32,14 @@ endif()
 
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env CCACHE_DISABLE=1
-            "${west_executable}" build
+            ZEPHYR_TOOLCHAIN_VARIANT=host
+            "${west_executable}" -z "${west_workspace}/zephyr" build
             --no-sysbuild
             --pristine
             -s "${SEAM_SOURCE_DIR}"
             -b native_sim/native/64
             -d "${SEAM_BUILD_DIR}"
-    WORKING_DIRECTORY "${REPOSITORY_ROOT}"
+    WORKING_DIRECTORY "${west_workspace}"
     RESULT_VARIABLE build_result
     OUTPUT_VARIABLE build_stdout
     ERROR_VARIABLE build_stderr

@@ -54,8 +54,8 @@ extern "C" {
 /* STACK_BUDGET_WORKLOAD_POLICY_BEGIN */
 #define STACK_BUDGET_DEPLOYABLE_WORKLOAD_POLICY(X)                           \
     X("mesh_clicker", "click_activity", "clicker_action", 1u, false)      \
-    X("mesh_anchor", "anchor_survey_report", "anchor_uwb_scan", 1u, false) \
-    X("mesh_gateway", "gateway_report_ingress", "system_workqueue", 1u, false) \
+    X("mesh_anchor", "anchor_scan", "anchor_uwb_scan", 1u, false) \
+    X("mesh_gateway", "gateway_report_ingress", "mesh_route", 1u, false) \
     X("mesh_gateway", "gateway_priority_control", "system_workqueue", 1u, false) \
     X("mesh_gateway", "ble_backpressure", "system_workqueue", 1u, false)
 /* STACK_BUDGET_WORKLOAD_POLICY_END */
@@ -105,24 +105,14 @@ extern "C" {
     X("app_anchor.c", "anchor_heartbeat_work_handler", "mesh_route")         \
     X("app_anchor.c", "anchor_command_execute_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_discovery_ack_liveness_work_handler", "system_workqueue") \
-    X("app_anchor_survey_runtime.c", "survey_work_handler", "anchor_uwb_scan") \
-    X("app_anchor_survey_runtime.c", "pair_start_kick_work_handler", "system_workqueue") \
-    X("app_anchor_survey_runtime.c", "pair_lease_work_handler", "system_workqueue") \
     X("app_anchor.c", "anchor_uwb_scan_work_handler", "anchor_uwb_scan")     \
-    X("app_anchor_survey_runtime.c", "app_anchor_survey_runtime_radio_active", "system_workqueue") \
     X("app_anchor.c", "anchor_note_uwb_awake_since", "system_workqueue")      \
     X("app_anchor.c", "anchor_click_handoff_work_handler", "anchor_uwb_scan") \
     X("app_anchor.c", "anchor_handle_mesh_click_wake_claim", "mesh_route") \
     X("app_mesh_test.c", "mesh_test_tx_thread_entry", "mesh_test")       \
     X("app_anchor.c", "anchor_handle_local_command", "system_workqueue")      \
-    X("app_anchor.c", "anchor_handle_survey_pair_prepare", "system_workqueue") \
-    X("app_anchor.c", "gateway_handle_survey_discovery_report", "system_workqueue") \
-    X("app_anchor_survey_discovery.c", "app_anchor_survey_discovery_handle_start", "system_workqueue") \
-    X("app_anchor_survey_discovery.c", "app_anchor_survey_delivery_gateway_confirmed", "system_workqueue") \
-    X("app_anchor_survey_discovery.c", "app_anchor_survey_delivery_transport_released", "system_workqueue") \
     X("app_anchor.c", "gateway_discovery_assignment_publish_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_discovery_assignment_finalize_work_handler", "system_workqueue") \
-    X("app_anchor.c", "gateway_survey_work_handler", "system_workqueue")      \
     X("app_anchor.c", "gateway_host_command_retry_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_host_abort_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_host_abort_route_work_handler", "mesh_route") \
@@ -187,10 +177,7 @@ extern "C" {
     X("app_stack_workload_diag.c", "app_stack_workload_diag_click_activity_admit", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_click_activity_sample", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_click_activity_release", "system_workqueue") \
-    X("app_stack_workload_diag.c", "app_stack_workload_diag_anchor_survey_admit", "system_workqueue") \
-    X("app_stack_workload_diag.c", "app_stack_workload_diag_anchor_survey_sample", "system_workqueue") \
-    X("app_stack_workload_diag.c", "app_stack_workload_diag_anchor_survey_release", "system_workqueue") \
-    X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_report_cycle", "system_workqueue") \
+    X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_report_cycle", "mesh_route") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_control_admit", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_control_sample", "system_workqueue") \
     X("app_stack_workload_diag.c", "app_stack_workload_diag_gateway_control_release", "system_workqueue")

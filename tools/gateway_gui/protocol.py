@@ -13,14 +13,9 @@ from typing import Any, Callable
 
 from .operation_policy import (
     ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
-    DISCOVERY_DEFAULT_ROUND_COUNT,
-    DISCOVERY_DEFAULT_SLOT_MS,
-    SURVEY_OPERATION_SAFETY_LIMIT_MS,
     OperationPolicyProfile,
     assignment_required_budget_ms,
     decode_operation_policy_value,
-    discovery_required_budget_ms,
-    discovery_required_start_delay_ms,
 )
 from .command_telemetry import (
     CommandTelemetryDecodeError,
@@ -57,11 +52,6 @@ GATEWAY_COMMAND_BUDGET_MIN_MS = 1000
 GATEWAY_COMMAND_BUDGET_MAX_MS = 3_600_000
 DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS = 1_800_000
 ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS = 120000
-SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS = SURVEY_OPERATION_SAFETY_LIMIT_MS
-SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS = \
-    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS
-SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT = 5
-
 MSG_CLICK_REPORT = 0x20
 MSG_SELF_TEST_REPORT = 0x21
 MSG_ANCHOR_HEARTBEAT = 0x22
@@ -69,8 +59,6 @@ MSG_MESH_DATA = 0x30
 MSG_COMMAND = 0x40
 MSG_COMMAND_RESULT = 0x41
 MSG_RESULT_BUNDLE = 0x44
-MSG_SURVEY_PAIR_RESULT = 0x53
-MSG_SURVEY_DISCOVERY_REPORT = 0x55
 MSG_GATEWAY_COMMAND_EVENT = 0x56
 MSG_GATEWAY_HOST_RECEIPT = 0x57
 
@@ -98,9 +86,6 @@ GATEWAY_COMMAND_EVENT_SLOT_UNAVAILABLE = 0xFF
 GATEWAY_ASSIGNMENT_PUBLISHER_MAX_ENTRIES = 50
 RANGE_REPORT_MAX_DISTANCE_SAMPLES = 96
 DETECTION_SOURCE_UWB_WAKE_CLAIM = 1
-SURVEY_GATEWAY_MAX_PEERS_PER_REPORT = 12
-SURVEY_REACHABILITY_ENTRY_LEN = 10
-
 _CLICK_REPORT_IDENTITY_FNV_OFFSET = 2166136261
 _CLICK_REPORT_IDENTITY_FNV_PRIME = 16777619
 
@@ -133,10 +118,7 @@ def click_report_session_id(clicker_id: int, event_seq: int) -> int:
 CMD_REBOOT = 0x0004
 CMD_CLEAR_ROUTE = 0x0007
 CMD_FORCE_REDISCOVERY = 0x000C
-CMD_SURVEY_REACHABILITY = 0x0100
-CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
-CMD_SURVEY_GO_RETIRED_ID = 0x0105
 TLV_EVENT_SEQ = 0x06
 TLV_BATTERY_MV = 0x02
 TLV_ERROR_CODE = 0x04
@@ -150,8 +132,6 @@ TLV_SAMPLE_COUNT = 0x0F
 TLV_COMMAND_ID = 0x10
 TLV_COMMAND_STATUS = 0x11
 TLV_EXPECTED_NODE_COUNT = 0x78
-TLV_SURVEY_ID = 0x15
-TLV_REACHABILITY_ENTRY = 0x17
 TLV_DURATION_MS = 0x1A
 TLV_REASON = 0x1E
 TLV_RANGE_STATUS = 0x21
@@ -190,15 +170,11 @@ TLV_ATTEMPT_INDEX = 0xA9
 TLV_DETECTION_SOURCE = 0xAA
 TLV_COMMAND_BUDGET_MS = 0xAB
 TLV_OPERATION_POLICY = 0xAE
-TLV_SURVEY_ROUND_ID = 0xAF
 TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION = 0xB1
 TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT = 0xB2
-TLV_SURVEY_OPERATION_GENERATION = 0xB6
-TLV_SURVEY_ROUND_COMMITMENT = 0xB7
 TLV_MESH_ACK_SEMANTIC_IDENTITY = 0xB8
 TLV_GATEWAY_HOST_RECEIPT_IDENTITY = 0xBB
 TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC
-TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xBD
 TLV_DIAG_FRAGMENT_INDEX = 0x55
 TLV_DIAG_FRAGMENT_COUNT = 0x56
 TLV_DIAG_SOURCE = 0x57
@@ -223,11 +199,8 @@ MESSAGE_NAMES = {
     0x12: "UWB_FINAL",
     0x13: "UWB_REPORT",
     0x14: "UWB_CLICKER_DIAG",
-    0x15: "UWB_SURVEY_DISCOVERY_PROBE",
     0x16: "UWB_ANCHOR_DIAG",
     0x17: "UWB_ANCHOR_DIAG_FRAGMENT",
-    0x18: "UWB_ANCHOR_PAIR_SCHEDULE",
-    0x19: "UWB_ANCHOR_PAIR_RESULT",
     MSG_CLICK_REPORT: "CLICK_REPORT",
     MSG_SELF_TEST_REPORT: "SELF_TEST_REPORT",
     MSG_ANCHOR_HEARTBEAT: "ANCHOR_HEARTBEAT",
@@ -252,12 +225,6 @@ MESSAGE_NAMES = {
     0x43: "RESULT_GRANT",
     MSG_RESULT_BUNDLE: "RESULT_BUNDLE",
     0x45: "GATEWAY_COLLECTION_EACK",
-    0x50: "SURVEY_REACH_REQ",
-    0x51: "SURVEY_REACH_REPORT",
-    0x52: "SURVEY_PAIR_PREPARE",
-    MSG_SURVEY_PAIR_RESULT: "SURVEY_PAIR_RESULT",
-    0x54: "SURVEY_DISCOVERY_START",
-    MSG_SURVEY_DISCOVERY_REPORT: "SURVEY_DISCOVERY_REPORT",
     MSG_GATEWAY_HOST_RECEIPT: "GATEWAY_HOST_RECEIPT",
     0x7F: "ERROR",
 }
@@ -287,12 +254,6 @@ SHARED_MESSAGE_TYPES = {
     0x43,
     MSG_RESULT_BUNDLE,
     0x45,
-    0x50,
-    0x51,
-    0x52,
-    MSG_SURVEY_PAIR_RESULT,
-    0x54,
-    MSG_SURVEY_DISCOVERY_REPORT,
     MSG_GATEWAY_HOST_RECEIPT,
     0x7F,
 }
@@ -325,15 +286,9 @@ COMMAND_NAMES = {
     0x0009: "START_HEARTBEAT",
     0x000A: "STOP_HEARTBEAT",
     CMD_FORCE_REDISCOVERY: "FORCE_REDISCOVERY",
-    CMD_SURVEY_REACHABILITY: "SURVEY_REACHABILITY",
-    0x0101: "SURVEY_PREPARE_PAIR",
-    0x0102: "SURVEY_START_PAIR",
-    0x0103: "SURVEY_ABORT",
     CMD_ASSIGN_DISCOVERY_SLOTS: "ASSIGN_DISCOVERY_SLOTS",
-    CMD_SURVEY_GO_RETIRED_ID: "RETIRED_SURVEY_GO",
     0x8000: "ML_START_COLLECTION",
     0x8001: "ML_START_FAST_RANGING",
-    0x8002: "ML_START_ANCHOR_PAIR_SURVEY",
     0x8003: "ML_START_LIVE_TRACKING",
     0x8004: "ML_LIVE_TRACKING_HEARTBEAT",
     0x8005: "ML_STOP_LIVE_TRACKING",
@@ -377,7 +332,6 @@ STREAM_CLASS_NAMES = {
     0: "UNKNOWN",
     1: "CLICK",
     2: "RESULT",
-    3: "SURVEY",
     4: "DIAGNOSTIC",
     5: "STATUS",
 }
@@ -515,9 +469,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     0x12: TlvSpec("REQUESTED_MSG_SEQ", _scalar(2)),
     0x13: TlvSpec("NEXT_HOP_ID", _scalar(8)),
     0x14: TlvSpec("GATEWAY_ID", _scalar(8)),
-    TLV_SURVEY_ID: TlvSpec("SURVEY_ID", _scalar(4)),
     0x16: TlvSpec("PEER_ID_LIST", _array(8)),
-    TLV_REACHABILITY_ENTRY: TlvSpec("REACHABILITY_ENTRY"),
     0x18: TlvSpec("RANGE_FLAGS", _scalar(1)),
     0x19: TlvSpec("LED_PATTERN_ID", _scalar(1)),
     TLV_DURATION_MS: TlvSpec("DURATION_MS", _scalar(4)),
@@ -598,21 +550,11 @@ TLV_SPECS: dict[int, TlvSpec] = {
     TLV_ATTEMPT_INDEX: TlvSpec("ATTEMPT_INDEX", _scalar(1)),
     TLV_DETECTION_SOURCE: TlvSpec("DETECTION_SOURCE", _scalar(1)),
     TLV_OPERATION_POLICY: TlvSpec("OPERATION_POLICY", _operation_policy),
-    TLV_SURVEY_ROUND_ID: TlvSpec("SURVEY_ROUND_ID", _scalar(2)),
     TLV_DISCOVERY_ASSIGNMENT_SCHEME_VERSION: TlvSpec(
         "DISCOVERY_ASSIGNMENT_SCHEME_VERSION", _scalar(1)
     ),
     TLV_DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT: TlvSpec(
         "DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT", _exact_bytes(32)
-    ),
-    TLV_SURVEY_ASSIGNMENT_IDENTITY: TlvSpec(
-        "SURVEY_ASSIGNMENT_IDENTITY", _exact_bytes(40)
-    ),
-    TLV_SURVEY_OPERATION_GENERATION: TlvSpec(
-        "SURVEY_OPERATION_GENERATION", _scalar(8)
-    ),
-    TLV_SURVEY_ROUND_COMMITMENT: TlvSpec(
-        "SURVEY_ROUND_COMMITMENT", _exact_bytes(32)
     ),
     TLV_MESH_ACK_SEMANTIC_IDENTITY: TlvSpec(
         "MESH_ACK_SEMANTIC_IDENTITY", _mesh_ack_semantic_identity
@@ -1250,157 +1192,6 @@ def validate_click_payload(packet: Packet, payload: bytes | None = None) -> None
 validate_click_report = validate_click_payload
 
 
-def validate_survey_discovery_report(
-    packet: Packet, payload: bytes | None = None
-) -> None:
-    """Validate one reliable discovery report before host acceptance.
-
-    The report's transport replay domain is the anchor boot incarnation in
-    ``packet.session_id``.  The survey operation generation remains an
-    independent mandatory payload value; equating the two would recreate the
-    asymmetric-reboot collision this identity split prevents.
-    """
-
-    if packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT:
-        raise DecodeError(
-            "survey discovery validator requires "
-            f"MSG_SURVEY_DISCOVERY_REPORT, got 0x{packet.msg_type:02x}"
-        )
-
-    payload_bytes = packet.payload if payload is None else payload
-    if not payload_bytes:
-        raise DecodeError("malformed survey discovery report: payload is empty")
-    tlvs = packet.tlvs if payload is None else parse_tlvs(payload_bytes)
-    if packet.stream_flags & GATEWAY_STREAM_FLAG_TRUNCATED or any(
-        tlv.truncated for tlv in tlvs
-    ):
-        raise DecodeError(
-            "malformed survey discovery report: truncated custody records "
-            "cannot be accepted"
-        )
-    if packet.flags != (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC):
-        raise DecodeError(
-            "malformed survey discovery report: exact gateway-ACK and "
-            "diagnostic flags are required"
-        )
-    if (
-        packet.src_id == 0
-        or packet.dst_id == 0
-        or packet.src_id == packet.dst_id
-        or packet.session_id == 0
-        or packet.seq == 0
-    ):
-        raise DecodeError(
-            "malformed survey discovery report: envelope identity must be "
-            "nonzero with distinct endpoints"
-        )
-
-    def values(type_id: int) -> list[TlvValue]:
-        return [tlv for tlv in tlvs if tlv.type_id == type_id]
-
-    required_specs = (
-        (TLV_SURVEY_ID, 4, "SURVEY_ID"),
-        (TLV_ANCHOR_ID, 8, "ANCHOR_ID"),
-        (TLV_SURVEY_OPERATION_GENERATION, 8, "SURVEY_OPERATION_GENERATION"),
-        (TLV_NODE_BOOT_COUNTER, 4, "NODE_BOOT_COUNTER"),
-        (TLV_COMMAND_STATUS, 2, "COMMAND_STATUS"),
-    )
-    required_values: dict[int, TlvValue] = {}
-    for type_id, width, name in required_specs:
-        occurrences = values(type_id)
-        if len(occurrences) != 1:
-            qualifier = "missing" if not occurrences else "duplicate"
-            raise DecodeError(
-                f"malformed survey discovery report: {qualifier} required "
-                f"{name} TLV"
-            )
-        value = occurrences[0]
-        if len(value.raw) != width:
-            raise DecodeError(
-                f"malformed survey discovery report: {name} TLV must be "
-                f"{width} bytes, got {len(value.raw)}"
-            )
-        required_values[type_id] = value
-
-    entries = values(TLV_REACHABILITY_ENTRY)
-    if len(entries) > SURVEY_GATEWAY_MAX_PEERS_PER_REPORT:
-        raise DecodeError(
-            "malformed survey discovery report: too many reachability entries"
-        )
-    expected_types = (
-        [TLV_SURVEY_ID, TLV_ANCHOR_ID]
-        + [TLV_REACHABILITY_ENTRY] * len(entries)
-        + [
-            TLV_SURVEY_OPERATION_GENERATION,
-            TLV_NODE_BOOT_COUNTER,
-            TLV_COMMAND_STATUS,
-        ]
-    )
-    if [tlv.type_id for tlv in tlvs] != expected_types:
-        raise DecodeError(
-            "malformed survey discovery report: TLVs are not in canonical "
-            "producer order or contain an unsupported type"
-        )
-
-    survey_id = int.from_bytes(required_values[TLV_SURVEY_ID].raw, "little")
-    anchor_id = int.from_bytes(required_values[TLV_ANCHOR_ID].raw, "little")
-    operation_generation = int.from_bytes(
-        required_values[TLV_SURVEY_OPERATION_GENERATION].raw, "little"
-    )
-    boot_incarnation = int.from_bytes(
-        required_values[TLV_NODE_BOOT_COUNTER].raw, "little"
-    )
-    command_status = int.from_bytes(
-        required_values[TLV_COMMAND_STATUS].raw, "little"
-    )
-    if survey_id == 0:
-        raise DecodeError(
-            "malformed survey discovery report: SURVEY_ID must be nonzero"
-        )
-    if anchor_id == 0 or anchor_id != packet.src_id:
-        raise DecodeError(
-            "malformed survey discovery report: ANCHOR_ID must be nonzero "
-            "and equal packet source"
-        )
-    if operation_generation == 0 or operation_generation & 0xFFFFFFFF == 0:
-        raise DecodeError(
-            "malformed survey discovery report: operation generation must "
-            "have a nonzero transport projection"
-        )
-    if boot_incarnation == 0 or packet.session_id != boot_incarnation:
-        raise DecodeError(
-            "malformed survey discovery report: packet session must equal "
-            "the nonzero node boot counter"
-        )
-    if command_status not in COMMAND_STATUS_NAMES:
-        raise DecodeError(
-            "malformed survey discovery report: command status is invalid"
-        )
-
-    peer_ids: set[int] = set()
-    for entry in entries:
-        if len(entry.raw) != SURVEY_REACHABILITY_ENTRY_LEN:
-            raise DecodeError(
-                "malformed survey discovery report: reachability entry must "
-                f"be {SURVEY_REACHABILITY_ENTRY_LEN} bytes"
-            )
-        peer_id = int.from_bytes(entry.raw[:8], "little")
-        quality = entry.raw[9]
-        if (
-            peer_id == 0
-            or peer_id == anchor_id
-            or peer_id == packet.dst_id
-            or peer_id in peer_ids
-            or quality > 100
-        ):
-            raise DecodeError(
-                "malformed survey discovery report: reachability endpoints "
-                "must be unique, nonzero, distinct from anchor/gateway, and "
-                "have quality at most 100"
-            )
-        peer_ids.add(peer_id)
-
-
 def parse_shared_packet_bytes(
     raw: bytes,
     *,
@@ -1722,8 +1513,6 @@ class GatewayReceiveBuffer:
             validate_click_payload(packet)
         elif packet.msg_type == MSG_SELF_TEST_REPORT:
             validate_self_test_report_packet(packet)
-        elif packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT:
-            validate_survey_discovery_report(packet)
         elif packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
             validate_gateway_command_event_packet(packet)
         elif (
@@ -2137,146 +1926,6 @@ def _build_command_frame(
         payload=payload,
     )
     return CommandFrame(label, command_id, frame, parse_cobs_packet(frame))
-
-
-def build_anchor_discovery_command(
-    *,
-    host_id: int,
-    gateway_id: int,
-    session_id: int,
-    seq: int,
-    survey_id: int,
-    duration_ms: int,
-    discovery_slot_count: int = 6,
-    sample_count: int = SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-    expected_anchor_count: int | None = None,
-    command_budget_ms: int | None = None,
-    operation_policy: OperationPolicyProfile | None = None,
-) -> CommandFrame:
-    if host_id == 0:
-        raise ValueError("host ID must be non-zero")
-    if gateway_id == 0:
-        raise ValueError("gateway ID must be non-zero")
-    if gateway_id == host_id:
-        raise ValueError("gateway ID must differ from host ID")
-    if not 1 <= survey_id <= 0xFFFFFFFF:
-        raise ValueError("survey ID must be in 1..0xffffffff")
-    if not 1 <= duration_ms <= 0xFFFFFFFF:
-        raise ValueError("duration must be in 1..0xffffffff ms")
-    if not 1 <= discovery_slot_count <= 50:
-        raise ValueError("discovery slot count must be in 1..50")
-    if sample_count != SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
-        raise ValueError(
-            "sample count must be exactly "
-            f"{SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT}"
-        )
-    if expected_anchor_count is not None and not (
-        1 <= expected_anchor_count <= 50
-    ):
-        raise ValueError("expected anchor count must be in 1..50")
-    if command_budget_ms is not None and not (
-        GATEWAY_COMMAND_BUDGET_MIN_MS
-        <= command_budget_ms
-        <= SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS
-    ):
-        raise ValueError(
-            f"command budget must be in {GATEWAY_COMMAND_BUDGET_MIN_MS}.."
-            f"{SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS} ms for a survey"
-        )
-    if command_budget_ms is not None:
-        deepest_hop = (
-            operation_policy.assignment.deepest_hop
-            if operation_policy is not None
-            else min(expected_anchor_count or MESH_NETWORK_MAX_HOPS,
-                     MESH_NETWORK_MAX_HOPS)
-        )
-        start_delay_ms = (
-            operation_policy.discovery.start_delay_ms
-            if operation_policy is not None
-            else discovery_required_start_delay_ms(deepest_hop)
-        )
-        required_budget_ms = discovery_required_budget_ms(
-            start_delay_ms,
-            DISCOVERY_DEFAULT_SLOT_MS,
-            discovery_slot_count,
-            DISCOVERY_DEFAULT_ROUND_COUNT,
-            duration_ms,
-            deepest_hop=deepest_hop,
-        )
-        if command_budget_ms < required_budget_ms:
-            raise ValueError(
-                "command budget must cover the selected survey discovery "
-                f"policy: minimum {required_budget_ms} ms"
-            )
-    if operation_policy is not None:
-        discovery = operation_policy.discovery
-        if duration_ms != discovery.report_grace_ms:
-            raise ValueError(
-                "legacy duration must equal operation-policy report grace"
-            )
-        if discovery_slot_count != discovery.slot_count:
-            raise ValueError(
-                "legacy discovery slot count must equal operation policy"
-            )
-
-    payload = bytearray()
-    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_REACHABILITY.to_bytes(2, "little"))
-    append_tlv(payload, TLV_SURVEY_ID, survey_id.to_bytes(4, "little"))
-    append_tlv(payload, TLV_DURATION_MS, duration_ms.to_bytes(4, "little"))
-    append_tlv(payload, TLV_SAMPLE_COUNT, sample_count.to_bytes(2, "little"))
-    append_tlv(payload, TLV_DISCOVERY_SLOT_COUNT, bytes((discovery_slot_count,)))
-    if expected_anchor_count is not None:
-        append_tlv(
-            payload,
-            TLV_EXPECTED_NODE_COUNT,
-            expected_anchor_count.to_bytes(2, "little"),
-        )
-    if command_budget_ms is not None:
-        append_tlv(payload, TLV_COMMAND_BUDGET_MS, command_budget_ms.to_bytes(4, "little"))
-    if operation_policy is not None:
-        append_operation_policy_tlvs(
-            payload,
-            (
-                operation_policy.discovery.encode_value(),
-                operation_policy.pair.encode_value(),
-            ),
-        )
-    return _build_command_frame(
-        label="Anchor survey discovery",
-        command_id=CMD_SURVEY_REACHABILITY,
-        host_id=host_id,
-        dst_id=gateway_id,
-        session_id=session_id,
-        seq=seq,
-        payload=bytes(payload),
-    )
-
-
-def build_survey_abort_command(
-    *,
-    host_id: int,
-    gateway_id: int,
-    session_id: int,
-    seq: int,
-) -> CommandFrame:
-    if host_id == 0:
-        raise ValueError("host ID must be non-zero")
-    if gateway_id == 0:
-        raise ValueError("gateway ID must be non-zero")
-    if gateway_id == host_id:
-        raise ValueError("gateway ID must differ from host ID")
-
-    payload = bytearray()
-    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_ABORT.to_bytes(2, "little"))
-    return _build_command_frame(
-        label="Abort active anchor survey",
-        command_id=CMD_SURVEY_ABORT,
-        host_id=host_id,
-        dst_id=gateway_id,
-        session_id=session_id,
-        seq=seq,
-        payload=bytes(payload),
-    )
 
 
 def build_here_i_am_command(

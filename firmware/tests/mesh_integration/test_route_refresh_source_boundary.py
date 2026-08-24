@@ -228,7 +228,6 @@ class RouteRefreshSourceBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("app_node_comm_gateway_route_refresh_ready", route_host)
         self.assertIn("gateway_start_discovery_assignment(", route_host)
-        self.assertIn("gateway_route_survey_command(", route_host)
         self.assertIn(
             "app_node_comm_request_route_refresh_correlated_bounded(", route_host
         )

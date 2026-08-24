@@ -295,7 +295,7 @@ static void test_pre_rf_retry_uses_randomized_exponential_backoff(void)
 {
     struct node_comm comm;
     struct node_comm_request request = request_with(
-        31u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 10000u);
+        31u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 10000u);
     struct node_comm_lease lease;
     uint64_t now_ms = 0u;
     uint8_t attempts;
@@ -493,9 +493,9 @@ static void test_same_priority_deferred_head_blocks_younger_ready_record(void)
 {
     struct node_comm comm;
     struct node_comm_request older = request_with(
-        140u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 1000u);
+        140u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 1000u);
     struct node_comm_request younger = request_with(
-        141u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 1000u);
+        141u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 1000u);
     struct node_comm_lease lease;
     uint64_t due_ms = 0u;
     uint32_t older_handle;
@@ -522,30 +522,30 @@ static void test_same_priority_deferred_head_blocks_younger_ready_record(void)
     assert(lease.handle == younger_handle);
 }
 
-static void test_protocol_response_preempts_durable_survey_result(void)
+static void test_protocol_response_preempts_durable_priority_result(void)
 {
     struct node_comm comm;
     struct node_comm_request assignment_response = request_with(
         142u, NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE, 1000u);
-    struct node_comm_request survey_result = request_with(
-        143u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 1000u);
+    struct node_comm_request priority_result = request_with(
+        143u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 1000u);
     struct node_comm_lease lease;
     uint32_t assignment_handle;
-    uint32_t survey_handle;
+    uint32_t priority_handle;
 
     init_running(&comm, 0u);
     assignment_handle = submit_request(&comm, &assignment_response, 0u);
-    survey_handle = submit_request(&comm, &survey_result, 1u);
+    priority_handle = submit_request(&comm, &priority_result, 1u);
     assert(node_comm_acquire(&comm, 1u, &lease) == 0);
     assert(lease.handle == assignment_handle);
-    assert(lease.handle != survey_handle);
+    assert(lease.handle != priority_handle);
 }
 
-static void test_deferred_durable_survey_blocks_lower_but_not_controls(void)
+static void test_deferred_durable_priority_blocks_lower_but_not_controls(void)
 {
     struct node_comm comm;
-    struct node_comm_request survey = request_with(
-        147u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 1000u);
+    struct node_comm_request priority_result = request_with(
+        147u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 1000u);
     struct node_comm_request lower_priority = request_with(
         148u, NODE_COMM_PROFILE_RELIABLE_UPLINK, 1000u);
     struct node_comm_request control_response = request_with(
@@ -554,15 +554,15 @@ static void test_deferred_durable_survey_blocks_lower_but_not_controls(void)
         150u, NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD, 1000u);
     struct node_comm_lease lease;
     uint64_t due_ms = 0u;
-    uint32_t survey_handle;
+    uint32_t priority_handle;
     uint32_t lower_handle;
     uint32_t response_handle;
     uint32_t flood_handle;
 
     init_running(&comm, 0u);
-    survey_handle = submit_request(&comm, &survey, 0u);
+    priority_handle = submit_request(&comm, &priority_result, 0u);
     assert(node_comm_acquire(&comm, 0u, &lease) == 0);
-    assert(lease.handle == survey_handle);
+    assert(lease.handle == priority_handle);
     assert(node_comm_lease_defer_pre_rf(&comm, &lease, 250u, 0u) == 0);
 
     lower_handle = submit_request(&comm, &lower_priority, 1u);
@@ -584,7 +584,7 @@ static void test_deferred_durable_survey_blocks_lower_but_not_controls(void)
     assert(node_comm_lease_complete(&comm, &lease,
                                     NODE_COMM_DELIVERY_FAILED, 1u) == 0);
 
-    /* The lower ready record is blocked until the survey retry, so it must
+    /* The lower ready record is blocked until the priority retry, so it must
      * not advertise now as its next service time and create a busy loop. */
     assert(node_comm_next_service_due_ms(&comm, 1u, &due_ms));
     assert(due_ms == 250u);
@@ -594,12 +594,12 @@ static void test_deferred_durable_survey_blocks_lower_but_not_controls(void)
     assert(due_ms == 250u);
 
     assert(node_comm_acquire(&comm, 250u, &lease) == 0);
-    assert(lease.handle == survey_handle);
+    assert(lease.handle == priority_handle);
     assert(node_comm_lease_note_rf_started(&comm, &lease, 250u) == 0);
     assert(node_comm_lease_await_confirmation(&comm, &lease, 250u) == 0);
 
     /* Once the durable owner has crossed the pre-RF boundary, the ordinary
-     * lower class can use the backend while survey confirmation is pending. */
+     * lower class can use the backend while priority confirmation is pending. */
     assert(node_comm_acquire(&comm, 250u, &lease) == 0);
     assert(lease.handle == lower_handle);
 }
@@ -650,7 +650,7 @@ static void test_cancel_retires_exact_wait_retry_owner_without_rf(void)
 {
     struct node_comm comm;
     struct node_comm_request request = request_with(
-        146u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 1000u);
+        146u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 1000u);
     struct node_comm_terminal_event event;
     struct node_comm_lease lease;
     uint32_t handle;
@@ -1385,7 +1385,7 @@ static void test_all_delivery_profiles_use_priority_then_fifo_order(void)
     const enum node_comm_delivery_profile profiles[] = {
         NODE_COMM_PROFILE_BEST_EFFORT,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
-        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
         NODE_COMM_PROFILE_CONTROL_RESPONSE,
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
@@ -1396,7 +1396,7 @@ static void test_all_delivery_profiles_use_priority_then_fifo_order(void)
         NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD,
         NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN,
         NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE,
-        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_BEST_EFFORT,
     };
@@ -1649,7 +1649,7 @@ test_priority_yield_requeues_exact_confirmation_owner_without_refunding_rf(void)
 {
     struct node_comm comm;
     struct node_comm_request durable = request_with(
-        920u, NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK, 10000u);
+        920u, NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK, 10000u);
     struct node_comm_terminal_event event;
     struct node_comm_lease lease;
     uint32_t generation = 0u;
@@ -1920,7 +1920,7 @@ static void test_durable_retry_backoff_diversifies_fifty_reporters(void)
                             (anchor * UINT32_C(0x9e3779b9));
 
             assert(node_comm_retry_backoff_ms(
-                       NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+                       NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
                        seed, round, &delay_ms) == 0);
             assert(delay_ms >= base_ms / 2u);
             assert(delay_ms <= base_ms + base_ms / 2u);
@@ -1932,10 +1932,10 @@ static void test_durable_retry_backoff_diversifies_fifty_reporters(void)
         assert(distinct_delays >= 20u);
     }
     assert(node_comm_retry_backoff_ms(
-               NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+               NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
                0u, 1u, &(uint32_t){0}) == -EINVAL);
     assert(node_comm_retry_backoff_ms(
-               NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+               NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
                1u, 0u, &(uint32_t){0}) == -EINVAL);
 }
 
@@ -2186,8 +2186,8 @@ int main(void)
     test_stop_cancel_emits_one_terminal_per_request();
     test_priority_then_fifo_selection();
     test_same_priority_deferred_head_blocks_younger_ready_record();
-    test_protocol_response_preempts_durable_survey_result();
-    test_deferred_durable_survey_blocks_lower_but_not_controls();
+    test_protocol_response_preempts_durable_priority_result();
+    test_deferred_durable_priority_blocks_lower_but_not_controls();
     test_non_durable_deferred_classes_remain_non_hol();
     test_cancel_retires_exact_wait_retry_owner_without_rf();
     test_bounded_control_pre_rf_deferral_retains_equal_priority_fifo();

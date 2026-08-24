@@ -5,7 +5,7 @@
 static bool operation_valid(enum protocol_rx_operation operation)
 {
     return operation >= PROTOCOL_RX_OPERATION_HERE_I_AM &&
-           operation <= PROTOCOL_RX_OPERATION_SURVEY;
+           operation <= PROTOCOL_RX_OPERATION_ENUMERATION;
 }
 
 static bool identity_matches(const struct protocol_rx_lifecycle *lifecycle,

@@ -31,19 +31,18 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .retry_backoff_shift_cap = 2u,
         .priority = 120u,
     },
-    [NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK] = {
+    [NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK] = {
         .retry_delay_ms = 50u,
         .success_repeat_delay_ms = 0u,
         .max_attempts = 16u,
         .successful_attempts_required = 1u,
         .retry_backoff_shift_cap = 3u,
         /*
-         * This profile is reserved for already-captured survey results. A
-         * pending assignment TABLE ACK must remain reliable, but it must not
-         * consume every newly repaired route while the gateway's bounded
-         * survey collection window is open. Keep durable measurements above
-         * ordinary uplinks, while causal protocol and control responses stay
-         * above the stored measurement.
+         * This profile is reserved for already-captured priority results. A
+         * pending assignment TABLE ACK remains reliable without consuming
+         * every newly repaired route. Keep durable measurements above ordinary
+         * uplinks, while causal protocol and control responses stay above the
+         * stored measurement.
          */
         .priority = 230u,
     },
@@ -51,8 +50,8 @@ static const struct node_comm_profile_policy profile_policies[] = {
         .retry_delay_ms = NODE_COMM_PROTOCOL_RESPONSE_RETRY_BASE_MS,
         .success_repeat_delay_ms = 0u,
         /*
-         * A survey START result can become ready while the gateway is still
-         * completing the required three-copy channel-5 control flood. Keep
+         * A protocol result can become ready while the gateway is still
+         * completing a required channel-5 control flood. Keep
          * enough channel-9 opportunities to outlive that bounded blackout;
          * the caller's absolute deadline remains the final time bound.
          */
@@ -719,7 +718,7 @@ static uint8_t terminal_proof_for(
     }
     switch (slot->request.profile) {
     case NODE_COMM_PROFILE_RELIABLE_UPLINK:
-    case NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK:
+    case NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK:
     case NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE:
         return NODE_COMM_TERMINAL_PROOF_SEMANTIC;
     default:
@@ -1236,14 +1235,13 @@ static bool same_priority_pre_rf_predecessor(
 }
 
 /*
- * An already-captured survey result is the highest-priority measurement
+ * An already-captured priority result is the highest-priority measurement
  * owner.  If its next RF attempt is temporarily deferred, allowing a lower
- * class to consume the newly repaired route can defer the measurement again
- * until the gateway's bounded collection window closes.  Keep lower classes
- * behind that exact pre-RF owner; bounded/control responses have equal or
- * higher priority and remain eligible.
+ * class to consume the newly repaired route can defer the measurement again.
+ * Keep lower classes behind that exact pre-RF owner; bounded/control
+ * responses have equal or higher priority and remain eligible.
  */
-static bool durable_survey_pre_rf_barrier(
+static bool priority_uplink_pre_rf_barrier(
     const struct node_comm *comm,
     const struct node_comm_request_slot *candidate)
 {
@@ -1255,7 +1253,7 @@ static bool durable_survey_pre_rf_barrier(
 
         if (slot == candidate || !slot_is_live(slot) ||
             slot->request.profile !=
-                NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+                NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK ||
             slot->priority <= candidate->priority) {
             continue;
         }
@@ -1296,7 +1294,7 @@ int node_comm_acquire(struct node_comm *comm,
         if (same_priority_pre_rf_predecessor(comm, slot)) {
             continue;
         }
-        if (durable_survey_pre_rf_barrier(comm, slot)) {
+        if (priority_uplink_pre_rf_barrier(comm, slot)) {
             continue;
         }
         if (selected == NULL ||
@@ -1828,7 +1826,7 @@ int node_comm_confirm_delivery_external_proof_for_generation(
         return ret;
     }
     if (slot->request.profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
-        slot->request.profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+        slot->request.profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK &&
         slot->request.profile !=
             NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) {
         return -ENOTSUP;
@@ -2074,7 +2072,7 @@ bool node_comm_next_service_due_ms(const struct node_comm *comm,
         } else if (slot->owner.delivery.state == FW_DELIVERY_WAIT_TX ||
                    slot->owner.delivery.state == FW_DELIVERY_RETRY) {
             if (same_priority_pre_rf_predecessor(comm, slot) ||
-                durable_survey_pre_rf_barrier(comm, slot)) {
+                priority_uplink_pre_rf_barrier(comm, slot)) {
                 slot_due_ms = slot->request.absolute_deadline_ms;
                 if (slot_due_ms == 0u) {
                     continue;

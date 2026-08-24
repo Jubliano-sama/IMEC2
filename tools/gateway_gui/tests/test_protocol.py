@@ -6,14 +6,11 @@ from typing import Any
 
 from tools.gateway_gui.operation_policy import (
     AssignmentOperationPolicy,
-    DiscoveryOperationPolicy,
     OperationPolicyProfile,
-    PairOperationPolicy,
 )
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
-    CMD_SURVEY_REACHABILITY,
     DEFAULT_HOST_ID,
     DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
     FLAG_COUNT_AS_CLICK,
@@ -36,9 +33,7 @@ from tools.gateway_gui.protocol import (
     MSG_GATEWAY_HOST_RECEIPT,
     MSG_MESH_DATA,
     MSG_SELF_TEST_REPORT,
-    MSG_SURVEY_DISCOVERY_REPORT,
     PACKET_EXT_MAX_PAYLOAD_LEN,
-    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
     TLV_ANCHOR_ID,
     TLV_BURST_ID,
     TLV_CLICKER_ID,
@@ -66,13 +61,10 @@ from tools.gateway_gui.protocol import (
     TLV_QUALITY,
     TLV_RANGE_STATUS,
     TLV_REASON,
-    TLV_REACHABILITY_ENTRY,
     TLV_RANGE_ROUND_INDICES,
     TLV_SAMPLE_COUNT,
     TLV_SAMPLE_INDEX,
     TLV_SEQUENCE_START_TIMESTAMPS_MS,
-    TLV_SURVEY_ID,
-    TLV_SURVEY_OPERATION_GENERATION,
     TLV_TIMESTAMP_MS,
     TLV_ATTEMPT_INDEX,
     TLV_UWB_CIR_SAMPLE,
@@ -85,8 +77,6 @@ from tools.gateway_gui.protocol import (
     DecodeError,
     GatewayHostReceiptIdentity,
     append_tlv,
-    build_anchor_discovery_command,
-    build_survey_abort_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
     build_gateway_host_receipt,
@@ -105,7 +95,6 @@ from tools.gateway_gui.protocol import (
     validate_click_payload,
     validate_gateway_local_command_result_packet,
     validate_self_test_report_packet,
-    validate_survey_discovery_report,
 )
 
 
@@ -140,47 +129,6 @@ def click_payload() -> bytes:
     append_tlv(payload, TLV_UWB_CIR_SAMPLE, b"\x01\x02\x03\xfe\xff\xff")
     append_tlv(payload, 0xFE, b"\xaa\xbb")
     append_tlv(payload, 0xFE, b"\xcc")
-    return bytes(payload)
-
-
-def survey_discovery_payload(
-    *,
-    anchor_id: int = 0x5555666677778888,
-    survey_id: int = 0xAABBCCDD,
-    operation_generation: int = 0x1234567887654321,
-    boot_incarnation: int = 0x10203040,
-    entries: tuple[tuple[int, int, int], ...] = (
-        (0x1111222233334444, -61, 82),
-        (0x2222333344445555, -72, 63),
-    ),
-    command_status: int = 0,
-) -> bytes:
-    payload = bytearray()
-    append_tlv(payload, TLV_SURVEY_ID, survey_id.to_bytes(4, "little"))
-    append_tlv(payload, TLV_ANCHOR_ID, anchor_id.to_bytes(8, "little"))
-    for peer_id, rssi_dbm, quality in entries:
-        append_tlv(
-            payload,
-            TLV_REACHABILITY_ENTRY,
-            peer_id.to_bytes(8, "little")
-            + rssi_dbm.to_bytes(1, "little", signed=True)
-            + quality.to_bytes(1, "little"),
-        )
-    append_tlv(
-        payload,
-        TLV_SURVEY_OPERATION_GENERATION,
-        operation_generation.to_bytes(8, "little"),
-    )
-    append_tlv(
-        payload,
-        TLV_NODE_BOOT_COUNTER,
-        boot_incarnation.to_bytes(4, "little"),
-    )
-    append_tlv(
-        payload,
-        TLV_COMMAND_STATUS,
-        command_status.to_bytes(2, "little"),
-    )
     return bytes(payload)
 
 
@@ -910,130 +858,6 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(DecodeError, "malformed click report"):
                     validate_click_payload(packet)
 
-    def test_survey_discovery_semantics_keep_boot_and_operation_identities_distinct(
-        self,
-    ) -> None:
-        operation_generation = 0x1234567887654321
-        records = b"".join(
-            stream_record(
-                survey_discovery_payload(
-                    operation_generation=operation_generation,
-                    boot_incarnation=boot_incarnation,
-                ),
-                msg_type=MSG_SURVEY_DISCOVERY_REPORT,
-                packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
-                packet_session_id=boot_incarnation,
-                packet_seq=1,
-            )
-            for boot_incarnation in (41, 42)
-        )
-
-        received = GatewayReceiveBuffer().feed(records)
-
-        self.assertEqual(received.errors, ())
-        self.assertEqual(len(received.packets), 2)
-        self.assertEqual(
-            [packet.session_id for packet in received.packets], [41, 42]
-        )
-        for packet in received.packets:
-            validate_survey_discovery_report(packet)
-            self.assertEqual(
-                packet.value(TLV_SURVEY_OPERATION_GENERATION),
-                operation_generation,
-            )
-            self.assertEqual(packet.value(TLV_NODE_BOOT_COUNTER), packet.session_id)
-            self.assertNotEqual(
-                packet.session_id, operation_generation & 0xFFFFFFFF
-            )
-
-    def test_receive_buffer_rejects_noncanonical_survey_discovery_reports(
-        self,
-    ) -> None:
-        anchor_id = 0x5555666677778888
-        gateway_id = 0x9999AAAABBBBCCCC
-        boot_incarnation = 0x10203040
-        operation_generation = 0x1234567887654321
-        valid = survey_discovery_payload(
-            anchor_id=anchor_id,
-            operation_generation=operation_generation,
-            boot_incarnation=boot_incarnation,
-        )
-        duplicate_boot = valid + tlv(
-            TLV_NODE_BOOT_COUNTER, boot_incarnation.to_bytes(4, "little")
-        )
-        invalid_peer = survey_discovery_payload(
-            anchor_id=anchor_id,
-            operation_generation=operation_generation,
-            boot_incarnation=boot_incarnation,
-            entries=((gateway_id, -61, 82),),
-        )
-        duplicate_peer = survey_discovery_payload(
-            anchor_id=anchor_id,
-            operation_generation=operation_generation,
-            boot_incarnation=boot_incarnation,
-            entries=((0x1111222233334444, -61, 82),) * 2,
-        )
-        cases = {
-            "missing operation generation": (
-                remove_tlv(valid, TLV_SURVEY_OPERATION_GENERATION),
-                boot_incarnation,
-                anchor_id,
-            ),
-            "duplicate boot": (duplicate_boot, boot_incarnation, anchor_id),
-            "unsupported TLV": (valid + tlv(0xFE, b"\x01"), boot_incarnation, anchor_id),
-            "old operation-session header": (
-                valid,
-                operation_generation & 0xFFFFFFFF,
-                anchor_id,
-            ),
-            "source anchor mismatch": (valid, boot_incarnation, anchor_id + 1),
-            "zero operation projection": (
-                replace_tlv(
-                    valid,
-                    TLV_SURVEY_OPERATION_GENERATION,
-                    0x1234567800000000.to_bytes(8, "little"),
-                ),
-                boot_incarnation,
-                anchor_id,
-            ),
-            "invalid command status": (
-                replace_tlv(valid, TLV_COMMAND_STATUS, (9).to_bytes(2, "little")),
-                boot_incarnation,
-                anchor_id,
-            ),
-            "gateway reachability peer": (
-                invalid_peer,
-                boot_incarnation,
-                anchor_id,
-            ),
-            "duplicate reachability peer": (
-                duplicate_peer,
-                boot_incarnation,
-                anchor_id,
-            ),
-        }
-        for label, (payload, session_id, source_id) in cases.items():
-            with self.subTest(label=label):
-                record = stream_record(
-                    payload,
-                    msg_type=MSG_SURVEY_DISCOVERY_REPORT,
-                    packet_flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
-                    packet_session_id=session_id,
-                    packet_src_id=source_id,
-                )
-                decoded = parse_stream_record(record)
-                self.assertEqual(decoded.msg_type, MSG_SURVEY_DISCOVERY_REPORT)
-                with self.assertRaisesRegex(
-                    DecodeError, "malformed survey discovery report"
-                ):
-                    validate_survey_discovery_report(decoded)
-                received = GatewayReceiveBuffer().feed(record)
-                self.assertEqual(received.packets, ())
-                self.assertEqual(len(received.errors), 1)
-                self.assertIn(
-                    "malformed survey discovery report", received.errors[0]
-                )
-
     def test_gateway_stream_accepts_extended_payload_maximum(self) -> None:
         payload = extended_stream_payload()
         record = stream_record(payload, msg_type=MSG_MESH_DATA, packet_flags=0)
@@ -1360,37 +1184,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result.errors, ())
         self.assertEqual([packet.transport for packet in result.packets], ["gateway-stream-v1", "cobs-shared-packet"])
 
-    def test_anchor_discovery_command_uses_real_gateway_contract(self) -> None:
-        gateway_id = 0xAABBCCDDEEFF0011
-        command = build_anchor_discovery_command(
-            host_id=DEFAULT_HOST_ID,
-            gateway_id=gateway_id,
-            session_id=0x10203040,
-            seq=9,
-            survey_id=0xA0B0C0D0,
-            duration_ms=250,
-            discovery_slot_count=6,
-            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-        )
-        packet = command.packet
-        self.assertEqual(command.command_id, CMD_SURVEY_REACHABILITY)
-        self.assertEqual(packet.dst_id, gateway_id)
-        self.assertEqual(packet.src_id, DEFAULT_HOST_ID)
-        self.assertEqual(packet.session_id, 0x10203040)
-        self.assertEqual(packet.seq, 9)
-        self.assertEqual(packet.value(TLV_COMMAND_ID), CMD_SURVEY_REACHABILITY)
-        self.assertEqual(packet.value(TLV_SURVEY_ID), 0xA0B0C0D0)
-        self.assertEqual(packet.value(TLV_DURATION_MS), 250)
-        self.assertEqual(
-            packet.value(TLV_SAMPLE_COUNT),
-            SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-        )
-        self.assertEqual(packet.value(TLV_DISCOVERY_SLOT_COUNT), 6)
-        self.assertEqual(
-            [value.type_id for value in packet.tlvs],
-            [TLV_COMMAND_ID, TLV_SURVEY_ID, TLV_DURATION_MS, TLV_SAMPLE_COUNT, TLV_DISCOVERY_SLOT_COUNT],
-        )
-
     def test_gateway_identity_decodes_exact_little_endian_device_id(self) -> None:
         gateway_id = 0xAABBCCDDEEFF0011
 
@@ -1413,23 +1206,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(command.packet.dst_id, gateway_id)
         self.assertEqual(command.packet.value(TLV_COMMAND_ID), CMD_FORCE_REDISCOVERY)
         self.assertEqual([value.type_id for value in command.packet.tlvs], [TLV_COMMAND_ID])
-
-    def test_survey_abort_targets_local_gateway_with_only_command_id(self) -> None:
-        gateway_id = 0xAABBCCDDEEFF0011
-        command = build_survey_abort_command(
-            host_id=DEFAULT_HOST_ID,
-            gateway_id=gateway_id,
-            session_id=0x55667789,
-            seq=12,
-        )
-
-        self.assertEqual(command.command_id, 0x0103)
-        self.assertEqual(command.packet.dst_id, gateway_id)
-        self.assertEqual(command.packet.value(TLV_COMMAND_ID), 0x0103)
-        self.assertEqual(
-            [value.type_id for value in command.packet.tlvs],
-            [TLV_COMMAND_ID],
-        )
 
     def test_assign_discovery_slots_command_targets_local_gateway_with_only_command_id(self) -> None:
         gateway_id = 0xAABBCCDDEEFF0011
@@ -1473,253 +1249,6 @@ class ProtocolTests(unittest.TestCase):
                 gateway_id=DEFAULT_HOST_ID,
                 session_id=1,
                 seq=1,
-            )
-
-    def test_gateway_command_budget_is_optional_and_shared_by_all_workflows(self) -> None:
-        common: dict[str, Any] = {
-            "host_id": DEFAULT_HOST_ID,
-            "gateway_id": 0xAABBCCDDEEFF0011,
-            "session_id": 1,
-            "seq": 2,
-            "command_budget_ms": 1_800_000,
-        }
-        commands = (
-            build_here_i_am_command(**common),
-            build_anchor_discovery_command(
-                **common,
-                survey_id=3,
-                duration_ms=250,
-                discovery_slot_count=3,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-            ),
-        )
-        for command in commands:
-            with self.subTest(command=command.label):
-                self.assertEqual(
-                    command.packet.value(TLV_COMMAND_BUDGET_MS), 1_800_000
-                )
-                budget_tlv = next(
-                    value for value in command.packet.tlvs
-                    if value.type_id == TLV_COMMAND_BUDGET_MS
-                )
-                self.assertEqual(budget_tlv.name, "COMMAND_BUDGET_MS")
-
-        assignment = build_assign_discovery_slots_command(
-            **{
-                **common,
-                "command_budget_ms":
-                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
-            }
-        )
-        self.assertEqual(
-            assignment.packet.value(TLV_COMMAND_BUDGET_MS),
-            DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS,
-        )
-        self.assertEqual(
-            build_assign_discovery_slots_command(**common).packet.value(
-                TLV_COMMAND_BUDGET_MS
-            ),
-            1_800_000,
-        )
-
-        maximum = {**common, "command_budget_ms": GATEWAY_COMMAND_BUDGET_MAX_MS}
-        self.assertEqual(
-            build_assign_discovery_slots_command(**maximum).packet.value(
-                TLV_COMMAND_BUDGET_MS
-            ),
-            GATEWAY_COMMAND_BUDGET_MAX_MS,
-        )
-
-        for invalid in (999, GATEWAY_COMMAND_BUDGET_MAX_MS + 1):
-            with self.subTest(invalid=invalid):
-                with self.assertRaisesRegex(ValueError, "command budget"):
-                    build_here_i_am_command(**{**common, "command_budget_ms": invalid})
-
-        with self.assertRaisesRegex(ValueError, "for a survey"):
-            build_anchor_discovery_command(
-                **{**common, "command_budget_ms": 1_800_001},
-                survey_id=3,
-                duration_ms=250,
-                discovery_slot_count=3,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-            )
-
-    def test_bare_builders_reject_budgets_firmware_cannot_admit(self) -> None:
-        common: dict[str, Any] = {
-            "host_id": DEFAULT_HOST_ID,
-            "gateway_id": 0xAABBCCDDEEFF0011,
-            "session_id": 1,
-            "seq": 2,
-        }
-        with self.assertRaisesRegex(ValueError, "assignment policy: minimum"):
-            build_assign_discovery_slots_command(
-                **common,
-                command_budget_ms=(
-                    DISCOVERY_ASSIGNMENT_OPERATION_DEFAULT_BUDGET_MS - 1
-                ),
-            )
-        three_anchor = build_assign_discovery_slots_command(
-            **common,
-            expected_anchor_count=3,
-            command_budget_ms=751_204,
-        )
-        self.assertEqual(
-            three_anchor.packet.value(TLV_COMMAND_BUDGET_MS),
-            751_204,
-        )
-
-        with self.assertRaisesRegex(
-            ValueError, "survey discovery policy: minimum 260277"
-        ):
-            build_anchor_discovery_command(
-                **common,
-                survey_id=3,
-                duration_ms=250,
-                discovery_slot_count=6,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                command_budget_ms=260_276,
-            )
-
-        maximum_roster = build_anchor_discovery_command(
-            **common,
-            survey_id=3,
-            duration_ms=250,
-            discovery_slot_count=6,
-            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-            expected_anchor_count=50,
-            command_budget_ms=260_277,
-        )
-        self.assertEqual(
-            50,
-            maximum_roster.packet.value(TLV_EXPECTED_NODE_COUNT),
-        )
-        with self.assertRaisesRegex(
-            ValueError, "survey discovery policy: minimum 260277"
-        ):
-            build_anchor_discovery_command(
-                **common,
-                survey_id=3,
-                duration_ms=250,
-                discovery_slot_count=6,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                expected_anchor_count=50,
-                command_budget_ms=260_276,
-            )
-
-        # Route refresh is different: firmware accepts a shorter explicit
-        # horizon to intentionally limit retries, while omission selects its
-        # robust 120-second default.
-        route = build_here_i_am_command(**common, command_budget_ms=1_000)
-        self.assertEqual(route.packet.value(TLV_COMMAND_BUDGET_MS), 1_000)
-
-    def test_v1_operation_policy_is_repeated_decoded_and_phase_budget_is_independent(self) -> None:
-        profile = OperationPolicyProfile(
-            assignment=AssignmentOperationPolicy(5, 1_600_000, 750),
-            discovery=DiscoveryOperationPolicy(
-                25_104, 200, 12, 4, 1_500, 500_000
-            ),
-            pair=PairOperationPolicy(1, 1),
-        )
-        common: dict[str, Any] = {
-            "host_id": DEFAULT_HOST_ID,
-            "gateway_id": 0xAABBCCDDEEFF0011,
-            "operation_policy": profile,
-        }
-        survey = build_anchor_discovery_command(
-            **common,
-            session_id=10,
-            seq=11,
-            survey_id=12,
-            duration_ms=1_500,
-            discovery_slot_count=12,
-            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-            command_budget_ms=500_000,
-        )
-        assignment = build_assign_discovery_slots_command(
-            **common,
-            session_id=13,
-            seq=14,
-            expected_anchor_count=5,
-            command_budget_ms=1_600_000,
-        )
-        here_i_am = build_here_i_am_command(
-            **common,
-            session_id=15,
-            seq=16,
-        )
-
-        expected_values = profile.encoded_values()
-        expected_by_command = (
-            (survey, expected_values[1:], ["survey_discovery", "survey_pair"]),
-            (assignment, expected_values[:1], ["assignment"]),
-            (
-                here_i_am,
-                expected_values,
-                ["assignment", "survey_discovery", "survey_pair"],
-            ),
-        )
-        for command, expected, families in expected_by_command:
-            with self.subTest(command=command.label):
-                policy_tlvs = tuple(
-                    value for value in command.packet.tlvs
-                    if value.type_id == TLV_OPERATION_POLICY
-                )
-                self.assertEqual(
-                    tuple(value.raw for value in policy_tlvs), expected
-                )
-                self.assertEqual(
-                    [value.decoded["family"] for value in policy_tlvs],
-                    families,
-                )
-                self.assertTrue(all(
-                    value.name == "OPERATION_POLICY" for value in policy_tlvs
-                ))
-
-        self.assertEqual(survey.packet.value(TLV_DURATION_MS), 1_500)
-        self.assertEqual(survey.packet.value(TLV_DISCOVERY_SLOT_COUNT), 12)
-        self.assertEqual(survey.packet.value(TLV_COMMAND_BUDGET_MS), 500_000)
-        self.assertEqual(assignment.packet.value(TLV_EXPECTED_NODE_COUNT), 5)
-        self.assertEqual(
-            assignment.packet.value(TLV_COMMAND_BUDGET_MS), 1_600_000
-        )
-
-        with self.assertRaisesRegex(ValueError, "legacy duration"):
-            build_anchor_discovery_command(
-                **common, session_id=20, seq=21, survey_id=22,
-                duration_ms=1_499, discovery_slot_count=12,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                command_budget_ms=500_000,
-            )
-        with self.assertRaisesRegex(ValueError, "legacy discovery slot"):
-            build_anchor_discovery_command(
-                **common, session_id=20, seq=21, survey_id=22,
-                duration_ms=1_500, discovery_slot_count=11,
-                sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-                command_budget_ms=500_000,
-            )
-        independent_budget = build_anchor_discovery_command(
-            **common, session_id=20, seq=21, survey_id=22,
-            duration_ms=1_500, discovery_slot_count=12,
-            sample_count=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-            command_budget_ms=499_999,
-        )
-        self.assertEqual(
-            independent_budget.packet.value(TLV_COMMAND_BUDGET_MS), 499_999
-        )
-        discovery_policy = tuple(
-            value.raw for value in independent_budget.packet.tlvs
-            if value.type_id == TLV_OPERATION_POLICY
-        )[0]
-        self.assertEqual(int.from_bytes(discovery_policy[15:19], "little"), 500_000)
-        with self.assertRaisesRegex(ValueError, "legacy expected"):
-            build_assign_discovery_slots_command(
-                **common, session_id=23, seq=24,
-                expected_anchor_count=4, command_budget_ms=1_600_000,
-            )
-        with self.assertRaisesRegex(ValueError, "legacy command budget"):
-            build_assign_discovery_slots_command(
-                **common, session_id=23, seq=24,
-                expected_anchor_count=5, command_budget_ms=1_600_001,
             )
 
     def test_discovery_assignment_tlvs_and_clock_offsets_decode_exact_wire_shapes(self) -> None:
@@ -1793,48 +1322,6 @@ class ProtocolTests(unittest.TestCase):
 
         malformed = parse_tlvs(tlv(TLV_DISCOVERY_ASSIGNMENT_TABLE, b"\x00" * 16))[0]
         self.assertIn("non-empty multiple of 17 bytes", malformed.decode_error or "")
-
-    def test_protocol_identity_tlvs_decode_only_exact_wire_shapes(self) -> None:
-        wire_shapes = (
-            (0xB1, "DISCOVERY_ASSIGNMENT_SCHEME_VERSION", b"\x02"),
-            (
-                0xB2,
-                "DISCOVERY_ASSIGNMENT_TABLE_COMMITMENT",
-                bytes(range(32)),
-            ),
-            (
-                0xB6,
-                "SURVEY_OPERATION_GENERATION",
-                (0x1122334455667788).to_bytes(8, "little"),
-            ),
-            (
-                0xB7,
-                "SURVEY_ROUND_COMMITMENT",
-                bytes(reversed(range(32))),
-            ),
-            (
-                0xB8,
-                "MESH_ACK_SEMANTIC_IDENTITY",
-                (
-                    (0xAABBCCDD).to_bytes(4, "little")
-                    + (0x1234).to_bytes(2, "little")
-                    + bytes(range(32))
-                ),
-            ),
-        )
-
-        for type_id, expected_name, raw in wire_shapes:
-            with self.subTest(type_id=f"0x{type_id:02x}"):
-                decoded = parse_tlvs(tlv(type_id, raw))[0]
-                self.assertTrue(decoded.known)
-                self.assertEqual(decoded.name, expected_name)
-                self.assertIsNone(decoded.decode_error)
-
-                for malformed_raw in (raw[:-1], raw + b"\x00"):
-                    malformed = parse_tlvs(tlv(type_id, malformed_raw))[0]
-                    self.assertTrue(malformed.known)
-                    self.assertEqual(malformed.name, expected_name)
-                    self.assertIsNotNone(malformed.decode_error)
 
     def test_cir_is_one_complex_sample_not_a_trace(self) -> None:
         decoded = decode_cir_sample(b"\x01\x00\x00\xfe\xff\xff")

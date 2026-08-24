@@ -712,6 +712,33 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("gateway_discovery_assignment_fail_locked(", unknown_fallback)
         self.assertNotIn("expected_claim_count", unknown_fallback)
 
+    def test_assignment_start_handoff_failure_finishes_without_abort(self) -> None:
+        validate = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_validate_host_options",
+        )
+        start = function_body(
+            GATEWAY_CONTROL,
+            "gateway_start_discovery_assignment",
+        )
+        handoff = start.index('"assignment-start"')
+        failure = braced_block(start, start.index("if (ret < 0)", handoff))
+
+        self.assertIn(
+            "gateway_discovery_assignment_finish_failure_locked(",
+            failure,
+        )
+        self.assertNotIn(
+            "gateway_discovery_assignment_fail_locked(",
+            failure,
+        )
+        self.assertIn("struct gateway_command_options host_options;", validate)
+        self.assertIn(
+            "gateway_discovery_assignment_validate_host_options(",
+            start,
+        )
+        self.assertNotIn("struct gateway_command_options host_options;", start)
+
     def test_compact_semantic_lane_survives_scanner_reentry(self) -> None:
         owner = ANCHOR.index(
             "static struct enumeration_response_lane "
@@ -1787,9 +1814,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         self.assertIn("!anchor_uwb_window_active()", admission)
         self.assertIn("!anchor_click_window_active()", admission)
-        self.assertIn(
-            "!mesh_report_anchor_survey_radio_active()", admission
-        )
         self.assertLess(valid, schedule)
         self.assertLess(schedule, eligibility)
         self.assertLess(eligibility, mark_abort)
@@ -1902,7 +1926,6 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         self.assertIn("RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN", response)
         self.assertIn("!anchor_uwb_window_active()", response)
         self.assertIn("!anchor_click_window_active()", response)
-        self.assertIn("!mesh_report_anchor_survey_radio_active()", response)
         self.assertIn("DWM3000_RECEIVE_ABORT_MESH_CONTROL", response)
         self.assertIn("mesh_rx_handoff_wait_for_control", response)
         abort_request = send.index(

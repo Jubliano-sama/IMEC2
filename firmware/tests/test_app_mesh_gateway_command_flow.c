@@ -1,5 +1,4 @@
 #include "app_mesh_gateway_command_flow.h"
-#include "survey_gateway_transaction.h"
 
 #include <assert.h>
 #include <string.h>
@@ -204,7 +203,7 @@ static void test_result_decoder_rejects_conflicting_singletons(void)
                    payload,
                    sizeof(payload),
                    &payload_len,
-                   CMD_SURVEY_PREPARE_PAIR,
+                   CMD_ASSIGN_DISCOVERY_SLOTS,
                    COMMAND_OK,
                    0u) == PROTO_OK);
         switch (singleton_types[i]) {
@@ -213,7 +212,7 @@ static void test_result_decoder_rejects_conflicting_singletons(void)
                                   sizeof(payload),
                                   &payload_len,
                                   TLV_COMMAND_ID,
-                                  CMD_SURVEY_START_PAIR) == PROTO_OK);
+                                  CMD_GET_STATUS) == PROTO_OK);
             break;
         case TLV_COMMAND_STATUS:
             assert(tlv_append_u16(payload,
@@ -235,7 +234,7 @@ static void test_result_decoder_rejects_conflicting_singletons(void)
         status = COMMAND_OK;
         reason = 0u;
         assert(app_mesh_gateway_command_flow_decode_result(
-                   CMD_SURVEY_PREPARE_PAIR,
+                   CMD_ASSIGN_DISCOVERY_SLOTS,
                    payload,
                    payload_len,
                    &status,
@@ -245,78 +244,10 @@ static void test_result_decoder_rejects_conflicting_singletons(void)
     }
 }
 
-static void test_malformed_then_valid_survey_result_preserves_transaction(void)
-{
-    const struct survey_pair pair = {
-        .survey_id = 77u,
-        .initiator_id = ANCHOR_ID,
-        .responder_id = UINT64_C(0xa200),
-        .sample_count = 4u,
-    };
-    const struct node_transaction_key key = {
-        .requester_id = GATEWAY_ID,
-        .responder_id = ANCHOR_ID,
-        .session_id = 77u,
-        .transaction_id = 51u,
-        .operation_id = CMD_SURVEY_PREPARE_PAIR,
-    };
-    struct survey_gateway_transaction transaction;
-    enum survey_gateway_transaction_result result;
-    enum node_transaction_action action;
-    enum command_status status = COMMAND_OK;
-    uint8_t reason = 0u;
-    uint8_t payload[32];
-    uint8_t request_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t result_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t zero_digest[SEMANTIC_DIGEST_SHA256_LEN] = {0};
-    size_t payload_len = 0u;
-
-    survey_gateway_transaction_init(&transaction);
-    assert(survey_gateway_transaction_load_pair(&transaction, &pair) == 0);
-    assert(node_transaction_digest_bytes(
-        (const uint8_t *)"request", 7u, request_digest));
-    assert(survey_gateway_transaction_begin(
-               &transaction, &key, CMD_SURVEY_PREPARE_PAIR,
-               request_digest, 710u, 810u, 5000u, 10u) == 0);
-
-    assert(mesh_append_command_id(payload, sizeof(payload), &payload_len,
-                                  CMD_SURVEY_PREPARE_PAIR) == PROTO_OK);
-    assert(app_mesh_gateway_command_flow_decode_result(
-               CMD_SURVEY_PREPARE_PAIR, payload, payload_len,
-               &status, &reason) != PROTO_OK);
-    assert(transaction.active.state == NODE_TRANSACTION_ACTIVE);
-    assert(semantic_digest_equal(transaction.active.accepted_result_digest,
-                                 zero_digest,
-                                 sizeof(zero_digest)));
-    assert(transaction.active.result_token == 0u);
-    assert(transaction.prepared_mask == 0u);
-    assert(transaction.recent_next == 0u);
-
-    payload_len = 0u;
-    assert(mesh_append_command_result(payload, sizeof(payload), &payload_len,
-                                      CMD_SURVEY_PREPARE_PAIR,
-                                      COMMAND_OK, 0u) == PROTO_OK);
-    assert(app_mesh_gateway_command_flow_decode_result(
-               CMD_SURVEY_PREPARE_PAIR, payload, payload_len,
-               &status, &reason) == PROTO_OK);
-    assert(node_transaction_digest_bytes(payload, payload_len, result_digest));
-    assert(survey_gateway_transaction_reconcile_result(
-               &transaction, &key, request_digest, result_digest,
-               key.transaction_id, status, 11u, &result, &action) == 0);
-    assert(result == SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK);
-    assert(transaction.active.state == NODE_TRANSACTION_SUCCEEDED);
-    assert(semantic_digest_equal(transaction.active.accepted_result_digest,
-                                 result_digest,
-                                 sizeof(result_digest)));
-    assert(transaction.prepared_mask ==
-           SURVEY_GATEWAY_TRANSACTION_INITIATOR_MASK);
-}
-
 int main(void)
 {
     test_prepare_anchor_receive_and_result_identity();
     test_anchor_receive_rejects_unsupported_group_scope();
     test_result_decoder_rejects_conflicting_singletons();
-    test_malformed_then_valid_survey_result_preserves_transaction();
     return 0;
 }

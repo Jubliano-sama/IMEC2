@@ -17,7 +17,7 @@ This layer implements:
 - Packet formats, TLVs, and COBS framing (`protocol.c`)
 - UWB wake, discovery, schedule, and DS-TWR sessions (`uwb_session.c`, `uwb.c`)
 - Mesh routing, relay, timing, preemption, and runtime coordination (`mesh*.c`, `route.c`)
-- Reports, status, survey, and gateway commands
+- Reports, status, enumeration, and gateway commands
 
 **Native tests** (recommended before any hardware work):
 
@@ -29,7 +29,7 @@ ctest --test-dir firmware/build --output-on-failure
 
 See `firmware/tests/` and the `mesh_integration` suite for higher-fidelity simulator tests.
 For connected-routing work, the `protocol_matrix` CTest label runs the focused
-Here-I-Am-through-survey, connection-control, and result-custody lifecycle gate.
+Here-I-Am-through-enumeration, connection-control, and result-custody lifecycle gate.
 The deterministic seed sweeps,
 sanitizer commands, exact replays, and flash-once hardware workflow are in
 [`tests/mesh_integration/README.md`](tests/mesh_integration/README.md).
@@ -169,7 +169,7 @@ Acceptance table (update as you complete gates):
 ## Current Implementation Status
 
 **Implemented** (core functionality is present and exercised in simulation + unit tests):
-- Native protocol, UWB sessions, mesh relay/routing/preemption, reports, survey, and gateway command handling.
+- Native protocol, UWB sessions, mesh relay/routing/preemption, reports, enumeration, and gateway command handling.
 - Full click path (wake politeness → claim → discovery → schedule → multi-anchor DS-TWR → mesh report).
 - Anchor low-duty scanning, claim arbitration, and retained-sleep behavior.
 - Gateway connected BLE GATT (COBS packet service) + command routing.
@@ -178,7 +178,7 @@ Acceptance table (update as you complete gates):
 
 **Still pending / hardware validation required**:
 - Full calibration of status-polled DS-TWR reply delays on real hardware.
-- Anchor-to-anchor survey runs.
+- Rebuilt anchor-to-anchor ranging runs.
 - End-to-end multi-board smoke testing and power measurements on target hardware.
 - Any remaining discrepancies between the simulator model and actual radio/SPI timing.
 

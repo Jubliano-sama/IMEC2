@@ -297,7 +297,7 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         )
         promote = function_body(
             ANCHOR_COMMANDS,
-            "anchor_promote_discovery_assignment_after_ack_locked",
+            "anchor_promote_discovery_assignment_locked_impl",
         )
 
         self.assertRegex(
@@ -330,11 +330,7 @@ class AnchorAssignmentPersistenceSourceInvariants(unittest.TestCase):
         listed_live_apply = apply.index(
             "local_anchor_discovery_assignment_note_table(", listed_save
         )
-        listed_schedule = apply.index(
-            "anchor_schedule_discovery_response(", listed_live_apply
-        )
         self.assertLess(listed_save, listed_live_apply)
-        self.assertLess(listed_live_apply, listed_schedule)
 
         unlisted_live_apply = apply.index(
             "local_anchor_discovery_assignment_note_table(", unlisted_save

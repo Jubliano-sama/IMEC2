@@ -16,8 +16,7 @@ The scenarios call the production-candidate native modules directly:
   processing, timeout/backoff, retransmission, and delivery confirmation.
 - `mesh_event_owner.c` binds UPDATE and END to the PROPOSE operation that owns
   a connection, including independent local and remote sequence domains.
-- `discovery_assignment.c`, `survey.c`, and the survey lease/transaction
-  modules apply assignment, discovery, pair-control, and result identities.
+- `discovery_assignment.c` applies assignment identities and durable slot state.
 - `gateway_collection.c` applies durable bundle and collection-EACK
   idempotence after the gateway relay requests semantic delivery.
 - `uwb_session.c` drives the clicker through wake, discovery, schedule, and
@@ -137,11 +136,9 @@ host thread indefinitely.
 
 `mesh_protocol_lifecycle_scenarios` is the continuous forced-relay slice for
 protocol changes. It sends real encoded frames through gateway route
-advertisement, assignment CLAIM/TABLE/ACK, survey discovery reports, pair planning,
-PREPARE/result reconciliation, and a pair sample. It injects a lost hop, a
-stale prior assignment table, a stale prior survey result, and an exact sample
-duplicate, then requires bounded retries, direct-gateway ACK custody, and a
-fully settled network:
+advertisement and assignment CLAIM/TABLE/ACK. It injects a lost hop and a stale
+prior assignment table, then requires bounded retries, direct-gateway ACK
+custody, and a fully settled network:
 
 ```sh
 ctest --test-dir firmware/build-stress \
@@ -149,53 +146,16 @@ ctest --test-dir firmware/build-stress \
 ```
 
 The real Here-I-Am route request/reply/ACK and reverse-route formation, deeper
-discovery announce/listen, assignment publisher/persistence,
-START/ABORT lease cleanup, survey journal/reset, and maximum-depth topology
-cases remain in their focused assignment, gateway-control, survey PHY/topology,
-and pair-lease suites. They are part of the required labels below rather than
-being approximated inside one oversized scenario.
-
-`mesh_survey_phy_scenarios` carries one gateway-planned pair across the
-remaining radio boundary. Both endpoint leases cross PREPARE and synchronized
-START custody before real production POLL, RESP, FINAL, and REPORT codecs run
-over complete channel-5 airtime windows. The first FINAL has no receive window,
-so the same sample retries within the public initiator timeout; all five
-samples then complete exactly once, a duplicate sample is idempotent, stale
-operation-N input cannot mutate operation N+1, and the gateway round plus both
-radios must release all ownership within an exact 23-transmission bound. Pair
-results carry the synchronized round generation; the runtime regression queues
-the identical pair for rerun and proves a delayed result from batch N cannot
-fill batch N+1's freshly cleared sample mask.
+discovery announce/listen, assignment publisher/persistence, and maximum-depth
+topology cases remain in their focused assignment and gateway-control suites.
+They are part of the required labels below rather than being approximated
+inside one oversized scenario.
 
 The forced RF lifecycle tests decode a real frame before handing it to a small
 application adapter that invokes the corresponding production state owner.
 They do not instantiate the Zephyr workqueue, BLE host, or full application
 coordinator; the source-invariant and application-policy tests in the same
 matrix cover those seams separately.
-
-`mesh_survey_round_adversarial_lifecycle` extends the continuous path through
-all four discovery announce rounds and PREPARE/START/ABORT. It forces a
-gateway-to-relay-to-leaf topology and injects lost, duplicated, corrupted,
-reordered, stale, and expired controls plus a reset and route repair between
-operations N and N+1. It bounds total RF traffic, identical control traffic,
-elapsed simulated time, semantic completion counts, lease ownership, and final
-settled state. The seed controls the production forwarding jitter and is
-printed with an exact replay command on failure:
-
-```sh
-firmware/build-stress/test_mesh_survey_round_adversarial_lifecycle \
-  --seed 0x5eed5307
-```
-
-Sweep forwarding-jitter seeds without rebuilding; the first failure prints its
-exact one-command replay:
-
-```sh
-for seed in $(seq 0 255); do
-  firmware/build-stress/test_mesh_survey_round_adversarial_lifecycle \
-    --seed "$seed" || exit 1
-done
-```
 
 `mesh_event_control_rf_scenarios` negotiates PROPOSE/ACCEPT over RF on two
 adjacent links in a forced four-node route, then injects duplicate, reordered,
@@ -212,18 +172,12 @@ stale/malformed/lost EACKs, route changes, and bounded terminal cleanup. A
 bundle is retried only by its production owner; the simulator does not invent
 unsupported intermediate bundle custody.
 
-The active survey flow uses `MSG_SURVEY_DISCOVERY_REPORT` (0x55). Legacy
-`MSG_SURVEY_REACH_REQ`/`MSG_SURVEY_REACH_REPORT` (0x50/0x51) remain codec and
-relay compatibility types covered by the `survey` unit target; they are not
-presented as the active mesh orchestrator path.
-
 Run the complete focused lifecycle matrix while iterating on protocol timing or
 custody. It combines click wake/discovery/ranging ownership and real
 `MSG_CLICK_REPORT` multihop delivery, direct gateway probing and Here-I-Am route
-formation, PROPOSE/ACCEPT/UPDATE/END, assignment publisher/persistence, survey
-discovery and pair-ranging timing, result/EACK custody and persistence, generic
-fault and reset models, post-operation liveness, and the known busy-line
-ACK-loss regression:
+formation, PROPOSE/ACCEPT/UPDATE/END, assignment publisher/persistence, generic
+fault and reset models, post-operation liveness, and the known busy-line ACK-loss
+regression:
 
 ```sh
 ctest --test-dir firmware/build-stress -L protocol_matrix \
@@ -434,13 +388,12 @@ that staged artifact; an anchor example is:
   --duration-seconds 600
 
 .venv/bin/python firmware/scripts/provision_mesh_anchor.py \
-  --gateway <GATEWAY_BLE_ADDRESS> --command survey \
-  --require-survey-success --expected-anchors 3 --expected-pairs 3 \
-  --duration 300
+  --gateway <GATEWAY_BLE_ADDRESS> --command assign-slots \
+  --expected-anchors 3 --duration 300
 ```
 
 The required successful typed workloads are `click_activity` for a clicker,
-`anchor_survey_report` for an anchor, and all of `gateway_report_ingress`,
+`anchor_scan` for an anchor, and all of `gateway_report_ingress`,
 `gateway_priority_control`, and `ble_backpressure` for a gateway. Promote the
 qualified, already-running artifact through the same wrapper, never through
 direct `west flash` for a deployable mesh role:
@@ -472,7 +425,7 @@ for example:
   --notification-hold-s 5
 ```
 
-Use repeated `assign-slots` or `survey` commands with fresh identities to
+Use repeated `assign-slots` commands with fresh identities to
 exercise re-entrant admission and BUSY handling, and use `qualify-reachability`
 when terminal direct/multihop evidence is required. The CLI's `--repeat`,
 `--interval`, `--duration`, and `--notification-hold-s` parameters change the

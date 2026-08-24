@@ -55,26 +55,9 @@ extern "C" {
 #define UWB_WAKE_CLAIM_LEN 49u
 #define UWB_DISCOVER_LEN 32u
 #define UWB_DISCOVERY_REPLY_LEN 44u
-#define UWB_SURVEY_DISCOVERY_PROBE_LEN 32u
 #define UWB_DISCOVERY_SLOT_COUNT 50u
 #define UWB_RANGE_RELEASE_LEN 34u
 #define UWB_RANGE_RELEASE_REASON_INSUFFICIENT_ANCHORS 1u
-#define UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN 40u
-#define UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN 9u
-#define UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS 5u
-#define UWB_ANCHOR_PAIR_SCHEDULE_MAX_START_DELAY_MS \
-    (UINT8_MAX * UWB_ANCHOR_PAIR_SCHEDULE_DELAY_UNIT_MS)
-#define UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS 2u
-#define UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS UWB_RANGE_SCHEDULE_MAX_ANCHORS
-#define UWB_ANCHOR_PAIR_SCHEDULE_MIN_LEN \
-    (UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN + \
-     (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) + \
-     UWB_FRAME_CRC_LEN)
-#define UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN \
-    (UWB_ANCHOR_PAIR_SCHEDULE_FIXED_LEN + \
-     (UWB_ANCHOR_PAIR_SCHEDULE_ENTRY_LEN * UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS) + \
-     UWB_FRAME_CRC_LEN)
-#define UWB_ANCHOR_PAIR_RESULT_LEN 56u
 #define UWB_ENUM_RECORD_LEN 9u
 #define UWB_ENUM_RECORDS_PER_BUNDLE 10u
 #define UWB_ENUM_MAX_HOPS 5u
@@ -83,19 +66,6 @@ extern "C" {
     (UWB_ENUM_BUNDLE_BASE_LEN + \
      (UWB_ENUM_RECORDS_PER_BUNDLE * UWB_ENUM_RECORD_LEN))
 #define UWB_ENUM_HOP_ACK_LEN 30u
-#define UWB_ANCHOR_PAIR_SURVEY_MIN_STRIDE_MS 80u
-#define UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS 100u
-#define UWB_ANCHOR_PAIR_SURVEY_THEORETICAL_MIN_MS \
-    ((UWB_RANGE_SCHEDULE_MIN_EXCHANGE_STRIDE_US + 999u) / 1000u)
-#define UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS \
-    ((5u * UWB_ANCHOR_PAIR_SURVEY_THEORETICAL_MIN_MS) + 100u)
-#define UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS \
-    UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS
-#define UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS \
-    UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS
-#define UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS \
-    (UWB_ANCHOR_PAIR_SURVEY_PADDED_WINDOW_MS + 100u)
-#define UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS 28u
 #define UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_DISCOVERY_START_MS 1000u
 #define UWB_WAKE_CLAIM_MAX_CLAIMED_DURATION_MS 2000u
@@ -173,8 +143,8 @@ struct uwb_range_header {
 /*
  * A normal-click POLL is the first frame of each DS-TWR exchange.  It carries
  * the clicker's current event age so every responding anchor can project the
- * physical button instant into its own uptime domain.  Survey/diagnostic POLLs
- * retain the compact header-only representation.
+ * physical button instant into its own uptime domain. Diagnostic POLLs retain
+ * the compact header-only representation.
  */
 struct uwb_poll_frame {
     struct uwb_range_header header;
@@ -290,16 +260,6 @@ struct uwb_discovery_reply_frame {
     uint8_t flags;
 };
 
-struct uwb_survey_discovery_probe_frame {
-    uint32_t network_id;
-    uint32_t survey_id;
-    uint64_t operation_generation;
-    uint64_t anchor_id;
-    uint8_t anchor_slot;
-    uint8_t slot_count;
-    uint8_t flags;
-};
-
 struct uwb_range_schedule_entry {
     uint64_t anchor_id;
     uint8_t seq;
@@ -337,41 +297,6 @@ struct uwb_range_release_frame {
     uint8_t discovered_anchor_count;
     uint8_t min_anchor_count;
     uint8_t reason;
-    uint8_t flags;
-};
-
-struct uwb_anchor_pair_schedule_frame {
-    uint32_t network_id;
-    uint64_t clicker_id;
-    uint32_t survey_id;
-    uint8_t attempt_index;
-    uint64_t nonce;
-    uint8_t anchor_count;
-    uint8_t pair_count;
-    uint8_t ranging_channel;
-    uint16_t first_pair_delay_ms;
-    uint16_t pair_stride_ms;
-    uint16_t pair_window_ms;
-    uint16_t reply_delay_us;
-    uint8_t flags;
-    uint64_t anchor_ids[UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS];
-    uint16_t anchor_start_delay_ms[UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS];
-};
-
-struct uwb_anchor_pair_result_frame {
-    uint32_t network_id;
-    uint64_t clicker_id;
-    uint32_t survey_id;
-    uint64_t nonce;
-    uint64_t initiator_id;
-    uint64_t responder_id;
-    uint8_t pair_index;
-    uint8_t pair_count;
-    uint8_t seq;
-    enum range_status status;
-    uint8_t quality;
-    int32_t distance_mm;
-    int8_t rsl_dbm;
     uint8_t flags;
 };
 
@@ -508,13 +433,6 @@ int uwb_encode_discovery_reply(const struct uwb_discovery_reply_frame *frame,
 int uwb_decode_discovery_reply(const uint8_t *data,
                                size_t len,
                                struct uwb_discovery_reply_frame *frame);
-int uwb_encode_survey_discovery_probe(const struct uwb_survey_discovery_probe_frame *frame,
-                                      uint8_t *out,
-                                      size_t out_cap,
-                                      size_t *written);
-int uwb_decode_survey_discovery_probe(const uint8_t *data,
-                                      size_t len,
-                                      struct uwb_survey_discovery_probe_frame *frame);
 int uwb_encode_range_schedule(const struct uwb_range_schedule_frame *frame,
                               uint8_t *out,
                               size_t out_cap,
@@ -530,26 +448,6 @@ int uwb_encode_range_release(const struct uwb_range_release_frame *frame,
 int uwb_decode_range_release(const uint8_t *data,
                              size_t len,
                              struct uwb_range_release_frame *frame);
-uint8_t uwb_anchor_pair_count(uint8_t anchor_count);
-int uwb_anchor_pair_at(const struct uwb_anchor_pair_schedule_frame *frame,
-                       uint8_t pair_index,
-                       uint64_t *initiator_id,
-                       uint64_t *responder_id);
-size_t uwb_anchor_pair_schedule_encoded_len(uint8_t anchor_count);
-int uwb_encode_anchor_pair_schedule(const struct uwb_anchor_pair_schedule_frame *frame,
-                                    uint8_t *out,
-                                    size_t out_cap,
-                                    size_t *written);
-int uwb_decode_anchor_pair_schedule(const uint8_t *data,
-                                    size_t len,
-                                    struct uwb_anchor_pair_schedule_frame *frame);
-int uwb_encode_anchor_pair_result(const struct uwb_anchor_pair_result_frame *frame,
-                                  uint8_t *out,
-                                  size_t out_cap,
-                                  size_t *written);
-int uwb_decode_anchor_pair_result(const uint8_t *data,
-                                  size_t len,
-                                  struct uwb_anchor_pair_result_frame *frame);
 size_t uwb_enumeration_bundle_encoded_len(uint8_t record_count);
 int uwb_encode_enumeration_bundle(
     const struct uwb_enumeration_bundle_frame *frame,

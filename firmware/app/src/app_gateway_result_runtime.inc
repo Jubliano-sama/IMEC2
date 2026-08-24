@@ -1511,11 +1511,8 @@ int gateway_preflight_result_semantic_delivery(
     struct gateway_decoded_command_result decoded = {0};
     struct gateway_command_pending pending_snapshot = {0};
     enum gateway_command_result_admission admission;
-    enum gateway_survey_result_preflight_outcome survey_preflight =
-        GATEWAY_SURVEY_RESULT_PREFLIGHT_UNRECOGNIZED;
     bool pending_matches;
     bool token_valid = false;
-    bool survey_transaction_owned;
     int ret;
 
     if (packet == NULL || (payload == NULL && payload_len != 0u) ||
@@ -1665,32 +1662,16 @@ ordinary_command_result:
         return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
     }
 
-    survey_transaction_owned = gateway_survey_owns_pending_control(
-        &pending_snapshot.command,
-        pending_snapshot.command_id);
-    if (survey_transaction_owned || !pending_matches) {
-        survey_preflight = gateway_survey_preflight_result(
-            packet, payload, payload_len, first_received_at_ms);
-    }
     admission = gateway_command_result_admit(
         &pending_snapshot,
         packet,
-        survey_transaction_owned,
-        survey_preflight ==
-            GATEWAY_SURVEY_RESULT_PREFLIGHT_ACCEPTED);
-    gateway_survey_discard_preflight_result();
+        false,
+        false);
 
     if (admission == GATEWAY_COMMAND_RESULT_IGNORE) {
-        return survey_preflight ==
-                   GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED ?
-               APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE :
-               APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW;
+        return APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW;
     }
     if (admission == GATEWAY_COMMAND_RESULT_WAIT) {
-        if (survey_preflight ==
-            GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED) {
-            return APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-        }
         return -EAGAIN;
     }
 
@@ -3170,12 +3151,9 @@ int gateway_note_command_result(const struct proto_packet *packet,
     enum gateway_command_pending_result_claim result_claim =
         GATEWAY_COMMAND_PENDING_RESULT_CLAIM_IGNORE;
     enum gateway_command_result_admission admission;
-    enum gateway_survey_result_preflight_outcome survey_preflight =
-        GATEWAY_SURVEY_RESULT_PREFLIGHT_UNRECOGNIZED;
     uint64_t result_received_at_ms = first_received_at_ms;
     uint32_t validation_token;
     uint32_t result_reservation_token = 0u;
-    bool survey_transaction_owned;
     bool deadline_expired = false;
     bool validation_blocked = false;
     bool validation_failed = false;
@@ -3312,69 +3290,21 @@ int gateway_note_command_result(const struct proto_packet *packet,
                    APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE : -ENOENT;
     }
 
-    survey_transaction_owned = gateway_survey_owns_pending_control(
-        &pending_snapshot.command,
-        pending_snapshot.command_id);
-    if (survey_transaction_owned || !pending_matches) {
-        survey_preflight = gateway_survey_preflight_result(
-            packet, payload, payload_len, result_received_at_ms);
-    }
-
     admission = gateway_command_result_admit(&pending_snapshot,
                                               packet,
-                                              survey_transaction_owned,
-                                              survey_preflight ==
-                                                  GATEWAY_SURVEY_RESULT_PREFLIGHT_ACCEPTED);
+                                              false,
+                                              false);
 
     if (admission == GATEWAY_COMMAND_RESULT_IGNORE) {
-        if (survey_preflight ==
-            GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED) {
-            gateway_survey_commit_preflight_result();
-            LOG_DBG("gateway survey duplicate/late result reconciled: src=0x%016llx session=%u seq=%u",
-                    packet == NULL ? 0ull :
-                    (unsigned long long)packet->src_id,
-                    packet == NULL ? 0u : packet->session_id,
-                    packet == NULL ? 0u : packet->seq);
-        } else {
-            gateway_survey_discard_preflight_result();
-        }
         if (collection_ret >= 0) {
             gateway_command_result_validation_release_reserved(
                 validation_token);
             return collection_ret;
         }
-        if (survey_preflight ==
-            GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED) {
-            gateway_command_result_validation_release_reserved(
-                validation_token);
-            return collection_ret >= 0 ? collection_ret :
-                   APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-        }
         gateway_command_result_validation_release_reserved(validation_token);
-        return survey_preflight ==
-                       GATEWAY_SURVEY_RESULT_PREFLIGHT_ACCEPTED ?
-               -EAGAIN : -ENOENT;
+        return -ENOENT;
     }
     if (admission == GATEWAY_COMMAND_RESULT_WAIT) {
-        if (survey_preflight ==
-            GATEWAY_SURVEY_RESULT_PREFLIGHT_RECONCILED) {
-            gateway_survey_commit_preflight_result();
-            LOG_DBG("gateway survey late/duplicate/conflicting result retained no pending ownership: src=0x%016llx session=%u seq=%u",
-                    packet == NULL ? 0ull :
-                    (unsigned long long)packet->src_id,
-                    packet == NULL ? 0u : packet->session_id,
-                    packet == NULL ? 0u : packet->seq);
-            gateway_command_result_validation_release_reserved(
-                validation_token);
-            return collection_ret >= 0 ? collection_ret :
-                   APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE;
-        }
-        gateway_survey_discard_preflight_result();
-        LOG_WRN("gateway survey result identity rejected while wait remains active: src=0x%016llx session=%u seq=%u",
-                packet == NULL ? 0ull :
-                (unsigned long long)packet->src_id,
-                packet == NULL ? 0u : packet->session_id,
-                packet == NULL ? 0u : packet->seq);
         gateway_command_result_validation_release_reserved(validation_token);
         return collection_ret >= 0 ? collection_ret : -EAGAIN;
     }
@@ -3398,7 +3328,6 @@ int gateway_note_command_result(const struct proto_packet *packet,
     if (ret == PROTO_OK) {
         ret = gateway_pending_command_lock();
         if (ret < 0) {
-            gateway_survey_discard_preflight_result();
             gateway_command_result_validation_release_reserved(
                 validation_token);
             return ret;
@@ -3441,7 +3370,6 @@ int gateway_note_command_result(const struct proto_packet *packet,
         k_mutex_unlock(&gateway_command_pending_lock);
         if (result_claim ==
             GATEWAY_COMMAND_PENDING_RESULT_CLAIM_EXPIRED) {
-            gateway_survey_discard_preflight_result();
             (void)k_work_cancel_delayable(
                 &gateway_command_result_timeout_work);
             gateway_emit_host_command_result_reserved(
@@ -3458,12 +3386,10 @@ int gateway_note_command_result(const struct proto_packet *packet,
         }
         if (result_claim !=
             GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED) {
-            gateway_survey_discard_preflight_result();
             gateway_command_result_validation_release_reserved(
                 validation_token);
             return collection_ret >= 0 ? collection_ret : -ENOENT;
         }
-        gateway_survey_commit_preflight_result();
         (void)k_work_cancel_delayable(&gateway_command_result_timeout_work);
         if (result_reservation_token != 0u) {
             gateway_command_result_release_terminal_reserved(
@@ -3492,7 +3418,6 @@ int gateway_note_command_result(const struct proto_packet *packet,
         return collection_ret >= 0 ? collection_ret :
                APP_GATEWAY_SEMANTIC_ACCEPT_NEW;
     }
-    gateway_survey_discard_preflight_result();
     gateway_command_result_validation_release_reserved(validation_token);
     return collection_ret >= 0 ? collection_ret : mesh_errno_from_proto(ret);
 }

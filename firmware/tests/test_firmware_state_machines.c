@@ -368,83 +368,11 @@ static void test_causal_c5_response_only_overrides_queued_rx_work(void)
     assert(!decision.c5_tx_allowed);
     capture.click_active = false;
 
-    capture.survey_pending = true;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, &changed) == 0);
-    assert(!decision.c5_tx_allowed);
-    capture.survey_pending = false;
-
     capture.gateway_continuous_ch9 = true;
     assert(fw_radio_activity_decide(&capture, &runtime,
                                     &decision, &changed) == 0);
     assert(!decision.c5_tx_allowed);
     capture.gateway_continuous_ch9 = false;
-}
-
-static void test_validated_survey_forward_only_overrides_live_ch9_ack_owner(void)
-{
-    struct fw_radio_activity_capture capture = {
-        .ch9_ack_wait_active = true,
-        .c5_tx_intent = FW_C5_TX_INTENT_BACKGROUND,
-    };
-    struct fw_radio_activity_runtime runtime;
-    struct fw_radio_activity_decision decision;
-
-    fw_radio_activity_runtime_init(&runtime);
-
-    /* A retained report's live ACK deadline keeps every ordinary Channel-5
-     * producer blocked, including the broader causal-response exception. */
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(!decision.c5_tx_allowed);
-    capture.c5_tx_intent = FW_C5_TX_INTENT_CAUSAL_RESPONSE;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(!decision.c5_tx_allowed);
-
-    /* The app may mint this intent only from the relay core's validated
-     * gateway survey-forward action. It opens one control send without
-     * weakening the ACK owner or its receive eligibility. */
-    capture.c5_tx_intent = FW_C5_TX_INTENT_GATEWAY_SURVEY_CONTROL;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(decision.state == FW_RADIO_ACTIVITY_MESH_RX);
-    assert(decision.c5_tx_allowed);
-    assert(decision.mesh_work_allowed);
-    assert(decision.uwb_rx_allowed);
-    assert(!decision.route_wait_allowed);
-    assert(!decision.report_tx_allowed);
-
-    capture.ch9_ack_wait_active = false;
-    capture.ch9_ack_send_pending = true;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(decision.c5_tx_allowed);
-
-    /* The exception is intentionally narrower than a generic priority lane:
-     * queued RX, clicks, survey RF, and continuous gateway RX still win. */
-    capture.rx_queue_used = 1u;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(!decision.c5_tx_allowed);
-    capture.rx_queue_used = 0u;
-
-    capture.click_active = true;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(!decision.c5_tx_allowed);
-    capture.click_active = false;
-
-    capture.survey_pending = true;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(!decision.c5_tx_allowed);
-    capture.survey_pending = false;
-
-    capture.gateway_continuous_ch9 = true;
-    assert(fw_radio_activity_decide(&capture, &runtime,
-                                    &decision, NULL) == 0);
-    assert(!decision.c5_tx_allowed);
 }
 
 static void test_radio_cancel_failure_enters_recovery(void)
@@ -1247,19 +1175,13 @@ static void test_gateway_uwb_failure_and_reset_never_ack(void)
                  FW_EFFECT_NONE) == FW_SM_IGNORED);
 }
 
-static void test_enumeration_survey_and_pair_lifecycles(void)
+static void test_enumeration_lifecycle(void)
 {
     struct fw_enumeration_sm enumeration;
-    struct fw_survey_sm survey;
-    struct fw_pair_coordinator_sm pair_coordinator;
-    struct fw_survey_pair_sm pair;
     struct fw_event event = operation_event(FW_MACHINE_ENUMERATION,
                                             FW_EVENT_START, 500u, 1u);
 
     fw_enumeration_sm_init(&enumeration);
-    fw_survey_sm_init(&survey);
-    fw_pair_coordinator_sm_init(&pair_coordinator);
-    fw_survey_pair_sm_init(&pair);
     assert(apply(fw_enumeration_sm_handle, &enumeration, &event,
                  FW_ENUMERATION_SEND_CLAIM,
                  FW_EFFECT_ENUM_SEND_CLAIM) == FW_SM_APPLIED);
@@ -1280,101 +1202,7 @@ static void test_enumeration_survey_and_pair_lifecycles(void)
                  FW_ENUMERATION_COMPLETE,
                  FW_EFFECT_ENUM_COMPLETE) == FW_SM_APPLIED);
 
-    event = operation_event(FW_MACHINE_SURVEY, FW_EVENT_START, 501u, 1u);
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_SEND_CONFIG,
-                 FW_EFFECT_SURVEY_SEND_CONFIG) == FW_SM_APPLIED);
-    event.type = FW_EVENT_CONFIG_SENT;
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_DISCOVERY,
-                 FW_EFFECT_SURVEY_BEGIN_DISCOVERY) == FW_SM_APPLIED);
-    event.type = FW_EVENT_DISCOVERY_ROUNDS_COMPLETED;
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_COLLECT_REPORTS,
-                 FW_EFFECT_SURVEY_COLLECT_REPORTS) == FW_SM_APPLIED);
-    event.type = FW_EVENT_REPORT_WINDOW_CLOSED;
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_BUILD_GRAPH,
-                 FW_EFFECT_SURVEY_BUILD_GRAPH) == FW_SM_APPLIED);
-    event.type = FW_EVENT_GRAPH_BUILT;
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_SELECT_PAIRS,
-                 FW_EFFECT_SURVEY_SELECT_PAIR) == FW_SM_APPLIED);
-    event.type = FW_EVENT_NO_PAIR_AVAILABLE;
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_PUBLISH,
-                 FW_EFFECT_SURVEY_PUBLISH) == FW_SM_APPLIED);
-    event.type = FW_EVENT_SURVEY_COMPLETE;
-    event.payload.flags = 0u;
-    assert(apply(fw_survey_sm_handle, &survey, &event,
-                 FW_SURVEY_PARTIAL,
-                 FW_EFFECT_SURVEY_PUBLISH_PARTIAL) == FW_SM_APPLIED);
 
-    event = operation_event(FW_MACHINE_PAIR_COORDINATOR,
-                            FW_EVENT_START, 503u, 1u);
-    assert(apply(fw_pair_coordinator_sm_handle, &pair_coordinator, &event,
-                 FW_PAIR_COORDINATOR_PREPARE_INITIATOR,
-                 FW_EFFECT_PAIR_PREPARE_INITIATOR) == FW_SM_APPLIED);
-    event.type = FW_EVENT_ACTION_ACCEPTED;
-    assert(apply(fw_pair_coordinator_sm_handle, &pair_coordinator, &event,
-                 FW_PAIR_COORDINATOR_PREPARE_RESPONDER,
-                 FW_EFFECT_PAIR_PREPARE_RESPONDER) == FW_SM_APPLIED);
-    assert(apply(fw_pair_coordinator_sm_handle, &pair_coordinator, &event,
-                 FW_PAIR_COORDINATOR_START_RESPONDER,
-                 FW_EFFECT_PAIR_START_RESPONDER) == FW_SM_APPLIED);
-    assert(apply(fw_pair_coordinator_sm_handle, &pair_coordinator, &event,
-                 FW_PAIR_COORDINATOR_START_INITIATOR,
-                 FW_EFFECT_PAIR_START_INITIATOR) == FW_SM_APPLIED);
-    assert(apply(fw_pair_coordinator_sm_handle, &pair_coordinator, &event,
-                 FW_PAIR_COORDINATOR_WAIT_RESULT,
-                 FW_EFFECT_PAIR_WAIT_RESULT) == FW_SM_APPLIED);
-    event.type = FW_EVENT_PAIR_RESULT_RECEIVED;
-    assert(apply(fw_pair_coordinator_sm_handle, &pair_coordinator, &event,
-                 FW_PAIR_COORDINATOR_COMPLETE,
-                 FW_EFFECT_PAIR_COMPLETE) == FW_SM_APPLIED);
-
-    event = operation_event(FW_MACHINE_SURVEY_PAIR,
-                            FW_EVENT_START, 502u, 1u);
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_PREPARED,
-                 FW_EFFECT_PAIR_PREPARE) == FW_SM_APPLIED);
-    event.type = FW_EVENT_PAIR_PREPARED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_ARMED,
-                 FW_EFFECT_PAIR_ARM_START) == FW_SM_APPLIED);
-    event.type = FW_EVENT_PAIR_START_ARMED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_WAIT_START,
-                 FW_EFFECT_START_TIMER) == FW_SM_APPLIED);
-    event.type = FW_EVENT_PAIR_START_DUE;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_RANGE,
-                 FW_EFFECT_PAIR_RANGE) == FW_SM_APPLIED);
-    event.type = FW_EVENT_PAIR_RANGE_COMPLETED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_RESULT_OWNED,
-                 FW_EFFECT_PAIR_RETAIN_RESULT) == FW_SM_APPLIED);
-    event.type = FW_EVENT_CANCEL;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_RESULT_OWNED,
-                 FW_EFFECT_NONE) == FW_SM_IGNORED);
-    event.type = FW_EVENT_DEADLINE_EXPIRED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_RESULT_OWNED,
-                 FW_EFFECT_NONE) == FW_SM_IGNORED);
-    event.type = FW_EVENT_PAIR_ABORTED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_RESULT_OWNED,
-                 FW_EFFECT_NONE) == FW_SM_IGNORED);
-    event.type = FW_EVENT_RADIO_JOB_FAILED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_RESULT_OWNED,
-                 FW_EFFECT_NONE) == FW_SM_IGNORED);
-    assert(pair.identity.active);
-    event.type = FW_EVENT_RESULT_CUSTODY_RELEASED;
-    assert(apply(fw_survey_pair_sm_handle, &pair, &event,
-                 FW_SURVEY_PAIR_COMPLETE,
-                 FW_EFFECT_PAIR_COMPLETE) == FW_SM_APPLIED);
 }
 
 int main(void)
@@ -1385,7 +1213,6 @@ int main(void)
     test_gateway_continuous_rx_blocks_competing_work();
     test_ch9_ack_custody_allows_rx_but_blocks_channel5_tx();
     test_causal_c5_response_only_overrides_queued_rx_work();
-    test_validated_survey_forward_only_overrides_live_ch9_ack_owner();
     test_radio_cancel_failure_enters_recovery();
     test_radio_recovery_completion_promotes_pending_after_report();
     test_radio_recovery_exhaustion_reports_both_owners();
@@ -1400,6 +1227,6 @@ int main(void)
     test_delivery_keeps_custody_and_attempt_accounting_exact();
     test_gateway_uwb_and_ble_flow_control_are_separate();
     test_gateway_uwb_failure_and_reset_never_ack();
-    test_enumeration_survey_and_pair_lifecycles();
+    test_enumeration_lifecycle();
     return 0;
 }

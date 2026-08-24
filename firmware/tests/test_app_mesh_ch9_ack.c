@@ -582,8 +582,6 @@ static void test_gateway_ack_required_worst_case_is_always_single(void)
         MSG_CLICK_REPORT,
         MSG_COMMAND_RESULT,
         MSG_RESULT_BUNDLE,
-        MSG_SURVEY_DISCOVERY_REPORT,
-        MSG_SURVEY_PAIR_RESULT,
         MSG_MESH_DATA,
     };
     static const uint8_t configured_limits[] = {1u, 4u, 8u, UINT8_MAX};

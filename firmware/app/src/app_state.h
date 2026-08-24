@@ -111,10 +111,8 @@ bool local_anchor_discovery_assignment_identity_get(
     struct discovery_assignment_table_commitment *table_commitment,
     uint8_t *anchor_slot,
     uint8_t *slot_count);
-uint8_t local_survey_discovery_slot(uint8_t slot_count);
 uint64_t clicker_priority_id(uint32_t event_seq, uint8_t attempt_index);
 uint64_t clicker_nonce(uint32_t event_seq);
-uint8_t survey_sample_seq(uint16_t sample_index);
 uint32_t u32_saturating_add(uint32_t lhs, uint32_t rhs);
 uint16_t delay_ms_to_u16(int64_t delay_ms);
 uint32_t uwb_schedule_burst_id(uint32_t event_seq, uint8_t attempt_index);

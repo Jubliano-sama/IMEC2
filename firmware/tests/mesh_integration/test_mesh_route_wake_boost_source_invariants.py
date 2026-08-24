@@ -70,27 +70,31 @@ class MeshRouteWakeBoostSourceInvariants(unittest.TestCase):
         self.assertIn("uptime_deadline_reached", body)
 
     def test_wake_train_selects_short_window_only_when_boost_active(self):
-        wake = function_body(ROUTE_CONTROL, "mesh_send_route_wake_train")
+        wake = function_body(
+            ROUTE_CONTROL, "mesh_send_route_wake_train_with_duration"
+        )
         attempt = wake.index("wake_train_attempt:")
         selection = wake.index("boost_single_shot =", attempt)
         query = wake.index("anchor_relay_control_followup_boost_active()", selection)
-        branch = wake.index("wake_train_config.wake_adv_ms = boost_single_shot ?", query)
+        baseline = wake.index("wake_train_config.wake_adv_ms = wake_train_ms", query)
+        branch = wake.index("if (boost_single_shot)", baseline)
         short = wake.index("MESH_ROUTE_WAKE_ADV_BOOST_ACTIVE_MS", branch)
-        fallback = wake.index("WAKE_ADV_MS", short)
-        debug = wake.index("DBG_WAKE_TRAIN_BOOST_SINGLE", fallback)
+        debug = wake.index("DBG_WAKE_TRAIN_BOOST_SINGLE", short)
         contact_open = wake.index("mesh_c5_contact_open(", debug)
 
         # The selection happens per polite-retry round, before the train
         # window (close_ms) and the contact deadline are computed from it.
         self.assertLess(attempt, selection)
         self.assertLess(query, branch)
+        self.assertLess(baseline, branch)
         self.assertLess(branch, short)
-        self.assertLess(short, fallback)
-        self.assertLess(fallback, debug)
+        self.assertLess(short, debug)
         self.assertLess(debug, contact_open)
 
     def test_boost_train_sends_exactly_one_claim_opportunity(self):
-        wake = function_body(ROUTE_CONTROL, "mesh_send_route_wake_train")
+        wake = function_body(
+            ROUTE_CONTROL, "mesh_send_route_wake_train_with_duration"
+        )
         loop_at = wake.index("while (k_uptime_get() < close_ms)")
         single_break = wake.index(
             "if (boost_single_shot && sent_count > 0u)", loop_at
@@ -107,11 +111,12 @@ class MeshRouteWakeBoostSourceInvariants(unittest.TestCase):
     def test_fallback_keeps_full_train(self):
         # The non-boost initializer still starts from the full train window
         # and the politeness sniff/backoff machinery stays untouched.
-        self.assertIn(
-            ".wake_adv_ms = WAKE_ADV_MS,",
-            ROUTE_CONTROL,
+        wrapper = function_body(ROUTE_CONTROL, "mesh_send_route_wake_train")
+        self.assertIn("WAKE_ADV_MS", wrapper)
+        wake = function_body(
+            ROUTE_CONTROL, "mesh_send_route_wake_train_with_duration"
         )
-        wake = function_body(ROUTE_CONTROL, "mesh_send_route_wake_train")
+        self.assertIn(".wake_adv_ms = wake_train_ms,", wake)
         sniff_pre = wake.index('mesh_route_wake_sniff_activity("pre"')
         sniff_post = wake.index('mesh_route_wake_sniff_activity("post"', sniff_pre)
         backoff = wake.index("mesh_route_wake_backoff(", sniff_post)

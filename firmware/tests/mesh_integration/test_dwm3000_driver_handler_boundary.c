@@ -342,7 +342,7 @@ static bool test_wrong_target_timing_and_fcs(void)
 static bool test_hardware_negative_tof_trace(void)
 {
     /*
-     * Raw timestamps from a real two-anchor survey where the antennas were
+     * Raw timestamps from a real two-anchor ranging exchange where the antennas were
      * close enough for the calibrated exchange to produce a negative ToF.
      * Keep this exact trace at the production driver boundary: it must never
      * be rounded or clamped into RANGE_OK with a zero distance.

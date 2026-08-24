@@ -38,17 +38,6 @@ bool app_mesh_route_wait_tx_clear_matches(
     const struct proto_packet *expected_packet,
     const uint8_t expected_digest[SEMANTIC_DIGEST_SHA256_LEN]);
 
-struct app_mesh_route_retry_identity {
-    enum app_mesh_direct_gateway_retry_mode mode;
-    uint32_t survey_id;
-};
-
-void app_mesh_route_retry_identity_select(
-    enum app_mesh_route_wait_tx_owner owner,
-    const struct proto_packet *packet,
-    uint32_t generation,
-    struct app_mesh_route_retry_identity *identity);
-
 struct app_mesh_route_wait_tx_state {
     bool outbound_ready;
     int tx_ret;

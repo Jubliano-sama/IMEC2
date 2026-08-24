@@ -211,7 +211,6 @@ static uint8_t priority_for_class(enum gateway_ble_stream_class packet_class)
     case GATEWAY_BLE_STREAM_CLASS_CLICK:
         return 0u;
     case GATEWAY_BLE_STREAM_CLASS_RESULT:
-    case GATEWAY_BLE_STREAM_CLASS_SURVEY:
     case GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT:
         return 1u;
     case GATEWAY_BLE_STREAM_CLASS_DIAGNOSTIC:
@@ -245,10 +244,6 @@ enum gateway_ble_stream_class gateway_ble_stream_classify_packet(uint8_t msg_typ
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
         return GATEWAY_BLE_STREAM_CLASS_RESULT;
-    case MSG_SURVEY_REACH_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-        return GATEWAY_BLE_STREAM_CLASS_SURVEY;
     case MSG_GATEWAY_COMMAND_EVENT:
         return GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT;
     case MSG_UWB_CLICKER_DIAG:
@@ -375,7 +370,7 @@ static bool drop_one_lower_priority(struct gateway_ble_stream_state *state,
             continue;
         }
         /*
-         * Results, surveys, and command events may already own durable
+         * Results and command events may already own durable
          * protocol custody.  Only best-effort diagnostics and status records
          * may be displaced by a higher-priority click.
          */

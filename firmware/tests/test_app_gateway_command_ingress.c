@@ -22,15 +22,11 @@ struct ingress_fixture {
     uint8_t cancel_count;
     uint8_t result_count;
     uint8_t execute_count;
-    uint8_t preemptive_check_count;
-    uint8_t preemptive_submit_count;
     uint32_t last_admission_cutoff;
     bool cancelled[3];
-    bool survey_abort_preemptive;
     int admit_ret;
     int submit_ret;
     int cancel_ret;
-    int preemptive_submit_ret;
 };
 
 static struct app_gateway_command_ingress_ops ops_for(
@@ -73,30 +69,6 @@ static int submit_priority(void *ctx, uint32_t admission_cutoff)
     fixture->submit_count++;
     fixture->last_admission_cutoff = admission_cutoff;
     return fixture->submit_ret;
-}
-
-static bool is_preemptive(
-    void *ctx,
-    const struct app_gateway_command_ingress_item *item)
-{
-    struct ingress_fixture *fixture = ctx;
-
-    fixture->preemptive_check_count++;
-    assert(item != NULL);
-    return fixture->survey_abort_preemptive &&
-           item->command_id == CMD_SURVEY_ABORT;
-}
-
-static int submit_preemptive(
-    void *ctx,
-    const struct app_gateway_command_ingress_item *item)
-{
-    struct ingress_fixture *fixture = ctx;
-
-    fixture->preemptive_submit_count++;
-    assert(item != NULL);
-    assert(item->command_id == CMD_SURVEY_ABORT);
-    return fixture->preemptive_submit_ret;
 }
 
 static int cancel_admitted(void *ctx,
@@ -168,8 +140,6 @@ static struct app_gateway_command_ingress_ops ops_for(
     return (struct app_gateway_command_ingress_ops) {
         .gateway_role = true,
         .gateway_id = UINT64_C(0x9000),
-        .is_preemptive = is_preemptive,
-        .submit_preemptive = submit_preemptive,
         .admit = admit,
         .submit_priority = submit_priority,
         .cancel_admitted = cancel_admitted,
@@ -248,9 +218,6 @@ static void test_ingress_to_c5_normalizes_command_class_ttl(void)
     } command_cases[] = {
         {CMD_PING, FLOOD_EPOCH_GLOBAL_TTL},
         {CMD_ASSIGN_DISCOVERY_SLOTS, FLOOD_EPOCH_GLOBAL_TTL},
-        {CMD_SURVEY_PREPARE_PAIR, MESH_DEFAULT_TTL},
-        {CMD_SURVEY_START_PAIR, MESH_DEFAULT_TTL},
-        {CMD_SURVEY_ABORT, MESH_DEFAULT_TTL},
     };
     static const uint8_t host_ttls[] = {
         0u,
@@ -329,149 +296,9 @@ static void test_ingress_to_c5_normalizes_command_class_ttl(void)
     }
 }
 
-static void test_survey_abort_bypasses_serialized_priority_dispatch(void)
-{
-    struct ingress_fixture fixture = {
-        .survey_abort_preemptive = true,
-    };
-    struct app_gateway_command_ingress_ops ops = ops_for(&fixture);
-    struct app_gateway_command_ingress_item item;
-    bool command_handled;
-    uint8_t frame[SERIAL_FRAME_MAX_LEN];
-    size_t frame_len = command_frame_for(
-        45u, CMD_SURVEY_ABORT, frame, sizeof(frame));
-
-    assert(app_gateway_command_ingress_handle_frame(&ops, frame, frame_len,
-                                                    &item,
-                                                    &command_handled) == 0);
-    assert(command_handled);
-    assert(item.command_id == CMD_SURVEY_ABORT);
-    assert(fixture.preemptive_check_count == 1u);
-    assert(fixture.preemptive_submit_count == 1u);
-    assert(fixture.admit_count == 0u);
-    assert(fixture.submit_count == 0u);
-    assert(fixture.cancel_count == 0u);
-    assert(fixture.result_count == 0u);
-}
-
-static void test_malformed_survey_abort_has_no_preemptive_authority(void)
-{
-    static const uint8_t scope_values[] = {
-        CMD_SCOPE_SINGLE_NODE,
-        UINT8_MAX,
-    };
-
-    for (size_t i = 0u;
-         i < sizeof(scope_values) / sizeof(scope_values[0]);
-         i++) {
-        uint8_t payload[] = {
-            TLV_COMMAND_ID, 2u,
-            (uint8_t)CMD_SURVEY_ABORT,
-            (uint8_t)(CMD_SURVEY_ABORT >> 8),
-            TLV_COMMAND_SCOPE, 1u, scope_values[i],
-        };
-        struct proto_packet packet = {
-            .msg_type = MSG_COMMAND,
-            .src_id = UINT64_C(0x1111),
-            .dst_id = UINT64_C(0x9000),
-            .session_id = 77u,
-            .seq = (uint16_t)(48u + i),
-            .ttl = 1u,
-        };
-        struct ingress_fixture fixture = {
-            .survey_abort_preemptive = true,
-        };
-        struct app_gateway_command_ingress_ops ops = ops_for(&fixture);
-        struct app_gateway_command_ingress_item item;
-        bool command_handled = false;
-        uint8_t frame[SERIAL_FRAME_MAX_LEN];
-        size_t frame_len = command_frame_for_payload(&packet,
-                                                     payload,
-                                                     sizeof(payload),
-                                                     frame,
-                                                     sizeof(frame));
-
-        assert(app_gateway_command_ingress_handle_frame(
-                   &ops,
-                   frame,
-                   frame_len,
-                   &item,
-                   &command_handled) == -EBADMSG);
-        assert(command_handled);
-        assert(item.command_id == CMD_SURVEY_ABORT);
-        assert(fixture.preemptive_check_count == 0u);
-        assert(fixture.preemptive_submit_count == 0u);
-        assert(fixture.admit_count == 0u);
-        assert(fixture.submit_count == 0u);
-        assert(fixture.cancel_count == 0u);
-        assert(fixture.result_count == 1u);
-        assert(fixture.result_command.seq == (uint16_t)(48u + i));
-        assert(fixture.result_command_id == CMD_SURVEY_ABORT);
-        assert(fixture.result_status == COMMAND_MALFORMED_PAYLOAD);
-        assert(fixture.result_reason == (uint8_t)EBADMSG);
-    }
-}
-
-static void test_local_abort_envelope_is_closed_before_classification(void)
-{
-    const uint8_t canonical_payload[] = {
-        TLV_COMMAND_ID, 2u,
-        (uint8_t)CMD_SURVEY_ABORT,
-        (uint8_t)(CMD_SURVEY_ABORT >> 8),
-    };
-    const uint8_t extended_payload[] = {
-        TLV_COMMAND_ID, 2u,
-        (uint8_t)CMD_SURVEY_ABORT,
-        (uint8_t)(CMD_SURVEY_ABORT >> 8),
-        TLV_COMMAND_SCOPE, 1u, CMD_SCOPE_SINGLE_NODE,
-    };
-    struct app_gateway_command_ingress_item item = {
-        .packet = {
-            .msg_type = MSG_COMMAND,
-            .src_id = UINT64_C(0x1111),
-            .dst_id = UINT64_C(0x9000),
-            .session_id = 77u,
-            .seq = 49u,
-            .ttl = 1u,
-            .payload_len = sizeof(canonical_payload),
-        },
-        .payload_len = sizeof(canonical_payload),
-        .command_id = CMD_SURVEY_ABORT,
-    };
-
-    memcpy(item.payload, canonical_payload, sizeof(canonical_payload));
-    assert(app_gateway_command_ingress_validate_command(
-               &item, UINT64_C(0x9000)) == 0);
-
-#define ASSERT_ABORT_ENVELOPE_REJECTS(field, value) do {                     \
-        __typeof__(item.packet.field) saved = item.packet.field;             \
-        item.packet.field = (value);                                         \
-        assert(app_gateway_command_ingress_validate_command(                 \
-                   &item, UINT64_C(0x9000)) == -EBADMSG);                    \
-        item.packet.field = saved;                                           \
-    } while (false)
-    ASSERT_ABORT_ENVELOPE_REJECTS(flags, FLAG_DIAGNOSTIC);
-    ASSERT_ABORT_ENVELOPE_REJECTS(src_id, 0u);
-    ASSERT_ABORT_ENVELOPE_REJECTS(src_id, UINT64_C(0x9000));
-    ASSERT_ABORT_ENVELOPE_REJECTS(session_id, 0u);
-    ASSERT_ABORT_ENVELOPE_REJECTS(seq, 0u);
-    ASSERT_ABORT_ENVELOPE_REJECTS(ttl, 0u);
-    ASSERT_ABORT_ENVELOPE_REJECTS(ttl, 2u);
-    ASSERT_ABORT_ENVELOPE_REJECTS(message_age_ms, 1u);
-#undef ASSERT_ABORT_ENVELOPE_REJECTS
-
-    memcpy(item.payload, extended_payload, sizeof(extended_payload));
-    item.payload_len = sizeof(extended_payload);
-    item.packet.payload_len = sizeof(extended_payload);
-    assert(app_gateway_command_ingress_validate_command(
-               &item, UINT64_C(0x9000)) == -EBADMSG);
-}
-
 static void test_ordinary_command_retains_serialized_priority_dispatch(void)
 {
-    struct ingress_fixture fixture = {
-        .survey_abort_preemptive = true,
-    };
+    struct ingress_fixture fixture = {0};
     struct app_gateway_command_ingress_ops ops = ops_for(&fixture);
     struct app_gateway_command_ingress_item item;
     bool command_handled;
@@ -483,39 +310,8 @@ static void test_ordinary_command_retains_serialized_priority_dispatch(void)
                                                     &command_handled) == 0);
     assert(command_handled);
     assert(item.command_id == CMD_FORCE_REDISCOVERY);
-    assert(fixture.preemptive_check_count == 1u);
-    assert(fixture.preemptive_submit_count == 0u);
     assert(fixture.admit_count == 1u);
     assert(fixture.submit_count == 1u);
-}
-
-static void test_survey_abort_queue_pressure_fails_without_normal_admission(void)
-{
-    struct ingress_fixture fixture = {
-        .survey_abort_preemptive = true,
-        .preemptive_submit_ret = -ENOSPC,
-    };
-    struct app_gateway_command_ingress_ops ops = ops_for(&fixture);
-    struct app_gateway_command_ingress_item item;
-    bool command_handled;
-    uint8_t frame[SERIAL_FRAME_MAX_LEN];
-    size_t frame_len = command_frame_for(
-        47u, CMD_SURVEY_ABORT, frame, sizeof(frame));
-
-    assert(app_gateway_command_ingress_handle_frame(&ops, frame, frame_len,
-                                                    &item,
-                                                    &command_handled) == -ENOSPC);
-    assert(command_handled);
-    assert(fixture.preemptive_check_count == 1u);
-    assert(fixture.preemptive_submit_count == 1u);
-    assert(fixture.admit_count == 0u);
-    assert(fixture.submit_count == 0u);
-    assert(fixture.cancel_count == 0u);
-    assert(fixture.result_count == 1u);
-    assert(fixture.result_command.seq == 47u);
-    assert(fixture.result_command_id == CMD_SURVEY_ABORT);
-    assert(fixture.result_status == COMMAND_BUSY);
-    assert(fixture.result_reason == (uint8_t)ENOSPC);
 }
 
 static void test_priority_failure_cancels_exact_admitted_command_before_one_error(void)
@@ -664,11 +460,7 @@ static void test_non_command_decodes_for_normal_gateway_routing(void)
 int main(void)
 {
     test_ingress_to_c5_normalizes_command_class_ttl();
-    test_survey_abort_bypasses_serialized_priority_dispatch();
-    test_malformed_survey_abort_has_no_preemptive_authority();
-    test_local_abort_envelope_is_closed_before_classification();
     test_ordinary_command_retains_serialized_priority_dispatch();
-    test_survey_abort_queue_pressure_fails_without_normal_admission();
     test_priority_failure_cancels_exact_admitted_command_before_one_error();
     test_priority_contention_retains_accepted_command_custody();
     test_admission_cutoff_is_wrap_safe_and_excludes_newer_items();

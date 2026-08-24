@@ -97,7 +97,7 @@ uint32_t app_mesh_rf_retry_next_delay_ms(
     } else if (node_comm_retry_backoff_ms(
                    policy == APP_MESH_RF_RETRY_POLICY_CONTROL_FLOOD ?
                        NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD :
-                       NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+                       NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
                    attempt_seed,
                    next_round,
                    &delay_ms) != 0) {

@@ -12,18 +12,7 @@ K_MUTEX_DEFINE(active_policy_mutex);
 static uint8_t operation_policy_present_mask(
     const struct operation_policy_set *set)
 {
-    uint8_t mask = 0u;
-
-    if (set->assignment_present) {
-        mask |= APP_OPERATION_POLICY_ASSIGNMENT_MASK;
-    }
-    if (set->discovery_present) {
-        mask |= APP_OPERATION_POLICY_DISCOVERY_MASK;
-    }
-    if (set->pair_present) {
-        mask |= APP_OPERATION_POLICY_PAIR_MASK;
-    }
-    return mask;
+    return set->assignment_present ? APP_OPERATION_POLICY_ASSIGNMENT_MASK : 0u;
 }
 
 static int operation_policy_validate_set(
@@ -34,34 +23,14 @@ static int operation_policy_validate_set(
     if (set == NULL) {
         return -EINVAL;
     }
-    if (set->assignment_present) {
-        policy = (struct operation_policy) {
-            .family = OPERATION_POLICY_FAMILY_ASSIGNMENT,
-            .value.assignment = set->assignment,
-        };
-        if (operation_policy_validate(&policy) != PROTO_OK) {
-            return -EBADMSG;
-        }
+    if (!set->assignment_present) {
+        return 0;
     }
-    if (set->discovery_present) {
-        policy = (struct operation_policy) {
-            .family = OPERATION_POLICY_FAMILY_SURVEY_DISCOVERY,
-            .value.discovery = set->discovery,
-        };
-        if (operation_policy_validate(&policy) != PROTO_OK) {
-            return -EBADMSG;
-        }
-    }
-    if (set->pair_present) {
-        policy = (struct operation_policy) {
-            .family = OPERATION_POLICY_FAMILY_SURVEY_PAIR,
-            .value.pair = set->pair,
-        };
-        if (operation_policy_validate(&policy) != PROTO_OK) {
-            return -EBADMSG;
-        }
-    }
-    return 0;
+    policy = (struct operation_policy) {
+        .family = OPERATION_POLICY_FAMILY_ASSIGNMENT,
+        .value.assignment = set->assignment,
+    };
+    return operation_policy_validate(&policy) == PROTO_OK ? 0 : -EBADMSG;
 }
 
 static void operation_policy_ensure_initialized_locked(void)
@@ -71,8 +40,6 @@ static void operation_policy_ensure_initialized_locked(void)
     }
     operation_policy_set_defaults(&active_policy);
     active_policy.assignment_present = true;
-    active_policy.discovery_present = true;
-    active_policy.pair_present = true;
     active_policy_initialized = true;
 }
 
@@ -104,12 +71,6 @@ int app_operation_policy_install(const struct operation_policy_set *set,
     operation_policy_ensure_initialized_locked();
     if (set->assignment_present) {
         active_policy.assignment = set->assignment;
-    }
-    if (set->discovery_present) {
-        active_policy.discovery = set->discovery;
-    }
-    if (set->pair_present) {
-        active_policy.pair = set->pair;
     }
     k_mutex_unlock(&active_policy_mutex);
     return 0;
@@ -161,12 +122,6 @@ static int operation_policy_resolve(
     if (updates->assignment_present) {
         resolved->assignment = updates->assignment;
     }
-    if (updates->discovery_present) {
-        resolved->discovery = updates->discovery;
-    }
-    if (updates->pair_present) {
-        resolved->pair = updates->pair;
-    }
     return 0;
 }
 
@@ -202,21 +157,10 @@ void app_operation_policy_commit_prepared(
         return;
     }
 
-    /*
-     * prepare_payload() has already parsed and validated every supplied
-     * family. Keep this commit infallible so a caller can publish the policy
-     * only after its command-specific state transition succeeds.
-     */
     k_mutex_lock(&active_policy_mutex, K_FOREVER);
     operation_policy_ensure_initialized_locked();
     if (candidate->updates.assignment_present) {
         active_policy.assignment = candidate->updates.assignment;
-    }
-    if (candidate->updates.discovery_present) {
-        active_policy.discovery = candidate->updates.discovery;
-    }
-    if (candidate->updates.pair_present) {
-        active_policy.pair = candidate->updates.pair;
     }
     k_mutex_unlock(&active_policy_mutex);
 }

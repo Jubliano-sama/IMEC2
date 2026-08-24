@@ -448,9 +448,6 @@ static void test_prepare_outbound_uses_command_class_ttl_for_every_host_value(vo
     } command_cases[] = {
         {CMD_PING, FLOOD_EPOCH_GLOBAL_TTL},
         {CMD_ASSIGN_DISCOVERY_SLOTS, FLOOD_EPOCH_GLOBAL_TTL},
-        {CMD_SURVEY_PREPARE_PAIR, MESH_DEFAULT_TTL},
-        {CMD_SURVEY_START_PAIR, MESH_DEFAULT_TTL},
-        {CMD_SURVEY_ABORT, MESH_DEFAULT_TTL},
     };
     static const uint8_t host_ttls[] = {
         0u,
@@ -623,23 +620,6 @@ static void test_duplicate_command_singletons_are_rejected(void)
                           TLV_DURATION_MS, 200u) == PROTO_OK);
     assert(gateway_command_extract_duration_ms(
                payload, payload_len, 50u, &duration_ms) ==
-           PROTO_ERR_MALFORMED);
-}
-
-static void test_retired_survey_go_is_rejected(void)
-{
-    enum command_id command_id = CMD_VENDOR_BASE;
-    uint8_t payload[8];
-    size_t payload_len = 0u;
-
-    assert(tlv_append_u16(payload,
-                          sizeof(payload),
-                          &payload_len,
-                          TLV_COMMAND_ID,
-                          CMD_SURVEY_GO_RETIRED_ID) == PROTO_OK);
-    assert(gateway_command_extract_id(payload,
-                                      payload_len,
-                                      &command_id) ==
            PROTO_ERR_MALFORMED);
 }
 
@@ -3812,58 +3792,19 @@ static void test_pending_command_expiry_handles_ms_wrap(void)
     assert(expired_id == CMD_PING);
 }
 
-static void test_pending_survey_prepare_completes_on_command_result(void)
+static void test_result_admission_respects_deferred_validation(void)
 {
-    struct gateway_command_pending pending = {0};
-    struct proto_packet prepare = {
-        .msg_type = MSG_SURVEY_PAIR_PREPARE,
-        .src_id = GATEWAY_ID_TEST,
-        .dst_id = ANCHOR_ID_TEST,
-        .session_id = 125u,
-        .seq = 46u,
-        .ttl = MESH_DEFAULT_TTL,
-    };
-    struct proto_packet result = {
-        .msg_type = MSG_COMMAND_RESULT,
-        .src_id = ANCHOR_ID_TEST,
-        .dst_id = GATEWAY_ID_TEST,
-        .session_id = 125u,
-        .seq = 46u,
-    };
+    const enum command_id commands[] = {CMD_PING};
 
-    assert(gateway_command_pending_start(&pending,
-                                         &prepare,
-                                         CMD_SURVEY_PREPARE_PAIR,
-                                         1000u,
-                                         GATEWAY_COMMAND_RESULT_TIMEOUT_MS) == PROTO_OK);
-    assert(gateway_command_pending_matches_result(&pending, &result));
-    assert(gateway_command_pending_claim_result(
-               &pending,
-               &result,
-               1001u,
-               NULL,
-               NULL) ==
-           GATEWAY_COMMAND_PENDING_RESULT_CLAIM_ACCEPTED);
-    assert(!pending.active);
-}
-
-static void test_pair_result_admission_distinguishes_manual_and_automatic(void)
-{
-    const enum command_id pair_commands[] = {
-        CMD_SURVEY_PREPARE_PAIR,
-        CMD_SURVEY_START_PAIR,
-    };
-
-    for (size_t i = 0u; i < sizeof(pair_commands) / sizeof(pair_commands[0]); i++) {
+    for (size_t i = 0u; i < sizeof(commands) / sizeof(commands[0]); i++) {
         struct gateway_command_pending pending = {0};
         struct proto_packet command = {
-            .msg_type = pair_commands[i] == CMD_SURVEY_PREPARE_PAIR ?
-                        MSG_SURVEY_PAIR_PREPARE : MSG_COMMAND,
+            .msg_type = MSG_COMMAND,
             .src_id = GATEWAY_ID_TEST,
             .dst_id = ANCHOR_ID_TEST,
             .session_id = 700u + (uint32_t)i,
             .seq = 80u + (uint16_t)i,
-            .ttl = MESH_DEFAULT_TTL,
+            .ttl = FLOOD_EPOCH_GLOBAL_TTL,
         };
         struct proto_packet result = {
             .msg_type = MSG_COMMAND_RESULT,
@@ -3876,7 +3817,7 @@ static void test_pair_result_admission_distinguishes_manual_and_automatic(void)
 
         assert(gateway_command_pending_start(&pending,
                                              &command,
-                                             pair_commands[i],
+                                             commands[i],
                                              1000u,
                                              GATEWAY_COMMAND_RESULT_TIMEOUT_MS) ==
                PROTO_OK);
@@ -3916,7 +3857,7 @@ static void test_pair_result_admission_distinguishes_manual_and_automatic(void)
         assert(!pending.active);
         assert(gateway_command_pending_start(&pending,
                                              &command,
-                                             pair_commands[i],
+                                             commands[i],
                                              1100u,
                                              GATEWAY_COMMAND_RESULT_TIMEOUT_MS) ==
                PROTO_OK);
@@ -4104,12 +4045,12 @@ static void test_pending_command_deadline_has_one_terminal_winner(void)
 static void test_pending_command_absolute_deadline_is_shared(void)
 {
     const struct proto_packet command = {
-        .msg_type = MSG_SURVEY_PAIR_PREPARE,
+        .msg_type = MSG_COMMAND,
         .src_id = GATEWAY_ID_TEST,
         .dst_id = ANCHOR_ID_TEST,
         .session_id = 129u,
         .seq = 49u,
-        .ttl = MESH_DEFAULT_TTL,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
     };
     const struct proto_packet result = {
         .msg_type = MSG_COMMAND_RESULT,
@@ -4124,7 +4065,7 @@ static void test_pending_command_absolute_deadline_is_shared(void)
     assert(gateway_command_pending_start_until(
                &pending,
                &command,
-               CMD_SURVEY_PREPARE_PAIR,
+               CMD_PING,
                1007u,
                deadline_ms) == PROTO_OK);
     assert(pending.deadline_ms == deadline_ms);
@@ -4139,7 +4080,7 @@ static void test_pending_command_absolute_deadline_is_shared(void)
     assert(gateway_command_pending_start_until(
                &pending,
                &command,
-               CMD_SURVEY_PREPARE_PAIR,
+               CMD_PING,
                1099u,
                deadline_ms) == PROTO_OK);
     assert(gateway_command_pending_claim_result(
@@ -4152,7 +4093,7 @@ static void test_pending_command_absolute_deadline_is_shared(void)
     assert(gateway_command_pending_start_until(
                &pending,
                &command,
-               CMD_SURVEY_PREPARE_PAIR,
+               CMD_PING,
                deadline_ms,
                deadline_ms) == PROTO_ERR_ARG);
 }
@@ -4706,7 +4647,6 @@ int main(void)
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
     test_duplicate_command_singletons_are_rejected();
-    test_retired_survey_go_is_rejected();
     test_extract_options_defaults_to_single_node_small_result();
     test_extract_options_rejects_unsupported_group_scope();
     test_command_scope_applies_to_explicit_and_derived_membership();
@@ -4761,8 +4701,7 @@ int main(void)
     test_pending_command_completes_on_matching_result();
     test_pending_command_expires_with_original_context();
     test_pending_command_expiry_handles_ms_wrap();
-    test_pending_survey_prepare_completes_on_command_result();
-    test_pair_result_admission_distinguishes_manual_and_automatic();
+    test_result_admission_respects_deferred_validation();
     test_pending_command_rejects_second_start();
     test_pending_command_deadline_has_one_terminal_winner();
     test_pending_command_absolute_deadline_is_shared();

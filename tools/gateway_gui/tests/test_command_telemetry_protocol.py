@@ -13,8 +13,8 @@ from tools.gateway_gui.protocol import parse_stream_record
 
 def event_payload():
     raw = bytearray(78)
-    raw[0:8] = bytes((1, 78, 2, 9, 0, 3, 0, 0))
-    raw[8:10] = (0x0100).to_bytes(2, "little")
+    raw[0:8] = bytes((1, 78, 1, 6, 0, 3, 0, 0))
+    raw[8:10] = (0x0104).to_bytes(2, "little")
     raw[12:16] = (44).to_bytes(4, "little")
     raw[16:20] = (99).to_bytes(4, "little")
     raw[20:24] = (7).to_bytes(4, "little")
@@ -33,8 +33,8 @@ class CommandTelemetryProtocolTests(unittest.TestCase):
         packet = parse_stream_record(stream_record(event_payload(), msg_type=MSG_GATEWAY_COMMAND_EVENT))
         self.assertEqual(packet.tlvs, ())
         event = decode_gateway_command_event(packet.payload, valid_statuses=set(COMMAND_STATUS_NAMES))
-        self.assertEqual(event.correlation_key, (2, 44, 7, 8))
-        self.assertEqual(event.pair_initiator_id, 0xA1)
+        self.assertEqual(event.correlation_key, (1, 44, 7, 8))
+        self.assertEqual(event.anchor_id, 0)
         self.assertEqual(event.total_count, 10)
 
     def test_unknown_schema_and_nonzero_reserved_are_rejected(self):

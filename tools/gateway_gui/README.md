@@ -27,7 +27,7 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    for the current production-successor preset, `IMEC Mesh Test Gateway`.
 2. Connect. The GUI verifies the service, reads the explicit gateway identity,
    and subscribes to packet notifications before reporting a connected state.
-3. Send `Anchor Survey Discovery`, `Here I Am`, or `Assign discovery slots`,
+3. Send `Here I Am` or `Assign discovery slots`,
    then inspect the received `COMMAND_RESULT`, reports, and activity log. A
    completed BLE write is shown as transport completion only, not command
    success.
@@ -111,16 +111,6 @@ acknowledgement or NVS-backed journal.
 
 ## Supported Commands
 
-- **Anchor Survey Discovery** sends a gateway-local `MSG_COMMAND` with
-  `CMD_SURVEY_REACHABILITY = 0x0100` to the identity read from GATT. Its payload
-  contains the survey identity and one complete versioned operation policy:
-  discovery start delay, slot duration/count, one to four rounds, report grace,
-  total budget, zero to two pair reruns, exactly five samples, and a concurrency
-  cap up to 25. Gateway firmware gathers one-way or mutual reachability, plans
-  disjoint-neighborhood batches, and arms each pair in the fixed order
-  PREPARE initiator, PREPARE responder, START responder, START initiator. The
-  START controls carry the common future execution instant; there is no
-  separate go-command. Pair distance is the median of the five usable samples.
 - **Here I Am** sends local `CMD_FORCE_REDISCOVERY = 0x000c` to the gateway's
   own `DEVICE_ID`. Its correlated successful terminal follows completion of the
   gateway's bounded `MSG_GATEWAY_ROUTE_ADV` flood custody; it does not claim
@@ -181,13 +171,11 @@ exact state and errors without synthesizing a waveform.
 
 ## Geometry And Mesh Diagnostics
 
-`Anchor Geometry` consumes only successful `SURVEY_PAIR_RESULT` distances.
-Failed pairs become visibility evidence only after terminal telemetry proves
-that every scheduled pair opportunity was observed. The default solver is the
-exact `visibility_branching_tuned` profile adapted from the user-owned
+The retained anchor-geometry solver is intentionally disconnected from the
+current command path until a new ranging workflow is built. The default solver
+is the exact `visibility_branching_tuned` profile adapted from the user-owned
 AnchorGeometrySolver commit `01c3edb470bcd868403e04a6cded754360decdf0`.
-The spring-energy solver is an explicit alternate; failures never fall back.
-This view is a RAM-only 2D diagnostic preview, not the production 3D
+This is a RAM-only 2D diagnostic component, not the production 3D
 self-setup result. The maintained 3D requirement remains unresolved until the
 future host API/solver defines height or plane constraints, workplace-frame
 registration, reflection handling, and uncertainty for partial or non-rigid

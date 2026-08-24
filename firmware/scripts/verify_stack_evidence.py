@@ -61,7 +61,7 @@ GATEWAY_FIT_REQUIRED_CONFIG = {
 }
 KNOWN_WORKLOADS = frozenset({
     "click_spam", "cir_handling", "relay_retry", "ble_backpressure",
-    "click_activity", "anchor_survey_report", "gateway_report_ingress",
+    "click_activity", "anchor_scan", "gateway_report_ingress",
     "gateway_priority_control",
 })
 THREAD_ROOTS = frozenset({

@@ -109,53 +109,6 @@ const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     return selected;
 }
 
-int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
-                                                 uint64_t target_id,
-                                                 uint64_t next_hop_id,
-                                                 uint8_t quality,
-                                                 uint32_t now_ms)
-{
-    struct mesh_downlink_entry entry;
-    int ret;
-
-    if (relay == NULL ||
-        relay->role != MESH_RELAY_ROLE_GATEWAY ||
-        !id_is_unicast(relay->local_id) ||
-        relay->local_id != relay->gateway_id ||
-        !id_is_unicast(target_id) ||
-        !id_is_unicast(next_hop_id) ||
-        target_id == relay->local_id ||
-        next_hop_id == relay->local_id ||
-        relay->upstream.current_epoch == 0u ||
-        quality > 100u) {
-        return PROTO_ERR_ARG;
-    }
-
-    /* Current accepted survey evidence supersedes older hints for this target. */
-    for (uint8_t i = 0u; i < MESH_RELAY_DOWNLINK_ROUTES; i++) {
-        if (relay->downlinks[i].valid &&
-            relay->downlinks[i].target_id == target_id) {
-            memset(&relay->downlinks[i], 0, sizeof(relay->downlinks[i]));
-        }
-    }
-
-    entry = (struct mesh_downlink_entry) {
-        .target_id = target_id,
-        .next_hop_id = next_hop_id,
-        .gateway_id = relay->local_id,
-        .route_epoch = relay->upstream.current_epoch,
-        .last_seen_ms = now_ms,
-        .hop_count = target_id == next_hop_id ? 1u : MESH_NETWORK_MAX_HOPS,
-        .quality = quality,
-        .valid = true,
-    };
-    ret = upsert_required_gateway_downlink(relay, &entry);
-    if (ret == PROTO_OK) {
-        mesh_relay_note_route_discovery_ready(relay, target_id);
-    }
-    return ret;
-}
-
 int mesh_relay_note_gateway_control_reverse_route(
     struct mesh_relay *relay,
     const struct proto_packet *packet,
@@ -189,12 +142,8 @@ int mesh_relay_note_gateway_control_reverse_route(
         return PROTO_ERR_ARG;
     }
 
-    destination_valid =
-        ((packet->msg_type == MSG_COMMAND ||
-          packet->msg_type == MSG_SURVEY_PAIR_PREPARE) &&
-         packet->dst_id == relay->local_id) ||
-        ((packet->msg_type == MSG_COMMAND ||
-          packet->msg_type == MSG_SURVEY_DISCOVERY_START) &&
+    destination_valid = packet->msg_type == MSG_COMMAND &&
+        (packet->dst_id == relay->local_id ||
          packet->dst_id == MESH_BROADCAST_ID);
     if (!destination_valid) {
         return PROTO_ERR_MALFORMED;

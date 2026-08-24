@@ -15,8 +15,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     enum fw_c5_tx_intent c5_tx_intent =
         mesh_c5_forwarded_control_intent(out);
     bool send_wake_train =
-        out != NULL && out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV &&
-        !mesh_report_anchor_survey_operation_generation_active(0u);
+        out != NULL && out->packet.msg_type != MSG_GATEWAY_ROUTE_ADV;
     enum discovery_assignment_phase enumeration_phase;
     uint32_t enumeration_epoch;
     uint32_t enumeration_operation_budget_ms;
@@ -2291,9 +2290,8 @@ wake_train_attempt:
         /*
          * A lifecycle pause preserves the route owner, but an already-running
          * wake train cannot be canceled by k_work_cancel().  Yield at this
-         * physical frame boundary so higher-priority survey preparation does
-         * not have to wait for the rest of the train.  Resume will rearm the
-         * retained route work after the survey releases the radio.
+         * physical frame boundary so higher-priority work does not have to
+         * wait for the rest of the train. Resume will rearm retained work.
          */
         if (mesh_transport_paused()) {
             ret = -ESHUTDOWN;
@@ -3129,9 +3127,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             bool gateway_priority_control =
                 DEVICE_ROLE == ROLE_ANCHOR &&
                 parsed.packet.src_id == GATEWAY_ID &&
-                (parsed.packet.msg_type == MSG_COMMAND ||
-                 parsed.packet.msg_type == MSG_SURVEY_PAIR_PREPARE ||
-                 parsed.packet.msg_type == MSG_SURVEY_DISCOVERY_START);
+                parsed.packet.msg_type == MSG_COMMAND;
             bool gateway_operation_priority =
                 DEVICE_ROLE == ROLE_ANCHOR &&
                 parsed.packet.src_id == GATEWAY_ID &&
@@ -3142,8 +3138,7 @@ static int mesh_listen_for_route_reply(uint64_t target_id,
             bool targeted_control_relay = false;
 
             if (gateway_priority_control &&
-                (parsed.packet.msg_type == MSG_COMMAND ||
-                 parsed.packet.msg_type == MSG_SURVEY_PAIR_PREPARE) &&
+                parsed.packet.msg_type == MSG_COMMAND &&
                 mesh_id_is_unicast(parsed.packet.dst_id) &&
                 parsed.packet.dst_id != DEVICE_ID &&
                 parsed.packet.ttl > 1u) {

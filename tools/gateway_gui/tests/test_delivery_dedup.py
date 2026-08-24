@@ -20,8 +20,6 @@ from tools.gateway_gui.protocol import (
     MSG_MESH_DATA,
     MSG_RESULT_BUNDLE,
     MSG_SELF_TEST_REPORT,
-    MSG_SURVEY_DISCOVERY_REPORT,
-    MSG_SURVEY_PAIR_RESULT,
     Packet,
     click_report_session_id,
     parse_stream_record,
@@ -174,33 +172,6 @@ def command_event_packet(
 
 
 class GatewayPacketDeduplicatorTests(unittest.TestCase):
-    def test_survey_discovery_replay_domain_is_anchor_boot_incarnation(self) -> None:
-        cache = GatewayPacketDeduplicator(gateway_id=0xAAA, max_entries=4)
-        operation_payload = b"same-operation-generation"
-        before_reboot = host_packet(
-            MSG_SURVEY_DISCOVERY_REPORT,
-            payload=operation_payload,
-            session_id=41,
-            seq=1,
-        )
-        after_reboot = replace(before_reboot, session_id=42)
-
-        self.assertEqual(
-            cache.observe(before_reboot).disposition, PacketDisposition.NEW
-        )
-        self.assertEqual(
-            cache.observe(after_reboot).disposition, PacketDisposition.NEW
-        )
-        self.assertEqual(
-            cache.observe(before_reboot).disposition,
-            PacketDisposition.DUPLICATE,
-        )
-        self.assertEqual(
-            cache.observe(after_reboot).disposition,
-            PacketDisposition.DUPLICATE,
-        )
-        self.assertEqual(cache.size, 2)
-
     def test_clicker_identity_namespaces_same_anchor_event_and_fragment(self) -> None:
         cache = GatewayPacketDeduplicator(max_entries=4)
         event_seq = 7
@@ -370,8 +341,6 @@ class GatewayPacketDeduplicatorTests(unittest.TestCase):
             host_packet(MSG_ANCHOR_HEARTBEAT, seq=5),
             host_packet(MSG_COMMAND_RESULT, seq=6),
             host_packet(MSG_RESULT_BUNDLE, seq=7),
-            host_packet(MSG_SURVEY_DISCOVERY_REPORT, seq=8),
-            host_packet(MSG_SURVEY_PAIR_RESULT, seq=9),
             host_packet(
                 MSG_MESH_DATA,
                 flags=FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,

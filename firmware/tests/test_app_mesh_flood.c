@@ -1,7 +1,6 @@
 #include "app_mesh_flood.h"
 
 #include "mesh_relay.h"
-#include "survey.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -78,82 +77,12 @@ static int test_send(const struct mesh_outbound *out, void *ctx)
         return -EBUSY;
     }
     assert(test->send_count < sizeof(test->delays) / sizeof(test->delays[0]));
-    assert(out->packet.msg_type == MSG_SURVEY_DISCOVERY_START ||
-           out->packet.msg_type == MSG_GATEWAY_ROUTE_ADV);
+    assert(out->packet.msg_type == MSG_GATEWAY_ROUTE_ADV);
     test->delays[test->send_count] = (uint16_t)test->now_ms;
     test->message_ages_ms[test->send_count] = out->packet.message_age_ms;
     test->queued_at_ms[test->send_count] = out->queued_at_ms;
     test->send_count++;
     return 0;
-}
-
-static void test_survey_start_repeats_age_from_one_origin(void)
-{
-    struct mesh_outbound gateway_adv = {
-        .next_hop_id = MESH_BROADCAST_ID,
-        .radio_channel = UWB_CHANNEL_WAKE_CONTACT,
-        .earliest_tx_ms = 1000u,
-        .earliest_tx_valid = true,
-    };
-    const struct survey_discovery_config config = {
-        .survey_id = UINT32_C(0x50665006),
-        .start_delay_ms = 2000u,
-        .slot_ms = 40u,
-        .slot_count = 6u,
-        .round_count = 4u,
-    };
-    struct app_mesh_flood_result result;
-    struct flood_test_ctx ctx = {
-        .now_ms = 900u,
-    };
-    const struct app_mesh_flood_ops ops = {
-        .now_ms = test_now_ms,
-        .sleep_until_ms = test_sleep_until_ms,
-        .defer_active = test_defer_active,
-        .c5_quiet = test_c5_quiet,
-        .random_u32 = test_random_u32,
-        .send = test_send,
-        .ctx = &ctx,
-    };
-    size_t payload_len = 0u;
-    uint8_t repeat_limit = app_mesh_flood_repeat_limit();
-
-    assert(survey_append_discovery_start_tlvs(
-               gateway_adv.payload, sizeof(gateway_adv.payload),
-               &payload_len, &config) == PROTO_OK);
-    assert(survey_init_discovery_start_packet(
-               &gateway_adv.packet, TEST_GATEWAY, &config, 1u,
-               (uint8_t)payload_len) == PROTO_OK);
-    gateway_adv.payload_len = (uint8_t)payload_len;
-    assert(repeat_limit == 4u);
-    assert(app_mesh_flood_send_bounded(&gateway_adv, &ops, &result) == 0);
-    assert(result.sent_count == repeat_limit);
-    assert(result.busy_skip_count == 0u);
-    assert(result.deferred_count == 0u);
-    assert(result.first_due_ms == 1000u);
-    assert(result.last_due_ms == 1000u +
-           ((uint32_t)(repeat_limit - 1u) * FLOOD_RELAY_REPEAT_MS));
-    assert(ctx.send_count == repeat_limit);
-    assert(ctx.quiet_count == repeat_limit);
-    assert(ctx.delays[0] == 1000u);
-    assert(ctx.delays[1] == 1000u + FLOOD_RELAY_REPEAT_MS);
-    assert(ctx.delays[repeat_limit - 1u] ==
-           1000u + ((uint16_t)(repeat_limit - 1u) * FLOOD_RELAY_REPEAT_MS));
-    for (uint8_t i = 0u; i < repeat_limit; i++) {
-        assert(ctx.message_ages_ms[i] ==
-               (uint32_t)i * FLOOD_RELAY_REPEAT_MS);
-        assert(ctx.queued_at_ms[i] == ctx.delays[i]);
-        if (i > 0u) {
-            assert(ctx.message_ages_ms[i] > ctx.message_ages_ms[i - 1u]);
-        }
-    }
-
-    assert(app_mesh_flood_backoff_ms(0u, 0u) == 20u);
-    assert(app_mesh_flood_backoff_ms(0u, 19u) == 39u);
-    assert(app_mesh_flood_backoff_ms(1u, 0u) == 40u);
-    assert(app_mesh_flood_backoff_ms(1u, 39u) == 79u);
-    assert(app_mesh_flood_backoff_ms(2u, 79u) == 159u);
-    assert(app_mesh_flood_backoff_ms(UINT8_MAX, 0u) == C5_POLITE_BACKOFF_MAX_MS);
 }
 
 static void test_resumable_deferral_saturates_and_rollover_rebases(void)
@@ -557,7 +486,6 @@ static void test_valid_zero_queue_origin_accumulates_age(void)
 
 int main(void)
 {
-    test_survey_start_repeats_age_from_one_origin();
     test_resumable_deferral_saturates_and_rollover_rebases();
     test_pause_after_quiet_check_prevents_send();
     test_pre_rf_blocks_preserve_four_real_opportunities();

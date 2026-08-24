@@ -5,61 +5,15 @@ int app_anchor_init(void)
     !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
     /*
      * The ML anchor is a deterministic full-duty ranging endpoint.  It does
-     * not participate in connected-mesh routing, survey delivery, discovery
+     * not participate in connected-mesh routing, discovery
      * assignment, or gateway command execution, so initializing those owners
      * would retain their queues and custody stores without a consumer.
      */
     return 0;
 #else
-#if DEVICE_ROLE == ROLE_ANCHOR
-    const struct app_anchor_survey_runtime_ops runtime_ops = {
-#if DEVICE_ROLE == ROLE_ANCHOR && \
-    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
-        .work_queue = &anchor_uwb_scan_work_q,
-#endif
-        .send_command_result = anchor_send_command_result,
-        .enter_low_power = anchor_enter_low_power,
-        .set_uwb_busy = anchor_set_uwb_busy,
-        .note_uwb_awake_since = anchor_note_uwb_awake_since,
-        .start_uwb_scan = anchor_start_uwb_scan,
-        .queue_sample_result = anchor_queue_survey_sample_result,
-        .report_queue_used = report_tx_queue_used,
-        .report_schedule = report_tx_schedule,
-        .relay_tx_active = anchor_relay_tx_active,
-        .connected_radio_active = mesh_anchor_connected_radio_active,
-        .active_owner_matches_outbound =
-            mesh_report_active_owner_matches_outbound,
-        .wake_active_outbox = mesh_report_wake_active_outbox,
-    };
-    const struct app_anchor_survey_discovery_ops discovery_ops = {
-        .abort_requested = app_anchor_survey_runtime_abort_requested,
-        .abort_pair = app_anchor_survey_runtime_abort_pair,
-        .admit_start = app_anchor_survey_runtime_admit_discovery,
-        .queue_start = app_anchor_survey_runtime_queue_discovery,
-        .schedule_work_ms =
-            app_anchor_survey_runtime_schedule_discovery_custody_ms,
-        .boot_incarnation = app_durable_state_boot_incarnation,
-        .next_sequence = app_anchor_survey_runtime_next_sequence,
-    };
-#endif
     int ret;
-
-#if DEVICE_ROLE == ROLE_ANCHOR
-    ret = app_anchor_survey_runtime_init(&runtime_ops);
-    if (ret < 0) {
-        return ret;
-    }
-    ret = app_anchor_survey_discovery_init(&discovery_ops);
-    if (ret < 0) {
-        return ret;
-    }
-#endif
-    k_work_init_delayable(&gateway_survey_work, gateway_survey_work_handler);
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
     if (gateway_host_command_msgq.max_msgs != GATEWAY_HOST_COMMAND_QUEUE_DEPTH) {
-        return -EINVAL;
-    }
-    if (gateway_host_abort_msgq.max_msgs != GATEWAY_HOST_ABORT_QUEUE_DEPTH) {
         return -EINVAL;
     }
     ret = app_gateway_command_lifecycle_init(&gateway_host_command_lifecycle,
@@ -71,10 +25,6 @@ int app_anchor_init(void)
                           gateway_host_command_work_handler);
     k_work_init_delayable(&gateway_host_command_retry_work,
                           gateway_host_command_retry_work_handler);
-    k_work_init_delayable(&gateway_host_abort_work,
-                          gateway_host_abort_work_handler);
-    k_work_init_delayable(&gateway_host_abort_route_work,
-                          gateway_host_abort_route_work_handler);
     app_mesh_arbitration_zephyr_gateway_set_schedule_failure_handler(
         gateway_host_command_schedule_failed, NULL);
 #endif
@@ -87,11 +37,6 @@ int app_anchor_init(void)
                           anchor_discovery_claim_work_handler);
 #endif
 #if DEVICE_ROLE == ROLE_GATEWAY
-    app_gateway_survey_incarnation_tracker_init(
-        &gateway_survey_incarnation_tracker);
-    memset(&gateway_survey_incarnation_event,
-           0,
-           sizeof(gateway_survey_incarnation_event));
     {
         const struct app_gateway_assignment_publisher_ops publisher_ops = {
             .emit_if_available = gateway_publish_assignment_event_if_available,
@@ -193,10 +138,6 @@ int app_anchor_start_anchor_role(void)
                 anchor_click_handoff_work_handler);
     k_work_init_delayable(&anchor_heartbeat_work, anchor_heartbeat_work_handler);
     k_work_init_delayable(&anchor_reboot_work, anchor_reboot_work_handler);
-    ret = app_anchor_survey_runtime_start();
-    if (ret < 0) {
-        return ret;
-    }
     k_work_init_delayable(&anchor_collection_result_work,
                           anchor_collection_result_work_handler);
     k_work_init_delayable(&anchor_command_execute_work,
@@ -245,11 +186,6 @@ int app_anchor_start_anchor_role(void)
                        K_THREAD_STACK_SIZEOF(anchor_uwb_scan_work_q_stack),
                        ANCHOR_UWB_SCAN_WORKQUEUE_PRIORITY,
                        &anchor_uwb_scan_work_q_config);
-    ret = app_anchor_survey_runtime_post_work_queue_start();
-    if (ret < 0) {
-        LOG_ERR("anchor survey queue-ready publication failed: %d", ret);
-        return ret;
-    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_note("DBG_ANCHOR_CH5_SCAN_WQ_STARTED\n");
     }

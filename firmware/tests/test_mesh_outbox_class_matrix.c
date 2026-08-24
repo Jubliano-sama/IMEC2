@@ -113,16 +113,6 @@ static void test_local_gateway_host_snapshot_class_matrix(void)
             MSG_MESH_DATA,
             FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
         },
-        {
-            MESH_RELAY_ROLE_ANCHOR,
-            MSG_SURVEY_DISCOVERY_REPORT,
-            FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
-        },
-        {
-            MESH_RELAY_ROLE_ANCHOR,
-            MSG_SURVEY_PAIR_RESULT,
-            FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC,
-        },
     };
 
     for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {

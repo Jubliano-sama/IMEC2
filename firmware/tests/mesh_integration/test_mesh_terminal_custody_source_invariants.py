@@ -41,7 +41,6 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
         self.assertNotIn("mesh_deferred_outbox_pending", transit)
         for source_owner_cleanup in (
             "mesh_anchor_range_report_note_terminal_release(",
-            "anchor_survey_delivery_transport_released(",
             "app_node_comm_note_gateway_failed_digest(",
         ):
             with self.subTest(cleanup=source_owner_cleanup):
@@ -124,8 +123,8 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
         note_claim = apply_assignment.index(
             "local_anchor_discovery_assignment_note_claim(epoch)", settle
         )
-        schedule_claim = apply_assignment.index(
-            "anchor_schedule_discovery_claim(", note_claim
+        start_response_lane = apply_assignment.index(
+            "anchor_start_compact_enumeration_response_lane(", note_claim
         )
 
         supersession_gate = apply_assignment[same_epoch_return:newer]
@@ -134,7 +133,7 @@ class MeshTerminalCustodySourceInvariantTests(unittest.TestCase):
         self.assertLess(same_epoch_resume, same_epoch_return)
         self.assertLess(newer, settle)
         self.assertLess(settle, note_claim)
-        self.assertLess(note_claim, schedule_claim)
+        self.assertLess(note_claim, start_response_lane)
 
         settle_body = function_body(
             ANCHOR, "anchor_settle_ack_before_newer_assignment"

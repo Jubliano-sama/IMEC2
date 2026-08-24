@@ -29,18 +29,8 @@ struct app_gateway_command_identity {
 
 struct app_gateway_command_ingress_ops {
     bool gateway_role;
-    /*
-     * A nonzero local identity enables command-specific host-envelope
-     * validation before any preemptive classification.  Zero retains the
-     * generic command/options validation used by isolated test fixtures.
-     */
+    /* Nonzero identifies the gateway accepting the host envelope. */
     uint64_t gateway_id;
-    bool (*is_preemptive)(
-        void *ctx,
-        const struct app_gateway_command_ingress_item *item);
-    int (*submit_preemptive)(
-        void *ctx,
-        const struct app_gateway_command_ingress_item *item);
     int (*admit)(void *ctx, struct app_gateway_command_ingress_item *item);
     /*
      * A zero return transfers execution custody. Retryable contention may

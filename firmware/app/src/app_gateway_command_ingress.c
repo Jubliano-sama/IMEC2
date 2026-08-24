@@ -47,28 +47,7 @@ int app_gateway_command_ingress_validate_command(
         return -EBADMSG;
     }
 
-    if (gateway_id != 0u &&
-        item->command_id == CMD_SURVEY_ABORT &&
-        item->packet.dst_id == gateway_id) {
-        /*
-         * The gateway-local recovery command is a deliberately closed
-         * command-ID-only schema.  It bypasses normal command serialization,
-         * so its complete host envelope must be canonical before that
-         * authority is even classified as preemptive.
-         */
-        if (item->packet.flags != 0u ||
-            item->packet.src_id == 0u ||
-            item->packet.src_id == gateway_id ||
-            item->packet.session_id == 0u ||
-            item->packet.seq == 0u ||
-            item->packet.ttl != 1u ||
-            item->packet.message_age_ms != 0u ||
-            item->payload_len != PROTO_TLV_U16_ENCODED_LEN ||
-            item->payload[0] != TLV_COMMAND_ID ||
-            item->payload[1] != sizeof(uint16_t)) {
-            return -EBADMSG;
-        }
-    }
+    (void)gateway_id;
     return 0;
 }
 
@@ -164,18 +143,6 @@ int app_gateway_command_ingress_handle_frame(
                          COMMAND_MALFORMED_PAYLOAD,
                          EBADMSG);
         return -EBADMSG;
-    }
-    if (ops->is_preemptive != NULL &&
-        ops->is_preemptive(ops->ctx, item_out)) {
-        if (ops->submit_preemptive == NULL) {
-            return -EINVAL;
-        }
-        ret = ops->submit_preemptive(ops->ctx, item_out);
-        if (ret < 0) {
-            ops->emit_result(ops->ctx, &item_out->packet, command_id,
-                             COMMAND_BUSY, (uint8_t)(-ret));
-        }
-        return ret;
     }
     ret = ops->admit(ops->ctx, item_out);
     if (ret < 0) {

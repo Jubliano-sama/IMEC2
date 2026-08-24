@@ -21,23 +21,11 @@ static struct operation_policy_set complete_policy(void)
 
     operation_policy_set_defaults(&policy);
     policy.assignment_present = true;
-    policy.discovery_present = true;
-    policy.pair_present = true;
     policy.assignment.expected_anchor_count = 12u;
     policy.assignment.operation_budget_ms =
         OPERATION_POLICY_ASSIGNMENT_DEFAULT_BUDGET_MS;
     policy.assignment.response_spread_ms = 750u;
     policy.assignment.ram_only_iteration = true;
-    policy.discovery.start_delay_ms =
-        OPERATION_POLICY_DISCOVERY_DEFAULT_START_DELAY_MS;
-    policy.discovery.slot_ms = OPERATION_POLICY_DISCOVERY_DEFAULT_SLOT_MS;
-    policy.discovery.slot_count = 10u;
-    policy.discovery.round_count =
-        OPERATION_POLICY_DISCOVERY_DEFAULT_ROUND_COUNT;
-    policy.discovery.report_grace_ms = 1200u;
-    policy.discovery.operation_budget_ms = 300000u;
-    policy.pair.max_reruns = 1u;
-    policy.pair.max_parallel_pairs = 1u;
     return policy;
 }
 
@@ -45,8 +33,6 @@ static void assert_policy_equal(const struct operation_policy_set *actual,
                                 const struct operation_policy_set *expected)
 {
     assert(actual->assignment_present == expected->assignment_present);
-    assert(actual->discovery_present == expected->discovery_present);
-    assert(actual->pair_present == expected->pair_present);
     assert(actual->assignment.expected_anchor_count ==
            expected->assignment.expected_anchor_count);
     assert(actual->assignment.operation_budget_ms ==
@@ -55,18 +41,6 @@ static void assert_policy_equal(const struct operation_policy_set *actual,
            expected->assignment.response_spread_ms);
     assert(actual->assignment.ram_only_iteration ==
            expected->assignment.ram_only_iteration);
-    assert(actual->discovery.start_delay_ms ==
-           expected->discovery.start_delay_ms);
-    assert(actual->discovery.slot_ms == expected->discovery.slot_ms);
-    assert(actual->discovery.slot_count == expected->discovery.slot_count);
-    assert(actual->discovery.round_count == expected->discovery.round_count);
-    assert(actual->discovery.report_grace_ms ==
-           expected->discovery.report_grace_ms);
-    assert(actual->discovery.operation_budget_ms ==
-           expected->discovery.operation_budget_ms);
-    assert(actual->pair.max_reruns == expected->pair.max_reruns);
-    assert(actual->pair.max_parallel_pairs ==
-           expected->pair.max_parallel_pairs);
 }
 
 static int copy_policy_tlvs(const uint8_t *payload,
@@ -1096,7 +1070,6 @@ static void test_malformed_and_duplicate_policy_reject_atomically(void)
     struct mesh_relay gateway;
     struct operation_policy_set policy = complete_policy();
     struct mesh_outbound valid;
-    struct mesh_outbound partial;
     struct mesh_outbound duplicate;
     struct mesh_outbound malformed;
     uint8_t policy_tlvs[OPERATION_POLICY_ALL_TLVS_LEN];
@@ -1117,12 +1090,6 @@ static void test_malformed_and_duplicate_policy_reject_atomically(void)
                             &policy_tlvs_len,
                             &first_policy_offset) == PROTO_OK);
     assert(policy_tlvs_len == sizeof(policy_tlvs));
-
-    partial = valid;
-    partial.payload_len -= OPERATION_POLICY_PAIR_TLV_LEN;
-    partial.packet.payload_len = partial.payload_len;
-    assert_route_adv_rejected_without_mutation(&partial,
-                                                TEST_ANCHOR_BASE + 20u);
 
     duplicate = valid;
     memcpy(&duplicate.payload[duplicate.payload_len],
@@ -1153,7 +1120,7 @@ static void test_invalid_policy_capture_and_snapshot_fail_atomically(void)
 
     mesh_relay_init(&gateway, MESH_RELAY_ROLE_GATEWAY,
                     TEST_GATEWAY_ID, TEST_GATEWAY_ID, TEST_ROUTE_EPOCH);
-    incomplete.pair_present = false;
+    incomplete.assignment_present = false;
     memset(&snapshot, 0xa5, sizeof(snapshot));
     unchanged = snapshot;
     next_seq = gateway.next_seq;

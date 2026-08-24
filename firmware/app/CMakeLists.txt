@@ -251,14 +251,13 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
            NOT IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             # Typed stack/protocol evidence has its own RTT channel. Keep the
-            # ordinary deferred warning/error ring bounded so the five-result
-            # survey journal and measured scan stack leave the required 9 KiB
-            # static RAM reserve.
+            # ordinary deferred warning/error ring bounded so the measured
+            # scan stack leaves the required 9 KiB static RAM reserve.
             "CONFIG_LOG_BUFFER_SIZE=1920\n")
         if(IMEC_BUILD_PRESET STREQUAL "mesh_anchor" OR
            IMEC_BUILD_PRESET STREQUAL "mesh_anchor_forcedhop")
             file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
-                # Four-board survey qualification measured 2076/6144 bytes on
+                # Four-board enumeration qualification measured 2076/6144 bytes on
                 # the system workqueue, while its current compiler chain is
                 # 4088 bytes. 5376 retains the 20% policy floor plus compiler
                 # margin, freeing RAM for the measured route worker without
@@ -338,7 +337,7 @@ project(uwb_firmware)
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/dwm3000_sdk.cmake")
 imec_resolve_dwm3000_sdk(DWM3000_SDK_DIR)
 
-# Five immutable survey samples (or transmitter stress datagrams) may be
+# Five immutable priority records (or transmitter stress datagrams) may be
 # admitted together while one protocol-response slot remains available.
 # Keep the pure/native scheduler's wider capacity out of constrained images.
 target_compile_definitions(app PRIVATE NODE_COMM_MAX_REQUESTS=6)
@@ -370,8 +369,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_command_result.c
     src/app_gateway_command_observability.c
     src/app_gateway_assignment_publisher.c
-    src/app_gateway_survey_observability.c
-    src/app_gateway_survey_round.c
     src/app_gateway_collection_eack.c
     src/app_gateway_collection_recovery.c
     src/app_gateway_eack_retry.c
@@ -391,7 +388,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_gateway_command_ingress.c
     src/app_gateway_command_lifecycle.c
     src/app_mesh_gateway_command_flow.c
-    src/app_mesh_local_delivery.c
     src/app_mesh_rx_policy.c
     src/app_mesh_preemption.c
     src/app_mesh_flood.c
@@ -419,9 +415,6 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_anchor.c
     src/app_anchor_command_completion.c
     src/app_anchor_ranging.c
-    src/app_anchor_survey_discovery.c
-    src/app_anchor_survey_result_delivery.c
-    src/app_anchor_survey_runtime.c
     src/app_watchdog.c
     src/dwm3000_driver_handler_contract.c
 )
@@ -480,13 +473,6 @@ target_sources(app PRIVATE
     ../src/serial_frame.c
     ../src/status.c
     ../src/route.c
-    ../src/survey.c
-    ../src/survey_anchor_deadline.c
-    ../src/survey_pair_planner.c
-    ../src/survey_pair_round_runtime.c
-    ../src/survey_round_control.c
-    ../src/survey_gateway_transaction.c
-    ../src/survey_pair_lease.c
 )
 
 target_include_directories(app PRIVATE

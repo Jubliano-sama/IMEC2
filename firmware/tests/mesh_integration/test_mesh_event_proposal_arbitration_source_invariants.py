@@ -445,16 +445,6 @@ ordinary_discard = select_ack.index("mesh_ch9_ack_batch_discard_if_safe(", repai
 assert stale < physical_commit < late_terminal < repair < repair_reason < ordinary_discard
 assert '"ack-tx-stale"' in select_ack[ordinary_discard:]
 
-survey_uplink = function_body(event_tx, "mesh_outbound_is_survey_uplink")
-assert "MSG_SURVEY_DISCOVERY_REPORT" in survey_uplink
-assert "MSG_SURVEY_PAIR_RESULT" in survey_uplink
-assert "MSG_CLICK_REPORT" not in survey_uplink
-keep_waiting = function_body(event_tx, "mesh_event_propose_keep_waiting")
-assert "mesh_event_propose_has_pending_survey_uplink" in keep_waiting
-assert "survey_pair_control_timeout_ms" in function_body(
-    event_tx, "mesh_event_survey_cadence_wait_deadline_ms"
-)
-
 propose = function_body(
     event_tx, "mesh_propose_event_after_channel5_contact_authorized"
 )
@@ -523,7 +513,7 @@ assert "batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE" in send_batch[
 scan = function_body(anchor_radio, "anchor_uwb_scan_work_handler")
 assert "relay_tx_active = mesh_relay_tx_active(&mesh_runtime);" in scan
 assert "mesh_route_waiting_tx_active()" in scan
-retry_gate = function_body(anchor_radio, "anchor_relay_retry_blocks_scan")
+retry_gate = function_body(anchor_radio, "anchor_relay_retry_plan_scan")
 assert "mesh_relay_tx_active(&mesh_runtime)" in retry_gate
 assert "MESH_RELAY_TX_WAIT_RETRY_BACKOFF" in retry_gate
 assert "uptime_deadline_reached(" in retry_gate
@@ -537,8 +527,6 @@ block_start = scan.index("if (anchor_uwb_window_active()")
 block_end = scan.index("uwb_radio_busy) {", block_start) + len("uwb_radio_busy) {")
 block_condition = scan[block_start:block_end]
 assert "anchor_uwb_window_active()" in block_condition
-assert "app_anchor_survey_runtime_radio_active()" in block_condition
-assert "app_anchor_survey_runtime_discovery_is_pending()" not in block_condition
 assert "mesh_rx_active" in block_condition
 assert "ch9_rx_conflict" in block_condition
 assert "uwb_radio_busy" in block_condition
@@ -586,7 +574,7 @@ retry_handler = function_body(
 assert "mesh_local_delivery_blocks_background_event_repair()" in retry_handler
 assert "mesh_event_propose_retry.retry_due_ms = now_ms + 25u" in retry_handler
 
-# Topology proposal exhaustion during a survey or discovery assignment is
+# Topology proposal exhaustion during discovery assignment is
 # cadence contention on the shared parent's single downstream slot: the
 # selected parent stays valid and the same parent gets one jittered retry.
 # The exhausted branch must never abandon, hold down, or rediscover.

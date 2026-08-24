@@ -25,30 +25,20 @@ from tools.gateway_gui.protocol import (  # noqa: E402
     GATEWAY_COMMAND_BUDGET_MIN_MS,
     GATEWAY_IDENTITY_UUID,
     MESH_NETWORK_MAX_HOPS,
-    MSG_ANCHOR_HEARTBEAT,
     GatewayReceiveBuffer,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
-    MSG_SURVEY_DISCOVERY_REPORT,
-    MSG_SURVEY_PAIR_RESULT,
     Packet,
     PACKET_RX_UUID,
     PACKET_TX_UUID,
     ROUTE_REFRESH_OPERATION_DEFAULT_BUDGET_MS,
     SERVICE_UUID,
-    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-    SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS,
-    SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-    TLV_COMMAND_ID,
-    build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_gateway_host_receipt,
     build_here_i_am_command,
-    build_survey_abort_command,
     decode_gateway_identity,
     is_gateway_assignment_publisher_event,
     validate_gateway_local_command_result_packet,
-    validate_survey_discovery_report,
 )
 from tools.gateway_gui.delivery_dedup import (  # noqa: E402
     GatewayPacketDeduplicator,
@@ -56,15 +46,10 @@ from tools.gateway_gui.delivery_dedup import (  # noqa: E402
     is_host_delivery_packet,
 )
 from tools.gateway_gui.operation_policy import (  # noqa: E402
-    DISCOVERY_DEFAULT_ROUND_COUNT,
-    DISCOVERY_DEFAULT_SLOT_MS,
     ASSIGNMENT_DEFAULT_RESPONSE_SPREAD_MS,
     AssignmentOperationPolicy,
-    DiscoveryOperationPolicy,
     OperationPolicyProfile,
     assignment_required_budget_ms,
-    discovery_required_budget_ms,
-    discovery_required_start_delay_ms,
 )
 from tools.gateway_gui.command_telemetry import (  # noqa: E402
     GatewayCommandEvent,
@@ -76,12 +61,9 @@ from tools.gateway_gui.command_orchestration import (  # noqa: E402
     GatewayAssignmentReplayReceipt,
     gateway_command_requires_preflight,
 )
-from tools.gateway_gui.anchor_geometry import solve_anchor_layout  # noqa: E402
-from tools.gateway_gui.diagnostic_models import SurveyGeometryModel  # noqa: E402
 from tools.gateway_gui.protocol import COMMAND_STATUS_NAMES  # noqa: E402
 
 
-GATEWAY_COMMAND_KIND_ANCHOR_SURVEY = 2
 GATEWAY_COMMAND_KIND_ANCHOR_ENUMERATION = 1
 GATEWAY_COMMAND_KIND_ROUTE_REFRESH = 3
 GATEWAY_COMMAND_STAGE_FLOOD_ATTEMPT = 4
@@ -89,21 +71,12 @@ GATEWAY_COMMAND_STAGE_BACKOFF = 5
 GATEWAY_COMMAND_STAGE_ANCHOR_REPORT = 6
 GATEWAY_COMMAND_STAGE_ENUMERATION_COMPLETE = 7
 GATEWAY_COMMAND_STAGE_SCHEDULE_READY = 8
-GATEWAY_COMMAND_STAGE_PAIR_START = 9
-GATEWAY_COMMAND_STAGE_PAIR_SUCCESS = 10
-GATEWAY_COMMAND_STAGE_PAIR_FAILURE = 11
 GATEWAY_COMMAND_STAGE_TERMINAL = 12
-CMD_SURVEY_REACHABILITY = 0x0100
-CMD_SURVEY_PREPARE_PAIR = 0x0101
-CMD_SURVEY_START_PAIR = 0x0102
-CMD_SURVEY_ABORT = 0x0103
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
 CMD_FORCE_REDISCOVERY = 0x000C
 DISCOVERY_SLOT_UNAVAILABLE = 0xFF
 DISCOVERY_SLOT_COUNT = 50
 ROUTE_REFRESH_MAX_LOCAL_ATTEMPTS = 9
-SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S = 5.0
-SURVEY_TERMINAL_DRAIN_MAX_S = 135.0
 BLE_RECONNECT_ATTEMPTS_DEFAULT = 6
 BLE_RECONNECT_DELAY_DEFAULT_S = 0.5
 
@@ -133,40 +106,6 @@ def _assignment_operation_policy(
             deepest_hop=deepest_hop,
             ram_only_iteration=ram_only_iteration,
         )
-    )
-
-
-def _survey_operation_policy(
-    *,
-    expected_anchor_count: int,
-    discovery_slot_count: int,
-    report_grace_ms: int,
-    deepest_hop: int = 0,
-) -> OperationPolicyProfile:
-    """Bind headless survey arguments to the policy firmware validates."""
-    start_delay_ms = discovery_required_start_delay_ms(deepest_hop)
-    discovery_budget_ms = discovery_required_budget_ms(
-        start_delay_ms,
-        DISCOVERY_DEFAULT_SLOT_MS,
-        discovery_slot_count,
-        DISCOVERY_DEFAULT_ROUND_COUNT,
-        report_grace_ms,
-        deepest_hop,
-    )
-    return OperationPolicyProfile(
-        assignment=AssignmentOperationPolicy(
-            expected_anchor_count=expected_anchor_count,
-            deepest_hop=deepest_hop,
-        ),
-        discovery=DiscoveryOperationPolicy(
-            start_delay_ms=start_delay_ms,
-            slot_ms=DISCOVERY_DEFAULT_SLOT_MS,
-            slot_count=discovery_slot_count,
-            round_count=DISCOVERY_DEFAULT_ROUND_COUNT,
-            report_grace_ms=report_grace_ms,
-            operation_budget_ms=discovery_budget_ms,
-            deepest_hop=deepest_hop,
-        ),
     )
 
 
@@ -227,37 +166,6 @@ async def _resolve_gateway_target(name_or_address: str, timeout_s: float) -> obj
             f"gateway {name_or_address!r} was found but did not advertise the IMEC service"
         )
     raise RuntimeError(f"gateway {name_or_address!r} was not found during BLE scan")
-
-
-def _survey_custody_record_retained(packet: Packet) -> bool:
-    """Retain the closed survey set even when it predates this host command."""
-    if packet.msg_type == MSG_ANCHOR_HEARTBEAT:
-        # Heartbeats are diagnostic topology records. The receive buffer has
-        # already checked their stream framing/CRC, and retaining the exact
-        # packet here lets this provisioning host release a stale BLE head.
-        return True
-    if packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT:
-        validate_survey_discovery_report(packet)
-        return True
-    if packet.msg_type == MSG_SURVEY_PAIR_RESULT:
-        return True
-    if packet.msg_type != MSG_COMMAND_RESULT:
-        return False
-    command_ids = tuple(
-        tlv
-        for tlv in packet.tlvs
-        if tlv.type_id == TLV_COMMAND_ID
-    )
-    if len(command_ids) != 1 or command_ids[0].decode_error is not None:
-        return False
-    return command_ids[0].decoded in (
-        CMD_FORCE_REDISCOVERY,
-        CMD_ASSIGN_DISCOVERY_SLOTS,
-        CMD_SURVEY_REACHABILITY,
-        CMD_SURVEY_PREPARE_PAIR,
-        CMD_SURVEY_START_PAIR,
-        CMD_SURVEY_ABORT,
-    )
 
 
 def _failed_qualification_command_result(
@@ -723,176 +631,6 @@ class AssignmentQualification:
         return sum(1 for hop, _previous in self.hop_paths.values() if hop > 1)
 
 
-def _pair(initiator_id: int, responder_id: int) -> tuple[int, int] | None:
-    if initiator_id == 0 or responder_id == 0 or initiator_id == responder_id:
-        return None
-    return tuple(sorted((initiator_id, responder_id)))
-
-
-@dataclass
-class SurveyQualification:
-    host_session_id: int
-    host_sequence: int
-    correlation_id: int
-    survey_id: int
-    expected_anchors: int
-    expected_pairs: int
-    anchors: set[int] = field(default_factory=set)
-    pair_starts: set[tuple[int, int]] = field(default_factory=set)
-    pair_successes: set[tuple[int, int]] = field(default_factory=set)
-    schedule_total: int | None = None
-    terminal_event: GatewayCommandEvent | None = None
-    retries: int = 0
-    errors: list[str] = field(default_factory=list)
-    seen_events: dict[int, GatewayCommandEvent] = field(default_factory=dict)
-    lost_event_baseline: int | None = None
-    geometry_model: SurveyGeometryModel = field(init=False)
-    geometry_rmse_m: float | None = field(default=None, init=False)
-
-    def __post_init__(self) -> None:
-        self.geometry_model = SurveyGeometryModel()
-        self.geometry_model.begin_survey(
-            self.survey_id,
-            host_session_id=self.host_session_id,
-            host_sequence=self.host_sequence,
-        )
-
-    def _matches(self, event: GatewayCommandEvent) -> bool:
-        return (
-            event.command_kind == GATEWAY_COMMAND_KIND_ANCHOR_SURVEY
-            and event.correlation_id == self.correlation_id
-            and event.host_session_id == self.host_session_id
-            and event.host_sequence == self.host_sequence
-        )
-
-    def _error(self, message: str) -> None:
-        if message not in self.errors:
-            self.errors.append(message)
-
-    def observe(self, event: GatewayCommandEvent) -> bool:
-        """Record one correlated event and return true at terminal."""
-        if not self._matches(event):
-            return False
-        if not _accept_event_sequence(event, self.seen_events, self.errors):
-            return self.terminal_event is not None
-        self.geometry_model.observe_command_event(event)
-        self.lost_event_baseline = _observe_lost_event_counter(
-            event,
-            self.lost_event_baseline,
-            self.errors,
-            "survey",
-        )
-        if event.stage == 5:
-            self.retries += 1
-        elif event.stage == GATEWAY_COMMAND_STAGE_ANCHOR_REPORT:
-            if event.command_id != CMD_SURVEY_REACHABILITY or event.anchor_id == 0:
-                self._error("anchor-report event has invalid command or anchor identity")
-            elif event.command_status != 0 or event.reason != 0:
-                self._error("anchor-report event is not successful")
-            else:
-                self.anchors.add(event.anchor_id)
-        elif event.stage == GATEWAY_COMMAND_STAGE_SCHEDULE_READY:
-            if event.command_id != CMD_SURVEY_REACHABILITY:
-                self._error("schedule-ready event has the wrong command")
-            if event.command_status != 0 or event.reason != 0:
-                self._error("schedule-ready event is not successful")
-            if self.schedule_total is not None and self.schedule_total != event.total_count:
-                self._error("schedule-ready pair count changed")
-            self.schedule_total = event.total_count
-        elif event.stage in (
-            GATEWAY_COMMAND_STAGE_PAIR_START,
-            GATEWAY_COMMAND_STAGE_PAIR_SUCCESS,
-            GATEWAY_COMMAND_STAGE_PAIR_FAILURE,
-        ):
-            pair = _pair(event.pair_initiator_id, event.pair_responder_id)
-            if event.command_id != CMD_SURVEY_START_PAIR or pair is None:
-                self._error(f"pair event stage {event.stage} has invalid identity")
-            elif event.stage == GATEWAY_COMMAND_STAGE_PAIR_START:
-                if event.command_status != 0 or event.reason != 0:
-                    self._error("pair-start event is not successful")
-                self.pair_starts.add(pair)
-            elif event.stage == GATEWAY_COMMAND_STAGE_PAIR_SUCCESS:
-                if pair not in self.pair_starts:
-                    self._error("pair succeeded before its pair-start event")
-                if event.command_status != 0 or event.reason != 0:
-                    self._error("pair-success event is not successful")
-                self.pair_successes.add(pair)
-            else:
-                self._error("survey emitted a pair-failure event")
-        elif event.stage == GATEWAY_COMMAND_STAGE_TERMINAL:
-            if event.command_id != CMD_SURVEY_REACHABILITY or not event.terminal:
-                self._error("survey terminal event has invalid command or flags")
-            self.terminal_event = event
-            return True
-        return False
-
-    def observe_packet(self, packet: Packet) -> bool:
-        return self.geometry_model.observe_pair_packet(packet) is not None
-
-    def validate(self) -> None:
-        terminal = self.terminal_event
-        if len(self.anchors) != self.expected_anchors:
-            self._error(
-                f"expected {self.expected_anchors} unique anchors, got {len(self.anchors)}"
-            )
-        if self.schedule_total != self.expected_pairs:
-            self._error(
-                f"expected schedule of {self.expected_pairs} pairs, got {self.schedule_total}"
-            )
-        if len(self.pair_starts) != self.expected_pairs:
-            self._error(
-                f"expected {self.expected_pairs} pair starts, got {len(self.pair_starts)}"
-            )
-        if self.pair_successes != self.pair_starts:
-            self._error("pair-success set does not exactly match the pair-start set")
-        if len(self.geometry_model.pairs) != self.expected_pairs:
-            self._error(
-                f"expected {self.expected_pairs} usable GUI pair distances, got "
-                f"{len(self.geometry_model.pairs)}"
-            )
-        expected_geometry_pairs = {
-            tuple(sorted((f"0x{left:016x}", f"0x{right:016x}")))
-            for left, right in self.pair_successes
-        }
-        if set(self.geometry_model.pairs) != expected_geometry_pairs:
-            self._error(
-                "usable GUI distance identities do not exactly match the "
-                "gateway pair-success identities"
-            )
-        if terminal is None:
-            self._error("matching survey terminal event was not received")
-        elif (
-            terminal.command_status != 0
-            or terminal.reason != 0
-            or terminal.total_count != self.expected_pairs
-            or terminal.success_count != self.expected_pairs
-            or terminal.failure_count != 0
-        ):
-            self._error(
-                "terminal survey counters are not an exact lossless success "
-                f"(status={terminal.command_status} reason={terminal.reason} "
-                f"total={terminal.total_count} success={terminal.success_count} "
-                f"failure={terminal.failure_count} lost={terminal.lost_event_count})"
-            )
-        ready, reason = self.geometry_model.solve_readiness()
-        if not ready:
-            self._error(f"GUI geometry is not solvable: {reason}")
-        else:
-            try:
-                result = solve_anchor_layout(self.geometry_model.pairs.values())
-            except (RuntimeError, ValueError) as exc:
-                self._error(f"GUI geometry solver rejected live pair data: {exc}")
-            else:
-                self.geometry_rmse_m = result.rmse_m
-                if len(result.positions_m) != self.expected_anchors:
-                    self._error(
-                        f"expected solved positions for {self.expected_anchors} anchors, "
-                        f"got {len(result.positions_m)}"
-                    )
-        if self.errors:
-            raise RuntimeError("survey qualification failed: " + "; ".join(self.errors))
-
-
 _identity_state = secrets.randbits(32)
 
 
@@ -913,7 +651,7 @@ def _next_identity(previous: int = 0) -> int:
     return identity
 
 
-Qualification = SurveyQualification | AssignmentQualification | RouteRefreshQualification
+Qualification = AssignmentQualification | RouteRefreshQualification
 
 
 @asynccontextmanager
@@ -945,7 +683,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
     receipt_in_flight: set[object] = set()
     receipt_outstanding: set[object] = set()
     receipt_state_changed = asyncio.Event()
-    survey_custody_activity = asyncio.Event()
     assignment_replay_barrier = GatewayAssignmentReplayBarrier()
     assignment_replay_changed = asyncio.Event()
     command_budget_ms = getattr(args, "command_budget_ms", None)
@@ -1076,7 +813,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     flush=True,
                 )
                 link_disconnected.set()
-                survey_custody_activity.set()
             finally:
                 receipt_in_flight.discard(receipt.identity)
                 receipt_state_changed.set()
@@ -1101,7 +837,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
             accepted_for_receipt = False
             assignment_replay = None
             command_event = None
-            survey_custody_record = False
             received += 1
             print(
                 f"BLE_PACKET type=0x{packet.msg_type:02x} src=0x{packet.src_id:016x} "
@@ -1109,17 +844,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"seq={packet.seq} payload={packet.payload.hex()}",
                 flush=True,
             )
-            if isinstance(qualification, SurveyQualification):
-                qualification.observe_packet(packet)
-            try:
-                survey_custody_record = _survey_custody_record_retained(packet)
-            except DecodeError as exc:
-                message = str(exc)
-                print(f"BLE_DECODE_ERROR {message}", flush=True)
-                decode_errors.append(message)
-                qualification_done.set()
-                transport_failed.set()
-                continue
             if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
                 try:
                     event = decode_gateway_command_event(
@@ -1193,8 +917,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 chunk_size=chunk_size,
                 connection_generation=connection_generation,
             ):
-                if survey_custody_record:
-                    survey_custody_activity.set()
+                pass
 
     def on_disconnect(_client: object) -> None:
         nonlocal disconnect_generation, notifications_enabled
@@ -1204,7 +927,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
         disconnect_generation += 1
         notifications_enabled = False
         link_disconnected.set()
-        survey_custody_activity.set()
         assignment_replay_changed.set()
         receipt_state_changed.set()
         if command_write_active:
@@ -1526,53 +1248,10 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 f"{label} qualification timed out after {timeout_s:.1f}s"
             )
         raise_transport_errors(f"{label} qualification")
-        if isinstance(current, SurveyQualification):
-            drain_deadline = deadline
-            quiet_s = max(
-                float(getattr(args, "survey_terminal_drain_quiet_s", 0.0)),
-                float(args.notification_hold_s),
-            )
-            if quiet_s > 0.0:
-                drain_deadline = min(
-                    deadline,
-                    loop.time() + SURVEY_TERMINAL_DRAIN_MAX_S,
-                )
-
-                # Legacy firmware can publish its terminal event before the
-                # last reliable cleanup result reaches the BLE head. Keep the
-                # exact-record receipt path alive until it has been quiet for
-                # one configured interval, but retain an absolute bound so a
-                # noisy peer cannot keep this command attached forever.
-                survey_custody_activity.clear()
-                while True:
-                    if link_disconnected.is_set():
-                        if not await reconnect_before(
-                            drain_deadline,
-                            f"{label} terminal drain",
-                        ):
-                            break
-                        survey_custody_activity.clear()
-                    remaining_s = drain_deadline - loop.time()
-                    if remaining_s <= 0.0:
-                        break
-                    try:
-                        await asyncio.wait_for(
-                            survey_custody_activity.wait(),
-                            timeout=min(quiet_s, remaining_s),
-                        )
-                    except asyncio.TimeoutError:
-                        break
-                    survey_custody_activity.clear()
-            await await_receipt_custody(
-                drain_deadline,
-                f"{label} terminal drain",
-            )
-            raise_transport_errors(f"{label} terminal drain")
-        else:
-            await await_receipt_custody(
-                deadline,
-                f"{label} qualification receipt drain",
-            )
+        await await_receipt_custody(
+            deadline,
+            f"{label} qualification receipt drain",
+        )
         current.validate()
 
     async def await_assignment_replay_clear(timeout_s: float) -> None:
@@ -1883,10 +1562,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                 }
                 if args.command == "here-i-am":
                     command = build_here_i_am_command(**command_args)
-                elif args.command == "abort-survey":
-                    command_args.pop("command_budget_ms")
-                    command = build_survey_abort_command(**command_args)
-                elif args.command == "assign-slots":
+                else:
                     assignment_policy = _assignment_operation_policy(
                         args.expected_anchors,
                         assignment_command_budget_ms,
@@ -1917,38 +1593,6 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                             expected_multihop_anchors=args.expected_multihop_anchors,
                             expected_anchor_hops=args.expected_anchor_hops,
                         )
-                else:
-                    if args.require_survey_success and args.survey_id:
-                        raise RuntimeError(
-                            "survey qualification requires an auto-generated "
-                            "survey ID so retained results from an earlier "
-                            "operation cannot satisfy the proof"
-                        )
-                    survey_id = args.survey_id or identity
-                    survey_policy = _survey_operation_policy(
-                        expected_anchor_count=args.expected_anchors,
-                        discovery_slot_count=args.discovery_slots,
-                        report_grace_ms=args.survey_duration_ms,
-                        deepest_hop=getattr(args, "deepest_hop", 0),
-                    )
-                    command = build_anchor_discovery_command(
-                        **command_args,
-                        survey_id=survey_id,
-                        duration_ms=args.survey_duration_ms,
-                        discovery_slot_count=args.discovery_slots,
-                        sample_count=args.samples,
-                        expected_anchor_count=args.expected_anchors,
-                        operation_policy=survey_policy,
-                    )
-                    if args.require_survey_success:
-                        qualification = SurveyQualification(
-                            identity,
-                            identity & 0xFFFF,
-                            identity,
-                            survey_id,
-                            args.expected_anchors,
-                            args.expected_pairs,
-                        )
                 if (
                     notifications_enabled
                     and gateway_command_requires_preflight(command.command_id)
@@ -1961,13 +1605,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                         args.assignment_timeout
                     )
                 qualification_timeout_s = None
-                if isinstance(qualification, SurveyQualification):
-                    qualification_timeout_s = _qualification_timeout_s(
-                        args.duration,
-                        command_budget_ms
-                        or SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-                    )
-                elif isinstance(qualification, AssignmentQualification):
+                if isinstance(qualification, AssignmentQualification):
                     qualification_timeout_s = _qualification_timeout_s(
                         args.assignment_timeout,
                         assignment_command_budget_ms
@@ -2012,28 +1650,7 @@ async def run(args: argparse.Namespace) -> Qualification | None:
                     raise_transport_errors(args.command)
         if defer_notifications:
             await enable_notifications()
-        if isinstance(qualification, SurveyQualification):
-            await await_qualification(
-                qualification,
-                _qualification_timeout_s(
-                    args.duration,
-                    command_budget_ms
-                    or SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-                ),
-                "survey",
-                deadline=qualification_deadline,
-            )
-            print(
-                "SURVEY_QUALIFICATION_OK "
-                f"survey={qualification.survey_id} "
-                f"anchors={len(qualification.anchors)} "
-                f"pairs={len(qualification.pair_successes)} "
-                f"distances={len(qualification.geometry_model.pairs)} "
-                f"geometry_rmse_m={qualification.geometry_rmse_m:.6f} "
-                f"retries={qualification.retries}",
-                flush=True,
-            )
-        elif (
+        if (
             isinstance(qualification, AssignmentQualification)
             and args.command == "assign-slots"
         ):
@@ -2083,8 +1700,6 @@ def main() -> None:
             "here-i-am",
             "assign-slots",
             "qualify-reachability",
-            "survey",
-            "abort-survey",
             "monitor",
         ),
         required=True,
@@ -2109,28 +1724,9 @@ def main() -> None:
     )
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--interval", type=float, default=0.05)
-    parser.add_argument("--survey-id", type=lambda value: int(value, 0), default=0)
-    parser.add_argument("--survey-duration-ms", type=int, default=1000)
-    parser.add_argument("--discovery-slots", type=int, default=6)
-    parser.add_argument(
-        "--samples",
-        type=int,
-        default=SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT,
-    )
     parser.add_argument("--notification-hold-s", type=float, default=0.0)
-    parser.add_argument(
-        "--survey-terminal-drain-quiet-s",
-        type=float,
-        default=SURVEY_TERMINAL_DRAIN_QUIET_DEFAULT_S,
-        help=(
-            "post-terminal quiet interval used to receipt delayed retained "
-            "survey records before disconnect"
-        ),
-    )
-    parser.add_argument("--require-survey-success", action="store_true")
     parser.add_argument("--require-assignment-success", action="store_true")
     parser.add_argument("--expected-anchors", type=int, default=3)
-    parser.add_argument("--expected-pairs", type=int, default=3)
     parser.add_argument("--expected-direct-anchors", type=int)
     parser.add_argument("--expected-multihop-anchors", type=int)
     parser.add_argument(
@@ -2175,20 +1771,6 @@ def main() -> None:
         parser.error("--reconnect-attempts must be non-negative")
     if args.reconnect_delay_s < 0.0:
         parser.error("--reconnect-delay-s must be non-negative")
-    if args.survey_terminal_drain_quiet_s < 0.0:
-        parser.error("--survey-terminal-drain-quiet-s must be non-negative")
-    if args.require_survey_success and args.command != "survey":
-        parser.error("--require-survey-success requires --command survey")
-    if args.require_survey_success and args.repeat != 1:
-        parser.error("survey qualification requires --repeat 1")
-    if args.require_survey_success and args.survey_id != 0:
-        parser.error(
-            "survey qualification requires --survey-id 0 (fresh automatic identity)"
-        )
-    if args.require_survey_success and (
-        args.expected_anchors < 2 or args.expected_pairs < 1
-    ):
-        parser.error("survey qualification requires at least two anchors and one pair")
     if args.require_assignment_success and args.command != "assign-slots":
         parser.error("--require-assignment-success requires --command assign-slots")
     if args.command == "qualify-reachability" and args.repeat != 1:
@@ -2199,11 +1781,6 @@ def main() -> None:
         parser.error("assignment qualification requires 1..50 expected anchors")
     if args.route_refresh_timeout <= 0.0 or args.assignment_timeout <= 0.0:
         parser.error("qualification timeouts must be positive")
-    if args.samples != SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT:
-        parser.error(
-            "--samples must be exactly "
-            f"{SURVEY_PAIR_RUNTIME_MAX_SAMPLE_COUNT}"
-        )
     if args.command_budget_ms is not None and not (
         GATEWAY_COMMAND_BUDGET_MIN_MS
         <= args.command_budget_ms
@@ -2226,25 +1803,6 @@ def main() -> None:
             parser.error(
                 "assignment --command-budget-ms must be at least "
                 f"{required_assignment_budget_ms}"
-            )
-    if args.command == "survey" and args.command_budget_ms is not None:
-        if args.command_budget_ms > SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS:
-            parser.error(
-                "survey --command-budget-ms must not exceed the 30-minute "
-                f"safety limit ({SURVEY_GATEWAY_OPERATION_MAX_BUDGET_MS})"
-            )
-        required_survey_budget_ms = discovery_required_budget_ms(
-            discovery_required_start_delay_ms(args.deepest_hop),
-            DISCOVERY_DEFAULT_SLOT_MS,
-            args.discovery_slots,
-            DISCOVERY_DEFAULT_ROUND_COUNT,
-            args.survey_duration_ms,
-            args.deepest_hop,
-        )
-        if args.command_budget_ms < required_survey_budget_ms:
-            parser.error(
-                "survey --command-budget-ms must cover the selected discovery "
-                f"policy: minimum {required_survey_budget_ms}"
             )
     for value, name in (
         (args.expected_direct_anchors, "--expected-direct-anchors"),

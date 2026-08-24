@@ -9,7 +9,6 @@ from tools.gateway_gui.command_telemetry import GatewayCommandRequestTracker
 from tools.gateway_gui.diagnostic_models import (
     AnchorBaseline, CommandTimelineModel, TopologyBaselineModel, command_run_status,
 )
-from tools.gateway_gui.protocol import build_anchor_discovery_command
 from tools.gateway_gui.tests.test_diagnostic_models import event
 
 
@@ -117,28 +116,6 @@ class EnumerationTopologyAlgebraProperties(unittest.TestCase):
                     self.assertFalse(path.exists())
                     model.accept_latest(); self.assertTrue(path.exists())
                     self.assertEqual(TopologyBaselineModel(path).baseline.anchor_ids, tuple(sorted(actual)))
-
-
-class SurveyParameterPartitionProperties(unittest.TestCase):
-    """INVARIANT survey_builder_accepts_exact_valid_partition_only."""
-
-    def test_generated_boundary_partitions_have_specific_validation_reasons(self):
-        base = dict(host_id=1, gateway_id=2, session_id=3, seq=4,
-                    survey_id=5, duration_ms=250, discovery_slot_count=6, sample_count=5)
-        partitions = {
-            "survey ID": ("survey_id", (0, 0x1_0000_0000)),
-            "duration": ("duration_ms", (0, 0x1_0000_0000)),
-            "discovery slot count": ("discovery_slot_count", (0, 51)),
-            "sample count": ("sample_count", (0, 1, 4, 6)),
-        }
-        for phrase, (field, invalid_values) in partitions.items():
-            for value in invalid_values:
-                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, phrase):
-                    build_anchor_discovery_command(**(base | {field: value}))
-        for slots, samples in itertools.product((1, 6, 50), (5,)):
-            command = build_anchor_discovery_command(**(base | {
-                "discovery_slot_count": slots, "sample_count": samples}))
-            self.assertGreater(len(command.packet.payload), 0)
 
 
 if __name__ == "__main__":

@@ -800,65 +800,6 @@ ml = (ROOT / "app/src/app_ml.c").read_text()
 assert "dwm3000_driver_idle()" not in ml
 assert "dwm3000_driver_standby()" not in ml
 assert ml.count("app_clicker_collect_uwb_attempt_with_options_until(") >= 2
-assert "app_clicker_send_wake_claim_train_until(" in ml
-assert "app_clicker_discover_uwb_anchors_until(" in ml
-assert "ml_clicker_anchor_pair_schedule_budget_ms" in ml
-pair_send = ml.index("static int ml_clicker_send_anchor_pair_schedule")
-pair_configure = ml.index("dwm3000_driver_configure_wake_mode", pair_send)
-pair_deadline = ml.index("app_wake_train_deadline_fits", pair_configure)
-pair_tx = ml.index("dwm3000_driver_send_frame", pair_deadline)
-pair_cleanup = ml.index(
-    "app_radio_idle_with_bounded_recovery", pair_tx
-)
-pair_release = ml.index("radio_guard_uwb_stop", pair_cleanup)
-pair_cleanup_failure = ml.index("if (cleanup_ret < 0)", pair_release)
-assert (
-    pair_configure
-    < pair_deadline
-    < pair_tx
-    < pair_cleanup
-    < pair_release
-    < pair_cleanup_failure
-)
-
-pair_receive = source_function_body(ml, "ml_clicker_receive_anchor_pair_results")
-pair_receive_configure = pair_receive.index(
-    "dwm3000_driver_configure_range_mode"
-)
-pair_receive_label = pair_receive.index("cleanup:", pair_receive_configure)
-pair_receive_cleanup = pair_receive.index(
-    "app_radio_standby_with_bounded_recovery", pair_receive_label
-)
-pair_receive_release = pair_receive.index(
-    "radio_guard_uwb_stop", pair_receive_cleanup
-)
-pair_receive_cleanup_failure = pair_receive.index(
-    "if (cleanup_ret < 0)", pair_receive_release
-)
-assert (
-    pair_receive_configure
-    < pair_receive_label
-    < pair_receive_cleanup
-    < pair_receive_release
-    < pair_receive_cleanup_failure
-)
-assert pair_receive.count("goto cleanup;") >= 2
-
-pair_survey = source_function_body(ml, "ml_clicker_run_anchor_pair_survey")
-pair_attempt_budget = pair_survey.index(
-    "ml_clicker_anchor_pair_attempt_budget_ms(session)"
-)
-pair_wake = pair_survey.index(
-    "app_clicker_send_wake_claim_train_until", pair_attempt_budget
-)
-pair_discovery = pair_survey.index(
-    "app_clicker_discover_uwb_anchors_until", pair_wake
-)
-pair_schedule = pair_survey.index(
-    "ml_clicker_send_anchor_pair_schedule", pair_discovery
-)
-assert pair_attempt_budget < pair_wake < pair_discovery < pair_schedule
-
 ml_post_burst = source_function_body(ml, "ml_clicker_run_post_burst_diagnostics")
 diag_target = ml_post_burst.index("attempt_target_us =")
 diag_latest_start = ml_post_burst.index("latest_start_ms =", diag_target)

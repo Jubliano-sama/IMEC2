@@ -128,12 +128,6 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_RESULT_GRANT:
     case MSG_RESULT_BUNDLE:
     case MSG_GATEWAY_COLLECTION_EACK:
-    case MSG_SURVEY_REACH_REQ:
-    case MSG_SURVEY_REACH_REPORT:
-    case MSG_SURVEY_PAIR_PREPARE:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_START:
-    case MSG_SURVEY_DISCOVERY_REPORT:
     case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:

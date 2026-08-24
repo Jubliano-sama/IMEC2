@@ -521,7 +521,7 @@ static bool app_node_comm_reliable_backend_profile(
     enum node_comm_delivery_profile profile)
 {
     return profile == NODE_COMM_PROFILE_RELIABLE_UPLINK ||
-           profile == NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+           profile == NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK ||
            profile == NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE;
 }
 
@@ -535,7 +535,7 @@ static int app_node_comm_durable_attempt_begin(
         return -EINVAL;
     }
     *attempt_token = 0u;
-    if (record->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK) {
+    if (record->profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK) {
         return 0;
     }
     if (node_comm_durable_attempt_owner_count == 0u) {
@@ -566,7 +566,7 @@ static int app_node_comm_durable_attempt_complete(
     if (record == NULL) {
         return -EINVAL;
     }
-    if (record->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK) {
+    if (record->profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK) {
         return 0;
     }
     if (node_comm_durable_attempt_owner_count == 0u ||
@@ -1200,7 +1200,7 @@ static int app_node_comm_preempt_reliable_owner_locked(uint32_t owner_handle,
 
     if (owner == NULL ||
         (owner->profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
-         owner->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK)) {
+         owner->profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK)) {
         return -EACCES;
     }
     if (owner->backend_preempt_delivery_generation != 0u ||
@@ -1644,7 +1644,7 @@ static int app_node_comm_normalize_schedule_result(int ret)
 }
 
 /*
- * A survey transport preemption deliberately closes the mesh workqueue while
+ * A local radio preemption deliberately closes the mesh workqueue while
  * retaining every accepted owner. Reservations created or committed inside
  * that bounded pause are therefore accepted without an immediate work
  * submission; the transport-preemption end path rearms the shared delivery
@@ -2202,8 +2202,8 @@ int app_node_comm_send_control_flood(const app_node_comm_envelope *envelope,
         stamped_envelope = *envelope;
         /*
          * Freeze age before the lower layer starts a wake train.  Protocols
-         * such as survey discovery use message age to align independent
-         * receivers to the same gateway-originated phase.
+         * that use message age can align independent receivers to the same
+         * gateway-originated phase.
          */
         stamped_envelope.queued_at_ms = now_ms;
         stamped_envelope.queued_at_valid = true;
@@ -2408,7 +2408,7 @@ int app_node_comm_submit_delivery(
     if (profile != NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD &&
         profile != NODE_COMM_PROFILE_SINGLE_CONTROL_ORIGIN &&
         profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
-        profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+        profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK &&
         profile != NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE &&
         profile != NODE_COMM_PROFILE_CONTROL_RESPONSE) {
         return -ENOTSUP;
@@ -2574,7 +2574,7 @@ int app_node_comm_submit_protocol_response_auto_reap(
 static bool app_node_comm_reservation_owner_kind_valid(uint8_t owner_kind)
 {
     return owner_kind == APP_NODE_COMM_RESERVATION_OWNER_RELIABLE_UPLINK ||
-           owner_kind == APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT ||
+           owner_kind == APP_NODE_COMM_RESERVATION_OWNER_PRIORITY_RELIABLE_UPLINK ||
            owner_kind == APP_NODE_COMM_RESERVATION_OWNER_COMMAND_RESPONSE ||
            owner_kind == APP_NODE_COMM_RESERVATION_OWNER_BOUNDED_CONTROL;
 }
@@ -2705,7 +2705,7 @@ static int app_node_comm_reserve_deliveries(
         reservation_lease_capacity < reservation_count ||
         (reservation_profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
          reservation_profile !=
-             NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+             NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK &&
          reservation_profile !=
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE &&
          reservation_profile != NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) ||
@@ -2871,7 +2871,7 @@ static int app_node_comm_commit_delivery_reservation(
          !mesh_id_is_unicast(envelope->packet.dst_id)) ||
         (reservation_profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
          reservation_profile !=
-             NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+             NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK &&
          reservation_profile !=
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE &&
          reservation_profile != NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD) ||
@@ -2939,7 +2939,7 @@ static int app_node_comm_commit_delivery_reservation(
             }
             if (ret == 0) {
                 ret = reservation_profile ==
-                              NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ?
+                              NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK ?
                           app_node_comm_schedule_reservation_locked(now_ms) :
                           app_node_comm_normalize_schedule_result(
                               app_node_comm_schedule_delivery_locked(now_ms));
@@ -3054,23 +3054,23 @@ int app_node_comm_cancel_reliable_uplink_reservation(
         APP_NODE_COMM_RESERVATION_OWNER_RELIABLE_UPLINK);
 }
 
-int app_node_comm_reserve_durable_reliable_uplinks(
+int app_node_comm_reserve_priority_reliable_uplinks(
     uint64_t owner_generation,
     size_t reservation_count,
     struct app_node_comm_reservation_lease *reservation_leases,
     size_t reservation_lease_capacity)
 {
     return app_node_comm_reserve_deliveries(
-        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
+        NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
         NODE_COMM_PROFILE_RELIABLE_UPLINK,
-        APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT,
+        APP_NODE_COMM_RESERVATION_OWNER_PRIORITY_RELIABLE_UPLINK,
         owner_generation,
         reservation_count,
         reservation_leases,
         reservation_lease_capacity);
 }
 
-int app_node_comm_commit_durable_reliable_uplink_reservation(
+int app_node_comm_commit_priority_reliable_uplink_reservation(
     const struct app_node_comm_reservation_lease *reservation,
     const app_node_comm_envelope *envelope,
     uint64_t absolute_deadline_ms,
@@ -3079,8 +3079,8 @@ int app_node_comm_commit_durable_reliable_uplink_reservation(
 {
     return app_node_comm_commit_delivery_reservation(
         reservation,
-        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
-        APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT,
+        NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
+        APP_NODE_COMM_RESERVATION_OWNER_PRIORITY_RELIABLE_UPLINK,
         envelope,
         absolute_deadline_ms,
         client_token,
@@ -3088,13 +3088,13 @@ int app_node_comm_commit_durable_reliable_uplink_reservation(
         handle_out);
 }
 
-int app_node_comm_cancel_durable_reliable_uplink_reservation(
+int app_node_comm_cancel_priority_reliable_uplink_reservation(
     const struct app_node_comm_reservation_lease *reservation)
 {
     return app_node_comm_cancel_delivery_reservation(
         reservation,
-        NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK,
-        APP_NODE_COMM_RESERVATION_OWNER_SURVEY_RESULT);
+        NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK,
+        APP_NODE_COMM_RESERVATION_OWNER_PRIORITY_RELIABLE_UPLINK);
 }
 
 int app_node_comm_reserve_protocol_response(
@@ -3244,7 +3244,7 @@ int app_node_comm_service_deliveries(void)
         return -EFAULT;
     }
     if ((attempt_record.profile == NODE_COMM_PROFILE_RELIABLE_UPLINK ||
-         attempt_record.profile == NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+         attempt_record.profile == NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK ||
          attempt_record.profile ==
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE) &&
         node_comm_reliable_uplink_inflight_handle != 0u &&
@@ -3388,7 +3388,7 @@ int app_node_comm_service_deliveries(void)
             &observation);
     } else if (attempt_record.profile == NODE_COMM_PROFILE_RELIABLE_UPLINK ||
                attempt_record.profile ==
-                   NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+                   NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK ||
                attempt_record.profile ==
                    NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE ||
                attempt_record.profile == NODE_COMM_PROFILE_BEST_EFFORT) {
@@ -3490,7 +3490,7 @@ int app_node_comm_service_deliveries(void)
                        (attempt_record.profile ==
                             NODE_COMM_PROFILE_RELIABLE_UPLINK ||
                         attempt_record.profile ==
-                            NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK ||
+                            NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK ||
                         attempt_record.profile ==
                             NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE)) {
                 state_ret = node_comm_lease_await_confirmation(
@@ -3520,7 +3520,7 @@ int app_node_comm_service_deliveries(void)
     } else if (attempt_record.profile == NODE_COMM_PROFILE_BEST_EFFORT) {
         /* Best-effort traffic gets one immediate backend opportunity. A
          * pre-RF deferral must not retain capacity or create route/radio work
-         * behind click, survey, or reliable protocol traffic. */
+         * behind click or reliable protocol traffic. */
         state_ret = node_comm_lease_complete(&node_comm_policy,
                                               &lease,
                                               NODE_COMM_DELIVERY_FAILED,
@@ -3617,7 +3617,7 @@ static int app_node_comm_note_gateway_confirmed_internal(
     record = app_node_comm_delivery_record_for_transaction(packet);
     if (record == NULL ||
         (record->profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
-         record->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+         record->profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK &&
          record->profile !=
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE)) {
         ret = -ENOENT;
@@ -3713,7 +3713,7 @@ static int app_node_comm_note_gateway_failed_internal(
     record = app_node_comm_delivery_record_for_transaction(packet);
     if (record == NULL ||
         (record->profile != NODE_COMM_PROFILE_RELIABLE_UPLINK &&
-         record->profile != NODE_COMM_PROFILE_DURABLE_RELIABLE_UPLINK &&
+         record->profile != NODE_COMM_PROFILE_PRIORITY_RELIABLE_UPLINK &&
          record->profile !=
              NODE_COMM_PROFILE_RELIABLE_PROTOCOL_RESPONSE)) {
         ret = -ENOENT;

@@ -287,7 +287,7 @@ def main() -> None:
     ) < low_level.index("mesh_transport_radio_claim(")
 
     # A retained ACK capability may escape only the exact relay MESH_TX state
-    # or its owner-only MESH_RX wait. It cannot steal a click, survey, gateway
+    # or its owner-only MESH_RX wait. It cannot steal a click, gateway
     # RX, or queued RX turn merely because its token is otherwise valid.
     exact_rx_owner = repair_admission.index("exact_ack_rx_repair_state =")
     repair_state_gate = repair_admission.index(
@@ -304,7 +304,6 @@ def main() -> None:
     assert repair_state_gate < repair_authorization < repair_validate
     assert "capture.rx_queue_used == 0u" in repair_admission
     assert "!capture.click_active" in repair_admission
-    assert "!capture.survey_pending" in repair_admission
     assert "!capture.gateway_continuous_ch9" in repair_admission
     assert "!exact_ack_rx_repair_state" in repair_admission[
         repair_state_gate:repair_authorization
@@ -372,7 +371,7 @@ def main() -> None:
 
     # A click observed inside a gateway-operation listener is still owned by
     # the clicker. The anchor keeps only a bounded local observation until it
-    # has classified and queued assignment, survey, or Here-I-Am control. Once
+    # has classified and queued assignment or Here-I-Am control. Once
     # that queue admission succeeds, the operation wins and no click handoff
     # can establish competing anchor/radio custody.
     retain_click = route_listener.index("DBG_C5_CONTROL_CLICK_RETAIN")

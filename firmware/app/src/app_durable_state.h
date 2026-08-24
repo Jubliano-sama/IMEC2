@@ -78,7 +78,7 @@ enum app_durable_state_role {
 
 /*
  * The NVS IDs behind these types retain the proven pre-RAM-migration key
- * assignments for click, gateway-command, and survey high-water records.
+ * assignments for click and gateway-command high-water records.
  * Their common envelope intentionally rejects older unbound schemas instead
  * of treating them as an empty first install.
  */
@@ -86,7 +86,6 @@ enum app_durable_state_record_type {
     APP_DURABLE_STATE_BOOT_INCARNATION = 1,
     APP_DURABLE_STATE_CLICK_EVENT_SEQUENCE = 2,
     APP_DURABLE_STATE_GATEWAY_COMMAND_SEQUENCE = 3,
-    APP_DURABLE_STATE_SURVEY_GENERATION = 4,
     APP_DURABLE_STATE_ANCHOR_ASSIGNMENT = 5,
     APP_DURABLE_STATE_GATEWAY_ASSIGNMENT = 6,
 };
@@ -198,7 +197,7 @@ int app_durable_state_boot_incarnation(uint32_t *incarnation);
  * exposed. Missing storage is a first install; corrupt, stale-schema, wrong
  * role, wrong-device, and wrong-scope records are errors, never "missing".
  *
- * scope_id is zero for boot/click/command counters. Survey state binds the
+ * scope_id is zero for boot/click/command counters. Scoped state binds a
  * record to the nonzero gateway identity as well as the local device.
  * Boot incarnation is reserved exactly once by app_durable_state_begin_boot()
  * and is not available through this generic API. It is a 32-bit route-epoch seed:
@@ -219,9 +218,9 @@ int app_durable_state_restore_high_water(
     uint64_t *reserved_through);
 
 /*
- * Persist an exact monotonic high-water checkpoint. This is currently the
- * anchor-side survey primitive: exact replay is idempotent and rollback is
- * rejected. Reservation-owned counter types reject this API.
+ * Persist an exact monotonic high-water checkpoint. Exact replay is
+ * idempotent and rollback is rejected. Reservation-owned counter types reject
+ * this API.
  */
 int app_durable_state_advance_high_water(
     enum app_durable_state_record_type type,

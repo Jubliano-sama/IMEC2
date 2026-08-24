@@ -8,7 +8,7 @@
 _Static_assert(FLOOD_EPOCH_GLOBAL_TTL == MESH_NETWORK_MAX_HOPS,
                "ordinary gateway commands must cover the reverse-route contract");
 _Static_assert(MESH_DEFAULT_TTL <= FLOOD_EPOCH_GLOBAL_TTL,
-               "bounded survey command TTL exceeds the network command TTL");
+               "bounded command TTL exceeds the network command TTL");
 
 static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
 {
@@ -17,8 +17,7 @@ static bool deadline_reached(uint32_t now_ms, uint32_t deadline_ms)
 
 static bool command_wait_packet_type(uint8_t msg_type)
 {
-    return msg_type == MSG_COMMAND ||
-           msg_type == MSG_SURVEY_PAIR_PREPARE;
+    return msg_type == MSG_COMMAND;
 }
 
 static bool command_scope_valid(uint8_t scope)
@@ -342,9 +341,6 @@ int gateway_command_extract_id(const uint8_t *payload,
         return PROTO_ERR_MALFORMED;
     }
 
-    if (proto_get_u16_le(value) == CMD_SURVEY_GO_RETIRED_ID) {
-        return PROTO_ERR_MALFORMED;
-    }
     *command_id = (enum command_id)proto_get_u16_le(value);
     return PROTO_OK;
 }
@@ -556,14 +552,8 @@ int gateway_command_rebind_broadcast_sequence(uint8_t *payload,
 
 uint8_t gateway_command_origin_ttl(enum command_id command_id)
 {
-    switch (command_id) {
-    case CMD_SURVEY_PREPARE_PAIR:
-    case CMD_SURVEY_START_PAIR:
-    case CMD_SURVEY_ABORT:
-        return MESH_DEFAULT_TTL;
-    default:
-        return FLOOD_EPOCH_GLOBAL_TTL;
-    }
+    (void)command_id;
+    return FLOOD_EPOCH_GLOBAL_TTL;
 }
 
 enum gateway_command_tracking_mode gateway_command_tracking_mode_from_options(

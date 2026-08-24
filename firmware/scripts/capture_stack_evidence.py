@@ -193,7 +193,10 @@ def capture(
             raise verifier.EvidenceError(
                 "target code identity changed during the RTT capture"
             )
-        transcript_name = f"{build.preset}-{ended.strftime('%Y%m%dT%H%M%SZ')}.typescript"
+        transcript_name = (
+            f"{build.preset}-{probe_id}-"
+            f"{ended.strftime('%Y%m%dT%H%M%SZ')}.typescript"
+        )
         final_transcript = output_dir / transcript_name
         transcript.replace(final_transcript)
     provenance = {

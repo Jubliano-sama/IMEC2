@@ -750,27 +750,6 @@ int mesh_relay_reserve_gateway_ack_candidate(struct mesh_relay *relay,
                                              uint64_t candidate_id,
                                              uint32_t now_ms);
 /*
- * Survey cleanup owns a serialized, exact COMMAND_RESULT expectation. Reserve
- * that outer identity before the ABORT command can reach RF so a saturated
- * source partition cannot reject the result before semantic validation. The
- * application must release the same identity only when that cleanup lifecycle
- * completes or reaches its proven safe-release boundary.
- */
-int mesh_relay_reserve_gateway_ack_cleanup_result(
-    struct mesh_relay *relay,
-    const struct proto_packet *expected_result,
-    uint32_t now_ms);
-int mesh_relay_release_gateway_ack_cleanup_result(
-    struct mesh_relay *relay,
-    const struct proto_packet *expected_result);
-/* A pair may need one exact ABORT result identity per endpoint. Return BUSY
- * until both cleanup suffix slots are free or confirmed-and-replaceable, and
- * publish the exact remaining time until all blocking identities expire. */
-int mesh_relay_gateway_ack_cleanup_pair_capacity(
-    struct mesh_relay *relay,
-    uint32_t now_ms,
-    uint32_t *retry_delay_ms);
-/*
  * A strictly validated RFC1982-newer source boot proves that the source can
  * no longer emit ACK_CONFIRM for gateway ACKs accepted before that reboot.
  * Preserve those exact semantic identities for duplicate repair, but make
@@ -796,12 +775,6 @@ const struct mesh_downlink_entry *mesh_relay_find_downlink(const struct mesh_rel
 const struct mesh_downlink_entry *mesh_relay_find_current_downlink(
     const struct mesh_relay *relay,
     uint64_t target_id);
-/* Caller must first accept a current-survey local gateway report and its RX metadata. */
-int mesh_relay_note_gateway_survey_reverse_route(struct mesh_relay *relay,
-                                                 uint64_t target_id,
-                                                 uint64_t next_hop_id,
-                                                 uint8_t quality,
-                                                 uint32_t now_ms);
 /*
  * An accepted gateway-originated channel-5 control frame proves a fresh
  * reverse first hop for the immediate response. origin_ttl is the TTL used by
@@ -1229,7 +1202,7 @@ int mesh_relay_commit_terminal_release(
  * Commit a gateway-local delivery only after the protocol owner has accepted
  * the exact item. On success, result contains the exact gateway ACK action and
  * binds duplicate handling to the accepted full semantic commitment. Exact
- * survey retries are ACK-sticky; collection result and bundle retries return
+ * Exact retries are ACK-sticky; collection result and bundle retries return
  * to the semantic owner so it can re-arm a missed collection EACK.
  */
 int mesh_relay_commit_gateway_delivery(struct mesh_relay *relay,

@@ -113,11 +113,8 @@ enum msg_type {
     MSG_UWB_FINAL = 0x12,
     MSG_UWB_REPORT = 0x13,
     MSG_UWB_CLICKER_DIAG = 0x14,
-    MSG_UWB_SURVEY_DISCOVERY_PROBE = 0x15,
     MSG_UWB_ANCHOR_DIAG = 0x16,
     MSG_UWB_ANCHOR_DIAG_FRAGMENT = 0x17,
-    MSG_UWB_ANCHOR_PAIR_SCHEDULE = 0x18,
-    MSG_UWB_ANCHOR_PAIR_RESULT = 0x19,
     MSG_UWB_ENUM_BUNDLE = 0x1A,
     MSG_UWB_ENUM_HOP_ACK = 0x1B,
 
@@ -153,12 +150,6 @@ enum msg_type {
     MSG_RESULT_BUNDLE = 0x44,
     MSG_GATEWAY_COLLECTION_EACK = 0x45,
 
-    MSG_SURVEY_REACH_REQ = 0x50,
-    MSG_SURVEY_REACH_REPORT = 0x51,
-    MSG_SURVEY_PAIR_PREPARE = 0x52,
-    MSG_SURVEY_PAIR_RESULT = 0x53,
-    MSG_SURVEY_DISCOVERY_START = 0x54,
-    MSG_SURVEY_DISCOVERY_REPORT = 0x55,
     MSG_GATEWAY_COMMAND_EVENT = 0x56,
     /* Host-to-gateway receipt; valid over serial/COBS, never over UWB. */
     MSG_GATEWAY_HOST_RECEIPT = 0x57,
@@ -198,7 +189,6 @@ enum tlv_type {
     TLV_REQUESTED_MSG_SEQ = 0x12,
     TLV_NEXT_HOP_ID = 0x13,
     TLV_GATEWAY_ID = 0x14,
-    TLV_SURVEY_ID = 0x15,
     TLV_PEER_ID_LIST = 0x16,
     TLV_REACHABILITY_ENTRY = 0x17,
     TLV_RANGE_FLAGS = 0x18,
@@ -351,7 +341,6 @@ enum tlv_type {
     TLV_EACK_PACKET_SEQUENCE = 0xAC,
     TLV_ROUTE_NODE_PATH = 0xAD,
     TLV_OPERATION_POLICY = 0xAE,
-    TLV_SURVEY_ROUND_ID = 0xAF,
     /* Nonzero per-boot incarnation for channel-9 EVENT_PROPOSE recovery. */
     TLV_MESH_EVENT_BOOT_NONCE = 0xB0,
     /* Required wire scheme for ordered discovery-assignment epochs. */
@@ -371,16 +360,6 @@ enum tlv_type {
      * reply diagnostics and are never ACK-completion authority.
      */
     TLV_ROUTE_REPLY_SHA256_COMMITMENT = 0xB5,
-    /*
-     * Gateway-reserved, durable, strictly increasing identity for one survey
-     * operation.  TLV_SURVEY_ID remains the host correlation value.
-     */
-    TLV_SURVEY_OPERATION_GENERATION = 0xB6,
-    /*
-     * Full SHA-256 commitment to one synchronized survey-round plan and its
-     * timing/command semantics.
-     */
-    TLV_SURVEY_ROUND_COMMITMENT = 0xB7,
     /*
      * Repeated gateway/hop ACK identity: acknowledged session, sequence, and
      * full canonical packet SHA-256. Session/sequence lists are diagnostic.
@@ -404,8 +383,6 @@ enum tlv_type {
      * ACCEPT replay without requiring synchronized node uptime clocks.
      */
     TLV_MESH_EVENT_PHASE_SHIFT_MS = 0xBC,
-    /* epoch || TABLE sequence || SHA-256, binding survey START to assignment. */
-    TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xBD,
     /* epoch || TABLE command sequence || SHA-256, binding enumeration END. */
     TLV_DISCOVERY_ASSIGNMENT_END_IDENTITY = 0xBE,
     TLV_DISCOVERY_ASSIGNMENT_ABORT_IDENTITY = 0xBF,
@@ -457,22 +434,14 @@ enum command_id {
     CMD_STOP_HEARTBEAT = 0x000A,
     /* 0x000B retired: gateway time sync. */
     CMD_FORCE_REDISCOVERY = 0x000C,
-    CMD_SURVEY_REACHABILITY = 0x0100,
-    CMD_SURVEY_PREPARE_PAIR = 0x0101,
-    CMD_SURVEY_START_PAIR = 0x0102,
-    CMD_SURVEY_ABORT = 0x0103,
     CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104,
-    /* 0x0105 retired: survey release is carried by START. */
     CMD_ML_START_COLLECTION = 0x8000,
     CMD_ML_START_FAST_RANGING = 0x8001,
-    CMD_ML_START_ANCHOR_PAIR_SURVEY = 0x8002,
     CMD_ML_START_LIVE_TRACKING = 0x8003,
     CMD_ML_LIVE_TRACKING_HEARTBEAT = 0x8004,
     CMD_ML_STOP_LIVE_TRACKING = 0x8005,
     CMD_VENDOR_BASE = 0x8000,
 };
-
-#define CMD_SURVEY_GO_RETIRED_ID 0x0105u
 
 enum command_status {
     COMMAND_OK = 0,

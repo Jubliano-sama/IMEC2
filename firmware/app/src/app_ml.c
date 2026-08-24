@@ -14,7 +14,6 @@
 #include "protocol.h"
 #include "report.h"
 #include "serial_frame.h"
-#include "survey.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -38,7 +37,6 @@ struct ml_clicker_request {
     uint8_t discovery_slot_count;
     bool range_only;
     bool allow_cached_discovery;
-    bool anchor_pair_survey;
     bool live_tracking;
     uint32_t live_watchdog_ms;
 };
@@ -74,12 +72,6 @@ struct ml_clicker_post_burst_diagnostic {
     bool valid;
 };
 
-struct ml_clicker_anchor_pair_result {
-    struct uwb_anchor_pair_result_frame result;
-    uint64_t timestamp_ms;
-    bool valid;
-};
-
 struct ml_clicker_runtime {
     struct ml_clicker_request request;
     uint32_t event_seq;
@@ -96,7 +88,6 @@ struct ml_clicker_runtime {
     uint16_t buffered_sample_head;
     uint16_t flushed_frames;
     uint16_t post_burst_diagnostics;
-    uint16_t anchor_pair_results;
     uint32_t ble_custody_retries;
     bool cached_discovery_used;
     bool custody_failed;
@@ -104,8 +95,6 @@ struct ml_clicker_runtime {
     struct ml_clicker_buffered_sample buffered_samples_storage[ML_CLICKER_BUFFERED_SAMPLE_MAX];
     struct ml_clicker_post_burst_diagnostic
         post_burst_diagnostics_storage[ML_CLICKER_POST_BURST_DIAG_MAX];
-    struct ml_clicker_anchor_pair_result
-        anchor_pair_results_storage[UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS];
     bool active;
 };
 #endif
@@ -165,9 +154,6 @@ static void ml_clicker_cache_note_range_result(uint64_t anchor_id,
 int ml_clicker_seed_cached_anchors(struct uwb_clicker_session *session,
                                           uint8_t max_anchor_count);
 static uint16_t ml_clicker_next_packet_seq(void);
-static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session,
-                                             uint64_t priority_id,
-                                             int64_t click_deadline_ms);
 int ml_clicker_emit_range_sample_if_active(
     const struct uwb_clicker_session *session,
     const struct uwb_range_schedule_frame *schedule,
@@ -181,7 +167,6 @@ void ml_clicker_run_post_burst_diagnostics(
 static int ml_clicker_emit_stored_post_burst_diagnostics(
     const struct uwb_clicker_session *session,
     const struct uwb_range_schedule_frame *schedule);
-static int ml_clicker_emit_stored_anchor_pair_results(void);
 bool ml_clicker_continue_after_range_start_failure(void);
 bool ml_clicker_should_continue_ranging(void);
 void ml_clicker_enter_range_quiet(void);
@@ -745,409 +730,6 @@ int ml_clicker_seed_cached_anchors(struct uwb_clicker_session *session,
            (int)seeded_count : -ENOENT;
 }
 
-static int ml_clicker_build_anchor_pair_schedule(
-    const struct uwb_clicker_session *session,
-    struct uwb_anchor_pair_schedule_frame *schedule)
-{
-    bool used[UWB_SESSION_DISCOVERY_CAPACITY] = {0};
-    uint8_t selected_count;
-
-    if (session == NULL || schedule == NULL) {
-        return -EINVAL;
-    }
-    if (session->candidate_count < UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) {
-        return -ETIMEDOUT;
-    }
-
-    selected_count = MIN(session->candidate_count, session->config.max_anchor_count);
-    if (selected_count < UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) {
-        return -ETIMEDOUT;
-    }
-
-    memset(schedule, 0, sizeof(*schedule));
-    schedule->network_id = session->config.network_id;
-    schedule->clicker_id = session->config.clicker_id;
-    schedule->survey_id = session->config.click_event_id;
-    schedule->attempt_index = session->attempt_index;
-    schedule->nonce = session->config.nonce;
-    schedule->anchor_count = selected_count;
-    schedule->pair_count = uwb_anchor_pair_count(selected_count);
-    schedule->ranging_channel = session->config.ranging_channel;
-    schedule->first_pair_delay_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS;
-    schedule->pair_stride_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS;
-    schedule->pair_window_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS;
-    schedule->reply_delay_us = UWB_RANGE_REPLY_DELAY_UUS;
-    schedule->flags = session->config.flags;
-
-    for (uint8_t out_index = 0u; out_index < selected_count; out_index++) {
-        int selected = -1;
-
-        for (uint8_t i = 0u; i < session->candidate_count; i++) {
-            const struct uwb_anchor_candidate *candidate = &session->candidates[i];
-
-            if (used[i]) {
-                continue;
-            }
-            if (selected < 0 ||
-                candidate->anchor_slot < session->candidates[selected].anchor_slot ||
-                (candidate->anchor_slot == session->candidates[selected].anchor_slot &&
-                 candidate->anchor_id < session->candidates[selected].anchor_id)) {
-                selected = (int)i;
-            }
-        }
-        if (selected < 0) {
-            return -EINVAL;
-        }
-        used[selected] = true;
-        schedule->anchor_ids[out_index] = session->candidates[selected].anchor_id;
-        schedule->anchor_start_delay_ms[out_index] =
-            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS;
-    }
-
-    return uwb_anchor_pair_schedule_encoded_len(schedule->anchor_count) == 0u ?
-           -EINVAL : 0;
-}
-
-static uint16_t ml_clicker_anchor_pair_max_start_delay_ms(
-    const struct uwb_anchor_pair_schedule_frame *schedule);
-
-static uint32_t ml_clicker_anchor_pair_schedule_budget_ms(
-    const struct uwb_anchor_pair_schedule_frame *schedule)
-{
-    uint64_t budget_ms;
-
-    if (schedule == NULL) {
-        return UINT32_MAX;
-    }
-    budget_ms = UWB_CONTROL_TX_TIMEOUT_MS +
-                ml_clicker_anchor_pair_max_start_delay_ms(schedule) +
-                ((uint64_t)schedule->pair_count *
-                 schedule->pair_stride_ms) +
-                schedule->pair_window_ms + 1000u +
-                CLICK_REPORT_BUILD_GUARD_MS;
-    return budget_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)budget_ms;
-}
-
-static uint32_t ml_clicker_anchor_pair_attempt_budget_ms(
-    const struct uwb_clicker_session *session)
-{
-    struct uwb_anchor_pair_schedule_frame schedule = {0};
-    uint32_t wake_tail_ms =
-        app_clicker_wake_train_opportunity_tail_ms(
-            &clicker_wake_train_config);
-    uint32_t wake_prefix_ms;
-    uint32_t discovery_window_ms;
-    uint64_t budget_ms;
-
-    if (session == NULL ||
-        session->config.max_anchor_count <
-            UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) {
-        return UINT32_MAX;
-    }
-
-    schedule.anchor_count = MIN(session->config.max_anchor_count,
-                                UWB_ANCHOR_PAIR_SCHEDULE_MAX_ANCHORS);
-    schedule.pair_count = uwb_anchor_pair_count(schedule.anchor_count);
-    schedule.pair_stride_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_STRIDE_MS;
-    schedule.pair_window_ms = UWB_ANCHOR_PAIR_SURVEY_DEFAULT_WINDOW_MS;
-    for (uint8_t i = 0u; i < schedule.anchor_count; i++) {
-        schedule.anchor_start_delay_ms[i] =
-            UWB_ANCHOR_PAIR_SURVEY_DEFAULT_FIRST_DELAY_MS;
-    }
-
-    wake_prefix_ms =
-        wake_tail_ms > clicker_wake_train_config.post_wake_claimed_duration_ms ?
-        wake_tail_ms -
-            clicker_wake_train_config.post_wake_claimed_duration_ms : 0u;
-    discovery_window_ms = discovery_window_ms_for_slots(
-        ml_clicker_discovery_slot_override > 0u ?
-        ml_clicker_discovery_slot_override :
-        session->config.max_anchor_count);
-    discovery_window_ms = u32_saturating_add(
-        discovery_window_ms, UWB_DISCOVERY_RX_GUARD_MS);
-    budget_ms = (uint64_t)wake_prefix_ms +
-                UWB_CONTROL_TX_TIMEOUT_MS +
-                discovery_window_ms +
-                ml_clicker_anchor_pair_schedule_budget_ms(&schedule);
-    return budget_ms > UINT32_MAX ? UINT32_MAX : (uint32_t)budget_ms;
-}
-
-static int ml_clicker_send_anchor_pair_schedule(
-    const struct uwb_anchor_pair_schedule_frame *schedule,
-    int64_t *schedule_tx_ms,
-    int64_t click_deadline_ms)
-{
-    uint8_t frame[UWB_ANCHOR_PAIR_SCHEDULE_MAX_LEN];
-    size_t frame_len = 0u;
-    int cleanup_ret;
-    int ret;
-
-    if (schedule_tx_ms != NULL) {
-        *schedule_tx_ms = 0;
-    }
-
-    ret = uwb_encode_anchor_pair_schedule(schedule, frame, sizeof(frame), &frame_len);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-
-    ret = radio_guard_uwb_start("clicker UWB ANCHOR_PAIR_SCHEDULE");
-    if (ret < 0) {
-        return ret;
-    }
-    ret = dwm3000_driver_configure_wake_mode();
-    if (ret == 0) {
-        if (!app_wake_train_deadline_fits(
-                k_uptime_get(),
-                click_deadline_ms,
-                ml_clicker_anchor_pair_schedule_budget_ms(schedule))) {
-            ret = -ETIMEDOUT;
-        } else {
-            ret = dwm3000_driver_send_frame(frame,
-                                            frame_len,
-                                            UWB_CONTROL_TX_TIMEOUT_MS);
-        }
-    }
-    cleanup_ret = app_radio_idle_with_bounded_recovery(
-        "ML anchor-pair schedule TX");
-    radio_guard_uwb_stop();
-    if (cleanup_ret < 0) {
-        LOG_ERR("clicker anchor-pair schedule radio cleanup failed: survey=%u operation_ret=%d cleanup_ret=%d",
-                schedule->survey_id,
-                ret,
-                cleanup_ret);
-        return cleanup_ret;
-    }
-    if (ret < 0) {
-        LOG_WRN("clicker anchor-pair schedule TX failed: survey=%u ret=%d",
-                schedule->survey_id,
-                ret);
-        return ret;
-    }
-    if (schedule_tx_ms != NULL) {
-        *schedule_tx_ms = k_uptime_get();
-    }
-    LOG_INF("clicker anchor-pair schedule TX complete: survey=%u anchors=%u pairs=%u schedule_start_ms=%u stride_ms=%u window_ms=%u rx_guard_ms=%u",
-            schedule->survey_id,
-            schedule->anchor_count,
-            schedule->pair_count,
-            schedule->first_pair_delay_ms,
-            schedule->pair_stride_ms,
-            schedule->pair_window_ms,
-            UWB_ANCHOR_PAIR_SURVEY_RX_EARLY_GUARD_MS);
-    return 0;
-}
-
-static bool ml_clicker_anchor_pair_result_matches(
-    const struct uwb_anchor_pair_schedule_frame *schedule,
-    const struct uwb_anchor_pair_result_frame *result)
-{
-    uint64_t initiator_id = 0u;
-    uint64_t responder_id = 0u;
-
-    if (schedule == NULL || result == NULL ||
-        result->network_id != schedule->network_id ||
-        result->clicker_id != schedule->clicker_id ||
-        result->survey_id != schedule->survey_id ||
-        result->nonce != schedule->nonce ||
-        result->pair_count != schedule->pair_count ||
-        result->pair_index >= schedule->pair_count) {
-        return false;
-    }
-    if (uwb_anchor_pair_at(schedule,
-                           result->pair_index,
-                           &initiator_id,
-                           &responder_id) != PROTO_OK) {
-        return false;
-    }
-    return result->initiator_id == initiator_id &&
-           result->responder_id == responder_id;
-}
-
-static uint16_t ml_clicker_anchor_pair_max_start_delay_ms(
-    const struct uwb_anchor_pair_schedule_frame *schedule)
-{
-    uint16_t max_delay_ms = 0u;
-
-    if (schedule == NULL) {
-        return 0u;
-    }
-    for (uint8_t i = 0u; i < schedule->anchor_count; i++) {
-        max_delay_ms = MAX(max_delay_ms, schedule->anchor_start_delay_ms[i]);
-    }
-    return max_delay_ms == 0u ? schedule->first_pair_delay_ms : max_delay_ms;
-}
-
-static int ml_clicker_receive_anchor_pair_results(
-    const struct uwb_anchor_pair_schedule_frame *schedule,
-    int64_t schedule_tx_ms,
-    int64_t click_deadline_ms)
-{
-    uint8_t frame[UWB_ANCHOR_PAIR_RESULT_LEN];
-    size_t frame_len = 0u;
-    uint16_t received_count = 0u;
-    int64_t schedule_end_ms;
-    int64_t rx_deadline_ms;
-    int cleanup_ret;
-    int ret;
-
-    if (schedule == NULL || schedule->pair_count > UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS) {
-        return -EINVAL;
-    }
-
-    schedule_end_ms = schedule_tx_ms +
-                      ml_clicker_anchor_pair_max_start_delay_ms(schedule) +
-                      ((int64_t)schedule->pair_count * schedule->pair_stride_ms) +
-                      schedule->pair_window_ms + 1000;
-    rx_deadline_ms = MIN(schedule_end_ms,
-                         click_deadline_ms - CLICK_REPORT_BUILD_GUARD_MS);
-    if (rx_deadline_ms <= k_uptime_get()) {
-        return -ETIMEDOUT;
-    }
-
-    ret = radio_guard_uwb_start("clicker anchor-pair result RX");
-    if (ret < 0) {
-        return ret;
-    }
-    ret = dwm3000_driver_configure_range_mode();
-    if (ret < 0) {
-        goto cleanup;
-    }
-    if (k_uptime_get() >= rx_deadline_ms) {
-        ret = -ETIMEDOUT;
-        goto cleanup;
-    }
-
-    while (received_count < schedule->pair_count &&
-           k_uptime_get() < rx_deadline_ms) {
-        struct uwb_anchor_pair_result_frame result = {0};
-        int64_t remaining_ms = rx_deadline_ms - k_uptime_get();
-
-        frame_len = 0u;
-        ret = dwm3000_driver_receive_frame_continuous((uint32_t)MAX(1, remaining_ms),
-                                                      frame,
-                                                      sizeof(frame),
-                                                      &frame_len,
-                                                      NULL,
-                                                      NULL,
-                                                      NULL);
-        if (ret == -ETIMEDOUT) {
-            break;
-        }
-        if (ret < 0) {
-            continue;
-        }
-        ret = uwb_decode_anchor_pair_result(frame, frame_len, &result);
-        if (ret != PROTO_OK) {
-            continue;
-        }
-        if (!ml_clicker_anchor_pair_result_matches(schedule, &result)) {
-            LOG_DBG("ML anchor-pair result ignored: survey=%u pair=%u ret=identity",
-                    result.survey_id,
-                    result.pair_index);
-            continue;
-        }
-        if (ml_clicker_runtime.anchor_pair_results_storage[result.pair_index].valid) {
-            continue;
-        }
-        ml_clicker_runtime.anchor_pair_results_storage[result.pair_index].result = result;
-        ml_clicker_runtime.anchor_pair_results_storage[result.pair_index].timestamp_ms =
-            (uint64_t)k_uptime_get();
-        ml_clicker_runtime.anchor_pair_results_storage[result.pair_index].valid = true;
-        ml_clicker_runtime.anchor_pair_results++;
-        received_count++;
-        LOG_INF("ML anchor-pair result RX: survey=%u pair=%u/%u initiator=0x%016llx responder=0x%016llx status=%s(%u) distance_mm=%d",
-                result.survey_id,
-                (unsigned int)(result.pair_index + 1u),
-                result.pair_count,
-                (unsigned long long)result.initiator_id,
-                (unsigned long long)result.responder_id,
-                range_status_name(result.status),
-                result.status,
-                result.distance_mm);
-    }
-
-    ret = received_count == schedule->pair_count ? 0 : -ETIMEDOUT;
-
-cleanup:
-    cleanup_ret = app_radio_standby_with_bounded_recovery(
-        "ML anchor-pair result RX");
-    radio_guard_uwb_stop();
-    if (cleanup_ret < 0) {
-        LOG_ERR("clicker anchor-pair result radio cleanup failed: survey=%u operation_ret=%d cleanup_ret=%d",
-                schedule->survey_id,
-                ret,
-                cleanup_ret);
-        return cleanup_ret;
-    }
-    return ret;
-}
-
-static int ml_clicker_run_anchor_pair_survey(struct uwb_clicker_session *session,
-                                             uint64_t priority_id,
-                                             int64_t click_deadline_ms)
-{
-    struct uwb_anchor_pair_schedule_frame pair_schedule;
-    int64_t schedule_tx_ms = 0;
-    int ret;
-
-    if (session == NULL) {
-        return -EINVAL;
-    }
-    if (!app_wake_train_deadline_fits(
-            k_uptime_get(),
-            click_deadline_ms,
-            ml_clicker_anchor_pair_attempt_budget_ms(session))) {
-        return -ETIMEDOUT;
-    }
-
-    ret = app_clicker_send_wake_claim_train_until(
-        session,
-        priority_id,
-        &clicker_wake_train_config,
-        click_deadline_ms);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = app_clicker_discover_uwb_anchors_until(session,
-                                                 click_deadline_ms);
-    if (ret < 0) {
-        return ret;
-    }
-    if (session->candidate_count < UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS) {
-        LOG_WRN("ML anchor-pair survey needs at least %u anchors: discovered=%u",
-                UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS,
-                session->candidate_count);
-        return -ETIMEDOUT;
-    }
-
-    ret = ml_clicker_build_anchor_pair_schedule(session, &pair_schedule);
-    if (ret < 0) {
-        return ret;
-    }
-    ml_clicker_runtime.selected_anchors = pair_schedule.anchor_count;
-    ml_clicker_runtime.attempted_ranges = pair_schedule.pair_count;
-
-    ret = ml_clicker_send_anchor_pair_schedule(&pair_schedule,
-                                               &schedule_tx_ms,
-                                               click_deadline_ms);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = ml_clicker_receive_anchor_pair_results(&pair_schedule,
-                                                 schedule_tx_ms,
-                                                 click_deadline_ms);
-    LOG_INF("ML anchor-pair survey receive complete: survey=%u anchors=%u pairs=%u received=%u ret=%d",
-            pair_schedule.survey_id,
-            pair_schedule.anchor_count,
-            pair_schedule.pair_count,
-            ml_clicker_runtime.anchor_pair_results,
-            ret);
-    return ret;
-}
-
 #define ML_CLICKER_BLE_CUSTODY_RETRY_MS 5u
 
 static int ml_clicker_try_send_encoded_frame(const uint8_t *frame,
@@ -1539,119 +1121,6 @@ static int ml_clicker_read_live_watchdog_ms(const uint8_t *payload,
     }
 
     *watchdog_ms = value;
-    return 0;
-}
-
-static int ml_clicker_emit_anchor_pair_result_record(
-    const struct ml_clicker_anchor_pair_result *stored)
-{
-    struct proto_packet packet = {0};
-    uint8_t payload[PACKET_MAX_PAYLOAD_LEN];
-    size_t payload_len = 0u;
-    const struct uwb_anchor_pair_result_frame *result;
-    int ret;
-
-    if (stored == NULL || !stored->valid) {
-        return -EINVAL;
-    }
-    result = &stored->result;
-
-    ret = tlv_append_u64(payload, sizeof(payload), &payload_len,
-                         TLV_CLICKER_ID, result->clicker_id);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u32(payload, sizeof(payload), &payload_len,
-                         TLV_SURVEY_ID, result->survey_id);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u32(payload, sizeof(payload), &payload_len,
-                         TLV_EVENT_SEQ, result->survey_id);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u64(payload, sizeof(payload), &payload_len,
-                         TLV_TIMESTAMP_MS, stored->timestamp_ms);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u64(payload, sizeof(payload), &payload_len,
-                         TLV_INITIATOR_ID, result->initiator_id);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u64(payload, sizeof(payload), &payload_len,
-                         TLV_RESPONDER_ID, result->responder_id);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u16(payload, sizeof(payload), &payload_len,
-                         TLV_SAMPLE_INDEX, result->pair_index);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u16(payload, sizeof(payload), &payload_len,
-                         TLV_SAMPLE_COUNT, result->pair_count);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_i32(payload, sizeof(payload), &payload_len,
-                         TLV_DISTANCE_MM, result->distance_mm);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u8(payload, sizeof(payload), &payload_len,
-                        TLV_QUALITY, result->quality);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_u8(payload, sizeof(payload), &payload_len,
-                        TLV_RANGE_STATUS, (uint8_t)result->status);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-    ret = tlv_append_i8(payload, sizeof(payload), &payload_len,
-                        TLV_UWB_RSL_DBM, result->rsl_dbm);
-    if (ret != PROTO_OK) {
-        return -EINVAL;
-    }
-
-    packet.msg_type = MSG_CLICK_REPORT;
-    packet.flags = FLAG_DIAGNOSTIC;
-    packet.src_id = DEVICE_ID;
-    packet.dst_id = ml_clicker_runtime.request.host_id == 0u ?
-                    GATEWAY_ID : ml_clicker_runtime.request.host_id;
-    packet.session_id = result->survey_id;
-    packet.seq = ml_clicker_next_packet_seq();
-    packet.ttl = 1u;
-    packet.payload_len = (uint8_t)payload_len;
-    return ml_clicker_emit_host_packet_retained(&packet,
-                                                payload,
-                                                payload_len);
-}
-
-static int ml_clicker_emit_stored_anchor_pair_results(void)
-{
-    for (uint8_t i = 0u; i < UWB_ANCHOR_PAIR_SURVEY_MAX_PAIRS; i++) {
-        const struct ml_clicker_anchor_pair_result *stored =
-            &ml_clicker_runtime.anchor_pair_results_storage[i];
-        int ret;
-
-        if (!stored->valid) {
-            continue;
-        }
-        ret = ml_clicker_emit_anchor_pair_result_record(stored);
-        if (ret < 0) {
-            ml_clicker_runtime.notify_failures++;
-            LOG_WRN("ML anchor-pair result notify failed: pair=%u ret=%d",
-                    i,
-                    ret);
-            return ret;
-        }
-        ml_clicker_runtime.flushed_frames++;
-        ml_clicker_runtime.emitted_samples++;
-    }
     return 0;
 }
 
@@ -2779,7 +2248,6 @@ void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
     }
     if (command_id != CMD_ML_START_COLLECTION &&
         command_id != CMD_ML_START_FAST_RANGING &&
-        command_id != CMD_ML_START_ANCHOR_PAIR_SURVEY &&
         command_id != CMD_ML_START_LIVE_TRACKING &&
         command_id != CMD_ML_LIVE_TRACKING_HEARTBEAT &&
         command_id != CMD_ML_STOP_LIVE_TRACKING) {
@@ -2833,42 +2301,26 @@ void ml_clicker_handle_ble_frame(const uint8_t *frame, size_t frame_len)
     request.range_only = command_id == CMD_ML_START_FAST_RANGING ||
                          request.live_tracking;
     request.allow_cached_discovery = request.range_only;
-    request.anchor_pair_survey = command_id == CMD_ML_START_ANCHOR_PAIR_SURVEY;
     request.live_watchdog_ms = ML_CLICKER_LIVE_DEFAULT_WATCHDOG_MS;
     if (request.live_tracking) {
         request.samples_per_anchor = UWB_RANGING_REQUESTS_MAX_PER_ANCHOR;
     }
 
-    if (request.anchor_pair_survey) {
-        struct survey_ml_anchor_pair_request survey_request = {0};
-
-        request.samples_per_anchor = 1u;
-        ret = survey_extract_ml_anchor_pair_request_tlvs(decoded_payload,
-                                                         payload_len,
-                                                         request.discovery_slot_count,
-                                                         &survey_request);
-        if (ret == PROTO_OK) {
-            request.discovery_slot_count = survey_request.discovery_slot_count;
-        } else {
-            ret = -EINVAL;
-        }
-    } else {
+    ret = ml_clicker_read_u8_tlv(decoded_payload,
+                                 payload_len,
+                                 TLV_SAMPLE_COUNT,
+                                 request.samples_per_anchor,
+                                 1u,
+                                 UWB_RANGING_REQUESTS_MAX_PER_ANCHOR,
+                                 &request.samples_per_anchor);
+    if (ret == 0) {
         ret = ml_clicker_read_u8_tlv(decoded_payload,
                                      payload_len,
-                                     TLV_SAMPLE_COUNT,
-                                     request.samples_per_anchor,
+                                     TLV_DISCOVERY_SLOT_COUNT,
+                                     request.discovery_slot_count,
                                      1u,
-                                     UWB_RANGING_REQUESTS_MAX_PER_ANCHOR,
-                                     &request.samples_per_anchor);
-        if (ret == 0) {
-            ret = ml_clicker_read_u8_tlv(decoded_payload,
-                                         payload_len,
-                                         TLV_DISCOVERY_SLOT_COUNT,
-                                         request.discovery_slot_count,
-                                         1u,
-                                         UWB_RANGE_SCHEDULE_MAX_ANCHORS,
-                                         &request.discovery_slot_count);
-        }
+                                     UWB_RANGE_SCHEDULE_MAX_ANCHORS,
+                                     &request.discovery_slot_count);
     }
     if (ret == 0 && request.live_tracking) {
         ret = ml_clicker_read_live_watchdog_ms(decoded_payload,
@@ -2938,18 +2390,15 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
     config.clicker_id = DEVICE_ID;
     config.click_event_id = event_seq;
     config.nonce = clicker_nonce(event_seq);
-    config.min_anchor_count = request.anchor_pair_survey ?
-                              UWB_ANCHOR_PAIR_SCHEDULE_MIN_ANCHORS : 1u;
+    config.min_anchor_count = 1u;
     config.max_anchor_count = request.max_anchor_count;
     config.max_attempts = 1u;
-    config.samples_per_anchor = request.anchor_pair_survey ?
-                                1u : request.samples_per_anchor;
+    config.samples_per_anchor = request.samples_per_anchor;
     config.wake_channel = UWB_WAKE_CHANNEL;
     config.ranging_channel = UWB_RANGING_CHANNEL;
     config.flags = request.range_only ?
                    (FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY) : FLAG_DIAGNOSTIC;
-    mode = request.anchor_pair_survey ? "anchor_pair_survey" :
-           (request.range_only ? "fast_range_only" : "full_diagnostics");
+    mode = request.range_only ? "fast_range_only" : "full_diagnostics";
 
     memset(&ml_clicker_runtime, 0, sizeof(ml_clicker_runtime));
     ml_clicker_runtime.request = request;
@@ -2979,11 +2428,7 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
                                        false,
                                        &clicker_attempt_gate_config);
     }
-    if (ret == 0 && request.anchor_pair_survey) {
-        ret = ml_clicker_run_anchor_pair_survey(&session,
-                                                priority_id,
-                                                click_deadline_ms);
-    } else if (ret == 0) {
+    if (ret == 0) {
         ret = app_clicker_collect_uwb_attempt_with_options_until(
             &session,
             priority_id,
@@ -2993,7 +2438,7 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
             click_deadline_ms,
             &schedule_tx_ms);
     }
-    if (ret == 0 && !request.anchor_pair_survey) {
+    if (ret == 0) {
         ml_clicker_runtime.selected_anchors = schedule.selected_count;
         ret = app_clicker_range_scheduled_anchors(&session,
                                           &schedule,
@@ -3003,13 +2448,7 @@ static void ml_clicker_collect_work_handler(struct k_work *work)
         ml_clicker_runtime.attempted_ranges = attempted_count;
     }
     gateway_ble_exit_uwb_quiet("ml-clicker-collection");
-    if (request.anchor_pair_survey) {
-        int emit_ret = ml_clicker_emit_stored_anchor_pair_results();
-
-        if (ret == 0 && emit_ret < 0) {
-            ret = emit_ret;
-        }
-    } else {
+    {
         int flush_ret = ml_clicker_flush_buffered_frames(&schedule);
 
         if (ret == 0 && flush_ret < 0) {

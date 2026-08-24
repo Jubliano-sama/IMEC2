@@ -5,9 +5,6 @@
 #include "mesh_sim.h"
 #include "mesh_sim_invariants.h"
 #include "node_transaction.h"
-#include "survey.h"
-#include "survey_gateway_transaction.h"
-#include "survey_round_control.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -23,11 +20,6 @@
 #define ROUTE_EPOCH UINT32_C(31)
 #define ASSIGNMENT_EPOCH_1 UINT32_C(0x31000101)
 #define ASSIGNMENT_EPOCH_2 UINT32_C(0x31000102)
-#define SURVEY_ID_1 UINT32_C(0x31005001)
-#define SURVEY_ID_2 UINT32_C(0x31005002)
-#define SURVEY_OPERATION_GENERATION_1 UINT64_C(0x0000000131005001)
-#define SURVEY_OPERATION_GENERATION_2 UINT64_C(0x0000000131005002)
-#define SURVEY_ROUND_ID UINT16_C(1)
 #define MAX_DRIVE_STEPS 600u
 #define C5_GUARD_US UINT64_C(500)
 #define DIRECT_GATEWAY_TX_PREPARE_US UINT64_C(20000)
@@ -623,191 +615,9 @@ static bool apply_assignment_table(
                policy, epoch, control->packet.seq, &commitment);
 }
 
-static int build_reach_report(uint64_t source_id, uint64_t peer_id,
-                              uint32_t survey_id, uint16_t seq,
-                              struct proto_packet *packet,
-                              uint8_t *payload,
-                              size_t *payload_len)
-{
-    const uint64_t operation_generation =
-        survey_id == SURVEY_ID_1 ? SURVEY_OPERATION_GENERATION_1 :
-                                   SURVEY_OPERATION_GENERATION_2;
-    const struct survey_reachability_entry entry = {
-        .peer_id = peer_id,
-        .rssi_dbm = -61,
-        .quality = 92u,
-    };
-    int ret = survey_append_reach_report_tlvs(
-        payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len, survey_id,
-        source_id, &entry, 1u);
-    if (ret == PROTO_OK) {
-        ret = survey_operation_generation_append_tlv(
-            payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len,
-            operation_generation);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u32(payload,
-                             UWB_MESH_MAX_PAYLOAD_LEN,
-                             payload_len,
-                             TLV_NODE_BOOT_COUNTER,
-                             1u);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u16(payload, UWB_MESH_MAX_PAYLOAD_LEN, payload_len,
-                             TLV_COMMAND_STATUS, COMMAND_OK);
-    }
-    return ret == PROTO_OK ?
-           survey_init_discovery_report_packet(packet, source_id, GATEWAY_ID,
-                                               survey_id, operation_generation,
-                                               1u, seq,
-                                               (uint8_t)*payload_len) : ret;
-}
-
-static int note_reach_delivery(struct survey_gateway_context *context,
-                               const struct mesh_sim_delivery *item)
-{
-    struct survey_reachability_entry entries[2];
-    const uint8_t *boot_raw = NULL;
-    uint32_t survey_id = 0u;
-    uint64_t anchor_id = 0u;
-    uint64_t operation_generation = 0u;
-    size_t entry_count = 0u;
-    uint8_t boot_len = 0u;
-    int ret = survey_extract_reach_report_tlvs(
-        item->payload, item->payload_len, &survey_id, &anchor_id,
-        entries, 2u, &entry_count);
-    if (ret == PROTO_OK) {
-        ret = survey_operation_generation_extract_tlv(
-            item->payload, item->payload_len, &operation_generation);
-    }
-    if (ret == PROTO_OK) {
-        ret = tlv_find_unique(item->payload, item->payload_len,
-                              TLV_NODE_BOOT_COUNTER,
-                              &boot_raw, &boot_len);
-    }
-    if (ret != PROTO_OK ||
-        boot_len != sizeof(uint32_t) ||
-        item->packet.msg_type != MSG_SURVEY_DISCOVERY_REPORT ||
-        item->packet.src_id != anchor_id ||
-        item->packet.session_id != proto_get_u32_le(boot_raw)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    return survey_gateway_note_reach_report(context, survey_id, anchor_id,
-                                            entries, entry_count);
-}
-
-static int build_pair_control(const struct survey_pair *pair, uint16_t seq,
-                              struct mesh_outbound *outbound)
-{
-    uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN] = {0};
-    size_t payload_len = 0u;
-    int ret;
-    memset(outbound, 0, sizeof(*outbound));
-    ret = survey_append_pair_tlvs(outbound->payload,
-                                  sizeof(outbound->payload), &payload_len,
-                                  pair);
-    if (ret == PROTO_OK) {
-        ret = survey_round_id_append_tlv(
-            outbound->payload, sizeof(outbound->payload), &payload_len,
-            SURVEY_ROUND_ID);
-    }
-    if (ret == PROTO_OK) {
-        proto_put_u16_le(round_commitment, SURVEY_ROUND_ID);
-        ret = survey_round_commitment_append_tlv(
-            outbound->payload, sizeof(outbound->payload), &payload_len,
-            round_commitment);
-    }
-    if (ret == PROTO_OK) {
-        ret = survey_init_pair_prepare_packet(&outbound->packet, pair,
-                                              GATEWAY_ID, LEAF_ID, seq,
-                                              (uint8_t)payload_len);
-    }
-    if (ret != PROTO_OK) {
-        return ret;
-    }
-    outbound->payload_len = (uint16_t)payload_len;
-    outbound->next_hop_id = RELAY_ID;
-    outbound->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
-    return PROTO_OK;
-}
-
-static struct node_transaction_key transaction_key(uint32_t survey_id,
-                                                   uint16_t seq)
-{
-    return (struct node_transaction_key) {
-        .requester_id = GATEWAY_ID,
-        .responder_id = LEAF_ID,
-        .session_id = survey_id,
-        .transaction_id = seq,
-        .operation_id = CMD_SURVEY_PREPARE_PAIR,
-    };
-}
-
-static int build_control_result(uint32_t survey_id, uint16_t seq,
-                                struct proto_packet *packet,
-                                uint8_t *payload,
-                                size_t *payload_len)
-{
-    int ret = mesh_append_command_result(payload, UWB_MESH_MAX_PAYLOAD_LEN,
-                                         payload_len,
-                                         CMD_SURVEY_PREPARE_PAIR,
-                                         COMMAND_OK, 0u);
-    return ret == PROTO_OK ?
-           mesh_init_command_result(packet, LEAF_ID, GATEWAY_ID, survey_id,
-                                    seq, (uint8_t)*payload_len, true) : ret;
-}
-
-static int finish_transaction_delivery(
-    struct survey_gateway_transaction *transaction, uint32_t handle,
-    uint32_t token,
-    uint64_t now_ms)
-{
-    struct node_comm_terminal_event event = {
-        .handle = handle,
-        .client_token = token,
-        .reason = NODE_COMM_TERMINAL_DELIVERED,
-        .attempts_started = 1u,
-    };
-    enum node_transaction_action action = NODE_TRANSACTION_ACTION_NONE;
-    int ret = survey_gateway_transaction_note_delivery_terminal(
-        transaction, &event, now_ms, &action);
-    if (ret != 0 || action != NODE_TRANSACTION_ACTION_TERMINAL_SUCCESS) {
-        return ret == 0 ? -EINVAL : ret;
-    }
-    return survey_gateway_transaction_phase_complete(transaction);
-}
-
-static int build_pair_result(const struct survey_pair *pair, uint16_t seq,
-                             struct proto_packet *packet,
-                             uint8_t *payload,
-                             size_t *payload_len)
-{
-    const struct survey_sample sample = {
-        .pair = *pair,
-        .sample_index = 0u,
-        .distance_mm = 4210,
-        .quality = 91u,
-        .range_status = RANGE_OK,
-    };
-    int ret = survey_append_sample_tlvs(payload, UWB_MESH_MAX_PAYLOAD_LEN,
-                                        payload_len, &sample);
-    if (ret == PROTO_OK) {
-        ret = tlv_append_u64(payload, UWB_MESH_MAX_PAYLOAD_LEN,
-                             payload_len, TLV_TIMESTAMP_MS,
-                             UINT64_C(123456));
-    }
-    return ret == PROTO_OK ?
-           survey_init_result_packet_from_reporter(
-               packet, &sample, LEAF_ID, GATEWAY_ID, seq,
-               (uint8_t)*payload_len) : ret;
-}
-
 struct lifecycle_context {
     struct fixture fixture;
     struct app_discovery_assignment_policy assignment;
-    struct survey_gateway_context survey;
-    struct survey_pair pair;
-    struct survey_gateway_transaction transaction;
     size_t deliveries;
 };
 static struct lifecycle_context lifecycle;
@@ -946,222 +756,6 @@ static bool run_assignment_phase(void)
     return true;
 }
 
-static bool run_survey_discovery_phase(void)
-{
-    struct fixture *fixture = &lifecycle.fixture;
-    struct proto_packet packet;
-    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    size_t payload_len = 0u;
-
-    CHECK(survey_gateway_begin_operation(
-              &lifecycle.survey, SURVEY_ID_1,
-              SURVEY_OPERATION_GENERATION_1, 1u) == PROTO_OK,
-          "survey begin failed");
-    payload_len = 0u;
-    CHECK(build_reach_report(LEAF_ID, RELAY_ID, SURVEY_ID_1, 51u,
-                             &packet, payload, &payload_len) == PROTO_OK,
-          "leaf reach report build failed");
-    lifecycle.deliveries++;
-    CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
-                          lifecycle.deliveries) == MESH_SIM_OK &&
-          note_reach_delivery(
-              &lifecycle.survey,
-              &fixture->world.roles[fixture->gateway]
-                   .deliveries[lifecycle.deliveries - 1u]) ==
-              PROTO_OK,
-          "leaf reach report did not cross forced relay");
-
-    payload_len = 0u;
-    CHECK(build_reach_report(RELAY_ID, LEAF_ID, SURVEY_ID_1, 52u,
-                             &packet, payload, &payload_len) == PROTO_OK &&
-          mesh_sim_queue_originated(&fixture->world, fixture->relay, &packet,
-                                    payload, payload_len) == MESH_SIM_OK,
-          "relay reach report build/queue failed");
-    lifecycle.deliveries++;
-    CHECK(drive_to_delivery_count(fixture, lifecycle.deliveries) == MESH_SIM_OK &&
-          note_reach_delivery(
-              &lifecycle.survey,
-              &fixture->world.roles[fixture->gateway]
-                   .deliveries[lifecycle.deliveries - 1u]) ==
-              PROTO_OK &&
-          survey_gateway_plan_pairs(&lifecycle.survey) == PROTO_OK &&
-          survey_gateway_pair_at(&lifecycle.survey, 0u, &lifecycle.pair) ==
-              PROTO_OK,
-          "survey discovery did not produce a pair");
-    CHECK((lifecycle.pair.initiator_id == LEAF_ID &&
-           lifecycle.pair.responder_id == RELAY_ID) ||
-          (lifecycle.pair.initiator_id == RELAY_ID &&
-           lifecycle.pair.responder_id == LEAF_ID),
-          "survey planner returned the wrong endpoint pair");
-    return true;
-}
-
-static bool run_survey_transaction_phase(void)
-{
-    struct fixture *fixture = &lifecycle.fixture;
-    struct survey_gateway_transaction *transaction = &lifecycle.transaction;
-    struct survey_pair pair2 = lifecycle.pair;
-    struct mesh_outbound control;
-    struct mesh_relay_result leaf_result;
-    struct proto_packet packet;
-    uint8_t payload[UWB_MESH_MAX_PAYLOAD_LEN];
-    size_t payload_len = 0u;
-    struct node_transaction_key old_key;
-    struct node_transaction_key new_key;
-    enum survey_gateway_transaction_result transaction_result;
-    enum node_transaction_action transaction_action;
-    uint8_t old_request_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t old_result_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t new_request_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t new_result_digest[SEMANTIC_DIGEST_SHA256_LEN];
-    uint8_t zero_digest[SEMANTIC_DIGEST_SHA256_LEN] = {0};
-    uint8_t cleanup_mask;
-    const uint32_t old_handle = 101u, old_token = 1001u;
-    const uint32_t new_handle = 102u, new_token = 1002u;
-
-    survey_gateway_transaction_init(transaction);
-    CHECK(survey_gateway_transaction_load_pair(transaction, &lifecycle.pair) == 0,
-          "survey transaction pair load failed");
-    CHECK(build_pair_control(&lifecycle.pair, 61u, &control) == PROTO_OK,
-          "survey prepare control build failed");
-    old_key = transaction_key(SURVEY_ID_1, 61u);
-    CHECK(node_transaction_digest_bytes(
-              control.payload, control.payload_len, old_request_digest),
-          "survey prepare digest failed");
-    CHECK(survey_gateway_transaction_begin(
-              transaction, &old_key, CMD_SURVEY_PREPARE_PAIR,
-              old_request_digest, old_token, old_handle,
-              (fixture->world.now_us / 1000u) + 30000u,
-              fixture->world.now_us / 1000u) == 0 &&
-          deliver_targeted_control(fixture, &control, &leaf_result) ==
-              PROTO_OK,
-          "survey prepare did not cross forced relay");
-    payload_len = 0u;
-    CHECK(build_control_result(SURVEY_ID_1, 61u, &packet,
-                               payload, &payload_len) == PROTO_OK,
-          "survey control result build failed");
-    CHECK(node_transaction_digest_bytes(
-              payload, payload_len, old_result_digest),
-          "survey control result digest failed");
-    lifecycle.deliveries++;
-    CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
-                          lifecycle.deliveries) == MESH_SIM_OK,
-          "survey control result did not reach gateway");
-    CHECK(survey_gateway_transaction_reconcile_result(
-              transaction, &old_key, old_request_digest,
-              old_result_digest, packet.seq, COMMAND_OK,
-              fixture->world.now_us / 1000u, &transaction_result,
-              &transaction_action) == 0 &&
-          transaction_result ==
-              SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK,
-          "survey control result did not reconcile");
-    CHECK(finish_transaction_delivery(
-              transaction, old_handle, old_token,
-              fixture->world.now_us / 1000u) == 0,
-          "survey control transaction did not terminalize");
-
-    /*
-     * Model the gateway cleanup delivery reaching its absolute deadline
-     * without a terminal event. Cleanup is best-effort after that bounded
-     * point: the communication handle is abandoned by the Zephyr adapter and
-     * the transaction must retire so operation N+1 can be admitted.
-     */
-    survey_gateway_transaction_require_cleanup(
-        transaction, false, fixture->world.now_us / 1000u);
-    cleanup_mask = survey_gateway_transaction_cleanup_mask(transaction);
-    CHECK(cleanup_mask != 0u &&
-          survey_gateway_transaction_note_cleanup_started(
-              transaction, cleanup_mask) == 0 &&
-          survey_gateway_transaction_note_cleanup_complete(
-              transaction, cleanup_mask,
-              (fixture->world.now_us / 1000u) + 30001u) == 0 &&
-          !survey_gateway_transaction_cleanup_pending(transaction),
-          "missing cleanup terminal kept operation N busy past its deadline");
-    survey_gateway_transaction_pair_complete(
-        transaction, true, (fixture->world.now_us / 1000u) + 30001u);
-
-    pair2.survey_id = SURVEY_ID_2;
-    pair2.operation_generation = SURVEY_OPERATION_GENERATION_2;
-    CHECK(survey_gateway_transaction_load_pair(transaction, &pair2) == 0 &&
-          build_pair_control(&pair2, 62u, &control) == PROTO_OK,
-          "new survey operation setup failed");
-    new_key = transaction_key(SURVEY_ID_2, 62u);
-    CHECK(node_transaction_digest_bytes(
-              control.payload, control.payload_len, new_request_digest),
-          "new survey control digest failed");
-    CHECK(survey_gateway_transaction_begin(
-              transaction, &new_key, CMD_SURVEY_PREPARE_PAIR,
-              new_request_digest, new_token, new_handle,
-              (fixture->world.now_us / 1000u) + 30000u,
-              fixture->world.now_us / 1000u) == 0 &&
-          deliver_targeted_control(fixture, &control, &leaf_result) ==
-              PROTO_OK,
-          "new survey control did not start");
-
-    /* The delayed, byte-identical N result must be an inert duplicate. */
-    CHECK(survey_gateway_transaction_reconcile_result(
-              transaction, &old_key, old_request_digest,
-              old_result_digest, 61u, COMMAND_OK,
-              fixture->world.now_us / 1000u, &transaction_result,
-              &transaction_action) == 0 &&
-          transaction_result == SURVEY_GATEWAY_TRANSACTION_RESULT_DUPLICATE &&
-          transaction->active.state == NODE_TRANSACTION_ACTIVE &&
-          node_transaction_key_equal(&transaction->active.spec.key, &new_key) &&
-          semantic_digest_equal(transaction->active.accepted_result_digest,
-                                zero_digest,
-                                sizeof(zero_digest)) &&
-          !transaction->abandoning && !transaction->conflict,
-          "operation-N result mutated operation N+1");
-
-    payload_len = 0u;
-    CHECK(build_control_result(SURVEY_ID_2, 62u, &packet,
-                               payload, &payload_len) == PROTO_OK,
-          "new survey result build failed");
-    CHECK(node_transaction_digest_bytes(
-              payload, payload_len, new_result_digest),
-          "new survey result digest failed");
-    lifecycle.deliveries++;
-    CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
-                          lifecycle.deliveries) == MESH_SIM_OK &&
-          survey_gateway_transaction_reconcile_result(
-              transaction, &new_key, new_request_digest,
-              new_result_digest, packet.seq, COMMAND_OK,
-              fixture->world.now_us / 1000u, &transaction_result,
-              &transaction_action) == 0 &&
-          transaction_result ==
-              SURVEY_GATEWAY_TRANSACTION_RESULT_ACCEPTED_OK &&
-          finish_transaction_delivery(
-              transaction, new_handle, new_token,
-              fixture->world.now_us / 1000u) == 0,
-          "operation N+1 did not complete after stale result");
-    survey_gateway_transaction_pair_complete(
-        transaction, true, fixture->world.now_us / 1000u);
-
-    payload_len = 0u;
-    CHECK(build_pair_result(&pair2, 1u, &packet,
-                            payload, &payload_len) == PROTO_OK,
-          "survey sample build failed");
-    lifecycle.deliveries++;
-    CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
-                          lifecycle.deliveries) == MESH_SIM_OK,
-          "survey sample did not cross forced relay");
-    CHECK(fixture->world.roles[fixture->gateway]
-              .deliveries[lifecycle.deliveries - 1u]
-              .packet.msg_type == MSG_SURVEY_PAIR_RESULT &&
-          fixture->world.roles[fixture->gateway]
-              .deliveries[lifecycle.deliveries - 1u]
-              .packet.session_id == SURVEY_ID_2,
-          "gateway did not receive the new survey sample");
-
-    /* An exact RF replay is ACKed idempotently and not delivered twice. */
-    CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
-                          lifecycle.deliveries) == MESH_SIM_OK &&
-          fixture->world.roles[fixture->gateway].delivery_count ==
-              lifecycle.deliveries,
-          "duplicate survey sample produced a second semantic delivery");
-    return true;
-}
-
 static bool run_lifecycle(void)
 {
     struct fixture *fixture = &lifecycle.fixture;
@@ -1178,8 +772,7 @@ static bool run_lifecycle(void)
           "gateway route advertisement did not install the forced route");
     CHECK(!fixture->world.reachable[fixture->leaf][fixture->gateway],
           "fixture accidentally permits direct leaf-to-gateway RF");
-    if (!run_assignment_phase() || !run_survey_discovery_phase() ||
-        !run_survey_transaction_phase()) {
+    if (!run_assignment_phase()) {
         return false;
     }
 
@@ -1194,11 +787,10 @@ static bool run_lifecycle(void)
             bits >>= 1u;
         }
     }
-    CHECK(lifecycle.deliveries >
-              MESH_RELAY_GATEWAY_ACK_IDENTITIES_PER_ORIGIN &&
-          confirmed_history_count > 0u,
-          "ACK-confirm path did not mutate production history across "
-          "capacity progression deliveries=%zu confirmed=%zu",
+    CHECK(lifecycle.deliveries == 3u &&
+          confirmed_history_count == lifecycle.deliveries,
+          "enumeration responses did not retain exact confirmed history "
+          "deliveries=%zu confirmed=%zu",
           lifecycle.deliveries,
           confirmed_history_count);
 
@@ -1218,8 +810,8 @@ static bool run_lifecycle(void)
     CHECK(delivery_retries > 0u && delivery_retries <= 8u,
           "delivery retries are absent or unbounded count=%" PRIu64,
           delivery_retries);
-    CHECK(confirm_retries == lifecycle.deliveries + 1u,
-          "terminal confirmation count disagrees with deliveries and replay "
+    CHECK(confirm_retries == 2u,
+          "enumeration terminal confirmation count disagrees with TABLE paths "
           "count=%" PRIu64 " deliveries=%zu",
           confirm_retries, lifecycle.deliveries);
     CHECK(mesh_sim_count_transitions(
@@ -1255,7 +847,7 @@ int main(void)
     if (!run_lifecycle()) {
         return EXIT_FAILURE;
     }
-    printf("PASS protocol_lifecycle here-i-am assignment survey forced-relay "
+    printf("PASS protocol_lifecycle here-i-am assignment forced-relay "
            "stale-generation bounded direct_gateway_turns=%" PRIu64
            " max_ack_turnaround_us=%" PRIu64 "\n",
            lifecycle.fixture.direct_gateway_turns,

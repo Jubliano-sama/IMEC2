@@ -144,11 +144,10 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
 
         self.assertLess(physical_send, physical_commit)
         self.assertLess(physical_commit, clear_exact_ack)
-        self.assertNotIn("survey_release_ch9_if_current", send)
         self.assertNotIn("mesh_close_channel9_connection", send)
         self.assertNotIn("mesh_relay_clear_channel9_timing", send)
 
-    def test_child_closes_survey_event_only_after_all_topology_work_drains(self):
+    def test_child_closes_topology_event_only_after_all_work_drains(self):
         actions = function_body(REPORT, "mesh_handle_result_actions")
         drain = function_body(REPORT, "mesh_drain_rx_queue_locked")
         arm_close = function_body(REPORT, "mesh_close_channel9_connection")
@@ -500,12 +499,11 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
             "capture.ch9_ack_receive_eligible",
             "capture.rx_queue_used == 0u",
             "!capture.click_active",
-            "!capture.survey_pending",
             "!capture.gateway_continuous_ch9",
         ):
             self.assertIn(required, exact_expression)
         self.assertNotIn("||", exact_expression)
-        self.assertEqual(exact_expression.count("&&"), 7)
+        self.assertEqual(exact_expression.count("&&"), 6)
 
         authorization = allowed.index(
             "authorization != NULL && authorization->valid", state_gate

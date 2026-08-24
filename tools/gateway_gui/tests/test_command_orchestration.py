@@ -6,7 +6,6 @@ from pathlib import Path
 import unittest
 
 from tools.gateway_gui.command_orchestration import (
-    CMD_SURVEY_ABORT,
     GatewayAssignmentReplayBarrier,
     GatewayCommandDispatch,
     GatewayCommandOrchestrator,
@@ -19,8 +18,8 @@ from tools.gateway_gui.command_telemetry import (
 )
 from tools.gateway_gui.protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
+    CMD_CLEAR_ROUTE,
     CMD_FORCE_REDISCOVERY,
-    CMD_SURVEY_REACHABILITY,
     GATEWAY_COMMAND_EVENT_FLAG_REPLAY,
     GATEWAY_COMMAND_EVENT_FLAG_TERMINAL,
 )
@@ -130,8 +129,8 @@ class GatewayAssignmentReplayBarrierTests(unittest.TestCase):
             self.assertIsNotNone(token)
             self.assertTrue(barrier.active)
             self.assertTrue(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
-            self.assertTrue(barrier.blocks(CMD_SURVEY_REACHABILITY))
-            self.assertFalse(barrier.blocks(CMD_SURVEY_ABORT))
+            self.assertTrue(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+            self.assertFalse(barrier.blocks(CMD_CLEAR_ROUTE))
             self.assertFalse(barrier.blocks(CMD_FORCE_REDISCOVERY))
             barrier.receipt_written(token)
             self.assertTrue(barrier.active)
@@ -142,7 +141,7 @@ class GatewayAssignmentReplayBarrierTests(unittest.TestCase):
         barrier.receipt_written(terminal_token)
         self.assertFalse(barrier.active)
         self.assertFalse(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
-        self.assertFalse(barrier.blocks(CMD_SURVEY_REACHABILITY))
+        self.assertFalse(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
 
     def test_live_non_replay_publication_blocks_until_terminal_receipt(self) -> None:
         barrier = GatewayAssignmentReplayBarrier()
@@ -153,8 +152,8 @@ class GatewayAssignmentReplayBarrierTests(unittest.TestCase):
         self.assertIsNotNone(mapping_token)
         self.assertTrue(barrier.active)
         self.assertTrue(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
-        self.assertTrue(barrier.blocks(CMD_SURVEY_REACHABILITY))
-        self.assertFalse(barrier.blocks(CMD_SURVEY_ABORT))
+        self.assertTrue(barrier.blocks(CMD_ASSIGN_DISCOVERY_SLOTS))
+        self.assertFalse(barrier.blocks(CMD_CLEAR_ROUTE))
         self.assertFalse(barrier.blocks(CMD_FORCE_REDISCOVERY))
         assert mapping_token is not None
         self.assertFalse(barrier.receipt_written(mapping_token))
@@ -199,15 +198,15 @@ class GatewayCommandPlanTests(unittest.TestCase):
 
         self.assertTrue(gateway_command_requires_preflight(CMD_ASSIGN_DISCOVERY_SLOTS))
         self.assertFalse(gateway_command_requires_preflight(CMD_FORCE_REDISCOVERY))
-        self.assertFalse(gateway_command_requires_preflight(CMD_SURVEY_ABORT))
+        self.assertFalse(gateway_command_requires_preflight(CMD_CLEAR_ROUTE))
         with self.assertRaisesRegex(ValueError, "requires a Here-I-Am"):
             GatewayCommandPlan.user_triggered(assignment)
         self.assertEqual(
             GatewayCommandPlan.user_triggered(here_i_am).target, here_i_am
         )
-        abort = dispatch(CMD_SURVEY_ABORT, 2, 12, 3)
+        immediate = dispatch(CMD_CLEAR_ROUTE, 2, 12, 3)
         with self.assertRaisesRegex(ValueError, "must not be preflighted"):
-            GatewayCommandPlan.user_triggered(abort, preflight=here_i_am)
+            GatewayCommandPlan.user_triggered(immediate, preflight=here_i_am)
 
     def test_preflight_and_target_must_have_distinct_identities(self) -> None:
         assignment = dispatch(CMD_ASSIGN_DISCOVERY_SLOTS, 1, 10, 1)
@@ -246,7 +245,7 @@ class GatewayCommandSourceInvariantTests(unittest.TestCase):
             ["_dispatch_gateway_command", "_maybe_send_gateway_host_receipt"],
         )
         self.assertTrue(
-            {"_send_discovery", "_send_here_i_am", "_send_assign_discovery_slots"}
+            {"_send_here_i_am", "_send_assign_discovery_slots"}
             <= orchestrated_handlers
         )
 
@@ -256,7 +255,7 @@ class GatewayCommandOrchestratorTests(unittest.TestCase):
         self.tracker = GatewayCommandRequestTracker()
         self.orchestrator = GatewayCommandOrchestrator(self.tracker)
         self.preflight = dispatch(CMD_FORCE_REDISCOVERY, 3, 101, 1)
-        self.target = dispatch(CMD_SURVEY_REACHABILITY, 2, 102, 2)
+        self.target = dispatch(CMD_ASSIGN_DISCOVERY_SLOTS, 1, 102, 2)
         self.plan = GatewayCommandPlan.user_triggered(
             self.target, preflight=self.preflight
         )

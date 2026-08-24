@@ -28,6 +28,24 @@ sys.modules[SPEC.name] = verifier
 SPEC.loader.exec_module(verifier)
 
 
+def function_body(source: str, name: str) -> str:
+    match = re.search(
+        rf"\b{re.escape(name)}\s*\([^;{{}}]*\)\s*\{{", source
+    )
+    if match is None:
+        raise AssertionError(f"function definition not found: {name}")
+    start = source.index("{", match.start())
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise AssertionError(f"unterminated function: {name}")
+
+
 def _line(key: str, value: object) -> str:
     if value is True:
         return f"{key}=y"
@@ -248,8 +266,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             "relay_retry": "mesh_route",
             "ble_backpressure": "system_workqueue",
             "click_activity": "clicker_action",
-            "anchor_survey_report": "anchor_uwb_scan",
-            "gateway_report_ingress": "system_workqueue",
+            "anchor_scan": "anchor_uwb_scan",
+            "gateway_report_ingress": "mesh_route",
             "gateway_priority_control": "system_workqueue",
         }
         lines = [f"DBG_STACK_BOOT preset={policy.preset} build={build.build_identity} epoch=1 uptime=1"]
@@ -360,7 +378,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             [item.kind for item in workload_policy["mesh_clicker"]],
         )
         self.assertEqual(
-            ["anchor_survey_report"],
+            ["anchor_scan"],
             [item.kind for item in workload_policy["mesh_anchor"]],
         )
         self.assertEqual(
@@ -1331,7 +1349,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         self.assertEqual([], evidence.issues)
 
-    def test_anchor_capture_requires_survey_owner_queue_with_exact_stack(self) -> None:
+    def test_anchor_capture_requires_scan_owner_queue_with_exact_stack(self) -> None:
         policy = self.policies["mesh_anchor"]
         build = verifier.BuildEvidence(
             self.root,
@@ -1970,13 +1988,13 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
         log = self._typed_log(policy, build)
         forged = log.read_text(encoding="utf-8").replace(
-            "kind=gateway_report_ingress owner=system_workqueue",
+            "kind=gateway_report_ingress owner=mesh_route",
             "kind=gateway_report_ingress owner=bt_rx",
         )
         _, issues = verifier.parse_typed_transcript(forged, policy, build)
         self.assertTrue(any("owner differs" in issue for issue in issues), issues)
 
-        other_role = self._typed_log(policy, build, ["anchor_survey_report"])
+        other_role = self._typed_log(policy, build, ["anchor_scan"])
         _, issues = verifier.parse_typed_transcript(
             other_role.read_text(encoding="utf-8"), policy, build
         )
@@ -1986,10 +2004,14 @@ class StackEvidenceVerifierTests(unittest.TestCase):
     def test_required_workloads_have_genuine_role_call_sites(self) -> None:
         clicker = (REPO_ROOT / "firmware" / "app" / "src" /
                    "app_clicker.c").read_text(encoding="utf-8")
-        anchor = (REPO_ROOT / "firmware" / "app" / "src" /
-                  "app_anchor_survey_discovery.c").read_text(encoding="utf-8")
+        anchor = read_composed_source(
+            REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
+        )
         gateway = read_composed_source(
             REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
+        )
+        mesh_report = read_composed_source(
+            REPO_ROOT / "firmware" / "app" / "src" / "app_mesh_report.c"
         )
         ble = read_composed_source(
             REPO_ROOT / "firmware" / "app" / "src" / "app_gateway_ble.c"
@@ -1997,14 +2019,15 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
         self.assertIn("dwm3000_driver_range_initiator", clicker)
         self.assertIn("app_stack_workload_diag_click_activity_sample", clicker)
-        self.assertIn("app_mesh_local_delivery_stage", anchor)
-        self.assertIn("app_stack_workload_diag_anchor_survey_admit", anchor)
-        self.assertIn("app_stack_workload_diag_anchor_survey_sample", anchor)
-        self.assertIn("app_stack_workload_diag_anchor_survey_release", anchor)
-        self.assertIn("survey_gateway_note_reach_report_with_reverse_hint", gateway)
-        self.assertIn("app_stack_workload_diag_gateway_report_cycle", gateway)
+        self.assertIn("anchor_uwb_scan_work_handler", anchor)
+        self.assertIn(
+            "dwm3000_driver_receive_frame_continuous_extend_on_activity",
+            anchor,
+        )
+        self.assertIn(
+            "app_stack_workload_diag_gateway_report_cycle", mesh_report
+        )
         self.assertIn("app_node_comm_submit_delivery", gateway)
-        self.assertIn("gateway_survey_wait_for_discovery_collection", gateway)
         self.assertIn("gateway_discovery_assignment_service_delivery", gateway)
         self.assertIn("app_stack_workload_diag_gateway_control_sample", gateway)
         self.assertIn("app_stack_workload_diag_ble_admit_with_pressure", ble)
@@ -2014,14 +2037,12 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         gateway = read_composed_source(
             REPO_ROOT / "firmware" / "app" / "src" / "app_anchor.c"
         )
-        signature = "static void gateway_host_command_submit_next_queued(void)\n{"
-        start = gateway.index(signature)
-        end = gateway.index(
-            "\nstatic size_t gateway_host_command_cancel_pending_surveys", start
+        body = function_body(
+            gateway,
+            "gateway_host_command_submit_next_queued",
         )
-        body = gateway[start:end]
 
-        self.assertEqual(1, body.count("gateway_host_command_submit_next_queued"))
+        self.assertEqual(0, body.count("gateway_host_command_submit_next_queued"))
         self.assertNotIn("gateway_host_command_submit_priority(", body)
         self.assertIn(
             "k_work_reschedule(&gateway_host_command_retry_work, K_NO_WAIT)",

@@ -84,8 +84,8 @@ static const char *stack_diag_workload_name(enum app_stack_diag_workload workloa
         return "ble_backpressure";
     case APP_STACK_DIAG_WORKLOAD_CLICK_ACTIVITY:
         return "click_activity";
-    case APP_STACK_DIAG_WORKLOAD_ANCHOR_SURVEY_REPORT:
-        return "anchor_survey_report";
+    case APP_STACK_DIAG_WORKLOAD_ANCHOR_SCAN:
+        return "anchor_scan";
     case APP_STACK_DIAG_WORKLOAD_GATEWAY_REPORT_INGRESS:
         return "gateway_report_ingress";
     case APP_STACK_DIAG_WORKLOAD_GATEWAY_PRIORITY_CONTROL:

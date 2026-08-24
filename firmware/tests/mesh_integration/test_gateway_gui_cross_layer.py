@@ -21,7 +21,6 @@ from tools.gateway_gui.protocol import (
     FLAG_GATEWAY_ACK_REQUIRED,
     GatewayReceiveBuffer,
     MSG_CLICK_REPORT,
-    SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
     TLV_ANCHOR_ID,
     TLV_BURST_ID,
     TLV_CLICKER_ID,
@@ -44,7 +43,6 @@ from tools.gateway_gui.protocol import (
     TLV_UWB_CIR_TOTAL_BYTES,
     TLV_OPERATION_POLICY,
     append_tlv,
-    build_anchor_discovery_command,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
     click_report_session_id,
@@ -338,7 +336,6 @@ def main() -> None:
     policy_values = profile.encoded_values()
     full_policy_suffix = operation_policy_suffix(policy_values)
     assignment_policy_suffix = operation_policy_suffix(policy_values[:1])
-    survey_policy_suffix = operation_policy_suffix(policy_values[1:])
     policy_enumeration = build_assign_discovery_slots_command(
         host_id=HOST,
         gateway_id=GATEWAY,
@@ -367,27 +364,6 @@ def main() -> None:
     policy_route_parsed = firmware_parse(oracle, policy_route.frame)
     assert "command_id=12" in policy_route_parsed
     assert f"payload=10020c00{full_policy_suffix}" in policy_route_parsed
-
-    policy_survey = build_anchor_discovery_command(
-        host_id=HOST,
-        gateway_id=GATEWAY,
-        session_id=0x1234567C,
-        seq=21,
-        survey_id=7,
-        duration_ms=profile.discovery.report_grace_ms,
-        discovery_slot_count=profile.discovery.slot_count,
-        sample_count=5,
-        expected_anchor_count=5,
-        command_budget_ms=SURVEY_GATEWAY_OPERATION_DEFAULT_BUDGET_MS,
-        operation_policy=profile,
-    )
-    expected_survey_payload = (
-        "100200011504070000001a04fa0000000f0205004c0106"
-        "78020500ab0440771b00" + survey_policy_suffix
-    )
-    policy_survey_parsed = firmware_parse(oracle, policy_survey.frame)
-    assert "command_id=256" in policy_survey_parsed
-    assert f"payload={expected_survey_payload}" in policy_survey_parsed
 
     timeline = CommandTimelineModel()
     with tempfile.TemporaryDirectory() as temporary:

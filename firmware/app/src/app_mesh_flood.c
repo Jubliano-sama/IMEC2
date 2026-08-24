@@ -100,8 +100,7 @@ static bool flood_destination_valid(const struct mesh_outbound *out)
                        out->packet.dst_id != MESH_BROADCAST_ID &&
                        out->next_hop_id != 0u &&
                        out->next_hop_id != MESH_BROADCAST_ID &&
-                       (out->packet.msg_type == MSG_COMMAND ||
-                        out->packet.msg_type == MSG_SURVEY_PAIR_PREPARE);
+                       out->packet.msg_type == MSG_COMMAND;
     return broadcast || targeted_command;
 }
 

@@ -978,8 +978,7 @@ bool mesh_transport_quiesced(void)
            !radio_guard_uwb_busy() &&
            /* A paused EVENT_ACCEPT retry is retained RAM custody, not live
             * RF.  Keep it parked for resume, but wait for an attempt that is
-            * physically inside the response send before lending the radio to
-            * survey discovery. */
+            * physically inside the response send before lending the radio. */
            atomic_get(&mesh_rx_response_active_state) == 0 &&
            atomic_get(&mesh_rx_handler_active_state) == 0;
 }
@@ -2105,7 +2104,6 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
 
     if (DEVICE_ROLE == ROLE_ANCHOR) {
         state.anchor_busy = anchor_uwb_window_active();
-        state.survey_busy = mesh_report_anchor_survey_radio_active();
     }
 
     now_ms = k_uptime_get_32();
@@ -2366,8 +2364,7 @@ static int mesh_c5_flood_store_deferred(const struct mesh_outbound *out,
         radio_guard_uwb_owner_client() ==
             RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN &&
         !anchor_uwb_window_active() &&
-        !anchor_click_window_active() &&
-        !mesh_report_anchor_survey_radio_active()) {
+        !anchor_click_window_active()) {
         abort_background_scan = true;
     }
     k_mutex_unlock(&mesh_c5_flood_deferred_lock);
@@ -2402,8 +2399,7 @@ static bool mesh_c5_flood_destination_valid(const struct mesh_outbound *out)
                 out->next_hop_id == MESH_BROADCAST_ID;
     targeted_command = mesh_id_is_unicast(out->packet.dst_id) &&
                        mesh_id_is_unicast(out->next_hop_id) &&
-                       (out->packet.msg_type == MSG_COMMAND ||
-                        out->packet.msg_type == MSG_SURVEY_PAIR_PREPARE);
+                       out->packet.msg_type == MSG_COMMAND;
     return broadcast || targeted_command;
 }
 
@@ -2923,12 +2919,7 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     if (send_wake_train) {
         tx_span_ms += wake_train_ms + MESH_CONTROL_FOLLOWUP_TURNAROUND_MS;
     }
-    *scheduled_retry_delay_ms =
-        app_anchor_gateway_survey_c5_quiet_delay_ms(k_uptime_get_32(),
-                                                     tx_span_ms);
-    if (*scheduled_retry_delay_ms != 0u) {
-        return -EAGAIN;
-    }
+    *scheduled_retry_delay_ms = 0u;
     ret = k_mutex_lock(&mesh_c5_control_scratch_lock, K_NO_WAIT);
     if (ret < 0) {
         return -EBUSY;
@@ -3148,7 +3139,7 @@ int mesh_try_send_reliable_uplink_view(
      * role scan continuously armed, so the result never reaches the event
      * proposal that establishes its return Channel-9 cadence.  Claim one
      * exact RX-to-control boundary for this response.  Queued mesh work and
-     * the coordinator's click/survey/ACK priorities still apply after the
+     * the coordinator's click/ACK priorities still apply after the
      * handoff; this only prevents a redundant receive rearm from winning
      * forever.
      */
@@ -3165,17 +3156,16 @@ int mesh_try_send_reliable_uplink_view(
             ((protocol_response_radio_owner ==
                   RADIO_GUARD_UWB_CLIENT_MESH_RX &&
               !anchor_uwb_window_active()) ||
-             protocol_response_radio_owner ==
+            protocol_response_radio_owner ==
                  RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN) &&
-            !anchor_click_window_active() &&
-            !mesh_report_anchor_survey_radio_active()) {
+            !anchor_click_window_active()) {
             /*
              * Gateway-command delivery can own a separate bounded C5
              * follow-up listener rather than the ordinary role scan.  That
              * receive lease is deliberately abortable, but it is outside
              * mesh_rx_handoff.scan_radio_active.  A locally accepted command
              * result must end that obsolete listener before it can establish
-             * its return cadence; never preempt click or survey ranging.
+             * its return cadence; never preempt click ranging.
              */
             abort_scan = true;
         }

@@ -1682,9 +1682,7 @@ bool mesh_report_local_protocol_response_active(void)
         return false;
     }
 
-    return pending->packet.msg_type == MSG_COMMAND_RESULT ||
-           pending->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-           pending->packet.msg_type == MSG_SURVEY_PAIR_RESULT;
+    return pending->packet.msg_type == MSG_COMMAND_RESULT;
 #else
     return false;
 #endif
@@ -3016,26 +3014,6 @@ static int mesh_complete_gateway_ack_confirm(
                 ret);
         return ret;
     }
-    if ((original_packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-         original_packet.msg_type == MSG_SURVEY_PAIR_RESULT) &&
-        mesh_report_callbacks != NULL &&
-        mesh_report_callbacks->anchor_survey_delivery_gateway_confirmed !=
-            NULL) {
-        ret =
-            mesh_report_callbacks->anchor_survey_delivery_gateway_confirmed(
-                &original_packet, original_digest);
-        if (!mesh_terminal_cleanup_idempotent_status(ret)) {
-            status_debug_printf(
-                "DBG_ACK_CONFIRM_TERMINAL stage=survey ret=%d original=%u seq=%u\n",
-                ret,
-                original_packet.msg_type,
-                original_packet.seq);
-            LOG_WRN("gateway ACK-confirm survey cleanup deferred: ret=%d",
-                    ret);
-            return ret;
-        }
-    }
-
     ret = mesh_relay_commit_gateway_ack_confirm_terminal(
         &mesh_runtime,
         confirm_packet,
@@ -3147,19 +3125,6 @@ static int mesh_complete_terminal_release(
     if (!mesh_terminal_cleanup_idempotent_status(ret)) {
         return ret;
     }
-    if ((terminal->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-         terminal->packet.msg_type == MSG_SURVEY_PAIR_RESULT) &&
-        mesh_report_callbacks != NULL &&
-        mesh_report_callbacks->anchor_survey_delivery_transport_released !=
-            NULL) {
-        ret =
-            mesh_report_callbacks->anchor_survey_delivery_transport_released(
-                &terminal->packet, semantic_digest, false);
-        if (!mesh_terminal_cleanup_idempotent_status(ret)) {
-            return ret;
-        }
-    }
-
     ret = app_node_comm_note_gateway_failed_digest(
         &terminal->packet, semantic_digest, reason);
     if (!mesh_terminal_cleanup_idempotent_status(ret)) {
@@ -3197,190 +3162,7 @@ static bool mesh_gateway_ack_route_waiting_owns(
            memcmp(ack->payload, waiting->payload, ack->payload_len) == 0;
 }
 
-static bool mesh_survey_abort_matches_transit_result(
-    const struct proto_packet *command,
-    const uint8_t *command_payload,
-    size_t command_payload_len,
-    const struct proto_packet *result_packet,
-    const uint8_t *result_payload,
-    size_t result_payload_len)
-{
-    struct survey_pair pair = {0};
-    struct survey_sample sample = {0};
-    enum command_id command_id;
-    uint8_t command_commitment[SEMANTIC_DIGEST_SHA256_LEN];
-    uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
-
-    return command != NULL && command_payload != NULL &&
-           result_packet != NULL && result_payload != NULL &&
-           command->msg_type == MSG_COMMAND &&
-           result_packet->msg_type == MSG_SURVEY_PAIR_RESULT &&
-           result_packet->src_id != DEVICE_ID &&
-           gateway_command_extract_id(command_payload,
-                                      command_payload_len,
-                                      &command_id) == PROTO_OK &&
-           command_id == CMD_SURVEY_ABORT &&
-           survey_extract_pair_tlvs(command_payload,
-                                    command_payload_len,
-                                    &pair) == PROTO_OK &&
-           survey_round_id_extract_tlv(command_payload,
-                                       command_payload_len,
-                                       &round_id) == PROTO_OK &&
-           survey_round_commitment_extract_tlv(
-               command_payload,
-               command_payload_len,
-               command_commitment) == PROTO_OK &&
-           command->session_id == survey_operation_session_id(
-               pair.operation_generation) &&
-           result_packet->src_id == pair.responder_id &&
-           result_packet->session_id == command->session_id &&
-           survey_pair_result_payload_validate(result_payload,
-                                               result_payload_len,
-                                               &sample) == PROTO_OK &&
-           survey_sample_matches_pair_run(&sample, &pair, round_id);
-}
-
-static int mesh_retire_stale_transit_survey_result_for_abort(
-    const struct mesh_rx_pending *incoming)
-{
-    bool retired = false;
-
-    if (incoming == NULL || incoming->packet.msg_type != MSG_COMMAND) {
-        return 0;
-    }
-    if (mesh_relay_tx_active(&mesh_runtime) &&
-        !mesh_runtime.pending.gateway_ack_forward_pending &&
-        mesh_runtime.pending.state !=
-            MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
-        mesh_survey_abort_matches_transit_result(
-            &incoming->packet,
-            incoming->payload,
-            incoming->payload_len,
-            &mesh_runtime.pending.packet,
-            mesh_runtime.pending.payload,
-            mesh_runtime.pending.payload_len)) {
-        mesh_relay_cancel_tx(&mesh_runtime);
-        retired = true;
-    }
-    if (mesh_route_waiting_tx_valid &&
-        mesh_survey_abort_matches_transit_result(
-            &incoming->packet,
-            incoming->payload,
-            incoming->payload_len,
-            &mesh_route_waiting_tx.packet,
-            mesh_route_waiting_tx.payload,
-            mesh_route_waiting_tx.payload_len)) {
-        mesh_route_waiting_tx_valid = false;
-        mesh_route_waiting_tx_owner = APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC;
-        retired = true;
-    }
-    if (!retired) {
-        return 0;
-    }
-    status_debug_printf(
-        "DBG_SURVEY_ABORT_TRANSIT_RESULT_RETIRED session=%u seq=%u\n",
-        incoming->packet.session_id,
-        incoming->packet.seq);
-    (void)mesh_schedule_tx_timeout();
-    return 0;
-}
-
 #if DEVICE_ROLE == ROLE_ANCHOR
-static bool mesh_transit_survey_result_precedes_generation(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len,
-    uint64_t operation_generation)
-{
-    const uint8_t *boot_value = NULL;
-    uint8_t boot_value_len = 0u;
-    uint64_t owned_generation = 0u;
-    bool session_valid;
-
-    if (packet == NULL || payload == NULL || operation_generation == 0u ||
-        (packet->msg_type != MSG_SURVEY_DISCOVERY_REPORT &&
-         packet->msg_type != MSG_SURVEY_PAIR_RESULT) ||
-        packet->flags !=
-            (FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC) ||
-        packet->src_id == DEVICE_ID || packet->dst_id != GATEWAY_ID ||
-        packet->payload_len != payload_len ||
-        survey_operation_generation_extract_tlv(
-            payload, payload_len, &owned_generation) != PROTO_OK ||
-        owned_generation == 0u) {
-        return false;
-    }
-    if (packet->msg_type == MSG_SURVEY_DISCOVERY_REPORT) {
-        session_valid =
-            tlv_find_unique(payload,
-                            payload_len,
-                            TLV_NODE_BOOT_COUNTER,
-                            &boot_value,
-                            &boot_value_len) == PROTO_OK &&
-            boot_value_len == sizeof(uint32_t) &&
-            proto_get_u32_le(boot_value) != 0u &&
-            packet->session_id == proto_get_u32_le(boot_value);
-    } else {
-        session_valid = packet->session_id ==
-            survey_operation_session_id(owned_generation);
-    }
-    return session_valid && owned_generation < operation_generation;
-}
-
-static int mesh_retire_stale_transit_survey_result_after_admission(
-    const struct mesh_rx_pending *incoming)
-{
-    struct survey_discovery_config config = {0};
-    bool retired = false;
-
-    if (incoming == NULL ||
-        incoming->packet.msg_type != MSG_SURVEY_DISCOVERY_START ||
-        survey_extract_discovery_start_tlvs(
-            incoming->payload,
-            incoming->payload_len,
-            &config) != PROTO_OK ||
-        config.operation_generation == 0u ||
-        !mesh_report_anchor_survey_operation_generation_active(
-            config.operation_generation)) {
-        return 0;
-    }
-
-    /* The new survey generation is durable and active before this cleanup.
-     * Release only an older transit result.  A gateway ACK already handed
-     * toward the child keeps its exact return custody until that handoff is
-     * terminal; same/new/malformed records are never inferred stale. */
-    if (mesh_relay_tx_active(&mesh_runtime) &&
-        !mesh_runtime.pending.gateway_ack_forward_pending &&
-        mesh_runtime.pending.state !=
-            MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD &&
-        mesh_transit_survey_result_precedes_generation(
-            &mesh_runtime.pending.packet,
-            mesh_runtime.pending.payload,
-            mesh_runtime.pending.payload_len,
-            config.operation_generation)) {
-        mesh_relay_cancel_tx(&mesh_runtime);
-        retired = true;
-    }
-    if (mesh_route_waiting_tx_valid &&
-        mesh_transit_survey_result_precedes_generation(
-            &mesh_route_waiting_tx.packet,
-            mesh_route_waiting_tx.payload,
-            mesh_route_waiting_tx.payload_len,
-            config.operation_generation)) {
-        mesh_route_waiting_tx_valid = false;
-        mesh_route_waiting_tx_owner = APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC;
-        retired = true;
-    }
-    if (!retired) {
-        return 0;
-    }
-    status_debug_printf(
-        "DBG_SURVEY_GENERATION_TRANSIT_RETIRED generation=%llu session=%u seq=%u\n",
-        (unsigned long long)config.operation_generation,
-        incoming->packet.session_id,
-        incoming->packet.seq);
-    (void)mesh_schedule_tx_timeout();
-    return 0;
-}
 #endif
 
 static inline bool mesh_selected_relay_parent_needs_channel9_repair(
@@ -3816,9 +3598,7 @@ after_gateway_ack:
                 &c5_forward_admission_retained);
         } else if (result->forward.packet.src_id == GATEWAY_ID &&
                    mesh_id_is_unicast(result->forward.packet.dst_id) &&
-                   (result->forward.packet.msg_type == MSG_COMMAND ||
-                    result->forward.packet.msg_type ==
-                        MSG_SURVEY_PAIR_PREPARE)) {
+                   result->forward.packet.msg_type == MSG_COMMAND) {
             struct mesh_outbound control_forward = result->forward;
 
             control_forward.radio_channel = UWB_CHANNEL_WAKE_CONTACT;
@@ -4786,7 +4566,7 @@ after_gateway_ack:
                 if (mesh_id_is_unicast(parent_id) &&
                     parent_id != GATEWAY_ID) {
                     mesh_close_channel9_connection(
-                        parent_id, "survey-burst-confirmed");
+                        parent_id, "operation-burst-confirmed");
                 }
             }
             LOG_INF("mesh pending TX gateway confirmation committed");
@@ -4946,28 +4726,14 @@ static int mesh_gateway_classify_post_receipt_semantic_result(
      * matched to the then-live semantic owner.  The GUI may return its exact
      * receipt after that volatile owner or receive window retires.  The raw
      * packet is already in host custody, and retrying cannot recreate the old
-     * mutation boundary, so retire source custody without replaying survey
-     * side effects.  Every other error remains fail-closed and retryable.
+     * mutation boundary. Every error remains fail-closed and retryable.
      */
     if (pending == NULL ||
         preflight_acceptance != APP_GATEWAY_SEMANTIC_ACCEPT_NEW) {
         return semantic_ret;
     }
-    if (semantic_ret == -ESTALE &&
-        (pending->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-         pending->packet.msg_type == MSG_SURVEY_PAIR_RESULT)) {
-        return APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW;
-    }
-    if (pending->packet.msg_type != MSG_COMMAND_RESULT ||
-        semantic_ret != -ENOENT ||
-        gateway_command_extract_id(pending->payload,
-                                   pending->payload_len,
-                                   &command_id) != PROTO_OK ||
-        (command_id != CMD_SURVEY_PREPARE_PAIR &&
-         command_id != CMD_SURVEY_START_PAIR)) {
-        return semantic_ret;
-    }
-    return APP_GATEWAY_SEMANTIC_ACCEPT_RECOVERED_RAW;
+    ARG_UNUSED(command_id);
+    return semantic_ret;
 }
 
 static int mesh_complete_gateway_host_delivery_locked(void)
@@ -5034,6 +4800,12 @@ static int mesh_complete_gateway_host_delivery_locked(void)
             mesh_gateway_host_delivery_semantic_acceptance = ret;
         }
         atomic_set(&mesh_gateway_host_delivery_semantic_accepted_state, 1);
+        if (pending->packet.src_id != DEVICE_ID) {
+            app_stack_workload_diag_gateway_report_cycle(
+                &pending->packet,
+                (uint16_t)k_msgq_num_used_get(&mesh_rx_msgq),
+                1u);
+        }
         if (semantic_ret == APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
             pending->packet.msg_type == MSG_MESH_DATA) {
             app_mesh_test_note_gateway_delivery(
@@ -5298,8 +5070,7 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         if (mesh_report_callbacks != NULL &&
             mesh_report_callbacks->gateway_note_anchor_boot_observation !=
                 NULL &&
-            (pending->packet.msg_type == MSG_ANCHOR_HEARTBEAT ||
-             pending->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT)) {
+            pending->packet.msg_type == MSG_ANCHOR_HEARTBEAT) {
             mesh_report_callbacks->gateway_note_anchor_boot_observation(
                 &pending->packet,
                 pending->payload,
@@ -5669,16 +5440,6 @@ gateway_semantic_result_ready:
          * relay commit, and the source ACK all wait for HOST_ACCEPTED. */
         if (atomic_get(&mesh_gateway_host_delivery_pending_state) == 0) {
 #endif
-            if ((result->actions & MESH_RELAY_ACTION_FORWARD) != 0u &&
-                pending->packet.msg_type == MSG_COMMAND) {
-                ret = mesh_retire_stale_transit_survey_result_for_abort(
-                    pending);
-                if (ret < 0) {
-                    LOG_ERR("survey ABORT could not retire exact stale transit result: ret=%d",
-                            ret);
-                    app_watchdog_stop_feeding();
-                }
-            }
             mesh_handle_result_actions(result, pending->radio_channel, pending,
                                        confirmed_packet_valid ?
                                        &confirmed_packet : NULL,
@@ -5701,7 +5462,7 @@ gateway_semantic_result_ready:
          * Forwarding a broadcast can take long enough to materially advance
          * its protocol age. Keep the delivery timestamp and message age at
          * the same instant so local timing reconstruction does not restart
-         * the survey after a relay operation.
+         * the operation after a relay operation.
          */
         mesh_rx_pending_refresh_age(pending, k_uptime_get_32());
 #if DEVICE_ROLE == ROLE_GATEWAY
@@ -5728,13 +5489,6 @@ gateway_semantic_result_ready:
                                                    &pending->current_channel9_plan :
                                                    NULL);
             }
-            mesh_report_gateway_handle_survey_discovery_report(&pending->packet,
-                                                   pending->payload,
-                                                   pending->payload_len,
-                                                   pending->first_received_at_ms,
-                                                   pending->previous_hop_id,
-                                                   pending->radio_channel,
-                                                   pending->link_quality);
             app_mesh_test_note_gateway_delivery(&pending->packet,
                                                 pending->payload,
                                                 pending->payload_len,
@@ -5770,20 +5524,6 @@ gateway_semantic_result_ready:
                             ret);
                 }
             }
-            mesh_report_anchor_handle_survey_discovery_start(&pending->packet,
-                                                 pending->payload,
-                                                 pending->payload_len);
-            ret =
-                mesh_retire_stale_transit_survey_result_after_admission(
-                    pending);
-            if (ret < 0) {
-                LOG_ERR("new survey generation could not retire stale transit result: ret=%d",
-                        ret);
-                app_watchdog_stop_feeding();
-            }
-            mesh_report_anchor_handle_survey_pair_prepare(&pending->packet,
-                                              pending->payload,
-                                                    pending->payload_len);
         }
 #endif
         handled_count++;

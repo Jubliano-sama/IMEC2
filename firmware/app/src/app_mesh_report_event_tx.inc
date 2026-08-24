@@ -811,8 +811,6 @@ static bool mesh_pending_is_retry_owned_operation_uplink(
     }
     switch (pending->packet.msg_type) {
     case MSG_COMMAND_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return true;
     case MSG_GATEWAY_ACK_CONFIRM:
         if (mesh_gateway_ack_confirm_payload_parse(
@@ -822,9 +820,7 @@ static bool mesh_pending_is_retry_owned_operation_uplink(
                 &confirmed) != PROTO_OK) {
             return false;
         }
-        return confirmed.msg_type == MSG_COMMAND_RESULT ||
-               confirmed.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-               confirmed.msg_type == MSG_SURVEY_PAIR_RESULT;
+        return confirmed.msg_type == MSG_COMMAND_RESULT;
     default:
         return false;
     }
@@ -901,7 +897,7 @@ static void mesh_event_propose_terminal_failure(uint64_t peer_id,
     }
 
     /*
-     * During a survey or discovery assignment operation, a missed proposal to
+     * During a discovery assignment operation, a missed proposal to
      * the selected parent is cadence contention on the shared parent's single
      * downstream slot, not an RF route collapse. Keep the parent candidate valid
      * and retry on the same parent; do not abandon, hold down, or rediscover.
@@ -1170,13 +1166,6 @@ static bool mesh_event_retry_after_failure(
     return scheduled;
 }
 
-static bool mesh_outbound_is_survey_uplink(const struct mesh_outbound *out)
-{
-    return out != NULL &&
-           (out->packet.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-            out->packet.msg_type == MSG_SURVEY_PAIR_RESULT);
-}
-
 static bool mesh_outbound_is_assignment_response(
     const struct mesh_outbound *out)
 {
@@ -1191,29 +1180,6 @@ static bool mesh_outbound_is_assignment_response(
             assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK);
 }
 
-static bool mesh_outbound_is_survey_control_response(
-    const struct mesh_outbound *out)
-{
-    const uint8_t *command_raw = NULL;
-    uint8_t command_len = 0u;
-    uint16_t command_id;
-
-    if (out == NULL || out->packet.msg_type != MSG_COMMAND_RESULT ||
-        tlv_find_unique(out->payload,
-                        out->payload_len,
-                        TLV_COMMAND_ID,
-                        &command_raw,
-                        &command_len) != PROTO_OK ||
-        command_len != sizeof(command_id)) {
-        return false;
-    }
-
-    command_id = proto_get_u16_le(command_raw);
-    return command_id == CMD_SURVEY_PREPARE_PAIR ||
-           command_id == CMD_SURVEY_START_PAIR ||
-           command_id == CMD_SURVEY_ABORT;
-}
-
 static bool mesh_outbound_is_topology_ack_confirm(
     const struct mesh_outbound *out)
 {
@@ -1226,42 +1192,17 @@ static bool mesh_outbound_is_topology_ack_confirm(
                                                &confirmed) != PROTO_OK) {
         return false;
     }
-    return confirmed.msg_type == MSG_COMMAND_RESULT ||
-           confirmed.msg_type == MSG_SURVEY_DISCOVERY_REPORT ||
-           confirmed.msg_type == MSG_SURVEY_PAIR_RESULT;
+    return confirmed.msg_type == MSG_COMMAND_RESULT;
 }
 
 static bool mesh_outbound_is_topology_operation_uplink(
     const struct mesh_outbound *out)
 {
 #if DEVICE_ROLE == ROLE_ANCHOR
-    return mesh_outbound_is_survey_uplink(out) ||
-           mesh_outbound_is_assignment_response(out) ||
-           mesh_outbound_is_survey_control_response(out) ||
+    return mesh_outbound_is_assignment_response(out) ||
            mesh_outbound_is_topology_ack_confirm(out);
 #else
     ARG_UNUSED(out);
-    return false;
-#endif
-}
-
-static bool mesh_event_propose_has_pending_survey_uplink(void)
-{
-#if DEVICE_ROLE == ROLE_ANCHOR
-    if (mesh_route_waiting_tx_valid &&
-        mesh_outbound_is_topology_operation_uplink(&mesh_route_waiting_tx)) {
-        return true;
-    }
-    {
-        struct mesh_outbound queued;
-
-        if (report_tx_queue_peek(&queued) == 0 &&
-            mesh_outbound_is_topology_operation_uplink(&queued)) {
-            return true;
-        }
-    }
-    return false;
-#else
     return false;
 #endif
 }
@@ -1275,14 +1216,8 @@ uint8_t app_mesh_report_selected_gateway_hop_count(void)
         return 0u;
     }
 
-    /* Route candidates count intermediate relays; survey timing counts RF hops. */
+    /* Route candidates count intermediate relays, so add the final RF hop. */
     return (uint8_t)(selected->hop_count + 1u);
-}
-
-static uint32_t mesh_event_survey_cadence_wait_deadline_ms(uint32_t now_ms)
-{
-    return now_ms + survey_pair_control_timeout_ms(
-                        app_mesh_report_selected_gateway_hop_count());
 }
 
 static uint32_t mesh_event_topology_contact_deadline_ms(uint32_t now_ms)
@@ -1290,9 +1225,9 @@ static uint32_t mesh_event_topology_contact_deadline_ms(uint32_t now_ms)
     return now_ms + MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS;
 }
 
-static uint32_t survey_identity_backoff_ms(uint64_t node_id,
-                                           uint64_t parent_id,
-                                           uint8_t deferral_count)
+static uint32_t mesh_identity_backoff_ms(uint64_t node_id,
+                                         uint64_t parent_id,
+                                         uint8_t deferral_count)
 {
     uint32_t seed = (uint32_t)(node_id ^ (parent_id >> 16) ^
                                (parent_id << 16));
@@ -1351,29 +1286,8 @@ static bool mesh_event_propose_retry_after_failure(
 
 static bool mesh_event_propose_keep_waiting(const char *reason)
 {
-#if DEVICE_ROLE == ROLE_ANCHOR
-    uint32_t now_ms = k_uptime_get_32();
-
-    if (!mesh_event_propose_retry.active ||
-        !mesh_event_propose_topology_operation ||
-        !mesh_event_propose_has_pending_survey_uplink()) {
-        return false;
-    }
-    if (app_mesh_event_retry_extend_deadline(
-            &mesh_event_propose_retry,
-            now_ms,
-            mesh_event_survey_cadence_wait_deadline_ms(now_ms)) != 0) {
-        return false;
-    }
-    return mesh_event_propose_retry_after_failure(
-        &mesh_event_propose_retry,
-        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
-        false,
-        reason);
-#else
     ARG_UNUSED(reason);
     return false;
-#endif
 }
 
 static int mesh_propose_event_after_channel5_contact_authorized(
@@ -3390,9 +3304,6 @@ static bool mesh_tx_can_wait_for_route(const struct mesh_outbound *out)
     case MSG_GATEWAY_ACK_CONFIRM:
     case MSG_MESH_DATA:
     case MSG_SELF_TEST_REPORT:
-    case MSG_SURVEY_PAIR_PREPARE:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         return true;
     default:
         return false;
@@ -4065,7 +3976,6 @@ static void mesh_try_route_waiting_tx(void)
     int ret;
 
     if (!mesh_route_waiting_tx_valid ||
-        (DEVICE_ROLE == ROLE_ANCHOR && mesh_report_anchor_survey_radio_active()) ||
         mesh_relay_tx_active(&mesh_runtime)) {
         return;
     }

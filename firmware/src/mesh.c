@@ -2,7 +2,6 @@
 
 #include "route.h"
 #include "semantic_digest.h"
-#include "survey.h"
 
 #include <string.h>
 
@@ -89,8 +88,6 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_RESULT_OFFER:
     case MSG_RESULT_GRANT:
     case MSG_COMMAND:
-    case MSG_SURVEY_PAIR_PREPARE:
-    case MSG_SURVEY_DISCOVERY_START:
         return channel5;
     case MSG_CLICK_REPORT:
     case MSG_SELF_TEST_REPORT:
@@ -101,15 +98,11 @@ bool mesh_packet_rf_channel_allowed(uint8_t msg_type,
     case MSG_GATEWAY_ROUTE_REQ:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         return channel9;
     case MSG_GATEWAY_COLLECTION_EACK:
         return true;
     case MSG_MESH_DATA:
         return synthetic_mesh_data_enabled && channel9;
-    case MSG_SURVEY_REACH_REQ:
-    case MSG_SURVEY_REACH_REPORT:
     case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:
@@ -702,153 +695,6 @@ static int mesh_result_bundle_payload_validate(
                PROTO_OK : PROTO_ERR_MALFORMED;
 }
 
-static int mesh_survey_discovery_report_payload_validate(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len)
-{
-    const uint8_t *value = NULL;
-    uint64_t operation_generation = 0u;
-    uint64_t anchor_id = 0u;
-    uint32_t boot_incarnation = 0u;
-    uint32_t survey_id = 0u;
-    size_t offset = 0u;
-    uint8_t value_len = 0u;
-    uint8_t entry_count = 0u;
-    int ret;
-
-    ret = tlv_find_unique(payload,
-                          payload_len,
-                          TLV_SURVEY_ID,
-                          &value,
-                          &value_len);
-    if (ret != PROTO_OK || value_len != sizeof(uint32_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    survey_id = proto_get_u32_le(value);
-    ret = tlv_find_unique(payload,
-                          payload_len,
-                          TLV_ANCHOR_ID,
-                          &value,
-                          &value_len);
-    if (ret != PROTO_OK || value_len != sizeof(uint64_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    anchor_id = proto_get_u64_le(value);
-    ret = tlv_find_unique(payload,
-                          payload_len,
-                          TLV_SURVEY_OPERATION_GENERATION,
-                          &value,
-                          &value_len);
-    if (ret != PROTO_OK || value_len != sizeof(uint64_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    operation_generation = proto_get_u64_le(value);
-    ret = tlv_find_unique(payload,
-                          payload_len,
-                          TLV_NODE_BOOT_COUNTER,
-                          &value,
-                          &value_len);
-    if (ret != PROTO_OK || value_len != sizeof(uint32_t)) {
-        return PROTO_ERR_MALFORMED;
-    }
-    boot_incarnation = proto_get_u32_le(value);
-    ret = tlv_find_unique(payload,
-                          payload_len,
-                          TLV_COMMAND_STATUS,
-                          &value,
-                          &value_len);
-    if (ret != PROTO_OK || value_len != sizeof(uint16_t) ||
-        proto_get_u16_le(value) > COMMAND_INTERNAL_ERROR ||
-        survey_id == 0u || anchor_id != packet->src_id ||
-        boot_incarnation == 0u ||
-        operation_generation == 0u ||
-        survey_operation_session_id(operation_generation) == 0u ||
-        packet->session_id != boot_incarnation) {
-        return PROTO_ERR_MALFORMED;
-    }
-
-    while (offset < payload_len) {
-        uint8_t type;
-        uint8_t len;
-
-        if (payload_len - offset < PROTO_TLV_HEADER_LEN) {
-            return PROTO_ERR_MALFORMED;
-        }
-        type = payload[offset];
-        len = payload[offset + 1u];
-        offset += PROTO_TLV_HEADER_LEN;
-        if ((size_t)len > payload_len - offset) {
-            return PROTO_ERR_MALFORMED;
-        }
-        switch (type) {
-        case TLV_SURVEY_ID:
-        case TLV_NODE_BOOT_COUNTER:
-            if (len != sizeof(uint32_t)) {
-                return PROTO_ERR_MALFORMED;
-            }
-            break;
-        case TLV_ANCHOR_ID:
-        case TLV_SURVEY_OPERATION_GENERATION:
-            if (len != sizeof(uint64_t)) {
-                return PROTO_ERR_MALFORMED;
-            }
-            break;
-        case TLV_COMMAND_STATUS:
-            if (len != sizeof(uint16_t)) {
-                return PROTO_ERR_MALFORMED;
-            }
-            break;
-        case TLV_REACHABILITY_ENTRY: {
-            struct survey_reachability_entry entry;
-
-            if (len != SURVEY_REACHABILITY_ENTRY_LEN ||
-                entry_count >= SURVEY_GATEWAY_MAX_PEERS_PER_REPORT) {
-                return PROTO_ERR_MALFORMED;
-            }
-            entry.peer_id = proto_get_u64_le(&payload[offset]);
-            entry.rssi_dbm = (int8_t)payload[offset + 8u];
-            entry.quality = payload[offset + 9u];
-            if (entry.peer_id == 0u || entry.quality > 100u ||
-                entry.peer_id == anchor_id) {
-                return PROTO_ERR_MALFORMED;
-            }
-            entry_count++;
-            break;
-        }
-        default:
-            return PROTO_ERR_MALFORMED;
-        }
-        offset += len;
-    }
-    return PROTO_OK;
-}
-
-static int mesh_survey_pair_result_payload_validate(
-    const struct proto_packet *packet,
-    const uint8_t *payload,
-    size_t payload_len)
-{
-    struct survey_sample sample = {0};
-    uint16_t expected_seq;
-
-    if (survey_pair_result_payload_validate(payload,
-                                            payload_len,
-                                            &sample) != PROTO_OK ||
-        sample.pair.operation_generation == 0u ||
-        packet->session_id != survey_operation_session_id(
-            sample.pair.operation_generation) ||
-        (packet->src_id != sample.pair.initiator_id &&
-         packet->src_id != sample.pair.responder_id) ||
-        survey_pair_result_transport_sequence(sample.round_id,
-                                              sample.sample_index,
-                                              &expected_seq) != PROTO_OK ||
-        packet->seq != expected_seq) {
-        return PROTO_ERR_MALFORMED;
-    }
-    return PROTO_OK;
-}
-
 static int mesh_gateway_uplink_payload_validate(
     const struct proto_packet *packet,
     const uint8_t *payload,
@@ -874,14 +720,6 @@ static int mesh_gateway_uplink_payload_validate(
                                                    payload,
                                                    payload_len,
                                                    gateway_id);
-    case MSG_SURVEY_DISCOVERY_REPORT:
-        return mesh_survey_discovery_report_payload_validate(packet,
-                                                             payload,
-                                                             payload_len);
-    case MSG_SURVEY_PAIR_RESULT:
-        return mesh_survey_pair_result_payload_validate(packet,
-                                                        payload,
-                                                        payload_len);
     case MSG_MESH_DATA:
         return payload_len > 0u ? PROTO_OK : PROTO_ERR_MALFORMED;
     default:
@@ -910,8 +748,6 @@ int mesh_packet_rx_semantics_validate(const struct proto_packet *packet,
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_PAIR_RESULT:
-    case MSG_SURVEY_DISCOVERY_REPORT:
         if (gateway_id == 0u || packet->dst_id != gateway_id ||
             packet->src_id == gateway_id ||
             previous_hop_id == local_id ||
@@ -1039,8 +875,6 @@ int mesh_packet_rx_semantics_validate(const struct proto_packet *packet,
         return mesh_event_control_payload_validate(packet,
                                                    payload,
                                                    payload_len);
-    case MSG_SURVEY_REACH_REQ:
-    case MSG_SURVEY_REACH_REPORT:
     case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_GATEWAY_HOST_RECEIPT:
     case MSG_ERROR:
@@ -1760,8 +1594,6 @@ bool mesh_gateway_ack_confirmed_type(uint8_t msg_type)
     case MSG_MESH_DATA:
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return true;
     default:
         return false;
@@ -1784,8 +1616,6 @@ bool mesh_gateway_ack_confirmed_flags_valid(uint8_t msg_type,
     case MSG_RESULT_BUNDLE:
         return flags == ack;
     case MSG_MESH_DATA:
-    case MSG_SURVEY_DISCOVERY_REPORT:
-    case MSG_SURVEY_PAIR_RESULT:
         return flags == diagnostic;
     case MSG_COMMAND_RESULT:
         return flags == ack || flags == diagnostic;

@@ -5,7 +5,6 @@
 #include "mesh_relay.h"
 #include "mesh_sim.h"
 #include "protocol.h"
-#include "survey.h"
 #include "uwb.h"
 
 #include <inttypes.h>
@@ -29,7 +28,6 @@ enum {
 #define DISCOVERY_EPOCH UINT32_C(0xD15C5001)
 #define CLAIM_SESSION_BASE UINT32_C(0xC1A10000)
 #define TABLE_SESSION UINT32_C(0x7AB15001)
-#define SURVEY_ID UINT32_C(0x50665006)
 #define GATEWAY_ID UINT64_C(0xA001000000000001)
 #define ANCHOR_ID_BASE UINT64_C(0xA002000000010000)
 
@@ -41,9 +39,6 @@ _Static_assert(UWB_DISCOVERY_SLOT_COUNT == 50u,
 _Static_assert(ANCHOR_COUNT == 50u, "scenario must exercise all 50 discovery slots");
 _Static_assert(ANCHOR_COUNT + 1u <= MESH_SIM_MAX_ROLES,
                "simulator must hold the gateway and 50 anchors");
-_Static_assert(SURVEY_GATEWAY_MAX_PAIRS == 150u,
-               "50 anchors at degree six must produce 150 pairs");
-
 struct anchor_state {
     uint64_t id;
     uint64_t hash;
@@ -1281,105 +1276,6 @@ static int test_discovery_assignment_radio_scenario(struct scenario_summary *sum
                                           summary);
 }
 
-static int test_survey_pairing_ceiling(void)
-{
-    static struct survey_gateway_context context;
-    struct survey_reachability_entry
-        entries[ANCHOR_COUNT][SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR];
-    uint8_t degree[ANCHOR_COUNT] = {0};
-    int ret;
-
-    ret = survey_gateway_begin(&context, SURVEY_ID, 1u);
-    REQUIRE(ret == PROTO_OK,
-            "survey begin ret=%d", ret);
-    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
-        size_t entry_index = 0u;
-
-        for (size_t distance = 1u;
-             distance <= SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR / 2u;
-             distance++) {
-            size_t forward = (i + distance) % ANCHOR_COUNT;
-            size_t reverse = (i + ANCHOR_COUNT - distance) % ANCHOR_COUNT;
-
-            entries[i][entry_index++] = (struct survey_reachability_entry) {
-                .peer_id = ANCHOR_ID_BASE + forward,
-                .rssi_dbm = (int8_t)(-40 - (int)distance),
-                .quality = (uint8_t)(100u - distance),
-            };
-            entries[i][entry_index++] = (struct survey_reachability_entry) {
-                .peer_id = ANCHOR_ID_BASE + reverse,
-                .rssi_dbm = (int8_t)(-40 - (int)distance),
-                .quality = (uint8_t)(100u - distance),
-            };
-        }
-        REQUIRE(entry_index == SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR,
-                "survey report index=%zu peers=%zu", i, entry_index);
-        ret = survey_gateway_note_reach_report(&context,
-                                               SURVEY_ID,
-                                               ANCHOR_ID_BASE + i,
-                                               entries[i],
-                                               entry_index);
-        REQUIRE(ret == PROTO_OK,
-                "survey report index=%zu ret=%d", i, ret);
-    }
-
-    ret = survey_gateway_plan_pairs(&context);
-    REQUIRE(ret == PROTO_OK && context.report_count == ANCHOR_COUNT &&
-            context.pair_count == SURVEY_GATEWAY_MAX_PAIRS,
-            "survey plan ret=%d reports=%zu pairs=%zu expected=%u",
-            ret, context.report_count, context.pair_count,
-            SURVEY_GATEWAY_MAX_PAIRS);
-    for (size_t i = 0u; i < context.pair_count; i++) {
-        struct survey_pair pair;
-        uint64_t initiator_offset;
-        uint64_t responder_offset;
-        size_t initiator;
-        size_t responder;
-
-        ret = survey_gateway_pair_at(&context, i, &pair);
-        REQUIRE(ret == PROTO_OK,
-                "survey pair reconstruction index=%zu ret=%d", i, ret);
-        REQUIRE(pair.initiator_id >= ANCHOR_ID_BASE &&
-                pair.responder_id >= ANCHOR_ID_BASE,
-                "survey pair index=%zu ids=0x%016" PRIx64 "/0x%016" PRIx64,
-                i, pair.initiator_id, pair.responder_id);
-        initiator_offset = pair.initiator_id - ANCHOR_ID_BASE;
-        responder_offset = pair.responder_id - ANCHOR_ID_BASE;
-        REQUIRE(initiator_offset < ANCHOR_COUNT,
-                "survey initiator index out of range pair=%zu offset=%" PRIu64,
-                i, initiator_offset);
-        REQUIRE(responder_offset < ANCHOR_COUNT,
-                "survey responder index out of range pair=%zu offset=%" PRIu64,
-                i, responder_offset);
-        REQUIRE(pair.survey_id == SURVEY_ID,
-                "survey pair ID mismatch index=%zu survey=%" PRIu32,
-                i, pair.survey_id);
-        REQUIRE(pair.sample_count == 1u,
-                "survey pair sample count index=%zu count=%u",
-                i, pair.sample_count);
-        initiator = (size_t)initiator_offset;
-        responder = (size_t)responder_offset;
-        degree[initiator]++;
-        degree[responder]++;
-        for (size_t j = 0u; j < i; j++) {
-            struct survey_pair previous_pair;
-
-            REQUIRE(survey_gateway_pair_at(
-                        &context, j, &previous_pair) == PROTO_OK,
-                    "previous survey pair reconstruction index=%zu", j);
-            REQUIRE(!(previous_pair.initiator_id == pair.initiator_id &&
-                      previous_pair.responder_id == pair.responder_id),
-                    "duplicate survey pair index=%zu previous=%zu", i, j);
-        }
-    }
-    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
-        REQUIRE(degree[i] == SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR,
-                "survey degree anchor=%zu degree=%u expected=%u",
-                i, degree[i], SURVEY_GATEWAY_MAX_PAIRS_PER_ANCHOR);
-    }
-    return 0;
-}
-
 int main(void)
 {
     struct scenario_summary summary;
@@ -1389,19 +1285,14 @@ int main(void)
     if (ret != 0) {
         return ret;
     }
-    ret = test_survey_pairing_ceiling();
-    if (ret != 0) {
-        return ret;
-    }
     printf("mesh discovery scenarios: PASS seed=0x%08" PRIx32
            " claim_rounds=%u claim_collisions=%zu table_rounds=%u"
-           " table_misses=%zu ack_collisions=%zu survey_pairs=%u\n",
+           " table_misses=%zu ack_collisions=%zu\n",
            SCENARIO_SEED,
            summary.claim_rounds,
            summary.claim_collisions,
            summary.table_rounds,
            summary.initial_table_misses,
-           summary.ack_collisions,
-           SURVEY_GATEWAY_MAX_PAIRS);
+           summary.ack_collisions);
     return 0;
 }

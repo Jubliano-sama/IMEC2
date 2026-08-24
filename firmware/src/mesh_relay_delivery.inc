@@ -1575,11 +1575,6 @@ int mesh_relay_handle_rx_with_random(struct mesh_relay *relay,
                                              payload,
                                              payload_len,
                                              previous_hop_id)) ||
-        !survey_gateway_control_semantics_valid(relay,
-                                                packet,
-                                                payload,
-                                                payload_len,
-                                                previous_hop_id) ||
         (packet->msg_type == MSG_COMMAND &&
          !command_packet_envelope_valid(relay,
                                         packet,
@@ -1838,20 +1833,6 @@ clicker_leaf_rx_allowed:
             return PROTO_OK;
         }
         if (packet->dst_id == relay->local_id) {
-            if (relay->role == MESH_RELAY_ROLE_ANCHOR &&
-                packet->msg_type == MSG_SURVEY_PAIR_PREPARE) {
-                /*
-                 * Relay acceptance precedes the application's command-result
-                 * admission. Redeliver an exact retry so a
-                 * transient result-capacity failure can make progress.  The
-                 * pair lease and command-result owners make an already
-                 * accepted prepare idempotent; never re-ACK or reforward it
-                 * from this final endpoint.
-                 */
-                result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
-                result->status = PROTO_ERR_STALE;
-                return PROTO_OK;
-            }
             if (gateway_delivery_requires_commit(relay, packet) &&
                 gateway_collection_duplicate_requires_redelivery(packet,
                                                                  payload,
@@ -1888,44 +1869,6 @@ clicker_leaf_rx_allowed:
             return PROTO_OK;
         }
         if (packet->dst_id == MESH_BROADCAST_ID) {
-            if (relay->role == MESH_RELAY_ROLE_ANCHOR &&
-                packet->msg_type == MSG_SURVEY_DISCOVERY_START) {
-                /*
-                 * The first copy may have committed flood suppression before
-                 * the local scheduler could own the discovery or before a
-                 * child heard this relay's wake train. Redeliver every exact
-                 * retry locally, and reflood only after the full control-hop
-                 * budget. This suppresses physical copies from one bounded
-                 * attempt while allowing the gateway's later recovery
-                 * generation to traverse every hop. An active generation is
-                 * absorbed by application admission.
-                 */
-                if (survey_discovery_duplicate_reflood_due(
-                        relay, packet, payload, payload_len, now_ms)) {
-                    ret = build_broadcast_forward(relay,
-                                                  packet,
-                                                  payload,
-                                                  payload_len,
-                                                  now_ms,
-                                                  random_value,
-                                                  &result->forward);
-                    if (ret == PROTO_OK) {
-                        result->actions |= MESH_RELAY_ACTION_FORWARD;
-                    } else if (ret != PROTO_ERR_STALE) {
-                        result->actions |= MESH_RELAY_ACTION_DROP;
-                        result->status = ret;
-                        return PROTO_OK;
-                    }
-                    duplicate_store(relay,
-                                    packet,
-                                    payload,
-                                    payload_len,
-                                    now_ms);
-                }
-                result->actions |= MESH_RELAY_ACTION_DELIVER_LOCAL;
-                result->status = PROTO_ERR_STALE;
-                return PROTO_OK;
-            }
             relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
             result->actions |= MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_STALE;

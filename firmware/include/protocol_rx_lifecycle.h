@@ -8,7 +8,6 @@ enum protocol_rx_operation {
     PROTOCOL_RX_OPERATION_NONE = 0,
     PROTOCOL_RX_OPERATION_HERE_I_AM,
     PROTOCOL_RX_OPERATION_ENUMERATION,
-    PROTOCOL_RX_OPERATION_SURVEY,
 };
 
 enum protocol_rx_mode {

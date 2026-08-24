@@ -462,21 +462,13 @@ static int anchor_submit_command_result(
     outbound.packet.seq = seq;
 
     now_ms = (uint64_t)k_uptime_get();
-    result_timeout_ms =
-        command_id == CMD_SURVEY_PREPARE_PAIR ||
-        command_id == CMD_SURVEY_START_PAIR ||
-        command_id == CMD_SURVEY_ABORT ?
-            survey_pair_control_timeout_ms(
-                app_mesh_report_selected_gateway_hop_count()) :
-            GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
+    result_timeout_ms = GATEWAY_COMMAND_RESULT_TIMEOUT_MS;
     absolute_deadline_ms = UINT64_MAX - now_ms <
                            result_timeout_ms ?
                            UINT64_MAX :
                            now_ms + result_timeout_ms;
     client_token = ((uint32_t)command_id << 16) | seq;
-    auto_reap_with_handle =
-        command_id == CMD_SURVEY_START_PAIR &&
-        status == COMMAND_OK && delivery_handle_out != NULL;
+    auto_reap_with_handle = false;
     if (protocol_reservation == NULL) {
         ret = auto_reap_with_handle ?
             app_node_comm_submit_protocol_response_auto_reap(
@@ -2967,7 +2959,6 @@ static void anchor_heartbeat_work_handler(struct k_work *work)
         return;
     }
     if (anchor_uwb_window_active() ||
-        app_anchor_survey_runtime_radio_active() ||
         mesh_relay_tx_active(&mesh_runtime)) {
         (void)anchor_heartbeat_schedule(anchor_heartbeat_interval_ms);
         return;
@@ -4345,55 +4336,6 @@ static int anchor_execute_command_side_effects(const struct proto_packet *packet
                       COMMAND_MALFORMED_PAYLOAD;
             *reason = (uint8_t)(-ret);
         }
-    } else if (command_id == CMD_SURVEY_START_PAIR) {
-        anchor_operation_high_duty_boost_begin(2000u);
-        ret = app_anchor_survey_runtime_start_pair_from_command(packet,
-                                                               payload,
-                                                               payload_len,
-                                                               status,
-                                                               reason);
-        if (ret < 0 && *status == COMMAND_OK) {
-            *status = COMMAND_INTERNAL_ERROR;
-            *reason = (uint8_t)(-ret);
-        }
-    } else if (command_id == CMD_SURVEY_ABORT) {
-        struct survey_pair pair = {0};
-        uint8_t round_commitment[SEMANTIC_DIGEST_SHA256_LEN];
-        uint16_t round_id = SURVEY_LEGACY_ROUND_ID;
-
-        ret = survey_extract_pair_tlvs(payload, payload_len, &pair);
-        if (ret == PROTO_OK) {
-            int round_ret = survey_round_id_extract_tlv(
-                payload, payload_len, &round_id);
-
-            if (round_ret == PROTO_OK) {
-                round_ret = survey_round_commitment_extract_tlv(
-                    payload, payload_len, round_commitment);
-            }
-            if (round_ret == PROTO_OK &&
-                pair.operation_generation != 0u &&
-                packet->session_id == survey_operation_session_id(
-                    pair.operation_generation)) {
-                round_ret =
-                    app_anchor_survey_runtime_abort_pair_matching_round(
-                    &pair,
-                    packet->session_id,
-                    round_id,
-                    round_commitment);
-                if (round_ret < 0) {
-                    *status = COMMAND_INTERNAL_ERROR;
-                    *reason = (uint8_t)(-round_ret);
-                    ret = round_ret;
-                }
-            } else {
-                *status = COMMAND_MALFORMED_PAYLOAD;
-                *reason = (uint8_t)(
-                    round_ret == PROTO_OK ? EPROTO : -round_ret);
-            }
-        } else {
-            *status = COMMAND_MALFORMED_PAYLOAD;
-            *reason = (uint8_t)(-ret);
-        }
     } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
         *status = COMMAND_UNSUPPORTED_COMMAND;
         *reason = 1u;
@@ -4477,22 +4419,10 @@ static uint32_t anchor_broadcast_command_schedule_delay_ms(
     size_t payload_len,
     uint32_t execution_remaining_ms)
 {
-    struct survey_pair pair = {0};
-
-    if (command_id != CMD_SURVEY_START_PAIR || payload == NULL ||
-        execution_remaining_ms < SURVEY_PAIR_START_SKEW_MARGIN_MS ||
-        survey_extract_pair_tlvs(payload, payload_len, &pair) != PROTO_OK ||
-        pair.responder_id != DEVICE_ID) {
-        return execution_remaining_ms;
-    }
-
-    /*
-     * The responder owns the left side of the shared start-skew window: it
-     * opens RX one margin before the immutable initiator timestamp. The
-     * embedded execute delay and packet age still derive the same shared
-     * deadline at both endpoints.
-     */
-    return execution_remaining_ms - SURVEY_PAIR_START_SKEW_MARGIN_MS;
+    ARG_UNUSED(command_id);
+    ARG_UNUSED(payload);
+    ARG_UNUSED(payload_len);
+    return execution_remaining_ms;
 }
 
 static int anchor_schedule_broadcast_command_execution(
@@ -4531,8 +4461,7 @@ static int anchor_schedule_broadcast_command_execution(
     anchor_pending_command_execution.execute_at_ms =
         anchor_pending_command_execution.received_at_ms + schedule_delay_ms;
     anchor_pending_command_execution.execute_deadline_ms =
-        anchor_pending_command_execution.received_at_ms + delay_ms +
-        SURVEY_PAIR_START_SKEW_MARGIN_MS;
+        anchor_pending_command_execution.received_at_ms + delay_ms;
     anchor_pending_command_execution.active = true;
     ret = mesh_route_work_reschedule(
         &anchor_command_execute_work,
@@ -4861,11 +4790,9 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
     struct gateway_command_options command_options = {0};
     bool reboot_after_result = false;
     bool force_rediscovery_after_result = false;
-    bool wait_for_delivery_completion;
     bool broadcast_command;
     bool expired;
     bool duplicate;
-    uint32_t delivery_handle = 0u;
     struct app_node_comm_reservation_lease protocol_reservation = {0};
     uint32_t delay_ms;
     uint32_t now_ms;
@@ -5085,8 +5012,6 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                 (unsigned int)command_id);
         return 1;
     }
-    wait_for_delivery_completion =
-        command_id == CMD_SURVEY_START_PAIR && status == COMMAND_OK;
     ret = anchor_submit_command_result(packet,
                                        command_id,
                                        status,
@@ -5094,8 +5019,7 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                                        NULL,
                                        0u,
                                        &protocol_reservation,
-                                       wait_for_delivery_completion ?
-                                           &delivery_handle : NULL);
+                                       NULL);
     if (ret < 0) {
         (void)app_node_comm_cancel_protocol_response_reservation(
             &protocol_reservation);
@@ -5103,31 +5027,7 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                 (unsigned int)command_id,
                 status,
                 ret);
-        if (command_id == CMD_SURVEY_START_PAIR && status == COMMAND_OK) {
-            (void)app_anchor_survey_runtime_cancel_pair_start(packet);
-        }
         return 0;
-    }
-    if (command_id == CMD_SURVEY_START_PAIR && status == COMMAND_OK) {
-        int bind_ret = app_anchor_survey_runtime_bind_pair_start_delivery(
-            packet, delivery_handle);
-
-        if (bind_ret < 0 && bind_ret != -ESTALE) {
-            LOG_WRN("survey pair start delivery binding failed: ret=%d",
-                    bind_ret);
-        }
-        if (bind_ret < 0) {
-            int abandon_ret =
-                app_anchor_survey_runtime_abandon_pair_start_delivery(
-                    delivery_handle, "pair-start-bind-failed");
-
-            if (abandon_ret < 0) {
-                LOG_ERR("survey pair start delivery binding cleanup failed: handle=%u ret=%d",
-                        delivery_handle,
-                        abandon_ret);
-            }
-            (void)app_anchor_survey_runtime_cancel_pair_start(packet);
-        }
     }
 
     LOG_INF("anchor command handled: cmd=0x%04x status=%u reason=%u",
