@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from typing import Callable, Literal
 
 from .command_telemetry import GatewayCommandEvent, GatewayCommandRequestTracker
-from .protocol import CMD_FORCE_REDISCOVERY, CMD_REBOOT, CMD_CLEAR_ROUTE
+from .protocol import (
+    CMD_CLEAR_ROUTE,
+    CMD_FORCE_REDISCOVERY,
+    CMD_REBOOT,
+    CMD_SURVEY_CANCEL,
+    CMD_SURVEY_GET_STATUS,
+    CMD_SURVEY_PLAN,
+    CMD_SURVEY_START,
+)
 
 
 # These commands must remain immediate when they are exposed by the GUI.  They
@@ -22,6 +30,10 @@ PREFLIGHT_EXEMPT_COMMAND_IDS = frozenset(
         CMD_FORCE_REDISCOVERY,
         CMD_ML_LIVE_TRACKING_HEARTBEAT,
         CMD_ML_STOP_LIVE_TRACKING,
+        CMD_SURVEY_START,
+        CMD_SURVEY_PLAN,
+        CMD_SURVEY_CANCEL,
+        CMD_SURVEY_GET_STATUS,
     }
 )
 ROUTE_REFRESH_DEFAULT_BUDGET_MS = 120_000

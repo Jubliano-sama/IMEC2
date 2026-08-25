@@ -61,6 +61,7 @@ MSG_COMMAND_RESULT = 0x41
 MSG_RESULT_BUNDLE = 0x44
 MSG_GATEWAY_COMMAND_EVENT = 0x56
 MSG_GATEWAY_HOST_RECEIPT = 0x57
+MSG_SURVEY_EVENT = 0x58
 
 GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN = 56
 GATEWAY_HOST_RECEIPT_TLV_LEN = 2 + GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN
@@ -119,6 +120,10 @@ CMD_REBOOT = 0x0004
 CMD_CLEAR_ROUTE = 0x0007
 CMD_FORCE_REDISCOVERY = 0x000C
 CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104
+CMD_SURVEY_START = 0x0105
+CMD_SURVEY_PLAN = 0x0106
+CMD_SURVEY_CANCEL = 0x0107
+CMD_SURVEY_GET_STATUS = 0x0108
 TLV_EVENT_SEQ = 0x06
 TLV_BATTERY_MV = 0x02
 TLV_ERROR_CODE = 0x04
@@ -185,6 +190,41 @@ TLV_DISCOVERY_ASSIGNMENT_EPOCH = 0xA5
 TLV_DISCOVERY_ASSIGNMENT_HASH = 0xA6
 TLV_DISCOVERY_ASSIGNMENT_TABLE = 0xA7
 TLV_CLICKER_CLOCK_OFFSET_RAW = 0xA8
+TLV_SURVEY_PHASE = 0xC0
+TLV_SURVEY_GENERATION = 0xC1
+TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xC2
+TLV_SURVEY_START_DELAY_MS = 0xC3
+TLV_SURVEY_SELF_STOP_DELAY_MS = 0xC4
+TLV_SURVEY_PLAN_COMMITMENT = 0xC5
+TLV_SURVEY_PLAN = 0xC6
+TLV_SURVEY_GRAPH = 0xC7
+TLV_SURVEY_RESULTS = 0xC8
+TLV_SURVEY_STATUS = 0xC9
+TLV_SURVEY_PARTIAL_REASONS = 0xCA
+TLV_SURVEY_SKIPPED_PLAN = 0xCB
+
+SURVEY_PROTOCOL_VERSION = 1
+SURVEY_MAX_ANCHORS = 50
+SURVEY_MAX_DEGREE = 4
+SURVEY_MAX_PAIRS = 100
+SURVEY_NEIGHBOR_BITMAP_BYTES = 7
+SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN = 42
+SURVEY_EVENT_HEADER_WIRE_LEN = 72
+SURVEY_NEIGHBOR_RECORD_WIRE_LEN = 8
+SURVEY_PLAN_PAIR_WIRE_LEN = 3
+SURVEY_RANGE_RESULT_WIRE_LEN = 8
+SURVEY_NO_MEDIAN_MM = -(1 << 31)
+
+SURVEY_EVENT_NEIGHBOR_GRAPH = 1
+SURVEY_EVENT_PLAN_ACCEPTED = 2
+SURVEY_EVENT_RANGE_PROGRESS = 3
+SURVEY_EVENT_TERMINAL = 4
+
+SURVEY_TERMINAL_COMPLETE = 0
+SURVEY_TERMINAL_PARTIAL = 1
+SURVEY_TERMINAL_ABORTED = 2
+SURVEY_TERMINAL_ENUMERATION_FAILED = 3
+SURVEY_TERMINAL_BUSY = 4
 
 
 MESSAGE_NAMES = {
@@ -226,6 +266,7 @@ MESSAGE_NAMES = {
     MSG_RESULT_BUNDLE: "RESULT_BUNDLE",
     0x45: "GATEWAY_COLLECTION_EACK",
     MSG_GATEWAY_HOST_RECEIPT: "GATEWAY_HOST_RECEIPT",
+    MSG_SURVEY_EVENT: "SURVEY_EVENT",
     0x7F: "ERROR",
 }
 
@@ -255,6 +296,7 @@ SHARED_MESSAGE_TYPES = {
     MSG_RESULT_BUNDLE,
     0x45,
     MSG_GATEWAY_HOST_RECEIPT,
+    MSG_SURVEY_EVENT,
     0x7F,
 }
 
@@ -265,6 +307,7 @@ SHARED_MESSAGE_TYPES = {
 HOST_ONLY_MESSAGE_TYPES = {
     MSG_GATEWAY_COMMAND_EVENT,
     MSG_GATEWAY_HOST_RECEIPT,
+    MSG_SURVEY_EVENT,
     0x7F,
 }
 RF_SHARED_MESSAGE_TYPES = SHARED_MESSAGE_TYPES - HOST_ONLY_MESSAGE_TYPES
@@ -272,6 +315,7 @@ RF_SHARED_MESSAGE_TYPES = SHARED_MESSAGE_TYPES - HOST_ONLY_MESSAGE_TYPES
 # receiptable gateway-stream record after the GUI commits its semantic model.
 HOST_RECEIPTABLE_MESSAGE_TYPES = RF_SHARED_MESSAGE_TYPES | {
     MSG_GATEWAY_COMMAND_EVENT,
+    MSG_SURVEY_EVENT,
 }
 
 COMMAND_NAMES = {
@@ -287,6 +331,10 @@ COMMAND_NAMES = {
     0x000A: "STOP_HEARTBEAT",
     CMD_FORCE_REDISCOVERY: "FORCE_REDISCOVERY",
     CMD_ASSIGN_DISCOVERY_SLOTS: "ASSIGN_DISCOVERY_SLOTS",
+    CMD_SURVEY_START: "SURVEY_START",
+    CMD_SURVEY_PLAN: "SURVEY_PLAN",
+    CMD_SURVEY_CANCEL: "SURVEY_CANCEL",
+    CMD_SURVEY_GET_STATUS: "SURVEY_GET_STATUS",
     0x8000: "ML_START_COLLECTION",
     0x8001: "ML_START_FAST_RANGING",
     0x8003: "ML_START_LIVE_TRACKING",
@@ -563,6 +611,27 @@ TLV_SPECS: dict[int, TlvSpec] = {
         "GATEWAY_HOST_RECEIPT_IDENTITY",
         _exact_bytes(GATEWAY_HOST_RECEIPT_IDENTITY_VALUE_LEN),
     ),
+    TLV_SURVEY_PHASE: TlvSpec("SURVEY_PHASE", _scalar(1)),
+    TLV_SURVEY_GENERATION: TlvSpec("SURVEY_GENERATION", _scalar(4)),
+    TLV_SURVEY_ASSIGNMENT_IDENTITY: TlvSpec(
+        "SURVEY_ASSIGNMENT_IDENTITY",
+        _exact_bytes(SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN),
+    ),
+    TLV_SURVEY_START_DELAY_MS: TlvSpec("SURVEY_START_DELAY_MS", _scalar(4)),
+    TLV_SURVEY_SELF_STOP_DELAY_MS: TlvSpec(
+        "SURVEY_SELF_STOP_DELAY_MS", _scalar(4)
+    ),
+    TLV_SURVEY_PLAN_COMMITMENT: TlvSpec(
+        "SURVEY_PLAN_COMMITMENT", _exact_bytes(32)
+    ),
+    TLV_SURVEY_PLAN: TlvSpec("SURVEY_PLAN"),
+    TLV_SURVEY_GRAPH: TlvSpec("SURVEY_GRAPH"),
+    TLV_SURVEY_RESULTS: TlvSpec("SURVEY_RESULTS"),
+    TLV_SURVEY_STATUS: TlvSpec("SURVEY_STATUS", _scalar(1)),
+    TLV_SURVEY_PARTIAL_REASONS: TlvSpec(
+        "SURVEY_PARTIAL_REASONS", _scalar(2)
+    ),
+    TLV_SURVEY_SKIPPED_PLAN: TlvSpec("SURVEY_SKIPPED_PLAN"),
 }
 
 # Keep every currently assigned protocol TLV named even where the GUI does not
@@ -804,6 +873,270 @@ class CommandFrame:
     command_id: int
     frame: bytes
     packet: Packet
+
+
+@dataclass(frozen=True)
+class SurveyAssignmentIdentity:
+    assignment_epoch: int
+    table_command_sequence: int
+    table_commitment: bytes
+    slot_span: int
+    max_hop_count: int
+
+    def __post_init__(self) -> None:
+        if not 0 < self.assignment_epoch <= 0xFFFFFFFF:
+            raise ValueError("survey assignment epoch must be nonzero uint32")
+        if not 0 < self.table_command_sequence <= 0xFFFFFFFF:
+            raise ValueError("survey table command sequence must be nonzero uint32")
+        if len(self.table_commitment) != 32 or not any(self.table_commitment):
+            raise ValueError("survey table commitment must be a nonzero SHA-256 digest")
+        if not 1 <= self.slot_span <= SURVEY_MAX_ANCHORS:
+            raise ValueError("survey slot span must be in 1..50")
+        if not 1 <= self.max_hop_count <= 5:
+            raise ValueError("survey max hop count must be in 1..5")
+
+    def encode(self) -> bytes:
+        return b"".join(
+            (
+                self.assignment_epoch.to_bytes(4, "little"),
+                self.table_command_sequence.to_bytes(4, "little"),
+                self.table_commitment,
+                bytes((self.slot_span, self.max_hop_count)),
+            )
+        )
+
+    @classmethod
+    def decode(cls, raw: bytes) -> "SurveyAssignmentIdentity":
+        if len(raw) != SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN:
+            raise DecodeError(
+                "survey assignment identity must be exactly "
+                f"{SURVEY_ASSIGNMENT_IDENTITY_WIRE_LEN} bytes"
+            )
+        try:
+            return cls(
+                assignment_epoch=int.from_bytes(raw[0:4], "little"),
+                table_command_sequence=int.from_bytes(raw[4:8], "little"),
+                table_commitment=raw[8:40],
+                slot_span=raw[40],
+                max_hop_count=raw[41],
+            )
+        except ValueError as exc:
+            raise DecodeError(str(exc)) from exc
+
+
+@dataclass(frozen=True)
+class SurveyNeighborReport:
+    own_slot: int
+    heard_slots: frozenset[int]
+
+
+@dataclass(frozen=True)
+class SurveyPlanPair:
+    initiator_slot: int
+    responder_slot: int
+    wave_index: int
+
+
+@dataclass(frozen=True)
+class SurveySkippedPair:
+    input_index: int
+    first_slot: int
+    second_slot: int
+    reason: int
+
+
+@dataclass(frozen=True)
+class SurveyRangeResult:
+    pair_index: int
+    success_count: int
+    responder_slot: int
+    median_mm: int | None
+
+    @property
+    def usable(self) -> bool:
+        return self.success_count >= 3 and self.median_mm is not None
+
+
+@dataclass(frozen=True)
+class SurveyEvent:
+    kind: int
+    status: int
+    generation: int
+    assignment: SurveyAssignmentIdentity
+    partial_reasons: int
+    occupied_slots: frozenset[int] = frozenset()
+    neighbor_reports: tuple[SurveyNeighborReport, ...] = ()
+    plan_pairs: tuple[SurveyPlanPair, ...] = ()
+    wave_count: int = 0
+    skipped_pairs: tuple[SurveySkippedPair, ...] = ()
+    range_results: tuple[SurveyRangeResult, ...] = ()
+
+
+def _slots_from_bitmap(raw: bytes) -> frozenset[int]:
+    return frozenset(
+        slot
+        for slot in range(SURVEY_MAX_ANCHORS)
+        if raw[slot // 8] & (1 << (slot % 8))
+    )
+
+
+def decode_survey_event(packet_or_payload: Packet | bytes) -> SurveyEvent:
+    payload = (
+        packet_or_payload.payload
+        if isinstance(packet_or_payload, Packet)
+        else packet_or_payload
+    )
+    if isinstance(packet_or_payload, Packet) and packet_or_payload.msg_type != MSG_SURVEY_EVENT:
+        raise DecodeError("survey event decoder requires MSG_SURVEY_EVENT")
+    if len(payload) < SURVEY_EVENT_HEADER_WIRE_LEN:
+        raise DecodeError("survey event is shorter than its fixed header")
+    if payload[0] != SURVEY_PROTOCOL_VERSION:
+        raise DecodeError(f"unsupported survey event version {payload[0]}")
+    kind = payload[1]
+    status = payload[2]
+    graph_count = payload[3]
+    generation = int.from_bytes(payload[4:8], "little")
+    partial_reasons = int.from_bytes(payload[8:10], "little")
+    result_count = payload[10]
+    pair_count = payload[11]
+    wave_count = payload[12]
+    skipped_count = payload[13]
+    assignment = SurveyAssignmentIdentity.decode(payload[14:56])
+    occupied_mask = int.from_bytes(payload[56:64], "little")
+    received_mask = int.from_bytes(payload[64:72], "little")
+    if generation == 0 or status > 4 or kind not in (1, 2, 3, 4):
+        raise DecodeError("survey event has an invalid identity, status, or kind")
+    offset = SURVEY_EVENT_HEADER_WIRE_LEN
+    reports: list[SurveyNeighborReport] = []
+    plan_pairs: list[SurveyPlanPair] = []
+    skipped: list[SurveySkippedPair] = []
+    results: list[SurveyRangeResult] = []
+    if kind == 1:
+        if pair_count or result_count or skipped_count:
+            raise DecodeError("neighbor graph event carries unrelated records")
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN + graph_count * SURVEY_NEIGHBOR_RECORD_WIRE_LEN
+        if len(payload) != expected or graph_count != received_mask.bit_count():
+            raise DecodeError("neighbor graph count or length mismatch")
+        seen: set[int] = set()
+        for _ in range(graph_count):
+            raw = payload[offset:offset + SURVEY_NEIGHBOR_RECORD_WIRE_LEN]
+            own_slot = raw[0]
+            if own_slot >= SURVEY_MAX_ANCHORS or own_slot in seen:
+                raise DecodeError("neighbor graph has an invalid or duplicate owner slot")
+            heard = _slots_from_bitmap(raw[1:])
+            if own_slot in heard or not (received_mask & (1 << own_slot)):
+                raise DecodeError("neighbor report violates its owner bitmap")
+            reports.append(SurveyNeighborReport(own_slot, heard))
+            seen.add(own_slot)
+            offset += SURVEY_NEIGHBOR_RECORD_WIRE_LEN
+    elif kind == 2:
+        if graph_count or result_count or pair_count > SURVEY_MAX_PAIRS or skipped_count > SURVEY_MAX_PAIRS:
+            raise DecodeError("plan event has invalid record counts")
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN + pair_count * SURVEY_PLAN_PAIR_WIRE_LEN + skipped_count * 4
+        if len(payload) != expected:
+            raise DecodeError("plan event length mismatch")
+        for _ in range(pair_count):
+            initiator, responder, wave = payload[offset:offset + 3]
+            if initiator >= 50 or responder >= 50 or initiator == responder or wave >= wave_count:
+                raise DecodeError("plan event carries an invalid accepted pair")
+            plan_pairs.append(SurveyPlanPair(initiator, responder, wave))
+            offset += 3
+        for _ in range(skipped_count):
+            input_index, first, second, reason = payload[offset:offset + 4]
+            if input_index >= SURVEY_MAX_PAIRS or reason not in range(1, 8):
+                raise DecodeError("plan event carries an invalid skipped pair")
+            skipped.append(SurveySkippedPair(input_index, first, second, reason))
+            offset += 4
+    else:
+        if graph_count or pair_count or skipped_count or result_count > SURVEY_MAX_PAIRS:
+            raise DecodeError("range event has invalid record counts")
+        expected = SURVEY_EVENT_HEADER_WIRE_LEN + result_count * SURVEY_RANGE_RESULT_WIRE_LEN
+        if len(payload) != expected:
+            raise DecodeError("range event length mismatch")
+        seen_pairs: set[int] = set()
+        for _ in range(result_count):
+            pair_index = payload[offset]
+            successes = payload[offset + 1]
+            responder = payload[offset + 2]
+            reserved = payload[offset + 3]
+            median_raw = int.from_bytes(payload[offset + 4:offset + 8], "little", signed=True)
+            if (
+                pair_index >= SURVEY_MAX_PAIRS
+                or pair_index in seen_pairs
+                or successes > 5
+                or responder >= SURVEY_MAX_ANCHORS
+                or reserved
+                or (successes == 0) != (median_raw == SURVEY_NO_MEDIAN_MM)
+                or (successes and median_raw < 0)
+            ):
+                raise DecodeError("range event carries an invalid result")
+            results.append(
+                SurveyRangeResult(
+                    pair_index,
+                    successes,
+                    responder,
+                    None if median_raw == SURVEY_NO_MEDIAN_MM else median_raw,
+                )
+            )
+            seen_pairs.add(pair_index)
+            offset += SURVEY_RANGE_RESULT_WIRE_LEN
+    return SurveyEvent(
+        kind=kind,
+        status=status,
+        generation=generation,
+        assignment=assignment,
+        partial_reasons=partial_reasons,
+        occupied_slots=frozenset(
+            slot for slot in range(SURVEY_MAX_ANCHORS) if occupied_mask & (1 << slot)
+        ),
+        neighbor_reports=tuple(reports),
+        plan_pairs=tuple(plan_pairs),
+        wave_count=wave_count,
+        skipped_pairs=tuple(skipped),
+        range_results=tuple(results),
+    )
+
+
+def select_survey_pairs(
+    event: SurveyEvent, *, degree_cap: int = SURVEY_MAX_DEGREE
+) -> tuple[tuple[int, int], ...]:
+    if event.kind != 1:
+        raise ValueError("pair selection requires a neighbor graph event")
+    if not 1 <= degree_cap <= SURVEY_MAX_DEGREE:
+        raise ValueError("survey degree cap must be in 1..4")
+    heard = {report.own_slot: report.heard_slots for report in event.neighbor_reports}
+    candidates = {
+        (first, second)
+        for first in sorted(event.occupied_slots)
+        for second in sorted(event.occupied_slots)
+        if first < second
+        and second in heard.get(first, frozenset())
+        and first in heard.get(second, frozenset())
+    }
+    degree = {slot: 0 for slot in event.occupied_slots}
+    selected: list[tuple[int, int]] = []
+    while candidates:
+        eligible = [
+            edge
+            for edge in candidates
+            if degree[edge[0]] < degree_cap and degree[edge[1]] < degree_cap
+        ]
+        if not eligible:
+            break
+        edge = min(
+            eligible,
+            key=lambda pair: (
+                max(degree[pair[0]], degree[pair[1]]),
+                degree[pair[0]] + degree[pair[1]],
+                pair[0],
+                pair[1],
+            ),
+        )
+        selected.append(edge)
+        degree[edge[0]] += 1
+        degree[edge[1]] += 1
+        candidates.remove(edge)
+    return tuple(selected)
 
 
 def bit_names(value: int, names: dict[int, str]) -> list[str]:
@@ -1247,7 +1580,7 @@ def parse_shared_packet_bytes(
         age_ms=age_ms,
         age_kind="message_age_ms",
         payload=payload,
-        tlvs=parse_tlvs(payload),
+        tlvs=() if raw[2] in (MSG_GATEWAY_COMMAND_EVENT, MSG_SURVEY_EVENT) else parse_tlvs(payload),
     )
 
 
@@ -1302,7 +1635,7 @@ def parse_stream_record(record: bytes) -> Packet:
         age_ms=int.from_bytes(record[32:36], "little"),
         age_kind="gateway_queue_age_ms",
         payload=payload,
-        tlvs=() if record[8] == MSG_GATEWAY_COMMAND_EVENT else parse_tlvs(
+        tlvs=() if record[8] in (MSG_GATEWAY_COMMAND_EVENT, MSG_SURVEY_EVENT) else parse_tlvs(
             payload, allow_truncated_tail=bool(record[7] & GATEWAY_STREAM_FLAG_TRUNCATED),
         ),
         stream_class=record[5],
@@ -2076,6 +2409,124 @@ def build_assign_discovery_slots_command(
     return _build_command_frame(
         label="Assign discovery slots",
         command_id=CMD_ASSIGN_DISCOVERY_SLOTS,
+        host_id=host_id,
+        dst_id=gateway_id,
+        session_id=session_id,
+        seq=seq,
+        payload=bytes(payload),
+    )
+
+
+def _validate_survey_command_envelope(
+    host_id: int, gateway_id: int, session_id: int, seq: int
+) -> None:
+    if not 0 < host_id <= 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("host ID must be a non-zero uint64")
+    if not 0 < gateway_id <= 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("gateway ID must be a non-zero uint64")
+    if host_id == gateway_id:
+        raise ValueError("gateway ID must differ from host ID")
+    if not 0 < session_id <= 0xFFFFFFFF or not 0 < seq <= 0xFFFF:
+        raise ValueError("survey command session and sequence must be nonzero")
+
+
+def build_survey_start_command(
+    *, host_id: int, gateway_id: int, session_id: int, seq: int
+) -> CommandFrame:
+    _validate_survey_command_envelope(host_id, gateway_id, session_id, seq)
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_START.to_bytes(2, "little"))
+    return _build_command_frame(
+        label="Start neighbor survey",
+        command_id=CMD_SURVEY_START,
+        host_id=host_id,
+        dst_id=gateway_id,
+        session_id=session_id,
+        seq=seq,
+        payload=bytes(payload),
+    )
+
+
+def build_survey_plan_command(
+    *,
+    host_id: int,
+    gateway_id: int,
+    session_id: int,
+    seq: int,
+    generation: int,
+    assignment: SurveyAssignmentIdentity,
+    pairs: tuple[tuple[int, int], ...],
+) -> CommandFrame:
+    _validate_survey_command_envelope(host_id, gateway_id, session_id, seq)
+    if not 0 < generation <= 0xFFFFFFFF:
+        raise ValueError("survey generation must be a nonzero uint32")
+    if len(pairs) > SURVEY_MAX_PAIRS:
+        raise ValueError("survey plan exceeds the 100-pair cap")
+    raw_pairs = bytearray()
+    for first, second in pairs:
+        if not 0 <= first < SURVEY_MAX_ANCHORS or not 0 <= second < SURVEY_MAX_ANCHORS:
+            raise ValueError("survey pair slots must be in 0..49")
+        raw_pairs.extend((first, second))
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_PLAN.to_bytes(2, "little"))
+    append_tlv(payload, TLV_SURVEY_GENERATION, generation.to_bytes(4, "little"))
+    append_tlv(payload, TLV_SURVEY_ASSIGNMENT_IDENTITY, assignment.encode())
+    if raw_pairs:
+        append_tlv(payload, TLV_SURVEY_PLAN, bytes(raw_pairs))
+    return _build_command_frame(
+        label="Submit survey ranging plan",
+        command_id=CMD_SURVEY_PLAN,
+        host_id=host_id,
+        dst_id=gateway_id,
+        session_id=session_id,
+        seq=seq,
+        payload=bytes(payload),
+    )
+
+
+def build_survey_cancel_command(
+    *,
+    host_id: int,
+    gateway_id: int,
+    session_id: int,
+    seq: int,
+    generation: int,
+) -> CommandFrame:
+    _validate_survey_command_envelope(host_id, gateway_id, session_id, seq)
+    if not 0 < generation <= 0xFFFFFFFF:
+        raise ValueError("survey generation must be a nonzero uint32")
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_CANCEL.to_bytes(2, "little"))
+    append_tlv(payload, TLV_SURVEY_GENERATION, generation.to_bytes(4, "little"))
+    return _build_command_frame(
+        label="Cancel survey",
+        command_id=CMD_SURVEY_CANCEL,
+        host_id=host_id,
+        dst_id=gateway_id,
+        session_id=session_id,
+        seq=seq,
+        payload=bytes(payload),
+    )
+
+
+def build_survey_get_status_command(
+    *,
+    host_id: int,
+    gateway_id: int,
+    session_id: int,
+    seq: int,
+    generation: int | None = None,
+) -> CommandFrame:
+    _validate_survey_command_envelope(host_id, gateway_id, session_id, seq)
+    if generation is not None and not 0 < generation <= 0xFFFFFFFF:
+        raise ValueError("survey generation must be a nonzero uint32")
+    payload = bytearray()
+    append_tlv(payload, TLV_COMMAND_ID, CMD_SURVEY_GET_STATUS.to_bytes(2, "little"))
+    if generation is not None:
+        append_tlv(payload, TLV_SURVEY_GENERATION, generation.to_bytes(4, "little"))
+    return _build_command_frame(
+        label="Retrieve survey status",
+        command_id=CMD_SURVEY_GET_STATUS,
         host_id=host_id,
         dst_id=gateway_id,
         session_id=session_id,

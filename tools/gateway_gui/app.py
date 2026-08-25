@@ -45,6 +45,10 @@ from .operation_policy import (
 from .protocol import (
     CMD_ASSIGN_DISCOVERY_SLOTS,
     CMD_FORCE_REDISCOVERY,
+    CMD_SURVEY_CANCEL,
+    CMD_SURVEY_GET_STATUS,
+    CMD_SURVEY_PLAN,
+    CMD_SURVEY_START,
     COMMAND_NAMES,
     COMMAND_STATUS_NAMES,
     DEFAULT_HOST_ID,
@@ -56,7 +60,17 @@ from .protocol import (
     MSG_SELF_TEST_REPORT,
     MSG_COMMAND_RESULT,
     MSG_GATEWAY_COMMAND_EVENT,
+    MSG_SURVEY_EVENT,
     Packet,
+    SURVEY_EVENT_NEIGHBOR_GRAPH,
+    SURVEY_EVENT_PLAN_ACCEPTED,
+    SURVEY_EVENT_RANGE_PROGRESS,
+    SURVEY_EVENT_TERMINAL,
+    SURVEY_TERMINAL_ABORTED,
+    SURVEY_TERMINAL_COMPLETE,
+    SURVEY_TERMINAL_PARTIAL,
+    SurveyAssignmentIdentity,
+    SurveyEvent,
     STREAM_CLASS_NAMES,
     TLV_ANCHOR_DIAG_BYTES,
     TLV_ANCHOR_ID,
@@ -113,11 +127,16 @@ from .protocol import (
     build_gateway_host_receipt,
     build_here_i_am_command,
     build_reboot_command,
+    build_survey_cancel_command,
+    build_survey_plan_command,
+    build_survey_start_command,
     click_samples,
     decode_cir_sample,
+    decode_survey_event,
     format_device_id,
     hex_dump,
     is_gateway_assignment_publisher_event,
+    select_survey_pairs,
 )
 
 
@@ -209,6 +228,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._topology_gateway_id: int | None = None
         self._topology_slot_span: int | None = None
         self._topology_timing_summary = "Topology estimate pending enumeration."
+        self._survey_chain_pending = False
+        self._survey_phase = "idle"
+        self._survey_generation: int | None = None
+        self._survey_assignment: SurveyAssignmentIdentity | None = None
+        self._survey_pairs: tuple[tuple[int, int], ...] = ()
+        self._survey_results: dict[int, Any] = {}
         self._initialize_gateway_diagnostics()
 
         self.connection_text = tk.StringVar(value="Disconnected")
@@ -368,13 +393,40 @@ class GatewayGui(GatewayDiagnosticsMixin):
             "Discovers all network anchors, refreshes routing trees, and assigns unique, collision-free discovery slots.",
         )
 
+        self.survey_button = ttk.Button(
+            operations,
+            text="Run Survey",
+            style="Primary.TButton",
+            command=self._run_survey,
+        )
+        self.survey_button.grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        Tooltip(
+            self.survey_button,
+            "Runs a fresh RAM-only enumeration, collects mutual neighbors, then ranges a degree-balanced plan.",
+        )
+
+        self.survey_cancel_button = ttk.Button(
+            operations,
+            text="Abort Active Survey",
+            command=self._cancel_survey,
+        )
+        self.survey_cancel_button.grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        Tooltip(
+            self.survey_cancel_button,
+            "Floods an explicit abort for the active survey generation.",
+        )
+
         self.refresh_button = ttk.Button(
             operations,
             text="Refresh Routes (Here I Am)",
             command=self._send_here_i_am,
         )
         self.refresh_button.grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.refresh_button,
@@ -388,7 +440,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             command=self._clear_gateway_memory,
         )
         self.clear_memory_button.grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
         Tooltip(
             self.clear_memory_button,
@@ -402,14 +454,14 @@ class GatewayGui(GatewayDiagnosticsMixin):
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Label(
             operations,
             textvariable=self.operation_estimate_text,
             style="Muted.TLabel",
             wraplength=295,
             justify="left",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # Advanced / Protocol Settings
         advanced = ttk.LabelFrame(parent, text="Protocol Parameters", padding=10)
@@ -767,7 +819,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
             if hours else f"{minutes:d}:{seconds:02d}"
         )
 
-    def _operation_policy_profile(self) -> OperationPolicyProfile:
+    def _operation_policy_profile(
+        self, *, ram_only_iteration: bool = False
+    ) -> OperationPolicyProfile:
         expected_raw = self.assignment_expected_anchors_text.get().strip()
         expected_anchor_count = (
             self._parse_int("Expected anchors", expected_raw)
@@ -794,6 +848,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     self.assignment_response_spread_text.get(),
                 ),
                 deepest_hop=deepest_hop,
+                ram_only_iteration=ram_only_iteration,
             ),
         )
 
@@ -903,7 +958,200 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 )
             if event.terminal:
                 self._store_enumeration_timing(event, anchors)
+                if self._survey_chain_pending:
+                    enumeration_ok = (
+                        not (event.flags & 0x04)
+                        and event.command_status == 0
+                        and event.reason == 0
+                        and event.failure_count == 0
+                        and event.total_count > 0
+                        and len(anchors) == event.total_count
+                        and all(
+                            detail.discovery_slot != 255
+                            and detail.hop_count != 0
+                            for detail in anchors.values()
+                        )
+                    )
+                    if enumeration_ok:
+                        self._command_progress_text = (
+                            "Survey: starting neighbor collection"
+                        )
+                        self.root.after_idle(
+                            self._start_survey_after_enumeration
+                        )
+                    else:
+                        self._survey_chain_pending = False
+                        self._survey_phase = "idle"
+                        self._append_log(
+                            "error",
+                            "Survey stopped because its fresh enumeration "
+                            "did not complete with one exact slot/hop record "
+                            "for every anchor.",
+                        )
         self._update_command_state()
+
+    def _start_survey_after_enumeration(self) -> None:
+        if not self._survey_chain_pending:
+            return
+        if self.command_orchestrator.active:
+            self.root.after(25, self._start_survey_after_enumeration)
+            return
+        try:
+            host_id = self._parse_int("Host ID", self.host_id_text.get())
+            gateway_id = self._require_gateway_identity()
+            session_id, seq = self._next_identity()
+            command = build_survey_start_command(
+                host_id=host_id,
+                gateway_id=gateway_id,
+                session_id=session_id,
+                seq=seq,
+            )
+        except ValueError as exc:
+            self._survey_chain_pending = False
+            self._survey_phase = "idle"
+            self._show_error(str(exc))
+            return
+        self._survey_chain_pending = False
+        self._survey_phase = "neighbors"
+        self._dispatch_gateway_command(
+            GatewayCommandDispatch(
+                command_kind=2,
+                command_id=command.command_id,
+                session_id=session_id,
+                sequence=seq,
+                frame=command.frame,
+                label=command.label,
+                timeout_s=60.0,
+                status_text=(
+                    "Enumeration complete; starting scheduled neighbor "
+                    "collection..."
+                ),
+            )
+        )
+        self._update_command_state()
+
+    def _submit_survey_plan(self, event: SurveyEvent) -> None:
+        if (
+            self._survey_generation != event.generation
+            or self._survey_assignment != event.assignment
+            or self._survey_phase != "planning"
+        ):
+            return
+        try:
+            pairs = select_survey_pairs(event)
+            host_id = self._parse_int("Host ID", self.host_id_text.get())
+            gateway_id = self._require_gateway_identity()
+            session_id, seq = self._next_identity()
+            command = build_survey_plan_command(
+                host_id=host_id,
+                gateway_id=gateway_id,
+                session_id=session_id,
+                seq=seq,
+                generation=event.generation,
+                assignment=event.assignment,
+                pairs=pairs,
+            )
+        except ValueError as exc:
+            self._survey_phase = "idle"
+            self._show_error(str(exc))
+            return
+        self._survey_pairs = pairs
+        self._survey_phase = "submitting-plan"
+        self._dispatch_gateway_command(
+            GatewayCommandDispatch(
+                command_kind=2,
+                command_id=command.command_id,
+                session_id=session_id,
+                sequence=seq,
+                frame=command.frame,
+                label=command.label,
+                timeout_s=60.0,
+                status_text=(
+                    f"Submitting {len(pairs)} mutual pair"
+                    f"{'s' if len(pairs) != 1 else ''} for ranging..."
+                ),
+            )
+        )
+
+    def _observe_survey_event_packet(self, packet: Packet) -> None:
+        try:
+            event = decode_survey_event(packet)
+        except Exception as exc:
+            self._show_error(f"Malformed survey event: {exc}")
+            return
+        if (
+            self._survey_generation is not None
+            and event.generation != self._survey_generation
+        ):
+            self._append_log(
+                "error",
+                f"Ignored stale survey generation {event.generation}; "
+                f"active generation is {self._survey_generation}.",
+            )
+            return
+        self._survey_generation = event.generation
+        self._survey_assignment = event.assignment
+        if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
+            self._survey_phase = "planning"
+            self.status_text.set(
+                f"Neighbor graph received from {len(event.neighbor_reports)} "
+                "anchors; building the degree-4 mutual-edge plan..."
+            )
+            self.root.after_idle(lambda: self._submit_survey_plan(event))
+        elif event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
+            self._survey_phase = "ranging"
+            self.status_text.set(
+                f"Survey plan accepted: {len(event.plan_pairs)} pairs in "
+                f"{event.wave_count} fixed wave"
+                f"{'s' if event.wave_count != 1 else ''}."
+            )
+        elif event.kind == SURVEY_EVENT_RANGE_PROGRESS:
+            self._survey_phase = "ranging"
+            for result in event.range_results:
+                self._survey_results[result.pair_index] = result
+            self.status_text.set(
+                f"Survey ranging: {len(self._survey_results)}/"
+                f"{len(self._survey_pairs)} pair results received."
+            )
+        elif event.kind == SURVEY_EVENT_TERMINAL:
+            for result in event.range_results:
+                self._survey_results[result.pair_index] = result
+            usable = sum(
+                result.usable for result in self._survey_results.values()
+            )
+            self._survey_phase = "idle"
+            outcome = {
+                SURVEY_TERMINAL_COMPLETE: "complete",
+                SURVEY_TERMINAL_PARTIAL: "partial",
+                SURVEY_TERMINAL_ABORTED: "aborted",
+            }.get(event.status, f"status {event.status}")
+            message = (
+                f"Survey {outcome}: {usable}/{len(self._survey_pairs)} "
+                f"pairs have usable median ranges"
+            )
+            if event.partial_reasons:
+                message += f"; partial flags=0x{event.partial_reasons:04x}"
+            self.status_text.set(message)
+            self._append_log("event", message)
+        self._update_command_state()
+
+    def _observe_survey_command_result(self, packet: Packet) -> None:
+        command_id = packet.value(TLV_COMMAND_ID)
+        status = packet.value(TLV_COMMAND_STATUS)
+        if command_id not in {
+            CMD_SURVEY_START,
+            CMD_SURVEY_PLAN,
+            CMD_SURVEY_CANCEL,
+            CMD_SURVEY_GET_STATUS,
+        } or not isinstance(status, int):
+            return
+        if status != 0:
+            self._survey_chain_pending = False
+            self._survey_phase = "idle"
+            self._show_error(
+                f"{COMMAND_NAMES.get(command_id, 'Survey command')} was "
+                f"rejected with {COMMAND_STATUS_NAMES.get(status, status)}"
+            )
 
     def _store_enumeration_timing(
         self, event: Any, anchors: dict[int, Any]
@@ -1008,12 +1256,16 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         self._submit_gateway_command(plan)
 
-    def _send_assign_discovery_slots(self) -> None:
+    def _send_assign_discovery_slots(
+        self, *, ram_only_iteration: bool = False
+    ) -> bool:
         try:
             host_id = self._parse_int("Host ID", self.host_id_text.get())
             gateway_id = self._require_gateway_identity()
             session_id, seq = self._next_identity()
-            operation_policy = self._operation_policy_profile()
+            operation_policy = self._operation_policy_profile(
+                ram_only_iteration=ram_only_iteration
+            )
             assignment_policy = operation_policy.assignment
             command_budget_ms = assignment_policy.operation_budget_ms
             expected_anchor_count = assignment_policy.expected_anchor_count or None
@@ -1065,8 +1317,55 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         except ValueError as exc:
             self._show_error(str(exc))
+            return False
+        return self._submit_gateway_command(plan)
+
+    def _run_survey(self) -> None:
+        self._survey_chain_pending = True
+        self._survey_phase = "enumerating"
+        self._survey_generation = None
+        self._survey_assignment = None
+        self._survey_pairs = ()
+        self._survey_results.clear()
+        if not self._send_assign_discovery_slots(ram_only_iteration=True):
+            self._survey_chain_pending = False
+            self._survey_phase = "idle"
+        else:
+            self._command_progress_text = "Survey: fresh RAM-only enumeration"
+            self._update_command_state()
+
+    def _cancel_survey(self) -> None:
+        if self._survey_generation is None or self._survey_phase == "idle":
+            self._show_error("There is no active survey generation to abort")
             return
-        self._submit_gateway_command(plan)
+        try:
+            host_id = self._parse_int("Host ID", self.host_id_text.get())
+            gateway_id = self._require_gateway_identity()
+            session_id, seq = self._next_identity()
+            command = build_survey_cancel_command(
+                host_id=host_id,
+                gateway_id=gateway_id,
+                session_id=session_id,
+                seq=seq,
+                generation=self._survey_generation,
+            )
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        self._survey_phase = "aborting"
+        self._dispatch_gateway_command(
+            GatewayCommandDispatch(
+                command_kind=2,
+                command_id=command.command_id,
+                session_id=session_id,
+                sequence=seq,
+                frame=command.frame,
+                label=command.label,
+                timeout_s=60.0,
+                status_text="Flooding an explicit survey abort...",
+            )
+        )
+        self._update_command_state()
 
     def _drain_events(self) -> None:
         try:
@@ -1263,6 +1562,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             getattr(orchestrator, "active", False)
             or (tracker is not None and tracker.pending is not None)
         )
+        survey_active = getattr(self, "_survey_phase", "idle") != "idle"
         if command_active:
             pending = tracker.pending if tracker is not None else None
             now = time.monotonic()
@@ -1289,11 +1589,34 @@ class GatewayGui(GatewayDiagnosticsMixin):
             reason = "Waiting for a valid gateway identity."
         else:
             reason = "Ready for a gateway command."
-        command_state = "normal" if reason.startswith("Ready") else "disabled"
+        if survey_active and not command_active:
+            reason = (
+                "Survey "
+                f"{self._survey_phase.replace('-', ' ')}; fixed radio plan active."
+            )
+        command_state = (
+            "normal"
+            if reason.startswith("Ready") and not survey_active
+            else "disabled"
+        )
         self.refresh_button.configure(state=command_state)
         self.assignment_button.configure(state=command_state)
+        if hasattr(self, "survey_button"):
+            self.survey_button.configure(state=command_state)
+        if hasattr(self, "survey_cancel_button"):
+            can_abort = (
+                survey_active
+                and self._survey_generation is not None
+                and self.connected
+                and self.gateway_id is not None
+                and not command_active
+                and self._survey_phase != "aborting"
+            )
+            self.survey_cancel_button.configure(
+                state="normal" if can_abort else "disabled"
+            )
         if hasattr(self, "clear_memory_button"):
-            clear_blocked = command_active or getattr(
+            clear_blocked = command_active or survey_active or getattr(
                 self, "connection_state", "disconnected"
             ) in ("connecting", "reconnecting", "disconnecting")
             self.clear_memory_button.configure(
@@ -1530,6 +1853,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
             else None
         )
         if canonical_delivery:
+            if packet.msg_type == MSG_SURVEY_EVENT:
+                self._observe_survey_event_packet(packet)
+            elif packet.msg_type == MSG_COMMAND_RESULT:
+                self._observe_survey_command_result(packet)
             self._observe_diagnostic_packet(packet, received_at=received_at)
         self.packet_counter += 1
         iid = f"packet-{self.packet_counter}"
@@ -1671,6 +1998,27 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     f"assigned_anchors={reason}"
                 )
             return f"command={command_name} status={status.display if status else '-'} reason={packet.value(TLV_REASON, '-')}"
+        if packet.msg_type == MSG_SURVEY_EVENT:
+            try:
+                event = decode_survey_event(packet)
+            except Exception as exc:
+                return f"malformed survey event: {exc}"
+            if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
+                return (
+                    f"survey={event.generation} neighbor_reports="
+                    f"{len(event.neighbor_reports)} partial="
+                    f"0x{event.partial_reasons:04x}"
+                )
+            if event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
+                return (
+                    f"survey={event.generation} pairs={len(event.plan_pairs)} "
+                    f"waves={event.wave_count} skipped={len(event.skipped_pairs)}"
+                )
+            usable = sum(result.usable for result in event.range_results)
+            return (
+                f"survey={event.generation} results={len(event.range_results)} "
+                f"usable={usable} partial=0x{event.partial_reasons:04x}"
+            )
         return f"dst={format_device_id(packet.dst_id)} payload={len(packet.payload)} bytes"
 
     def _observe_gateway_id(self, packet: Packet) -> None:
@@ -2140,6 +2488,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.command_timeline_model.reset()
         if hasattr(self, "topology_model"):
             self.topology_model.reset()
+        self._survey_chain_pending = False
+        self._survey_phase = "idle"
+        self._survey_generation = None
+        self._survey_assignment = None
+        self._survey_pairs = ()
+        self._survey_results = {}
         self._reset_topology_timing()
         if hasattr(self, "anchor_geometry_view"):
             self.anchor_geometry_view.show_model(self.geometry_model)

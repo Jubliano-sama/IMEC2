@@ -1058,6 +1058,7 @@ static bool mesh_frame_requires_anchor_click_handoff(const uint8_t *frame,
         !IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER);
 
     return mesh_decode_channel5_wake_claim(frame, frame_len, claim, NULL) &&
+           !app_survey_anchor_active() &&
            app_mesh_c5_wake_claim_requires_anchor_handoff(
                claim->flags, local_can_range_clicks);
 }
@@ -1407,6 +1408,109 @@ static bool mesh_process_received_frame(const uint8_t *frame,
     return false;
 }
 
+static bool mesh_gateway_run_survey_response_slice(void)
+{
+    uint8_t *frame = mesh_uwb_rx_frame;
+    struct radio_guard_uwb_lease lease = {0};
+    uint64_t round_deadline_ms = 0u;
+    bool functional_rx_outcome = false;
+    int parking_ret;
+    int release_ret;
+    int ret;
+
+    if (DEVICE_ROLE != ROLE_GATEWAY ||
+        !app_survey_gateway_response_window(
+            (uint64_t)k_uptime_get(), &round_deadline_ms)) {
+        return false;
+    }
+    ret = mesh_rx_radio_claim("gateway compact survey RX", &lease);
+    if (ret < 0) {
+        mesh_schedule_uwb_rx(0u);
+        return true;
+    }
+    ret = dwm3000_driver_configure_wake_mesh_control_mode();
+    if (ret < 0) {
+        int recovery_ret = dwm3000_driver_force_recovery();
+
+        ret = recovery_ret < 0 ? recovery_ret :
+            dwm3000_driver_configure_wake_mesh_control_mode();
+    }
+    while (ret == 0 && app_survey_gateway_response_window(
+               (uint64_t)k_uptime_get(), &round_deadline_ms)) {
+        struct survey_response_bundle bundle;
+        struct survey_response_hop_ack ack;
+        enum dwm3000_rx_failure failure = DWM3000_RX_FAILURE_NONE;
+        uint8_t encoded[UWB_SURVEY_HOP_ACK_LEN];
+        size_t frame_len = 0u;
+        size_t encoded_len = 0u;
+        uint8_t quality = 0u;
+        uint64_t now_ms = (uint64_t)k_uptime_get();
+        uint32_t window_ms;
+
+        if (now_ms >= round_deadline_ms) {
+            continue;
+        }
+        window_ms = round_deadline_ms - now_ms > UINT32_MAX ?
+            UINT32_MAX : (uint32_t)(round_deadline_ms - now_ms);
+        ret = dwm3000_driver_receive_frame_continuous(
+            window_ms, frame, UWB_MESH_MAX_FRAME_LEN, &frame_len,
+            &quality, NULL, &failure);
+        functional_rx_outcome =
+            app_mesh_rx_policy_dwm_attempt_made_progress(ret, failure);
+        if (ret == -ETIMEDOUT) {
+            ret = 0;
+            continue;
+        }
+        if (ret == -ECANCELED) {
+            break;
+        }
+        if (ret < 0) {
+            int recovery_ret = dwm3000_driver_force_recovery();
+
+            ret = recovery_ret < 0 ? recovery_ret :
+                dwm3000_driver_configure_wake_mesh_control_mode();
+            continue;
+        }
+        if (uwb_decode_survey_bundle(frame, frame_len, &bundle) != PROTO_OK) {
+            ret = 0;
+            continue;
+        }
+        ret = app_survey_gateway_handle_bundle(
+            &bundle, (uint64_t)k_uptime_get(), &ack);
+        if (ret == 0) {
+            int encode_ret = uwb_encode_survey_hop_ack(
+                &ack, encoded, sizeof(encoded), &encoded_len);
+
+            ret = encode_ret == PROTO_OK ? 0 :
+                mesh_errno_from_proto(encode_ret);
+        }
+        if (ret == 0) {
+            int ack_ret = dwm3000_driver_send_frame_tracked_until(
+                encoded, encoded_len, UWB_CONTROL_TX_TIMEOUT_MS,
+                round_deadline_ms, NULL);
+
+            /* A timed-out ACK leaves custody at the child for a later round. */
+            ret = ack_ret == -ETIMEDOUT ? 0 : ack_ret;
+        }
+        if (ret >= 0 || ret == -ESTALE || ret == -EBADMSG) {
+            ret = 0;
+        }
+    }
+    parking_ret = mesh_radio_idle_with_bounded_recovery("gateway-survey-lane");
+    release_ret = mesh_rx_radio_finish(&lease, parking_ret);
+    if (release_ret < 0) {
+        mesh_uwb_rx_active = false;
+        return true;
+    } else if (functional_rx_outcome) {
+        app_watchdog_note_radio_progress();
+    }
+    if (ret == -ECANCELED) {
+        (void)app_node_comm_gateway_delivery_safe_boundary();
+    }
+    mesh_schedule_uwb_rx(0u);
+    return true;
+}
+
 static bool mesh_gateway_run_enumeration_response_slice(void)
 {
     uint8_t *frame = mesh_uwb_rx_frame;
@@ -1695,8 +1799,19 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
         mesh_schedule_uwb_rx(MESH_ROUTE_CHANNEL9_WAIT_RETRY_MS);
         return;
     }
-    if (mesh_gateway_run_enumeration_response_slice()) {
+    if (mesh_gateway_run_survey_response_slice() ||
+        mesh_gateway_run_enumeration_response_slice()) {
         return;
+    }
+    {
+        uint32_t survey_wait_ms = 0u;
+
+        if (DEVICE_ROLE == ROLE_GATEWAY &&
+            app_survey_gateway_radio_quiet(
+                (uint64_t)k_uptime_get(), &survey_wait_ms)) {
+            mesh_schedule_uwb_rx(survey_wait_ms);
+            return;
+        }
     }
     if (mesh_rx_response_active()) {
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -1750,6 +1865,7 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
             uint32_t slice_remaining_ms;
             uint32_t ack_retry_wait_ms = 0u;
             uint32_t enumeration_wait_ms = 0u;
+            uint32_t survey_wait_ms = 0u;
             uint32_t protocol_validation_token = 0u;
             bool functional_rx_outcome = false;
             struct radio_guard_uwb_lease radio_lease = {0};
@@ -1765,6 +1881,13 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                     (uint64_t)k_uptime_get(), NULL)) {
                 status_debug_printf(
                     "DBG_GATEWAY_CH9_RX_YIELD_ENUM now=%u\n", now_ms);
+                mesh_schedule_uwb_rx(0u);
+                return;
+            }
+            if (app_survey_gateway_response_window(
+                    (uint64_t)k_uptime_get(), NULL)) {
+                status_debug_printf(
+                    "DBG_GATEWAY_CH9_RX_YIELD_SURVEY now=%u\n", now_ms);
                 mesh_schedule_uwb_rx(0u);
                 return;
             }
@@ -1791,7 +1914,12 @@ static void mesh_uwb_rx_work_handler(struct k_work *work)
                 status_debug_printf(
                     "DBG_GATEWAY_CH9_RX_CAP_ENUM now=%u wait=%u\n",
                     now_ms,
-                    enumeration_wait_ms);
+                                enumeration_wait_ms);
+            }
+            if (app_survey_gateway_response_pending_wait_ms(
+                    (uint64_t)k_uptime_get(), &survey_wait_ms) &&
+                survey_wait_ms < remaining_ms) {
+                remaining_ms = survey_wait_ms;
             }
 
             if (remaining_ms == 0u) {

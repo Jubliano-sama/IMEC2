@@ -12,6 +12,25 @@ int app_anchor_init(void)
     return 0;
 #else
     int ret;
+    {
+        const struct app_survey_ops survey_runtime_ops = {
+#if DEVICE_ROLE == ROLE_GATEWAY
+            .send_control = gateway_survey_send_control,
+            .emit_event = gateway_survey_emit_event,
+            .wake_gateway_rx = gateway_survey_wake_rx,
+            .gateway_terminal = gateway_survey_terminal,
+#elif DEVICE_ROLE == ROLE_ANCHOR && \
+    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+            .anchor_upstream = anchor_survey_upstream,
+            .anchor_reschedule = anchor_survey_work_reschedule,
+#endif
+        };
+
+        ret = app_survey_init(&survey_runtime_ops);
+        if (ret < 0) {
+            return ret;
+        }
+    }
 #if DEVICE_ROLE == ROLE_GATEWAY && defined(CONFIG_IMEC_GATEWAY_BLE)
     if (gateway_host_command_msgq.max_msgs != GATEWAY_HOST_COMMAND_QUEUE_DEPTH) {
         return -EINVAL;

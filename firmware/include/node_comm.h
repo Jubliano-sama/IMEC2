@@ -25,6 +25,21 @@
  */
 #define NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS 10000u
 
+/*
+ * A broadcast recipient forwards its command before dispatching it locally.
+ * Applying a command at hop depth N therefore spans the gateway's origin
+ * wave plus N independently bounded relay waves.  Timed protocols must use
+ * this helper instead of reconstructing the flood timing from unrelated
+ * fast-path constants.
+ */
+static inline uint32_t node_comm_bounded_control_apply_budget_ms(
+    uint8_t max_hop_count)
+{
+    return max_hop_count == 0u ? 0u :
+        ((uint32_t)max_hop_count + 1u) *
+            NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS;
+}
+
 enum node_comm_lifecycle_state {
     NODE_COMM_STOPPED = 0,
     NODE_COMM_RUNNING,

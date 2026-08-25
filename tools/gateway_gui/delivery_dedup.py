@@ -27,7 +27,9 @@ from .protocol import (
     MSG_MESH_DATA,
     MSG_RESULT_BUNDLE,
     MSG_SELF_TEST_REPORT,
+    MSG_SURVEY_EVENT,
     Packet,
+    decode_survey_event,
     is_gateway_assignment_publisher_event,
     validate_gateway_command_event_packet,
     validate_gateway_local_command_result_packet,
@@ -49,6 +51,7 @@ GATEWAY_ACK_REQUIRED_MESSAGE_TYPES = frozenset(
         MSG_ANCHOR_HEARTBEAT,
         MSG_COMMAND_RESULT,
         MSG_RESULT_BUNDLE,
+        MSG_SURVEY_EVENT,
     }
 )
 
@@ -141,7 +144,7 @@ def is_host_delivery_packet(packet: Packet) -> bool:
     visible on every arrival and consumes no cache budget.
     """
 
-    if packet.msg_type == MSG_GATEWAY_COMMAND_EVENT:
+    if packet.msg_type in (MSG_GATEWAY_COMMAND_EVENT, MSG_SURVEY_EVENT):
         return packet.flags == FLAG_GATEWAY_ACK_REQUIRED
     if packet.msg_type in GATEWAY_ACK_REQUIRED_MESSAGE_TYPES:
         return (packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0
@@ -220,6 +223,23 @@ class GatewayPacketDeduplicator:
     def _identity_and_candidate(
         self, packet: Packet
     ) -> tuple[DeliveryIdentity, _CachedPacket] | None:
+        if packet.msg_type == MSG_SURVEY_EVENT:
+            try:
+                event = decode_survey_event(packet)
+            except DecodeError:
+                return None
+            if (
+                packet.flags != FLAG_GATEWAY_ACK_REQUIRED
+                or packet.src_id == 0
+                or packet.src_id != packet.dst_id
+                or packet.session_id != event.generation
+                or packet.seq == 0
+            ):
+                return None
+            return (
+                self._identity(packet, self._gateway_id),
+                _CachedPacket(packet.flags, bytes(packet.payload)),
+            )
         if packet.msg_type == MSG_SELF_TEST_REPORT:
             try:
                 validate_self_test_report_packet(packet)

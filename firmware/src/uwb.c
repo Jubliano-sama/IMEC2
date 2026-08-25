@@ -199,7 +199,10 @@ bool uwb_frame_type_valid(uint8_t type)
            type == MSG_UWB_ANCHOR_DIAG ||
            type == MSG_UWB_ANCHOR_DIAG_FRAGMENT ||
            type == MSG_UWB_ENUM_BUNDLE ||
-           type == MSG_UWB_ENUM_HOP_ACK;
+           type == MSG_UWB_ENUM_HOP_ACK ||
+           type == MSG_UWB_SURVEY_PRESENCE ||
+           type == MSG_UWB_SURVEY_BUNDLE ||
+           type == MSG_UWB_SURVEY_HOP_ACK;
 }
 
 int uwb_header_validate(const struct uwb_range_header *header, uint8_t expected_type)

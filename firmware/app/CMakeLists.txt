@@ -228,7 +228,7 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
                 # messages in the flash-constrained gateway image. Typed RTT
                 # evidence identifies the active protocol owner at runtime.
                 "CONFIG_ASSERT_NO_FILE_INFO=y\n")
-            set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 4480)
+            set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 8512)
         endif()
         file(APPEND "${IMEC_MESH_ROUTE_TEST_NAME_CONF}"
             # The gateway is the flash-constrained production role. Typed RTT
@@ -242,10 +242,10 @@ if(IMEC_MESH_ROUTE_TEST_BUILD)
             # preserve the gateway's required static RAM reserve, including
             # the full broadcast-command replay commitment.
             "CONFIG_LOG_BUFFER_SIZE=1024\n"
-            # The exact preset selects 4480 for its known 3440-byte application
-            # compiler chain plus the required 1024-byte runtime margin and one
-            # alignment step. Complete platform closure remains a promotion
-            # gate; generic gateway builds retain their prior 4256-byte setting.
+            # Survey host-event custody reaches a 6776-byte synchronous chain.
+            # 8512 retains the verifier's 20% free-space floor plus alignment
+            # room. Complete platform closure remains a promotion gate;
+            # generic gateway builds retain their prior 4256-byte setting.
             "CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=${IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE}\n")
     elseif(FIRMWARE_ROLE STREQUAL "anchor" AND
            NOT IMEC_MESH_ROUTE_TEST_TRANSMITTER_BUILD)
@@ -412,6 +412,7 @@ set(IMEC_APP_LOCAL_SOURCES
     src/app_stack_diag_record.c
     src/app_stack_diag.c
     src/app_stack_workload_diag.c
+    src/app_survey.c
     src/app_anchor.c
     src/app_anchor_command_completion.c
     src/app_anchor_ranging.c
@@ -472,6 +473,9 @@ target_sources(app PRIVATE
     ../src/report.c
     ../src/serial_frame.c
     ../src/status.c
+    ../src/survey.c
+    ../src/survey_protocol.c
+    ../src/survey_response_lane.c
     ../src/route.c
 )
 

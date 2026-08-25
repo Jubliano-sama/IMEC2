@@ -388,6 +388,9 @@ static void test_gateway_operations_outrank_only_unaccepted_clicks(void)
 {
     static const enum command_id operation_commands[] = {
         CMD_ASSIGN_DISCOVERY_SLOTS,
+        CMD_SURVEY_START,
+        CMD_SURVEY_PLAN,
+        CMD_SURVEY_CANCEL,
     };
     uint8_t payload[] = {TLV_COMMAND_ID, sizeof(uint16_t), 0u, 0u};
 

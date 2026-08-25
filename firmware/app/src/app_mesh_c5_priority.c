@@ -241,6 +241,9 @@ bool app_mesh_c5_gateway_operation_outranks_unaccepted_click(
 
     switch (command_id) {
     case CMD_ASSIGN_DISCOVERY_SLOTS:
+    case CMD_SURVEY_START:
+    case CMD_SURVEY_PLAN:
+    case CMD_SURVEY_CANCEL:
         return true;
     default:
         return false;

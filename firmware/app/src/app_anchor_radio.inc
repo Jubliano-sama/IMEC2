@@ -723,6 +723,11 @@ static bool anchor_handle_uwb_claim(const struct uwb_wake_claim_frame *first_cla
     if (first_claim == NULL) {
         return false;
     }
+    if (app_survey_anchor_active()) {
+        /* A survey owns the radio against its absolute plan.  Leaving the
+         * claim unanswered makes the clicker use its existing retry path. */
+        return false;
+    }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
         !app_mesh_c5_wake_claim_requires_anchor_handoff(first_claim->flags,
                                                          true)) {
@@ -1552,6 +1557,7 @@ static bool anchor_handle_mesh_click_wake_claim(
     int release_ret;
 
     if (DEVICE_ROLE != ROLE_ANCHOR || claim == NULL ||
+        app_survey_anchor_active() ||
         !app_mesh_c5_wake_claim_preempts_mesh(claim->flags)) {
         return false;
     }

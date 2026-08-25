@@ -117,6 +117,9 @@ enum msg_type {
     MSG_UWB_ANCHOR_DIAG_FRAGMENT = 0x17,
     MSG_UWB_ENUM_BUNDLE = 0x1A,
     MSG_UWB_ENUM_HOP_ACK = 0x1B,
+    MSG_UWB_SURVEY_PRESENCE = 0x1C,
+    MSG_UWB_SURVEY_BUNDLE = 0x1D,
+    MSG_UWB_SURVEY_HOP_ACK = 0x1E,
 
     MSG_CLICK_REPORT = 0x20,
     MSG_SELF_TEST_REPORT = 0x21,
@@ -153,6 +156,8 @@ enum msg_type {
     MSG_GATEWAY_COMMAND_EVENT = 0x56,
     /* Host-to-gateway receipt; valid over serial/COBS, never over UWB. */
     MSG_GATEWAY_HOST_RECEIPT = 0x57,
+    /* Gateway-local survey graph, plan, result, and terminal projection. */
+    MSG_SURVEY_EVENT = 0x58,
 
     MSG_ERROR = 0x7F,
 };
@@ -386,6 +391,18 @@ enum tlv_type {
     /* epoch || TABLE command sequence || SHA-256, binding enumeration END. */
     TLV_DISCOVERY_ASSIGNMENT_END_IDENTITY = 0xBE,
     TLV_DISCOVERY_ASSIGNMENT_ABORT_IDENTITY = 0xBF,
+    TLV_SURVEY_PHASE = 0xC0,
+    TLV_SURVEY_GENERATION = 0xC1,
+    TLV_SURVEY_ASSIGNMENT_IDENTITY = 0xC2,
+    TLV_SURVEY_START_DELAY_MS = 0xC3,
+    TLV_SURVEY_SELF_STOP_DELAY_MS = 0xC4,
+    TLV_SURVEY_PLAN_COMMITMENT = 0xC5,
+    TLV_SURVEY_PLAN = 0xC6,
+    TLV_SURVEY_GRAPH = 0xC7,
+    TLV_SURVEY_RESULTS = 0xC8,
+    TLV_SURVEY_STATUS = 0xC9,
+    TLV_SURVEY_PARTIAL_REASONS = 0xCA,
+    TLV_SURVEY_SKIPPED_PLAN = 0xCB,
 };
 
 enum detection_source {
@@ -435,6 +452,10 @@ enum command_id {
     /* 0x000B retired: gateway time sync. */
     CMD_FORCE_REDISCOVERY = 0x000C,
     CMD_ASSIGN_DISCOVERY_SLOTS = 0x0104,
+    CMD_SURVEY_START = 0x0105,
+    CMD_SURVEY_PLAN = 0x0106,
+    CMD_SURVEY_CANCEL = 0x0107,
+    CMD_SURVEY_GET_STATUS = 0x0108,
     CMD_ML_START_COLLECTION = 0x8000,
     CMD_ML_START_FAST_RANGING = 0x8001,
     CMD_ML_START_LIVE_TRACKING = 0x8003,

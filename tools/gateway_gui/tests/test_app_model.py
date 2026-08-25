@@ -843,6 +843,31 @@ class AppModelTests(unittest.TestCase):
             "horizon; set Expected anchors for fast completion...",
         )
 
+    def test_survey_enumeration_is_explicitly_ram_only(self) -> None:
+        gui = GatewayGui.__new__(GatewayGui)
+        gui.connected = True
+        gui.gateway_id = 0xAABBCCDDEEFF0011
+        gui.sequence = 0
+        gui._last_command_session_id = 0
+        gui.host_id_text = FakeVariable(f"0x{DEFAULT_HOST_ID:016x}")  # type: ignore[assignment]
+        gui.command_budget_text = FakeVariable("")  # type: ignore[assignment]
+        self.set_default_policy_variables(gui, expected_anchors="4")
+        gui.__dict__["_submit_gateway_command"] = Mock(return_value=True)
+        gui.__dict__["_show_error"] = Mock()
+
+        self.assertTrue(
+            gui._send_assign_discovery_slots(ram_only_iteration=True)
+        )
+
+        plan = gui._submit_gateway_command.call_args.args[0]
+        policies = tuple(
+            value.decoded
+            for value in parse_cobs_packet(plan.target.frame).tlvs
+            if value.type_id == TLV_OPERATION_POLICY
+        )
+        self.assertEqual(len(policies), 1)
+        self.assertTrue(policies[0]["ram_only_iteration"])
+
     def test_manual_here_i_am_carries_the_current_full_policy(self) -> None:
         gui = GatewayGui.__new__(GatewayGui)
         gui.connected = True

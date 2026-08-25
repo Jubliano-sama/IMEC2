@@ -323,7 +323,10 @@ BUILD_ASSERT(ANCHOR_UWB_SCAN_WORKQUEUE_STACK_SIZE >=
 #if DEVICE_ROLE == ROLE_CLICKER
 #define MESH_ROUTE_WORKQUEUE_STACK_SIZE 6784u
 #elif DEVICE_ROLE == ROLE_GATEWAY
-#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8192u
+/* Survey status emission reaches a 6688-byte synchronous chain. 8384 keeps
+ * the verifier's 20% free-space floor without consuming avoidable gateway
+ * RAM. */
+#define MESH_ROUTE_WORKQUEUE_STACK_SIZE 8384u
 #else
 /*
  * Four-board qualification measured 7360 bytes in the direct anchor's

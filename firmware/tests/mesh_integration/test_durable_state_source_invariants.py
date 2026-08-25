@@ -26,6 +26,7 @@ ANCHOR_INIT = (APP / "src/app_anchor_init.inc").read_text()
 ANCHOR = (APP / "src/app_anchor.c").read_text()
 ANCHOR_COMMANDS = (APP / "src/app_anchor_commands.inc").read_text()
 GATEWAY_CONTROL = (APP / "src/app_anchor_gateway_control.inc").read_text()
+APP_SURVEY = (APP / "src/app_survey.c").read_text()
 MESH_REPORT = (APP / "src/app_mesh_report.c").read_text()
 MESH_REPORT_RX = (APP / "src/app_mesh_report_rx.inc").read_text()
 APP_STATE = (APP / "src/app_state.c").read_text()
@@ -51,6 +52,63 @@ def function_body(source: str, name: str) -> str:
 
 
 class DurableStateSourceInvariants(unittest.TestCase):
+    def test_survey_plan_is_the_single_execution_control(self) -> None:
+        submit = function_body(APP_SURVEY, "app_survey_gateway_submit_plan")
+        anchor = function_body(APP_SURVEY, "app_survey_anchor_apply_control")
+
+        self.assertNotIn("APP_SURVEY_GATEWAY_SEND_START", APP_SURVEY)
+        self.assertNotIn("SURVEY_PHASE_START", APP_SURVEY)
+        self.assertIn(
+            "execution_delay_ms = gateway_state.control_delivery_ms;",
+            submit,
+        )
+        self.assertIn(
+            "gateway_state.stage = APP_SURVEY_GATEWAY_EXECUTING;",
+            submit,
+        )
+        self.assertIn(
+            "anchor_state.action = APP_SURVEY_ANCHOR_ACTION_EXECUTE;",
+            anchor,
+        )
+        request_fill = function_body(APP_SURVEY, "survey_range_request_fill")
+        self.assertIn(
+            "request->flags = FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;",
+            request_fill,
+        )
+
+    def test_survey_roster_span_is_derived_from_occupied_slots(self) -> None:
+        anchor_roster = function_body(
+            APP_SURVEY, "app_survey_anchor_note_ram_roster"
+        )
+        gateway_table = function_body(
+            GATEWAY_CONTROL,
+            "gateway_discovery_assignment_prepare_durable_table_locked",
+        )
+
+        self.assertIn("entries[i].slot >= table_slot_count", anchor_roster)
+        self.assertIn(
+            "survey_slot_span_include(\n"
+            "            anchor_state.slot_span, entries[i].slot)",
+            anchor_roster,
+        )
+        self.assertNotIn("anchor_state.slot_span = table_slot_count",
+                         anchor_roster)
+        self.assertIn(
+            "claimed_slot_span = survey_slot_span_include(", gateway_table
+        )
+
+        anchor_control = function_body(
+            APP_SURVEY, "app_survey_anchor_apply_control"
+        )
+        self.assertIn(
+            "table_slot_count == 0u || own_slot >= table_slot_count",
+            anchor_control,
+        )
+        self.assertNotIn(
+            "slot_count != control->identity.assignment.slot_span",
+            anchor_control,
+        )
+
     def test_clean_slate_assignment_identity_restores_unprovisioned(self) -> None:
         clear = function_body(
             ANCHOR_COMMANDS,
@@ -172,7 +230,7 @@ class DurableStateSourceInvariants(unittest.TestCase):
             "set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 4256)", common
         )
         self.assertIn(
-            "set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 4480)", exact
+            "set(IMEC_GATEWAY_SYSTEM_WORKQUEUE_STACK_SIZE 8512)", exact
         )
         self.assertIn(
             '"CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE='

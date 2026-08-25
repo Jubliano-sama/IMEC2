@@ -36,6 +36,7 @@
 #include "app_node_comm_gateway_route_refresh.h"
 #include "app_operation_policy.h"
 #include "app_state.h"
+#include "app_survey.h"
 #include "app_stack_workload_diag.h"
 #include "firmware_delivery_loss.h"
 #include "firmware_state_machines.h"

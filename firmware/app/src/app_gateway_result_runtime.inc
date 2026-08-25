@@ -738,6 +738,19 @@ int gateway_ble_stream_packet(const struct proto_packet *packet,
              * mesh owner behind it. */
             return -EBADMSG;
         }
+    } else if (packet != NULL && packet->msg_type == MSG_SURVEY_EVENT) {
+        struct survey_event event;
+
+        if (packet->flags == FLAG_GATEWAY_ACK_REQUIRED &&
+            payload != NULL && packet->src_id != 0u &&
+            packet->src_id == packet->dst_id && packet->seq != 0u &&
+            survey_event_decode(payload, payload_len, &event) == PROTO_OK &&
+            event.identity.generation != 0u &&
+            packet->session_id == event.identity.generation) {
+            retain_until_sent = true;
+        } else {
+            return -EBADMSG;
+        }
     }
     key = k_spin_lock(&gateway_ble_stream_lock);
     if (retain_until_sent) {
@@ -1234,6 +1247,11 @@ static int gateway_ble_accept_host_receipt(
          * unrelated mesh-custody item behind it, so it must never also signal
          * the generic mesh receipt owner. */
         return gateway_command_event_finish_host_receipt(&head_packet);
+    }
+    if (head_packet.msg_type == MSG_SURVEY_EVENT) {
+        /* Survey events originate in gateway RAM and have no mesh custody
+         * owner.  The retained BLE head itself is their complete lane. */
+        return gateway_ble_finish_host_delivery(&head_packet);
     }
     if (local_command_result) {
         /* A local host-command result was moved out of its admission queue

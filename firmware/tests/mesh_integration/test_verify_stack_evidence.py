@@ -1179,16 +1179,20 @@ class StackEvidenceVerifierTests(unittest.TestCase):
 
     def test_synchronous_linear_chain_overflow_fails_owner_capacity(self) -> None:
         configured = self.policies["mesh_gateway"].system_workqueue_bytes
+        required_free = verifier._required_free(configured)
+        overflow_usage = configured - required_free + 1
+        root_usage = overflow_usage // 2
         evidence = self._synchronous_evidence(
-            {"root": 3200, "leaf": 3200},
+            {"root": root_usage, "leaf": overflow_usage - root_usage},
             {"root": {"leaf"}, "leaf": set()},
         )
 
-        self.assertEqual(6400, evidence.synchronous_usage_bytes[
+        self.assertEqual(overflow_usage, evidence.synchronous_usage_bytes[
             "system_workqueue"
         ])
         self.assertTrue(any(
-            "compiler synchronous stack chain 6400 plus required free 1024 "
+            f"compiler synchronous stack chain {overflow_usage} plus "
+            f"required free {required_free} "
             f"exceeds configured {configured}"
             in issue
             for issue in evidence.issues
@@ -1284,8 +1288,15 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertNotIn("system_workqueue", evidence.synchronous_usage_bytes)
 
     def test_synchronous_clone_names_keep_distinct_frames_and_owners(self) -> None:
+        configured = self.policies["mesh_gateway"].system_workqueue_bytes
+        required_free = verifier._required_free(configured)
+        overflow_usage = configured - required_free + 1
+        root_usage = overflow_usage // 2
         evidence = self._synchronous_evidence(
-            {"root.constprop.7": 3200, "leaf.isra.2": 3200},
+            {
+                "root.constprop.7": root_usage,
+                "leaf.isra.2": overflow_usage - root_usage,
+            },
             {
                 "root.constprop.7": {"leaf.isra.2"},
                 "leaf.isra.2": set(),
@@ -1293,7 +1304,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
             roots=("root.constprop.7",),
         )
 
-        self.assertEqual(6400, evidence.synchronous_usage_bytes[
+        self.assertEqual(overflow_usage, evidence.synchronous_usage_bytes[
             "system_workqueue"
         ])
         issue = next(
@@ -1490,8 +1501,8 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         self.assertNotIn("main", required)
         self.assertNotIn("BT HCI TX", required)
         self.assertNotIn("BT RX", required)
-        self.assertEqual(4480, required["sysworkq"])
-        self.assertEqual(8192, required["mesh_route"])
+        self.assertEqual(8512, required["sysworkq"])
+        self.assertEqual(8384, required["mesh_route"])
         self.assertEqual(policy.bt_rx_bytes, required["BT RX WQ"])
         self.assertGreaterEqual(required["BT RX WQ"], 1536)
         self.assertEqual(1344, required["BT LW WQ"])

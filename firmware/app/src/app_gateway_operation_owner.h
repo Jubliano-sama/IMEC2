@@ -9,6 +9,7 @@
 enum app_gateway_operation_owner_kind {
     APP_GATEWAY_OPERATION_OWNER_NONE = 0,
     APP_GATEWAY_OPERATION_OWNER_ASSIGNMENT,
+    APP_GATEWAY_OPERATION_OWNER_SURVEY,
 };
 
 struct app_gateway_operation_lease {

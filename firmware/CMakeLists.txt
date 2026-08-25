@@ -47,6 +47,9 @@ add_library(core
     src/stack_diag_transport.c
     src/stack_budget.c
     src/status.c
+    src/survey.c
+    src/survey_protocol.c
+    src/survey_response_lane.c
     src/route.c
     src/semantic_digest.c
 )
@@ -165,6 +168,25 @@ target_link_libraries(test_enumeration_response_lane PRIVATE core)
 add_test(NAME enumeration_response_lane COMMAND test_enumeration_response_lane)
 set_tests_properties(enumeration_response_lane PROPERTIES
     LABELS "mesh_integration;hardware_models;assignment;radio;timing")
+
+add_executable(test_survey tests/test_survey.c)
+target_link_libraries(test_survey PRIVATE core)
+add_test(NAME survey COMMAND test_survey)
+set_tests_properties(survey PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;protocol;timing")
+
+add_executable(test_survey_response_lane
+    tests/test_survey_response_lane.c)
+target_link_libraries(test_survey_response_lane PRIVATE core)
+add_test(NAME survey_response_lane COMMAND test_survey_response_lane)
+set_tests_properties(survey_response_lane PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;radio;timing;custody")
+
+add_executable(test_survey_protocol tests/test_survey_protocol.c)
+target_link_libraries(test_survey_protocol PRIVATE core)
+add_test(NAME survey_protocol COMMAND test_survey_protocol)
+set_tests_properties(survey_protocol PROPERTIES
+    LABELS "mesh_integration;hardware_models;survey;protocol;contamination")
 
 add_executable(test_flood_parent_learning
     tests/test_flood_parent_learning.c)

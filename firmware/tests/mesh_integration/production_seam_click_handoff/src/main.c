@@ -4,6 +4,7 @@
 #include "app_node_comm.h"
 #include "app_radio_guard.h"
 #include "app_radio_low_power_policy.h"
+#include "app_survey.h"
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "mesh.h"
@@ -88,6 +89,12 @@ static uint32_t anchor_uwb_scan_interval_ms = 100u;
 static bool anchor_click_window_busy;
 static bool anchor_scan_recovery_gap_requested;
 static bool anchor_uwb_busy;
+static bool survey_active;
+
+bool app_survey_anchor_active(void)
+{
+    return survey_active;
+}
 
 static struct app_node_comm_reservation_lease click_reservation;
 static struct app_node_comm_reservation_lease filler_reservations[4];
@@ -739,6 +746,7 @@ static void fixture_reset(void)
     anchor_click_window_busy = false;
     anchor_scan_recovery_gap_requested = false;
     anchor_uwb_busy = false;
+    survey_active = false;
     repair_work_runs = 0u;
     repair_deferrals = 0u;
     repair_rf_starts = 0u;
@@ -760,6 +768,28 @@ static void fixture_reset(void)
     k_work_init(&click_queue_barrier_work, click_queue_barrier_handler);
     k_work_init_delayable(&repair_work, repair_work_handler);
     zassert_ok(app_node_comm_init(NULL));
+}
+
+ZTEST(production_seam_click_handoff,
+      test_active_survey_declines_click_handoff_for_clicker_retry)
+{
+    const struct uwb_wake_claim_frame claim = {
+        .network_id = 0x12345678u,
+        .clicker_id = clicker_id,
+        .click_event_id = click_event_seq,
+        .attempt_index = click_attempt_index,
+        .priority_id = UINT64_C(0x0102030405060708),
+        .nonce = UINT64_C(0x1122334455667788),
+        .flags = FLAG_COUNT_AS_CLICK,
+    };
+
+    fixture_reset();
+    survey_active = true;
+    zassert_false(anchor_handle_mesh_click_wake_claim(
+        &claim, 211u, k_uptime_get()));
+    zassert_false(anchor_click_handoff_pending());
+    zassert_false(radio_guard_uwb_busy());
+    zassert_equal(click_phase_claims, 0u);
 }
 
 ZTEST(production_seam_click_handoff,

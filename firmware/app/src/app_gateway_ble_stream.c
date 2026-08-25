@@ -243,6 +243,7 @@ enum gateway_ble_stream_class gateway_ble_stream_classify_packet(uint8_t msg_typ
                GATEWAY_BLE_STREAM_CLASS_UNKNOWN;
     case MSG_COMMAND_RESULT:
     case MSG_RESULT_BUNDLE:
+    case MSG_SURVEY_EVENT:
         return GATEWAY_BLE_STREAM_CLASS_RESULT;
     case MSG_GATEWAY_COMMAND_EVENT:
         return GATEWAY_BLE_STREAM_CLASS_COMMAND_EVENT;

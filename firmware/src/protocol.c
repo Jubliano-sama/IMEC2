@@ -130,6 +130,7 @@ static bool proto_packet_msg_type_valid(uint8_t msg_type)
     case MSG_GATEWAY_COLLECTION_EACK:
     case MSG_GATEWAY_COMMAND_EVENT:
     case MSG_GATEWAY_HOST_RECEIPT:
+    case MSG_SURVEY_EVENT:
     case MSG_ERROR:
         return true;
     default:
@@ -150,6 +151,7 @@ bool proto_packet_msg_type_allowed_over_uwb(uint8_t msg_type)
      */
     return msg_type != MSG_GATEWAY_COMMAND_EVENT &&
            msg_type != MSG_GATEWAY_HOST_RECEIPT &&
+           msg_type != MSG_SURVEY_EVENT &&
            msg_type != MSG_ERROR;
 }
 
@@ -427,6 +429,7 @@ static bool gateway_host_receipt_identity_valid(
 
     if (identity == NULL ||
         (identity->original_msg_type != MSG_GATEWAY_COMMAND_EVENT &&
+         identity->original_msg_type != MSG_SURVEY_EVENT &&
          !proto_packet_msg_type_allowed_over_uwb(identity->original_msg_type)) ||
         identity->src_id == 0u || identity->dst_id == 0u ||
         identity->session_id == 0u || identity->seq == 0u) {
@@ -434,6 +437,7 @@ static bool gateway_host_receipt_identity_valid(
     }
 
     gateway_local = identity->original_msg_type == MSG_GATEWAY_COMMAND_EVENT ||
+                    identity->original_msg_type == MSG_SURVEY_EVENT ||
                     (identity->original_msg_type == MSG_COMMAND_RESULT &&
                      identity->src_id == identity->dst_id);
     if (gateway_local && identity->src_id != identity->dst_id) {
@@ -442,7 +446,8 @@ static bool gateway_host_receipt_identity_valid(
     if (!gateway_local && identity->src_id == identity->dst_id) {
         return false;
     }
-    if (identity->original_msg_type == MSG_GATEWAY_COMMAND_EVENT) {
+    if (identity->original_msg_type == MSG_GATEWAY_COMMAND_EVENT ||
+        identity->original_msg_type == MSG_SURVEY_EVENT) {
         return identity->original_flags == FLAG_GATEWAY_ACK_REQUIRED;
     }
     if (identity->original_msg_type == MSG_COMMAND_RESULT) {

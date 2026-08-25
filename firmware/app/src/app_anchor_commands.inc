@@ -2334,6 +2334,36 @@ static int anchor_start_compact_enumeration_response_lane(
     return 0;
 }
 
+static int anchor_survey_upstream(uint64_t *parent_id, uint8_t *hop_count)
+{
+    const struct route_candidate *selected;
+
+    if (parent_id == NULL || hop_count == NULL) {
+        return -EINVAL;
+    }
+    selected = route_selected(&mesh_runtime.upstream);
+    if (selected == NULL || selected->next_hop_id == 0u ||
+        selected->hop_count == UINT8_MAX || selected->hop_count == UINT8_MAX - 1u) {
+        return -EHOSTUNREACH;
+    }
+    *parent_id = selected->next_hop_id;
+    *hop_count = (uint8_t)(selected->hop_count + 1u);
+    return 0;
+}
+
+#if DEVICE_ROLE == ROLE_ANCHOR && \
+    !defined(CONFIG_IMEC_MESH_ROUTE_TEST_TRANSMITTER)
+static int anchor_survey_work_reschedule(struct k_work_delayable *work,
+                                         uint32_t delay_ms)
+{
+    if (work == NULL) {
+        return -EINVAL;
+    }
+    return k_work_reschedule_for_queue(&anchor_uwb_scan_work_q, work,
+                                       K_MSEC(delay_ms));
+}
+#endif
+
 static int anchor_schedule_late_discovery_claim(
     const struct proto_packet *table_command,
     uint32_t epoch,
@@ -3679,6 +3709,9 @@ static int anchor_apply_discovery_assignment_command(
         return 0;
     }
     if (phase == DISCOVERY_ASSIGNMENT_PHASE_CLAIM) {
+        if (anchor_discovery_assignment_ram_only_iteration) {
+            app_survey_anchor_clear_ram_roster();
+        }
         ret = anchor_restore_discovery_assignment_ram(&snapshot);
         if (ret < 0) {
             return ret;
@@ -3988,6 +4021,15 @@ static int anchor_apply_discovery_assignment_command(
         }
         app_operation_policy_commit_prepared(&policy_candidate);
         return 0;
+    }
+
+    if (anchor_discovery_assignment_ram_only_iteration) {
+        ret = app_survey_anchor_note_ram_roster(
+            entries, entry_count, slot_count, epoch, packet->session_id,
+            &table_commitment);
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     for (size_t i = 0u; i < entry_count; i++) {
@@ -4334,6 +4376,22 @@ static int anchor_execute_command_side_effects(const struct proto_packet *packet
         if (ret < 0) {
             *status = ret == -ESTALE ? COMMAND_INVALID_STATE :
                       COMMAND_MALFORMED_PAYLOAD;
+            *reason = (uint8_t)(-ret);
+        }
+    } else if (command_id == CMD_SURVEY_START ||
+               command_id == CMD_SURVEY_PLAN ||
+               command_id == CMD_SURVEY_CANCEL) {
+        struct survey_control control;
+
+        ret = survey_control_extract_tlvs(payload, payload_len, &control);
+        if (ret == PROTO_OK) {
+            ret = app_survey_anchor_apply_control(packet, &control);
+        } else {
+            ret = mesh_errno_from_proto(ret);
+        }
+        if (ret < 0) {
+            *status = ret == -ESTALE || ret == -EHOSTUNREACH ?
+                COMMAND_INVALID_STATE : COMMAND_MALFORMED_PAYLOAD;
             *reason = (uint8_t)(-ret);
         }
     } else if (command_id != CMD_PING && command_id != CMD_GET_STATUS) {
@@ -4865,6 +4923,18 @@ static int anchor_handle_local_command_locked(const struct proto_packet *packet,
                             ret);
                 }
                 return ret < 0 ? 0 : 1;
+            }
+            if (command_id == CMD_SURVEY_START ||
+                command_id == CMD_SURVEY_PLAN ||
+                command_id == CMD_SURVEY_CANCEL) {
+                struct survey_control control;
+
+                ret = survey_control_extract_tlvs(payload, payload_len,
+                                                  &control);
+                if (ret == PROTO_OK) {
+                    ret = app_survey_anchor_apply_control(packet, &control);
+                }
+                return ret == PROTO_OK || ret == 0 ? 1 : 0;
             }
             LOG_INF("anchor ignored duplicate broadcast command: cmd=0x%04x command_seq=%u",
                     (unsigned int)command_id,

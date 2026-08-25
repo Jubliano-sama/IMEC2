@@ -28,8 +28,8 @@ extern "C" {
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
       0u, 8704u, true, true, true, true, false)                               \
-    X(GATEWAY, "mesh_gateway", 4096u, 4480u, 8192u, 8192u, 320u, 2048u, 1536u,  \
-      1536u, 6000u, true, true, true, true, false)
+    X(GATEWAY, "mesh_gateway", 4416u, 8512u, 8384u, 8192u, 320u, 2048u, 1536u,  \
+      1536u, 4096u, true, true, true, true, false)
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
     X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 5376u, 9472u, 8192u, \
@@ -117,6 +117,8 @@ extern "C" {
     X("app_anchor.c", "gateway_host_abort_work_handler", "system_workqueue") \
     X("app_anchor.c", "gateway_host_abort_route_work_handler", "mesh_route") \
     X("app_anchor.c", "gateway_host_command_work_handler", "mesh_route") \
+    X("app_survey.c", "anchor_work_handler", "anchor_uwb_scan") \
+    X("app_survey.c", "gateway_work_handler", "system_workqueue") \
     X("app_mesh_arbitration_zephyr.c", "retry_work_handler", "system_workqueue") \
     X("app_mesh_report.c", "mesh_route_discovery_work_handler", "mesh_route") \
     X("app_mesh_report.c", "mesh_click_preempt_work_handler", "mesh_route") \

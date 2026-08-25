@@ -26,6 +26,7 @@
 #include "mesh.h"
 #include "mesh_relay.h"
 #include "serial_frame.h"
+#include "survey_protocol.h"
 
 #if defined(CONFIG_BT)
 #include <zephyr/bluetooth/bluetooth.h>

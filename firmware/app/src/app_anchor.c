@@ -28,6 +28,7 @@
 #include "app_operation_policy.h"
 #include "app_state.h"
 #include "app_stack_workload_diag.h"
+#include "app_survey.h"
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
 #include "discovery_assignment.h"
@@ -310,6 +311,7 @@ static bool anchor_scan_recovery_gap_requested;
 #if DEVICE_ROLE == ROLE_GATEWAY
 static struct app_gateway_operation_owner gateway_operation_owner;
 static struct app_gateway_operation_lease gateway_assignment_operation_lease;
+static struct app_gateway_operation_lease gateway_survey_operation_lease;
 static struct k_spinlock gateway_operation_owner_lock;
 
 static int gateway_operation_owner_claim(
