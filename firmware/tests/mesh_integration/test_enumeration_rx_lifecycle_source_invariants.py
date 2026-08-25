@@ -26,6 +26,8 @@ DRIVER_IO = (ROOT / "app/src/dwm3000_driver_io.inc").read_text()
 LIFECYCLE = (ROOT / "src/protocol_rx_lifecycle.c").read_text()
 RELAY_CUSTODY = (ROOT / "src/mesh_relay_custody.inc").read_text()
 NODE_COMM = (ROOT / "src/node_comm.c").read_text()
+GATEWAY_COMMAND = (ROOT / "src/gateway_command.c").read_text()
+SURVEY = (ROOT / "src/survey.c").read_text()
 MESH = (ROOT / "include/mesh.h").read_text()
 PROTOCOL = (ROOT / "include/protocol.h").read_text()
 UWB = (ROOT / "include/uwb.h").read_text()
@@ -75,6 +77,108 @@ def braced_block(source: str, start: int) -> str:
 
 
 class EnumerationRxLifecycleSourceTests(unittest.TestCase):
+    def test_retryable_local_survey_commands_leave_result_to_worker(self) -> None:
+        for function_name in (
+            "gateway_start_survey",
+            "gateway_submit_survey_plan",
+        ):
+            handler = function_body(GATEWAY_CONTROL, function_name)
+            retryable = handler.index(
+                "app_gateway_command_ingress_contention_retryable(ret)"
+            )
+            busy = handler.index("COMMAND_BUSY", retryable)
+            internal = handler.index("COMMAND_INTERNAL_ERROR", busy)
+
+            self.assertLess(retryable, busy)
+            self.assertLess(busy, internal)
+
+    def test_forced_hop_route_adv_depth_gate_precedes_rx_queue(self) -> None:
+        queue = function_body(REPORT_RX, "mesh_queue_from_frame_at_internal")
+        forced_depth = queue.index(
+            "CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS"
+        )
+        route_adv = queue.index(
+            "context.packet.msg_type == MSG_GATEWAY_ROUTE_ADV",
+            forced_depth,
+        )
+        depth_gate = queue.index(
+            "!app_mesh_c5_gateway_route_adv_rx_allowed(", route_adv
+        )
+        rejection = queue.index("return false;", depth_gate)
+        packet_copy = queue.index("pending.packet = context.packet;")
+        queue_admission = queue.index("k_msgq_put(&mesh_rx_msgq")
+
+        self.assertLess(forced_depth, route_adv)
+        self.assertLess(route_adv, depth_gate)
+        self.assertLess(depth_gate, rejection)
+        self.assertLess(rejection, packet_copy)
+        self.assertLess(packet_copy, queue_admission)
+        self.assertEqual(
+            queue.count("app_mesh_c5_gateway_route_adv_rx_allowed("), 1
+        )
+
+    def test_survey_start_and_plan_reuse_compact_primary_flood(self) -> None:
+        classify = function_body(
+            GATEWAY_COMMAND,
+            "gateway_command_uses_compact_scheduled_flood",
+        )
+        relay = function_body(RELAY_CUSTODY, "build_broadcast_forward")
+        send = function_body(
+            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
+        )
+        gateway = function_body(
+            GATEWAY_CONTROL, "gateway_survey_send_control"
+        )
+        schedule = function_body(SURVEY, "survey_control_delivery_delay_ms")
+
+        self.assertIn("command_id == CMD_SURVEY_START", classify)
+        self.assertIn("command_id == CMD_SURVEY_PLAN", classify)
+        self.assertNotIn("CMD_SURVEY_CANCEL", classify)
+        self.assertIn(
+            "gateway_command_uses_compact_scheduled_flood", relay
+        )
+        self.assertIn(
+            "compact_primary_control = enumeration_control ||", relay
+        )
+        self.assertIn(
+            "MESH_ENUMERATION_RELAY_COPY_COUNT - 1u", relay
+        )
+        self.assertIn(
+            "DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS", relay
+        )
+        self.assertIn("mesh_enumeration_relay_delay_ms", relay)
+
+        self.assertIn(
+            "compact_scheduled_control = "
+            "mesh_c5_compact_scheduled_control(&tx)",
+            send,
+        )
+        self.assertIn(
+            "compact_primary_control = enumeration_control ||", send
+        )
+        self.assertIn(
+            "(single_opportunity || compact_primary_control)", send
+        )
+        self.assertIn(
+            "gateway_enumeration_claim || compact_scheduled_control", send
+        )
+        self.assertIn("attempt == 0u", send)
+        self.assertIn(
+            "compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR", send
+        )
+        self.assertIn("send_wake_train = false", send)
+
+        self.assertIn(
+            "outbound.flood_retry_count = "
+            "MESH_ENUMERATION_RELAY_COPY_COUNT - 1u",
+            gateway,
+        )
+        self.assertIn("NODE_COMM_PROFILE_BOUNDED_CONTROL_FLOOD", gateway)
+        self.assertIn("SURVEY_CONTROL_ORIGIN_BUDGET_MS", schedule)
+        self.assertIn("SURVEY_CONTROL_ACTIVATION_BUDGET_MS", schedule)
+        self.assertIn("SURVEY_CONTROL_PER_HOP_BUDGET_MS", schedule)
+        self.assertIn("SURVEY_CONTROL_REDUNDANCY_MS", schedule)
+
     def test_relayed_claim_cannot_replace_here_i_am_gateway_parent(self) -> None:
         apply = function_body(
             COMMANDS, "anchor_apply_discovery_assignment_command"
@@ -856,7 +960,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         loop = send.index("attempt < attempt_count", attempts)
         select = send.index(
-            "(single_opportunity || enumeration_control)", loop
+            "(single_opportunity || compact_primary_control)", loop
         )
         one_copy = send.index(
             "app_mesh_flood_send_opportunity", select
@@ -883,7 +987,10 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "app_mesh_flood_send_resume_limit(out, ops, &progress, result, 1u)",
             opportunity,
         )
-        self.assertIn("enumeration_control ?", forward)
+        self.assertIn(
+            "compact_primary_control = enumeration_control ||", forward
+        )
+        self.assertIn("compact_primary_control ?", forward)
         self.assertIn(
             "MESH_ENUMERATION_RELAY_COPY_COUNT - 1u", forward
         )
@@ -981,7 +1088,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
 
         attempts = send.index("attempt_count = 1u + tx.flood_retry_count")
         physical = send.index(
-            "(single_opportunity || enumeration_control)", attempts
+            "(single_opportunity || compact_primary_control)", attempts
         )
         one_copy = send.index("app_mesh_flood_send_opportunity", physical)
         self.assertLess(attempts, physical)
@@ -1071,7 +1178,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "mesh_c5_gateway_enumeration_quick_copy_burst(&tx)"
         )
         owner_if = burst_send.index(
-            "if (enumeration_control || gateway_enumeration_quick_copies)",
+            "if (compact_primary_control || gateway_enumeration_quick_copies)",
             quick,
         )
         owner_condition = burst_send[owner_if:burst_send.index("{", owner_if)]
@@ -1088,7 +1195,11 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         owner_end = burst_send.index(
             "mesh_c5_enumeration_relay_burst_end()", out_label
         )
-        self.assertIn("enumeration_control", owner_condition)
+        self.assertIn("compact_primary_control", owner_condition)
+        self.assertIn(
+            "compact_primary_control = enumeration_control ||",
+            burst_send[:owner_if],
+        )
         self.assertIn("gateway_enumeration_quick_copies", owner_condition)
         self.assertLess(owner_begin, copy_loop)
         self.assertLess(copy_loop, completeness)
@@ -1216,7 +1327,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "struct app_mesh_flood_progress attempt_progress = {0}", loop
         )
         enumeration_path = send.index(
-            "(single_opportunity || enumeration_control)", progress
+            "(single_opportunity || compact_primary_control)", progress
         )
         atomic_path = send.index("atomic_gateway_control ?", enumeration_path)
         bounded = send.index(
@@ -1240,7 +1351,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         expected_block = braced_block(send, expected)
         self.assertIn("app_mesh_flood_repeat_limit()", expected_block)
         self.assertIn(
-            "(single_opportunity || enumeration_control) ? 1u",
+            "(single_opportunity || compact_primary_control) ? 1u",
             expected_block,
         )
         self.assertIn(

@@ -152,6 +152,9 @@ bool app_mesh_c5_gateway_control_rx_allowed(
     uint64_t gateway_id,
     bool require_relayed_gateway_control,
     uint8_t required_gateway_relay_hops);
+bool app_mesh_c5_gateway_route_adv_rx_allowed(
+    uint8_t packet_ttl,
+    uint8_t required_gateway_relay_hops);
 bool app_mesh_c5_control_route_hint_is_first(
     struct app_mesh_c5_control_route_history *history,
     const struct app_mesh_c5_control_route_identity *identity);

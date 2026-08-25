@@ -729,6 +729,30 @@ static bool mesh_queue_from_frame_at_internal(
         }
         return false;
     }
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)
+    if (radio_channel == UWB_CHANNEL_WAKE_CONTACT &&
+        DEVICE_ROLE == ROLE_ANCHOR &&
+        context.packet.src_id == GATEWAY_ID &&
+        context.packet.msg_type == MSG_GATEWAY_ROUTE_ADV &&
+        !app_mesh_c5_gateway_route_adv_rx_allowed(
+            context.packet.ttl,
+            CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS)) {
+        const uint8_t observed_relay_hops =
+            context.packet.ttl <= FLOOD_EPOCH_GLOBAL_TTL ?
+                (uint8_t)(FLOOD_EPOCH_GLOBAL_TTL - context.packet.ttl) :
+                UINT8_MAX;
+
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+            status_debug_printf(
+                "DBG_ANCHOR_GATEWAY_ROUTE_ADV_HOPS_REJECT seq=%u got=%u required=%u prev=0x%llx\n",
+                context.packet.seq,
+                observed_relay_hops,
+                CONFIG_IMEC_MESH_ROUTE_TEST_REQUIRED_GATEWAY_RELAY_HOPS,
+                (unsigned long long)context.previous_hop_id);
+        }
+        return false;
+    }
+#endif
     if (mesh_gateway_route_test_role()) {
         status_debug_printf("DBG_GATEWAY_RX_DECODE ch=%u msg=0x%02x src=0x%llx dst=0x%llx prev=0x%llx seq=%u flags=0x%02x plen=%u q=%u\n",
                             radio_channel,

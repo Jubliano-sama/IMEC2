@@ -226,6 +226,8 @@ _Static_assert(offsetof(struct gateway_collection_eack_custody_snapshot, packet)
 int gateway_command_extract_id(const uint8_t *payload,
                                size_t payload_len,
                                enum command_id *command_id);
+bool gateway_command_uses_compact_scheduled_flood(const uint8_t *payload,
+                                                  size_t payload_len);
 int gateway_command_extract_options(const uint8_t *payload,
                                     size_t payload_len,
                                     struct gateway_command_options *options);

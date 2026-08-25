@@ -2982,6 +2982,8 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     uint32_t assignment_epoch;
     uint32_t slot_seed;
     bool enumeration_control = false;
+    bool compact_scheduled_control = false;
+    bool compact_primary_control;
     int ret;
 
     if (!broadcast_packet_needs_forward(relay, packet, payload, payload_len)) {
@@ -3000,7 +3002,12 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
                 payload_len,
                 &assignment_phase,
                 &assignment_epoch) == PROTO_OK;
+        compact_scheduled_control =
+            gateway_command_uses_compact_scheduled_flood(payload,
+                                                         payload_len);
     }
+    compact_primary_control = enumeration_control ||
+                              compact_scheduled_control;
 
     out->packet = *packet;
     out->packet.ttl = (uint8_t)(packet->ttl - 1u);
@@ -3012,9 +3019,10 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     out->radio_channel = UWB_CHANNEL_WAKE_CONTACT;
     out->queued_at_ms = now_ms;
     out->queued_at_valid = true;
-    /* Enumeration controls own exactly three diversified outer
-     * opportunities; the transport sends each as one physical copy. */
-    out->flood_retry_count = enumeration_control ?
+    /* Enumeration and scheduled survey controls own exactly three
+     * diversified outer opportunities; the transport sends each as one
+     * physical copy. */
+    out->flood_retry_count = compact_primary_control ?
                                  MESH_ENUMERATION_RELAY_COPY_COUNT - 1u :
                                  flood_control.retry_count;
     if (packet->msg_type == MSG_COMMAND) {
@@ -3025,7 +3033,7 @@ static int build_broadcast_forward(const struct mesh_relay *relay,
     }
     slot_seed = flood_identity_seed(packet, relay->local_id);
     out->earliest_tx_ms = now_ms +
-        (enumeration_control ?
+        (compact_primary_control ?
              DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
                  mesh_enumeration_relay_delay_ms(relay->local_id, packet) :
              flood_forward_total_delay_ms(

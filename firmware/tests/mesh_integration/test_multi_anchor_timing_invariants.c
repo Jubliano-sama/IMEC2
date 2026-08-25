@@ -5,6 +5,7 @@
 #include "mesh_radio_timing.h"
 #include "mesh_relay.h"
 #include "operation_policy.h"
+#include "survey.h"
 #include "uwb.h"
 #include "uwb_session.h"
 
@@ -478,6 +479,42 @@ static void test_depth_aware_enumeration_control_listener(void)
     }
 }
 
+static void test_depth_aware_survey_control_schedule(void)
+{
+    uint32_t previous_ms = 0u;
+
+    CHECK(survey_control_delivery_delay_ms(0u) == 0u,
+          "invalid survey depth must not produce a schedule");
+    CHECK(survey_control_delivery_delay_ms(UWB_ENUM_MAX_HOPS + 1u) == 0u,
+          "out-of-range survey depth must not produce a schedule");
+
+    for (uint8_t hop_count = 1u;
+         hop_count <= UWB_ENUM_MAX_HOPS;
+         hop_count++) {
+        uint32_t propagation_ms =
+            discovery_assignment_control_propagation_hold_ms(hop_count);
+        uint32_t schedule_ms =
+            survey_control_delivery_delay_ms(hop_count);
+        uint32_t required_ms =
+            NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS +
+            MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS +
+            propagation_ms;
+
+        CHECK(schedule_ms == required_ms +
+                                 DISCOVERY_ASSIGNMENT_CONTROL_LISTENER_REDUNDANCY_MS +
+                                 SURVEY_RADIO_GUARD_MS,
+              "survey schedule lost its queue, propagation, or guard bound");
+        CHECK(schedule_ms > required_ms,
+              "survey schedule must retain explicit post-delivery margin");
+        if (previous_ms != 0u) {
+            CHECK(schedule_ms - previous_ms ==
+                      DISCOVERY_ASSIGNMENT_RELAY_BEFORE_RESPONSE_MAX_MS,
+                  "each survey depth must add exactly one compact relay bound");
+        }
+        previous_ms = schedule_ms;
+    }
+}
+
 static void test_maintained_normal_click_phy_and_capacity_contract(void)
 {
     const struct dwm3000_phy_timing *wake =
@@ -529,6 +566,7 @@ int main(void)
     test_claim_phase_sweep();
     test_enumeration_activation_phase_sweep();
     test_depth_aware_enumeration_control_listener();
+    test_depth_aware_survey_control_schedule();
     test_discovery_collision_sweep_and_old_spacing_sensitivity();
     test_multi_anchor_claim_and_range_schedule_invariants();
 

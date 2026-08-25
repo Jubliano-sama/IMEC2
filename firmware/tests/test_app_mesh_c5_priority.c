@@ -609,6 +609,31 @@ static void test_forced_hop_generic_rx_requires_exact_control_depth(void)
         2u));
 }
 
+static void test_forced_hop_route_adv_requires_exact_control_depth(void)
+{
+    const uint8_t direct_ttl = FLOOD_EPOCH_GLOBAL_TTL;
+    const uint8_t one_relay_ttl = FLOOD_EPOCH_GLOBAL_TTL - 1u;
+    const uint8_t two_relay_ttl = FLOOD_EPOCH_GLOBAL_TTL - 2u;
+
+    /* A depth-two forced anchor must not install or forward the gateway's
+     * direct advertisement. Doing so lets a depth-one anchor select it as a
+     * parent before the depth-two anchor later selects that anchor from the
+     * correctly relayed command, creating a two-node parent loop. */
+    assert(!app_mesh_c5_gateway_route_adv_rx_allowed(direct_ttl, 2u));
+    assert(!app_mesh_c5_gateway_route_adv_rx_allowed(one_relay_ttl, 2u));
+    assert(app_mesh_c5_gateway_route_adv_rx_allowed(two_relay_ttl, 2u));
+
+    /* The depth-one role accepts only the one-relay advertisement. This keeps
+     * advertisement and command parent selection on the same depth model. */
+    assert(!app_mesh_c5_gateway_route_adv_rx_allowed(direct_ttl, 1u));
+    assert(app_mesh_c5_gateway_route_adv_rx_allowed(one_relay_ttl, 1u));
+    assert(!app_mesh_c5_gateway_route_adv_rx_allowed(two_relay_ttl, 1u));
+
+    /* Production anchors have no forced depth and retain normal flood
+     * behavior. */
+    assert(app_mesh_c5_gateway_route_adv_rx_allowed(direct_ttl, 0u));
+}
+
 static void test_forced_hop_listens_after_rejected_direct_control_wake(void)
 {
     const uint64_t gateway_id = 0x9999888877776666ull;
@@ -892,6 +917,7 @@ int main(void)
     test_wake_claim_click_priority_policy();
     test_forced_hop_anchor_ignores_direct_gateway_route_wake();
     test_forced_hop_generic_rx_requires_exact_control_depth();
+    test_forced_hop_route_adv_requires_exact_control_depth();
     test_forced_hop_listens_after_rejected_direct_control_wake();
     test_gateway_control_route_hint_uses_first_transport_copy();
     test_connected_gap_stays_armed_until_deadline_or_click();

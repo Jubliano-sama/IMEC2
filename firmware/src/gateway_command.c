@@ -345,6 +345,17 @@ int gateway_command_extract_id(const uint8_t *payload,
     return PROTO_OK;
 }
 
+bool gateway_command_uses_compact_scheduled_flood(const uint8_t *payload,
+                                                  size_t payload_len)
+{
+    enum command_id command_id;
+
+    return gateway_command_extract_id(payload, payload_len, &command_id) ==
+               PROTO_OK &&
+           (command_id == CMD_SURVEY_START ||
+            command_id == CMD_SURVEY_PLAN);
+}
+
 int gateway_command_extract_options(const uint8_t *payload,
                                     size_t payload_len,
                                     struct gateway_command_options *options)

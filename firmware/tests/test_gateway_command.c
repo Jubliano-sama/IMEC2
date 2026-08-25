@@ -563,6 +563,31 @@ static void test_prepare_outbound_rejects_malformed_command_id(void)
                                             &command_id) == PROTO_ERR_MALFORMED);
 }
 
+static void test_only_scheduled_survey_controls_use_compact_flood(void)
+{
+    uint8_t payload[8];
+    size_t payload_len;
+
+    make_command_payload(payload, sizeof(payload), &payload_len,
+                         CMD_SURVEY_START);
+    assert(gateway_command_uses_compact_scheduled_flood(payload,
+                                                        payload_len));
+    make_command_payload(payload, sizeof(payload), &payload_len,
+                         CMD_SURVEY_PLAN);
+    assert(gateway_command_uses_compact_scheduled_flood(payload,
+                                                        payload_len));
+    make_command_payload(payload, sizeof(payload), &payload_len,
+                         CMD_SURVEY_CANCEL);
+    assert(!gateway_command_uses_compact_scheduled_flood(payload,
+                                                         payload_len));
+    make_command_payload(payload, sizeof(payload), &payload_len, CMD_PING);
+    assert(!gateway_command_uses_compact_scheduled_flood(payload,
+                                                         payload_len));
+    payload[1] = 1u;
+    assert(!gateway_command_uses_compact_scheduled_flood(payload,
+                                                         payload_len));
+}
+
 static void test_duplicate_command_singletons_are_rejected(void)
 {
     struct gateway_command_options options;
@@ -4646,6 +4671,7 @@ int main(void)
     test_prepare_outbound_uses_command_class_ttl_for_every_host_value();
     test_prepare_outbound_rejects_invalid_host_packets();
     test_prepare_outbound_rejects_malformed_command_id();
+    test_only_scheduled_survey_controls_use_compact_flood();
     test_duplicate_command_singletons_are_rejected();
     test_extract_options_defaults_to_single_node_small_result();
     test_extract_options_rejects_unsupported_group_scope();

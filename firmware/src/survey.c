@@ -24,13 +24,18 @@ _Static_assert(
          SURVEY_RANGE_ATTEMPT_SPACING_MS) < SURVEY_RANGE_WAVE_MS,
     "all scheduled range attempts must start inside their wave");
 _Static_assert(
-    ((UWB_ENUM_MAX_HOPS + 1u) *
-         NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS) +
+    SURVEY_CONTROL_ORIGIN_BUDGET_MS +
+        SURVEY_CONTROL_ACTIVATION_BUDGET_MS +
+        SURVEY_CONTROL_PROPAGATION_MARGIN_MS +
+        (UWB_ENUM_MAX_HOPS * SURVEY_CONTROL_PER_HOP_BUDGET_MS) +
+        SURVEY_CONTROL_REDUNDANCY_MS +
         SURVEY_RADIO_GUARD_MS +
         (SURVEY_MAX_ANCHORS * SURVEY_NEIGHBOR_SLOT_MS) +
         SURVEY_RESULT_PREPARE_MS + ENUMERATION_RESPONSE_LANE_MS <
             SURVEY_INITIAL_SELF_EXPIRY_MS,
     "worst-case control and neighbor-result timing must fit self-expiry");
+_Static_assert(SURVEY_CONTROL_PER_HOP_BUDGET_MS == 540u,
+               "survey controls require the proven compact relay bound");
 
 static bool slot_valid(uint8_t slot)
 {
@@ -176,13 +181,16 @@ uint32_t survey_control_delivery_delay_ms(uint8_t max_hop_count)
     if (max_hop_count == 0u || max_hop_count > UWB_ENUM_MAX_HOPS) {
         return 0u;
     }
-    if (max_hop_count == 1u) {
-        /* Keep a full relay horizon plus half an origin-wave horizon. */
-        return NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS +
-               (NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS / 2u) +
-               SURVEY_RADIO_GUARD_MS;
-    }
-    return node_comm_bounded_control_apply_budget_ms(max_hop_count) +
+    /* The origin is submitted asynchronously, so keep its complete custody
+     * budget plus the activation train of a wave admitted at that deadline.
+     * START and PLAN then use the proven enumeration relay schedule and its
+     * exact per-hop worst-case bound. */
+    return SURVEY_CONTROL_ORIGIN_BUDGET_MS +
+           SURVEY_CONTROL_ACTIVATION_BUDGET_MS +
+           SURVEY_CONTROL_PROPAGATION_MARGIN_MS +
+           (uint32_t)max_hop_count *
+               SURVEY_CONTROL_PER_HOP_BUDGET_MS +
+           SURVEY_CONTROL_REDUNDANCY_MS +
            SURVEY_RADIO_GUARD_MS;
 }
 

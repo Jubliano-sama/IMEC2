@@ -33,6 +33,7 @@ from tools.gateway_gui.protocol import (
     MSG_GATEWAY_HOST_RECEIPT,
     MSG_MESH_DATA,
     MSG_SELF_TEST_REPORT,
+    MSG_SURVEY_EVENT,
     PACKET_EXT_MAX_PAYLOAD_LEN,
     TLV_ANCHOR_ID,
     TLV_BURST_ID,
@@ -1034,6 +1035,34 @@ class ProtocolTests(unittest.TestCase):
         malformed_command[10] ^= 1
         with self.assertRaises(DecodeError):
             decode_gateway_host_receipt_identity(bytes(malformed_command))
+
+        survey_identity = GatewayHostReceiptIdentity(
+            original_msg_type=MSG_SURVEY_EVENT,
+            original_flags=FLAG_GATEWAY_ACK_REQUIRED,
+            src_id=command_identity.src_id,
+            dst_id=command_identity.src_id,
+            session_id=command_identity.session_id,
+            seq=command_identity.seq,
+            stream_record_digest=command_identity.stream_record_digest,
+        )
+        self.assertEqual(
+            decode_gateway_host_receipt_identity(
+                encode_gateway_host_receipt_identity(survey_identity)
+            ),
+            survey_identity,
+        )
+        with self.assertRaises(ValueError):
+            encode_gateway_host_receipt_identity(
+                GatewayHostReceiptIdentity(
+                    original_msg_type=MSG_SURVEY_EVENT,
+                    original_flags=FLAG_GATEWAY_ACK_REQUIRED,
+                    src_id=survey_identity.src_id,
+                    dst_id=survey_identity.dst_id + 1,
+                    session_id=survey_identity.session_id,
+                    seq=survey_identity.seq,
+                    stream_record_digest=survey_identity.stream_record_digest,
+                )
+            )
 
         local_result = GatewayHostReceiptIdentity(
             original_msg_type=MSG_COMMAND_RESULT,

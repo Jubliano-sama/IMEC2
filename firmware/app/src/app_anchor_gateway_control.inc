@@ -3698,7 +3698,8 @@ static int gateway_start_survey(
     gateway_emit_host_command_result(
         host_command, CMD_SURVEY_START,
         ret == 0 ? COMMAND_OK :
-        ret == -EBUSY ? COMMAND_BUSY :
+        app_gateway_command_ingress_contention_retryable(ret) ?
+            COMMAND_BUSY :
         ret == -ESTALE || ret == -ENOENT ? COMMAND_INVALID_STATE :
         ret == -EINVAL ? COMMAND_MALFORMED_PAYLOAD :
         COMMAND_INTERNAL_ERROR,
@@ -3723,7 +3724,8 @@ static int gateway_submit_survey_plan(
     gateway_emit_host_command_result(
         host_command, CMD_SURVEY_PLAN,
         ret == 0 ? COMMAND_OK :
-        ret == -EBUSY ? COMMAND_BUSY :
+        app_gateway_command_ingress_contention_retryable(ret) ?
+            COMMAND_BUSY :
         ret == -ESTALE ? COMMAND_INVALID_STATE :
         ret == -EINVAL || ret == -EBADMSG ? COMMAND_MALFORMED_PAYLOAD :
         COMMAND_INTERNAL_ERROR,

@@ -2166,6 +2166,72 @@ static void test_command_flood_broadcast_deduplicates_logical_sequence(void)
     assert(relay.command_replay.newest_command_seq == 1u);
 }
 
+static void test_scheduled_survey_controls_reuse_compact_relay_wave(void)
+{
+    const enum command_id scheduled_ids[] = {
+        CMD_SURVEY_START,
+        CMD_SURVEY_PLAN,
+    };
+    struct mesh_relay relay;
+    struct mesh_relay_result result;
+    struct proto_packet packet = {
+        .msg_type = MSG_COMMAND,
+        .src_id = GATEWAY,
+        .dst_id = MESH_BROADCAST_ID,
+        .ttl = FLOOD_EPOCH_GLOBAL_TTL,
+    };
+    uint8_t payload[64];
+
+    for (size_t i = 0u;
+         i < sizeof(scheduled_ids) / sizeof(scheduled_ids[0]);
+         i++) {
+        size_t payload_len = 0u;
+        uint32_t now_ms = 6000u + (uint32_t)i * 1000u;
+
+        packet.session_id = 7100u + (uint32_t)i;
+        packet.seq = (uint16_t)(30u + i);
+        assert(mesh_append_command_id(payload,
+                                      sizeof(payload),
+                                      &payload_len,
+                                      scheduled_ids[i]) == PROTO_OK);
+        assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                             TLV_COMMAND_SCOPE,
+                             CMD_SCOPE_ALL_HEARD) == PROTO_OK);
+        assert(tlv_append_u8(payload, sizeof(payload), &payload_len,
+                             TLV_COMMAND_RESPONSE_MODE,
+                             CMD_RESPONSE_NONE) == PROTO_OK);
+        assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                              TLV_COMMAND_SEQ,
+                              packet.session_id) == PROTO_OK);
+        assert(tlv_append_u32(payload, sizeof(payload), &payload_len,
+                              TLV_FLOOD_EPOCH_ID,
+                              8100u + (uint32_t)i) == PROTO_OK);
+        packet.payload_len = (uint16_t)payload_len;
+
+        mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR,
+                        ANCHOR_A, GATEWAY, 13u);
+        assert(mesh_relay_handle_rx_with_random(&relay,
+                                                &packet,
+                                                payload,
+                                                payload_len,
+                                                GATEWAY,
+                                                80u,
+                                                now_ms,
+                                                (uint32_t)(i + 5u),
+                                                &result) == PROTO_OK);
+        assert(result.status == PROTO_OK);
+        assert(has_action(&result, MESH_RELAY_ACTION_FORWARD));
+        assert(result.forward.flood_retry_count ==
+               MESH_ENUMERATION_RELAY_COPY_COUNT - 1u);
+        assert(result.forward.earliest_tx_valid);
+        assert(result.forward.earliest_tx_ms - now_ms >=
+               DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS);
+        assert(result.forward.earliest_tx_ms - now_ms <=
+               DISCOVERY_ASSIGNMENT_UPSTREAM_COPY_BURST_REMAINDER_MS +
+                   MESH_ENUMERATION_RELAY_MAX_INITIAL_DELAY_MS);
+    }
+}
+
 static void test_single_assignment_table_relays_three_copies_across_two_hops(void)
 {
     struct mesh_relay relay_a;
@@ -19883,6 +19949,7 @@ int main(void)
     test_targeted_gateway_command_commits_only_after_local_admission();
     test_command_flood_broadcast_deduplicates_logical_sequence();
     test_single_assignment_table_relays_three_copies_across_two_hops();
+    test_scheduled_survey_controls_reuse_compact_relay_wave();
     test_collection_eack_broadcast_deduplicates_exact_round_only();
     test_collection_eack_received_list_confirms_pending_result();
     test_recovery_eack_releases_only_exact_packet_and_bundle();

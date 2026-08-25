@@ -35,8 +35,11 @@ static void test_timing_contract(void)
     assert(node_comm_bounded_control_apply_budget_ms(1u) == 20000u);
     assert(node_comm_bounded_control_apply_budget_ms(5u) == 60000u);
     assert(survey_control_delivery_delay_ms(0u) == 0u);
-    assert(survey_control_delivery_delay_ms(1u) == 15060u);
-    assert(survey_control_delivery_delay_ms(5u) == 60060u);
+    assert(survey_control_delivery_delay_ms(1u) == 13750u);
+    assert(survey_control_delivery_delay_ms(2u) == 14290u);
+    assert(survey_control_delivery_delay_ms(3u) == 14830u);
+    assert(survey_control_delivery_delay_ms(4u) == 15370u);
+    assert(survey_control_delivery_delay_ms(5u) == 15910u);
     assert(survey_slot_span_include(0u, 0u) == 1u);
     assert(survey_slot_span_include(1u, 2u) == 3u);
     assert(survey_slot_span_include(3u, 1u) == 3u);
@@ -51,9 +54,10 @@ static void test_timing_contract(void)
     assert(survey_wave_stride_ms(1u) == 2200u);
     assert(survey_wave_stride_ms(3u) == 5950u);
     assert(survey_wave_stride_ms(5u) == 10700u);
-    assert(survey_execution_duration_ms(2u, 3u) == 29750u);
+    assert(survey_execution_duration_ms(2u, 3u) == 23800u);
     assert(survey_plan_fits_hard_cap(60000u, 100u, 5u));
-    assert(!survey_plan_fits_hard_cap(700000u, 100u, 5u));
+    assert(survey_plan_fits_hard_cap(708600u, 100u, 5u));
+    assert(!survey_plan_fits_hard_cap(708601u, 100u, 5u));
 }
 
 static void test_graph_and_plan(void)

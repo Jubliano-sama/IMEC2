@@ -392,6 +392,20 @@ bool app_mesh_c5_gateway_control_rx_allowed(
         origin_ttl, packet_ttl, required_gateway_relay_hops);
 }
 
+bool app_mesh_c5_gateway_route_adv_rx_allowed(
+    uint8_t packet_ttl,
+    uint8_t required_gateway_relay_hops)
+{
+    if (required_gateway_relay_hops == 0u) {
+        return true;
+    }
+
+    return app_mesh_gateway_control_relay_hops_allowed(
+        FLOOD_EPOCH_GLOBAL_TTL,
+        packet_ttl,
+        required_gateway_relay_hops);
+}
+
 bool app_mesh_c5_control_route_hint_is_first(
     struct app_mesh_c5_control_route_history *history,
     const struct app_mesh_c5_control_route_identity *identity)

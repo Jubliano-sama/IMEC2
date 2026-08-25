@@ -2549,6 +2549,14 @@ static bool mesh_c5_gateway_enumeration_claim(
 #endif
 }
 
+static bool mesh_c5_compact_scheduled_control(
+    const struct mesh_outbound *out)
+{
+    return out != NULL && out->packet.msg_type == MSG_COMMAND &&
+           gateway_command_uses_compact_scheduled_flood(out->payload,
+                                                        out->payload_len);
+}
+
 static int mesh_send_c5_flood_now_until(
     const struct mesh_outbound *out,
     uint8_t purpose,
@@ -2588,6 +2596,8 @@ static int mesh_send_c5_flood_now_until(
     uint32_t enumeration_operation_budget_ms = 0u;
     uint32_t enumeration_now_ms = 0u;
     bool enumeration_control;
+    bool compact_scheduled_control;
+    bool compact_primary_control;
     bool atomic_gateway_control;
     bool enumeration_needs_wake = false;
     bool enumeration_burst_owned = false;
@@ -2615,21 +2625,24 @@ static int mesh_send_c5_flood_now_until(
     attempt_count = 1u + tx.flood_retry_count;
     gateway_enumeration_quick_copies =
         mesh_c5_gateway_enumeration_quick_copy_burst(&tx);
-    if (gateway_enumeration_quick_copies &&
-        absolute_deadline_ms != 0u &&
-        (uint64_t)k_uptime_get() >= absolute_deadline_ms) {
-        return -ETIMEDOUT;
-    }
-    if (gateway_enumeration_quick_copies) {
-        /* Admission observes the logical deadline. Once admitted, the tiny
-         * three-copy burst completes atomically instead of expiring midway. */
-        flood_ctx.absolute_deadline_ms = 0u;
-    }
     enumeration_control = mesh_c5_flood_enumeration_identity(
         &tx,
         &enumeration_phase,
         &enumeration_epoch,
         &enumeration_operation_budget_ms);
+    compact_scheduled_control = mesh_c5_compact_scheduled_control(&tx);
+    compact_primary_control = enumeration_control ||
+                              compact_scheduled_control;
+    if ((gateway_enumeration_quick_copies || compact_primary_control) &&
+        absolute_deadline_ms != 0u &&
+        (uint64_t)k_uptime_get() >= absolute_deadline_ms) {
+        return -ETIMEDOUT;
+    }
+    if (gateway_enumeration_quick_copies || compact_primary_control) {
+        /* Admission observes the logical deadline. Once admitted, the tiny
+         * three-copy burst completes atomically instead of expiring midway. */
+        flood_ctx.absolute_deadline_ms = 0u;
+    }
     atomic_gateway_control =
         purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
     flood_ctx.atomic_gateway_control = atomic_gateway_control;
@@ -2663,10 +2676,16 @@ static int mesh_send_c5_flood_now_until(
          * violate the single activation-owner contract. */
         send_wake_train = false;
     }
+    if (compact_scheduled_control && DEVICE_ROLE == ROLE_ANCHOR) {
+        /* START and PLAN share enumeration's one activation owner: the
+         * gateway wakes the complete route, then relays only the compact
+         * control burst while every anchor is already listening. */
+        send_wake_train = false;
+    }
     gateway_enumeration_claim =
         mesh_c5_gateway_enumeration_claim(&tx);
 
-    if (enumeration_control || gateway_enumeration_quick_copies) {
+    if (compact_primary_control || gateway_enumeration_quick_copies) {
         mesh_c5_enumeration_relay_burst_begin(&tx);
         enumeration_burst_owned = true;
     }
@@ -2680,7 +2699,7 @@ static int mesh_send_c5_flood_now_until(
         struct app_mesh_flood_result attempt_result = {0};
         struct app_mesh_flood_progress attempt_progress = {0};
         uint32_t wake_train_ms = send_wake_train ?
-            gateway_enumeration_claim ?
+            (gateway_enumeration_claim || compact_scheduled_control) ?
                 (attempt == 0u ?
                     MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS : 0u) :
                 WAKE_ADV_MS : 0u;
@@ -2724,7 +2743,7 @@ static int mesh_send_c5_flood_now_until(
                                                          log_reason);
         }
 
-        ret = (single_opportunity || enumeration_control) ?
+        ret = (single_opportunity || compact_primary_control) ?
             app_mesh_flood_send_opportunity(&tx, &ops, &attempt_result) :
             atomic_gateway_control ?
             app_mesh_flood_send_bounded_resume(&tx,
@@ -2771,7 +2790,7 @@ static int mesh_send_c5_flood_now_until(
                     (MESH_GATEWAY_ROUTE_ADV_COPY_GAP_MAX_MS + 1u);
             } else {
                 copy_gap_ms =
-                    (enumeration_control ?
+                    (compact_primary_control ?
                          MESH_ENUMERATION_RELAY_COPY_GUARD_MS :
                          FLOOD_POST_ROOT_GUARD_MS) +
                     diversification_ms;
@@ -2787,7 +2806,7 @@ static int mesh_send_c5_flood_now_until(
     }
     if (atomic_gateway_control && ret == 0) {
         uint16_t copies_per_attempt =
-            (single_opportunity || enumeration_control) ? 1u :
+            (single_opportunity || compact_primary_control) ? 1u :
             app_mesh_flood_repeat_limit();
         uint16_t expected_copies = attempt_count * copies_per_attempt;
 
@@ -3014,7 +3033,9 @@ int mesh_try_send_c5_flood_view(const struct app_mesh_outbound_view *view,
     out->flood_retry_count = view->flood_retry_count;
     out->queued_at_valid = view->queued_at_valid;
     out->earliest_tx_valid = view->earliest_tx_valid;
-    if (send_wake_train && mesh_c5_gateway_enumeration_claim(out)) {
+    if (send_wake_train &&
+        (mesh_c5_gateway_enumeration_claim(out) ||
+         mesh_c5_compact_scheduled_control(out))) {
         wake_train_ms =
             MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS;
     }

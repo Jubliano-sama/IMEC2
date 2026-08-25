@@ -19,18 +19,20 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     enum discovery_assignment_phase enumeration_phase;
     uint32_t enumeration_epoch;
     uint32_t enumeration_operation_budget_ms;
-    bool enumeration_burst_owned = mesh_c5_flood_enumeration_identity(
-        out,
-        &enumeration_phase,
-        &enumeration_epoch,
-        &enumeration_operation_budget_ms);
+    bool compact_burst_owned =
+        mesh_c5_flood_enumeration_identity(
+            out,
+            &enumeration_phase,
+            &enumeration_epoch,
+            &enumeration_operation_budget_ms) ||
+        mesh_c5_compact_scheduled_control(out);
     int store_ret;
     int ret;
 
     if (forward_admission_retained != NULL) {
         *forward_admission_retained = false;
     }
-    if (enumeration_burst_owned) {
+    if (compact_burst_owned) {
         /*
          * Cover the admission-to-deferred handoff as part of the same burst.
          * The inner sender takes another reference while it owns the physical
@@ -46,7 +48,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
         if (forward_admission_retained != NULL) {
             *forward_admission_retained = true;
         }
-        if (enumeration_burst_owned) {
+        if (compact_burst_owned) {
             mesh_c5_enumeration_relay_burst_end();
         }
         return ret;
@@ -67,7 +69,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
             ret = store_ret;
         }
     }
-    if (enumeration_burst_owned) {
+    if (compact_burst_owned) {
         mesh_c5_enumeration_relay_burst_end();
     }
     return ret;

@@ -319,6 +319,7 @@ static int anchor_run_response_lane(
 {
     struct survey_response_lane lane;
     uint8_t frame[UWB_MESH_MAX_FRAME_LEN];
+    int32_t all_acked_elapsed_ms = -1;
     int ret;
 
     ret = survey_response_lane_begin(&lane, NETWORK_ID, generation,
@@ -350,8 +351,17 @@ static int anchor_run_response_lane(
 
         if (!enumeration_response_timing_at_depth(start_ms, now_ms,
                                                    max_hop_count, &timing)) {
-            return enumeration_response_lane_complete_depth(
-                       start_ms, now_ms, max_hop_count) ? 0 : -ESTALE;
+            if (enumeration_response_lane_complete_depth(
+                    start_ms, now_ms, max_hop_count)) {
+                status_debug_printf(
+                    "DBG_SURVEY_LANE_END g=%u k=%u h=%u rec=%u "
+                    "ack=%d dur=%llu\n",
+                    generation, (unsigned int)kind, hop_count,
+                    lane.record_count, all_acked_elapsed_ms,
+                    (unsigned long long)(now_ms - start_ms));
+                return 0;
+            }
+            return -ESTALE;
         }
         round_start_ms = now_ms - timing.round_offset_ms;
         round_deadline_ms = round_start_ms + ENUMERATION_RESPONSE_ROUND_MS;
@@ -381,6 +391,16 @@ static int anchor_run_response_lane(
         if (ret == 0) {
             (void)survey_lane_handle_raw(&lane, frame, frame_len, &timing,
                                          round_deadline_ms);
+            if (all_acked_elapsed_ms < 0 &&
+                survey_response_lane_all_acked(&lane)) {
+                all_acked_elapsed_ms = (int32_t)MIN(
+                    (uint64_t)INT32_MAX,
+                    (uint64_t)k_uptime_get() - start_ms);
+                status_debug_printf(
+                    "DBG_SURVEY_LANE_ACK g=%u k=%u h=%u rec=%u t=%d\n",
+                    generation, (unsigned int)kind, hop_count,
+                    lane.record_count, all_acked_elapsed_ms);
+            }
         } else if (ret != -ETIMEDOUT && ret != -ECANCELED) {
             int recovery_ret = dwm3000_driver_force_recovery();
 
@@ -935,6 +955,11 @@ static void gateway_work_handler(struct k_work *work)
 
         gateway_build_progress_event_locked(&event, false);
         gateway_state.last_event = event;
+        status_debug_printf(
+            "DBG_SURVEY_STRIDE g=%u s=%u got=%u want=%u late=%lld\n",
+            gateway_state.identity.generation, gateway_state.stride_index,
+            event.result_count, gateway_state.plan_build.plan.pair_count,
+            (long long)(now_ms - gateway_state.response_lane_end_ms));
         gateway_state.stride_index++;
         if (gateway_state.stride_index >= total_strides) {
             gateway_build_progress_event_locked(&event, true);
@@ -1072,6 +1097,19 @@ int app_survey_gateway_start(
     gateway_state.response_lane_end_ms =
         gateway_state.response_lane_start_ms +
         survey_result_lane_duration_ms(roster->assignment.max_hop_count);
+    status_debug_printf(
+        "DBG_SURVEY_BUDGET ph=1 g=%u ctrl=%u slots=%u prep=%u "
+        "lane=%u total=%u\n",
+        gateway_state.identity.generation, gateway_state.control_delivery_ms,
+        survey_neighbor_sequence_duration_ms(roster->assignment.slot_span),
+        SURVEY_RESULT_PREPARE_MS,
+        survey_result_lane_duration_ms(roster->assignment.max_hop_count),
+        gateway_state.control_delivery_ms +
+            survey_neighbor_sequence_duration_ms(
+                roster->assignment.slot_span) +
+            SURVEY_RESULT_PREPARE_MS +
+            survey_result_lane_duration_ms(
+                roster->assignment.max_hop_count));
     (void)gateway_work_reschedule(gateway_state.response_lane_end_ms);
     k_mutex_unlock(&survey_lock);
     if (survey_ops.wake_gateway_rx != NULL) {
@@ -1161,6 +1199,16 @@ int app_survey_gateway_submit_plan(
         gateway_state.response_lane_start_ms +
         survey_result_lane_duration_ms(
             gateway_state.identity.assignment.max_hop_count);
+    status_debug_printf(
+        "DBG_SURVEY_BUDGET ph=2 g=%u ctrl=%u stride=%u waves=%u "
+        "drain=%u total=%u\n",
+        gateway_state.identity.generation, execution_delay_ms,
+        survey_wave_stride_ms(
+            gateway_state.identity.assignment.max_hop_count),
+        built.plan.wave_count, SURVEY_EXTRA_DRAIN_STRIDES,
+        execution_delay_ms + survey_execution_duration_ms(
+            built.plan.wave_count,
+            gateway_state.identity.assignment.max_hop_count));
     if (built.skipped_count != 0u) {
         gateway_state.partial_reasons |=
             SURVEY_PARTIAL_SKIPPED_PLAN_ENTRY;
@@ -1413,6 +1461,14 @@ int app_survey_gateway_handle_bundle(
                 gateway_state.results[result.pair_index] = result;
                 response_bit_set(gateway_state.result_received_mask,
                                  result.pair_index);
+                status_debug_printf(
+                    "DBG_SURVEY_RESULT_RX g=%u p=%u s=%u t=%llu "
+                    "d=%u r=%u ok=%u\n",
+                    gateway_state.identity.generation, result.pair_index,
+                    gateway_state.stride_index,
+                    (unsigned long long)(received_at_ms -
+                        gateway_state.response_lane_start_ms),
+                    timing.depth, timing.round, result.success_count);
             }
         }
     }

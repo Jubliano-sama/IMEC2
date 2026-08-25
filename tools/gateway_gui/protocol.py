@@ -2108,6 +2108,15 @@ def _validate_gateway_host_receipt_identity(
                 raise error_type(
                     "gateway-local command-result host receipt has invalid flags"
                 )
+    elif identity.original_msg_type == MSG_SURVEY_EVENT:
+        if identity.src_id != identity.dst_id:
+            raise error_type(
+                "gateway survey-event host receipt must be self-addressed"
+            )
+        if identity.original_flags != FLAG_GATEWAY_ACK_REQUIRED:
+            raise error_type(
+                "gateway survey-event host receipt requires ACK-required flags"
+            )
     elif identity.src_id == identity.dst_id:
         raise error_type("host receipt source and destination IDs must differ")
     if identity.session_id == 0 or identity.seq == 0:
