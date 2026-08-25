@@ -124,7 +124,7 @@ The clicker discovers anchors on every press. Moving, adding, or removing anchor
 ```text
 t=0 ms      Button press wakes clicker
 t=0-75+ ms  Clicker samples decoded UWB gate traffic at the start and end of the BLE courtesy window
-t≈gate      After the decoded gate is quiet, clicker sends repeated UWB wake claims for 400 ms
+t≈gate      After the decoded gate is quiet, clicker sends repeated UWB wake claims for 500 ms
 t≈scan      Anchors that accept a valid claim create one ownership epoch
 t≈wake      Clicker sends discovery and listens for hash-slot anchor replies
 t≈reply     If at least three anchors replied, clicker sends the selected-anchor range schedule
@@ -291,7 +291,7 @@ Assumptions:
 - 50 clicks/day.
 - Two quiet 2 ms UWB politeness samples in the normal quiet case.
 - 75 ms minimum BLE courtesy scan/advertise during normal-click politeness.
-- 400 ms UWB wake-claim train.
+- 500 ms UWB wake-claim train.
 - UWB discovery/reply/schedule exchange.
 - Up to 4 scheduled anchors.
 - One shared 400 ms channel-5 ranging burst.
@@ -304,27 +304,27 @@ Assumptions:
 | MCU wake from deep sleep | 1 ms | 5 mA | 5 |
 | UWB sampled politeness | 2 × (2.67 ms startup/PLL + 2 ms RX) = 9.34 ms active | 75 mA | 701 |
 | BLE courtesy scan/advertise | 75 ms wall time, controller-scheduled 20/25 ms passive scan duty plus about three 1 ms TX events; local TX is not RX time | 5 mA active | 315 |
-| UWB wake train | 400 ms | 75 mA | 30,000 |
+| UWB wake train | 500 ms | 75 mA | 37,500 |
 | UWB discovery/reply/schedule | ~80 ms | 75 mA | 6,000 |
 | UWB radio wake/reset/configure | 10 ms | 20 mA | 200 |
 | UWB shared TWR burst | One 400 ms channel-5 burst covering up to 4 scheduled anchors | 75 mA | 30,000 |
 | MCU processing + LED blink | 50 ms | 10 mA | 500 |
-| **Total per click** | **~1.05 s wall time in the normal quiet case** | | **69,971 uA·s** |
+| **Total per click** | **~1.15 s wall time in the normal quiet case** | | **77,471 uA·s** |
 
-69,971 uA·s is about 0.0194 mAh per click. Decoded same-network UWB waits are mostly sleep until the advertised or scheduled window clears, followed by a restarted politeness gate. A full 500 ms no-clear politeness window is still sampled, not continuous RX, and costs far less than a continuous 500 ms listen at 75 mA.
+77,471 uA·s is about 0.0215 mAh per click. Decoded same-network UWB waits are mostly sleep until the advertised or scheduled window clears, followed by a restarted politeness gate. A full 500 ms no-clear politeness window is still sampled, not continuous RX, and costs far less than a continuous 500 ms listen at 75 mA.
 
 #### Daily Energy
 
 | Component | Calculation | mAh/day |
 | --- | --- | --- |
-| Active clicks | 50 × 0.0194 mAh | 0.97 |
+| Active clicks | 50 × 0.0215 mAh | 1.08 |
 | Deep sleep, MCU plus UWB | 2.86 uA × 24h | 0.069 |
-| **Daily total** | | **1.04** |
-| With ~3× safety margin | | **3.12** |
+| **Daily total** | | **1.15** |
+| With ~3× safety margin | | **3.45** |
 
 | Battery | Capacity | Estimated Life |
 | --- | --- | --- |
-| LiPo 85 mAh | 85 mAh | ~27 days |
+| LiPo 85 mAh | 85 mAh | ~25 days |
 
 ### Anchor Budget
 
@@ -368,4 +368,3 @@ Assumptions:
 Low-duty UWB wake scanning is the dominant anchor idle cost. The current 5 ms RX setting is about 1.29% RX-window duty over the full wake/sleep cycle, or 1.32% against the configured 380 ms sleep interval. It is about 1.98% conservative DWM3000 awake-time duty once startup and PLL time are charged at the same 75 mA estimate. Active route/report traffic adds about 13.45 mAh/day under the 1000 selected-events/day assumption. Higher-duty Stage 1 debug scans must not be treated as the production anchor setting.
 
 The IRQ-free runtime does not change the configured DWM3000 awake windows in the table above. It adds MCU and SPI energy while firmware waits for UWB TX/RX completion because the nRF polls `SYS_STATUS` every 50 us instead of sleeping until a DWM3000 IRQ edge. The additional daily cost is approximately `MCU_active_current_mA * status_polled_seconds_per_day / 3600`. For the normal 5 ms periodic anchor scan baseline, the conservative awake-time model is about 1709 status-polled seconds/day, so a 4-6 mA MCU active-current delta adds roughly 1.90-2.85 mAh/day before margin. Higher-duty debug profiles must be measured directly rather than extrapolated into production. Hardware power validation should measure this separately from the DWM3000 RX/TX current.
-

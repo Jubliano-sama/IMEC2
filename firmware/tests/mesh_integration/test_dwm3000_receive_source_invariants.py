@@ -84,6 +84,26 @@ send_anchor_diag_fragment_block = function_body(
 )
 range_initiator = function_body("dwm3000_driver_range_initiator")
 
+assert "DBG_DWM_CH5_RX_HUNT_EMPTY s=%u e=%u" in continuous_activity
+assert_order(
+    continuous_activity,
+    "hunt_started_ms = k_uptime_get_32()",
+    "ret = wait_status_internal(",
+    "hunt_ended_ms = k_uptime_get_32()",
+    "dwt_forcetrxoff()",
+    "DBG_DWM_CH5_RX_HUNT_EMPTY",
+)
+for retained_observation in (
+    "status",
+    "active_phy_mode",
+    "radio_configured",
+    "radio_awake",
+    "radio_state_unknown",
+):
+    assert retained_observation in continuous_activity[
+        continuous_activity.index("DBG_DWM_CH5_RX_HUNT_EMPTY") :
+    ], f"empty-hunt trace must retain {retained_observation}"
+
 assert read_frame.count("dwt_read32bitreg(RX_FINFO_ID)") == 1
 assert "last_rx_finfo_register = rx_finfo" in read_frame
 assert_order(

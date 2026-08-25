@@ -4,7 +4,7 @@
 When the sender's own operation decode latched the high-duty boost, the route
 responder decoded the same flood and sits in ~100% Channel-5 RX, so the wake
 train must collapse to one WAKE_CLAIM opportunity instead of cycling
-MESH_RADIO_WAKE_OPPORTUNITIES for the full 400 ms window.  Without the boost
+MESH_RADIO_WAKE_OPPORTUNITIES for the full ordinary wake window. Without the boost
 the full train must remain untouched.
 """
 
@@ -124,6 +124,28 @@ class MeshRouteWakeBoostSourceInvariants(unittest.TestCase):
         self.assertLess(sniff_pre, sniff_post)
         self.assertLess(sniff_post, backoff)
         self.assertLess(backoff, retry)
+
+    def test_wake_train_trace_bounds_actual_transmit_span(self):
+        wake = function_body(
+            ROUTE_CONTROL, "mesh_send_route_wake_train_with_duration"
+        )
+        self.assertEqual(wake.count("last_claim_sent_ms = k_uptime_get_32()"), 2)
+        self.assertEqual(
+            wake.count("first_claim_sent_ms = last_claim_sent_ms"), 2
+        )
+        trace = wake.index("DBG_WAKE_TRAIN_TIMING")
+        release = wake.index("mesh_transport_radio_finish(")
+        retry = wake.index("goto wake_train_attempt;", release)
+        self.assertLess(release, trace)
+        self.assertLess(trace, retry)
+        for field in (
+            "event_seq",
+            "train_started_ms",
+            "first_claim_sent_ms",
+            "last_claim_sent_ms",
+            "sent_count",
+        ):
+            self.assertIn(field, wake[trace : trace + 500])
 
 
 if __name__ == "__main__":

@@ -43,11 +43,11 @@ A route-request wake does not interrupt an active channel 9 rhythm. A valid clic
 
 ## **A wake flood repeats complete Channel 5 claims**
 
-A wake flood is the wake train. Its required production transmission budget is 400 ms. Throughout it, the sender starts complete, independently decodable Channel 5 standard-PHR packets. Each packet uses the 4096-symbol wake preamble, 16-symbol SFD, and 850 kbps data rate, followed by a versioned wake claim with its own CRC and the radio FCS. A clicker sends successful copies back-to-back.
+A wake flood is the wake train. Its ordinary production transmission budget is 500 ms. Throughout it, the sender starts complete, independently decodable Channel 5 standard-PHR packets. Each packet uses the 4096-symbol wake preamble, 16-symbol SFD, and 850 kbps data rate, followed by a versioned wake claim with its own CRC and the radio FCS. A clicker sends successful copies back-to-back. The first gateway-originated enumeration CLAIM deliberately uses the longer 1,000 ms activation train.
 
 The on-air sequence is:
 
-`20 ms quiet check -> repeat [preamble + wake claim + optional typed suffix] for 400 ms of wake transmission -> 20 ms quiet check`
+`20 ms quiet check -> repeat [preamble + wake claim + optional typed suffix] for 500 ms of wake transmission -> 20 ms quiet check`
 
 The wake claim identifies the network, sender, event, attempt, priority, channels, required anchor count, and nonce. It also carries the remaining time until the flood ends, the follow-up begins, plus typed flags that distinguish click/ranging, route setup, and a separate control follow-up. Those countdowns are refreshed in every copy so a receiver that joins the flood late can still recover the same absolute schedule.
 

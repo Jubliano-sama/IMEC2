@@ -120,7 +120,7 @@ source of truth for their accepted arguments and local checks.
 
 Current key constants (as of the latest implementation):
 - Anchor low-duty scan: 380 ms interval, 3 ms normal RX window (≈0.78–0.79% duty).
-- Clicker wake train: 400 ms.
+- Ordinary wake train: 500 ms; the initial gateway enumeration activation remains 1,000 ms.
 - UWB PHY: 850 kbps, long preamble for wake/range, 1024-symbol for mesh control.
 - Clicker politeness: requires ≥100 ms quiet channel-5 time before wake train.
 - Status polling overhead is modeled separately from radio duty.

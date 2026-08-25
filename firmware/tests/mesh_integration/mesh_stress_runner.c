@@ -24,9 +24,11 @@
 #define MAX_POST_COMPLETION_STEPS_PER_PATH_NODE \
     (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u) * \
      ROUTE_MAX_CANDIDATES)
+/* A longer repair can advance cadence parity and require one additional
+ * candidate cycle before retained post-delivery custody becomes idle. */
 #define MAX_POST_COMPLETION_EMPTY_CHANNEL9_PER_CONNECTION \
     (MESH_RADIO_EVENT_MAX_MISSES * (ROUTE_MAX_FAILURES + 1u) * \
-     ROUTE_MAX_CANDIDATES)
+     (ROUTE_MAX_CANDIDATES + 1u))
 #define POST_COMPLETION_STEP_FIXED_ALLOWANCE 2u
 #define POST_COMPLETION_EMPTY_CHANNEL9_FIXED_ALLOWANCE 2u
 #define IDENTICAL_CONTROL_FIXED_ALLOWANCE 2u

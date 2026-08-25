@@ -21,7 +21,8 @@
 #define ANCHOR_ID UINT64_C(0xa300000000000001)
 #define GATEWAY_ID UINT64_C(0x9000000000000001)
 
-#define PRODUCTION_WAKE_TRAIN_US UINT64_C(400000)
+#define PRODUCTION_WAKE_TRAIN_US \
+    (UINT64_C(1000) * MESH_RADIO_WAKE_TRAIN_MS)
 #define ENUMERATION_ACTIVATION_WAKE_TRAIN_US \
     (UINT64_C(1000) * MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS)
 #define CLAIMED_DURATION_MS 1200u
@@ -39,6 +40,8 @@ _Static_assert(MESH_RADIO_ANCHOR_SCAN_RX_US == 3500u,
                "wake scenarios require the production 3.5 ms anchor scan");
 _Static_assert(MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS == 380u,
                "wake scenarios require the production 380 ms reschedule");
+_Static_assert(MESH_RADIO_WAKE_TRAIN_MS == 500u,
+               "ordinary production wake trains must remain at least 500 ms");
 _Static_assert(PRODUCTION_WAKE_TRAIN_US / 1000u <=
                    UWB_WAKE_CLAIM_MAX_WAKE_TRAIN_MS,
                "the production wake train must fit the UWB claim field");
@@ -447,7 +450,7 @@ static void run_attempt_one_case(const struct low_duty_timing *timing,
                  phase->name,
                  seed,
                  phase_us,
-                 "valid 400 ms attempt-1 train did not produce an accepted claim");
+                 "valid production attempt-1 train did not produce an accepted claim");
 }
 
 static void test_attempt_one_wake_trains(const struct low_duty_timing *timing,

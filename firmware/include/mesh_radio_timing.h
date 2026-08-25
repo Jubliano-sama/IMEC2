@@ -5,7 +5,7 @@
 #define MESH_RADIO_ANCHOR_SCAN_RX_US 3500u
 #define MESH_RADIO_ANCHOR_SCAN_RESCHEDULE_MS 380u
 #define MESH_RADIO_ACTIVITY_COMPLETION_US 15000u
-#define MESH_RADIO_WAKE_TRAIN_MS 400u
+#define MESH_RADIO_WAKE_TRAIN_MS 500u
 /* First gateway-origin enumeration CLAIM only; later phases remain wake-free. */
 #define MESH_RADIO_ENUMERATION_ACTIVATION_WAKE_TRAIN_MS 1000u
 /* Keep activation dense while avoiding a fixed transmitter/receiver cadence. */

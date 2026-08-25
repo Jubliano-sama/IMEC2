@@ -1,5 +1,5 @@
 row,start,end,text,style,lane_index
-direct,0,400,"400 ms wake train\nTX bursts alternate with 3 ms click-politeness listens",emphasis,0
+direct,0,400,"Historical 400 ms wake train\nnow 500 ms in production",emphasis,0
 direct,400,460,"60 ms control turnaround",default,0
 direct,460,580,"Four survey-control frames\n40 ms repeat spacing",emphasis,0
 relay_child,-219,21,"240 ms physical RX owner\nchild cadence",default,0

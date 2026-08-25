@@ -517,6 +517,8 @@ int main(void)
 {
     CHECK(SCAN_PERIOD_US == UINT64_C(380000),
           "test is not using the production low-duty scan period");
+    CHECK(MESH_RADIO_WAKE_TRAIN_MS == 500u,
+          "ordinary production wake trains must remain at least 500 ms");
     CHECK(MESH_RADIO_ANCHOR_SCAN_RX_US == 3500u,
           "test is not using the production scan window");
     CHECK(dwm3000_timing_airtime_us_ceil(DWM3000_TIMING_PHY_CH5_WAKE,

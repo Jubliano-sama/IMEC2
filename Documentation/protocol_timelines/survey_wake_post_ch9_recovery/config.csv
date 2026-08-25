@@ -1,6 +1,6 @@
 key,value
 title,"FOUR-BOARD SURVEY: A 3 MS SCAN CAN MISS A LIVE WAKE TRAIN"
-caption,"Normalized from the four-probe RTT trace. Direct anchor A transmits the survey wake train while forced relay B owns two adjacent Channel-9 receive reservations. A release-side latch survives both windows; B's first real Channel-5 scan consumes it only after attempting the widened receive."
+caption,"Historical four-probe RTT trace captured with the former 400 ms default. Direct anchor A transmits the survey wake train while forced relay B owns two adjacent Channel-9 receive reservations. A release-side latch survives both windows; B's first real Channel-5 scan consumes it only after attempting the widened receive."
 key_point,"Each successfully released Channel-9 window idempotently arms one atomic recovery latch. The first real scan widens from 3 ms to the existing 20 ms control-followup slice, spans the sender's politeness-listen gap, captures the still-live wake train, and then reuses the existing control handoff."
 start,-240
 end,720

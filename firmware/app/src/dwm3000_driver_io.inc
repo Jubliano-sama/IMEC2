@@ -495,6 +495,8 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     int64_t completion_deadline_ms = 0;
     uint32_t remaining_ms;
     uint32_t rearm_count = 0u;
+    uint32_t hunt_started_ms = 0u;
+    uint32_t hunt_ended_ms = 0u;
     uint64_t observed_at_ms = 0u;
     bool activity_seen = false;
     bool completion_active = false;
@@ -522,6 +524,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
     if (ret < 0) {
         return ret;
     }
+    hunt_started_ms = k_uptime_get_32();
 
     driver_stats.rx_starts++;
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
@@ -547,6 +550,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
         return finish_abortible_continuous_receive(ret);
     }
     if (ret < 0 && !rx_status_has_activity(status)) {
+        hunt_ended_ms = k_uptime_get_32();
         dwt_forcetrxoff();
         if (ret != -ETIMEDOUT) {
             driver_stats.rx_failures++;
@@ -557,10 +561,15 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             *failure = DWM3000_RX_FAILURE_NO_PREAMBLE_TIMEOUT;
         }
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-            status_debug_printf("DBG_DWM_CH5_RX_HUNT_EMPTY ret=%d status=0x%08x acq=%u\n",
+            status_debug_printf("DBG_DWM_CH5_RX_HUNT_EMPTY s=%u e=%u ret=%d sys=%08x phy=%u cfg=%u aw=%u unk=%u\n",
+                                hunt_started_ms,
+                                hunt_ended_ms,
                                 ret,
                                 status,
-                                acquire_timeout_ms);
+                                (unsigned int)active_phy_mode,
+                                radio_configured ? 1u : 0u,
+                                radio_awake ? 1u : 0u,
+                                radio_state_unknown ? 1u : 0u);
         }
         return finish_abortible_continuous_receive(-ETIMEDOUT);
     }

@@ -2052,6 +2052,8 @@ static int mesh_send_route_wake_train_with_duration(
     uint32_t next_click_rx_ms = 0u;
     uint32_t click_observed_ms = 0u;
     uint32_t train_started_ms = 0u;
+    uint32_t first_claim_sent_ms = 0u;
+    uint32_t last_claim_sent_ms = 0u;
     int64_t close_ms;
     uint16_t sent_count = 0u;
     uint16_t embedded_count = 0u;
@@ -2190,6 +2192,8 @@ wake_train_attempt:
     }
     sent_count = 0u;
     embedded_count = 0u;
+    first_claim_sent_ms = 0u;
+    last_claim_sent_ms = 0u;
     c5_activity = false;
     activity_phase = NULL;
     /*
@@ -2357,6 +2361,10 @@ wake_train_attempt:
             }
             status_debug_note("DBG_EMBEDDED_ROUTE_REQ_TX\n");
             status_debug_tx_wake_claim_sent_pulse();
+            last_claim_sent_ms = k_uptime_get_32();
+            if (sent_count == 0u) {
+                first_claim_sent_ms = last_claim_sent_ms;
+            }
             if (rf_started_out != NULL && !*rf_started_out) {
                 *rf_started_out = true;
                 if (rf_started_at_ms_out != NULL) {
@@ -2412,6 +2420,10 @@ wake_train_attempt:
             status_debug_note("DBG_WAKE_TRAIN_FIRST_SEND_OK\n");
         }
         status_debug_tx_wake_claim_sent_pulse();
+        last_claim_sent_ms = k_uptime_get_32();
+        if (sent_count == 0u) {
+            first_claim_sent_ms = last_claim_sent_ms;
+        }
         if (rf_started_out != NULL && !*rf_started_out) {
             *rf_started_out = true;
             if (rf_started_at_ms_out != NULL) {
@@ -2502,6 +2514,14 @@ out:
         ret = release_ret;
         goto out_unlock;
     }
+    status_debug_printf("DBG_WAKE_TRAIN_TIMING evt=%u start=%u first=%u last=%u end=%u sent=%u ret=%d\n",
+                        event_seq,
+                        train_started_ms,
+                        first_claim_sent_ms,
+                        last_claim_sent_ms,
+                        k_uptime_get_32(),
+                        sent_count,
+                        ret);
     if (click_captured) {
         mesh_c5_contact_clear("click-preempt");
         goto out_unlock;

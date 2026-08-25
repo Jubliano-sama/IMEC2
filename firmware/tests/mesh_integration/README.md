@@ -81,7 +81,7 @@ no direct-delivery fallback.
 - a safe-boundary runtime ordering check: gateway command, local click, event
   repair, then transit; plus a DS-TWR-owned receiver causing a dropped transit
   opportunity and origin retry on the same negotiated route;
-- a 400 ms channel-5 wake train over four scan phases. The real 3 ms / 380 ms
+- a 500 ms channel-5 wake train over four scan phases. The real 3 ms / 380 ms
   low-duty schedule must see enough preamble to extend that same RX operation
   and accept a valid first-attempt wake claim;
 - 50 deterministic anchor claims, one extended-packet assignment table,

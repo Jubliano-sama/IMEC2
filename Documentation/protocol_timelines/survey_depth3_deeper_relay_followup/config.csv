@@ -1,6 +1,6 @@
 key,value
 title,"RESOLVED DEPTH-3 DOWNLINK DEFECT: THE SECOND RELAY WAKE"
-caption,"Figure: Normalized four-board control flood. The previous image rejected A's valid one-hop payload, then remained on extended PHY while B transmitted the required standard wake. The current image reopens a bounded standard probe and keeps click priority."
+caption,"Historical four-board control flood captured with the former 400 ms default. The previous image rejected A's valid one-hop payload, then remained on extended PHY while B transmitted the required standard wake. The current image reopens a bounded standard probe and keeps click priority."
 key_point,"Live four-probe RTT now proves the fix: forced-two-hop C rejects the direct and one-hop copies, captures B's later standard wake inside the 2-second listener, accepts the exact two-hop payload, runs discovery, and stages its report. The remaining failure is a separate reliable-uplink arbitration defect shown in survey_depth3_uplink_route_wait_collision."
 start,0
 end,3700

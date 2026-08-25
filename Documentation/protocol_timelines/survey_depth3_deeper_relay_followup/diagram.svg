@@ -20,7 +20,7 @@ svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #11
 <line x1="44.0" y1="60.0" x2="4258.0" y2="60.0" class="major-line"/>
 <text x="159.0" y="98.0" class="row-label">GATEWAY - ORIGIN</text>
 <rect x="274.0" y="70.0" width="430.7" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
-<text x="489.4" y="93.0" class="small center event-text" text-anchor="middle"><tspan x="489.4" dy="0.0">Standard wake train</tspan><tspan x="489.4" dy="12.0">direct gateway copy</tspan></text>
+<text x="489.4" y="93.0" class="small center event-text" text-anchor="middle"><tspan x="489.4" dy="0.0">Historical 400 ms wake train</tspan><tspan x="489.4" dy="12.0">direct gateway copy</tspan></text>
 <rect x="704.7" y="70.0" width="118.4" height="48.0" fill="#ffffff" stroke="#111111" stroke-width="1"/>
 <text x="763.9" y="87.0" class="small center event-text" text-anchor="middle"><tspan x="763.9" dy="0.0">Extended control</tspan><tspan x="763.9" dy="12.0">payload</tspan><tspan x="763.9" dy="12.0">hop count 0</tspan></text>
 <rect x="823.1" y="70.0" width="3434.9" height="48.0" fill="#fafafa" stroke="#333333" stroke-width="1"/>
@@ -126,5 +126,5 @@ svg { background: #ffffff; font-family: Arial, Helvetica, sans-serif; color: #11
 <text x="3758.4" y="717.5" class="tiny center" text-anchor="middle"><tspan x="3758.4" dy="0.0">required hop-2 control arrives</tspan></text>
 <text x="3866.1" y="747.5" class="tiny center" text-anchor="middle"><tspan x="3866.1" dy="0.0">discovery work can start</tspan></text>
 <text x="4184.9" y="717.5" class="tiny center" text-anchor="middle"><tspan x="4184.9" dy="0.0">C stages its discovery report</tspan></text>
-<text x="2150.0" y="802.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Figure: Normalized four-board control flood. The previous image rejected A&#x27;s valid one-hop payload, then remained on extended PHY while B transmitted the required standard wake. The current image reopens a bounded standard probe and keeps click priority.</tspan></text>
+<text x="2150.0" y="802.0" class="caption center" text-anchor="middle"><tspan x="2150.0" dy="0.0">Historical four-board control flood captured with the former 400 ms default. The previous image rejected A&#x27;s valid one-hop payload, then remained on extended PHY while B transmitted the required standard wake. The current image reopens a bounded standard probe and keeps click priority.</tspan></text>
 </svg>

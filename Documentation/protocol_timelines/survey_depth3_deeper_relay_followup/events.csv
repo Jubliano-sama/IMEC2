@@ -1,5 +1,5 @@
 row,start,end,text,style,lane_index
-gateway,0,400,"Standard wake train\ndirect gateway copy",default,0
+gateway,0,400,"Historical 400 ms wake train\ndirect gateway copy",default,0
 gateway,400,510,"Extended control payload\nhop count 0",default,0
 gateway,510,3700,"Bounded redrives remain available",quiet,0
 anchor_a,0,510,"Receives direct copy",default,0

@@ -1566,7 +1566,7 @@ add_test(NAME mesh_stress_busy_line_route_repair_regression
     COMMAND mesh_stress --scenario busy-line --seed 0x1076
             --fault-seed 0xf4174e9b --packets 2 --loss 300
             --ack-loss 1200 --duplicate 800 --delay 2500
-            --max-delay-us 6000 --max-steps 800 --quiet)
+            --max-delay-us 6000 --max-steps 1600 --quiet)
 set_tests_properties(mesh_stress_busy_line_route_repair_regression PROPERTIES
     LABELS "mesh_integration;hardware_models;simulator;stress;multi_node;faults;replay;routes;liveness")
 add_test(NAME mesh_stress_busy_line_runtime_cleanup_regression

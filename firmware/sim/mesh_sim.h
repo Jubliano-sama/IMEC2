@@ -30,12 +30,12 @@ typedef int (*mesh_sim_gateway_admit_fn)(
 
 #define MESH_SIM_MAX_ROLES 64u
 #define MESH_SIM_MAX_CONNECTIONS 64u
-#define MESH_SIM_MAX_CONNECTION_EVENTS 1024u
+#define MESH_SIM_MAX_CONNECTION_EVENTS 2048u
 #define MESH_SIM_MAX_EVENTS 4096u
-#define MESH_SIM_MAX_RX_WINDOWS 1024u
+#define MESH_SIM_MAX_RX_WINDOWS 2048u
 #define MESH_SIM_MAX_TRANSMISSIONS 1024u
 #define MESH_SIM_MAX_RECEPTIONS 1024u
-/* Preserve a complete 800-step adversarial replay instead of a lossy tail. */
+/* Preserve complete adversarial replays instead of a lossy trace tail. */
 #define MESH_SIM_MAX_TRANSITIONS 16384u
 #define MESH_SIM_MAX_DISPATCHES_PER_RUN (MESH_SIM_MAX_TRANSITIONS * 2u)
 #define MESH_SIM_MAX_SAME_TIME_DISPATCHES 1024u

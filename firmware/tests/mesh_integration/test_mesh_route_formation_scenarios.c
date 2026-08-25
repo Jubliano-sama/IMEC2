@@ -540,7 +540,7 @@ static int run_connection_until_message(
     uint8_t msg_type,
     uint16_t *transmission_index)
 {
-    for (size_t turn = 0u; turn < 4u; turn++) {
+    for (size_t turn = 0u; turn < MESH_RADIO_EVENT_MAX_MISSES; turn++) {
         size_t transmission_count_before;
         size_t reception_count_before;
         const struct mesh_sim_transmission *tx;
@@ -2387,8 +2387,13 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
           MESH_SIM_OK);
 
     set_test_phase("unseeded_click_origin_to_relay");
-    CHECK(run_connection_event(&world, connection_origin_relay) ==
-          MESH_SIM_OK);
+    ret = run_connection_until_message(&world,
+                                       connection_origin_relay,
+                                       origin,
+                                       world.roles[relay_1].id,
+                                       click_packet.msg_type,
+                                       NULL);
+    CHECK(ret == MESH_SIM_OK);
     CHECK(world.roles[origin].relay.pending.state ==
           MESH_RELAY_TX_WAIT_GATEWAY_ACK);
     CHECK(queue_has_click(&world.roles[relay_1],
@@ -2404,8 +2409,12 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
     CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
 
     set_test_phase("unseeded_click_relay_to_relay");
-    CHECK(run_connection_event(&world, connection_relay_relay) ==
-          MESH_SIM_OK);
+    CHECK(run_connection_until_message(&world,
+                                       connection_relay_relay,
+                                       relay_1,
+                                       world.roles[relay_2].id,
+                                       click_packet.msg_type,
+                                       NULL) == MESH_SIM_OK);
     CHECK(world.roles[relay_1].relay.pending.state ==
           MESH_RELAY_TX_WAIT_GATEWAY_ACK);
     CHECK(world.roles[relay_1].relay.outbox_record.valid);
