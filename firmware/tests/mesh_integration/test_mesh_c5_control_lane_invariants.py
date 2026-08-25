@@ -56,6 +56,16 @@ def main() -> None:
         "static int mesh_send_outbound_with_release_on_channel_until(",
         "static int mesh_send_outbound_with_release_on_channel(",
     )
+    preconfigured_ch9 = implementation_body(
+        source,
+        "static int mesh_send_outbound_preconfigured_ch9_locked_until(",
+        "static int mesh_send_outbound_preconfigured_ch9_locked(",
+    )
+    transmitted_airtime = body(
+        source,
+        "static uint64_t mesh_transmitted_frame_airtime_us(",
+        "static int mesh_send_outbound_preconfigured_ch9_locked_until(",
+    )
     flood_defer = body(
         source,
         "static bool mesh_c5_flood_defer_active_cb(",
@@ -149,14 +159,51 @@ def main() -> None:
     assert "authorization" in c5_send
     assert "UWB_CHANNEL_WAKE_CONTACT" in c5_send
     assert "out->radio_channel =" not in c5_send
-    snapshot = low_level.index("mesh_encode_outbound_tx_snapshot(out,")
     select_channel = low_level.index(
         "radio_channel = forced_radio_channel == 0u ? out->radio_channel :"
     )
     configure = low_level.index(
         "ret = radio_channel == UWB_CHANNEL_MESH_PAYLOAD ?"
     )
-    assert select_channel < snapshot < configure
+    sizing_encode = low_level.index("mesh_encode_outbound_tx_snapshot(out,")
+    final_encode = low_level.index(
+        "ret = mesh_encode_outbound_tx_snapshot(", configure
+    )
+    physical_send = low_level.index(
+        "dwm3000_driver_send_frame_tracked_until(", final_encode
+    )
+    assert (
+        select_channel < sizing_encode < configure < final_encode < physical_send
+    )
+    assert "mesh_transmitted_frame_airtime_us(" in low_level[
+        final_encode:physical_send
+    ]
+    assert low_level.count("mesh_encode_outbound_tx_snapshot(") == 2
+
+    ch9_sizing_encode = preconfigured_ch9.index(
+        "mesh_encode_outbound_tx_snapshot(out,"
+    )
+    ch9_wait = preconfigured_ch9.index("mesh_wait_until_ms(out->earliest_tx_ms)")
+    ch9_final_encode = preconfigured_ch9.index(
+        "ret = mesh_encode_outbound_tx_snapshot(", ch9_wait
+    )
+    ch9_physical_send = preconfigured_ch9.index(
+        "dwm3000_driver_send_frame_tracked_until(", ch9_final_encode
+    )
+    assert (
+        ch9_sizing_encode < ch9_wait < ch9_final_encode < ch9_physical_send
+    )
+    assert "mesh_transmitted_frame_airtime_us(" in preconfigured_ch9[
+        ch9_final_encode:ch9_physical_send
+    ]
+    assert preconfigured_ch9.count("mesh_encode_outbound_tx_snapshot(") == 2
+    assert "DWM3000_TIMING_PHY_CH9_MESH" in transmitted_airtime
+    assert "DWM3000_TIMING_PHY_CH5_MESH_CONTROL" in transmitted_airtime
+    assert "DWM3000_TIMING_PHY_CH5_WAKE" in transmitted_airtime
+    assert (
+        "dwm3000_timing_airtime_us_ceil(phy, frame_len)"
+        in transmitted_airtime
+    )
     assert "out->radio_channel =" not in low_level
     assert "*tx = *out;" not in low_level
     assert "contact->state == C5_CONTACT_NONE" in contact_expiry

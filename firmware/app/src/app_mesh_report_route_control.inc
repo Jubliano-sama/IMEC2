@@ -42,7 +42,7 @@ static int mesh_send_c5_flood_response(const struct mesh_outbound *out,
     ret = mesh_send_c5_flood_now_intent(
         out, purpose, reason, send_wake_train, true, false, NULL, &result, NULL,
         c5_tx_intent);
-    if (result.sent_count > 0u) {
+    if (ret == 0 && result.sent_count > 0u) {
         if (forward_admission_retained != NULL) {
             *forward_admission_retained = true;
         }
@@ -2060,6 +2060,8 @@ static int mesh_send_route_wake_train_with_duration(
     uint8_t polite_retry = 0u;
     uint8_t click_quality = 0u;
     bool c5_activity = false;
+    bool atomic_gateway_control =
+        purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
     bool boost_single_shot = false;
     bool click_captured = false;
     bool local_can_range_clicks =
@@ -2242,18 +2244,20 @@ wake_train_attempt:
     }
     status_debug_note("DBG_WAKE_TRAIN_GUARD_OK\n");
 
-    ret = mesh_route_wake_sniff_activity("pre",
-                                         target_id,
-                                         reason,
-                                         polite_retry,
-                                         &c5_activity);
-    if (ret < 0) {
-        goto out;
-    }
-    if (c5_activity) {
-        activity_phase = "pre";
-        ret = -EAGAIN;
-        goto out;
+    if (!atomic_gateway_control) {
+        ret = mesh_route_wake_sniff_activity("pre",
+                                             target_id,
+                                             reason,
+                                             polite_retry,
+                                             &c5_activity);
+        if (ret < 0) {
+            goto out;
+        }
+        if (c5_activity) {
+            activity_phase = "pre";
+            ret = -EAGAIN;
+            goto out;
+        }
     }
 
 
@@ -2433,7 +2437,7 @@ wake_train_attempt:
         sent_count++;
         uwb_clicker_note_wake_claim_tx(session, 1u);
 
-        if (local_can_range_clicks &&
+        if (!atomic_gateway_control && local_can_range_clicks &&
             uptime_deadline_reached(k_uptime_get_32(), next_click_rx_ms)) {
             bool rx_activity = false;
             int listen_ret;
@@ -2484,7 +2488,7 @@ wake_train_attempt:
         }
     }
 
-    if (ret >= 0 && sent_count > 0u) {
+    if (!atomic_gateway_control && ret >= 0 && sent_count > 0u) {
         ret = mesh_route_wake_sniff_activity("post",
                                              target_id,
                                              reason,

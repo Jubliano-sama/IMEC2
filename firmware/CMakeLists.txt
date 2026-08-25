@@ -33,6 +33,7 @@ add_library(core
     src/mesh.c
     src/mesh_event_owner.c
     src/mesh_event_owner_registry.c
+    src/mesh_packet_age.c
     src/mesh_route_path.c
     src/node_comm.c
     src/node_transaction.c
@@ -140,6 +141,12 @@ target_link_libraries(test_mesh_event_owner_registry PRIVATE core)
 add_test(NAME mesh_event_owner_registry COMMAND test_mesh_event_owner_registry)
 set_tests_properties(mesh_event_owner_registry PROPERTIES
     LABELS "mesh_integration;hardware_models;protocol;connection;state")
+
+add_executable(test_mesh_packet_age tests/test_mesh_packet_age.c)
+target_link_libraries(test_mesh_packet_age PRIVATE core)
+add_test(NAME mesh_packet_age COMMAND test_mesh_packet_age)
+set_tests_properties(mesh_packet_age PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol;timing;communication")
 
 add_executable(test_operation_policy tests/test_operation_policy.c)
 target_link_libraries(test_operation_policy PRIVATE core)

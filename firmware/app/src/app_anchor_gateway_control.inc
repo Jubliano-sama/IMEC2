@@ -3582,9 +3582,13 @@ static int gateway_survey_send_control(
     }
     *origin_ms = origin;
     status_debug_printf(
-        "DBG_SURVEY_CONTROL phase=%u gen=%u handle=%u delay=%u bytes=%u\n",
+        "DBG_SURVEY_CONTROL phase=%u gen=%u handle=%u origin=%llu "
+        "delay=%u bytes=%u\n",
         (unsigned int)control->phase, control->identity.generation,
-        handle, control->start_delay_present ? control->start_delay_ms : 0u,
+        handle, (unsigned long long)origin,
+        control->phase == SURVEY_PHASE_PLAN ?
+            control->plan.execution_start_delay_ms :
+            (control->start_delay_present ? control->start_delay_ms : 0u),
         (unsigned int)payload_len);
     return 0;
 }

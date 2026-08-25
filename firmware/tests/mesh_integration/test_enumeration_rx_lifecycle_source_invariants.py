@@ -1157,6 +1157,144 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
         )
         self.assertIn("ret = -EIO", incomplete_block)
 
+    def test_gateway_command_relay_wave_keeps_all_admitted_copies_atomic(
+        self,
+    ) -> None:
+        send = function_body(
+            REPORT_TRANSPORT, "mesh_send_c5_flood_now_until"
+        )
+        defer = function_body(
+            REPORT_TRANSPORT, "mesh_c5_flood_defer_active_cb"
+        )
+        quiet = function_body(
+            REPORT_TRANSPORT, "mesh_c5_flood_quiet_cb"
+        )
+        relay = function_body(
+            REPORT_ROUTE_CONTROL, "mesh_send_c5_flood_response"
+        )
+        wake = function_body(
+            REPORT_ROUTE_CONTROL,
+            "mesh_send_route_wake_train_with_duration",
+        )
+
+        # Every gateway command owns the primary no-politeness wave, including
+        # enumeration. Enumeration still retains its separate lifecycle and
+        # one-physical-copy-per-attempt path below.
+        enumeration = send.index(
+            "enumeration_control = mesh_c5_flood_enumeration_identity("
+        )
+        classify = send.index("atomic_gateway_control =", enumeration)
+        install = send.index(
+            "flood_ctx.atomic_gateway_control = atomic_gateway_control",
+            classify,
+        )
+        classification = send[classify:install]
+        self.assertIn(
+            "purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD",
+            classification,
+        )
+        self.assertNotIn("enumeration_control", classification)
+
+        # Once admitted, neither politeness callback may listen and mistake a
+        # sibling's copy for unrelated work.
+        for body, bypass_action, ordinary_action in (
+            (defer, "return false;", "mesh_rx_pending_count()"),
+            (quiet, "return true;", "mesh_stop_role_scan()"),
+        ):
+            atomic = body.index(
+                "flood_ctx != NULL && flood_ctx->atomic_gateway_control"
+            )
+            bypass = body.index(bypass_action, atomic)
+            ordinary = body.index(ordinary_action, bypass + 1)
+            self.assertLess(atomic, bypass)
+            self.assertLess(bypass, ordinary)
+
+        # The atomic branch owns a resumable four-copy opportunity for each
+        # outer relay attempt and reports success only when every copy exists.
+        loop = send.index("attempt < attempt_count", install)
+        progress = send.index(
+            "struct app_mesh_flood_progress attempt_progress = {0}", loop
+        )
+        enumeration_path = send.index(
+            "(single_opportunity || enumeration_control)", progress
+        )
+        atomic_path = send.index("atomic_gateway_control ?", enumeration_path)
+        bounded = send.index(
+            "app_mesh_flood_send_bounded_resume", atomic_path
+        )
+        background = send.index(
+            "app_mesh_command_orchestrator_serialize_flood", bounded
+        )
+        self.assertLess(enumeration_path, atomic_path)
+        self.assertLess(atomic_path, bounded)
+        self.assertLess(bounded, background)
+        self.assertIn("&attempt_progress", send[bounded:background])
+
+        failed = send.index("if (ret != 0)", background)
+        failed_block = braced_block(send, failed)
+        self.assertIn("!atomic_gateway_control", failed_block)
+        self.assertIn("aggregate_result.sent_count > 0u", failed_block)
+        expected = send.index(
+            "if (atomic_gateway_control && ret == 0)", failed
+        )
+        expected_block = braced_block(send, expected)
+        self.assertIn("app_mesh_flood_repeat_limit()", expected_block)
+        self.assertIn(
+            "(single_opportunity || enumeration_control) ? 1u",
+            expected_block,
+        )
+        self.assertIn(
+            "expected_copies = attempt_count * copies_per_attempt",
+            expected_block,
+        )
+        self.assertIn(
+            "aggregate_result.sent_count != expected_copies",
+            expected_block,
+        )
+        self.assertIn("ret = -EIO", expected_block)
+
+        # A partial physical wave is retained for retry instead of being
+        # acknowledged as forwarding success.
+        accepted = relay.index("if (ret == 0 && result.sent_count > 0u)")
+        retained = relay.index("*forward_admission_retained = true", accepted)
+        deferred = relay.index("mesh_c5_flood_store_deferred(", retained)
+        self.assertLess(accepted, retained)
+        self.assertLess(retained, deferred)
+
+        # The same purpose-only exclusion covers the wake train, including an
+        # enumeration activation train, without command-specific decoding.
+        wake_atomic = wake.index("bool atomic_gateway_control =")
+        wake_classification = wake[
+            wake_atomic : wake.index(";", wake_atomic) + 1
+        ]
+        self.assertIn(
+            "purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD",
+            wake_classification,
+        )
+        self.assertNotIn("authorization_candidate", wake_classification)
+        self.assertNotIn("CMD_ASSIGN_DISCOVERY_SLOTS", wake_classification)
+
+        pre = wake.index("if (!atomic_gateway_control)", wake_atomic)
+        pre_sniff = wake.index(
+            'mesh_route_wake_sniff_activity("pre"', pre
+        )
+        train = wake.index(
+            "if (!atomic_gateway_control && local_can_range_clicks", pre_sniff
+        )
+        train_listen = wake.index("mesh_route_wake_listen_for_click", train)
+        post = wake.index(
+            "if (!atomic_gateway_control && ret >= 0 && sent_count > 0u)",
+            train_listen,
+        )
+        post_sniff = wake.index(
+            'mesh_route_wake_sniff_activity("post"', post
+        )
+        self.assertLess(pre, pre_sniff)
+        self.assertLess(pre_sniff, train)
+        self.assertLess(train, train_listen)
+        self.assertLess(train_listen, post)
+        self.assertLess(post, post_sniff)
+
     def test_compact_gateway_clock_domain_stays_64_bit_across_wrap(
         self,
     ) -> None:
@@ -1410,7 +1548,7 @@ class EnumerationRxLifecycleSourceTests(unittest.TestCase):
             "mesh_send_c5_flood_now_intent(", outer_begin
         )
         immediate_result = submit.index(
-            "if (result.sent_count > 0u)", immediate_send
+            "if (ret == 0 && result.sent_count > 0u)", immediate_send
         )
         immediate_end = submit.index(
             "mesh_c5_enumeration_relay_burst_end()", immediate_result

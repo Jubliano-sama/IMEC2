@@ -43,10 +43,12 @@
 #include "app_wake_train_politeness.h"
 #include "app_watchdog.h"
 #include "dwm3000_driver.h"
+#include "dwm3000_timing.h"
 #include "discovery_assignment.h"
 #include "mesh.h"
 #include "mesh_event_owner.h"
 #include "mesh_event_owner_registry.h"
+#include "mesh_packet_age.h"
 #include "mesh_preemption.h"
 #include "mesh_relay.h"
 #include "protocol.h"
@@ -1005,6 +1007,7 @@ struct mesh_c5_flood_tx_context {
     struct app_mesh_tx_observation *observation;
     uint64_t absolute_deadline_ms;
     bool response_priority;
+    bool atomic_gateway_control;
     uint8_t c5_tx_intent;
     const struct mesh_outbound *candidate;
 };

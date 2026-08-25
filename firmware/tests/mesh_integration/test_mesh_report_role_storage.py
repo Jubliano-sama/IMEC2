@@ -174,7 +174,8 @@ class MeshReportRoleStorageTests(unittest.TestCase):
             self.report_source, "mesh_encode_outbound_tx_snapshot"
         )
         self.assertIn("out->payload", encode)
-        self.assertIn("packet_age_add_elapsed(tx_packet", encode)
+        self.assertIn("mesh_packet_age_at_air_arrival(", encode)
+        self.assertIn("frame_airtime_us", encode)
         self.assertNotIn("mesh_outbound_refresh_age", encode)
         self.assertNotIn("memcpy(", encode)
 

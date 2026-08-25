@@ -465,6 +465,7 @@ target_sources(app PRIVATE
     ../src/mesh.c
     ../src/mesh_event_owner.c
     ../src/mesh_event_owner_registry.c
+    ../src/mesh_packet_age.c
     ../src/mesh_preemption.c
     ../src/mesh_relay.c
     ../src/mesh_relay_channel9.c

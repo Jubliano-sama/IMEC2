@@ -1159,6 +1159,7 @@ static int mesh_ch9_slot_tx_end(struct mesh_ch9_slot_tx_context *ctx)
  */
 static int mesh_encode_outbound_tx_snapshot(
     const struct mesh_outbound *out,
+    uint64_t frame_airtime_us,
     struct proto_packet *tx_packet,
     uint8_t *frame,
     size_t frame_cap,
@@ -1174,11 +1175,14 @@ static int mesh_encode_outbound_tx_snapshot(
         return PROTO_ERR_ARG;
     }
 
-    *tx_packet = out->packet;
     now_ms = k_uptime_get_32();
-    if (out->queued_at_valid) {
-        packet_age_add_elapsed(tx_packet, now_ms - out->queued_at_ms);
-    }
+    *tx_packet = out->packet;
+    tx_packet->message_age_ms = mesh_packet_age_at_air_arrival(
+        out->packet.message_age_ms,
+        out->queued_at_ms,
+        out->queued_at_valid,
+        now_ms,
+        frame_airtime_us);
     ret = uwb_mesh_frame_encode(NETWORK_ID,
                                 DEVICE_ID,
                                 out->next_hop_id,
@@ -1192,6 +1196,24 @@ static int mesh_encode_outbound_tx_snapshot(
     }
 
     return PROTO_OK;
+}
+
+static uint64_t mesh_transmitted_frame_airtime_us(
+    uint8_t radio_channel,
+    bool channel5_extended_control,
+    size_t frame_len)
+{
+    enum dwm3000_timing_phy phy;
+    if (radio_channel == UWB_CHANNEL_MESH_PAYLOAD) {
+        phy = DWM3000_TIMING_PHY_CH9_MESH;
+    } else if (radio_channel == UWB_CHANNEL_WAKE_CONTACT) {
+        phy = channel5_extended_control ?
+            DWM3000_TIMING_PHY_CH5_MESH_CONTROL :
+            DWM3000_TIMING_PHY_CH5_WAKE;
+    } else {
+        return 0u;
+    }
+    return dwm3000_timing_airtime_us_ceil(phy, frame_len);
 }
 
 static int mesh_send_outbound_preconfigured_ch9_locked_until(
@@ -1215,6 +1237,7 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
     }
 
     ret = mesh_encode_outbound_tx_snapshot(out,
+                                           0u,
                                            &tx_packet,
                                            frame,
                                            UWB_MESH_MAX_FRAME_LEN,
@@ -1226,6 +1249,18 @@ static int mesh_send_outbound_preconfigured_ch9_locked_until(
 
     if (out->earliest_tx_valid) {
         mesh_wait_until_ms(out->earliest_tx_ms);
+    }
+    ret = mesh_encode_outbound_tx_snapshot(
+        out,
+        mesh_transmitted_frame_airtime_us(
+            UWB_CHANNEL_MESH_PAYLOAD, false, frame_len),
+        &tx_packet,
+        frame,
+        UWB_MESH_MAX_FRAME_LEN,
+        &frame_len);
+    if (ret != PROTO_OK) {
+        LOG_WRN("mesh final frame encode failed for %s: %d", reason, ret);
+        return -EINVAL;
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
         status_debug_printf("DBG_CH9_TX_SEND_AT now=%u earliest=%u msg=%02x len=%u\n",
@@ -1319,6 +1354,7 @@ static int mesh_send_outbound_with_release_on_channel_until(
     struct radio_guard_uwb_lease radio_lease = {0};
     uint8_t *frame = mesh_send_scratch_frame;
     size_t frame_len = 0u;
+    uint32_t encoded_at_ms = 0u;
     int64_t uwb_window_start_ms = -1;
     bool channel5_extended_control = false;
     bool gateway_enumeration_quick_burst_owner;
@@ -1379,6 +1415,7 @@ static int mesh_send_outbound_with_release_on_channel_until(
 
     k_mutex_lock(&mesh_send_scratch_lock, K_FOREVER);
     ret = mesh_encode_outbound_tx_snapshot(out,
+                                           0u,
                                            &tx_packet,
                                            frame,
                                            UWB_MESH_MAX_FRAME_LEN,
@@ -1447,6 +1484,21 @@ static int mesh_send_outbound_with_release_on_channel_until(
             out->earliest_tx_valid) {
             mesh_wait_until_ms(out->earliest_tx_ms);
         }
+        ret = mesh_encode_outbound_tx_snapshot(
+            out,
+            mesh_transmitted_frame_airtime_us(
+                radio_channel, channel5_extended_control, frame_len),
+            &tx_packet,
+            frame,
+            UWB_MESH_MAX_FRAME_LEN,
+            &frame_len);
+        encoded_at_ms = k_uptime_get_32();
+        if (ret != PROTO_OK) {
+            LOG_WRN("mesh final frame encode failed for %s: %d", reason, ret);
+            ret = -EINVAL;
+        }
+    }
+    if (ret == 0) {
         if (radio_channel == UWB_CHANNEL_MESH_PAYLOAD &&
             IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf("DBG_CH9_TX_SEND_AT now=%u earliest=%u msg=%02x len=%u\n",
@@ -1476,6 +1528,19 @@ static int mesh_send_outbound_with_release_on_channel_until(
         }
     }
     if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf(
+            "DBG_MESH_TX_AGE msg=%02x seq=%u age=%u enc=%u rf=%llu gap=%lld air=%u\n",
+            tx_packet.msg_type,
+            tx_packet.seq,
+            tx_packet.message_age_ms,
+            encoded_at_ms,
+            (unsigned long long)driver_observation.rf_started_at_ms,
+            driver_observation.rf_started ?
+                (long long)(driver_observation.rf_started_at_ms -
+                            encoded_at_ms) : -1ll,
+            (unsigned int)((mesh_transmitted_frame_airtime_us(
+                radio_channel, channel5_extended_control, frame_len) + 999u) /
+                1000u));
         status_debug_printf(
             "DBG_MESH_TX_STAGE stage=start msg=%02x seq=%u ch=%u seen=%u at=%llu\n",
             tx_packet.msg_type,
@@ -2065,6 +2130,14 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
     bool collection_recovery_receipt_owner;
     uint32_t now_ms;
 
+    /* An admitted gateway command is the Channel-5 priority owner. Its
+     * bounded hop wave must not surrender its remaining copies to a sibling
+     * relay carrying that same command. Physical send authorization is still
+     * rechecked at every wake claim and data frame boundary. */
+    if (flood_ctx != NULL && flood_ctx->atomic_gateway_control) {
+        return false;
+    }
+
     /* A recovered stale collection packet owns the host-receipt completion
      * transaction. Its C5 CLOSED EACK must run before the next queued frame
      * is admitted, even though the coordinator still observes the gateway
@@ -2114,13 +2187,19 @@ static bool mesh_c5_flood_defer_active_cb(void *ctx)
 
 static bool mesh_c5_flood_quiet_cb(uint32_t sniff_ms, void *ctx)
 {
+    const struct mesh_c5_flood_tx_context *flood_ctx = ctx;
     struct radio_guard_uwb_lease radio_lease = {0};
     size_t frame_len = 0u;
     int64_t uwb_window_start_ms = -1;
     int release_ret;
     int ret;
 
-    ARG_UNUSED(ctx);
+    /* Gateway-command relay waves are already hop-scheduled and primary.
+     * Listening here lets another relay's copy cancel the admitted sender's
+     * redundancy, which is exactly the opposite of the flood contract. */
+    if (flood_ctx != NULL && flood_ctx->atomic_gateway_control) {
+        return true;
+    }
 
     mesh_stop_role_scan();
     ret = mesh_transport_radio_claim(RADIO_GUARD_UWB_CLIENT_MESH_RX,
@@ -2509,6 +2588,7 @@ static int mesh_send_c5_flood_now_until(
     uint32_t enumeration_operation_budget_ms = 0u;
     uint32_t enumeration_now_ms = 0u;
     bool enumeration_control;
+    bool atomic_gateway_control;
     bool enumeration_needs_wake = false;
     bool enumeration_burst_owned = false;
     bool gateway_enumeration_quick_copies;
@@ -2550,6 +2630,9 @@ static int mesh_send_c5_flood_now_until(
         &enumeration_phase,
         &enumeration_epoch,
         &enumeration_operation_budget_ms);
+    atomic_gateway_control =
+        purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD;
+    flood_ctx.atomic_gateway_control = atomic_gateway_control;
     if (enumeration_control) {
         enumeration_now_ms = k_uptime_get_32();
         (void)protocol_rx_downstream_activation_expire(
@@ -2595,6 +2678,7 @@ static int mesh_send_c5_flood_now_until(
 
     for (uint16_t attempt = 0u; attempt < attempt_count; attempt++) {
         struct app_mesh_flood_result attempt_result = {0};
+        struct app_mesh_flood_progress attempt_progress = {0};
         uint32_t wake_train_ms = send_wake_train ?
             gateway_enumeration_claim ?
                 (attempt == 0u ?
@@ -2642,6 +2726,11 @@ static int mesh_send_c5_flood_now_until(
 
         ret = (single_opportunity || enumeration_control) ?
             app_mesh_flood_send_opportunity(&tx, &ops, &attempt_result) :
+            atomic_gateway_control ?
+            app_mesh_flood_send_bounded_resume(&tx,
+                                                &ops,
+                                                &attempt_progress,
+                                                &attempt_result) :
             command_orchestrator == NULL ?
             app_mesh_command_orchestrator_serialize_flood(&tx,
                                                           &ops,
@@ -2663,7 +2752,8 @@ static int mesh_send_c5_flood_now_until(
         }
         aggregate_result.last_due_ms = attempt_result.last_due_ms;
         if (ret != 0) {
-            if (!gateway_enumeration_quick_copies &&
+            if (!atomic_gateway_control &&
+                !gateway_enumeration_quick_copies &&
                 aggregate_result.sent_count > 0u) {
                 ret = 0;
             }
@@ -2694,6 +2784,16 @@ static int mesh_send_c5_flood_now_until(
     if (gateway_enumeration_quick_copies && ret == 0 &&
         aggregate_result.sent_count != attempt_count) {
         ret = -EIO;
+    }
+    if (atomic_gateway_control && ret == 0) {
+        uint16_t copies_per_attempt =
+            (single_opportunity || enumeration_control) ? 1u :
+            app_mesh_flood_repeat_limit();
+        uint16_t expected_copies = attempt_count * copies_per_attempt;
+
+        if (aggregate_result.sent_count != expected_copies) {
+            ret = -EIO;
+        }
     }
 
 out:
@@ -2803,6 +2903,8 @@ int mesh_try_send_c5_flood_resume(
     struct mesh_c5_flood_tx_context flood_ctx = {
         .rf_started_out = rf_started,
         .response_priority = mesh_c5_flood_purpose_is_priority(purpose),
+        .atomic_gateway_control =
+            purpose == C5_CONTACT_PURPOSE_GATEWAY_COMMAND_FLOOD,
     };
     struct app_mesh_flood_ops ops = {
         .now_ms = mesh_c5_flood_now_ms,
