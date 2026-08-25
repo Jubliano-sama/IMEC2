@@ -19,6 +19,11 @@ _Static_assert(SURVEY_GRAPH_MAX_WIRE_LEN <= PACKET_EXT_MAX_PAYLOAD_LEN,
 _Static_assert(SURVEY_RESULTS_MAX_WIRE_LEN <= PACKET_EXT_MAX_PAYLOAD_LEN,
                "all survey results must fit one extended packet");
 _Static_assert(
+    SURVEY_RESPONDER_HEAD_START_MS +
+        ((SURVEY_RANGE_ATTEMPT_COUNT - 1u) *
+         SURVEY_RANGE_ATTEMPT_SPACING_MS) < SURVEY_RANGE_WAVE_MS,
+    "all scheduled range attempts must start inside their wave");
+_Static_assert(
     ((UWB_ENUM_MAX_HOPS + 1u) *
          NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS) +
         SURVEY_RADIO_GUARD_MS +
@@ -170,6 +175,12 @@ uint32_t survey_control_delivery_delay_ms(uint8_t max_hop_count)
 {
     if (max_hop_count == 0u || max_hop_count > UWB_ENUM_MAX_HOPS) {
         return 0u;
+    }
+    if (max_hop_count == 1u) {
+        /* Keep a full relay horizon plus half an origin-wave horizon. */
+        return NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS +
+               (NODE_COMM_BOUNDED_CONTROL_HOP_BUDGET_MS / 2u) +
+               SURVEY_RADIO_GUARD_MS;
     }
     return node_comm_bounded_control_apply_budget_ms(max_hop_count) +
            SURVEY_RADIO_GUARD_MS;

@@ -35,7 +35,7 @@ static void test_timing_contract(void)
     assert(node_comm_bounded_control_apply_budget_ms(1u) == 20000u);
     assert(node_comm_bounded_control_apply_budget_ms(5u) == 60000u);
     assert(survey_control_delivery_delay_ms(0u) == 0u);
-    assert(survey_control_delivery_delay_ms(1u) == 20060u);
+    assert(survey_control_delivery_delay_ms(1u) == 15060u);
     assert(survey_control_delivery_delay_ms(5u) == 60060u);
     assert(survey_slot_span_include(0u, 0u) == 1u);
     assert(survey_slot_span_include(1u, 2u) == 3u);
@@ -46,12 +46,12 @@ static void test_timing_contract(void)
     assert(survey_neighbor_beacon_offset_ms(0u) == 100u);
     assert(survey_neighbor_beacon_offset_ms(4u) == 740u);
     assert(survey_neighbor_beacon_offset_ms(5u) == UINT32_MAX);
-    assert(survey_range_attempt_offset_ms(0u) == 200u);
-    assert(survey_range_attempt_offset_ms(4u) == 600u);
-    assert(survey_wave_stride_ms(1u) == 2600u);
-    assert(survey_wave_stride_ms(3u) == 6350u);
-    assert(survey_wave_stride_ms(5u) == 11100u);
-    assert(survey_execution_duration_ms(2u, 3u) == 31750u);
+    assert(survey_range_attempt_offset_ms(0u) == 100u);
+    assert(survey_range_attempt_offset_ms(4u) == 420u);
+    assert(survey_wave_stride_ms(1u) == 2200u);
+    assert(survey_wave_stride_ms(3u) == 5950u);
+    assert(survey_wave_stride_ms(5u) == 10700u);
+    assert(survey_execution_duration_ms(2u, 3u) == 29750u);
     assert(survey_plan_fits_hard_cap(60000u, 100u, 5u));
     assert(!survey_plan_fits_hard_cap(700000u, 100u, 5u));
 }

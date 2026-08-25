@@ -25,9 +25,21 @@
 #define APP_SURVEY_ANCHOR_PREPARE_MS 100u
 #define APP_SURVEY_GATEWAY_PREPARE_MS 40u
 #define APP_SURVEY_RADIO_RETRY_MS 2u
-#define APP_SURVEY_RANGE_RX_GUARD_MS 30u
-#define APP_SURVEY_RANGE_TIMEOUT_MS 70u
+#define APP_SURVEY_RANGE_RX_GUARD_MS 25u
+#define APP_SURVEY_RANGE_TIMEOUT_MS 55u
 #define APP_SURVEY_START_EDGE_SLOP_MS SURVEY_RADIO_GUARD_MS
+
+_Static_assert(APP_SURVEY_RANGE_RX_GUARD_MS +
+                   APP_SURVEY_RANGE_TIMEOUT_MS <=
+                   SURVEY_RANGE_ATTEMPT_SPACING_MS,
+               "a failed responder attempt must not overlap the next one");
+_Static_assert(
+    SURVEY_RESPONDER_HEAD_START_MS +
+        ((SURVEY_RANGE_ATTEMPT_COUNT - 1u) *
+         SURVEY_RANGE_ATTEMPT_SPACING_MS) +
+        APP_SURVEY_RANGE_TIMEOUT_MS + SURVEY_RADIO_GUARD_MS <=
+            SURVEY_RANGE_WAVE_MS,
+    "the last range timeout and radio guard must fit inside its wave");
 
 enum app_survey_gateway_stage {
     APP_SURVEY_GATEWAY_IDLE = 0,
@@ -556,19 +568,25 @@ static int anchor_run_responder_pair(
             bounded_wait_ms(wave_start_ms,
                             target_ms + APP_SURVEY_RANGE_RX_GUARD_MS) :
             APP_SURVEY_RANGE_RX_GUARD_MS + APP_SURVEY_RANGE_TIMEOUT_MS;
+        int64_t call_start_ms;
+        int64_t call_end_ms;
         int ret;
 
         sleep_until_ms((int64_t)listen_ms);
         survey_range_request_fill(&request, snapshot, pair_index, attempt,
                                   initiator_id, DEVICE_ID);
         request.timeout_ms = timeout_ms;
+        call_start_ms = k_uptime_get();
         ret = dwm3000_driver_responder_poll_expected(
             DEVICE_ID, &request, timeout_ms, &result);
+        call_end_ms = k_uptime_get();
         status_debug_printf(
-            "DBG_SURVEY_RANGE role=responder pair=%u attempt=%u "
-            "late=%lld timeout=%u ret=%d status=%u distance=%d\n",
+            "DBG_SURVEY_PROFILE kind=attempt r=R p=%u a=%u "
+            "sd=%lld dur=%lld fd=%lld to=%u ret=%d st=%u mm=%d\n",
             pair_index, attempt,
-            (long long)((int64_t)k_uptime_get() - (int64_t)target_ms),
+            (long long)(call_start_ms - (int64_t)target_ms),
+            (long long)(call_end_ms - call_start_ms),
+            (long long)(call_end_ms - (int64_t)target_ms),
             timeout_ms, ret, (unsigned int)result.status,
             result.distance_mm);
         if (ret == 0 && result.status == RANGE_OK &&
@@ -603,14 +621,17 @@ static void anchor_run_initiator_pair(
         {
             uint64_t target_ms = wave_start_ms +
                 survey_range_attempt_offset_ms(attempt);
+            int64_t call_start_ms = k_uptime_get();
             int ret = dwm3000_driver_range_initiator(&request, &result);
+            int64_t call_end_ms = k_uptime_get();
 
             status_debug_printf(
-                "DBG_SURVEY_RANGE role=initiator pair=%u attempt=%u "
-                "late=%lld ret=%d status=%u\n",
+                "DBG_SURVEY_PROFILE kind=attempt r=I p=%u a=%u "
+                "sd=%lld dur=%lld fd=%lld ret=%d st=%u\n",
                 pair_index, attempt,
-                (long long)((int64_t)k_uptime_get() -
-                            (int64_t)target_ms),
+                (long long)(call_start_ms - (int64_t)target_ms),
+                (long long)(call_end_ms - call_start_ms),
+                (long long)(call_end_ms - (int64_t)target_ms),
                 ret, (unsigned int)result.status);
         }
         app_watchdog_note_radio_progress();
@@ -645,7 +666,11 @@ static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
         }
         sleep_until_ms((int64_t)wave_start_ms);
         if (stride < snapshot->plan.wave_count) {
+            int64_t configure_start_ms = k_uptime_get();
+            int64_t configure_end_ms;
+
             ret = dwm3000_driver_configure_range_mode();
+            configure_end_ms = k_uptime_get();
             if (ret < 0) {
                 break;
             }
@@ -659,10 +684,23 @@ static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
                 }
                 if (pair->responder_slot == snapshot->own_slot) {
                     struct survey_range_result local_result;
+                    int64_t pair_end_ms;
 
                     ret = anchor_run_responder_pair(snapshot, pair_index,
                                                     wave_start_ms,
                                                     &local_result);
+                    pair_end_ms = k_uptime_get();
+                    status_debug_printf(
+                        "DBG_SURVEY_PROFILE kind=pair r=R p=%u "
+                        "cfg=%lld cfg_end=%lld end=%lld slack=%lld\n",
+                        pair_index,
+                        (long long)(configure_end_ms - configure_start_ms),
+                        (long long)(configure_end_ms -
+                                    (int64_t)wave_start_ms),
+                        (long long)(pair_end_ms - (int64_t)wave_start_ms),
+                        (long long)((int64_t)(wave_start_ms +
+                                             SURVEY_RANGE_WAVE_MS) -
+                                    pair_end_ms));
                     if (ret == 0 && snapshot->local_result_count <
                                         SURVEY_MAX_DEGREE) {
                         snapshot->local_results[
@@ -671,8 +709,22 @@ static int anchor_execute_plan(struct app_survey_anchor_state *snapshot)
                     break;
                 }
                 if (pair->initiator_slot == snapshot->own_slot) {
+                    int64_t pair_end_ms;
+
                     anchor_run_initiator_pair(snapshot, pair_index,
                                               wave_start_ms);
+                    pair_end_ms = k_uptime_get();
+                    status_debug_printf(
+                        "DBG_SURVEY_PROFILE kind=pair r=I p=%u "
+                        "cfg=%lld cfg_end=%lld end=%lld slack=%lld\n",
+                        pair_index,
+                        (long long)(configure_end_ms - configure_start_ms),
+                        (long long)(configure_end_ms -
+                                    (int64_t)wave_start_ms),
+                        (long long)(pair_end_ms - (int64_t)wave_start_ms),
+                        (long long)((int64_t)(wave_start_ms +
+                                             SURVEY_RANGE_WAVE_MS) -
+                                    pair_end_ms));
                     break;
                 }
             }
