@@ -225,14 +225,14 @@ class GatewayPacketDeduplicator:
     ) -> tuple[DeliveryIdentity, _CachedPacket] | None:
         if packet.msg_type == MSG_SURVEY_EVENT:
             try:
-                event = decode_survey_event(packet)
+                survey_event = decode_survey_event(packet)
             except DecodeError:
                 return None
             if (
                 packet.flags != FLAG_GATEWAY_ACK_REQUIRED
                 or packet.src_id == 0
                 or packet.src_id != packet.dst_id
-                or packet.session_id != event.generation
+                or packet.session_id != survey_event.generation
                 or packet.seq == 0
             ):
                 return None
@@ -264,7 +264,7 @@ class GatewayPacketDeduplicator:
             )
 
         try:
-            event = validate_gateway_command_event_packet(packet)
+            command_event = validate_gateway_command_event_packet(packet)
         except DecodeError:
             return None
 
@@ -279,7 +279,7 @@ class GatewayPacketDeduplicator:
                 self._identity(packet, self._gateway_id),
                 _CachedPacket(packet.flags, bytes(normalized)),
             )
-        if not is_gateway_assignment_publisher_event(event):
+        if not is_gateway_assignment_publisher_event(command_event):
             # Generic retained progress is not assignment publication. Keep
             # exact stream identity and semantic bytes so reconnect replay is
             # idempotent without acquiring the assignment replay barrier.
@@ -297,18 +297,18 @@ class GatewayPacketDeduplicator:
 
         identity = CommandEventIdentity(
             gateway_id=self._gateway_id,
-            command_kind=event.command_kind,
-            command_id=event.command_id,
-            gateway_epoch=event.route_epoch,
-            correlation_id=event.correlation_id,
-            gateway_sequence=event.gateway_sequence,
-            host_session_id=event.host_session_id,
-            host_sequence=event.host_sequence,
-            stage=event.stage,
-            anchor_id=event.anchor_id,
-            discovery_slot=event.discovery_slot,
-            pair_initiator_id=event.pair_initiator_id,
-            pair_responder_id=event.pair_responder_id,
+            command_kind=command_event.command_kind,
+            command_id=command_event.command_id,
+            gateway_epoch=command_event.route_epoch,
+            correlation_id=command_event.correlation_id,
+            gateway_sequence=command_event.gateway_sequence,
+            host_session_id=command_event.host_session_id,
+            host_sequence=command_event.host_sequence,
+            stage=command_event.stage,
+            anchor_id=command_event.anchor_id,
+            discovery_slot=command_event.discovery_slot,
+            pair_initiator_id=command_event.pair_initiator_id,
+            pair_responder_id=command_event.pair_responder_id,
         )
 
         # A replayed assignment publication has a fresh stream/event sequence

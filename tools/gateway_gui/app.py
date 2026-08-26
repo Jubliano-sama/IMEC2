@@ -138,6 +138,11 @@ from .protocol import (
     is_gateway_assignment_publisher_event,
     select_survey_pairs,
 )
+from .survey_runtime import (
+    StaleSurveyEvent,
+    SurveyEventNotReady,
+    SurveyStateError,
+)
 
 
 APP_BG = "#f2f4f5"
@@ -234,6 +239,8 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_assignment: SurveyAssignmentIdentity | None = None
         self._survey_pairs: tuple[tuple[int, int], ...] = ()
         self._survey_results: dict[int, Any] = {}
+        self._survey_pending_dispatch: GatewayCommandDispatch | None = None
+        self._survey_deferred_dispatch: GatewayCommandDispatch | None = None
         self._initialize_gateway_diagnostics()
 
         self.connection_text = tk.StringVar(value="Disconnected")
@@ -916,8 +923,12 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.status_text.set(
                 "Here I Am preflight failed; requested command was not sent"
             )
+            if self._survey_chain_pending:
+                self._survey_chain_pending = False
+                self._survey_phase = "idle"
         if transition.completed:
             self._command_progress_text = ""
+        self._refresh_survey_view()
         self._update_command_state()
 
     def _observe_operation_progress(self, event: Any) -> None:
@@ -932,6 +943,15 @@ class GatewayGui(GatewayDiagnosticsMixin):
             pending.host_sequence,
         ):
             return
+        if self._survey_chain_pending or self._survey_phase == "enumerating":
+            try:
+                self.survey_model.observe_command_event(event)
+            except SurveyStateError as exc:
+                self.survey_model.fail("enumeration", str(exc))
+                self._survey_chain_pending = False
+                self._survey_phase = "idle"
+                self._show_error(f"Survey enumeration telemetry conflict: {exc}")
+            self._refresh_survey_view()
         if event.command_kind == 1:
             anchors = self.command_timeline_model.enumerated_anchors.get(
                 event.correlation_key, {}
@@ -1013,7 +1033,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             return
         self._survey_chain_pending = False
         self._survey_phase = "neighbors"
-        self._dispatch_gateway_command(
+        self._submit_survey_dispatch(
             GatewayCommandDispatch(
                 command_kind=2,
                 command_id=command.command_id,
@@ -1028,7 +1048,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 ),
             )
         )
-        self._update_command_state()
 
     def _submit_survey_plan(self, event: SurveyEvent) -> None:
         if (
@@ -1053,11 +1072,21 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         except ValueError as exc:
             self._survey_phase = "idle"
+            self.survey_model.fail("plan", str(exc))
             self._show_error(str(exc))
+            self._refresh_survey_view()
             return
         self._survey_pairs = pairs
+        try:
+            self.survey_model.set_requested_pairs(pairs)
+        except SurveyStateError as exc:
+            self._survey_phase = "idle"
+            self.survey_model.fail("plan", str(exc))
+            self._show_error(str(exc))
+            self._refresh_survey_view()
+            return
         self._survey_phase = "submitting-plan"
-        self._dispatch_gateway_command(
+        self._submit_survey_dispatch(
             GatewayCommandDispatch(
                 command_kind=2,
                 command_id=command.command_id,
@@ -1073,24 +1102,131 @@ class GatewayGui(GatewayDiagnosticsMixin):
             )
         )
 
-    def _observe_survey_event_packet(self, packet: Packet) -> None:
+    def _submit_survey_dispatch(self, dispatch: GatewayCommandDispatch) -> bool:
+        if self.survey_command_owner.pending is not None:
+            if self._survey_deferred_dispatch is not None:
+                self.survey_model.fail(
+                    "plan", "A second survey command was queued before the first completed"
+                )
+                self._show_error(self.survey_model.error or "Survey command queue conflict")
+                self._refresh_survey_view()
+                return False
+            self._survey_deferred_dispatch = dispatch
+            self.status_text.set(
+                f"{dispatch.label} is queued behind the current survey command result"
+            )
+            self._refresh_survey_view()
+            return True
+        if not self.survey_command_owner.begin(
+            dispatch.command_id,
+            dispatch.session_id,
+            dispatch.sequence,
+            dispatch.label,
+            timeout_s=dispatch.timeout_s,
+        ):
+            return False
+        self._survey_pending_dispatch = dispatch
+        self.survey_model.note_command_dispatched(dispatch.command_id)
+        self._dispatch_gateway_command(dispatch)
+        self._refresh_survey_view()
+        self._update_command_state()
+        return True
+
+    def _dispatch_deferred_survey_command(self) -> None:
+        dispatch = self._survey_deferred_dispatch
+        self._survey_deferred_dispatch = None
+        if dispatch is not None:
+            self._submit_survey_dispatch(dispatch)
+
+    def _observe_survey_event_packet(
+        self,
+        packet: Packet,
+        *,
+        received_at: float | None = None,
+        allow_buffer: bool = True,
+    ) -> bool:
         try:
             event = decode_survey_event(packet)
         except Exception as exc:
             self._show_error(f"Malformed survey event: {exc}")
-            return
-        if (
-            self._survey_generation is not None
-            and event.generation != self._survey_generation
-        ):
+            return True
+        observed_at = time.monotonic() if received_at is None else received_at
+        created_at = observed_at - max(packet.age_ms, 0) / 1000.0
+        try:
+            self.survey_model.observe_survey_event(
+                event,
+                created_at=created_at,
+            )
+        except SurveyEventNotReady as exc:
+            if not allow_buffer:
+                self._append_log("error", f"Ignored survey event: {exc}")
+                return False
+            controlling_command = (
+                "START" if not self.survey_model.start_accepted else "PLAN"
+            )
+            controlling_step = (
+                "neighbors" if controlling_command == "START" else "plan"
+            )
+            duplicate = any(
+                (
+                    buffered.src_id,
+                    buffered.dst_id,
+                    buffered.session_id,
+                    buffered.seq,
+                    buffered.flags,
+                    buffered.payload,
+                )
+                == (
+                    packet.src_id,
+                    packet.dst_id,
+                    packet.session_id,
+                    packet.seq,
+                    packet.flags,
+                    packet.payload,
+                )
+                for buffered, _ in self._survey_event_buffer
+            )
+            if duplicate:
+                self.status_text.set(
+                    "Repeated early survey event is still waiting for "
+                    f"{controlling_command} acceptance"
+                )
+            elif len(self._survey_event_buffer) >= 16:
+                self.survey_model.fail(
+                    controlling_step,
+                    "Survey event buffer exceeded 16 reliable records before "
+                    f"{controlling_command} acceptance",
+                )
+                self._survey_phase = "idle"
+                self._show_error(self.survey_model.error or str(exc))
+            else:
+                self._survey_event_buffer.append((packet, received_at))
+                self.status_text.set(
+                    "Survey event received early; waiting for the exact "
+                    f"{controlling_command} result"
+                )
+            self._refresh_survey_view()
+            return False
+        except StaleSurveyEvent as exc:
             self._append_log(
                 "error",
-                f"Ignored stale survey generation {event.generation}; "
-                f"active generation is {self._survey_generation}.",
+                f"Ignored stale survey generation {event.generation}: {exc}",
             )
-            return
-        self._survey_generation = event.generation
-        self._survey_assignment = event.assignment
+            return True
+        except SurveyStateError as exc:
+            step = {
+                SURVEY_EVENT_NEIGHBOR_GRAPH: "neighbors",
+                SURVEY_EVENT_PLAN_ACCEPTED: "plan",
+            }.get(event.kind, "ranging")
+            self.survey_model.fail(step, str(exc))
+            self._survey_phase = "idle"
+            self._show_error(f"Survey state conflict: {exc}")
+            self._refresh_survey_view()
+            return True
+
+        self._survey_generation = self.survey_model.generation
+        self._survey_assignment = self.survey_model.assignment
+        self._survey_results = dict(self.survey_model.results)
         if event.kind == SURVEY_EVENT_NEIGHBOR_GRAPH:
             self._survey_phase = "planning"
             self.status_text.set(
@@ -1100,22 +1236,22 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.root.after_idle(lambda: self._submit_survey_plan(event))
         elif event.kind == SURVEY_EVENT_PLAN_ACCEPTED:
             self._survey_phase = "ranging"
+            self._survey_pairs = tuple(
+                (pair.initiator_slot, pair.responder_slot)
+                for pair in self.survey_model.plan_pairs
+            )
             self.status_text.set(
-                f"Survey plan accepted: {len(event.plan_pairs)} pairs in "
+                f"Survey plan accepted: {len(self._survey_pairs)} pairs in "
                 f"{event.wave_count} fixed wave"
                 f"{'s' if event.wave_count != 1 else ''}."
             )
         elif event.kind == SURVEY_EVENT_RANGE_PROGRESS:
             self._survey_phase = "ranging"
-            for result in event.range_results:
-                self._survey_results[result.pair_index] = result
             self.status_text.set(
                 f"Survey ranging: {len(self._survey_results)}/"
                 f"{len(self._survey_pairs)} pair results received."
             )
         elif event.kind == SURVEY_EVENT_TERMINAL:
-            for result in event.range_results:
-                self._survey_results[result.pair_index] = result
             usable = sum(
                 result.usable for result in self._survey_results.values()
             )
@@ -1133,7 +1269,70 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 message += f"; partial flags=0x{event.partial_reasons:04x}"
             self.status_text.set(message)
             self._append_log("event", message)
+        self._schedule_survey_geometry_solve()
+        self._refresh_survey_view()
         self._update_command_state()
+        return True
+
+    def _commit_buffered_survey_packet(self, packet: Packet) -> None:
+        """Commit and receipt an early event only after its semantic apply."""
+        dedup = self.delivery_dedup
+        gateway_scope = getattr(self, "gateway_id", None)
+        if gateway_scope is None:
+            gateway_scope = packet.dst_id
+        if gateway_scope != packet.dst_id:
+            self._log_gateway_receipt(
+                "error",
+                "Buffered survey event was applied after the gateway scope "
+                "changed; no host receipt was sent",
+            )
+            return
+        delivery = dedup.observe(packet, commit=False)
+        if delivery.disposition is PacketDisposition.CONFLICT:
+            self._log_gateway_receipt(
+                "error",
+                "Buffered survey event conflicted with retained host state; "
+                "no host receipt was sent",
+            )
+            return
+        if delivery.disposition is PacketDisposition.NEW:
+            try:
+                committed = dedup.commit(packet, delivery)
+            except Exception as exc:
+                self._log_gateway_receipt(
+                    "error", f"Buffered survey delivery commit failed: {exc}"
+                )
+                return
+            if not committed:
+                self._log_gateway_receipt(
+                    "error",
+                    "Buffered survey event could not be committed to the "
+                    "active RAM scope; no host receipt was sent",
+                )
+                return
+        receipt_frame = self._maybe_send_gateway_host_receipt(
+            packet,
+            delivery,
+            gateway_scope=gateway_scope,
+        )
+        if receipt_frame is None and delivery.cached:
+            self._log_gateway_receipt(
+                "error",
+                "Buffered survey event remains retained upstream because its "
+                "host receipt was not written",
+            )
+
+    def _drain_buffered_survey_events(self) -> None:
+        buffered = tuple(self._survey_event_buffer)
+        self._survey_event_buffer.clear()
+        for buffered_packet, buffered_at in buffered:
+            applied = self._observe_survey_event_packet(
+                buffered_packet,
+                received_at=buffered_at,
+                allow_buffer=False,
+            )
+            if applied:
+                self._commit_buffered_survey_packet(buffered_packet)
 
     def _observe_survey_command_result(self, packet: Packet) -> None:
         command_id = packet.value(TLV_COMMAND_ID)
@@ -1145,13 +1344,52 @@ class GatewayGui(GatewayDiagnosticsMixin):
             CMD_SURVEY_GET_STATUS,
         } or not isinstance(status, int):
             return
-        if status != 0:
-            self._survey_chain_pending = False
-            self._survey_phase = "idle"
+        transition = self.survey_command_owner.observe_result(
+            command_id,
+            packet.session_id,
+            packet.seq,
+            status,
+        )
+        if not transition.matched or transition.request is None:
+            return
+        self._survey_pending_dispatch = None
+        if transition.outcome == "accepted":
+            self.survey_model.note_command_accepted(command_id)
+            if command_id in (CMD_SURVEY_START, CMD_SURVEY_PLAN):
+                self._drain_buffered_survey_events()
+            self._dispatch_deferred_survey_command()
+        else:
+            status_name = COMMAND_STATUS_NAMES.get(status, str(status))
+            self.survey_model.note_command_rejected(command_id, status_name)
+            if command_id == CMD_SURVEY_CANCEL:
+                self._survey_phase = "ranging"
+            else:
+                self._survey_chain_pending = False
+                self._survey_phase = "idle"
+                self._survey_deferred_dispatch = None
             self._show_error(
                 f"{COMMAND_NAMES.get(command_id, 'Survey command')} was "
-                f"rejected with {COMMAND_STATUS_NAMES.get(status, status)}"
+                f"rejected with {status_name}"
             )
+        self._refresh_survey_view()
+        self._update_command_state()
+
+    def _expire_survey_command(self) -> None:
+        transition = self.survey_command_owner.expire()
+        if not transition.matched or transition.request is None:
+            return
+        command_id = transition.request.command_id
+        self._survey_pending_dispatch = None
+        self.survey_model.note_command_timeout(command_id)
+        if command_id == CMD_SURVEY_CANCEL:
+            self._survey_phase = "ranging"
+        else:
+            self._survey_chain_pending = False
+            self._survey_phase = "idle"
+            self._survey_deferred_dispatch = None
+        self._show_error(f"{transition.request.label} timed out waiting for COMMAND_RESULT")
+        self._refresh_survey_view()
+        self._update_command_state()
 
     def _store_enumeration_timing(
         self, event: Any, anchors: dict[int, Any]
@@ -1327,11 +1565,20 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_assignment = None
         self._survey_pairs = ()
         self._survey_results.clear()
+        self.survey_command_owner.reset()
+        self._survey_pending_dispatch = None
+        self._survey_deferred_dispatch = None
+        self._survey_event_buffer.clear()
         if not self._send_assign_discovery_slots(ram_only_iteration=True):
             self._survey_chain_pending = False
             self._survey_phase = "idle"
         else:
+            expected_raw = self.assignment_expected_anchors_text.get().strip()
+            expected = int(expected_raw) if expected_raw else 0
+            self.survey_model.begin(expected_anchor_count=expected)
             self._command_progress_text = "Survey: fresh RAM-only enumeration"
+            self._show_survey_tab()
+            self._refresh_survey_view()
             self._update_command_state()
 
     def _cancel_survey(self) -> None:
@@ -1353,7 +1600,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self._show_error(str(exc))
             return
         self._survey_phase = "aborting"
-        self._dispatch_gateway_command(
+        self._submit_survey_dispatch(
             GatewayCommandDispatch(
                 command_kind=2,
                 command_id=command.command_id,
@@ -1365,7 +1612,6 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 status_text="Flooding an explicit survey abort...",
             )
         )
-        self._update_command_state()
 
     def _drain_events(self) -> None:
         try:
@@ -1379,6 +1625,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         # Each packet carries its immutable worker-side receive timestamp; only
         # expire against wall time after all already-received events are seen.
         self._expire_gateway_command()
+        self._expire_survey_command()
         self._update_command_state()
         if self.root.winfo_exists():
             self.root.after(50, self._drain_events)
@@ -1498,6 +1745,28 @@ class GatewayGui(GatewayDiagnosticsMixin):
             if isinstance(barrier, GatewayAssignmentReplayBarrier):
                 barrier.reset()
             getattr(self, "_assignment_replay_receipts", {}).clear()
+            survey_owner = getattr(self, "survey_command_owner", None)
+            if survey_owner is not None:
+                survey_owner.reset()
+            self._survey_pending_dispatch = None
+            self._survey_deferred_dispatch = None
+            getattr(self, "_survey_event_buffer", []).clear()
+            survey_model = getattr(self, "survey_model", None)
+            if survey_model is not None and survey_model.active:
+                running_step = next(
+                    (
+                        step.key
+                        for step in survey_model.steps.values()
+                        if step.state == "running"
+                    ),
+                    "ranging",
+                )
+                survey_model.fail(
+                    running_step,
+                    "BLE disconnected before the survey reached a terminal event",
+                )
+                self._survey_phase = "idle"
+                self._refresh_survey_view()
         if not self.connected and state != "connecting":
             self._clear_gateway_identity("Connect to read the gateway firmware DEVICE_ID.")
         elif state == "connecting":
@@ -1558,13 +1827,22 @@ class GatewayGui(GatewayDiagnosticsMixin):
     def _update_command_state(self) -> None:
         tracker = getattr(self, "command_request_tracker", None)
         orchestrator = getattr(self, "command_orchestrator", None)
+        survey_owner = getattr(self, "survey_command_owner", None)
+        survey_pending = (
+            survey_owner.pending if survey_owner is not None else None
+        )
         command_active = bool(
             getattr(orchestrator, "active", False)
             or (tracker is not None and tracker.pending is not None)
+            or survey_pending is not None
         )
         survey_active = getattr(self, "_survey_phase", "idle") != "idle"
         if command_active:
-            pending = tracker.pending if tracker is not None else None
+            pending = (
+                tracker.pending
+                if tracker is not None and tracker.pending is not None
+                else survey_pending
+            )
             now = time.monotonic()
             remaining_s = 0.0
             if pending is not None:
@@ -1578,7 +1856,11 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 and orchestrator.plan is not None
             ):
                 remaining_s += orchestrator.plan.target.timeout_s
-            progress = self._command_progress_text or "Command running"
+            progress = (
+                self.survey_model.headline
+                if survey_pending is not None
+                else self._command_progress_text or "Command running"
+            )
             reason = (
                 f"{progress}. Deadline countdown: "
                 f"{self._format_duration_ms(int(remaining_s * 1000))}."
@@ -1609,7 +1891,9 @@ class GatewayGui(GatewayDiagnosticsMixin):
                 and self._survey_generation is not None
                 and self.connected
                 and self.gateway_id is not None
-                and not command_active
+                and survey_pending is None
+                and getattr(self, "_survey_deferred_dispatch", None) is None
+                and not getattr(orchestrator, "active", False)
                 and self._survey_phase != "aborting"
             )
             self.survey_cancel_button.configure(
@@ -1847,6 +2131,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
                     "semantic mutation",
                 )
         canonical_delivery = delivery.disposition is PacketDisposition.NEW
+        semantic_applied = True
         replay_receipt = (
             self._observe_assignment_replay(packet)
             if canonical_delivery
@@ -1854,7 +2139,10 @@ class GatewayGui(GatewayDiagnosticsMixin):
         )
         if canonical_delivery:
             if packet.msg_type == MSG_SURVEY_EVENT:
-                self._observe_survey_event_packet(packet)
+                semantic_applied = self._observe_survey_event_packet(
+                    packet,
+                    received_at=received_at,
+                )
             elif packet.msg_type == MSG_COMMAND_RESULT:
                 self._observe_survey_command_result(packet)
             self._observe_diagnostic_packet(packet, received_at=received_at)
@@ -1905,7 +2193,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._observe_gateway_id(packet)
         if cir_result is not None and cir_result.key is not None:
             self._refresh_selected_cir(cir_result.key)
-        if canonical_delivery and delivery.cached:
+        if canonical_delivery and delivery.cached and semantic_applied:
             try:
                 committed = dedup.commit(packet, delivery)
             except Exception as exc:
@@ -2458,9 +2746,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
         """Clear external gateway host RAM (dedup, geometry, history, CIR) and reset connected board RAM."""
         tracker = getattr(self, "command_request_tracker", None)
         orchestrator = getattr(self, "command_orchestrator", None)
+        survey_owner = getattr(self, "survey_command_owner", None)
+        survey_model = getattr(self, "survey_model", None)
         if (
             getattr(orchestrator, "active", False)
             or (tracker is not None and tracker.pending is not None)
+            or (survey_owner is not None and survey_owner.pending is not None)
+            or (survey_model is not None and survey_model.active)
             or getattr(self, "connection_state", "disconnected")
             in ("connecting", "reconnecting", "disconnecting")
         ):
@@ -2478,6 +2770,13 @@ class GatewayGui(GatewayDiagnosticsMixin):
             self.command_request_tracker.reset()
         if hasattr(self, "command_orchestrator"):
             self.command_orchestrator.reset()
+        if survey_owner is not None:
+            survey_owner.reset()
+        if survey_model is not None:
+            survey_model.clear()
+        self._survey_pending_dispatch = None
+        self._survey_deferred_dispatch = None
+        getattr(self, "_survey_event_buffer", []).clear()
         if hasattr(self, "geometry_model"):
             self.geometry_model.reset()
         if hasattr(self, "click_location_model"):
@@ -2495,22 +2794,25 @@ class GatewayGui(GatewayDiagnosticsMixin):
         self._survey_pairs = ()
         self._survey_results = {}
         self._reset_topology_timing()
-        if hasattr(self, "anchor_geometry_view"):
-            self.anchor_geometry_view.show_model(self.geometry_model)
         if hasattr(self, "click_diagnostics_view"):
             self.click_diagnostics_view.show(self.click_location_model.state, {})
         if hasattr(self, "mesh_diagnostics_view"):
             self.mesh_diagnostics_view.show_timeline(self.command_timeline_model)
             self.mesh_diagnostics_view.show_topology(None, {})
+        self._refresh_survey_view()
 
         # If connected to physical gateway board, submit CMD_REBOOT to clear board RAM
-        if getattr(self, "connected", False) and getattr(self, "gateway_id", None) is not None:
+        connected_gateway_id = getattr(self, "gateway_id", None)
+        if (
+            getattr(self, "connected", False)
+            and isinstance(connected_gateway_id, int)
+        ):
             try:
                 host_id = self._parse_int("Host ID", self.host_id_text.get())
                 session_id, seq = self._next_identity()
                 cmd = build_reboot_command(
                     host_id=host_id,
-                    gateway_id=self.gateway_id,
+                    gateway_id=connected_gateway_id,
                     session_id=session_id,
                     seq=seq,
                 )
@@ -2548,6 +2850,7 @@ class GatewayGui(GatewayDiagnosticsMixin):
 
     def _close(self) -> None:
         self.status_text.set("Stopping BLE transport...")
+        self._shutdown_gateway_diagnostics()
         self.transport.shutdown()
         self.root.destroy()
 

@@ -31,6 +31,10 @@ adapter, and permission for the desktop user to use the system Bluetooth stack.
    then inspect the received `COMMAND_RESULT`, reports, and activity log. A
    completed BLE write is shown as transport completion only, not command
    success.
+4. Use `Run Survey` for the complete current workflow. The GUI runs a fresh
+   RAM-only enumeration, binds its exact slot map to the new survey generation,
+   submits the mutual-pair plan, shows every command and pair transition live,
+   and solves the usable distances without blocking the Tk event loop.
 
 For every ordinary command, the GUI freezes the command and its runtime policy,
 sends a separately correlated Here-I-Am, waits for its typed successful
@@ -56,7 +60,9 @@ records split across ATT notifications, legacy COBS notifications, TLV parsing,
 unknown/repeated TLV retention, click sample alignment, CIR decoding, and exact
 command construction. They also cover out-of-order CIR fragment assembly,
 missing fragments, overlaps, gaps, bounds, metadata mismatches, signed component
-decoding, and magnitude math.
+decoding, and magnitude math. Survey tests cover exact command-result
+correlation, early reliable-event buffering, stale-generation rejection,
+accepted-plan pair binding, immutable range results, and geometry readiness.
 
 ## BLE And Protocol Assumptions
 
@@ -126,6 +132,12 @@ acknowledgement or NVS-backed journal.
   `COMMAND_OK`, while terminal counters preserve missing claims or ACKs for
   optional strict qualification. The assigned-anchor count is returned in
   `REASON`.
+- **Run Survey** chains the current `CMD_SURVEY_START = 0x0105` and
+  `CMD_SURVEY_PLAN = 0x0106` controls behind a fresh RAM-only enumeration. Each
+  control owns one exact host session/sequence until its reliable result or
+  timeout. The gateway internally retries retryable `COMMAND_BUSY` pressure;
+  the GUI does not mistake that backoff for a finished survey. An explicit
+  `CMD_SURVEY_CANCEL = 0x0107` remains available after the generation is known.
 
 There is no arbitrary command composer. Although the envelope is extensible,
 firmware applies command-specific destinations, scopes, TLV validation, and
@@ -171,15 +183,20 @@ exact state and errors without synthesizing a waveform.
 
 ## Geometry And Mesh Diagnostics
 
-The retained anchor-geometry solver is intentionally disconnected from the
-current command path until a new ranging workflow is built. The default solver
-is the exact `visibility_branching_tuned` profile adapted from the user-owned
-AnchorGeometrySolver commit `01c3edb470bcd868403e04a6cded754360decdf0`.
-This is a RAM-only 2D diagnostic component, not the production 3D
-self-setup result. The maintained 3D requirement remains unresolved until the
-future host API/solver defines height or plane constraints, workplace-frame
-registration, reflection handling, and uncertainty for partial or non-rigid
-distance graphs.
+`Survey & Geometry` is connected to the current generation-bound survey event
+stream. Enumeration supplies the exact discovery-slot-to-anchor mapping; the
+accepted gateway plan supplies stable pair indices; only immutable results with
+at least three successful samples become distance constraints. Pending and
+insufficient pairs remain visible, but they never become invented coordinates.
+The solver runs on one background worker and stale completions are discarded by
+GUI-run serial plus geometry revision, so packet and command progress stays live.
+
+The default solver is the exact `visibility_branching_tuned` profile adapted
+from the user-owned AnchorGeometrySolver commit
+`01c3edb470bcd868403e04a6cded754360decdf0`. This is a RAM-only relative 2D
+diagnostic, because the survey exports pair distances without anchor heights or
+workplace-frame registration. It does not claim the unresolved production 3D
+self-setup result.
 
 `Click Location` groups ranges by protocol session, event sequence, and clicker
 ID and solves against the current geometry generation. Duplicate, stale,
@@ -193,3 +210,8 @@ a correlated timeline and topology view. A complete terminal enumeration can
 be explicitly accepted as the baseline under
 `~/.config/imec2-gateway-gui/anchor-baseline.json`; incomplete or lossy runs
 remain unknown and never update the baseline automatically.
+
+The survey tab complements that generic timeline with the complete live chain:
+route refresh, enumeration, neighbor collection, plan acceptance, pair ranging,
+and geometry solve. Each row updates from retained protocol evidence rather
+than elapsed-time guesses.

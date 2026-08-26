@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 import time
 import tkinter as tk
@@ -11,6 +12,7 @@ from typing import Any, Callable, cast
 from .diagnostic_models import (
     ClickLocationModel, CommandTimelineModel, PendingWakeAttemptAdapter,
     TopologyBaselineModel, WakeEvidence, WakeTrainMonitor, anchor_label,
+    solve_geometry,
 )
 from .diagnostic_views import ClickDiagnosticsView, MeshDiagnosticsView
 from .command_telemetry import (
@@ -26,6 +28,8 @@ from .protocol import (
     MSG_GATEWAY_COMMAND_EVENT, Packet, TLV_ANCHOR_ID, TLV_CLICKER_ID,
     TLV_COMMAND_ID, TLV_COMMAND_STATUS, TLV_EVENT_SEQ,
 )
+from .survey_runtime import SurveyCommandOwner, SurveyOperationModel
+from .survey_view import SurveyGeometryView
 
 
 class GatewayDiagnosticsMixin:
@@ -48,6 +52,14 @@ class GatewayDiagnosticsMixin:
             self.command_request_tracker
         )
         self.assignment_replay_barrier = GatewayAssignmentReplayBarrier()
+        self.survey_model = SurveyOperationModel()
+        self.survey_command_owner = SurveyCommandOwner()
+        self._survey_event_buffer: list[tuple[Packet, float | None]] = []
+        self._geometry_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="imec-survey-geometry"
+        )
+        self._geometry_future: Future[Any] | None = None
+        self._geometry_resolve_pending = False
         self.topology_model = TopologyBaselineModel(
             Path.home() / ".config" / "imec2-gateway-gui" / "anchor-baseline.json"
         )
@@ -58,24 +70,34 @@ class GatewayDiagnosticsMixin:
         self.activity_notebook = notebook
         notebook.bind("<<NotebookTabChanged>>", self._diagnostic_tab_changed, add=True)
         click_tab = ttk.Frame(notebook, style="Panel.TFrame")
+        survey_tab = ttk.Frame(notebook, style="Panel.TFrame")
         mesh_tab = ttk.Frame(notebook, style="Panel.TFrame")
         notebook.add(click_tab, text="Click Location")
+        notebook.add(survey_tab, text="Survey & Geometry")
         notebook.add(mesh_tab, text="Mesh Commands")
         self.click_location_tab = click_tab
+        self.survey_geometry_tab = survey_tab
         self.mesh_commands_tab = mesh_tab
         self.click_diagnostics_view = ClickDiagnosticsView(click_tab)
         self.click_diagnostics_view.pack(fill="both", expand=True)
+        self.survey_geometry_view = SurveyGeometryView(survey_tab)
+        self.survey_geometry_view.pack(fill="both", expand=True)
         self.mesh_diagnostics_view = MeshDiagnosticsView(mesh_tab, accept_baseline=self._accept_topology_baseline)
         self.mesh_diagnostics_view.pack(fill="both", expand=True)
         if self.topology_model.load_error:
             self.mesh_diagnostics_view.topology_var.set(f"[?] Baseline load failed: {self.topology_model.load_error}")
         self.click_diagnostics_view.show(self.click_location_model.state, {})
+        self.survey_geometry_view.show_model(self.survey_model)
 
     def _diagnostic_tab_changed(self, _event: tk.Event[Any]) -> None:
         if not hasattr(self, "click_location_tab"):
             return
         selected = self.activity_notebook.nametowidget(self.activity_notebook.select())
-        if selected not in (self.click_location_tab, self.mesh_commands_tab):
+        if selected not in (
+            self.click_location_tab,
+            self.survey_geometry_tab,
+            self.mesh_commands_tab,
+        ):
             return
         split = cast(ttk.Panedwindow, self.activity_notebook.master)
         self.root.after_idle(lambda: split.sashpos(0, max(360, int(split.winfo_height() * 0.68))))
@@ -200,7 +222,106 @@ class GatewayDiagnosticsMixin:
         self.packet_tree.item(iid, values=values, tags=self._diagnostic_packet_tags(packet))
 
     def _handle_diagnostic_event(self, event: dict[str, Any]) -> bool:
-        return False
+        if event.get("kind") != "survey_geometry_solved":
+            return False
+        self._geometry_future = None
+        revision = event.get("revision")
+        run_serial = event.get("run_serial")
+        if (
+            not isinstance(revision, int)
+            or run_serial != self.survey_model.run_serial
+        ):
+            if self._geometry_resolve_pending:
+                self._geometry_resolve_pending = False
+                self._schedule_survey_geometry_solve()
+            return True
+        error = event.get("error")
+        if isinstance(error, str):
+            self.survey_model.geometry_failed(revision, error)
+        else:
+            layout = event.get("layout")
+            if layout is not None:
+                try:
+                    applied = self.survey_model.apply_layout(revision, layout)
+                except ValueError as exc:
+                    self.survey_model.geometry_failed(revision, str(exc))
+                else:
+                    if applied and self.survey_model.generation is not None:
+                        state = self.click_location_model.set_geometry(
+                            layout.positions_m,
+                            self.survey_model.generation,
+                        )
+                        click_view = getattr(self, "click_diagnostics_view", None)
+                        if click_view is not None:
+                            click_view.show(state, layout.positions_m)
+        self._refresh_survey_view()
+        if self._geometry_resolve_pending:
+            self._geometry_resolve_pending = False
+            self._schedule_survey_geometry_solve()
+        return True
+
+    def _refresh_survey_view(self) -> None:
+        view = getattr(self, "survey_geometry_view", None)
+        if view is not None:
+            view.show_model(self.survey_model)
+
+    def _show_survey_tab(self) -> None:
+        notebook = getattr(self, "activity_notebook", None)
+        tab = getattr(self, "survey_geometry_tab", None)
+        if notebook is not None and tab is not None:
+            notebook.select(tab)
+
+    def _schedule_survey_geometry_solve(self) -> None:
+        model = self.survey_model
+        if (
+            not model.geometry_solve_ready
+            or model.layout_revision == model.geometry_revision
+        ):
+            self._refresh_survey_view()
+            return
+        future = self._geometry_future
+        if future is not None and not future.done():
+            self._geometry_resolve_pending = True
+            return
+        revision = model.geometry_revision
+        run_serial = model.run_serial
+        pairs = model.geometry_pairs
+        future = self._geometry_executor.submit(
+            solve_geometry,
+            pairs,
+            solver="Visibility branching tuned",
+        )
+        self._geometry_future = future
+
+        def completed(item: Future[Any]) -> None:
+            try:
+                layout = item.result()
+            except Exception as exc:  # Delivered on Tk's event queue.
+                self.events.put(
+                    {
+                        "kind": "survey_geometry_solved",
+                        "run_serial": run_serial,
+                        "revision": revision,
+                        "error": f"Geometry solve failed: {exc}",
+                    }
+                )
+            else:
+                self.events.put(
+                    {
+                        "kind": "survey_geometry_solved",
+                        "run_serial": run_serial,
+                        "revision": revision,
+                        "layout": layout,
+                    }
+                )
+
+        future.add_done_callback(completed)
+        self._refresh_survey_view()
+
+    def _shutdown_gateway_diagnostics(self) -> None:
+        executor = getattr(self, "_geometry_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _accept_topology_baseline(self) -> None:
         try:
