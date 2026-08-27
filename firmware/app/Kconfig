@@ -127,6 +127,16 @@ config IMEC_MESH_ROUTE_TEST
       their synthetic traffic options separately. Legacy and ML roles remain
       untouched unless a mesh_* build preset selects this option.
 
+config IMEC_MESH_CLICK_FULL_CIR_REPORTING
+    bool "Capture and report the full CIR window for connected-mesh clicks"
+    depends on IMEC_MESH_ROUTE_TEST
+    default n
+    help
+      Capture the 1152-byte accumulator CIR window during connected-mesh click
+      ranging and stream it in additional routed report packets. The compact
+      six-byte CIR tap remains in the base click report when this is disabled.
+      ML data-collection roles are unaffected.
+
 config IMEC_MESH_ROUTE_TEST_TRANSMITTER
     bool "Continuously transmit synthetic mesh-test packets"
     depends on IMEC_MESH_ROUTE_TEST
@@ -269,6 +279,15 @@ config IMEC_DS_TWR_RTT_DEBUG
       Emits one compact record at each POLL, RESPONSE, FINAL, and REPORT stage.
       This is intended for timing-sensitive bench captures where subsystem
       debug logging would overflow RTT and obscure the exchange itself.
+
+config IMEC_CLICK_HANDOFF_RTT_TRACE
+    bool "Emit deferred click schedule handoff traces over RTT"
+    depends on USE_SEGGER_RTT
+    help
+      Records click-priority preemption and RANGE_SCHEDULE TX/RX timestamps in
+      RAM during the timing-sensitive handoff, then emits one compact record
+      only after the range burst or failed handoff has ended. This bench-only
+      trace must not add logging work between RANGE_SCHEDULE and the first POLL.
 
 endmenu
 

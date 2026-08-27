@@ -17,6 +17,7 @@
 #include "app_gateway_operation_owner.h"
 #include "app_mesh_arbitration_zephyr.h"
 #include "app_mesh_c5_priority.h"
+#include "app_mesh_ch9_ack.h"
 #include "app_mesh_gateway_command_flow.h"
 #include "app_mesh_command_orchestrator.h"
 #include "app_mesh_report.h"

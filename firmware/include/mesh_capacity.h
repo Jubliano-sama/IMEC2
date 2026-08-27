@@ -17,12 +17,15 @@
 #define MESH_CONNECTED_REQUIRED_SOURCES \
     (MESH_CONNECTED_MAX_ANCHORS + MESH_CONNECTED_REQUIRED_CLICKERS)
 
+/* One relay may serve its own click plus three child anchors. */
+#define MESH_CONNECTED_SHARED_RELAY_CLICK_ANCHORS 4u
+
 /*
  * The Zephyr report queue owns the nominal entries.  While its immutable head
  * is owned by a sender, one additional report can be held in the explicit
  * custody-recovery reserve without mutating that head.
  */
-#define MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 9u
+#define MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH 16u
 #define MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY 1u
 #define MESH_CONNECTED_ANCHOR_REPORT_STORAGE_CAPACITY \
     (MESH_CONNECTED_ANCHOR_REPORT_QUEUE_DEPTH + \

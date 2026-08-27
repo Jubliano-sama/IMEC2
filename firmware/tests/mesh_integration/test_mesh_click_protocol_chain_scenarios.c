@@ -689,6 +689,9 @@ static bool run_click_uwb_path(
                 .range_round_indices = rounds,
                 .sequence_start_timestamps_ms = starts,
                 .sample_count = 1u,
+                .participant_anchor_ids = anchor_ids,
+                .participant_anchor_count =
+                    UWB_NORMAL_CLICK_MIN_ANCHORS,
                 .burst_id = CLICK_EVENT_ID,
                 .burst_id_present = true,
                 .omit_rsl = true,
@@ -1440,19 +1443,28 @@ static bool test_click_path(void)
             size_t full_ack_count = count_full_identity_transitions(
                 &fixture.world,
                 MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                report_nodes[anchor_index] == fixture.source ? SOURCE_ID :
-                report_nodes[anchor_index] == fixture.relay1 ? RELAY1_ID :
                 RELAY2_ID,
                 GATEWAY_ID,
                 &report_packets[anchor_index]);
+            bool gateway_confirmation_pending =
+                mesh_relay_gateway_identity_confirmation_pending(
+                    &fixture.world.roles[fixture.gateway].relay,
+                    report_packets[anchor_index].src_id,
+                    report_packets[anchor_index].msg_type,
+                    report_packets[anchor_index].session_id,
+                    report_packets[anchor_index].seq,
+                    (uint32_t)(fixture.world.now_us / 1000u));
 
             CHECK(deliveries_by_anchor[anchor_index] == 1u &&
-                      full_ack_count == 1u,
-                  "anchor report was not delivered/acked: anchor=%zu "
-                  "deliveries=%u full_identity_acks=%zu",
+                      full_ack_count == 1u &&
+                      !gateway_confirmation_pending,
+                  "anchor report was not delivered/confirmed: anchor=%zu "
+                  "deliveries=%u gateway_edge_confirms=%zu "
+                  "gateway_confirmation_pending=%u",
                   anchor_index,
                   deliveries_by_anchor[anchor_index],
-                  full_ack_count);
+                  full_ack_count,
+                  gateway_confirmation_pending ? 1u : 0u);
         }
     }
     CHECK(pressure_released && admission.attempts >= 4u &&

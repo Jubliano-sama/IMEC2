@@ -1,0 +1,8 @@
+tests:
+  imec2.production_seam.click_preempt_priority:
+    platform_allow:
+      - native_sim/native/64
+    tags:
+      - production_seam
+      - workqueue
+      - click

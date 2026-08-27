@@ -2258,14 +2258,24 @@ def parse_typed_transcript(log: str, policy: PresetPolicy, build: BuildEvidence)
                 sample_count += 1
                 open_sample = None
             elif line.startswith("DBG_STACK_RUN_END "):
-                fields = _fields(line, "DBG_STACK_RUN_END", {"epoch", "run", "kind", "owner", "outcome", "queue", "custody", "credit", "retry", "drain", "src", "dst", "session", "seq", "type", "samples", "sequence", "previous", "uptime"})
+                fields = _fields(line, "DBG_STACK_RUN_END", {"epoch", "run", "kind", "owner", "outcome", "queue", "custody", "credit", "retry", "drain", "src", "dst", "session", "seq", "type", "samples", "attempts", "errors", "last_error", "mutex_drops", "short_drops", "sequence", "previous", "uptime"})
                 _u32(fields, "uptime")
                 run_id = _u32(fields, "run")
                 run = runs.pop(run_id, None)
                 if run is None or open_sample is not None and open_sample["run"] == run_id:
                     raise EvidenceError("unmatched workload completion")
                 identity = (_u64(fields, "src"), _u64(fields, "dst"), _u32(fields, "session"), _u32(fields, "seq"), _u32(fields, "type"))
-                if _u64(fields, "epoch") != run["epoch"] or fields["kind"] != run["kind"] or fields["owner"] != run["owner"] or identity != run["identity"] or _u32(fields, "sequence") != run["sequence"] or _u32(fields, "previous") != run["previous"] or _u32(fields, "samples") != len(run["samples"]) or fields["outcome"] not in {"ack", "custody_drop", "direct_ack_failure", "preempted", "timeout_drop", "disconnect", "error"}:
+                samples = _u32(fields, "samples")
+                sample_attempts = _u32(fields, "attempts")
+                sample_errors = _u32(fields, "errors")
+                last_sample_error = _int(fields, "last_error")
+                _u32(fields, "mutex_drops")
+                _u32(fields, "short_drops")
+                if (sample_attempts != samples + sample_errors or
+                        (sample_errors == 0 and last_sample_error != 0) or
+                        (sample_errors > 0 and not (-0x8000 <= last_sample_error < 0))):
+                    raise EvidenceError("workload completion has inconsistent sample accounting")
+                if _u64(fields, "epoch") != run["epoch"] or fields["kind"] != run["kind"] or fields["owner"] != run["owner"] or identity != run["identity"] or _u32(fields, "sequence") != run["sequence"] or _u32(fields, "previous") != run["previous"] or samples != len(run["samples"]) or fields["outcome"] not in {"ack", "custody_drop", "direct_ack_failure", "preempted", "timeout_drop", "disconnect", "error"}:
                     raise EvidenceError("workload completion does not match its run")
                 run["outcome"] = fields["outcome"]
                 run["end"] = (_u32(fields, "queue"), _u32(fields, "custody"), _u32(fields, "credit"), _u32(fields, "retry"), _u32(fields, "drain"))

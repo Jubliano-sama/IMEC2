@@ -42,6 +42,7 @@ from tools.gateway_gui.protocol import (
     TLV_UWB_CIR_START_INDEX,
     TLV_UWB_CIR_TOTAL_BYTES,
     TLV_OPERATION_POLICY,
+    TLV_PEER_ID_LIST,
     append_tlv,
     build_assign_discovery_slots_command,
     build_here_i_am_command,
@@ -128,6 +129,12 @@ def _common_click_payload() -> bytearray:
 
 def _normal_click_payload() -> bytes:
     payload = _common_click_payload()
+    append_tlv(
+        payload,
+        TLV_PEER_ID_LIST,
+        CLICK_ANCHOR.to_bytes(8, "little")
+        + (CLICK_ANCHOR + 1).to_bytes(8, "little"),
+    )
     append_tlv(payload, TLV_DISTANCE_MM, (4_512).to_bytes(4, "little", signed=True))
     append_tlv(payload, TLV_QUALITY, b"\x5a")
     append_tlv(payload, TLV_RANGE_STATUS, b"\x00")

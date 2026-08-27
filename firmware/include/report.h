@@ -15,6 +15,8 @@ extern "C" {
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES 96u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_SINGLE_PACKET 13u
 #define RANGE_REPORT_MAX_DISTANCE_SAMPLES_FRAGMENT 13u
+#define RANGE_REPORT_MIN_PARTICIPANT_ANCHORS 2u
+#define RANGE_REPORT_MAX_PARTICIPANT_ANCHORS 4u
 /*
  * The first packet also carries diagnostics and may fit only one distance
  * sample.  Every later packet can use the normal fragment capacity.
@@ -99,9 +101,11 @@ struct range_report_fields {
     const int32_t *distance_samples_mm;
     const uint8_t *range_round_indices;
     const uint64_t *sequence_start_timestamps_ms;
+    const uint64_t *participant_anchor_ids;
     uint16_t sample_index;
     uint16_t sample_count;
     uint16_t distance_sample_count;
+    uint8_t participant_anchor_count;
     uint32_t burst_id;
     uint8_t attempt_index;
     uint8_t detection_source;

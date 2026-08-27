@@ -105,7 +105,17 @@ int route_record_candidate_success_at(struct route_table *table,
                                       uint64_t next_hop_id,
                                       uint64_t gateway_id,
                                       uint32_t now_ms);
+int route_refresh_candidate_at(struct route_table *table,
+                               uint64_t next_hop_id,
+                               uint64_t gateway_id,
+                               uint32_t now_ms);
 void route_refresh_selected_at(struct route_table *table, uint32_t now_ms);
+enum route_delivery_action route_record_candidate_failure_at(
+    struct route_table *table,
+    uint64_t next_hop_id,
+    uint64_t gateway_id,
+    enum route_failure_kind kind,
+    uint32_t now_ms);
 enum route_delivery_action route_record_failure_at(struct route_table *table,
                                                    enum route_failure_kind kind,
                                                    uint32_t now_ms);

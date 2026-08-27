@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -52,6 +53,29 @@ def _line(key: str, value: object) -> str:
     if value is False:
         return f"# {key} is not set"
     return f"{key}={value}"
+
+
+def dwm3000_driver_source() -> Path:
+    relative = Path("dwm3000 examples and sdk") / "decadriver" / "deca_device.c"
+    local = REPO_ROOT / relative
+    if local.is_file():
+        return local
+
+    common_dir = subprocess.run(
+        [
+            "git", "-C", str(REPO_ROOT), "rev-parse",
+            "--path-format=absolute", "--git-common-dir",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    canonical = Path(common_dir).parent / relative
+    if canonical.is_file():
+        return canonical
+    raise AssertionError(
+        "DWM3000 driver is absent from both this worktree and its canonical checkout"
+    )
 
 
 class StackEvidenceVerifierTests(unittest.TestCase):
@@ -290,7 +314,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         for run, kind, owner, click_sequence, previous, identity in entries:
             lines.append(self._sample(policy, build, run, run, kind, owner, identity))
             src, dst, session, seq, msg_type = identity
-            lines.append(f"DBG_STACK_RUN_END epoch=1 run={run} kind={kind} owner={owner} outcome=ack queue=1 custody=1 credit=1 retry=0 drain=1 src={src} dst={dst} session={session} seq={seq} type={msg_type} samples=1 sequence={click_sequence} previous={previous} uptime={run * 10 + 1}")
+            lines.append(f"DBG_STACK_RUN_END epoch=1 run={run} kind={kind} owner={owner} outcome=ack queue=1 custody=1 credit=1 retry=0 drain=1 src={src} dst={dst} session={session} seq={seq} type={msg_type} samples=1 attempts=1 errors=0 last_error=0 mutex_drops=0 short_drops=0 sequence={click_sequence} previous={previous} uptime={run * 10 + 1}")
         log = self.root / "capture.typescript"
         log.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return log
@@ -2061,12 +2085,7 @@ class StackEvidenceVerifierTests(unittest.TestCase):
         )
 
     def test_spi_crc_register_read_does_not_reenter_transfer_engine(self) -> None:
-        driver = (
-            REPO_ROOT /
-            "dwm3000 examples and sdk" /
-            "decadriver" /
-            "deca_device.c"
-        ).read_text(encoding="utf-8")
+        driver = dwm3000_driver_source().read_text(encoding="utf-8")
         start = driver.index("void dwt_xfer3000\n(")
         end = driver.index("} // end dwt_xfer3000()", start)
         body = driver[start:end]

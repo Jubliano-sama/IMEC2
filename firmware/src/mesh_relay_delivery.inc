@@ -739,7 +739,12 @@ int mesh_relay_start_tx(struct mesh_relay *relay,
     }
 
     (void)mesh_relay_expire_routes(relay, now_ms);
-    ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+    ret = mesh_relay_select_next_hop_for_packet(relay,
+                                                packet,
+                                                payload,
+                                                payload_len,
+                                                now_ms,
+                                                &next_hop_id);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -803,7 +808,12 @@ int mesh_relay_start_result_offer(struct mesh_relay *relay,
     }
 
     (void)mesh_relay_expire_routes(relay, now_ms);
-    ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+    ret = mesh_relay_select_next_hop_for_packet(relay,
+                                                packet,
+                                                payload,
+                                                payload_len,
+                                                now_ms,
+                                                &next_hop_id);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -878,7 +888,12 @@ int mesh_relay_start_channel9_tx(struct mesh_relay *relay,
         return PROTO_ERR_MALFORMED;
     }
 
-    ret = mesh_relay_select_next_hop(relay, packet->dst_id, &next_hop_id);
+    ret = mesh_relay_select_next_hop_for_packet(relay,
+                                                packet,
+                                                payload,
+                                                payload_len,
+                                                now_ms,
+                                                &next_hop_id);
     if (ret != PROTO_OK) {
         return ret;
     }
@@ -1031,7 +1046,10 @@ void mesh_relay_note_tx_sent(struct mesh_relay *relay,
     }
 
     if (out->packet.dst_id == relay->gateway_id) {
-        route_refresh_selected_at(&relay->upstream, now_ms);
+        (void)route_refresh_candidate_at(&relay->upstream,
+                                         out->next_hop_id,
+                                         relay->gateway_id,
+                                         now_ms);
     } else if (out->packet.dst_id != MESH_BROADCAST_ID) {
         refresh_downlink(relay, out->packet.dst_id, out->next_hop_id, now_ms);
     }
@@ -1083,17 +1101,46 @@ static int schedule_pending_parent_failure(struct mesh_relay *relay,
     uint64_t next_hop_id = 0u;
     uint32_t delay_ms;
     uint8_t failure_count;
+    const bool bounded_report_hop_retry =
+        packet_uses_report_hop_custody(relay, &relay->pending.packet) &&
+        id_is_unicast(relay->pending.next_hop_id) &&
+        relay->pending.next_hop_id != relay->gateway_id;
 
     pending_refresh_age(&relay->pending, now_ms);
     outbox_record_sync_age_from_pending(relay, now_ms);
     selected = route_selected(&relay->upstream);
-    if (selected != NULL) {
+    if (bounded_report_hop_retry) {
+        failed_parent_id = relay->pending.next_hop_id;
+        failed_route_epoch = relay->upstream.current_epoch;
+    } else if (selected != NULL) {
         failed_parent_id = selected->next_hop_id;
         failed_route_epoch = selected->route_epoch;
     }
-    action = route_record_failure_at(&relay->upstream,
-                                     ROUTE_FAILURE_GATEWAY_ACK,
-                                     now_ms);
+    if (bounded_report_hop_retry &&
+        relay->pending.parent_hop_ack_miss_count <
+            ROUTE_RETRIES_PER_CANDIDATE) {
+        relay->pending.parent_hop_ack_miss_count++;
+        relay->pending.state = MESH_RELAY_TX_WAIT_RETRY_BACKOFF;
+        relay->pending.next_hop_id = failed_parent_id;
+        relay->pending.retry_after_ms = now_ms +
+            mesh_relay_retry_backoff_ms(
+                relay->pending.parent_hop_ack_miss_count,
+                random_value);
+        relay->pending.gateway_ack_deadline_ms = 0u;
+        return PROTO_OK;
+    }
+    if (bounded_report_hop_retry) {
+        action = route_abandon_candidate_at(&relay->upstream,
+                                            failed_parent_id,
+                                            relay->gateway_id,
+                                            failed_route_epoch,
+                                            now_ms);
+        relay->pending.parent_hop_ack_miss_count = 0u;
+    } else {
+        action = route_record_failure_at(&relay->upstream,
+                                         ROUTE_FAILURE_GATEWAY_ACK,
+                                         now_ms);
+    }
     if ((action == ROUTE_DELIVERY_TRY_ALTERNATE ||
          action == ROUTE_DELIVERY_DISCOVER) &&
         failed_parent_id != 0u &&
@@ -1282,9 +1329,23 @@ int mesh_relay_tick_with_random(struct mesh_relay *relay,
             relay->outbox_record.valid) {
             pending_refresh_age(&relay->pending, now_ms);
             outbox_record_sync_age_from_pending(relay, now_ms);
-            ret = mesh_relay_select_next_hop(relay,
-                                             relay->pending.packet.dst_id,
-                                             &next_hop_id);
+            if (packet_uses_report_hop_custody(
+                    relay, &relay->pending.packet) &&
+                mesh_relay_frozen_upstream_hop_usable(
+                    relay,
+                    relay->pending.next_hop_id,
+                    now_ms)) {
+                next_hop_id = relay->pending.next_hop_id;
+                ret = PROTO_OK;
+            } else {
+                ret = mesh_relay_select_next_hop_for_packet(
+                    relay,
+                    &relay->pending.packet,
+                    relay->pending.payload,
+                    relay->pending.payload_len,
+                    now_ms,
+                    &next_hop_id);
+            }
             if (ret != PROTO_OK) {
                 relay->pending.retry_after_ms = now_ms + RELAY_BUSY_RETRY_MIN_MS;
                 result->actions |= MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED;
@@ -1871,6 +1932,28 @@ clicker_leaf_rx_allowed:
         if (packet->dst_id == MESH_BROADCAST_ID) {
             relay_diag_inc_u8(&relay->diagnostics.flood_suppression_count);
             result->actions |= MESH_RELAY_ACTION_DROP;
+            result->status = PROTO_ERR_STALE;
+            return PROTO_OK;
+        }
+
+        if (mesh_relay_packet_can_queue_gateway_report(relay, packet)) {
+            /*
+             * DUPLICATE_CLASS_EXACT is returned only for a digest-bound
+             * entry whose first delivery was accepted.  Per-hop custody is
+             * therefore already at this relay even if the child missed the
+             * original HOP_ACK.  Replay that terminal proof without creating
+             * a second upstream owner.  CUSTODY_ACCEPTED tells the platform
+             * handoff gate that this ACK is backed by existing custody rather
+             * than by a new forward in this receive turn.
+             */
+            add_hop_ack_action(relay,
+                               packet,
+                               payload,
+                               payload_len,
+                               previous_hop_id,
+                               result);
+            result->actions |= MESH_RELAY_ACTION_CUSTODY_ACCEPTED |
+                               MESH_RELAY_ACTION_DROP;
             result->status = PROTO_ERR_STALE;
             return PROTO_OK;
         }

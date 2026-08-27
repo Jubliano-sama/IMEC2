@@ -439,6 +439,170 @@ int mesh_relay_select_next_hop(const struct mesh_relay *relay,
     return PROTO_OK;
 }
 
+static bool click_participant_list(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint64_t participant_ids[4],
+    uint8_t *participant_count)
+{
+    const uint8_t *value = NULL;
+    uint8_t value_len = 0u;
+    bool source_present = false;
+    int ret;
+
+    if (relay == NULL || packet == NULL || participant_ids == NULL ||
+        participant_count == NULL || relay->role != MESH_RELAY_ROLE_ANCHOR ||
+        packet->msg_type != MSG_CLICK_REPORT ||
+        packet->dst_id != relay->gateway_id ||
+        (packet->flags & FLAG_COUNT_AS_CLICK) == 0u ||
+        (packet->flags & FLAG_DIAGNOSTIC) != 0u ||
+        packet->payload_len != payload_len || payload == NULL) {
+        return false;
+    }
+    ret = tlv_find_unique(payload,
+                          payload_len,
+                          TLV_PEER_ID_LIST,
+                          &value,
+                          &value_len);
+    if (ret != PROTO_OK ||
+        value_len < 2u * sizeof(uint64_t) ||
+        value_len > 4u * sizeof(uint64_t) ||
+        value_len % sizeof(uint64_t) != 0u) {
+        return false;
+    }
+    *participant_count = (uint8_t)(value_len / sizeof(uint64_t));
+    for (uint8_t i = 0u; i < *participant_count; i++) {
+        participant_ids[i] =
+            proto_get_u64_le(&value[(size_t)i * sizeof(uint64_t)]);
+        if (!id_is_unicast(participant_ids[i]) ||
+            (i > 0u && participant_ids[i] <= participant_ids[i - 1u])) {
+            return false;
+        }
+        source_present |= participant_ids[i] == packet->src_id;
+    }
+    return source_present;
+}
+
+static bool route_path_interior_avoids_participants(
+    const struct mesh_route_path *path,
+    const uint64_t *participant_ids,
+    uint8_t participant_count)
+{
+    if (path == NULL || path->count < 2u || participant_ids == NULL ||
+        participant_count == 0u) {
+        return false;
+    }
+    for (uint8_t path_index = 1u; path_index + 1u < path->count;
+         path_index++) {
+        for (uint8_t participant_index = 0u;
+             participant_index < participant_count;
+             participant_index++) {
+            if (path->node_ids[path_index] ==
+                participant_ids[participant_index]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+int mesh_relay_select_next_hop_for_packet(
+    const struct mesh_relay *relay,
+    const struct proto_packet *packet,
+    const uint8_t *payload,
+    size_t payload_len,
+    uint32_t now_ms,
+    uint64_t *next_hop_id)
+{
+    struct route_table clean_routes;
+    uint64_t participant_ids[4] = {0};
+    uint8_t participant_count = 0u;
+    int ordinary_ret;
+
+    if (relay == NULL || packet == NULL || next_hop_id == NULL ||
+        packet->payload_len != payload_len ||
+        (payload_len > 0u && payload == NULL)) {
+        return PROTO_ERR_ARG;
+    }
+    ordinary_ret = mesh_relay_select_next_hop(relay,
+                                               packet->dst_id,
+                                               next_hop_id);
+    if (ordinary_ret != PROTO_OK ||
+        !click_participant_list(relay,
+                                packet,
+                                payload,
+                                payload_len,
+                                participant_ids,
+                                &participant_count)) {
+        return ordinary_ret;
+    }
+
+    clean_routes = relay->upstream;
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &relay->upstream.candidates[i];
+        const struct mesh_route_path *path = NULL;
+        bool clean = false;
+
+        if (!candidate->valid ||
+            candidate->gateway_id != relay->gateway_id ||
+            candidate->route_epoch != relay->upstream.current_epoch) {
+            clean_routes.candidates[i].valid = false;
+            continue;
+        }
+        if (candidate->next_hop_id == relay->gateway_id &&
+            candidate->hop_count == 0u) {
+            clean = true;
+        } else {
+            path = upstream_candidate_ancestry(relay, candidate);
+            clean = route_path_interior_avoids_participants(
+                path, participant_ids, participant_count);
+        }
+        if (!clean) {
+            clean_routes.candidates[i].valid = false;
+        }
+    }
+    if (route_select_best_at(&clean_routes, now_ms) == PROTO_OK) {
+        const struct route_candidate *selected = route_selected(&clean_routes);
+
+        if (selected != NULL) {
+            *next_hop_id = selected->next_hop_id;
+            return PROTO_OK;
+        }
+    }
+
+    /* Every cached path intersects the click cohort (or lacks provable
+     * ancestry). Use the ordinary best route immediately; this packet must
+     * not trigger repair, hold-down, or delay merely for participation. */
+    return ordinary_ret;
+}
+
+static bool mesh_relay_frozen_upstream_hop_usable(
+    const struct mesh_relay *relay,
+    uint64_t next_hop_id,
+    uint32_t now_ms)
+{
+    if (relay == NULL || !id_is_unicast(next_hop_id)) {
+        return false;
+    }
+    for (uint8_t i = 0u; i < ROUTE_MAX_CANDIDATES; i++) {
+        const struct route_candidate *candidate =
+            &relay->upstream.candidates[i];
+
+        if (candidate->valid &&
+            candidate->gateway_id == relay->gateway_id &&
+            candidate->route_epoch == relay->upstream.current_epoch &&
+            candidate->next_hop_id == next_hop_id &&
+            (!candidate->hold_down_valid ||
+             deadline_reached(now_ms, candidate->hold_down_until_ms))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 
 void mesh_relay_reset_route_discovery(struct mesh_relay *relay)
 {

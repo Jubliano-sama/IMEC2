@@ -438,6 +438,9 @@ static struct k_work gateway_ble_rx_work;
 static struct k_work_delayable gateway_ble_stream_work;
 static struct k_work_delayable gateway_ble_host_receipt_timeout_work;
 static struct k_work_delayable gateway_ble_recovery_work;
+#if DEVICE_ROLE == ROLE_GATEWAY
+static atomic_t gateway_ble_host_receipt_ingress_count;
+#endif
 static struct bt_conn *gateway_ble_conn;
 static bool gateway_ble_advertising_active;
 static bool gateway_ble_stack_ready;
@@ -476,6 +479,10 @@ static int gateway_ble_rx_bytes(const uint8_t *data, size_t len);
 static int gateway_ble_start_advertising(void);
 static int gateway_ble_stop_advertising(const char *reason);
 static void gateway_ble_rx_work_handler(struct k_work *work);
+#if DEVICE_ROLE == ROLE_GATEWAY
+static bool gateway_ble_pending_is_host_receipt(
+    const struct gateway_ble_frame_pending *pending);
+#endif
 static void gateway_ble_stream_work_handler(struct k_work *work);
 static void gateway_ble_host_receipt_timeout_work_handler(
     struct k_work *work);
@@ -529,6 +536,17 @@ static int gateway_ble_rx_write_capacity(const uint8_t *data, size_t len)
 static void gateway_ble_resume_rx(void)
 {
     int ret = k_work_submit(&gateway_ble_rx_work);
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+        status_debug_printf(
+            "DBG_GATEWAY_BLE_RX_SUBMIT ret=%d q=%u receipts=%d busy=0x%x\n",
+            ret,
+            (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+            (int)atomic_get(&gateway_ble_host_receipt_ingress_count),
+            (unsigned int)k_work_busy_get(&gateway_ble_rx_work));
+    }
+#endif
 
     if (gateway_ble_work_handoff_requires_reset(ret)) {
         gateway_ble_schedule_failed("rx", ret);
@@ -1811,6 +1829,9 @@ int gateway_ble_init(void)
                           gateway_ble_host_receipt_timeout_work_handler);
     k_work_init_delayable(&gateway_ble_recovery_work,
                           gateway_ble_recovery_work_handler);
+#if DEVICE_ROLE == ROLE_GATEWAY
+    atomic_clear(&gateway_ble_host_receipt_ingress_count);
+#endif
     gateway_ble_stream_init(&gateway_ble_stream_state);
     gateway_ble_direct_queue_init(&gateway_ble_direct_tx_state);
     {
@@ -1883,6 +1904,9 @@ int gateway_ble_init(void)
 static int gateway_ble_queue_frame(void)
 {
     struct gateway_ble_frame_pending pending = {0};
+#if DEVICE_ROLE == ROLE_GATEWAY
+    bool host_receipt;
+#endif
     int ret;
 
     if (gateway_ble_rx_len <= 1u) {
@@ -1892,10 +1916,22 @@ static int gateway_ble_queue_frame(void)
 
     pending.len = (uint16_t)gateway_ble_rx_len;
     memcpy(pending.frame, gateway_ble_rx_frame, gateway_ble_rx_len);
+#if DEVICE_ROLE == ROLE_GATEWAY
+    host_receipt = gateway_ble_pending_is_host_receipt(&pending);
+#endif
     ret = k_msgq_put(&gateway_ble_rx_msgq, &pending, K_NO_WAIT);
     if (ret < 0) {
         LOG_WRN("gateway BLE RX frame queue full: len=%u", pending.len);
     } else {
+#if DEVICE_ROLE == ROLE_GATEWAY
+        if (host_receipt) {
+            atomic_inc(&gateway_ble_host_receipt_ingress_count);
+            /* The system workqueue also owns continuous Channel-9 RX.  Make
+             * the completed receipt a radio boundary before scheduling its
+             * worker, or that worker can sit behind the whole RX slice. */
+            mesh_gateway_host_receipt_ingress_queued();
+        }
+#endif
         gateway_ble_resume_rx();
     }
     gateway_ble_rx_len = 0u;
@@ -1965,11 +2001,29 @@ static bool gateway_ble_pending_is_host_receipt(
 }
 #endif
 
+bool gateway_ble_host_receipt_ingress_pending(void)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    return atomic_get(&gateway_ble_host_receipt_ingress_count) > 0;
+#else
+    return false;
+#endif
+}
+
 static void gateway_ble_rx_work_handler(struct k_work *work)
 {
     struct gateway_ble_frame_pending pending;
 
     ARG_UNUSED(work);
+
+#if DEVICE_ROLE == ROLE_GATEWAY
+    if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+        status_debug_printf(
+            "DBG_GATEWAY_BLE_RX_WORK stage=enter q=%u receipts=%d\n",
+            (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+            (int)atomic_get(&gateway_ble_host_receipt_ingress_count));
+    }
+#endif
 
     if (!gateway_ble_transport_enabled()) {
         return;
@@ -1993,6 +2047,14 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
                 break;
             }
             (void)gateway_handle_ble_frame(pending.frame, pending.len, 0u);
+            atomic_dec(&gateway_ble_host_receipt_ingress_count);
+            if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+                status_debug_printf(
+                    "DBG_GATEWAY_BLE_RX_WORK stage=receipt q=%u receipts=%d\n",
+                    (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+                    (int)atomic_get(
+                        &gateway_ble_host_receipt_ingress_count));
+            }
             continue;
         }
 #endif
@@ -2001,6 +2063,14 @@ static void gateway_ble_rx_work_handler(struct k_work *work)
         ret = gateway_command_result_reserve_ingress(
             &result_reservation_token);
         if (ret < 0) {
+            if (IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE)) {
+                status_debug_printf(
+                    "DBG_GATEWAY_BLE_RX_WORK stage=reserve ret=%d q=%u receipts=%d\n",
+                    ret,
+                    (unsigned int)k_msgq_num_used_get(&gateway_ble_rx_msgq),
+                    (int)atomic_get(
+                        &gateway_ble_host_receipt_ingress_count));
+            }
             if (ret != -ENOSPC) {
                 LOG_ERR("gateway command result admission failed: %d", ret);
                 gateway_ble_schedule_failed("rx-result-admission", ret);
@@ -2089,6 +2159,11 @@ void gateway_ble_get_status(struct gateway_ble_status *status)
 
     status->connected = false;
     status->packet_notify_enabled = false;
+}
+
+bool gateway_ble_host_receipt_ingress_pending(void)
+{
+    return false;
 }
 #endif
 

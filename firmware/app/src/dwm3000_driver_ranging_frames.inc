@@ -321,6 +321,7 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
                          bool *clock_offset_sampled,
                          int32_t *carrier_integrator,
                          bool *carrier_integrator_sampled,
+                         uint64_t *ipatov_rx_timestamp,
                          bool capture_rsl)
 {
     uint64_t observed_at_ms = 0u;
@@ -386,7 +387,8 @@ static int receive_frame(uint32_t timeout_ms, uint32_t *status,
         if (!read_rx_diagnostics(rsl_dbm, cir_sample, cir_sampled,
                                  clock_offset_raw, clock_offset_sampled,
                                  carrier_integrator,
-                                 carrier_integrator_sampled)) {
+                                 carrier_integrator_sampled,
+                                 ipatov_rx_timestamp)) {
             dwt_forcetrxoff();
             return -EIO;
         }
@@ -511,7 +513,7 @@ static int receive_report(const struct dwm3000_range_request *request,
 
     ret = receive_frame(REPORT_RX_TIMEOUT_MS, &status,
                         rx_buffer, sizeof(rx_buffer), &frame_len, NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, false);
+                        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false);
     if (ret < 0) {
         result_set_request_metadata(result, request);
         result->responder_id = responder_id;
@@ -707,6 +709,7 @@ static int receive_clicker_diag(const struct uwb_range_header *poll,
                         NULL,
                         NULL,
                         NULL,
+                        NULL,
                         false);
     if (ret < 0) {
         if (result != NULL) {
@@ -818,6 +821,7 @@ static int receive_anchor_diag(const struct dwm3000_range_request *request,
                         NULL,
                         NULL,
                         NULL,
+                        NULL,
                         false);
     if (ret < 0) {
         return ret == -ETIMEDOUT ? -ETIMEDOUT : -EIO;
@@ -897,6 +901,7 @@ static int receive_anchor_diag_fragments(const struct dwm3000_range_request *req
                             rx_buffer,
                             sizeof(rx_buffer),
                             &frame_len,
+                            NULL,
                             NULL,
                             NULL,
                             NULL,

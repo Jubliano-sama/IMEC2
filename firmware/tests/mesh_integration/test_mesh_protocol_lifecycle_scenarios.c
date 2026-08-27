@@ -520,6 +520,8 @@ static int deliver_targeted_control(struct fixture *state,
 
 static int build_assignment_result(uint32_t epoch,
                                    enum discovery_assignment_phase phase,
+                                   const struct discovery_assignment_table_commitment
+                                       *table_commitment,
                                    uint16_t seq, struct proto_packet *packet,
                                    uint8_t *payload,
                                    size_t *payload_len)
@@ -538,6 +540,12 @@ static int build_assignment_result(uint32_t epoch,
             payload, UWB_MESH_MAX_PAYLOAD_LEN, &length,
             discovery_assignment_hash(LEAF_ID));
     }
+    if (ret == PROTO_OK && phase == DISCOVERY_ASSIGNMENT_PHASE_ACK) {
+        ret = table_commitment == NULL ? PROTO_ERR_ARG :
+            discovery_assignment_append_table_commitment(
+                payload, UWB_MESH_MAX_PAYLOAD_LEN, &length,
+                table_commitment);
+    }
     if (ret == PROTO_OK) {
         ret = mesh_init_command_result(packet, LEAF_ID, GATEWAY_ID, epoch,
                                        seq, (uint8_t)length, true);
@@ -548,25 +556,23 @@ static int build_assignment_result(uint32_t epoch,
 
 static bool validate_assignment_delivery(const struct mesh_sim_delivery *item,
                                          uint32_t epoch,
-                                         enum discovery_assignment_phase phase)
+                                         enum discovery_assignment_phase phase,
+                                         const struct discovery_assignment_table_commitment
+                                             *table_commitment)
 {
-    enum discovery_assignment_phase decoded_phase = 0;
-    enum command_id command_id = CMD_VENDOR_BASE;
-    uint64_t hash = 0u;
-    uint32_t decoded_epoch = 0u;
+    struct discovery_assignment_result decoded = {0};
+
     return item->packet.msg_type == MSG_COMMAND_RESULT &&
            item->packet.src_id == LEAF_ID &&
            item->packet.session_id == epoch &&
-           gateway_command_extract_id(item->payload, item->payload_len,
-                                      &command_id) == PROTO_OK &&
-           command_id == CMD_ASSIGN_DISCOVERY_SLOTS &&
-           discovery_assignment_extract_control_tlvs(
-               item->payload, item->payload_len, &decoded_phase,
-               &decoded_epoch) == PROTO_OK &&
-           decoded_phase == phase && decoded_epoch == epoch &&
-           discovery_assignment_extract_claim_hash(
-               item->payload, item->payload_len, &hash) == PROTO_OK &&
-           hash == discovery_assignment_hash(LEAF_ID);
+           discovery_assignment_parse_result_tlvs(
+               item->payload, item->payload_len, &decoded) == PROTO_OK &&
+           decoded.phase == phase && decoded.epoch == epoch &&
+           decoded.hash == discovery_assignment_hash(LEAF_ID) &&
+           (phase != DISCOVERY_ASSIGNMENT_PHASE_ACK ||
+            (table_commitment != NULL &&
+             discovery_assignment_table_commitment_equal(
+                 &decoded.table_commitment, table_commitment)));
 }
 
 static int queue_and_drive(struct fixture *state,
@@ -658,6 +664,7 @@ static bool run_assignment_phase(void)
     payload_len = 0u;
     CHECK(build_assignment_result(ASSIGNMENT_EPOCH_1,
                                   DISCOVERY_ASSIGNMENT_PHASE_CLAIM,
+                                  NULL,
                                   21u, &packet, payload, &payload_len) ==
               PROTO_OK,
           "assignment claim result build failed");
@@ -672,7 +679,7 @@ static bool run_assignment_phase(void)
     CHECK(validate_assignment_delivery(
               &fixture->world.roles[fixture->gateway]
                    .deliveries[lifecycle.deliveries - 1u],
-              ASSIGNMENT_EPOCH_1, DISCOVERY_ASSIGNMENT_PHASE_CLAIM),
+              ASSIGNMENT_EPOCH_1, DISCOVERY_ASSIGNMENT_PHASE_CLAIM, NULL),
           "gateway accepted malformed assignment claim");
 
     CHECK(build_assignment_control(ASSIGNMENT_EPOCH_1,
@@ -687,6 +694,7 @@ static bool run_assignment_phase(void)
     payload_len = 0u;
     CHECK(build_assignment_result(ASSIGNMENT_EPOCH_1,
                                   DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                  &assignment->committed_table_commitment,
                                   32u, &packet, payload, &payload_len) ==
               PROTO_OK,
           "assignment ACK build failed");
@@ -696,7 +704,8 @@ static bool run_assignment_phase(void)
           validate_assignment_delivery(
               &fixture->world.roles[fixture->gateway]
                    .deliveries[lifecycle.deliveries - 1u],
-              ASSIGNMENT_EPOCH_1, DISCOVERY_ASSIGNMENT_PHASE_ACK),
+              ASSIGNMENT_EPOCH_1, DISCOVERY_ASSIGNMENT_PHASE_ACK,
+              &assignment->committed_table_commitment),
           "assignment ACK did not settle through relay");
 
     CHECK(build_assignment_control(ASSIGNMENT_EPOCH_2,
@@ -746,12 +755,18 @@ static bool run_assignment_phase(void)
     payload_len = 0u;
     CHECK(build_assignment_result(ASSIGNMENT_EPOCH_2,
                                   DISCOVERY_ASSIGNMENT_PHASE_ACK,
+                                  &assignment->committed_table_commitment,
                                   43u, &packet, payload, &payload_len) ==
               PROTO_OK,
           "second assignment ACK build failed");
     lifecycle.deliveries++;
     CHECK(queue_and_drive(fixture, &packet, payload, payload_len,
-                          lifecycle.deliveries) == MESH_SIM_OK,
+                          lifecycle.deliveries) == MESH_SIM_OK &&
+          validate_assignment_delivery(
+              &fixture->world.roles[fixture->gateway]
+                   .deliveries[lifecycle.deliveries - 1u],
+              ASSIGNMENT_EPOCH_2, DISCOVERY_ASSIGNMENT_PHASE_ACK,
+              &assignment->committed_table_commitment),
           "second assignment ACK did not settle");
     return true;
 }
@@ -810,8 +825,9 @@ static bool run_lifecycle(void)
     CHECK(delivery_retries > 0u && delivery_retries <= 8u,
           "delivery retries are absent or unbounded count=%" PRIu64,
           delivery_retries);
-    CHECK(confirm_retries == 2u,
-          "enumeration terminal confirmation count disagrees with TABLE paths "
+    CHECK(confirm_retries == 0u,
+          "hop-custodied enumeration responses entered obsolete end-to-end "
+          "confirmation "
           "count=%" PRIu64 " deliveries=%zu",
           confirm_retries, lifecycle.deliveries);
     CHECK(mesh_sim_count_transitions(

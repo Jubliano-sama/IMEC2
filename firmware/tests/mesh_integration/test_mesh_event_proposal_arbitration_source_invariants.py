@@ -32,6 +32,7 @@ delivery = (APP / "app_mesh_report_delivery.inc").read_text()
 transport = (APP / "app_mesh_report_transport.inc").read_text()
 route_control = (APP / "app_mesh_report_route_control.inc").read_text()
 anchor_radio = (APP / "app_anchor_radio.inc").read_text()
+ch9_ack_source = (APP / "app_mesh_ch9_ack.c").read_text()
 report_source = (APP / "app_mesh_report.c").read_text()
 owner_source = (ROOT / "src" / "mesh_event_owner.c").read_text()
 mesh_source = (ROOT / "src" / "mesh.c").read_text()
@@ -509,10 +510,31 @@ assert "batch->owner == APP_MESH_CH9_ACK_OWNER_TRANSIT_CORE" in send_batch[
 
 # Passive relay custody, a far-future retry, and route-wait records must not
 # suppress the low-duty Channel-5 contact scan. A retry that is due, or would
-# become due before the scan and retune finish, gets the next radio turn.
+# become due before the scan and retune finish, gets the next radio turn. Only
+# the relay core's live WAIT_GATEWAY_ACK/WAIT_GATEWAY_ACK_FORWARD receive turn
+# blocks the scan: queued batch-ACK custody does not prove that RX is live.
 scan = function_body(anchor_radio, "anchor_uwb_scan_work_handler")
 assert "relay_tx_active = mesh_relay_tx_active(&mesh_runtime);" in scan
 assert "mesh_route_waiting_tx_active()" in scan
+ack_wait_sample = scan.index(
+    "ch9_ack_wait_active = app_mesh_ch9_core_ack_wait_active("
+)
+ack_wait_sample_end = scan.index(";", ack_wait_sample)
+scan_ack_wait = scan[ack_wait_sample:ack_wait_sample_end]
+assert "&mesh_runtime.pending" in scan_ack_wait
+assert "relay_tx_active" in scan_ack_wait
+assert "mesh_report_ch9_ack_wait_active" not in scan_ack_wait
+assert "mesh_ch9_tx_pending_is_active" not in scan_ack_wait
+assert "app_mesh_ch9_ack_table_any_pending" not in scan_ack_wait
+core_ack_wait = function_body(
+    ch9_ack_source, "app_mesh_ch9_core_ack_wait_active"
+)
+assert "pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK" in core_ack_wait
+assert (
+    "pending->state == MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD"
+    in core_ack_wait
+)
+assert "MESH_RELAY_TX_WAIT_RETRY_BACKOFF" not in core_ack_wait
 retry_gate = function_body(anchor_radio, "anchor_relay_retry_plan_scan")
 assert "mesh_relay_tx_active(&mesh_runtime)" in retry_gate
 assert "MESH_RELAY_TX_WAIT_RETRY_BACKOFF" in retry_gate
@@ -528,16 +550,33 @@ block_end = scan.index("uwb_radio_busy) {", block_start) + len("uwb_radio_busy) 
 block_condition = scan[block_start:block_end]
 assert "anchor_uwb_window_active()" in block_condition
 assert "mesh_rx_active" in block_condition
+assert "ch9_ack_wait_active" in block_condition
 assert "ch9_rx_conflict" in block_condition
 assert "uwb_radio_busy" in block_condition
 assert "relay_tx_retry_blocks_scan" in block_condition
 assert "relay_tx_active" not in block_condition
 assert "route_waiting_active" not in block_condition
+assert ack_wait_sample < block_start
+retry_select_end = scan.index("uint32_t retry_ms =", block_end)
+retry_select_end = scan.index(";", retry_select_end) + 1
+retry_selection = scan[block_end:retry_select_end]
+assert (
+    "ch9_ack_wait_active ? ANCHOR_UWB_SCAN_MESH_RX_RETRY_MS"
+    in retry_selection
+)
+blocked_trace = scan.index("DBG_ANCHOR_CH5_SCAN_BLOCKED", retry_select_end)
+blocked_schedule = scan.index(
+    "anchor_uwb_scan_schedule_ms(retry_ms);", blocked_trace
+)
+blocked_return = scan.index("return;", blocked_schedule)
+assert "ch9_ack_wait_active ? 1u : 0u" in scan[
+    blocked_trace:blocked_schedule
+]
 guard_acquire = scan.index(
     "radio_guard_uwb_claim(RADIO_GUARD_UWB_CLIENT_ANCHOR_SCAN,",
-    block_end,
+    blocked_return,
 )
-assert block_end < guard_acquire
+assert block_end < blocked_schedule < blocked_return < guard_acquire
 
 # Operation responses remain source-owned until their end-to-end ACK.  A
 # relay may release only the exact retained topology ACK after the bounded

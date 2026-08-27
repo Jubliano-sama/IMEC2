@@ -95,6 +95,20 @@ for release_helper, park_call in (
 wake = function_body("clicker_send_wake_claim_train_until")
 tail = function_body("app_clicker_wake_train_opportunity_tail_ms")
 assert "post_wake_claimed_duration_ms" in tail
+discovery_countdown = function_body("clicker_discovery_starts_in_ms")
+claimed_duration = function_body("clicker_claimed_duration_ms")
+assert "discovery_delay_ms" in discovery_countdown
+assert "discovery_starts_in_ms" in claimed_duration
+assert "UWB_CLICK_DISCOVERY_DELAY_MS" in wake
+assert re.search(
+    r"#define UWB_CLICK_DISCOVERY_DELAY_MS\s+20u", APP_CONFIG
+)
+assert re.search(
+    r"#define UWB_CLICK_PRIORITY_EXTENSION_MS\s+300u", APP_CONFIG
+)
+assert re.search(
+    r"#define UWB_CLICK_PRIORITY_LISTEN_EXTENSION_MS\s+900u", APP_CONFIG
+)
 # The clicker advertises every discovery slot on the wire.  Its absolute
 # wake-claim epoch must therefore reserve the full 50-slot reply window, not
 # merely the four anchors eventually selected for ranging.

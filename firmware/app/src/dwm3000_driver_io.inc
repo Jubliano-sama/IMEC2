@@ -128,18 +128,32 @@ int dwm3000_driver_configure_mesh_payload_mode(void)
 
 int dwm3000_driver_idle(void)
 {
+    uint32_t trace_id = radio_transition_trace_next();
     int ret;
 
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_IDLE id=%u step=entry tid=%p configured=%u awake=%u unknown=%u phy=%u spi=%u\n",
+        trace_id, k_current_get(), radio_configured ? 1u : 0u,
+        radio_awake ? 1u : 0u, radio_state_unknown ? 1u : 0u,
+        (unsigned int)active_phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
     if (radio_state_unknown || (radio_awake && !radio_configured)) {
         ret = configure_radio_from_reset(DWM3000_PHY_RANGE);
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_IDLE id=%u step=recover ret=%d\n", trace_id, ret);
         if (ret < 0) {
             return ret;
         }
     }
     if (!radio_awake) {
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_IDLE id=%u step=already_asleep\n", trace_id);
         return 0;
     }
     if (!radio_configured) {
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_IDLE id=%u step=unconfigured ret=%d\n",
+            trace_id, -EIO);
         return -EIO;
     }
 
@@ -147,38 +161,67 @@ int dwm3000_driver_idle(void)
     dwt_setinterrupt(0u, 0u, DWT_ENABLE_INT_ONLY);
     clear_all_events();
     ret = take_port_error("idle");
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_IDLE id=%u step=port_error ret=%d\n", trace_id, ret);
     if (ret < 0) {
         return ret;
     }
-    return check_device_fatal_status("idle");
+    ret = check_device_fatal_status("idle");
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_IDLE id=%u step=done ret=%d configured=%u awake=%u unknown=%u phy=%u spi=%u\n",
+        trace_id, ret, radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u, (unsigned int)active_phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
+    return ret;
 }
 
 int dwm3000_driver_standby(void)
 {
+    uint32_t trace_id = radio_transition_trace_next();
     int ret;
 
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=entry tid=%p configured=%u awake=%u unknown=%u phy=%u spi=%u\n",
+        trace_id, k_current_get(), radio_configured ? 1u : 0u,
+        radio_awake ? 1u : 0u, radio_state_unknown ? 1u : 0u,
+        (unsigned int)active_phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
     if (radio_state_unknown || (radio_awake && !radio_configured)) {
         ret = configure_radio_from_reset(DWM3000_PHY_RANGE);
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_STANDBY id=%u step=recover ret=%d\n", trace_id, ret);
         if (ret < 0) {
             return ret;
         }
     }
     if (!radio_awake) {
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_STANDBY id=%u step=already_asleep\n", trace_id);
         return 0;
     }
     if (!radio_configured) {
+        DWM3000_TRANSITION_TRACE(
+            "DBG_DWM_STANDBY id=%u step=unconfigured ret=%d\n",
+            trace_id, -EIO);
         return -EIO;
     }
 
     ret = dwm3000_driver_idle();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=idle ret=%d\n", trace_id, ret);
     if (ret < 0) {
         return ret;
     }
     ret = dwm3000_port_set_slow_spi();
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=slow_spi ret=%d spi=%u\n",
+        trace_id, ret, (unsigned int)dwm3000_port_current_spi_hz());
     if (ret < 0) {
         invalidate_radio_state_tagged(__func__);
         return ret;
     }
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=sleep_commands_begin\n", trace_id);
     dwt_configuresleep(DWM3000_SLEEP_MODE, DWM3000_SLEEP_WAKE_FLAGS);
     dwt_entersleep(DWT_DW_IDLE_RC);
     /*
@@ -187,11 +230,24 @@ int dwm3000_driver_standby(void)
      */
     radio_awake = false;
     radio_state_unknown = true;
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=sleep_commands_end configured=%u awake=%u unknown=%u\n",
+        trace_id, radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u);
     ret = take_port_error("standby");
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=port_error ret=%d configured=%u awake=%u unknown=%u\n",
+        trace_id, ret, radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u);
     if (ret < 0) {
         return ret;
     }
     radio_state_unknown = false;
+    DWM3000_TRANSITION_TRACE(
+        "DBG_DWM_STANDBY id=%u step=done configured=%u awake=%u unknown=%u phy=%u spi=%u\n",
+        trace_id, radio_configured ? 1u : 0u, radio_awake ? 1u : 0u,
+        radio_state_unknown ? 1u : 0u, (unsigned int)active_phy_mode,
+        (unsigned int)dwm3000_port_current_spi_hz());
     LOG_INF("DWM3000 entered sleep with retained config; wakeup pin required before next UWB window");
     return 0;
 }
@@ -385,6 +441,7 @@ static int receive_frame_with_preamble_timeout(uint32_t timeout_ms,
                         timing == NULL ? NULL : &rx_timestamp,
                         &rx_quality,
                         &rx_rsl_dbm,
+                        NULL,
                         NULL,
                         NULL,
                         NULL,
@@ -598,6 +655,7 @@ static int receive_frame_continuous_extend_on_activity(uint32_t acquire_timeout_
             payload_len = 0u;
             if (rsl_dbm != NULL) {
                 if (!read_rx_diagnostics(&rx_rsl_dbm,
+                                         NULL,
                                          NULL,
                                          NULL,
                                          NULL,

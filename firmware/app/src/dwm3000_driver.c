@@ -487,6 +487,7 @@ static bool radio_awake;
 static bool radio_restored_from_sleep;
 static bool radio_state_unknown = true;
 static enum dwm3000_phy_mode active_phy_mode;
+static atomic_t radio_transition_trace_seq;
 static struct dwm3000_rx_debug_snapshot last_rx_debug;
 static uint32_t last_rx_finfo_register;
 static uint32_t last_rx_host_uptime_ms;

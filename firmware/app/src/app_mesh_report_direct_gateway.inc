@@ -374,7 +374,11 @@ static int mesh_send_direct_gateway_payload_and_wait_ack(
                 }
                 ret = ack_ret == -ETIMEDOUT ? -EAGAIN : ack_ret;
             } else {
-                route_record_success_at(&mesh_runtime.upstream, k_uptime_get_32());
+                (void)route_record_candidate_success_at(
+                    &mesh_runtime.upstream,
+                    out->next_hop_id,
+                    GATEWAY_ID,
+                    k_uptime_get_32());
                 mesh_direct_gateway_bulk_probe_clear("direct-gateway-ack");
             }
         }
@@ -553,9 +557,12 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
             (void)report_tx_queue_abort_head(&head_token);
             break;
         }
-        ret = mesh_relay_select_next_hop(&mesh_runtime,
-                                         queued->packet.dst_id,
-                                         &queued_next_hop_id);
+        ret = mesh_relay_select_next_hop_for_packet(&mesh_runtime,
+                                                    &queued->packet,
+                                                    queued->payload,
+                                                    queued->payload_len,
+                                                    now_ms,
+                                                    &queued_next_hop_id);
         if (ret != PROTO_OK || queued_next_hop_id != next_hop_id) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                 status_debug_printf("DBG_CH9_TX_BATCH_DIRECT_STOP reason=next-hop n=%u ret=%d next=0x%llx want=0x%llx seq=%u q=%u\n",
@@ -879,7 +886,11 @@ static int mesh_try_send_report_tx_ch9_direct_gateway_batch(
                                 mesh_ch9_tx_pending.active ? 1u : 0u);
         }
         if (ack_ret == 0) {
-            route_record_success_at(&mesh_runtime.upstream, k_uptime_get_32());
+            (void)route_record_candidate_success_at(
+                &mesh_runtime.upstream,
+                next_hop_id,
+                GATEWAY_ID,
+                k_uptime_get_32());
             mesh_direct_gateway_bulk_probe_clear("direct-gateway-batch-ack");
         } else {
             mesh_schedule_tx_timeout();

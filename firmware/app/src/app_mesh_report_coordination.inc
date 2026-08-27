@@ -1409,33 +1409,19 @@ static bool mesh_gateway_delivery_is_internal_control(
                CMD_ASSIGN_DISCOVERY_SLOTS;
 }
 
-static int mesh_gateway_accept_semantic_delivery(
+static int mesh_gateway_commit_preflighted_semantic_delivery(
     const struct mesh_rx_pending *pending)
 {
     const struct mesh_event_plan *current_channel9_plan;
-    int assignment_admission;
 
     if (pending == NULL ||
         !mesh_gateway_delivery_requires_semantic_acceptance(&pending->packet)) {
         return -EINVAL;
     }
-    if (!mesh_gateway_delivery_is_internal_control(pending)) {
-        assignment_admission =
-            gateway_discovery_assignment_admit_nonassignment_source(
-                pending->packet.src_id);
-        if (assignment_admission < 0) {
-            return assignment_admission;
-        }
-        if (assignment_admission == 0) {
-            /*
-             * Keep the packet in sender custody. Once enumeration is terminal,
-             * an unprovisioned anchor or synthetic bench source may
-             * retry through the ordinary semantic path without having consumed
-             * a candidate origin partition while the roster was being built.
-             */
-            return -EAGAIN;
-        }
-    }
+    /* Source admission is a one-way lease from the pure preflight.  The GUI
+     * receipt can race a newly started assignment round; rechecking the live
+     * assignment gate here would make that retained receipt block the same
+     * assignment forever. Fresh packets still pass through preflight first. */
     current_channel9_plan = pending->current_channel9_plan_valid ?
                             &pending->current_channel9_plan : NULL;
 
@@ -1642,6 +1628,59 @@ static bool mesh_click_preempt_on_route_owner(void)
 #endif
 }
 
+static bool mesh_click_preempt_boundary_requested(void)
+{
+    bool requested;
+    k_spinlock_key_t key = k_spin_lock(&mesh_click_preempt_request_lock);
+
+    requested = mesh_click_preempt_request.state ==
+                    MESH_CLICK_PREEMPT_REQUEST_QUEUED &&
+                !uptime_deadline_reached(
+                    k_uptime_get_32(),
+                    mesh_click_preempt_request.bridge_deadline_ms);
+    k_spin_unlock(&mesh_click_preempt_request_lock, key);
+    return requested;
+}
+
+static bool mesh_click_preempt_wait_route_backoff(uint32_t delay_ms)
+{
+    uint32_t deadline_ms = k_uptime_get_32() + delay_ms;
+
+    for (;;) {
+        uint32_t now_ms;
+
+        if (mesh_click_preempt_boundary_requested()) {
+            return true;
+        }
+        now_ms = k_uptime_get_32();
+        if (uptime_deadline_reached(now_ms, deadline_ms)) {
+            return false;
+        }
+        /* The semaphore closes the race between checking the request and
+         * sleeping. Ignore a stale token, but retain the original absolute
+         * backoff so a canceled/expired click cannot shorten it. */
+        (void)k_sem_take(&mesh_click_preempt_route_wake,
+            K_MSEC(uptime_ms_until_deadline(now_ms, deadline_ms)));
+    }
+}
+
+/* This work item is only a speculative kick: the request state remains the
+ * authoritative owner until the route thread claims it.  Do not use the
+ * generic accepted-state submit wrapper here, because a concurrent in-band
+ * claim can make a redundant submission fail without losing any owner. */
+static int mesh_click_preempt_submit_route_kick(void)
+{
+    if (mesh_transport_paused()) {
+        return -ESHUTDOWN;
+    }
+#if defined(CONFIG_IMEC_DEDICATED_COMM_WORKQUEUE)
+    return k_work_submit_to_queue(&mesh_route_work_q,
+                                  &mesh_click_preempt_work);
+#else
+    return k_work_submit(&mesh_click_preempt_work);
+#endif
+}
+
 static void mesh_click_preempt_log_result(
     int ret,
     const struct app_mesh_click_preempt_result *result)
@@ -1691,6 +1730,14 @@ static int mesh_click_preempt_run_route_owned(uint32_t bridge_deadline_ms)
 
     ret = app_mesh_apply_click_preempt_plan(&plan, &ops, &result);
     mesh_click_preempt_log_result(ret, &result);
+    if (uptime_deadline_reached(k_uptime_get_32(), bridge_deadline_ms)) {
+        /* The custody mutation remains internally consistent, but the click
+         * no longer has its required discovery guard.  Fail closed instead
+         * of reporting a handoff that finished too late. */
+        LOG_ERR("click preemption route transaction crossed bridge deadline");
+        app_watchdog_stop_feeding();
+        return -ETIMEDOUT;
+    }
     return ret;
 }
 
@@ -1700,13 +1747,17 @@ static void mesh_click_preempt_request_init(void)
 
     k_work_init(&mesh_click_preempt_work, mesh_click_preempt_work_handler);
     k_sem_init(&mesh_click_preempt_done, 0u, 1u);
+    k_sem_init(&mesh_click_preempt_route_wake, 0u, 1u);
     key = k_spin_lock(&mesh_click_preempt_request_lock);
     memset(&mesh_click_preempt_request, 0,
            sizeof(mesh_click_preempt_request));
     k_spin_unlock(&mesh_click_preempt_request_lock, key);
 }
 
-static void mesh_click_preempt_work_handler(struct k_work *work)
+/* Claim and finish the one queued bridge request while already serialized by
+ * the route owner. Safe call sites must have released their radio/scratch
+ * leases before entering here. */
+static bool mesh_click_preempt_service_queued_route_owned(void)
 {
     uint32_t generation;
     uint32_t bridge_deadline_ms;
@@ -1716,21 +1767,17 @@ static void mesh_click_preempt_work_handler(struct k_work *work)
     uint8_t observed_state = MESH_CLICK_PREEMPT_REQUEST_IDLE;
     int ret;
 
-    ARG_UNUSED(work);
-    key = k_spin_lock(&mesh_click_preempt_request_lock);
-    if (mesh_click_preempt_request.state ==
-        MESH_CLICK_PREEMPT_REQUEST_CANCELED) {
-        /* The submitter already returned at its physical handoff deadline.
-         * Drain this exact stale work before making the single-flight slot
-         * reusable, so it cannot execute against a later click generation. */
-        mesh_click_preempt_request.state = MESH_CLICK_PREEMPT_REQUEST_IDLE;
-        k_spin_unlock(&mesh_click_preempt_request_lock, key);
-        return;
+    if (!mesh_click_preempt_on_route_owner()) {
+        LOG_ERR("click preemption boundary serviced outside route owner");
+        app_watchdog_stop_feeding();
+        return false;
     }
+
+    key = k_spin_lock(&mesh_click_preempt_request_lock);
     if (mesh_click_preempt_request.state !=
         MESH_CLICK_PREEMPT_REQUEST_QUEUED) {
         k_spin_unlock(&mesh_click_preempt_request_lock, key);
-        return;
+        return false;
     }
     generation = mesh_click_preempt_request.generation;
     bridge_deadline_ms = mesh_click_preempt_request.bridge_deadline_ms;
@@ -1740,13 +1787,15 @@ static void mesh_click_preempt_work_handler(struct k_work *work)
             MESH_CLICK_PREEMPT_REQUEST_COMPLETE;
         signal = true;
         k_spin_unlock(&mesh_click_preempt_request_lock, key);
+        k_sem_reset(&mesh_click_preempt_route_wake);
         if (signal) {
             k_sem_give(&mesh_click_preempt_done);
         }
-        return;
+        return true;
     }
     mesh_click_preempt_request.state = MESH_CLICK_PREEMPT_REQUEST_RUNNING;
     k_spin_unlock(&mesh_click_preempt_request_lock, key);
+    k_sem_reset(&mesh_click_preempt_route_wake);
 
     /* This transaction takes only report_tx_queue_overflow_lock with
      * K_NO_WAIT and schedules work nonblocking, so a higher-priority route
@@ -1776,6 +1825,38 @@ static void mesh_click_preempt_work_handler(struct k_work *work)
     if (signal) {
         k_sem_give(&mesh_click_preempt_done);
     }
+    return true;
+}
+
+static void mesh_click_preempt_work_handler(struct k_work *work)
+{
+    uint32_t generation;
+    k_spinlock_key_t key;
+
+    ARG_UNUSED(work);
+    key = k_spin_lock(&mesh_click_preempt_request_lock);
+    if (mesh_click_preempt_request.state ==
+        MESH_CLICK_PREEMPT_REQUEST_CANCELED) {
+        /* The submitter already returned at its physical handoff deadline.
+         * Drain this exact stale work before making the single-flight slot
+         * reusable, so it cannot execute against a later click generation. */
+        generation = mesh_click_preempt_request.generation;
+        mesh_click_preempt_request.state =
+            MESH_CLICK_PREEMPT_REQUEST_PREPARING;
+        k_spin_unlock(&mesh_click_preempt_request_lock, key);
+        k_sem_reset(&mesh_click_preempt_route_wake);
+        key = k_spin_lock(&mesh_click_preempt_request_lock);
+        if (mesh_click_preempt_request.generation == generation &&
+            mesh_click_preempt_request.state ==
+                MESH_CLICK_PREEMPT_REQUEST_PREPARING) {
+            mesh_click_preempt_request.state =
+                MESH_CLICK_PREEMPT_REQUEST_IDLE;
+        }
+        k_spin_unlock(&mesh_click_preempt_request_lock, key);
+        return;
+    }
+    k_spin_unlock(&mesh_click_preempt_request_lock, key);
+    (void)mesh_click_preempt_service_queued_route_owned();
 }
 
 static int mesh_click_preempt_take_complete(uint32_t generation, int *result)
@@ -1832,23 +1913,61 @@ int mesh_preempt_for_click_event_until(uint32_t physical_deadline_ms)
     mesh_click_preempt_request.generation = generation;
     mesh_click_preempt_request.bridge_deadline_ms = bridge_deadline_ms;
     mesh_click_preempt_request.result = -EINPROGRESS;
+    mesh_click_preempt_request.state = MESH_CLICK_PREEMPT_REQUEST_PREPARING;
+    k_spin_unlock(&mesh_click_preempt_request_lock, key);
+
+    /* PREPARING owns the single-flight slot but is intentionally invisible
+     * to route boundaries until both synchronization tokens are clean. */
+    k_sem_reset(&mesh_click_preempt_done);
+    k_sem_reset(&mesh_click_preempt_route_wake);
+    key = k_spin_lock(&mesh_click_preempt_request_lock);
+    if (mesh_click_preempt_request.generation != generation ||
+        mesh_click_preempt_request.state !=
+            MESH_CLICK_PREEMPT_REQUEST_PREPARING) {
+        k_spin_unlock(&mesh_click_preempt_request_lock, key);
+        return -ESTALE;
+    }
     mesh_click_preempt_request.state = MESH_CLICK_PREEMPT_REQUEST_QUEUED;
     k_spin_unlock(&mesh_click_preempt_request_lock, key);
-    /* No handler has been submitted for this generation yet, so resetting
-     * the completion token cannot clear a live route-owner completion. */
-    k_sem_reset(&mesh_click_preempt_done);
 
-    ret = mesh_submit_owned_work(&mesh_click_preempt_work,
-                                 "click-preempt-route-owner");
+    /* Publish the durable kick before submitting the fallback work. If the
+     * occupied route owner reaches an in-band boundary immediately, its
+     * service path consumes/resets this token and no stale wake can be left
+     * behind after completion. */
+    k_sem_give(&mesh_click_preempt_route_wake);
+
+    ret = mesh_click_preempt_submit_route_kick();
     if (ret < 0) {
         key = k_spin_lock(&mesh_click_preempt_request_lock);
         if (mesh_click_preempt_request.generation == generation &&
             mesh_click_preempt_request.state ==
                 MESH_CLICK_PREEMPT_REQUEST_QUEUED) {
-            mesh_click_preempt_request.state = MESH_CLICK_PREEMPT_REQUEST_IDLE;
+            mesh_click_preempt_request.state =
+                MESH_CLICK_PREEMPT_REQUEST_PREPARING;
+            k_spin_unlock(&mesh_click_preempt_request_lock, key);
+            k_sem_reset(&mesh_click_preempt_route_wake);
+            key = k_spin_lock(&mesh_click_preempt_request_lock);
+            if (mesh_click_preempt_request.generation == generation &&
+                mesh_click_preempt_request.state ==
+                    MESH_CLICK_PREEMPT_REQUEST_PREPARING) {
+                mesh_click_preempt_request.state =
+                    MESH_CLICK_PREEMPT_REQUEST_IDLE;
+            }
+            k_spin_unlock(&mesh_click_preempt_request_lock, key);
+            return ret;
         }
+        if (mesh_click_preempt_request.generation != generation ||
+            (mesh_click_preempt_request.state !=
+                 MESH_CLICK_PREEMPT_REQUEST_RUNNING &&
+             mesh_click_preempt_request.state !=
+                 MESH_CLICK_PREEMPT_REQUEST_COMPLETE)) {
+            k_spin_unlock(&mesh_click_preempt_request_lock, key);
+            return -ESTALE;
+        }
+        /* A live in-band boundary can claim the request between publication
+         * and work submission. Its completion remains authoritative even if
+         * the redundant queued-work submission reports an error. */
         k_spin_unlock(&mesh_click_preempt_request_lock, key);
-        return ret;
     }
 
     for (;;) {
@@ -1903,6 +2022,17 @@ int mesh_preempt_for_click_event_until(uint32_t physical_deadline_ms)
     return ret == 0 ? operation_ret : -ESTALE;
 }
 #else
+static bool mesh_click_preempt_boundary_requested(void)
+{
+    return false;
+}
+
+static bool mesh_click_preempt_wait_route_backoff(uint32_t delay_ms)
+{
+    k_msleep(delay_ms);
+    return false;
+}
+
 int mesh_preempt_for_click_event_until(uint32_t physical_deadline_ms)
 {
     ARG_UNUSED(physical_deadline_ms);
@@ -2883,6 +3013,29 @@ static void mesh_schedule_route_waiting_retry_after(const char *reason, uint32_t
             delay_ms);
 }
 
+static void mesh_wake_unarmed_route_waiting_from_rx(const char *reason)
+{
+    bool work_pending = k_work_delayable_is_pending(&mesh_route_waiting_work);
+
+    if (!app_mesh_route_wait_tx_should_wake_from_rx(
+            mesh_route_waiting_tx_valid, work_pending)) {
+        if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
+            mesh_route_waiting_tx_valid && work_pending) {
+            status_debug_printf(
+                "DBG_ROUTE_WAIT_RX_WAKE_PRESERVED now=%u remaining=%u msg=0x%02x session=%u seq=%u\n",
+                k_uptime_get_32(),
+                k_ticks_to_ms_ceil32(
+                    k_work_delayable_remaining_get(
+                        &mesh_route_waiting_work)),
+                mesh_route_waiting_tx.packet.msg_type,
+                mesh_route_waiting_tx.packet.session_id,
+                mesh_route_waiting_tx.packet.seq);
+        }
+        return;
+    }
+    mesh_schedule_route_waiting_retry_after(reason, 0u);
+}
+
 static void mesh_schedule_route_waiting_retry(const char *reason)
 {
     uint32_t now;
@@ -3198,6 +3351,41 @@ static bool mesh_role_uses_uwb_rx(void)
 static bool mesh_transport_paused(void)
 {
     return atomic_get(&mesh_transport_paused_state) != 0;
+}
+
+static bool mesh_gateway_host_receipt_priority_pending(void)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    return gateway_ble_host_receipt_ingress_pending() ||
+           (atomic_get(&mesh_gateway_host_delivery_pending_state) != 0 &&
+            atomic_get(&mesh_gateway_host_receipt_received_state) != 0);
+#else
+    return false;
+#endif
+}
+
+void mesh_gateway_host_receipt_ingress_queued(void)
+{
+#if DEVICE_ROLE == ROLE_GATEWAY
+    bool abort_scan;
+    k_spinlock_key_t key = k_spin_lock(&mesh_rx_handoff_lock);
+
+    /* Request an edge abort only while this lock proves that the ordinary
+     * mesh scanner owns an active receive.  The pending predicate closes the
+     * opposite race in mesh_rx_radio_claim(), so this abort bit can never be
+     * left behind to cancel an unrelated later radio operation. */
+    abort_scan = mesh_rx_handoff.scan_radio_active;
+    if (abort_scan) {
+        dwm3000_driver_request_receive_abort(
+            DWM3000_RECEIVE_ABORT_MESH_CONTROL);
+    }
+    k_spin_unlock(&mesh_rx_handoff_lock, key);
+    status_debug_printf(
+        "DBG_GATEWAY_HOST_RECEIPT_PREEMPT queued=%u scan=%u now=%u\n",
+        gateway_ble_host_receipt_ingress_pending() ? 1u : 0u,
+        abort_scan ? 1u : 0u,
+        k_uptime_get_32());
+#endif
 }
 
 static bool mesh_rx_handoff_scan_rearm_allowed(void)

@@ -130,6 +130,7 @@ TLV_ERROR_CODE = 0x04
 TLV_TIMESTAMP_MS = 0x07
 TLV_ANCHOR_ID = 0x0A
 TLV_CLICKER_ID = 0x0B
+TLV_PEER_ID_LIST = 0x16
 TLV_DISTANCE_MM = 0x0C
 TLV_QUALITY = 0x0D
 TLV_SAMPLE_INDEX = 0x0E
@@ -517,7 +518,7 @@ TLV_SPECS: dict[int, TlvSpec] = {
     0x12: TlvSpec("REQUESTED_MSG_SEQ", _scalar(2)),
     0x13: TlvSpec("NEXT_HOP_ID", _scalar(8)),
     0x14: TlvSpec("GATEWAY_ID", _scalar(8)),
-    0x16: TlvSpec("PEER_ID_LIST", _array(8)),
+    TLV_PEER_ID_LIST: TlvSpec("PEER_ID_LIST", _array(8)),
     0x18: TlvSpec("RANGE_FLAGS", _scalar(1)),
     0x19: TlvSpec("LED_PATTERN_ID", _scalar(1)),
     TLV_DURATION_MS: TlvSpec("DURATION_MS", _scalar(4)),
@@ -1275,6 +1276,7 @@ def parse_tlvs(payload: bytes, *, allow_truncated_tail: bool = False) -> tuple[T
 _CLICK_SINGLETON_TLVS = {
     TLV_CLICKER_ID,
     TLV_ANCHOR_ID,
+    TLV_PEER_ID_LIST,
     TLV_EVENT_SEQ,
     TLV_TIMESTAMP_MS,
     TLV_DISTANCE_MM,
@@ -1411,6 +1413,37 @@ def validate_click_payload(packet: Packet, payload: bytes | None = None) -> None
     if event_seq == 0 or click_report_session_id(clicker_id, event_seq) != packet.session_id:
         raise DecodeError(
             "malformed click report: packet session must bind CLICKER_ID and EVENT_SEQ"
+        )
+
+    participant_values = _click_tlv_values(tlvs, TLV_PEER_ID_LIST)
+    if mode_flags == FLAG_COUNT_AS_CLICK:
+        participant_tlv = present(TLV_PEER_ID_LIST, "PEER_ID_LIST")
+        if (
+            len(participant_tlv.raw) < 2 * 8
+            or len(participant_tlv.raw) > 4 * 8
+            or len(participant_tlv.raw) % 8 != 0
+        ):
+            raise DecodeError(
+                "malformed click report: PEER_ID_LIST must contain 2 through 4 anchor IDs"
+            )
+        participant_ids = [
+            int.from_bytes(participant_tlv.raw[offset:offset + 8], "little")
+            for offset in range(0, len(participant_tlv.raw), 8)
+        ]
+        if any(anchor == 0 for anchor in participant_ids) or any(
+            right <= left
+            for left, right in zip(participant_ids, participant_ids[1:])
+        ):
+            raise DecodeError(
+                "malformed click report: PEER_ID_LIST must be nonzero, unique, and sorted"
+            )
+        if anchor_id not in participant_ids:
+            raise DecodeError(
+                "malformed click report: PEER_ID_LIST must include the reporting anchor"
+            )
+    elif participant_values:
+        raise DecodeError(
+            "malformed click report: diagnostic reports must not carry PEER_ID_LIST"
         )
 
     detection_present = {

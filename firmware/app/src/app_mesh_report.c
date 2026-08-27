@@ -95,6 +95,10 @@ static struct protocol_rx_downstream_activation
 #define MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS 6000u
 #define MESH_TOPOLOGY_PARENT_CONTACT_RETRIES 1u
 #define MESH_TOPOLOGY_PARENT_CONTACT_DEADLINE_MS 25000u
+/* Initial attempt plus three retained-route retries serves four children that
+ * contend for one relay without misclassifying cadence contention as route
+ * loss. The existing contact cadence and radio windows remain unchanged. */
+#define MESH_KNOWN_PARENT_CONTACT_RETRIES 3u
 #define MESH_EVENT_ACCEPT_RETRY_DEADLINE_MS MESH_EVENT_PROPOSE_RETRY_DEADLINE_MS
 #define MESH_EVENT_CONTROL_RX_QUEUE_LIFETIME_MS 1000u
 #define MESH_EVENT_NEGOTIATION_DEADLINE_MS \
@@ -199,10 +203,11 @@ BUILD_ASSERT(MESH_GATEWAY_DIRECT_PROBE_ATTEMPT_MS +
 #define MESH_CH9_DIRECT_GATEWAY_BATCH_ACK_RESERVE_MS \
     (MESH_CH9_TX_CONFIG_GUARD_MS + MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS + \
      MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS)
-BUILD_ASSERT(MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
+BUILD_ASSERT(MESH_GATEWAY_RX_REARM_GUARD_MS +
+             MESH_GATEWAY_IMMEDIATE_ACK_GUARD_MS +
              MESH_CH9_TX_CONFIG_GUARD_MS <
              MESH_GATEWAY_DIRECT_PROBE_ACK_RX_MS,
-             "gateway immediate ACK turnaround must fit the sender receive window");
+             "gateway batch lookahead and immediate ACK turnaround must fit the sender receive window");
 #define MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS MESH_EVENT_DEFAULT_WINDOW_MS
 #define MESH_DIRECT_GATEWAY_BATCH_WINDOW_MS \
     (MESH_DIRECT_GATEWAY_BATCH_TX_WINDOW_MS + \
@@ -369,6 +374,11 @@ BUILD_ASSERT(MESH_CH9_TX_BATCH_MAX <= REPORT_TX_QUEUE_DEPTH,
 #if !defined(CONFIG_IMEC_ML_ANCHOR)
 BUILD_ASSERT(REPORT_TX_QUEUE_DEPTH >= RANGE_REPORT_MAX_PACKET_FRAGMENTS,
              "one maximum range report must fit in an empty report queue");
+BUILD_ASSERT(REPORT_TX_QUEUE_DEPTH >=
+                 MESH_CONNECTED_SHARED_RELAY_CLICK_ANCHORS *
+                 (ANCHOR_CLICK_RANGE_REPORT_FRAGMENT_CAPACITY +
+                  RANGE_REPORT_MAX_CIR_FRAGMENTS),
+             "one relay must retain a complete four-anchor click burst");
 BUILD_ASSERT(UWB_DEFAULT_CLICK_MAX_EXCHANGES > 0u &&
              UWB_DEFAULT_CLICK_MAX_EXCHANGES <=
                  RANGE_REPORT_MAX_DISTANCE_SAMPLES,
@@ -422,6 +432,7 @@ struct mesh_event_control_record {
     uint8_t payload[MESH_EVENT_CONTROL_COMPACT_PAYLOAD_MAX];
     uint64_t peer_id;
     uint32_t encoded_delay_ms;
+    uint8_t prepared_rf_attempts;
     uint8_t payload_len;
     bool valid;
     bool transmit_phase_frozen;
@@ -551,6 +562,7 @@ static struct k_work_delayable mesh_route_waiting_work;
 #if DEVICE_ROLE == ROLE_ANCHOR
 enum mesh_click_preempt_request_state {
     MESH_CLICK_PREEMPT_REQUEST_IDLE = 0,
+    MESH_CLICK_PREEMPT_REQUEST_PREPARING,
     MESH_CLICK_PREEMPT_REQUEST_QUEUED,
     MESH_CLICK_PREEMPT_REQUEST_RUNNING,
     MESH_CLICK_PREEMPT_REQUEST_CANCELED,
@@ -569,13 +581,14 @@ BUILD_ASSERT(sizeof(struct mesh_click_preempt_request) <= 16u,
              "click-preemption request metadata must stay compact");
 BUILD_ASSERT(sizeof(struct mesh_click_preempt_request) +
                  sizeof(struct k_work) +
-                 sizeof(struct k_sem) +
-                 sizeof(struct k_spinlock) < 88u,
+                 2u * sizeof(struct k_sem) +
+                 sizeof(struct k_spinlock) < 112u,
              "click-preemption route bridge exceeds anchor RAM policy margin");
 
 static struct mesh_click_preempt_request mesh_click_preempt_request;
 static struct k_work mesh_click_preempt_work;
 static struct k_sem mesh_click_preempt_done;
+static struct k_sem mesh_click_preempt_route_wake;
 static struct k_spinlock mesh_click_preempt_request_lock;
 #if defined(CONFIG_ZTEST)
 /* Composed seam only: force the otherwise-impossible defensive rollback. */
@@ -700,9 +713,11 @@ BUILD_ASSERT(MESH_CONNECTED_ANCHOR_REPORT_RECOVERY_RESERVE_CAPACITY == 1u,
 BUILD_ASSERT(sizeof(mesh_anchor_downlink_store) == 1648u,
              "anchor downlink and route ancestry RAM contract changed");
 #if defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4184u,
+BUILD_ASSERT(sizeof(struct mesh_outbound) == 1024u,
+             "connected anchor outbound record RAM contract changed");
+BUILD_ASSERT(sizeof(mesh_ch9_tx_pending) == 4152u,
              "connected anchor pending batch RAM contract changed");
-BUILD_ASSERT(sizeof(mesh_ch9_tx_batch_storage) == 4184u,
+BUILD_ASSERT(sizeof(mesh_ch9_tx_batch_storage) == 4152u,
              "candidate/pending batch overlay RAM contract changed");
 BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
              "direct batching needs independent retained pending ownership");
@@ -711,7 +726,7 @@ BUILD_ASSERT(MESH_DIRECT_GATEWAY_BATCHING_ENABLED == 0,
 static struct mesh_gateway_ack_store mesh_gateway_ack_store;
 static bool mesh_gateway_ack_store_initialized;
 static bool mesh_gateway_ack_store_attached;
-BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 9544u,
+BUILD_ASSERT(sizeof(mesh_gateway_ack_store) == 10072u,
              "gateway ACK store RAM contract changed");
 #endif
 
@@ -858,6 +873,8 @@ static atomic_t mesh_gateway_host_delivery_semantic_finalized_state;
 static atomic_t mesh_gateway_host_delivery_relay_committed_state;
 static atomic_t mesh_gateway_host_delivery_ack_handoff_state;
 static int mesh_gateway_host_delivery_semantic_acceptance;
+static struct mesh_outbound mesh_gateway_host_delivery_ack;
+static bool mesh_gateway_host_delivery_ack_valid;
 static struct k_work_delayable mesh_gateway_host_delivery_retry_work;
 #endif
 static uint8_t mesh_uwb_rx_frame[UWB_MESH_MAX_FRAME_LEN];
@@ -938,6 +955,8 @@ static void mesh_route_ready_event_owner_clear(void)
 }
 static struct mesh_event_control_record mesh_event_propose_record;
 static struct app_mesh_event_retry_state mesh_event_propose_retry;
+static struct app_mesh_known_parent_contact_retry_state
+    mesh_known_parent_contact_retry;
 static bool mesh_event_propose_topology_operation;
 static struct app_mesh_c5_tx_authorization_token
     mesh_forwarded_ack_event_repair_authorization;

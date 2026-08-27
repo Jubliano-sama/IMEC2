@@ -129,6 +129,13 @@ static void test_retained_owner_cannot_overwrite_generic_wait_slot(void)
         APP_MESH_ROUTE_WAIT_TX_OWNER_RETAINED_LOCAL));
 }
 
+static void test_rx_wake_preserves_armed_future_route_wait(void)
+{
+    assert(app_mesh_route_wait_tx_should_wake_from_rx(true, false));
+    assert(!app_mesh_route_wait_tx_should_wake_from_rx(true, true));
+    assert(!app_mesh_route_wait_tx_should_wake_from_rx(false, false));
+}
+
 static struct proto_packet route_wait_command_packet(void)
 {
     const struct proto_packet packet = {
@@ -259,6 +266,7 @@ int main(void)
     test_busy_schedules_channel9_retry();
     test_other_failure_schedules_busy_retry();
     test_retained_owner_cannot_overwrite_generic_wait_slot();
+    test_rx_wake_preserves_armed_future_route_wait();
     test_clear_requires_exact_owner_and_immutable_packet_identity();
     test_clear_rejects_same_header_different_payload();
     return 0;

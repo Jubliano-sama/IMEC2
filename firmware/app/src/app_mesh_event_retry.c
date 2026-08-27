@@ -28,6 +28,26 @@ static bool request_key_equal(
            lhs->message_type == rhs->message_type;
 }
 
+static bool rf_retry_key_equal(const struct app_mesh_rf_retry_key *lhs,
+                               const struct app_mesh_rf_retry_key *rhs)
+{
+    return lhs != NULL && rhs != NULL &&
+           lhs->source_id == rhs->source_id &&
+           lhs->destination_id == rhs->destination_id &&
+           lhs->session_id == rhs->session_id &&
+           lhs->sequence == rhs->sequence &&
+           lhs->message_type == rhs->message_type &&
+           lhs->operation == rhs->operation;
+}
+
+static bool known_parent_packet_key_valid(
+    const struct app_mesh_rf_retry_key *key)
+{
+    return key != NULL && key->source_id != 0u &&
+           key->operation > APP_MESH_RF_RETRY_OPERATION_NONE &&
+           key->operation <= APP_MESH_RF_RETRY_OPERATION_COLLECTION_EACK;
+}
+
 bool app_mesh_event_payload_digest(
     const uint8_t *payload,
     size_t payload_len,
@@ -123,6 +143,16 @@ enum app_mesh_event_accept_correlation app_mesh_event_accept_classify(
     }
 
     /*
+     * Before any failed RF exchange, retain compatibility with the older
+     * ACCEPT format that used its own nonzero header identity. Once PROPOSE
+     * has been retried, a nonmatching ACCEPT can be the delayed response to an
+     * earlier proposal phase and must not install that stale appointment.
+     */
+    if (proposal->rf_attempts != 0u) {
+        return APP_MESH_EVENT_ACCEPT_REJECT;
+    }
+
+    /*
      * The stable connection release gave ACCEPT its own fresh packet identity.
      * Active-peer and timing-shape correlation keeps that wire behavior
      * interoperable without admitting an unrelated peer or negotiation.
@@ -161,6 +191,30 @@ int app_mesh_event_retry_begin(
     state->event_interval_ms = event_interval_ms;
     state->phase_slop_ms = phase_slop_ms;
     state->active = true;
+    return 0;
+}
+
+int app_mesh_event_retry_rebind_request(
+    struct app_mesh_event_retry_state *state,
+    const struct app_mesh_event_request_identity *request,
+    const struct app_mesh_rf_retry_key *retry_key)
+{
+    if (state == NULL || !state->active || !request_valid(request) ||
+        retry_key == NULL || retry_key->source_id != request->source_id ||
+        retry_key->destination_id != state->peer_id ||
+        retry_key->session_id != request->session_id ||
+        retry_key->sequence != request->sequence ||
+        retry_key->message_type != request->message_type ||
+        retry_key->operation == APP_MESH_RF_RETRY_OPERATION_NONE ||
+        retry_key->operation != state->retry_key.operation) {
+        return -EINVAL;
+    }
+
+    state->request = *request;
+    state->retry_key = *retry_key;
+    if (state->retry.active) {
+        state->retry.key = *retry_key;
+    }
     return 0;
 }
 
@@ -335,6 +389,62 @@ bool app_mesh_event_retry_expired(
 }
 
 void app_mesh_event_retry_clear(struct app_mesh_event_retry_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+enum app_mesh_known_parent_contact_action
+app_mesh_known_parent_contact_note_hard_failure(
+    struct app_mesh_known_parent_contact_retry_state *state,
+    uint64_t parent_id,
+    const struct app_mesh_rf_retry_key *packet_key,
+    uint8_t retained_route_retry_budget,
+    uint8_t *hard_failure_count)
+{
+    if (hard_failure_count != NULL) {
+        *hard_failure_count = 0u;
+    }
+    if (state == NULL || parent_id == 0u ||
+        !known_parent_packet_key_valid(packet_key)) {
+        return APP_MESH_KNOWN_PARENT_CONTACT_REPAIR_ROUTE;
+    }
+
+    if (!state->active || state->parent_id != parent_id ||
+        !rf_retry_key_equal(&state->packet_key, packet_key)) {
+        memset(state, 0, sizeof(*state));
+        state->packet_key = *packet_key;
+        state->parent_id = parent_id;
+        state->active = true;
+    }
+    if (state->hard_failures != UINT8_MAX) {
+        state->hard_failures++;
+    }
+    if (hard_failure_count != NULL) {
+        *hard_failure_count = state->hard_failures;
+    }
+    if (state->hard_failures <= retained_route_retry_budget) {
+        return APP_MESH_KNOWN_PARENT_CONTACT_RETRY;
+    }
+
+    memset(state, 0, sizeof(*state));
+    return APP_MESH_KNOWN_PARENT_CONTACT_REPAIR_ROUTE;
+}
+
+void app_mesh_known_parent_contact_note_success(
+    struct app_mesh_known_parent_contact_retry_state *state,
+    uint64_t parent_id,
+    const struct app_mesh_rf_retry_key *packet_key)
+{
+    if (state != NULL && state->active && state->parent_id == parent_id &&
+        rf_retry_key_equal(&state->packet_key, packet_key)) {
+        memset(state, 0, sizeof(*state));
+    }
+}
+
+void app_mesh_known_parent_contact_clear(
+    struct app_mesh_known_parent_contact_retry_state *state)
 {
     if (state != NULL) {
         memset(state, 0, sizeof(*state));

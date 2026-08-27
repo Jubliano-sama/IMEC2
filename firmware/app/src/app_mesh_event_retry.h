@@ -49,6 +49,24 @@ struct app_mesh_event_retry_state {
     bool retry_due_armed;
 };
 
+enum app_mesh_known_parent_contact_action {
+    APP_MESH_KNOWN_PARENT_CONTACT_RETRY = 0,
+    APP_MESH_KNOWN_PARENT_CONTACT_REPAIR_ROUTE,
+};
+
+/*
+ * A valid route and a live channel-9 appointment are independent.  This
+ * packet-scoped state keeps a known parent while contact is serialized behind
+ * other children, and permits route repair only after the bounded contact
+ * budget is exhausted.
+ */
+struct app_mesh_known_parent_contact_retry_state {
+    struct app_mesh_rf_retry_key packet_key;
+    uint64_t parent_id;
+    uint8_t hard_failures;
+    bool active;
+};
+
 struct app_mesh_event_completion {
     struct app_mesh_event_request_identity request;
     uint64_t peer_id;
@@ -92,6 +110,12 @@ int app_mesh_event_retry_begin(
     uint32_t deadline_ms,
     uint32_t event_interval_ms,
     uint16_t phase_slop_ms);
+/* Replace an unconfirmed request's wire identity without resetting its parent,
+ * deadline, RF-attempt count, or backoff round. */
+int app_mesh_event_retry_rebind_request(
+    struct app_mesh_event_retry_state *state,
+    const struct app_mesh_event_request_identity *request,
+    const struct app_mesh_rf_retry_key *retry_key);
 int app_mesh_event_retry_extend_deadline(
     struct app_mesh_event_retry_state *state,
     uint32_t now_ms,
@@ -126,6 +150,19 @@ bool app_mesh_event_retry_expired(
     const struct app_mesh_event_retry_state *state,
     uint32_t now_ms);
 void app_mesh_event_retry_clear(struct app_mesh_event_retry_state *state);
+enum app_mesh_known_parent_contact_action
+app_mesh_known_parent_contact_note_hard_failure(
+    struct app_mesh_known_parent_contact_retry_state *state,
+    uint64_t parent_id,
+    const struct app_mesh_rf_retry_key *packet_key,
+    uint8_t retained_route_retry_budget,
+    uint8_t *hard_failure_count);
+void app_mesh_known_parent_contact_note_success(
+    struct app_mesh_known_parent_contact_retry_state *state,
+    uint64_t parent_id,
+    const struct app_mesh_rf_retry_key *packet_key);
+void app_mesh_known_parent_contact_clear(
+    struct app_mesh_known_parent_contact_retry_state *state);
 enum app_mesh_event_request_match app_mesh_event_completion_match(
     const struct app_mesh_event_completion *completion,
     uint64_t peer_id,

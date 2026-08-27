@@ -637,6 +637,65 @@ static bool route_ack_matches(const struct mesh_outbound *outbound,
            requested_seq == data_packet->seq;
 }
 
+static bool hop_ack_matches(
+    const struct mesh_outbound *outbound,
+    uint64_t ack_sender_id,
+    uint64_t previous_hop_id,
+    const struct proto_packet *data_packet,
+    const uint8_t *data_payload,
+    size_t data_payload_len)
+{
+    bool contains = false;
+
+    if (outbound == NULL || data_packet == NULL ||
+        (data_payload_len > 0u && data_payload == NULL)) {
+        return false;
+    }
+    return outbound->packet.msg_type == MSG_MESH_HOP_ACK &&
+           outbound->packet.src_id == ack_sender_id &&
+           outbound->packet.dst_id == previous_hop_id &&
+           outbound->packet.session_id == data_packet->session_id &&
+           outbound->next_hop_id == previous_hop_id &&
+           mesh_ack_payload_contains_packet(&outbound->packet,
+                                            outbound->payload,
+                                            outbound->payload_len,
+                                            data_packet,
+                                            data_payload,
+                                            data_payload_len,
+                                            &contains) == PROTO_OK &&
+           contains;
+}
+
+static bool queued_hop_ack_matches(
+    const struct mesh_sim_role_instance *node,
+    uint64_t ack_sender_id,
+    uint64_t previous_hop_id,
+    const struct proto_packet *data_packet,
+    const uint8_t *data_payload,
+    size_t data_payload_len)
+{
+    size_t match_count = 0u;
+
+    if (node == NULL) {
+        return false;
+    }
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
+
+        if (!queued->valid || queued->needs_relay_start ||
+            !hop_ack_matches(&queued->outbound,
+                             ack_sender_id,
+                             previous_hop_id,
+                             data_packet,
+                             data_payload,
+                             data_payload_len)) {
+            continue;
+        }
+        match_count++;
+    }
+    return match_count == 1u;
+}
+
 static void remove_queued_entry_for_test(struct mesh_sim_role_instance *node,
                                          size_t index)
 {
@@ -731,6 +790,10 @@ static int build_unseeded_click(struct proto_packet *packet,
                                 size_t *payload_len,
                                 uint64_t anchor_id)
 {
+    const uint64_t participant_anchor_ids[] = {
+        anchor_id,
+        UINT64_C(0xefffffffffffffff),
+    };
     const int32_t distance_samples[] = {120};
     const uint8_t range_round_indices[] = {0u};
     const uint64_t sequence_start_timestamps_ms[] = {1u};
@@ -746,6 +809,8 @@ static int build_unseeded_click(struct proto_packet *packet,
         .range_round_indices = range_round_indices,
         .sequence_start_timestamps_ms = sequence_start_timestamps_ms,
         .sample_count = 1u,
+        .participant_anchor_ids = participant_anchor_ids,
+        .participant_anchor_count = 2u,
         .burst_id = UNSEEDED_CLICK_SESSION,
         .burst_id_present = true,
         .omit_rsl = true,
@@ -847,30 +912,6 @@ static bool queue_has_click(const struct mesh_sim_role_instance *node,
                                    packet,
                                    payload,
                                    payload_len)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool queue_has_packet_identity(
-    const struct mesh_sim_role_instance *node,
-    const struct proto_packet *packet,
-    uint64_t next_hop_id)
-{
-    if (node == NULL || packet == NULL) {
-        return false;
-    }
-    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
-        const struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
-
-        if (queued->valid &&
-            queued->outbound.next_hop_id == next_hop_id &&
-            queued->outbound.packet.msg_type == packet->msg_type &&
-            queued->outbound.packet.src_id == packet->src_id &&
-            queued->outbound.packet.dst_id == packet->dst_id &&
-            queued->outbound.packet.session_id == packet->session_id &&
-            queued->outbound.packet.seq == packet->seq) {
             return true;
         }
     }
@@ -1374,10 +1415,6 @@ static int run_ttl_ladder_data_case(void)
     uint16_t reply_nonce = 0u;
     uint8_t origin;
     uint8_t gateway;
-    uint8_t first_gateway_ack_ttl = 0u;
-    uint8_t first_confirm_ack_ttl = 0u;
-    uint16_t gateway_ack_seq = 0u;
-    uint16_t confirm_ack_seq = 0u;
     char phase[96];
 
     mesh_sim_init(&world, SCENARIO_SEED ^ UINT32_C(0x64006400));
@@ -1740,212 +1777,151 @@ static int run_ttl_ladder_data_case(void)
     CHECK(world.roles[origin].relay.pending.state ==
           MESH_RELAY_TX_WAIT_GATEWAY_ACK);
 
-    for (size_t reverse_step = 0u;
-         reverse_step < TTL_LADDER_HOP_COUNT;
-         reverse_step++) {
-        size_t connection = TTL_LADDER_HOP_COUNT - reverse_step - 1u;
+    /* The gateway receipt terminates at its immediate relay. Every earlier
+     * edge closes independently with the hop ACK already queued when that
+     * parent accepted the exact report. */
+    {
+        const size_t gateway_connection = TTL_LADDER_HOP_COUNT - 1u;
+        const uint8_t gateway_relay = path[gateway_connection];
+        uint16_t transmission_index = UINT16_MAX;
         const struct mesh_sim_transmission *tx;
-        const struct mesh_sim_reception *rx;
-        size_t transmission_count_before = world.transmission_count;
-        size_t reception_count_before = world.reception_count;
+
+        set_test_phase("ttl_ladder_gateway_receipt_to_adjacent_relay");
+        CHECK(run_connection_until_message(
+                  &world,
+                  connections[gateway_connection],
+                  gateway,
+                  world.roles[gateway_relay].id,
+                  MSG_GATEWAY_ACK,
+                  &transmission_index) == MESH_SIM_OK);
+        tx = &world.transmissions[transmission_index];
+        CHECK(route_ack_matches(&tx->outbound,
+                                world.roles[gateway_relay].id,
+                                &data_packet));
+        CHECK(world.roles[gateway_relay].relay.pending
+                  .gateway_ack_confirm_pending);
+    }
+
+    for (size_t reverse_step = 0u;
+         reverse_step + 1u < TTL_LADDER_HOP_COUNT;
+         reverse_step++) {
+        size_t connection = TTL_LADDER_HOP_COUNT - reverse_step - 2u;
+        uint8_t child = path[connection];
+        uint8_t parent = path[connection + 1u];
+        uint16_t transmission_index = UINT16_MAX;
+        const struct mesh_sim_transmission *tx;
+        uint16_t requested_seq = 0u;
 
         snprintf(phase,
                  sizeof(phase),
-                 "ttl_ladder_gateway_ack_hop_%zu",
+                 "ttl_ladder_hop_custody_%zu",
                  reverse_step + 1u);
         set_test_phase(phase);
-        CHECK(run_connection_event(&world, connections[connection]) ==
-              MESH_SIM_OK);
-        CHECK(world.transmission_count == transmission_count_before + 1u);
-        CHECK(world.reception_count == reception_count_before + 1u);
-        tx = &world.transmissions[transmission_count_before];
-        rx = &world.receptions[reception_count_before];
-        CHECK(tx->node_index == path[connection + 1u]);
-        CHECK(tx->has_outbound);
-        CHECK(route_ack_matches(&tx->outbound,
-                                world.roles[path[connection]].id,
-                                &data_packet));
-        if (reverse_step == 0u) {
-            first_gateway_ack_ttl = tx->outbound.packet.ttl;
-            gateway_ack_seq = tx->outbound.packet.seq;
+        CHECK(run_connection_until_message(
+                  &world,
+                  connections[connection],
+                  parent,
+                  world.roles[child].id,
+                  MSG_MESH_HOP_ACK,
+                  &transmission_index) == MESH_SIM_OK);
+        tx = &world.transmissions[transmission_index];
+        CHECK(tx->outbound.packet.src_id == world.roles[parent].id);
+        CHECK(tx->outbound.packet.dst_id == world.roles[child].id);
+        CHECK(tx->outbound.packet.session_id == data_packet.session_id);
+        CHECK(find_tlv_u16(tx->outbound.payload,
+                           tx->outbound.payload_len,
+                           TLV_REQUESTED_MSG_SEQ,
+                           &requested_seq) == PROTO_OK);
+        CHECK(requested_seq == data_packet.seq);
+        CHECK(world.roles[child].relay.pending.state == MESH_RELAY_TX_IDLE);
+        if (connection == 0u) {
+            CHECK(world.roles[child].tx_queue_count == 0u);
         } else {
-            CHECK(tx->outbound.packet.ttl ==
-                  (uint8_t)(first_gateway_ack_ttl - reverse_step));
-            CHECK(tx->outbound.packet.seq == gateway_ack_seq);
-        }
-        CHECK(rx->outcome == MESH_SIM_RX_DECODED);
-        CHECK(rx->packet.msg_type == MSG_GATEWAY_ACK);
-        CHECK(rx->packet.ttl == tx->outbound.packet.ttl);
-        CHECK(world.roles[gateway].delivery_count == 1u);
-        if (connection > 0u) {
-            CHECK(world.roles[origin].relay.pending.state ==
-                  MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+            /* This relay has relinquished its upstream report custody, but
+             * it still owes the exact hop ACK to its own child.  That edge is
+             * serviced by the next reverse-walk iteration. */
+            CHECK(world.roles[child].tx_queue_count == 1u);
+            CHECK(queued_hop_ack_matches(
+                      &world.roles[child],
+                      world.roles[child].id,
+                      world.roles[path[connection - 1u]].id,
+                      &data_packet,
+                      data_payload,
+                      data_payload_len));
         }
     }
-    CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[origin].relay.pending.gateway_ack_confirm_pending);
+    CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(pending_gateway_ack_confirm_packet(&world,
-                                             origin,
+                                             path[TTL_LADDER_HOP_COUNT - 1u],
                                              &confirm_packet) == PROTO_OK);
     CHECK(confirm_packet.src_id == data_packet.src_id);
     CHECK(confirm_packet.dst_id == data_packet.dst_id);
     CHECK(confirm_packet.session_id == data_packet.session_id);
     CHECK(confirm_packet.seq == data_packet.seq);
-    for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
+    {
+        const size_t gateway_connection = TTL_LADDER_HOP_COUNT - 1u;
+        const uint8_t gateway_relay = path[gateway_connection];
+        uint16_t transmission_index = UINT16_MAX;
         const struct mesh_sim_transmission *tx;
-        const struct mesh_sim_reception *rx;
-        size_t transmission_index = SIZE_MAX;
-        size_t reception_index = SIZE_MAX;
-        bool sent = false;
 
-        snprintf(phase, sizeof(phase), "ttl_ladder_confirm_hop_%zu", i + 1u);
-        set_test_phase(phase);
-        for (size_t turn = 0u; turn < 3u && !sent; turn++) {
-            CHECK(repair_connection_before_payload_turn(
-                      &world, connections[i]) == MESH_SIM_OK);
-            size_t transmission_count_before = world.transmission_count;
-            size_t reception_count_before = world.reception_count;
-
-            CHECK(run_connection_event(&world, connections[i]) == MESH_SIM_OK);
-            CHECK(world.transmission_count <= transmission_count_before + 1u);
-            CHECK(world.reception_count <= reception_count_before + 1u);
-            if (world.transmission_count == transmission_count_before) {
-                CHECK(world.reception_count == reception_count_before);
-                continue;
-            }
-            CHECK(world.reception_count == reception_count_before + 1u);
-            tx = &world.transmissions[transmission_count_before];
-            rx = &world.receptions[reception_count_before];
-            if (tx->node_index == path[i] && tx->has_outbound &&
-                tx->outbound.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM &&
-                tx->outbound.next_hop_id == world.roles[path[i + 1u]].id) {
-                transmission_index = transmission_count_before;
-                reception_index = reception_count_before;
-                sent = true;
-                continue;
-            }
-
-            /*
-             * The first raw payload queued a child-facing hop ACK.  The
-             * periodic connection order can expose that reverse turn before
-             * the next forward confirmation turn, so consume it explicitly
-             * instead of pretending each path hop owns four consecutive
-             * useful events.
-             */
-            CHECK(tx->node_index == path[i + 1u]);
-            CHECK(tx->has_outbound);
-            CHECK(tx->outbound.packet.msg_type == MSG_MESH_HOP_ACK);
-            CHECK(tx->outbound.next_hop_id == world.roles[path[i]].id);
-            CHECK(rx->outcome == MESH_SIM_RX_DECODED);
-        }
-        CHECK(sent);
+        set_test_phase("ttl_ladder_adjacent_relay_confirm");
+        CHECK(run_connection_until_message(
+                  &world,
+                  connections[gateway_connection],
+                  gateway_relay,
+                  GATEWAY_ID,
+                  MSG_GATEWAY_ACK_CONFIRM,
+                  &transmission_index) == MESH_SIM_OK);
         tx = &world.transmissions[transmission_index];
-        rx = &world.receptions[reception_index];
-        CHECK(tx->node_index == path[i]);
-        CHECK(tx->has_outbound);
-        CHECK(tx->outbound.packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
         CHECK(tx->outbound.packet.src_id == confirm_packet.src_id);
         CHECK(tx->outbound.packet.dst_id == confirm_packet.dst_id);
         CHECK(tx->outbound.packet.session_id == confirm_packet.session_id);
         CHECK(tx->outbound.packet.seq == confirm_packet.seq);
-        CHECK(tx->outbound.packet.ttl == MESH_GATEWAY_ACK_TTL - i);
-        CHECK(tx->outbound.next_hop_id == world.roles[path[i + 1u]].id);
-        CHECK(rx->outcome == MESH_SIM_RX_DECODED);
-        CHECK(rx->packet.msg_type == MSG_GATEWAY_ACK_CONFIRM);
-        CHECK(rx->packet.ttl == tx->outbound.packet.ttl);
-        CHECK(world.roles[gateway].delivery_count == 1u);
+        CHECK(tx->outbound.next_hop_id == GATEWAY_ID);
     }
 
-    for (size_t reverse_step = 0u;
-         reverse_step < TTL_LADDER_HOP_COUNT;
-         reverse_step++) {
-        size_t connection = TTL_LADDER_HOP_COUNT - reverse_step - 1u;
+    {
+        const size_t gateway_connection = TTL_LADDER_HOP_COUNT - 1u;
+        const uint8_t gateway_relay = path[gateway_connection];
+        uint16_t transmission_index = UINT16_MAX;
         const struct mesh_sim_transmission *tx;
-        const struct mesh_sim_reception *rx;
-        size_t transmission_index = SIZE_MAX;
-        size_t reception_index = SIZE_MAX;
-        bool sent = false;
 
-        snprintf(phase,
-                 sizeof(phase),
-                 "ttl_ladder_confirm_ack_hop_%zu",
-                 reverse_step + 1u);
-        set_test_phase(phase);
-        for (size_t turn = 0u; turn < 3u && !sent; turn++) {
-            size_t transmission_count_before;
-            size_t reception_count_before;
-
-            CHECK(repair_connection_before_payload_turn(
-                      &world, connections[connection]) == MESH_SIM_OK);
-            transmission_count_before = world.transmission_count;
-            reception_count_before = world.reception_count;
-            CHECK(run_connection_event(&world, connections[connection]) ==
-                  MESH_SIM_OK);
-            CHECK(world.transmission_count <= transmission_count_before + 1u);
-            CHECK(world.reception_count <= reception_count_before + 1u);
-            if (world.transmission_count == transmission_count_before) {
-                CHECK(world.reception_count == reception_count_before);
-                continue;
-            }
-            CHECK(world.reception_count == reception_count_before + 1u);
-            tx = &world.transmissions[transmission_count_before];
-            rx = &world.receptions[reception_count_before];
-            if (tx->node_index == path[connection + 1u] &&
-                tx->has_outbound &&
-                route_ack_matches(&tx->outbound,
-                                  world.roles[path[connection]].id,
-                                  &confirm_packet)) {
-                transmission_index = transmission_count_before;
-                reception_index = reception_count_before;
-                sent = true;
-                continue;
-            }
-            CHECK(tx->has_outbound);
-            CHECK(tx->outbound.packet.msg_type == MSG_MESH_HOP_ACK);
-            CHECK((tx->node_index == path[connection] &&
-                   tx->outbound.next_hop_id ==
-                       world.roles[path[connection + 1u]].id) ||
-                  (tx->node_index == path[connection + 1u] &&
-                   tx->outbound.next_hop_id ==
-                       world.roles[path[connection]].id));
-            CHECK(rx->outcome == MESH_SIM_RX_DECODED);
-        }
-        CHECK(sent);
+        set_test_phase("ttl_ladder_adjacent_relay_confirm_receipt");
+        CHECK(run_connection_until_message(
+                  &world,
+                  connections[gateway_connection],
+                  gateway,
+                  world.roles[gateway_relay].id,
+                  MSG_GATEWAY_ACK,
+                  &transmission_index) == MESH_SIM_OK);
         tx = &world.transmissions[transmission_index];
-        rx = &world.receptions[reception_index];
-        CHECK(tx->node_index == path[connection + 1u]);
-        CHECK(tx->has_outbound);
         CHECK(route_ack_matches(&tx->outbound,
-                                world.roles[path[connection]].id,
+                                world.roles[gateway_relay].id,
                                 &confirm_packet));
-        if (reverse_step == 0u) {
-            first_confirm_ack_ttl = tx->outbound.packet.ttl;
-            confirm_ack_seq = tx->outbound.packet.seq;
-        } else {
-            CHECK(tx->outbound.packet.ttl ==
-                  (uint8_t)(first_confirm_ack_ttl - reverse_step));
-            CHECK(tx->outbound.packet.seq == confirm_ack_seq);
-        }
-        CHECK(rx->outcome == MESH_SIM_RX_DECODED);
-        CHECK(rx->packet.msg_type == MSG_GATEWAY_ACK);
-        CHECK(rx->packet.ttl == tx->outbound.packet.ttl);
-        CHECK(world.roles[gateway].delivery_count == 1u);
+        CHECK(world.roles[gateway_relay].relay.pending.state ==
+              MESH_RELAY_TX_IDLE);
     }
-    CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[origin].id) == 1u);
+                                     world.roles[origin].id) == 0u);
+    CHECK(mesh_sim_count_transitions(
+              &world,
+              MESH_SIM_TRANSITION_GATEWAY_ACKED,
+              world.roles[path[TTL_LADDER_HOP_COUNT - 1u]].id) == 1u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_ROUTE_REQUIRED,
                                      0u) == 0u);
     for (size_t i = 0u; i < TTL_LADDER_HOP_COUNT; i++) {
-        CHECK(world.connections[connections[i]].completed_events >= 4u);
+        CHECK(world.connections[connections[i]].completed_events >=
+              (i + 1u == TTL_LADDER_HOP_COUNT ? 4u : 2u));
         CHECK(world.connections[connections[i]].completed_repairs <= 1u);
         CHECK(world.connections[connections[i]].timing_a.timing_fresh);
         CHECK(world.connections[connections[i]].timing_b.timing_fresh);
         CHECK(!world.connections[connections[i]].timing_a.fallback_required);
         CHECK(!world.connections[connections[i]].timing_b.fallback_required);
+        CHECK(world.roles[path[i]].tx_queue_count == 0u);
     }
+    CHECK(world.roles[gateway].tx_queue_count == 0u);
     CHECK(world.last_error == MESH_SIM_OK);
     return 0;
 }
@@ -2404,9 +2380,21 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[origin].id) == 0u);
-    CHECK(run_connection_event(&world, connection_origin_relay) ==
-          MESH_SIM_OK);
-    CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
+    CHECK(run_connection_until_message(
+              &world,
+              connection_origin_relay,
+              relay_1,
+              world.roles[origin].id,
+              MSG_MESH_HOP_ACK,
+              &phase_tx) == MESH_SIM_OK);
+    CHECK(hop_ack_matches(&world.transmissions[phase_tx].outbound,
+                          world.roles[relay_1].id,
+                          world.roles[origin].id,
+                          &click_packet,
+                          click_payload,
+                          click_payload_len));
+    CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(world.roles[origin].tx_queue_count == 0u);
 
     set_test_phase("unseeded_click_relay_to_relay");
     CHECK(run_connection_until_message(&world,
@@ -2426,9 +2414,21 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[relay_1].id) == 0u);
-    CHECK(run_connection_event(&world, connection_relay_relay) ==
-          MESH_SIM_OK);
-    CHECK(world.roles[relay_1].relay.pending.state != MESH_RELAY_TX_IDLE);
+    CHECK(run_connection_until_message(
+              &world,
+              connection_relay_relay,
+              relay_2,
+              world.roles[relay_1].id,
+              MSG_MESH_HOP_ACK,
+              &phase_tx) == MESH_SIM_OK);
+    CHECK(hop_ack_matches(&world.transmissions[phase_tx].outbound,
+                          world.roles[relay_2].id,
+                          world.roles[relay_1].id,
+                          &click_packet,
+                          click_payload,
+                          click_payload_len));
+    CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(world.roles[relay_1].tx_queue_count == 0u);
 
     set_test_phase("unseeded_click_direct_gateway_ack");
     CHECK(run_direct_click_turn(&world, relay_2, gateway) == MESH_SIM_OK);
@@ -2449,44 +2449,26 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
                      click_payload_len) == 0);
     }
     CHECK(world.roles[relay_2].relay.pending.state ==
-          MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
+          MESH_RELAY_TX_WAIT_GATEWAY_ACK);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[relay_2].id) == 0u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_1].id) == 0u);
+                                     world.roles[relay_1].id) == 1u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[origin].id) == 0u);
-
-    set_test_phase("unseeded_click_gateway_ack_to_relay_1");
-    CHECK(run_connection_event(&world, connection_relay_relay) ==
-          MESH_SIM_OK);
-    CHECK(run_connection_event(&world, connection_relay_relay) ==
-          MESH_SIM_OK);
-    CHECK(world.roles[relay_2].relay.pending.state ==
-          MESH_RELAY_TX_IDLE);
-    CHECK(mesh_sim_count_transitions(&world,
-                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_2].id) == 1u);
-    CHECK(world.roles[relay_1].relay.pending.state ==
-          MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
-    CHECK(mesh_sim_count_transitions(&world,
-                                     MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_1].id) == 0u);
-
-    set_test_phase("unseeded_click_gateway_ack_to_origin");
-    CHECK(run_connection_event(&world, connection_origin_relay) ==
-          MESH_SIM_OK);
-    CHECK(run_connection_event(&world, connection_origin_relay) ==
-          MESH_SIM_OK);
+    CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[origin].relay.pending.state != MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[origin].relay.pending.gateway_ack_confirm_pending);
+    CHECK(world.roles[relay_2].relay.pending.gateway_ack_confirm_pending);
     CHECK(pending_gateway_ack_confirm_packet(&world,
-                                             origin,
+                                             relay_2,
                                              &confirm_packet) == PROTO_OK);
+    CHECK(confirm_packet.src_id == click_packet.src_id);
+    CHECK(confirm_packet.dst_id == click_packet.dst_id);
+    CHECK(confirm_packet.session_id == click_packet.session_id);
+    CHECK(confirm_packet.seq == click_packet.seq);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
                                      world.roles[origin].id) == 0u);
@@ -2496,84 +2478,25 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
     CHECK(world.roles[gateway].gateway_semantic_commit_count == 1u);
     CHECK(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
 
-    set_test_phase("unseeded_click_confirm_to_relay_1");
-    CHECK(run_connection_until_message(
-              &world,
-              connection_origin_relay,
-              origin,
-              world.roles[relay_1].id,
-              MSG_GATEWAY_ACK_CONFIRM,
-              &phase_tx) == MESH_SIM_OK);
-    CHECK(world.transmissions[phase_tx].outbound.packet.ttl ==
-          confirm_packet.ttl);
-    CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(queue_has_packet_identity(&world.roles[relay_1],
-                                    &confirm_packet,
-                                    world.roles[relay_2].id));
-    CHECK(world.roles[gateway].delivery_count == gateway_delivery_before + 1u);
-
-    set_test_phase("unseeded_click_confirm_to_relay_2");
-    CHECK(run_connection_until_message(
-              &world,
-              connection_relay_relay,
-              relay_1,
-              world.roles[relay_2].id,
-              MSG_GATEWAY_ACK_CONFIRM,
-              &phase_tx) == MESH_SIM_OK);
-    CHECK(world.transmissions[phase_tx].outbound.packet.ttl ==
-          (uint8_t)(confirm_packet.ttl - 1u));
-    CHECK(world.roles[relay_1].relay.pending.state != MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[relay_1].relay.pending.packet.msg_type ==
-          MSG_GATEWAY_ACK_CONFIRM);
-    CHECK(world.roles[relay_2].relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(queue_has_packet_identity(&world.roles[relay_2],
-                                    &confirm_packet,
-                                    GATEWAY_ID));
-    CHECK(world.roles[gateway].delivery_count == gateway_delivery_before + 1u);
-
-    set_test_phase("unseeded_click_confirm_direct_gateway_ack");
+    set_test_phase("unseeded_click_adjacent_relay_confirm");
     CHECK(run_direct_click_turn(&world, relay_2, gateway) == MESH_SIM_OK);
     CHECK(world.roles[gateway].delivery_count == gateway_delivery_before + 1u);
-    CHECK(world.roles[relay_2].relay.pending.state ==
-          MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
-
-    set_test_phase("unseeded_click_confirm_ack_to_relay_1");
-    CHECK(run_connection_until_message(
-              &world,
-              connection_relay_relay,
-              relay_2,
-              world.roles[relay_1].id,
-              MSG_GATEWAY_ACK,
-              &phase_tx) == MESH_SIM_OK);
-    CHECK(route_ack_matches(&world.transmissions[phase_tx].outbound,
-                            world.roles[relay_1].id,
-                            &confirm_packet));
     CHECK(world.roles[relay_2].relay.pending.state == MESH_RELAY_TX_IDLE);
-    CHECK(world.roles[relay_1].relay.pending.state ==
-          MESH_RELAY_TX_WAIT_GATEWAY_ACK_FORWARD);
-
-    set_test_phase("unseeded_click_confirm_ack_to_origin");
-    CHECK(run_connection_until_message(
-              &world,
-              connection_origin_relay,
-              relay_1,
-              world.roles[origin].id,
-              MSG_GATEWAY_ACK,
-              &phase_tx) == MESH_SIM_OK);
-    CHECK(route_ack_matches(&world.transmissions[phase_tx].outbound,
-                            world.roles[origin].id,
-                            &confirm_packet));
     CHECK(world.roles[relay_1].relay.pending.state == MESH_RELAY_TX_IDLE);
     CHECK(world.roles[origin].relay.pending.state == MESH_RELAY_TX_IDLE);
+    CHECK(world.roles[origin].tx_queue_count == 0u);
+    CHECK(world.roles[relay_1].tx_queue_count == 0u);
+    CHECK(world.roles[relay_2].tx_queue_count == 0u);
+    CHECK(world.roles[gateway].tx_queue_count == 0u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[origin].id) == 1u);
+                                     world.roles[origin].id) == 0u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_1].id) == 2u);
+                                     world.roles[relay_1].id) == 1u);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_GATEWAY_ACKED,
-                                     world.roles[relay_2].id) == 2u);
+                                     world.roles[relay_2].id) == 1u);
     CHECK(world.roles[gateway].gateway_semantic_commit_count == 1u);
     CHECK(world.roles[gateway].gateway_semantic_duplicate_ack_count == 0u);
 
@@ -2600,7 +2523,7 @@ static int run_unseeded_report_route_custody_case(bool self_test_report)
             }
         }
         CHECK(click_transmissions == 3u);
-        CHECK(confirm_transmissions == 3u);
+        CHECK(confirm_transmissions == 1u);
     }
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_ROUTE_REQUIRED,

@@ -27,6 +27,11 @@ enum app_mesh_route_wait_tx_owner {
 bool app_mesh_route_wait_tx_may_store(
     enum app_mesh_route_wait_tx_owner owner);
 
+/* An RX-owner yield may kick an unarmed route-wait owner, but must not pull a
+ * deliberate future Channel-9 deadline forward. */
+bool app_mesh_route_wait_tx_should_wake_from_rx(bool waiting_valid,
+                                                bool work_pending);
+
 /* Match one clear request to the exact route-wait owner and full immutable
  * packet commitment. The transport owner supplies semantic digests that
  * commit the full payload; TTL and message age are retry-local fields. */

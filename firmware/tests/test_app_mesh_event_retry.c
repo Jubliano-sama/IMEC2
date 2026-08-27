@@ -215,6 +215,35 @@ static void test_accept_correlates_with_exact_and_stable_release_identities(void
                                           77u,
                                           true) ==
            APP_MESH_EVENT_ACCEPT_LEGACY);
+
+    {
+        uint32_t retry_delay_ms = 0u;
+
+        assert(app_mesh_event_retry_note_failure(
+            &proposal,
+            APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+            1100u,
+            0x13579bdfu,
+            true,
+            &retry_delay_ms));
+        assert(retry_delay_ms != 0u);
+        assert(app_mesh_event_accept_classify(&proposal,
+                                              PEER_ID,
+                                              LOCAL_ID,
+                                              PEER_ID,
+                                              0x87654321u,
+                                              77u,
+                                              true) ==
+               APP_MESH_EVENT_ACCEPT_REJECT);
+        assert(app_mesh_event_accept_classify(&proposal,
+                                              PEER_ID,
+                                              LOCAL_ID,
+                                              PEER_ID,
+                                              request.session_id,
+                                              request.sequence,
+                                              true) ==
+               APP_MESH_EVENT_ACCEPT_EXACT);
+    }
     assert(app_mesh_event_accept_classify(&proposal,
                                           PEER_ID,
                                           LOCAL_ID,
@@ -265,6 +294,76 @@ static void test_accept_correlates_with_exact_and_stable_release_identities(void
                                           request.sequence,
                                           true) ==
            APP_MESH_EVENT_ACCEPT_REJECT);
+}
+
+static void test_rebinding_retry_identity_preserves_attempt_budget_and_backoff(void)
+{
+    const uint8_t first_payload[] = {0x61u, 0x62u, 0x63u};
+    const uint8_t retry_payload[] = {0x71u, 0x72u, 0x73u};
+    struct app_mesh_event_request_identity first = request_identity(
+        LOCAL_ID, UINT32_C(0x12345678), 19u,
+        first_payload, sizeof(first_payload));
+    struct app_mesh_event_request_identity retry = request_identity(
+        LOCAL_ID, UINT32_C(0x12345679), 20u,
+        retry_payload, sizeof(retry_payload));
+    struct app_mesh_rf_retry_key first_key = retry_key(
+        first.session_id, first.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_rf_retry_key retry_key_value = retry_key(
+        retry.session_id, retry.sequence,
+        APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
+    struct app_mesh_event_retry_state state = {0};
+    uint32_t retry_due_ms;
+    uint32_t delay_ms = 0u;
+    uint16_t retry_round;
+
+    assert(app_mesh_event_retry_begin(&state,
+                                      PEER_ID,
+                                      &first,
+                                      &first_key,
+                                      1000u,
+                                      10000u,
+                                      EVENT_INTERVAL_MS,
+                                      0u) == 0);
+    assert(app_mesh_event_retry_note_failure(
+        &state,
+        APP_MESH_RF_RETRY_POLICY_RELIABLE_DATA,
+        1100u,
+        0x2468ace0u,
+        true,
+        &delay_ms));
+    retry_due_ms = state.retry_due_ms;
+    retry_round = state.retry.retry_round;
+
+    assert(app_mesh_event_retry_rebind_request(
+               &state, &retry, &retry_key_value) == 0);
+    assert(state.active);
+    assert(state.rf_attempts == 1u);
+    assert(state.retry_due_armed);
+    assert(state.retry_due_ms == retry_due_ms);
+    assert(state.retry.retry_round == retry_round);
+    assert(state.request.session_id == retry.session_id);
+    assert(state.request.sequence == retry.sequence);
+    assert(state.retry_key.session_id == retry.session_id);
+    assert(state.retry_key.sequence == retry.sequence);
+    assert(state.retry.key.session_id == retry.session_id);
+    assert(state.retry.key.sequence == retry.sequence);
+    assert(app_mesh_event_accept_classify(&state,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          first.session_id,
+                                          first.sequence,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_REJECT);
+    assert(app_mesh_event_accept_classify(&state,
+                                          PEER_ID,
+                                          LOCAL_ID,
+                                          PEER_ID,
+                                          retry.session_id,
+                                          retry.sequence,
+                                          true) ==
+           APP_MESH_EVENT_ACCEPT_EXACT);
 }
 
 static void test_delayed_legacy_accept_cannot_complete_newer_proposal(void)
@@ -974,12 +1073,95 @@ static void test_limited_retry_allows_deferrals_and_one_rf_retry(void)
     assert(!state.retry_due_armed);
 }
 
+static void test_four_click_anchors_share_one_known_parent_without_repair(void)
+{
+    enum {
+        ANCHOR_COUNT = 4,
+        RETAINED_ROUTE_RETRIES = ANCHOR_COUNT - 1,
+    };
+    struct app_mesh_known_parent_contact_retry_state states[ANCHOR_COUNT] = {0};
+    struct app_mesh_rf_retry_key keys[ANCHOR_COUNT];
+    bool served[ANCHOR_COUNT] = {0};
+
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        keys[i] = (struct app_mesh_rf_retry_key) {
+            .source_id = LOCAL_ID + i,
+            .destination_id = UINT64_C(0x9999888877776666),
+            .session_id = 0x4000u + (uint32_t)i,
+            .sequence = (uint16_t)(i + 1u),
+            .message_type = MSG_CLICK_REPORT,
+            .operation = APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE,
+        };
+    }
+
+    /* The relay serves one child per round. Every child waiting behind it
+     * retains the already-known route instead of entering discovery. */
+    for (size_t round = 0u; round < ANCHOR_COUNT; round++) {
+        for (size_t i = round; i < ANCHOR_COUNT; i++) {
+            if (i == round) {
+                app_mesh_known_parent_contact_note_success(
+                    &states[i], PEER_ID, &keys[i]);
+                served[i] = true;
+            } else {
+                uint8_t failures = 0u;
+
+                assert(app_mesh_known_parent_contact_note_hard_failure(
+                           &states[i],
+                           PEER_ID,
+                           &keys[i],
+                           RETAINED_ROUTE_RETRIES,
+                           &failures) ==
+                       APP_MESH_KNOWN_PARENT_CONTACT_RETRY);
+                assert(failures == round + 1u);
+            }
+        }
+    }
+    for (size_t i = 0u; i < ANCHOR_COUNT; i++) {
+        assert(served[i]);
+        assert(!states[i].active);
+    }
+}
+
+static void test_known_parent_enters_repair_after_four_failed_contacts(void)
+{
+    enum { RETAINED_ROUTE_RETRIES = 3 };
+    struct app_mesh_known_parent_contact_retry_state state = {0};
+    struct app_mesh_rf_retry_key key = {
+        .source_id = LOCAL_ID,
+        .destination_id = UINT64_C(0x9999888877776666),
+        .session_id = 0x5000u,
+        .sequence = 1u,
+        .message_type = MSG_CLICK_REPORT,
+        .operation = APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE,
+    };
+
+    for (uint8_t failure = 1u; failure <= RETAINED_ROUTE_RETRIES; failure++) {
+        uint8_t observed = 0u;
+
+        assert(app_mesh_known_parent_contact_note_hard_failure(
+                   &state,
+                   PEER_ID,
+                   &key,
+                   RETAINED_ROUTE_RETRIES,
+                   &observed) == APP_MESH_KNOWN_PARENT_CONTACT_RETRY);
+        assert(observed == failure);
+    }
+    assert(app_mesh_known_parent_contact_note_hard_failure(
+               &state,
+               PEER_ID,
+               &key,
+               RETAINED_ROUTE_RETRIES,
+               NULL) == APP_MESH_KNOWN_PARENT_CONTACT_REPAIR_ROUTE);
+    assert(!state.active);
+}
+
 int main(void)
 {
     test_counterphase_shift_preserves_frozen_proposal_shape();
     test_duplicate_conflict_and_busy_are_distinct();
     test_old_fnv_collision_is_a_digest_conflict();
     test_accept_correlates_with_exact_and_stable_release_identities();
+    test_rebinding_retry_identity_preserves_attempt_budget_and_backoff();
     test_delayed_legacy_accept_cannot_complete_newer_proposal();
     test_accept_phase_is_compatibility_agnostic_and_parity_can_be_bound();
     test_legacy_accept_survives_wire_validation_before_app_correlation();
@@ -992,6 +1174,8 @@ int main(void)
     test_accept_rx_cache_is_scoped_to_one_live_session();
     test_extend_deadline_keeps_same_parent_waiting();
     test_limited_retry_allows_deferrals_and_one_rf_retry();
+    test_four_click_anchors_share_one_known_parent_without_repair();
+    test_known_parent_enters_repair_after_four_failed_contacts();
     puts("app mesh event retry tests passed");
     return 0;
 }

@@ -770,6 +770,42 @@ static void test_connected_gap_hands_allowed_control_to_extended_follower(void)
            APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL);
 }
 
+static void test_connected_gap_hands_event_negotiation_to_extended_follower(void)
+{
+    const uint64_t gateway_id = 0x9999888877776666ull;
+    const uint64_t relay_anchor_id = 0x2222222222222301ull;
+    const uint8_t event_negotiation_flags =
+        FLAG_ROUTE_SETUP | FLAG_DIAGNOSTIC | FLAG_RANGE_ONLY;
+
+    assert(!app_mesh_c5_wake_followup_is_control(event_negotiation_flags));
+    assert(app_mesh_c5_wake_followup_uses_extended_phr(
+        event_negotiation_flags));
+    assert(app_mesh_c5_connected_gap_route_handoff_required(
+        relay_anchor_id,
+        gateway_id,
+        event_negotiation_flags,
+        false,
+        true));
+    assert(app_mesh_c5_connected_gap_rx_action(
+               false,
+               app_mesh_c5_connected_gap_route_handoff_required(
+                   relay_anchor_id,
+                   gateway_id,
+                   event_negotiation_flags,
+                   false,
+                   true),
+               false) ==
+           APP_MESH_C5_CONNECTED_GAP_RX_HANDOFF_ROUTE_CONTROL);
+
+    /* Forced-hop policy still refuses a direct-gateway copy in this lane. */
+    assert(!app_mesh_c5_connected_gap_route_handoff_required(
+        gateway_id,
+        gateway_id,
+        event_negotiation_flags,
+        false,
+        true));
+}
+
 static void test_route_adv_delay_targets_requester_reply_window(void)
 {
     const struct app_mesh_c5_route_adv_timing timing = {
@@ -922,6 +958,7 @@ int main(void)
     test_gateway_control_route_hint_uses_first_transport_copy();
     test_connected_gap_stays_armed_until_deadline_or_click();
     test_connected_gap_hands_allowed_control_to_extended_follower();
+    test_connected_gap_hands_event_negotiation_to_extended_follower();
     test_route_adv_delay_targets_requester_reply_window();
     test_route_reply_window_covers_direct_probe_and_reply_exchange();
     test_connected_gap_window_uses_channel5_until_retune_guard();

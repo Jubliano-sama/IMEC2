@@ -1,4 +1,5 @@
 #include "mesh_sim.h"
+#include "mesh_sim_internal.h"
 #include "mesh_sim_invariants.h"
 
 #include <stdint.h>
@@ -397,6 +398,7 @@ static void test_duplicate_relay_admission_is_coalesced(void)
     uint8_t relay;
     uint8_t gateway;
     uint16_t ignored;
+    const struct mesh_sim_transition *coalesced;
 
     phase = "duplicate-relay-admission";
     packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
@@ -440,8 +442,158 @@ static void test_duplicate_relay_admission_is_coalesced(void)
           world.roles[relay].tx_queue_count);
     CHECK(mesh_sim_count_transitions(&world,
                                      MESH_SIM_TRANSITION_PACKET_COALESCED,
-                                     SOURCE_B_ID) == 2u,
-          "duplicate forward/ACK admission was not diagnosed twice");
+                                     SOURCE_B_ID) == 1u,
+          "duplicate created a second upstream owner or failed to coalesce "
+          "the child hop ACK");
+    coalesced = mesh_sim_find_transition(
+        &world,
+        MESH_SIM_TRANSITION_PACKET_COALESCED,
+        SOURCE_B_ID,
+        0u);
+    CHECK(coalesced != NULL &&
+              coalesced->msg_type == MSG_MESH_HOP_ACK &&
+              coalesced->peer_id == SOURCE_A_ID,
+          "duplicate did not coalesce only the child-facing hop ACK");
+}
+
+static size_t queued_packet_count(
+    const struct mesh_sim_role_instance *node,
+    uint8_t msg_type,
+    uint64_t src_id,
+    uint32_t session_id,
+    uint16_t seq,
+    const uint8_t *payload,
+    size_t payload_len)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        const struct mesh_sim_queued_tx *queued = &node->tx_queue[i];
+        const struct mesh_outbound *outbound = &queued->outbound;
+
+        if (queued->valid && outbound->packet.msg_type == msg_type &&
+            outbound->packet.src_id == src_id &&
+            outbound->packet.session_id == session_id &&
+            outbound->packet.seq == seq &&
+            outbound->payload_len == payload_len &&
+            memcmp(outbound->payload, payload, payload_len) == 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static size_t queued_type_count(const struct mesh_sim_role_instance *node,
+                                uint8_t msg_type)
+{
+    size_t count = 0u;
+
+    for (size_t i = 0u; i < MESH_SIM_TX_QUEUE_CAPACITY; i++) {
+        if (node->tx_queue[i].valid &&
+            node->tx_queue[i].outbound.packet.msg_type == msg_type) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static void test_expired_relay_dedup_reuses_exact_full_queue_owner(void)
+{
+    static struct mesh_sim_world world;
+    struct proto_packet packet = data_packet(SOURCE_A_ID, 17u);
+    struct mesh_sim_queued_tx queue_snapshot[MESH_SIM_TX_QUEUE_CAPACITY];
+    const uint8_t payload[] = {0x43u};
+    const uint8_t mutated_payload[] = {0x44u};
+    size_t coalesced_before;
+    size_t coalesced_after_exact;
+    size_t queued_before_mutation;
+    uint8_t source;
+    uint8_t relay;
+    uint8_t gateway;
+    int ret;
+
+    phase = "expired-relay-dedup-full-app-queue";
+    packet.flags = FLAG_GATEWAY_ACK_REQUIRED | FLAG_DIAGNOSTIC;
+    packet.payload_len = sizeof(payload);
+    mesh_sim_init(&world, UINT32_C(0x2017));
+    CHECK(mesh_sim_add_role(&world, MESH_SIM_ROLE_TRANSMITTER,
+                            SOURCE_A_ID, GATEWAY_ID, 1u, &source) ==
+              MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_ANCHOR,
+                                SOURCE_B_ID, GATEWAY_ID, 1u, &relay) ==
+              MESH_SIM_OK &&
+              mesh_sim_add_role(&world, MESH_SIM_ROLE_GATEWAY,
+                                GATEWAY_ID, GATEWAY_ID, 1u, &gateway) ==
+              MESH_SIM_OK,
+          "relay roles setup failed");
+    CHECK(mesh_sim_set_link(&world, source, relay, 100u, 0u) ==
+              MESH_SIM_OK &&
+              mesh_sim_set_link(&world, relay, gateway, 100u, 0u) ==
+              MESH_SIM_OK &&
+              mesh_sim_install_route(&world, relay, gateway, 0u, 1u) ==
+              PROTO_OK &&
+              mesh_sim_set_tx_queue_capacity(&world, relay, 2u) ==
+              MESH_SIM_OK,
+          "relay route or bounded queue setup failed");
+
+    world.now_us = UINT64_C(1000000);
+    CHECK(mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         payload, sizeof(payload)) ==
+              MESH_SIM_OK,
+          "initial transit report admission failed");
+    CHECK(world.roles[relay].tx_queue_count == 2u &&
+              queued_packet_count(&world.roles[relay], MSG_MESH_DATA,
+                                  packet.src_id, packet.session_id,
+                                  packet.seq, payload, sizeof(payload)) == 1u &&
+              queued_type_count(&world.roles[relay], MSG_MESH_HOP_ACK) == 1u,
+          "initial report and hop ACK did not fill the bounded queue exactly");
+    memcpy(queue_snapshot, world.roles[relay].tx_queue,
+           sizeof(queue_snapshot));
+
+    world.now_us +=
+        ((uint64_t)ROUTE_DEDUP_WINDOW_MS + 1u) * UINT64_C(1000);
+    coalesced_before = mesh_sim_count_transitions(
+        &world, MESH_SIM_TRANSITION_PACKET_COALESCED, SOURCE_B_ID);
+    CHECK(mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         payload, sizeof(payload)) ==
+              MESH_SIM_OK,
+          "exact replay after relay dedup expiry was rejected");
+    coalesced_after_exact = mesh_sim_count_transitions(
+        &world, MESH_SIM_TRANSITION_PACKET_COALESCED, SOURCE_B_ID);
+    CHECK(world.roles[relay].tx_queue_count == 2u &&
+              memcmp(queue_snapshot, world.roles[relay].tx_queue,
+                     sizeof(queue_snapshot)) == 0 &&
+              queued_type_count(&world.roles[relay], MSG_MESH_HOP_ACK) == 1u,
+          "exact replay changed the full durable queue owner");
+    CHECK(coalesced_after_exact == coalesced_before + 2u,
+          "exact replay did not coalesce both the retained report and its hop ACK: before=%zu after=%zu",
+          coalesced_before, coalesced_after_exact);
+
+    world.now_us +=
+        ((uint64_t)ROUTE_DEDUP_WINDOW_MS + 1u) * UINT64_C(1000);
+    queued_before_mutation = mesh_sim_count_transitions(
+        &world, MESH_SIM_TRANSITION_PACKET_QUEUED, SOURCE_B_ID);
+    ret = mesh_sim_relay_dispatch_packet(&world, relay, source, &packet,
+                                         mutated_payload,
+                                         sizeof(mutated_payload));
+    CHECK(ret == MESH_SIM_ERR_CAPACITY,
+          "same-header mutated payload admission ret=%d expected capacity",
+          ret);
+    CHECK(world.roles[relay].tx_queue_count == 2u &&
+              memcmp(queue_snapshot, world.roles[relay].tx_queue,
+                     sizeof(queue_snapshot)) == 0 &&
+              queued_type_count(&world.roles[relay], MSG_MESH_HOP_ACK) == 1u,
+          "mutated replay changed the full durable queue owner");
+    CHECK(queued_packet_count(&world.roles[relay], MSG_MESH_DATA,
+                              packet.src_id, packet.session_id, packet.seq,
+                              mutated_payload, sizeof(mutated_payload)) == 0u &&
+              mesh_sim_count_transitions(
+                  &world, MESH_SIM_TRANSITION_PACKET_QUEUED,
+                  SOURCE_B_ID) == queued_before_mutation &&
+              mesh_sim_count_transitions(
+                  &world, MESH_SIM_TRANSITION_PACKET_COALESCED,
+                  SOURCE_B_ID) == coalesced_after_exact,
+          "mutated replay was acknowledged or coalesced despite failed custody");
 }
 
 static void test_malformed_control_is_inert(void)
@@ -836,6 +988,7 @@ int main(void)
     test_ack_loss_does_not_drop_data();
     test_duplicate_delivery_is_idempotent();
     test_duplicate_relay_admission_is_coalesced();
+    test_expired_relay_dedup_reuses_exact_full_queue_owner();
     test_malformed_control_is_inert();
     test_same_seed_replays_delay_and_reordering();
     test_stale_relay_tick_cannot_mutate_new_operation();

@@ -5,6 +5,13 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 CLICKER = (ROOT / "app/src/app_clicker.c").read_text(encoding="utf-8")
+MAIN = (ROOT / "app/src/main.c").read_text(encoding="utf-8")
+RTT_CONTROL = (
+    ROOT / "app/src/app_clicker_rtt_control.c"
+).read_text(encoding="utf-8")
+RTT_BENCH_CONFIG = (
+    ROOT / "app/conf/mesh-clicker-rtt-bench.conf"
+).read_text(encoding="utf-8")
 
 
 def function_body(name: str) -> str:
@@ -18,6 +25,68 @@ def function_body(name: str) -> str:
         if depth == 0:
             return CLICKER[match.start() : index + 1]
     raise AssertionError(f"unterminated function {name}")
+
+
+def source_function_body(source: str, name: str) -> str:
+    match = re.search(rf"\b{name}\s*\([^;]*?\)\s*\{{", source, re.DOTALL)
+    assert match is not None, f"missing function {name}"
+    brace = source.index("{", match.start())
+    depth = 0
+    for index in range(brace, len(source)):
+        depth += source[index] == "{"
+        depth -= source[index] == "}"
+        if depth == 0:
+            return source[match.start() : index + 1]
+    raise AssertionError(f"unterminated function {name}")
+
+
+# RTT is an extra supervised input on the normal clicker, never a replacement
+# for the physical GPIO path.  The bench fragment may enable RTT only; startup
+# must arm the button before polling RTT, and RTT must inject through the same
+# gesture machine and bounded action FIFO as a real press/release pair.
+assert RTT_BENCH_CONFIG.strip() == "CONFIG_IMEC_CLICKER_RTT_CONTROL=y"
+main = source_function_body(MAIN, "main")
+button_start = main.index("app_clicker_button_init()")
+rtt_start = main.index("app_clicker_rtt_control_start()", button_start)
+assert button_start < rtt_start
+rtt_dispatch = source_function_body(
+    RTT_CONTROL, "app_clicker_rtt_dispatch_line"
+)
+assert "app_clicker_inject_button_gesture(gesture)" in rtt_dispatch
+gesture_inject = function_body("app_clicker_inject_button_gesture")
+assert "click_button_gesture_handle(BUTTON_SIGNAL_PRESS" in gesture_inject
+assert "click_button_gesture_handle(BUTTON_SIGNAL_RELEASE" in gesture_inject
+assert gesture_inject.count("app_clicker_submit_button_action(action)") == 2
+for physical_wrapper in (
+    "click_button_handle_signal_at(",
+    "click_button_handle_signal(",
+):
+    assert physical_wrapper not in gesture_inject, (
+        "RTT gesture injection must not pass through the physical-button "
+        "provenance wrapper"
+    )
+
+physical_signal = function_body("click_button_handle_signal_at")
+gesture = physical_signal.index("click_button_gesture_handle(")
+trace = physical_signal.index(
+    'status_debug_printf("DBG_CLICKER_BUTTON signal=%u source=%s at=%u '
+    'action=%u ret=%d"',
+    gesture,
+)
+reject = physical_signal.index("if (ret != PROTO_OK)", trace)
+assert gesture < trace < reject, (
+    "every physical signal outcome must be traced before success or rejection"
+)
+for trace_argument in (
+    "(unsigned int)signal",
+    'source == NULL ? "unknown" : source',
+    "signal_at_ms",
+    "(unsigned int)action",
+    "ret",
+):
+    assert trace_argument in physical_signal[trace:reject], (
+        f"physical-button provenance trace is missing {trace_argument}"
+    )
 
 
 poweroff = function_body("clicker_systemoff_now")

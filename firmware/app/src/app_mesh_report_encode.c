@@ -19,7 +19,8 @@
 
 LOG_MODULE_DECLARE(app_mesh_report, LOG_LEVEL_DBG);
 
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
 BUILD_ASSERT(DWM3000_FULL_CIR_BYTES <= UINT16_MAX,
              "CIR reassembly length must fit its protocol field");
 BUILD_ASSERT(RANGE_REPORT_CIR_PACKET_METADATA_BYTES +
@@ -34,7 +35,8 @@ BUILD_ASSERT(RANGE_REPORT_CIR_WINDOW_RAW_BYTES == DWM3000_FULL_CIR_BYTES,
 
 static struct app_mesh_report_encode_ops report_encode_ops;
 
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
 struct anchor_cir_report_stream {
     uint64_t clicker_id;
     uint64_t anchor_id;
@@ -49,6 +51,7 @@ struct anchor_cir_report_stream {
     uint16_t next_fragment_index;
     uint16_t fragment_count;
     uint16_t next_seq;
+    bool queue_in_progress;
     bool active;
 };
 
@@ -264,7 +267,8 @@ int append_anchor_status_tlvs(uint8_t *payload,
 
 uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity)
 {
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
     k_spinlock_key_t key = k_spin_lock(&anchor_cir_report_lock);
 
     if (anchor_cir_report_stream.active) {
@@ -290,7 +294,8 @@ uint8_t *mesh_anchor_click_cir_capture_begin(size_t *capacity)
 
 bool app_mesh_report_encode_cir_pending(void)
 {
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
     k_spinlock_key_t key = k_spin_lock(&anchor_cir_report_lock);
     bool pending = anchor_cir_report_stream.active;
 
@@ -301,7 +306,8 @@ bool app_mesh_report_encode_cir_pending(void)
 #endif
 }
 
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
 static int anchor_cir_report_queue_next(void)
 {
     struct range_report_cir_fragment fragment = {0};
@@ -319,6 +325,10 @@ static int anchor_cir_report_queue_next(void)
     if (!anchor_cir_report_stream.active) {
         k_spin_unlock(&anchor_cir_report_lock, key);
         return -ENOENT;
+    }
+    if (anchor_cir_report_stream.queue_in_progress) {
+        k_spin_unlock(&anchor_cir_report_lock, key);
+        return -EBUSY;
     }
 
     chunk_len = MIN((uint16_t)sizeof(chunk),
@@ -340,16 +350,8 @@ static int anchor_cir_report_queue_next(void)
            &anchor_click_cir_buffer[anchor_cir_report_stream.next_offset],
            chunk_len);
     generation = anchor_cir_report_stream.generation;
-    anchor_cir_report_stream.next_offset += chunk_len;
-    anchor_cir_report_stream.next_fragment_index++;
-    outbound.packet.seq = anchor_cir_report_stream.next_seq++;
-    if (anchor_cir_report_stream.next_seq == 0u) {
-        anchor_cir_report_stream.next_seq = 1u;
-    }
-    if (anchor_cir_report_stream.next_offset >=
-        anchor_cir_report_stream.captured_len) {
-        anchor_cir_report_stream.active = false;
-    }
+    outbound.packet.seq = anchor_cir_report_stream.next_seq;
+    anchor_cir_report_stream.queue_in_progress = true;
     k_spin_unlock(&anchor_cir_report_lock, key);
 
     ret = report_append_cir_fragment_tlvs(payload,
@@ -380,6 +382,37 @@ static int anchor_cir_report_queue_next(void)
     }
     ret = report_encode_ops.queue_cir_fragment(&outbound, &queue_depth);
     if (ret == 0) {
+        key = k_spin_lock(&anchor_cir_report_lock);
+        if (anchor_cir_report_stream.generation != generation ||
+            !anchor_cir_report_stream.active ||
+            !anchor_cir_report_stream.queue_in_progress ||
+            anchor_cir_report_stream.next_offset != fragment.byte_offset ||
+            anchor_cir_report_stream.next_fragment_index !=
+                fragment.fragment_index ||
+            anchor_cir_report_stream.next_seq != outbound.packet.seq) {
+            if (anchor_cir_report_stream.generation == generation) {
+                anchor_cir_report_stream.queue_in_progress = false;
+                anchor_cir_report_stream.active = false;
+            }
+            k_spin_unlock(&anchor_cir_report_lock, key);
+            LOG_ERR("anchor CIR stream changed after fragment was queued: event=%u fragment=%u/%u",
+                    fragment.event_seq,
+                    fragment.fragment_index + 1u,
+                    fragment.fragment_count);
+            return -ESTALE;
+        }
+        anchor_cir_report_stream.next_offset += chunk_len;
+        anchor_cir_report_stream.next_fragment_index++;
+        anchor_cir_report_stream.next_seq++;
+        if (anchor_cir_report_stream.next_seq == 0u) {
+            anchor_cir_report_stream.next_seq = 1u;
+        }
+        anchor_cir_report_stream.queue_in_progress = false;
+        if (anchor_cir_report_stream.next_offset >=
+            anchor_cir_report_stream.captured_len) {
+            anchor_cir_report_stream.active = false;
+        }
+        k_spin_unlock(&anchor_cir_report_lock, key);
         status_debug_printf("DBG_ANCHOR_CIR_QUEUE event=%u fragment=%u/%u offset=%u bytes=%u queue=%u\n",
                             fragment.event_seq,
                             fragment.fragment_index + 1u,
@@ -390,11 +423,17 @@ static int anchor_cir_report_queue_next(void)
         report_tx_schedule(0u);
         return 0;
     }
-    ret = -ENOSPC;
+    key = k_spin_lock(&anchor_cir_report_lock);
+    if (anchor_cir_report_stream.generation == generation) {
+        anchor_cir_report_stream.queue_in_progress = false;
+    }
+    k_spin_unlock(&anchor_cir_report_lock, key);
+    return -ENOSPC;
 
 fail_stream:
     key = k_spin_lock(&anchor_cir_report_lock);
     if (anchor_cir_report_stream.generation == generation) {
+        anchor_cir_report_stream.queue_in_progress = false;
         anchor_cir_report_stream.active = false;
     }
     k_spin_unlock(&anchor_cir_report_lock, key);
@@ -440,6 +479,7 @@ static int anchor_cir_report_start(uint64_t clicker_id,
                     UWB_FULL_CIR_REPORT_PACKET_BYTES - 1u) /
                    UWB_FULL_CIR_REPORT_PACKET_BYTES);
     anchor_cir_report_stream.next_seq = next_seq == 0u ? 1u : next_seq;
+    anchor_cir_report_stream.queue_in_progress = false;
     anchor_cir_report_stream.active = true;
     k_spin_unlock(&anchor_cir_report_lock, key);
 
@@ -457,7 +497,8 @@ static int anchor_cir_report_start(uint64_t clicker_id,
 
 int app_mesh_report_encode_queue_next_cir(void)
 {
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
     return anchor_cir_report_queue_next();
 #else
     return -ENOENT;
@@ -468,6 +509,8 @@ static int build_range_report_samples(uint64_t clicker_id,
                                       uint32_t event_seq,
                                       uint8_t attempt_index,
                                       uint32_t burst_id,
+                                      const uint64_t *participant_anchor_ids,
+                                      uint8_t participant_anchor_count,
                                       const struct dwm3000_range_result *range_result,
                                       const int32_t *distance_samples_mm,
                                       const uint8_t *range_round_indices,
@@ -561,11 +604,14 @@ build_payload:
         fields.event_seq = event_seq;
         fields.attempt_index = attempt_index;
         fields.detection_source = DETECTION_SOURCE_UWB_WAKE_CLAIM;
+        fields.participant_anchor_ids = participant_anchor_ids;
+        fields.participant_anchor_count = participant_anchor_count;
         fields.detection_attempt_present = attempt_index != 0u;
         fields.distance_mm = range_result->distance_mm;
         fields.quality = range_result->quality;
         fields.rsl_dbm = range_result->rsl_dbm;
-        fields.cir_sample = range_result->cir_sampled ? range_result->cir_sample : NULL;
+        fields.cir_sample = range_result->cir_sampled ?
+                            range_result->cir_sample : NULL;
         fields.range_status = range_result->status;
         fields.distance_samples_mm = chunk_count > 0u ? &distance_samples_mm[sample_index] : NULL;
         fields.range_round_indices = chunk_count > 0u ?
@@ -736,7 +782,8 @@ build_payload:
         packet_index++;
     } while (sample_index < sample_count);
 
-#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
+#if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_MESH_CLICK_FULL_CIR_REPORTING)
     if (range_result->anchor_full_cir_sampled) {
         uint64_t cir_timestamp_ms = 0u;
         uint16_t cir_seq;
@@ -772,16 +819,45 @@ fail:
 
 int build_uwb_schedule_report_if_relevant(
     const struct uwb_anchor_session *session,
+    const struct uwb_range_schedule_frame *schedule,
     uint8_t schedule_flags,
     const struct anchor_range_window_report *report)
 {
+    uint64_t participant_anchor_ids[RANGE_REPORT_MAX_PARTICIPANT_ANCHORS] = {0};
+    uint8_t participant_anchor_count = 0u;
     int ret;
 
     if ((schedule_flags & (FLAG_COUNT_AS_CLICK | FLAG_DIAGNOSTIC)) == 0u) {
         return 0;
     }
-    if (session == NULL || report == NULL || !report->have_result) {
+    if (session == NULL || schedule == NULL || report == NULL ||
+        !report->have_result) {
         return 0;
+    }
+
+    if ((schedule_flags & FLAG_COUNT_AS_CLICK) != 0u) {
+        if (schedule->selected_count <
+                RANGE_REPORT_MIN_PARTICIPANT_ANCHORS ||
+            schedule->selected_count >
+                RANGE_REPORT_MAX_PARTICIPANT_ANCHORS) {
+            return -EINVAL;
+        }
+        participant_anchor_count = schedule->selected_count;
+        for (uint8_t i = 0u; i < participant_anchor_count; i++) {
+            participant_anchor_ids[i] = schedule->entries[i].anchor_id;
+        }
+        for (uint8_t i = 1u; i < participant_anchor_count; i++) {
+            uint64_t value = participant_anchor_ids[i];
+            uint8_t insert_at = i;
+
+            while (insert_at > 0u &&
+                   participant_anchor_ids[insert_at - 1u] > value) {
+                participant_anchor_ids[insert_at] =
+                    participant_anchor_ids[insert_at - 1u];
+                insert_at--;
+            }
+            participant_anchor_ids[insert_at] = value;
+        }
     }
 
     ret = build_range_report_samples(session->epoch.clicker_id,
@@ -789,6 +865,9 @@ int build_uwb_schedule_report_if_relevant(
                                      session->epoch.attempt_index,
                                      uwb_schedule_burst_id(session->epoch.click_event_id,
                                                            session->epoch.attempt_index),
+                                     participant_anchor_count > 0u ?
+                                         participant_anchor_ids : NULL,
+                                     participant_anchor_count,
                                      &report->result,
                                      report->distance_samples_mm,
                                      report->range_round_indices,

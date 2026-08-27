@@ -1920,7 +1920,7 @@ static int mesh_route_wake_sniff_activity(const char *phase,
     return ret == -ETIMEDOUT ? 0 : ret;
 }
 
-static void mesh_route_wake_backoff(uint64_t target_id,
+static bool mesh_route_wake_backoff(uint64_t target_id,
                                     const char *phase,
                                     const char *reason,
                                     uint8_t retry_index)
@@ -1945,7 +1945,7 @@ static void mesh_route_wake_backoff(uint64_t target_id,
             phase == NULL ? "unknown" : phase,
             delay_ms,
             reason == NULL ? "route" : reason);
-    k_msleep(delay_ms);
+    return mesh_click_preempt_wait_route_backoff(delay_ms);
 }
 
 static int mesh_route_wake_listen_for_click(
@@ -2307,6 +2307,11 @@ wake_train_attempt:
             ret = -ESHUTDOWN;
             break;
         }
+        if (!atomic_gateway_control &&
+            mesh_click_preempt_boundary_requested()) {
+            ret = -ECANCELED;
+            break;
+        }
 
         ret = uwb_clicker_build_wake_claim(session,
                                            clicker_priority_id(event_seq,
@@ -2537,10 +2542,13 @@ out:
         if (ret == -EAGAIN && c5_activity &&
             polite_retry < APP_WAKE_TRAIN_POLITE_MAX_RETRIES) {
             mesh_restart_role_scan();
-            mesh_route_wake_backoff(target_id,
-                                    activity_phase,
-                                    reason,
-                                    polite_retry);
+            if (mesh_route_wake_backoff(target_id,
+                                        activity_phase,
+                                        reason,
+                                        polite_retry)) {
+                ret = -ECANCELED;
+                goto out_unlock;
+            }
             polite_retry++;
             goto wake_train_attempt;
         }

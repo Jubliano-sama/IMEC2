@@ -39,7 +39,12 @@ static int mesh_try_send_report_tx_ch9_batch(void)
         return -EAGAIN;
     }
 
-    ret = mesh_relay_select_next_hop(&mesh_runtime, first->packet.dst_id, &next_hop_id);
+    ret = mesh_relay_select_next_hop_for_packet(&mesh_runtime,
+                                                &first->packet,
+                                                first->payload,
+                                                first->payload_len,
+                                                now_ms,
+                                                &next_hop_id);
     if (ret != PROTO_OK) {
         return -ENOTSUP;
     }
@@ -224,9 +229,12 @@ static int mesh_try_send_report_tx_ch9_batch(void)
             (void)report_tx_queue_abort_head(&head_token);
             break;
         }
-        ret = mesh_relay_select_next_hop(&mesh_runtime,
-                                         queued->packet.dst_id,
-                                         &queued_next_hop_id);
+        ret = mesh_relay_select_next_hop_for_packet(&mesh_runtime,
+                                                    &queued->packet,
+                                                    queued->payload,
+                                                    queued->payload_len,
+                                                    now_ms,
+                                                    &queued_next_hop_id);
         if (ret != PROTO_OK || queued_next_hop_id != next_hop_id) {
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) && sent_count > 0u) {
                 status_debug_printf("DBG_CH9_TX_BATCH_STOP reason=next-hop sent=%u now=%u ret=%d next=0x%llx want=0x%llx seq=%u q=%u\n",
@@ -1064,6 +1072,65 @@ int mesh_range_report_batch_reserve(uint64_t clicker_id,
         RANGE_REPORT_MAX_PACKET_FRAGMENTS);
 }
 
+int mesh_range_report_batch_rebind(uint64_t current_clicker_id,
+                                   uint32_t current_event_seq,
+                                   uint8_t current_attempt_index,
+                                   uint64_t replacement_clicker_id,
+                                   uint32_t replacement_event_seq,
+                                   uint8_t replacement_attempt_index)
+{
+#if DEVICE_ROLE == ROLE_ANCHOR
+    int ret;
+
+    if (current_clicker_id == 0u || current_event_seq == 0u ||
+        replacement_clicker_id == 0u || replacement_event_seq == 0u) {
+        return -EINVAL;
+    }
+    ret = k_mutex_lock(&report_tx_queue_overflow_lock, K_FOREVER);
+    if (ret != 0) {
+        return ret;
+    }
+    if (!anchor_range_report_batch_matches_locked(current_clicker_id,
+                                                  current_event_seq,
+                                                  current_attempt_index)) {
+        ret = -ESTALE;
+        goto out;
+    }
+    if (anchor_range_report_batch_reservation.queue_admission_fail_closed ||
+        anchor_range_report_batch_reservation.rollback_scratch_owned ||
+        anchor_range_report_batch_reservation.queued_fragment_count != 0u ||
+        anchor_range_report_batch_reservation.control.fragment_count != 0u) {
+        ret = -EBUSY;
+        goto out;
+    }
+
+    anchor_range_report_batch_reservation.clicker_id =
+        replacement_clicker_id;
+    anchor_range_report_batch_reservation.event_seq = replacement_event_seq;
+    anchor_range_report_batch_reservation.attempt_index =
+        replacement_attempt_index;
+    anchor_range_report_batch_reservation.control.clicker_id =
+        replacement_clicker_id;
+    anchor_range_report_batch_reservation.control.event_seq =
+        replacement_event_seq;
+    anchor_range_report_batch_reservation.control.attempt_index =
+        replacement_attempt_index;
+    ret = 0;
+
+out:
+    k_mutex_unlock(&report_tx_queue_overflow_lock);
+    return ret;
+#else
+    ARG_UNUSED(current_clicker_id);
+    ARG_UNUSED(current_event_seq);
+    ARG_UNUSED(current_attempt_index);
+    ARG_UNUSED(replacement_clicker_id);
+    ARG_UNUSED(replacement_event_seq);
+    ARG_UNUSED(replacement_attempt_index);
+    return 0;
+#endif
+}
+
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_ZTEST)
 enum mesh_range_report_batch_abort_queue_operation {
     MESH_RANGE_REPORT_BATCH_ABORT_PREFLIGHT_PEEK = 0,
@@ -1752,11 +1819,9 @@ static void report_tx_work_handler(struct k_work *work)
         }
     }
 #if DEVICE_ROLE == ROLE_ANCHOR && defined(CONFIG_IMEC_MESH_ROUTE_TEST)
-    if (report_tx_queue_used() < 2u) {
-        ret = app_mesh_report_encode_queue_next_cir();
-        if (ret < 0 && ret != -ENOENT) {
-            LOG_WRN("anchor partial CIR report refill failed: %d", ret);
-        }
+    ret = app_mesh_report_encode_queue_next_cir();
+    if (ret < 0 && ret != -ENOENT && ret != -ENOSPC) {
+        LOG_WRN("anchor partial CIR report refill failed: %d", ret);
     }
 #endif
     anchor_busy = anchor_uwb_window_active();
@@ -1846,9 +1911,13 @@ static void report_tx_work_handler(struct k_work *work)
 
     {
         uint64_t selected_next_hop_id = 0u;
-        int select_ret = mesh_relay_select_next_hop(&mesh_runtime,
-                                                    outbound->packet.dst_id,
-                                                    &selected_next_hop_id);
+        int select_ret = mesh_relay_select_next_hop_for_packet(
+            &mesh_runtime,
+            &outbound->packet,
+            outbound->payload,
+            outbound->payload_len,
+            now_ms,
+            &selected_next_hop_id);
 
         if (select_ret != PROTO_OK) {
             enum app_mesh_ch9_timeout_pressure_action pressure_action =
@@ -1860,23 +1929,15 @@ static void report_tx_work_handler(struct k_work *work)
                     DEVICE_ID);
 
             if (pressure_action == APP_MESH_CH9_TIMEOUT_DROP_TRANSIT) {
-                ret = report_tx_queue_commit_head(&head_token, outbound);
-                if (ret != 0) {
-                    LOG_ERR("report queue transit-drop commit failed: %d", ret);
-                    (void)report_tx_queue_abort_head(&head_token);
-                    report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
-                    return;
-                }
-                status_debug_printf("DBG_TRANSIT_QUEUE_DROP_NO_UPSTREAM src=0x%llx seq=%u type=0x%02x select=%d q=%u\n",
+                /* The child retired its copy on our hop ACK, so this queue
+                 * head is now the sole owner. Let the normal route-wait path
+                 * below retain it; route loss is never permission to drop. */
+                status_debug_printf("DBG_TRANSIT_QUEUE_RETAIN_NO_UPSTREAM src=0x%llx seq=%u type=0x%02x select=%d q=%u\n",
                                     (unsigned long long)outbound->packet.src_id,
                                     outbound->packet.seq,
                                     outbound->packet.msg_type,
                                     select_ret,
                                     report_tx_queue_used());
-                if (report_tx_queue_used() > 0u) {
-                    report_tx_schedule(0u);
-                }
-                return;
             }
             if (pressure_action == APP_MESH_CH9_TIMEOUT_DEFER_LOCAL) {
                 (void)report_tx_queue_abort_head(&head_token);
@@ -1921,6 +1982,25 @@ static void report_tx_work_handler(struct k_work *work)
         return;
     }
 
+    if (mesh_route_waiting_tx_owns_exact(
+            outbound, APP_MESH_ROUTE_WAIT_TX_OWNER_GENERIC)) {
+        /*
+         * A known parent whose Channel-9 contact still needs refreshing can
+         * retain this exact packet in the route-wait lane while returning
+         * -EBUSY.  That lane is now the sole retry owner, so commit the queue
+         * head for every exact transfer result rather than keying ownership
+         * transfer to the incidental errno used by route discovery.
+         */
+        status_debug_note("DBG_REPORT_QUEUE_TO_ROUTE_WAIT\n");
+        ret = report_tx_queue_commit_head(&head_token, outbound);
+        if (ret != 0) {
+            LOG_ERR("report queue route-wait transfer commit failed: %d", ret);
+            (void)report_tx_queue_abort_head(&head_token);
+            report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        }
+        return;
+    }
+
     if (ret == -EAGAIN) {
         uint32_t retry_delay_ms = 0u;
 
@@ -1944,19 +2024,6 @@ static void report_tx_work_handler(struct k_work *work)
                                              retry_delay_ms);
         report_tx_schedule_backoff(retry_delay_ms,
                                    "report-tx-transient");
-        return;
-    }
-
-    if (ret == -EHOSTUNREACH &&
-        IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
-        mesh_route_waiting_tx_active()) {
-        status_debug_note("DBG_REPORT_QUEUE_TO_ROUTE_WAIT\n");
-        ret = report_tx_queue_commit_head(&head_token, outbound);
-        if (ret != 0) {
-            LOG_ERR("report queue route-wait transfer commit failed: %d", ret);
-            (void)report_tx_queue_abort_head(&head_token);
-            report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
-        }
         return;
     }
 
@@ -2000,6 +2067,22 @@ static void report_tx_work_handler(struct k_work *work)
         return;
     }
 
+    if (outbound->packet.src_id != DEVICE_ID &&
+        outbound->packet.dst_id == GATEWAY_ID &&
+        (outbound->packet.flags & FLAG_GATEWAY_ACK_REQUIRED) != 0u) {
+        /* A validated transit report cannot become permanently malformed in
+         * this adapter. Preserve its sole custody and fail loud instead of
+         * committing a silent drop after its child has already stopped. */
+        (void)report_tx_queue_abort_head(&head_token);
+        LOG_ERR("retained transit report hit permanent TX error: src=0x%016llx type=0x%02x seq=%u ret=%d",
+                (unsigned long long)outbound->packet.src_id,
+                outbound->packet.msg_type,
+                outbound->packet.seq,
+                ret);
+        app_watchdog_stop_feeding();
+        report_tx_schedule(REPORT_TX_RETRY_DELAY_MS);
+        return;
+    }
     {
         int commit_ret = report_tx_queue_commit_head(&head_token, outbound);
 
@@ -2210,9 +2293,12 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
             app_watchdog_stop_feeding();
         } else if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
             status_debug_printf(
-                "DBG_TRANSIT_REVERSE_ROUTE_COMMIT src=0x%llx prev=0x%llx owner=queue\n",
+                "DBG_TRANSIT_REVERSE_ROUTE_COMMIT src=0x%llx session=%u seq=%u prev=0x%llx owner=queue admission=%s\n",
                 (unsigned long long)queued.packet.src_id,
-                (unsigned long long)queued.ingress_previous_hop_id);
+                queued.packet.session_id,
+                queued.packet.seq,
+                (unsigned long long)queued.ingress_previous_hop_id,
+                duplicate_owned ? "existing" : "new");
         }
     }
 
@@ -2225,8 +2311,12 @@ int queue_anchor_report(const struct mesh_outbound *outbound)
         app_stack_workload_diag_click_sample(&queued.packet, click_queue_depth,
                                              click_queue_depth);
     }
-    LOG_INF("anchor queued gateway-bound report: msg=0x%02x earliest_tx_ms=%u queue_depth=%u",
+    LOG_INF("anchor queued gateway-bound report: msg=0x%02x src=0x%016llx session=%u seq=%u admission=%s earliest_tx_ms=%u queue_depth=%u",
             queued.packet.msg_type,
+            (unsigned long long)queued.packet.src_id,
+            queued.packet.session_id,
+            queued.packet.seq,
+            duplicate_owned ? "existing" : "new",
             queued.earliest_tx_ms,
             queue_depth);
     if (!anchor_uwb_window_active()) {
@@ -2976,6 +3066,7 @@ static int mesh_complete_gateway_ack_confirm(
 {
     struct proto_packet original_packet;
     uint8_t original_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    bool locally_originated;
     int ret;
 
     ret = mesh_gateway_ack_confirm_identity_packet(
@@ -2984,14 +3075,33 @@ static int mesh_complete_gateway_ack_confirm(
         confirm_payload_len,
         &original_packet,
         original_digest);
-    if (ret != PROTO_OK || original_packet.src_id != DEVICE_ID ||
-        original_packet.dst_id != GATEWAY_ID) {
+    if (ret != PROTO_OK || original_packet.dst_id != GATEWAY_ID) {
         status_debug_printf(
             "DBG_ACK_CONFIRM_TERMINAL stage=identity ret=%d msg=%u seq=%u\n",
             ret,
             confirm_packet == NULL ? 0u : confirm_packet->msg_type,
             confirm_packet == NULL ? 0u : confirm_packet->seq);
         return -EBADMSG;
+    }
+    locally_originated = original_packet.src_id == DEVICE_ID;
+
+    if (!locally_originated) {
+        /* The child already retired its original on this relay's hop ACK.
+         * There is no local producer record to consume here; exact relay-core
+         * custody is the only remaining owner. */
+        ret = mesh_relay_commit_gateway_ack_confirm_terminal(
+            &mesh_runtime,
+            confirm_packet,
+            confirm_payload,
+            confirm_payload_len,
+            k_uptime_get_32());
+        status_debug_printf(
+            "DBG_RELAY_ACK_CONFIRM_TERMINAL ret=%d src=0x%llx type=0x%02x seq=%u\n",
+            ret,
+            (unsigned long long)original_packet.src_id,
+            original_packet.msg_type,
+            original_packet.seq);
+        return ret == PROTO_OK ? 0 : -EBADMSG;
     }
 
     /*
@@ -3667,8 +3777,11 @@ after_gateway_ack:
         } else if (mesh_forward_uses_gateway_batch_queue(&result->forward)) {
             ret = queue_anchor_report(&result->forward);
             if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
-                status_debug_printf("DBG_FORWARD_GATEWAY_BATCH_QUEUE ret=%d seq=%u q=%u\n",
+                status_debug_printf("DBG_FORWARD_GATEWAY_BATCH_QUEUE ret=%d src=0x%llx session=%u seq=%u q=%u\n",
                                     ret,
+                                    (unsigned long long)
+                                        result->forward.packet.src_id,
+                                    result->forward.packet.session_id,
                                     result->forward.packet.seq,
                                     report_tx_queue_used());
             }
@@ -3697,8 +3810,10 @@ after_gateway_ack:
                 } else if (reverse_route_ret == PROTO_OK &&
                            IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
                     status_debug_printf(
-                        "DBG_TRANSIT_REVERSE_ROUTE_COMMIT src=0x%llx prev=0x%llx\n",
+                        "DBG_TRANSIT_REVERSE_ROUTE_COMMIT src=0x%llx session=%u seq=%u prev=0x%llx owner=relay\n",
                         (unsigned long long)result->forward.packet.src_id,
+                        result->forward.packet.session_id,
+                        result->forward.packet.seq,
                         (unsigned long long)
                             result->forward.ingress_previous_hop_id);
                 }
@@ -3901,9 +4016,9 @@ after_gateway_ack:
             uint64_t debug_next_hop = 0u;
             int debug_select_ret;
 
-            debug_select_ret = mesh_relay_select_next_hop(&mesh_runtime,
-                                                          retransmit->packet.dst_id,
-                                                          &debug_next_hop);
+            debug_next_hop = retransmit->next_hop_id;
+            debug_select_ret = mesh_id_is_unicast(debug_next_hop) ?
+                               PROTO_OK : PROTO_ERR_NOT_FOUND;
             mesh_fill_channel5_requirements(&requirements);
             (void)mesh_expire_channel9_timings(now_ms, "retransmit");
             direct_gateway_retransmit =
@@ -4053,6 +4168,10 @@ after_gateway_ack:
                         debug_select_ret, debug_next_hop)) {
                         uint32_t failure_actions = MESH_RELAY_ACTION_NONE;
                         int failure_status = PROTO_OK;
+                        struct app_mesh_rf_retry_key contact_key =
+                            mesh_rf_retry_packet_key(
+                                &retransmit->packet,
+                                APP_MESH_RF_RETRY_OPERATION_EVENT_PROPOSE);
                         int repair_ret;
                         int failure_ret = PROTO_OK;
                         uint32_t repair_generation =
@@ -4072,6 +4191,10 @@ after_gateway_ack:
                             "retransmit-event-repair",
                             retransmit);
                         if (repair_ret == 0) {
+                            app_mesh_known_parent_contact_note_success(
+                                &mesh_known_parent_contact_retry,
+                                debug_next_hop,
+                                &contact_key);
                             if (mesh_route_ready_event_owner_matches(
                                     &mesh_route_ready_event_owner,
                                     debug_next_hop,
@@ -4099,6 +4222,7 @@ after_gateway_ack:
                                     retransmit) &&
                                 (select_after_repair != PROTO_OK ||
                                  selected_after_repair != debug_next_hop);
+                            bool retain_known_parent = false;
 
                             if (topology_route_changed) {
                                 defer_ret = mesh_relay_note_retransmit_deferred(
@@ -4112,6 +4236,39 @@ after_gateway_ack:
                                         "retransmit-topology-route-exhausted");
                                 }
                             } else {
+                                if (!mesh_outbound_is_topology_operation_uplink(
+                                        retransmit)) {
+                                    uint8_t hard_failure_count = 0u;
+                                    enum app_mesh_known_parent_contact_action
+                                        contact_action =
+                                            app_mesh_known_parent_contact_note_hard_failure(
+                                                &mesh_known_parent_contact_retry,
+                                                debug_next_hop,
+                                                &contact_key,
+                                                MESH_KNOWN_PARENT_CONTACT_RETRIES,
+                                                &hard_failure_count);
+
+                                    retain_known_parent =
+                                        contact_action ==
+                                        APP_MESH_KNOWN_PARENT_CONTACT_RETRY;
+                                    if (retain_known_parent) {
+                                        defer_ret =
+                                            mesh_relay_note_retransmit_deferred(
+                                                &mesh_runtime,
+                                                retransmit,
+                                                failure_now_ms +
+                                                    RELAY_BUSY_RETRY_MIN_MS);
+                                        status_debug_printf(
+                                            "DBG_KNOWN_PARENT_CONTACT_RETRY peer=0x%llx failure=%u/%u seq=%u phase=retransmit\n",
+                                            (unsigned long long)debug_next_hop,
+                                            hard_failure_count,
+                                            MESH_KNOWN_PARENT_CONTACT_RETRIES,
+                                            retransmit->packet.seq);
+                                    }
+                                }
+                            }
+                            if (!topology_route_changed &&
+                                !retain_known_parent) {
                                 downstream_peer_count =
                                     mesh_capture_downstream_channel9_peers(
                                         downstream_peers,
@@ -4133,6 +4290,7 @@ after_gateway_ack:
                                 }
                             }
                             if (!topology_route_changed &&
+                                !retain_known_parent &&
                                 failure_ret == PROTO_OK &&
                                 (failure_actions &
                                  MESH_RELAY_ACTION_ROUTE_DISCOVERY_NEEDED) != 0u) {
@@ -4140,6 +4298,7 @@ after_gateway_ack:
                                     retransmit->packet.dst_id,
                                     "retransmit-event-repair-failed");
                             } else if (!topology_route_changed &&
+                                       !retain_known_parent &&
                                        failure_ret != PROTO_OK) {
                                 status_debug_note(
                                     "DBG_RETRANSMIT_EVENT_REPAIR_ACCOUNT_FAIL\n");
@@ -4450,10 +4609,20 @@ after_gateway_ack:
             assignment.phase == DISCOVERY_ASSIGNMENT_PHASE_ACK;
         const uint64_t custody_parent =
             mesh_runtime.outbox_record.custody_parent;
+        int range_ret;
         int producer_ret = -ENOENT;
         int commit_ret;
         int comm_ret;
 
+        range_ret = mesh_anchor_range_report_note_gateway_confirmed(
+            confirmed_packet, confirmed_digest);
+        if (!mesh_terminal_cleanup_idempotent_status(range_ret)) {
+            LOG_ERR("next-hop custody range cleanup failed: ret=%d",
+                    range_ret);
+            app_watchdog_stop_feeding();
+            mesh_schedule_tx_timeout();
+            goto gateway_confirmation_done;
+        }
         if (confirmed_packet != NULL && confirmed_digest != NULL &&
             confirmed_packet->src_id == DEVICE_ID &&
             mesh_report_callbacks != NULL &&
@@ -4465,8 +4634,8 @@ after_gateway_ack:
                 mesh_report_callbacks->anchor_delivery_gateway_confirmed(
                     confirmed_packet, confirmed_digest);
         }
-        if (producer_ret != 0) {
-            LOG_ERR("assignment next-hop custody producer cleanup failed: ret=%d",
+        if (!mesh_terminal_cleanup_idempotent_status(producer_ret)) {
+            LOG_ERR("next-hop custody producer cleanup failed: ret=%d",
                     producer_ret);
             app_watchdog_stop_feeding();
             mesh_schedule_tx_timeout();
@@ -4477,7 +4646,7 @@ after_gateway_ack:
             confirmed_packet,
             confirmed_digest);
         if (commit_ret != PROTO_OK) {
-            LOG_ERR("assignment next-hop custody core commit failed: ret=%d",
+            LOG_ERR("next-hop custody core commit failed: ret=%d",
                     commit_ret);
             app_watchdog_stop_feeding();
             mesh_schedule_tx_timeout();
@@ -4486,20 +4655,49 @@ after_gateway_ack:
         comm_ret = app_node_comm_note_gateway_confirmed_digest_at(
             confirmed_packet, confirmed_digest, accepted_at_ms);
         if (!mesh_terminal_cleanup_idempotent_status(comm_ret)) {
-            LOG_ERR("assignment next-hop custody node communication cleanup failed: ret=%d",
+            LOG_ERR("next-hop custody node communication cleanup failed: ret=%d",
                     comm_ret);
             app_watchdog_stop_feeding();
         }
         status_debug_printf(
-            "DBG_ENUM_NEXT_HOP_CUSTODY seq=%u parent=0x%llx\n",
+            "DBG_NEXT_HOP_CUSTODY type=0x%02x src=0x%llx session=%u seq=%u parent=0x%llx accepted=%llu now=%u\n",
+            confirmed_packet == NULL ? 0u : confirmed_packet->msg_type,
+            (unsigned long long)(confirmed_packet == NULL ? 0u :
+                                 confirmed_packet->src_id),
+            confirmed_packet == NULL ? 0u : confirmed_packet->session_id,
             confirmed_packet == NULL ? 0u : confirmed_packet->seq,
             (unsigned long long)(confirmed_packet == NULL ? 0u :
-                                 custody_parent));
+                                 custody_parent),
+            (unsigned long long)accepted_at_ms,
+            k_uptime_get_32());
+        if (table_response_custody) {
+            status_debug_printf(
+                "DBG_ENUM_NEXT_HOP_CUSTODY seq=%u parent=0x%llx\n",
+                confirmed_packet == NULL ? 0u : confirmed_packet->seq,
+                (unsigned long long)(confirmed_packet == NULL ? 0u :
+                                     custody_parent));
+        }
         if (table_response_custody) {
             if (mesh_id_is_unicast(custody_parent) &&
                 custody_parent != GATEWAY_ID) {
                 mesh_retire_assignment_channel9_peer(
                     custody_parent, "assignment-table-custody");
+            }
+        }
+        if (!table_response_custody &&
+            app_node_comm_pending_delivery_count() == 0u &&
+            report_tx_queue_used() == 0u &&
+            !mesh_route_waiting_tx_valid &&
+            !app_mesh_ch9_ack_table_any_pending(&mesh_ch9_ack_table)) {
+            const struct route_candidate *selected =
+                route_selected(&mesh_runtime.upstream);
+            uint64_t parent_id =
+                selected != NULL ? selected->next_hop_id : custody_parent;
+
+            if (mesh_id_is_unicast(parent_id) &&
+                parent_id != GATEWAY_ID) {
+                mesh_close_channel9_connection(
+                    parent_id, "next-hop-custody-complete");
             }
         }
         mesh_schedule_tx_timeout();
@@ -4536,7 +4734,7 @@ after_gateway_ack:
             confirmed_packet != NULL && confirmed_packet->src_id == DEVICE_ID;
         int comm_ret;
 
-        if (locally_originated &&
+        if (confirmed_packet != NULL &&
             confirmed_packet->msg_type == MSG_GATEWAY_ACK_CONFIRM) {
             int complete_ret = mesh_complete_gateway_ack_confirm(
                 confirmed_packet,
@@ -4736,6 +4934,23 @@ static int mesh_gateway_classify_post_receipt_semantic_result(
     return semantic_ret;
 }
 
+static void mesh_trace_gateway_host_completion(const char *stage,
+                                               int ret,
+                                               const struct mesh_rx_pending *pending)
+{
+    if (!IS_ENABLED(CONFIG_IMEC_CLICK_HANDOFF_RTT_TRACE) ||
+        pending == NULL) {
+        return;
+    }
+    status_debug_printf(
+        "DBG_GW_HOST_COMPLETE st=%s ret=%d msg=%02x src=%08x seq=%u\n",
+        stage,
+        ret,
+        pending->packet.msg_type,
+        (uint32_t)pending->packet.src_id,
+        pending->packet.seq);
+}
+
 static int mesh_complete_gateway_host_delivery_locked(void)
 {
     struct mesh_rx_pending *pending = &mesh_rx_work_pending;
@@ -4765,7 +4980,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
             pending->result_validation_token = 0u;
         } else {
             validation_token = pending->result_validation_token;
-            ret = mesh_gateway_accept_semantic_delivery(pending);
+            ret = mesh_gateway_commit_preflighted_semantic_delivery(pending);
             gateway_command_result_validation_release_reserved(
                 validation_token);
             pending->result_validation_token = 0u;
@@ -4779,6 +4994,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
                     pending->packet.seq);
             }
             if (ret < 0) {
+                mesh_trace_gateway_host_completion("accept", ret, pending);
                 LOG_WRN("gateway host-delivery semantic acceptance retained: msg=0x%02x src=0x%016llx ret=%d",
                         pending->packet.msg_type,
                         (unsigned long long)pending->packet.src_id,
@@ -4836,6 +5052,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
                 semantic_ret);
         }
         if (ret < 0) {
+            mesh_trace_gateway_host_completion("final", ret, pending);
             LOG_WRN("gateway host-delivery semantic finalization retained: msg=0x%02x src=0x%016llx ret=%d",
                     pending->packet.msg_type,
                     (unsigned long long)pending->packet.src_id,
@@ -4856,18 +5073,37 @@ static int mesh_complete_gateway_host_delivery_locked(void)
                 k_uptime_get_32(),
                 result);
             if (ret != PROTO_OK) {
+                mesh_trace_gateway_host_completion("relay", ret, pending);
                 LOG_WRN("gateway host-delivery relay commit retained: msg=0x%02x src=0x%016llx ret=%d",
                         pending->packet.msg_type,
                         (unsigned long long)pending->packet.src_id,
                         ret);
                 goto retry;
             }
+            if ((result->actions & MESH_RELAY_ACTION_SEND_GATEWAY_ACK) == 0u) {
+                mesh_trace_gateway_host_completion("relay-ack", -EIO,
+                                                   pending);
+                goto retry;
+            }
+            /* mesh_work_result is shared timeout/RX scratch.  Freeze the
+             * committed ACK in this split-phase transaction before setting
+             * the durable relay-commit bit. */
+            mesh_gateway_host_delivery_ack = result->gateway_ack;
+            mesh_gateway_host_delivery_ack_valid = true;
         }
         atomic_set(&mesh_gateway_host_delivery_relay_committed_state, 1);
     }
 
     if (atomic_get(&mesh_gateway_host_delivery_ack_handoff_state) == 0) {
         if (semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
+            if (!mesh_gateway_host_delivery_ack_valid) {
+                mesh_trace_gateway_host_completion("ack-owner", -ESTALE,
+                                                   pending);
+                goto retry;
+            }
+            memset(result, 0, sizeof(*result));
+            result->actions = MESH_RELAY_ACTION_SEND_GATEWAY_ACK;
+            result->gateway_ack = mesh_gateway_host_delivery_ack;
             mesh_handle_result_actions(
                 result,
                 pending->radio_channel,
@@ -4878,6 +5114,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
                 NULL,
                 &gateway_ack_handed_off);
             if (!gateway_ack_handed_off) {
+                mesh_trace_gateway_host_completion("ack", -EAGAIN, pending);
                 LOG_WRN("gateway host-delivery ACK has no mesh owner yet: msg=0x%02x src=0x%016llx",
                         pending->packet.msg_type,
                         (unsigned long long)pending->packet.src_id);
@@ -4889,6 +5126,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
 
     ret = gateway_ble_finish_host_delivery(&pending->packet);
     if (ret < 0) {
+        mesh_trace_gateway_host_completion("ble", ret, pending);
         LOG_WRN("gateway host-delivery BLE retirement retained: ret=%d", ret);
         goto retry;
     }
@@ -4907,6 +5145,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
             return ret;
         }
     }
+    mesh_trace_gateway_host_completion("done", 0, pending);
     atomic_clear(&mesh_gateway_host_receipt_received_state);
     atomic_clear(&mesh_gateway_host_delivery_pending_state);
     atomic_clear(&mesh_gateway_host_delivery_semantic_accepted_state);
@@ -4914,6 +5153,7 @@ static int mesh_complete_gateway_host_delivery_locked(void)
     atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
     atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
     mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
+    mesh_gateway_host_delivery_ack_valid = false;
     (void)k_work_cancel_delayable(&mesh_gateway_host_delivery_retry_work);
     if (collection_recovery) {
         /* Release the exact recovery scan suppression only after its BLE
@@ -5096,6 +5336,7 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
             const uint32_t allowed_actions =
                 MESH_RELAY_ACTION_DROP |
                 MESH_RELAY_ACTION_DELIVER_LOCAL |
+                MESH_RELAY_ACTION_TX_NEXT_HOP_CUSTODY_ACCEPTED |
                 MESH_RELAY_ACTION_SEND_ROUTE_REPLY_ACK |
                 MESH_RELAY_ACTION_ROUTE_DISCOVERY_READY |
                 MESH_RELAY_ACTION_GATEWAY_ACK_CONFIRM_PENDING |
@@ -5115,11 +5356,13 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         }
 #endif
 
-        LOG_INF("mesh RX handled: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx actions=0x%08x status=%d",
+        LOG_INF("mesh RX handled: msg=0x%02x src=0x%016llx dst=0x%016llx prev=0x%016llx session=%u seq=%u actions=0x%08x status=%d",
                 pending->packet.msg_type,
                 (unsigned long long)pending->packet.src_id,
                 (unsigned long long)pending->packet.dst_id,
                 (unsigned long long)pending->previous_hop_id,
+                pending->packet.session_id,
+                pending->packet.seq,
                 result->actions,
                 result->status);
         if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) &&
@@ -5191,7 +5434,8 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
         if (mesh_c5_control_rx_semantically_admitted(
                 &pending->packet,
                 result,
-                admitted_event_control)) {
+                admitted_event_control) &&
+            pending->packet.msg_type != MSG_MESH_EVENT_PROPOSE) {
             mesh_note_c5_control_rx(&pending->packet,
                                     pending->previous_hop_id,
                                     pending->radio_channel,
@@ -5277,7 +5521,9 @@ static uint32_t mesh_drain_rx_queue_locked(const char *owner)
                 if (!stream_reservation_acquired &&
                     semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_REDRIVE &&
                     semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_COLLECTION_RECOVERY) {
-                    semantic_ret = mesh_gateway_accept_semantic_delivery(pending);
+                    semantic_ret =
+                        mesh_gateway_commit_preflighted_semantic_delivery(
+                            pending);
                     if (semantic_ret >= 0 &&
                         semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_NEW &&
                         semantic_ret != APP_GATEWAY_SEMANTIC_ACCEPT_DUPLICATE &&
@@ -5328,6 +5574,7 @@ gateway_semantic_result_ready:
                     atomic_clear(&mesh_gateway_host_delivery_semantic_finalized_state);
                     atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
                     atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
+                    mesh_gateway_host_delivery_ack_valid = false;
                     atomic_set(&mesh_gateway_host_delivery_pending_state, 1);
                     ret = gateway_ble_commit_stream_reservation_projection(
                         &pending->packet,
@@ -5361,6 +5608,7 @@ gateway_semantic_result_ready:
                         atomic_clear(&mesh_gateway_host_delivery_relay_committed_state);
                         atomic_clear(&mesh_gateway_host_delivery_ack_handoff_state);
                         mesh_gateway_host_delivery_semantic_acceptance = -EINVAL;
+                        mesh_gateway_host_delivery_ack_valid = false;
                         LOG_ERR("gateway semantic BLE custody commit failed without ACK: msg=0x%02x src=0x%016llx ret=%d",
                                 pending->packet.msg_type,
                                 (unsigned long long)pending->packet.src_id,

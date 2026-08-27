@@ -242,6 +242,49 @@ static bool mesh_select_channel9_rx_event(uint32_t now_ms,
 	    return selected;
 }
 
+static bool mesh_select_direct_gateway_ack_rx(
+    uint32_t now_ms,
+    struct mesh_event_plan *selected_plan,
+    uint64_t *selected_peer)
+{
+    const struct mesh_pending_tx *pending = &mesh_runtime.pending;
+    struct mesh_event_timing timing;
+    uint32_t remaining_ms;
+
+    if (!IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST) ||
+        DEVICE_ROLE != ROLE_ANCHOR || selected_plan == NULL ||
+        selected_peer == NULL || !mesh_relay_tx_active(&mesh_runtime) ||
+        pending->state != MESH_RELAY_TX_WAIT_GATEWAY_ACK ||
+        pending->radio_channel != UWB_CHANNEL_MESH_PAYLOAD ||
+        !mesh_id_is_unicast(pending->next_hop_id) ||
+        pending->gateway_ack_deadline_ms == 0u ||
+        uptime_deadline_reached(now_ms, pending->gateway_ack_deadline_ms) ||
+        mesh_find_active_channel9_timing(pending->next_hop_id,
+                                         now_ms,
+                                         &timing)) {
+        return false;
+    }
+
+    remaining_ms = uptime_ms_until_deadline(
+        now_ms, pending->gateway_ack_deadline_ms);
+    *selected_plan = (struct mesh_event_plan) {
+        .action = MESH_EVENT_PLAN_START,
+        .start_ms = now_ms,
+        .end_ms = pending->gateway_ack_deadline_ms,
+        .window_ms = (uint16_t)MIN(remaining_ms, (uint32_t)UINT16_MAX),
+    };
+    *selected_peer = pending->next_hop_id;
+    if (IS_ENABLED(CONFIG_IMEC_MESH_ROUTE_TEST)) {
+        status_debug_printf(
+            "DBG_DIRECT_GW_ACK_RX_TURN now=%u end=%u deadline=%u seq=%u\n",
+            now_ms,
+            selected_plan->end_ms,
+            pending->gateway_ack_deadline_ms,
+            pending->packet.seq);
+    }
+    return true;
+}
+
 static bool mesh_select_channel9_ack_tx_event(uint32_t now_ms,
                                                struct mesh_event_plan *selected_plan,
                                                uint64_t *selected_peer)
@@ -442,6 +485,15 @@ static bool mesh_channel9_ack_pending_for_peer(uint64_t peer_id)
                                                     peer_id);
 }
 
+static bool mesh_channel9_core_tx_pending_for_peer(uint64_t peer_id)
+{
+    return mesh_id_is_unicast(peer_id) &&
+           mesh_runtime.pending.next_hop_id == peer_id &&
+           app_mesh_ch9_core_pending_allows_rx(
+               &mesh_runtime.pending,
+               mesh_relay_tx_active(&mesh_runtime));
+}
+
 static bool mesh_channel9_next_required_activity(
     const struct mesh_relay_event_timing_entry *entry,
     const uint64_t *local_reliable_tx_peers,
@@ -459,6 +511,7 @@ static bool mesh_channel9_next_required_activity(
               entry->next_hop_id,
               local_reliable_tx_peers,
               local_reliable_tx_peer_count) ||
+          mesh_channel9_core_tx_pending_for_peer(entry->next_hop_id) ||
           mesh_channel9_ack_pending_for_peer(entry->next_hop_id)))) {
         return true;
     }

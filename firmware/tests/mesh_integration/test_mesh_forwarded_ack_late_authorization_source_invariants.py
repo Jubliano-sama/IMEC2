@@ -350,6 +350,21 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         )
         self.assertNotIn("mesh_event_owner_abandon", attempt)
 
+    def test_event_end_trace_names_match_the_channel_five_transport(self):
+        send = function_body(REPORT, "mesh_send_event_control")
+        receive = function_body(REPORT, "mesh_handle_event_control")
+        attempt = function_body(REPORT, "mesh_try_close_channel9_connection")
+        arm = function_body(REPORT, "mesh_close_channel9_connection")
+
+        self.assertIn(
+            "outbound.radio_channel = UWB_CHANNEL_WAKE_CONTACT", send
+        )
+        self.assertIn('"DBG_C5_EVENT_END_RX\\n"', receive)
+        self.assertIn('"DBG_C5_EVENT_END_TX\\n"', attempt)
+        self.assertIn('"DBG_C5_EVENT_END_FAIL\\n"', attempt)
+        self.assertIn('"DBG_C5_EVENT_END_ARM peer=', arm)
+        self.assertNotIn("DBG_CH9_EVENT_END", REPORT)
+
     def test_pending_close_blocks_parent_switch_and_owns_scheduler_due_time(self):
         block = function_body(
             REPORT, "mesh_channel9_close_intent_blocks_upstream"
@@ -585,6 +600,7 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         promote = function_body(
             REPORT, "mesh_event_accept_promote_forwarded_ack_repair"
         )
+        clear = function_body(REPORT, "mesh_event_accept_clear")
 
         supplied = authorized.index(
             "authorization != NULL && authorization->valid"
@@ -632,9 +648,7 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         )
         now = promote.index("now_ms = k_uptime_get_32()", peer_match)
         expired = promote.index("app_mesh_event_retry_expired(", now)
-        expired_clear = promote.index(
-            "memset(&mesh_event_accept_retry, 0", expired
-        )
+        expired_clear = promote.index("mesh_event_accept_clear()", expired)
         expired_fallback = promote.index("return -ENOENT", expired_clear)
         attach = promote.index(
             "mesh_event_accept_retry.c5_repair_authorization =",
@@ -651,6 +665,14 @@ class ForwardedAckLateAuthorizationSourceInvariantTests(unittest.TestCase):
         self.assertLess(expired_fallback, attach)
         self.assertLess(attach, arm)
         self.assertLess(arm, schedule)
+        matching_contact_clear = clear.index("mesh_c5_contact_clear_matching(")
+        retry_clear = clear.index("memset(&mesh_event_accept_retry", matching_contact_clear)
+        self.assertLess(matching_contact_clear, retry_clear)
+        self.assertIn(
+            "C5_CONTACT_PURPOSE_CHANNEL9_TIMING_NEGOTIATION",
+            clear[matching_contact_clear:retry_clear],
+        )
+        self.assertNotIn("mesh_c5_contact_clear(", clear)
         self.assertIn("retry_due_ms", promote[attach:schedule])
         self.assertNotIn("app_mesh_ch9_c5_repair_owner_matches", promote)
         self.assertNotIn("app_mesh_c5_tx_authorization_token_equal", promote)

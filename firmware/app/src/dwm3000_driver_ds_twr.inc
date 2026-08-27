@@ -291,7 +291,8 @@ int dwm3000_driver_range_initiator(const struct dwm3000_range_request *request,
             &result->clicker_clock_offset_raw,
             &result->clicker_clock_offset_sampled,
             &result->carrier_integrator,
-            &result->carrier_integrator_sampled);
+            &result->carrier_integrator_sampled,
+            NULL);
 
         result->clicker_rx_diag_sampled =
             diagnostics_valid &&
@@ -554,6 +555,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     uint64_t poll_rx_ts;
     uint64_t resp_tx_ts;
     uint64_t final_rx_ts;
+    uint64_t final_ipatov_rx_ts = 0u;
     int64_t poll_received_at_ms = 0;
     uint16_t reply_delay_uus;
     uint8_t quality = 0u;
@@ -563,6 +565,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     enum range_status report_status = RANGE_OK;
     bool cir_sampled = false;
     bool capture_final_rsl;
+    bool negative_tof = false;
     int ret;
 
     if (result != NULL) {
@@ -605,7 +608,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
     ret = receive_frame(timeout_ms == 0u ? DEFAULT_RESPONDER_WINDOW_MS : timeout_ms,
                         &status, rx_buffer, sizeof(rx_buffer), &frame_len,
                         &poll_rx_ts, &quality, &rsl_dbm, NULL, NULL,
-                        NULL, NULL, NULL, NULL, false);
+                        NULL, NULL, NULL, NULL, NULL, false);
     if (ret == 0) {
         poll_received_at_ms = k_uptime_get();
     }
@@ -786,6 +789,8 @@ static int responder_poll_once(uint64_t local_anchor_id,
                         result != NULL ? &result->clock_offset_sampled : NULL,
                         result != NULL ? &result->carrier_integrator : NULL,
                         result != NULL ? &result->carrier_integrator_sampled : NULL,
+                        DWM3000_DS_TWR_RTT_DEBUG_ENABLED ?
+                            &final_ipatov_rx_ts : NULL,
                         capture_final_rsl);
     if (ret < 0) {
         if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
@@ -849,6 +854,7 @@ static int responder_poll_once(uint64_t local_anchor_id,
                                                  final_rx_ts,
                                                  &distance_mm);
         if (ret < 0) {
+            negative_tof = ret == -ERANGE;
             report_status = RANGE_INTERNAL_ERROR;
         }
     }
@@ -988,6 +994,17 @@ static int responder_poll_once(uint64_t local_anchor_id,
                             k_uptime_get_32(),
                             poll.header.seq,
                             poll.header.round_index);
+        if (negative_tof) {
+            status_debug_printf(
+                "DBG_DS_NEG_TOF_CIA evt=%u seq=%u round=%u rx=0x%08x ip=0x%010llx delta=%lld\n",
+                poll.header.session_id,
+                poll.header.seq,
+                poll.header.round_index,
+                (unsigned int)final_rx_ts,
+                (unsigned long long)final_ipatov_rx_ts,
+                (long long)timestamp_delta_40(final_ipatov_rx_ts,
+                                              final_rx_ts));
+        }
     }
     if (DWM3000_DS_TWR_RTT_DEBUG_ENABLED) {
         status_debug_printf("DBG_DS_RESP stage=done ret=%d status=%u now=%u seq=%u round=%u\n",

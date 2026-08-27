@@ -65,6 +65,8 @@ struct expected_transaction {
     uint64_t src_id;
     uint32_t session_id;
     uint16_t seq;
+    uint8_t semantic_digest[SEMANTIC_DIGEST_SHA256_LEN];
+    uint8_t origin_path_index;
 };
 
 struct runner {
@@ -455,7 +457,16 @@ static int queue_packets(struct runner *runner)
                     .src_id = packet.src_id,
                     .session_id = packet.session_id,
                     .seq = packet.seq,
+                    .origin_path_index = (uint8_t)origin,
                 };
+            if (!mesh_packet_semantic_digest(
+                    &packet,
+                    payload,
+                    payload_len,
+                    runner->transactions[runner->transaction_count - 1u]
+                        .semantic_digest)) {
+                return MESH_SIM_ERR_PROTOCOL;
+            }
             runner->expected_deliveries++;
         }
     }
@@ -1003,6 +1014,151 @@ static bool transition_matches_transaction(
            transition->packet_seq == transaction->seq;
 }
 
+static bool hop_ack_confirms_transaction(
+    const struct mesh_sim_reception *reception,
+    uint64_t sender_id,
+    uint64_t receiver_id,
+    const struct expected_transaction *transaction)
+{
+    if (reception->outcome != MESH_SIM_RX_DECODED ||
+        reception->protocol_status != PROTO_OK ||
+        reception->source_id != sender_id ||
+        reception->receiver_id != receiver_id ||
+        reception->packet.msg_type != MSG_MESH_HOP_ACK ||
+        reception->packet.src_id != sender_id ||
+        reception->packet.dst_id != receiver_id ||
+        reception->packet.session_id != transaction->session_id) {
+        return false;
+    }
+
+    for (uint8_t index = 0u;
+         index < MESH_ACK_SEMANTIC_IDENTITY_MAX;
+         index++) {
+        struct mesh_ack_semantic_identity identity;
+        int ret = mesh_ack_semantic_identity_at(reception->payload,
+                                                reception->payload_len,
+                                                index,
+                                                &identity);
+
+        if (ret == PROTO_ERR_NOT_FOUND) {
+            break;
+        }
+        if (ret != PROTO_OK) {
+            return false;
+        }
+        if (identity.session_id == transaction->session_id &&
+            identity.seq == transaction->seq &&
+            memcmp(identity.digest,
+                   transaction->semantic_digest,
+                   sizeof(identity.digest)) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool exact_hop_custody_terminal(
+    const struct runner *runner,
+    uint64_t sender_id,
+    uint64_t receiver_id,
+    const struct expected_transaction *transaction)
+{
+    for (size_t i = 0u; i < runner->world->reception_count; i++) {
+        if (hop_ack_confirms_transaction(&runner->world->receptions[i],
+                                         sender_id,
+                                         receiver_id,
+                                         transaction)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint32_t gateway_adjacent_terminal_count(
+    const struct runner *runner,
+    uint64_t node_id,
+    const struct expected_transaction *transaction)
+{
+    uint32_t count = 0u;
+
+    for (size_t i = 0u; i < runner->world->transition_count; i++) {
+        const struct mesh_sim_transition *transition =
+            &runner->world->transitions[i];
+
+        if (transition->kind == MESH_SIM_TRANSITION_GATEWAY_ACKED &&
+            transition->node_id == node_id &&
+            transition->peer_id == GATEWAY_ID &&
+            transition_matches_transaction(transition, transaction)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static uint32_t transaction_terminal_custody_stages(
+    const struct runner *runner,
+    const struct expected_transaction *transaction,
+    uint32_t *expected_stages)
+{
+    uint32_t completed = 0u;
+
+    if (transaction->origin_path_index >= runner->path_node_count) {
+        *expected_stages = 0u;
+        return 0u;
+    }
+    *expected_stages =
+        (uint32_t)(runner->path_node_count - transaction->origin_path_index);
+    for (size_t path_index = transaction->origin_path_index;
+         path_index < runner->path_node_count;
+         path_index++) {
+        uint64_t owner_id =
+            runner->world->roles[runner->nodes[path_index]].id;
+
+        if (path_index + 1u < runner->path_node_count) {
+            uint64_t next_hop_id =
+                runner->world->roles[runner->nodes[path_index + 1u]].id;
+
+            if (exact_hop_custody_terminal(runner,
+                                           next_hop_id,
+                                           owner_id,
+                                           transaction)) {
+                completed++;
+            } else {
+                fprintf(stderr,
+                        "missing exact hop custody terminal: owner=%" PRIx64
+                        " next=%" PRIx64 " src=%" PRIx64
+                        " session=%" PRIu32 " seq=%u\n",
+                        owner_id, next_hop_id, transaction->src_id,
+                        transaction->session_id, transaction->seq);
+            }
+        } else {
+            uint32_t gateway_terminals = gateway_adjacent_terminal_count(
+                runner, owner_id, transaction);
+            bool direct_source =
+                path_index == transaction->origin_path_index;
+
+            if ((direct_source && gateway_terminals == 1u) ||
+                (!direct_source && gateway_terminals > 0u)) {
+                /* Direct-source custody and a transit relay's ACK_CONFIRM close
+                 * at the same exact gateway-adjacent terminal boundary. A
+                 * transit confirmation may be replayed after reset; any exact
+                 * close is sufficient, while the direct-source oracle keeps
+                 * its historical exactly-once requirement. */
+                completed++;
+            } else {
+                fprintf(stderr,
+                        "invalid gateway-adjacent custody terminals: owner=%"
+                        PRIx64 " src=%" PRIx64 " session=%" PRIu32
+                        " seq=%u count=%" PRIu32 "\n",
+                        owner_id, transaction->src_id,
+                        transaction->session_id, transaction->seq,
+                        gateway_terminals);
+            }
+        }
+    }
+    return completed;
+}
+
 static bool bounded_control_type(uint8_t msg_type)
 {
     switch (msg_type) {
@@ -1153,7 +1309,8 @@ static int terminal_checks(struct runner *runner)
          transaction_index++) {
         const struct expected_transaction *transaction =
             &runner->transactions[transaction_index];
-        uint32_t completions = 0u;
+        uint32_t expected_custody_stages = 0u;
+        uint32_t completed_custody_stages;
         uint32_t retries = 0u;
 
         for (size_t i = 0u; i < runner->world->transition_count; i++) {
@@ -1163,20 +1320,22 @@ static int terminal_checks(struct runner *runner)
             if (!transition_matches_transaction(transition, transaction)) {
                 continue;
             }
-            if (transition->kind == MESH_SIM_TRANSITION_GATEWAY_ACKED &&
-                transition->node_id == transaction->src_id) {
-                completions++;
-            } else if (transition->kind == MESH_SIM_TRANSITION_RETRY_READY) {
+            if (transition->kind == MESH_SIM_TRANSITION_RETRY_READY) {
                 retries++;
             }
         }
-        if (completions != 1u || retries > retry_bound) {
+        completed_custody_stages = transaction_terminal_custody_stages(
+            runner, transaction, &expected_custody_stages);
+        if (completed_custody_stages != expected_custody_stages ||
+            retries > retry_bound) {
             fprintf(stderr,
                     "transaction bound failed: src=%" PRIx64
-                    " session=%" PRIu32 " seq=%u completions=%" PRIu32
+                    " session=%" PRIu32 " seq=%u custody_stages=%" PRIu32
+                    "/%" PRIu32
                     " retries=%" PRIu32 " retry_bound=%" PRIu64 "\n",
                     transaction->src_id, transaction->session_id,
-                    transaction->seq, completions, retries, retry_bound);
+                    transaction->seq, completed_custody_stages,
+                    expected_custody_stages, retries, retry_bound);
             return MESH_SIM_ERR_PROTOCOL;
         }
     }

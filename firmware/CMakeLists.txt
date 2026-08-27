@@ -255,6 +255,22 @@ set_tests_properties(production_seam_click_handoff PROPERTIES
     LABELS "mesh_integration;hardware_models;protocol_matrix;production_seam;composition;future_facade;radio;state;workqueue"
     TIMEOUT 300)
 
+add_test(NAME production_seam_click_preempt_priority
+    COMMAND ${CMAKE_COMMAND}
+            -DREPOSITORY_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/..
+            -DSEAM_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/production_seam_click_preempt_priority
+            -DSEAM_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}/production-seam-click-preempt-priority-zephyr
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/production_seam_click_handoff/run.cmake)
+set_tests_properties(production_seam_click_preempt_priority PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol_matrix;production_seam;click;radio;workqueue"
+    TIMEOUT 300)
+
+add_test(NAME click_preempt_priority_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_click_preempt_priority_source_invariants.py)
+set_tests_properties(click_preempt_priority_source_invariants PROPERTIES
+    LABELS "mesh_integration;hardware_models;protocol_matrix;production_seam;click;radio;workqueue;static_analysis")
+
 add_test(NAME production_seam_gateway_result_actions
     COMMAND ${CMAKE_COMMAND}
             -DREPOSITORY_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/..
@@ -627,6 +643,11 @@ add_test(NAME node_comm_source_boundary
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_node_comm_source_boundary.py)
 set_tests_properties(node_comm_source_boundary
     PROPERTIES LABELS "mesh_integration;hardware_models;communication")
+add_test(NAME gateway_host_receipt_priority_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_gateway_host_receipt_priority_source_invariants.py)
+set_tests_properties(gateway_host_receipt_priority_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;delivery;gateway;radio;static_analysis")
 add_test(NAME mesh_terminal_custody_source_invariants
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_mesh_terminal_custody_source_invariants.py)
@@ -811,6 +832,15 @@ target_link_libraries(test_app_mesh_rf_retry PRIVATE core)
 add_test(NAME app_mesh_rf_retry COMMAND test_app_mesh_rf_retry)
 set_tests_properties(app_mesh_rf_retry PROPERTIES
     LABELS "mesh_integration;hardware_models;communication")
+add_executable(test_app_mesh_direct_gateway_retry
+    tests/test_app_mesh_direct_gateway_retry.c
+    app/src/app_mesh_direct_gateway_retry.c)
+target_include_directories(test_app_mesh_direct_gateway_retry PRIVATE app/src)
+target_link_libraries(test_app_mesh_direct_gateway_retry PRIVATE core)
+add_test(NAME app_mesh_direct_gateway_retry
+    COMMAND test_app_mesh_direct_gateway_retry)
+set_tests_properties(app_mesh_direct_gateway_retry PROPERTIES
+    LABELS "mesh_integration;hardware_models;communication;route")
 add_executable(test_app_mesh_event_retry
     tests/test_app_mesh_event_retry.c
     app/src/app_mesh_event_retry.c
@@ -999,6 +1029,12 @@ add_test(NAME clicker_button_wake_source_invariants
 set_tests_properties(clicker_button_wake_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;click;power;state;static_analysis")
 
+add_test(NAME anchor_click_discovery_slot_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_anchor_click_discovery_slot_source_invariants.py)
+set_tests_properties(anchor_click_discovery_slot_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;click;enumeration;timing;static_analysis")
+
 add_test(NAME clicker_retained_idle_failure_source_invariants
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_clicker_retained_idle_failure_source_invariants.py)
@@ -1015,6 +1051,18 @@ add_test(NAME clicker_wake_deadline_source_invariants
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_clicker_wake_deadline_source_invariants.py)
 set_tests_properties(clicker_wake_deadline_source_invariants
     PROPERTIES LABELS "mesh_integration;hardware_models;click;timing;wake;static_analysis")
+
+add_test(NAME clicker_range_stack_diag_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_clicker_range_stack_diag_source_invariants.py)
+set_tests_properties(clicker_range_stack_diag_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;click;timing;stack;static_analysis")
+
+add_test(NAME debug_rtt_drop_accounting_source_invariants
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_debug_rtt_drop_accounting_source_invariants.py)
+set_tests_properties(debug_rtt_drop_accounting_source_invariants
+    PROPERTIES LABELS "mesh_integration;hardware_models;communication;stack_evidence;static_analysis")
 
 add_test(NAME ml_clicker_role_isolation_source_invariants
     COMMAND ${Python3_EXECUTABLE}
@@ -1160,6 +1208,12 @@ add_test(NAME provision_mesh_anchor
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_provision_mesh_anchor.py)
 set_tests_properties(provision_mesh_anchor PROPERTIES LABELS "hardware_models")
+
+add_test(NAME clicker_hil
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_clicker_hil.py)
+set_tests_properties(clicker_hil
+    PROPERTIES LABELS "mesh_integration;hardware_models;click;host_tools")
 
 add_test(NAME mesh_deployment_policy
     COMMAND ${Python3_EXECUTABLE}
@@ -1388,6 +1442,19 @@ add_test(NAME mesh_click_protocol_chain_scenarios
     COMMAND test_mesh_click_protocol_chain_scenarios)
 set_tests_properties(mesh_click_protocol_chain_scenarios
     PROPERTIES LABELS "mesh_integration;hardware_models;simulator;click;wake;protocol;communication;delivery;ble;network_stress")
+
+add_executable(test_gateway_ch9_back_to_back_scenarios
+    tests/mesh_integration/test_gateway_ch9_back_to_back_scenarios.c
+)
+target_link_libraries(test_gateway_ch9_back_to_back_scenarios PRIVATE mesh_sim)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(test_gateway_ch9_back_to_back_scenarios
+        PRIVATE -Wall -Wextra -Werror -pedantic)
+endif()
+add_test(NAME gateway_ch9_back_to_back_scenarios
+    COMMAND test_gateway_ch9_back_to_back_scenarios)
+set_tests_properties(gateway_ch9_back_to_back_scenarios
+    PROPERTIES LABELS "mesh_integration;hardware_models;simulator;click;radio;timing;communication;delivery")
 
 add_executable(test_dwm3000_driver_handler_boundary
     tests/mesh_integration/test_dwm3000_driver_handler_boundary.c
@@ -1667,6 +1734,7 @@ set_property(TEST
     mesh_click_collision_sweep
     mesh_click_report_delivery_sweep
     mesh_click_protocol_chain_scenarios
+    gateway_ch9_back_to_back_scenarios
     mesh_gateway_ble_scenarios
     gateway_ble_pressure_scenarios
     mesh_network_stress_scenarios

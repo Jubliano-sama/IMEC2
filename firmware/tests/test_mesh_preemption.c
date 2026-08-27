@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define ANCHOR_A 0xA001u
+#define RELAY_ANCHOR 0xA002u
 #define TRANSMITTER 0xB001u
 #define GATEWAY 0x9000u
 
@@ -25,6 +26,16 @@ static struct route_candidate direct_gateway_route(uint32_t route_epoch)
         .last_success_ms = 1000u,
         .valid = true,
     };
+    return route;
+}
+
+static struct route_candidate relay_gateway_route(uint32_t route_epoch)
+{
+    struct route_candidate route = direct_gateway_route(route_epoch);
+
+    route.next_hop_id = RELAY_ANCHOR;
+    route.hop_count = 2u;
+    route.route_cost = 210u;
     return route;
 }
 
@@ -168,6 +179,53 @@ static void test_click_preemption_requeues_local_click_report(void)
     assert(!plan.defer_active_tx);
     assert(!plan.schedule_timeout);
     assert(mesh_relay_tx_active(&relay));
+}
+
+static void test_click_preemption_retains_local_multihop_hop_ack_owner(void)
+{
+    struct mesh_relay relay;
+    struct route_candidate route = relay_gateway_route(7u);
+    struct proto_packet packet = {
+        .msg_type = MSG_CLICK_REPORT,
+        .flags = FLAG_GATEWAY_ACK_REQUIRED,
+        .src_id = ANCHOR_A,
+        .dst_id = GATEWAY,
+        .session_id = 23u,
+        .seq = 24u,
+        .ttl = MESH_GATEWAY_ACK_TTL,
+        .payload_len = 4u,
+    };
+    struct mesh_outbound tx;
+    struct mesh_click_preempt_plan plan;
+    uint8_t payload[] = {0xc1u, 0x1cu, 0xacu, 0x4bu};
+
+    mesh_relay_init(&relay, MESH_RELAY_ROLE_ANCHOR, ANCHOR_A, GATEWAY, 7u);
+    assert(route_upsert_candidate(&relay.upstream, &route) == PROTO_OK);
+    assert(mesh_relay_start_tx(&relay,
+                               &packet,
+                               payload,
+                               sizeof(payload),
+                               5000u,
+                               &tx) == PROTO_OK);
+    assert(tx.next_hop_id == RELAY_ANCHOR);
+    tx.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    relay.pending.radio_channel = UWB_CHANNEL_MESH_PAYLOAD;
+    mesh_relay_note_tx_sent(&relay, &tx, 5001u);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+
+    assert(mesh_prepare_click_preemption(&relay, ANCHOR_A, 5100u, &plan) ==
+           PROTO_OK);
+    assert(!plan.transfer_local_click);
+    assert(!plan.defer_active_tx);
+    assert(!plan.schedule_timeout);
+    assert(mesh_relay_tx_active(&relay));
+    assert(relay.pending.packet.session_id == packet.session_id);
+    assert(relay.pending.packet.seq == packet.seq);
+    assert(relay.pending.next_hop_id == RELAY_ANCHOR);
+    assert(relay.pending.state == MESH_RELAY_TX_WAIT_GATEWAY_ACK);
+
+    /* Keeping the active owner preserves its exact RX predicate while the
+     * click coordinator temporarily suppresses radio work. */
 }
 
 static void test_click_preemption_retains_transit_click_report(void)
@@ -387,6 +445,7 @@ int main(void)
     test_click_preemption_defers_collection_result();
     test_click_preemption_ignores_disposable_heartbeat();
     test_click_preemption_requeues_local_click_report();
+    test_click_preemption_retains_local_multihop_hop_ack_owner();
     test_click_preemption_retains_transit_click_report();
     test_click_preemption_preserves_forbidden_local_custody();
     test_click_preemption_refuses_expired_relay_custody();

@@ -28,6 +28,8 @@ void status_debug_note(const char *text);
 __attribute__((format(printf, 1, 2)))
 #endif
 void status_debug_printf(const char *fmt, ...);
+void status_debug_rtt_drop_counts(uint32_t *mutex_busy_drops,
+                                  uint32_t *short_write_drops);
 int status_stack_diag_transaction_begin(void);
 int status_stack_diag_note(const char *text);
 void status_stack_diag_transaction_end(void);

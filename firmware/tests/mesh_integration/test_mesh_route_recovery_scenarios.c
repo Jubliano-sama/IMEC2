@@ -285,8 +285,7 @@ static int note_parent_failure_with_lightweight_parity(
     CHECK(memcmp(&lightweight_relay, relay, sizeof(*relay)) == 0);
     return full_ret;
 }
-
-static int exercise_first_three_failures(
+static int exercise_first_three_parent_hop_ack_misses(
     struct mesh_relay *producer,
     const struct pending_identity *identity,
     uint32_t *now_ms)
@@ -302,9 +301,9 @@ static int exercise_first_three_failures(
             failure, random_value);
         uint32_t retry_at_ms;
 
-        test_ctx.phase = failure == 1u ? "parent_failure_1" :
-                         (failure == 2u ? "parent_failure_2" :
-                          "parent_failure_3");
+        test_ctx.phase = failure == 1u ? "parent_hop_ack_miss_1" :
+                         (failure == 2u ? "parent_hop_ack_miss_2" :
+                          "parent_hop_ack_miss_3");
         CHECK(note_parent_failure_with_lightweight_parity(producer,
                                                           *now_ms,
                                                           random_value,
@@ -313,7 +312,8 @@ static int exercise_first_three_failures(
         selected = route_selected(&producer->upstream);
         CHECK(selected != NULL);
         CHECK(selected->next_hop_id == PRIMARY_PARENT_ID);
-        CHECK(selected->failure_count == failure);
+        CHECK(selected->failure_count == 0u);
+        CHECK(producer->pending.parent_hop_ack_miss_count == failure);
         CHECK(producer->pending.state == MESH_RELAY_TX_WAIT_RETRY_BACKOFF);
         CHECK(producer->pending.next_hop_id == PRIMARY_PARENT_ID);
         CHECK(producer->pending.retry_after_ms == *now_ms + expected_delay);
@@ -367,7 +367,8 @@ static int test_no_alternate_fourth_failure(uint32_t seed, uint32_t start_ms)
     CHECK(start_pending_producer(&producer, false, now_ms, &initial,
                                  &identity) == 0);
     now_ms += 101u;
-    CHECK(exercise_first_three_failures(&producer, &identity, &now_ms) == 0);
+    CHECK(exercise_first_three_parent_hop_ack_misses(
+              &producer, &identity, &now_ms) == 0);
     CHECK(mesh_relay_find_downlink(&producer, DEPENDENT_CHILD_ID) != NULL);
     CHECK(find_event_timing(&producer, DEPENDENT_CHILD_ID) != NULL);
 
@@ -417,7 +418,8 @@ static int test_alternate_parent_fourth_failure(uint32_t seed,
     CHECK(start_pending_producer(&producer, true, now_ms, &initial,
                                  &identity) == 0);
     now_ms += 101u;
-    CHECK(exercise_first_three_failures(&producer, &identity, &now_ms) == 0);
+    CHECK(exercise_first_three_parent_hop_ack_misses(
+              &producer, &identity, &now_ms) == 0);
     CHECK(mesh_relay_find_downlink(&producer, DEPENDENT_CHILD_ID) != NULL);
     CHECK(find_event_timing(&producer, DEPENDENT_CHILD_ID) != NULL);
 

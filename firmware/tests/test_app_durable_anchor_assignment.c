@@ -349,6 +349,15 @@ static struct app_durable_state_anchor_assignment promoted_assignment(void)
     return assignment;
 }
 
+static struct app_durable_state_anchor_assignment end_pending_assignment(void)
+{
+    struct app_durable_state_anchor_assignment assignment =
+        pending_assignment();
+
+    assignment.ack_pending = 0u;
+    return assignment;
+}
+
 static bool assignment_equal(
     const struct app_durable_state_anchor_assignment *left,
     const struct app_durable_state_anchor_assignment *right)
@@ -440,6 +449,22 @@ static void test_missing_and_canonical_round_trip(void)
 
     install_store(&store, APP_DURABLE_STATE_ROLE_ANCHOR);
     memset(&restored, 0xa5, sizeof(restored));
+    assert(app_durable_state_restore_anchor_assignment(
+               TEST_GATEWAY_A, &restored) == 1);
+    assert(assignment_equal(&restored, &pending));
+}
+
+static void test_end_pending_assignment_round_trip(void)
+{
+    struct fake_store store = {0};
+    struct app_durable_state_anchor_assignment pending =
+        end_pending_assignment();
+    struct app_durable_state_anchor_assignment restored;
+
+    install_store(&store, APP_DURABLE_STATE_ROLE_ANCHOR);
+    assert(pending.pending_slot != 0u);
+    assert(app_durable_state_save_anchor_assignment(
+               TEST_GATEWAY_A, &pending) == 0);
     assert(app_durable_state_restore_anchor_assignment(
                TEST_GATEWAY_A, &restored) == 1);
     assert(assignment_equal(&restored, &pending));
@@ -780,6 +805,7 @@ static void test_pending_promotion_costs_exactly_two_writes(void)
 int main(void)
 {
     test_missing_and_canonical_round_trip();
+    test_end_pending_assignment_round_trip();
     test_logically_invalid_records_are_rejected_without_writes();
     test_corruption_and_all_bindings_fail_closed();
     test_non_anchor_roles_cannot_access_assignment_record();

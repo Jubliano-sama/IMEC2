@@ -13,6 +13,15 @@ extern "C" {
 #define STACK_BUDGET_SERVICE_MIN_FREE_BYTES 256u
 #define STACK_BUDGET_MIN_FREE_PERCENT 20u
 #define STACK_BUDGET_LARGE_LOCAL_FRAME_MAX_BYTES 8192u
+#define STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES 1536u
+#define STACK_BUDGET_GATEWAY_LOG_PROCESSOR_MEASURED_MAX_BYTES 480u
+#define STACK_BUDGET_GATEWAY_LOG_PROCESSOR_MEASURED_MIN_FREE_BYTES 1024u
+
+#if STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES - \
+        STACK_BUDGET_GATEWAY_LOG_PROCESSOR_MEASURED_MAX_BYTES < \
+    STACK_BUDGET_GATEWAY_LOG_PROCESSOR_MEASURED_MIN_FREE_BYTES
+#error "gateway logging stack must retain its measured 1 KiB free margin"
+#endif
 
 /*
  * This table is the review baseline for the production-candidate presets.
@@ -28,8 +37,12 @@ extern "C" {
       1024u, 24576u, true, true, true, true, false)                           \
     X(ANCHOR, "mesh_anchor", 5120u, 5376u, 9472u, 8192u, 320u, 2048u, 0u,        \
       0u, 8704u, true, true, true, true, false)                               \
-    X(GATEWAY, "mesh_gateway", 4416u, 8512u, 8384u, 8192u, 320u, 2048u, 1536u,  \
+    X(GATEWAY, "mesh_gateway", 4416u, 8512u, 8384u, 8192u, 320u, 1536u, 1536u,  \
       1536u, 4096u, true, true, true, true, false)
+
+#if STACK_BUDGET_GATEWAY_LOG_PROCESSOR_BYTES != 1536u
+#error "gateway logging stack constant and deployable policy diverged"
+#endif
 
 #define STACK_BUDGET_BENCH_PRESET_POLICY(X)                                   \
     X(ANCHOR_FORCEDHOP, "mesh_anchor_forcedhop", 5120u, 5376u, 9472u, 8192u, \
