@@ -1212,6 +1212,11 @@ add_test(NAME flash_verified_mesh
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh.py)
 set_tests_properties(flash_verified_mesh PROPERTIES LABELS "hardware_models")
 
+add_test(NAME flash_verified_mesh_batch
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_flash_verified_mesh_batch.py)
+set_tests_properties(flash_verified_mesh_batch PROPERTIES LABELS "hardware_models")
+
 add_test(NAME capture_stack_evidence
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mesh_integration/test_capture_stack_evidence.py)
