@@ -73,54 +73,96 @@ static int check_device_fatal_status(const char *operation)
         return 0;
     }
 
-#if defined(CONFIG_IMEC_CLICKER_RTT_CONTROL)
+#if defined(CONFIG_IMEC_MESH_ROUTE_TEST) && \
+    defined(CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE)
     {
-        uint32_t status_hi_fast;
-        uint32_t dev_id_fast;
-        uint32_t status_hi_slow;
-        uint32_t dev_id_slow;
-        int status_hi_fast_ret;
-        int dev_id_fast_ret;
-        int status_hi_slow_ret;
-        int dev_id_slow_ret;
+        uint32_t original_spi_hz = dwm3000_port_current_spi_hz();
+        uint32_t fint_status;
+        uint32_t status_low;
+        uint32_t status_hi_repeat;
+        uint32_t dev_id;
+        uint16_t status_hi_short;
+        int fint_ret;
+        int status_low_ret;
+        int status_hi_short_ret;
+        int status_hi_repeat_ret;
+        int dev_id_ret;
+        int slow_spi_ret;
+        int restore_spi_ret;
 
         /*
-         * A failed SYS_STATUS_HI read has previously returned a valid DEV_ID
-         * value.  Compare repeated register and identity reads at both SPI
-         * rates after the operation has already failed terminally.  This
-         * distinguishes a transient/header decode problem from a fast-SPI
-         * electrical problem without touching the successful runtime path.
+         * This path runs only after the operation is already terminal.  The
+         * SDK treats SYS_STATUS_HI as authoritative only when FINT_STAT has
+         * SYS_PANIC set, and reads the meaningful low 16 bits there.  Capture
+         * both widths plus the neighbouring status and identity registers at
+         * the current and slow SPI rates.  That separates a genuine device
+         * panic from an address/header or retained-wake read failure without
+         * changing the successful radio path or its timing.
          */
         dwm3000_port_clear_error();
-        status_hi_fast = dwt_read32bitreg(SYS_STATUS_HI_ID);
-        status_hi_fast_ret = dwm3000_port_take_error();
+        fint_status = dwt_read32bitreg(FINT_STAT_ID);
+        fint_ret = dwm3000_port_take_error();
         dwm3000_port_clear_error();
-        dev_id_fast = dwt_readdevid();
-        dev_id_fast_ret = dwm3000_port_take_error();
-
-        (void)dwm3000_port_set_slow_spi();
+        status_low = dwt_read32bitreg(SYS_STATUS_ID);
+        status_low_ret = dwm3000_port_take_error();
         dwm3000_port_clear_error();
-        status_hi_slow = dwt_read32bitreg(SYS_STATUS_HI_ID);
-        status_hi_slow_ret = dwm3000_port_take_error();
+        status_hi_short = dwt_read16bitoffsetreg(SYS_STATUS_HI_ID, 0);
+        status_hi_short_ret = dwm3000_port_take_error();
         dwm3000_port_clear_error();
-        dev_id_slow = dwt_readdevid();
-        dev_id_slow_ret = dwm3000_port_take_error();
-        (void)dwm3000_port_set_fast_spi();
-
+        status_hi_repeat = dwt_read32bitreg(SYS_STATUS_HI_ID);
+        status_hi_repeat_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        dev_id = dwt_readdevid();
+        dev_id_ret = dwm3000_port_take_error();
         status_debug_printf(
-            "DBG_DWM_FATAL_PROBE1 op=%s first=%08x fast_hi=%08x fast_id=%08x\n",
+            "DBG_DWM_FATAL_CURRENT op=%s spi=%u first=%08x fatal=%04x panic=%u\n",
             operation == NULL ? "unknown" : operation,
+            (unsigned int)original_spi_hz,
             (unsigned int)status_hi,
-            (unsigned int)status_hi_fast,
-            (unsigned int)dev_id_fast);
+            (unsigned int)fatal_status,
+            (fint_status & FINT_STAT_SYS_PANIC_BIT_MASK) != 0u ? 1u : 0u);
         status_debug_printf(
-            "DBG_DWM_FATAL_PROBE2 fast_ret=%d/%d slow_hi=%08x slow_id=%08x slow_ret=%d/%d\n",
-            status_hi_fast_ret,
-            dev_id_fast_ret,
-            (unsigned int)status_hi_slow,
-            (unsigned int)dev_id_slow,
-            status_hi_slow_ret,
-            dev_id_slow_ret);
+            "DBG_DWM_FATAL_CURRENT_REG fint=%08x low=%08x hi16=%04x hi32=%08x id=%08x\n",
+            (unsigned int)fint_status,
+            (unsigned int)status_low,
+            (unsigned int)status_hi_short,
+            (unsigned int)status_hi_repeat,
+            (unsigned int)dev_id);
+        status_debug_printf(
+            "DBG_DWM_FATAL_CURRENT_RET fint=%d low=%d hi16=%d hi32=%d id=%d\n",
+            fint_ret, status_low_ret, status_hi_short_ret,
+            status_hi_repeat_ret, dev_id_ret);
+
+        slow_spi_ret = dwm3000_port_set_slow_spi();
+        dwm3000_port_clear_error();
+        fint_status = dwt_read32bitreg(FINT_STAT_ID);
+        fint_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        status_low = dwt_read32bitreg(SYS_STATUS_ID);
+        status_low_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        status_hi_short = dwt_read16bitoffsetreg(SYS_STATUS_HI_ID, 0);
+        status_hi_short_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        status_hi_repeat = dwt_read32bitreg(SYS_STATUS_HI_ID);
+        status_hi_repeat_ret = dwm3000_port_take_error();
+        dwm3000_port_clear_error();
+        dev_id = dwt_readdevid();
+        dev_id_ret = dwm3000_port_take_error();
+        restore_spi_ret = original_spi_hz > 7000000u ?
+            dwm3000_port_set_fast_spi() : dwm3000_port_set_slow_spi();
+
+        status_debug_printf(
+            "DBG_DWM_FATAL_SLOW_REG fint=%08x low=%08x hi16=%04x hi32=%08x id=%08x\n",
+            (unsigned int)fint_status,
+            (unsigned int)status_low,
+            (unsigned int)status_hi_short,
+            (unsigned int)status_hi_repeat,
+            (unsigned int)dev_id);
+        status_debug_printf(
+            "DBG_DWM_FATAL_SLOW_RET set=%d fint=%d low=%d hi16=%d hi32=%d id=%d restore=%d\n",
+            slow_spi_ret, fint_ret, status_low_ret, status_hi_short_ret,
+            status_hi_repeat_ret, dev_id_ret, restore_spi_ret);
         status_debug_printf(
             "DBG_DWM_FATAL_PROBE3 cfg=%u awake=%u unknown=%u phy=%u tid=%p uptime=%u\n",
             radio_configured ? 1u : 0u,
@@ -945,7 +987,7 @@ static int wait_status_internal(uint32_t mask,
             int ret = check_device_fatal_status("status-match");
 
             if (ret < 0) {
-                if (IS_ENABLED(CONFIG_IMEC_CLICKER_RTT_CONTROL)) {
+                if (IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE)) {
                     status_debug_printf(
                         "DBG_DWM_STATUS_FATAL phase=match low=0x%08x mask=0x%08x polls=%u elapsed_us=%u ret=%d\n",
                         (unsigned int)read_status,
@@ -1044,7 +1086,7 @@ receive_abort_not_requested:
         int ret = check_device_fatal_status("status-boundary-match");
 
         if (ret < 0) {
-            if (IS_ENABLED(CONFIG_IMEC_CLICKER_RTT_CONTROL)) {
+            if (IS_ENABLED(CONFIG_IMEC_CLICKER_SYSTEMON_RETAINED_IDLE)) {
                 status_debug_printf(
                     "DBG_DWM_STATUS_FATAL phase=boundary low=0x%08x mask=0x%08x polls=%u elapsed_us=%u ret=%d\n",
                     (unsigned int)read_status,
