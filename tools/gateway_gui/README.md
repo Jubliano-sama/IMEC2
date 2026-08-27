@@ -52,7 +52,7 @@ derives `DEVICE_ID` from the BLE address.
 ```sh
 .venv/bin/python -m unittest discover -s tools/gateway_gui/tests -v
 .venv/bin/python -m compileall -q tools/gateway_gui
-.venv/bin/python -m mypy --explicit-package-bases tools/gateway_gui
+.venv/bin/python -m mypy --explicit-package-bases --exclude 'tools/gateway_gui/tests/' tools/gateway_gui
 ```
 
 The tests cover shared-envelope CRC and COBS framing, current gateway stream
@@ -81,6 +81,26 @@ the identity read and packet notification subscription work:
 
 ```sh
 .venv/bin/python -m tools.gateway_gui.ble_smoke [BLE_ADDRESS]
+```
+
+One strict hardware survey can be rerun through the production GUI itself. The
+command exits zero only after accepted START and PLAN results, exactly three
+anchors and pairs, five usable samples per pair, no partial reason, and the
+receipt-backed GUI terminal. `script` preserves the terminal proof while still
+giving Tk and the BLE client a TTY:
+
+```sh
+mkdir -p logs/manual-gateway-gui-survey
+script -q -e -c ".venv/bin/python -m tools.gateway_gui.survey_hil E0:85:31:10:C4:17" logs/manual-gateway-gui-survey/run.typescript
+```
+
+The click HIL runner likewise owns the BLE receipt consumer before injecting
+the RTT click. Its checked-in probe map is the four-probe bench described by
+the script's `--help`; select `direct` for DDD and `forced` for a topology with
+forced-hop anchors:
+
+```sh
+.venv/bin/python firmware/scripts/test_clicker_hil.py --config direct --output-name manual-ddd
 ```
 
 Host commands are shared IMEC packets with CRC-16/CCITT-FALSE, COBS encoding,
